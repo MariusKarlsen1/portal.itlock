@@ -1,0 +1,211 @@
+@page "/komponenter"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Komponentregister</PageTitle>
+
+<h1>Komponentregister</h1>
+<p>Søk og bla i alle komponenter. Trykk "Rediger" for å endre navn, produsent eller produktkode.</p>
+
+<div class="filters">
+    <input @bind="_search" @bind:event="oninput" placeholder="Søk på navn, produsent eller produktkode" class="search-input" />
+    <select @bind="_selectedTypeId">
+        <option value="0">Alle komponenttyper</option>
+        @foreach (var t in _types)
+        {
+            <option value="@t.Id">@t.Navn</option>
+        }
+    </select>
+</div>
+
+<p class="result-count">@FilteredComponents.Count() av @_components.Count komponenter</p>
+
+<div class="table-wrap">
+    <table class="component-table">
+        <thead>
+            <tr>
+                <th>Komponenttype</th>
+                <th>Navn</th>
+                <th>Produsent</th>
+                <th>Produktkode</th>
+                <th>Brukt i</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var c in FilteredComponents)
+            {
+                <tr>
+                    @if (_editingId == c.Id)
+                    {
+                        <td>@c.TypeName</td>
+                        <td><input @bind="c.Navn" /></td>
+                        <td><input @bind="c.Produsent" /></td>
+                        <td><input @bind="c.Produktkode" /></td>
+                        <td>@UsageLabel(c.PackageCount)</td>
+                        <td class="actions">
+                            <button type="button" class="save-button" @onclick="@(() => Save(c))">Lagre</button>
+                            <button type="button" class="cancel-button" @onclick="@(() => _editingId = null)">Avbryt</button>
+                        </td>
+                    }
+                    else
+                    {
+                        <td>@c.TypeName</td>
+                        <td>@c.Navn</td>
+                        <td>@c.Produsent</td>
+                        <td>@c.Produktkode</td>
+                        <td>@UsageLabel(c.PackageCount)</td>
+                        <td class="actions">
+                            <button type="button" class="edit-button" @onclick="@(() => _editingId = c.Id)">Rediger</button>
+                        </td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="new-component">
+    <h2>Legg til komponent</h2>
+    <div class="new-component-form">
+        <select @bind="_draft.ComponentTypeId">
+            @foreach (var t in _types)
+            {
+                <option value="@t.Id">@t.Navn</option>
+            }
+        </select>
+        <input @bind="_draft.Navn" placeholder="Navn" />
+        <input @bind="_draft.Produsent" placeholder="Produsent (valgfritt)" />
+        <input @bind="_draft.Produktkode" placeholder="Produktkode (valgfritt)" />
+        <button type="button" class="add-button" @onclick="AddComponent">Legg til</button>
+    </div>
+    @if (!string.IsNullOrEmpty(_addMessage))
+    {
+        <p class="save-success">@_addMessage</p>
+    }
+</div>
+
+@code {
+    private sealed class ComponentDraft
+    {
+        public int Id { get; set; }
+        public int ComponentTypeId { get; set; }
+        public string TypeName { get; set; } = "";
+        public string Navn { get; set; } = "";
+        public string? Produsent { get; set; }
+        public string? Produktkode { get; set; }
+        public int PackageCount { get; set; }
+    }
+
+    private sealed class NewComponentDraft
+    {
+        public int ComponentTypeId { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Produsent { get; set; }
+        public string? Produktkode { get; set; }
+    }
+
+    private List<ComponentDraft> _components = [];
+    private List<ComponentType> _types = [];
+    private string _search = "";
+    private int _selectedTypeId;
+    private int? _editingId;
+    private NewComponentDraft _draft = new();
+    private string? _addMessage;
+
+    private IEnumerable<ComponentDraft> FilteredComponents =>
+        _components.Where(MatchesFilter).OrderBy(c => c.TypeName).ThenBy(c => c.Navn);
+
+    private bool MatchesFilter(ComponentDraft c)
+    {
+        if (_selectedTypeId != 0 && c.ComponentTypeId != _selectedTypeId)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(_search))
+        {
+            return true;
+        }
+
+        var term = _search.Trim();
+        return Contains(c.Navn, term) || Contains(c.Produsent, term) || Contains(c.Produktkode, term);
+    }
+
+    private static bool Contains(string? value, string term) =>
+        !string.IsNullOrEmpty(value) && value.Contains(term, StringComparison.OrdinalIgnoreCase);
+
+    private static string UsageLabel(int count) => count switch
+    {
+        0 => "Ikke i bruk",
+        1 => "1 pakke",
+        _ => $"{count} pakker"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _types = await Db.ComponentTypes.OrderBy(t => t.Navn).ToListAsync();
+
+        var components = await Db.Components
+            .Include(c => c.Type)
+            .Include(c => c.Pakker)
+            .ToListAsync();
+
+        _components = components.Select(c => new ComponentDraft
+        {
+            Id = c.Id,
+            ComponentTypeId = c.ComponentTypeId,
+            TypeName = c.Type?.Navn ?? "?",
+            Navn = c.Navn,
+            Produsent = c.Produsent,
+            Produktkode = c.Produktkode,
+            PackageCount = c.Pakker.Count
+        }).ToList();
+
+        _draft.ComponentTypeId = _types.FirstOrDefault()?.Id ?? 0;
+    }
+
+    private async Task Save(ComponentDraft draft)
+    {
+        var entity = await Db.Components.FirstAsync(c => c.Id == draft.Id);
+        entity.Navn = draft.Navn.Trim();
+        entity.Produsent = string.IsNullOrWhiteSpace(draft.Produsent) ? null : draft.Produsent.Trim();
+        entity.Produktkode = string.IsNullOrWhiteSpace(draft.Produktkode) ? null : draft.Produktkode.Trim();
+        await Db.SaveChangesAsync();
+
+        _editingId = null;
+        draft.Produsent = entity.Produsent;
+        draft.Produktkode = entity.Produktkode;
+    }
+
+    private async Task AddComponent()
+    {
+        if (_draft.ComponentTypeId == 0 || string.IsNullOrWhiteSpace(_draft.Navn))
+        {
+            _addMessage = "Velg komponenttype og skriv inn et navn.";
+            return;
+        }
+
+        Db.Components.Add(new Component
+        {
+            ComponentTypeId = _draft.ComponentTypeId,
+            Navn = _draft.Navn.Trim(),
+            Produsent = string.IsNullOrWhiteSpace(_draft.Produsent) ? null : _draft.Produsent.Trim(),
+            Produktkode = string.IsNullOrWhiteSpace(_draft.Produktkode) ? null : _draft.Produktkode.Trim()
+        });
+        await Db.SaveChangesAsync();
+
+        _addMessage = $"\"{_draft.Navn.Trim()}\" er lagt til.";
+        var typeId = _draft.ComponentTypeId;
+        _draft = new NewComponentDraft { ComponentTypeId = typeId };
+        await LoadAsync();
+    }
+}
