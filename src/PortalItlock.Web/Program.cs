@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PortalItlock.Web.Components;
 using PortalItlock.Web.Data;
+using PortalItlock.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,6 +11,8 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddScoped<PackageMatchingService>();
 
 var app = builder.Build();
 
