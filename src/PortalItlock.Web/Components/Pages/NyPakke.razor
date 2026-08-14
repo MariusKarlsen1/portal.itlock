@@ -1,0 +1,244 @@
+@page "/ny-pakke"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Components.DoorFinder
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Ny pakke</PageTitle>
+
+<h1>Ny pakke</h1>
+<p>Sett sammen en dørpakke manuelt: gi den et navn, huk av hvilke krav den oppfyller, og legg til komponentene den består av.</p>
+
+<div class="ny-pakke-layout">
+    <div class="ny-pakke-info">
+        <label>
+            Navn på pakke
+            <input @bind="_form.Navn" @bind:event="oninput" placeholder="F.eks. Innerdør EI30 RC2" />
+        </label>
+        <label>
+            Beskrivelse (valgfritt)
+            <textarea @bind="_form.Beskrivelse" rows="3"></textarea>
+        </label>
+    </div>
+
+    <div class="ny-pakke-krav">
+        <h2>Krav pakken oppfyller</h2>
+        <RequirementSelector Dimensions="_dimensions"
+                              SelectedValueIds="_selectedValueIds"
+                              SelectedValueIdsChanged="OnSelectionChanged" />
+    </div>
+
+    <div class="ny-pakke-komponenter">
+        <h2>Komponenter</h2>
+
+        @if (_components.Count > 0)
+        {
+            <table class="component-table">
+                <thead>
+                    <tr>
+                        <th>Komponenttype</th>
+                        <th>Navn</th>
+                        <th>Produsent</th>
+                        <th>Antall</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in _components)
+                    {
+                        <tr>
+                            <td>@ComponentTypeName(c.ComponentTypeId)</td>
+                            <td>@c.Navn</td>
+                            <td>@c.Produsent</td>
+                            <td>@c.Antall</td>
+                            <td>
+                                <button type="button" class="remove-button" @onclick="@(() => _components.Remove(c))">
+                                    Fjern
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <p class="component-empty">Ingen komponenter lagt til ennå.</p>
+        }
+
+        <div class="component-add">
+            <label>
+                Komponenttype
+                <select @bind="_draft.ComponentTypeId">
+                    @foreach (var type in _componentTypes)
+                    {
+                        <option value="@type.Id">@type.Navn</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Navn
+                <input @bind="_draft.Navn" placeholder="F.eks. Assa 431" />
+            </label>
+            <label>
+                Produsent (valgfritt)
+                <input @bind="_draft.Produsent" />
+            </label>
+            <label>
+                Produktkode (valgfritt)
+                <input @bind="_draft.Produktkode" />
+            </label>
+            <label class="antall-field">
+                Antall
+                <input type="number" min="1" @bind="_draft.Antall" />
+            </label>
+            <button type="button" class="add-button" @onclick="AddComponent">Legg til komponent</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <p class="form-error">@_error</p>
+    }
+
+    @if (!string.IsNullOrEmpty(_savedMessage))
+    {
+        <p class="save-success">@_savedMessage</p>
+    }
+
+    <button type="button" class="save-button" @onclick="SavePackage">Lagre pakke</button>
+</div>
+
+@code {
+    private sealed class PackageFormModel
+    {
+        public string Navn { get; set; } = "";
+        public string? Beskrivelse { get; set; }
+    }
+
+    private sealed class ComponentDraft
+    {
+        public int ComponentTypeId { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Produsent { get; set; }
+        public string? Produktkode { get; set; }
+        public int Antall { get; set; } = 1;
+    }
+
+    private readonly PackageFormModel _form = new();
+    private ComponentDraft _draft = new();
+    private List<RequirementDimension> _dimensions = [];
+    private List<ComponentType> _componentTypes = [];
+    private HashSet<int> _selectedValueIds = [];
+    private List<ComponentDraft> _components = [];
+    private string? _error;
+    private string? _savedMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadReferenceDataAsync();
+        _draft.ComponentTypeId = _componentTypes.FirstOrDefault()?.Id ?? 0;
+    }
+
+    private async Task LoadReferenceDataAsync()
+    {
+        _dimensions = await Db.RequirementDimensions
+            .Include(d => d.Verdier)
+            .OrderBy(d => d.Rekkefolge)
+            .ToListAsync();
+
+        _componentTypes = await Db.ComponentTypes
+            .OrderBy(t => t.Navn)
+            .ToListAsync();
+    }
+
+    private Task OnSelectionChanged(HashSet<int> selected)
+    {
+        _selectedValueIds = selected;
+        return Task.CompletedTask;
+    }
+
+    private string ComponentTypeName(int id) =>
+        _componentTypes.FirstOrDefault(t => t.Id == id)?.Navn ?? "?";
+
+    private void AddComponent()
+    {
+        if (_draft.ComponentTypeId == 0 || string.IsNullOrWhiteSpace(_draft.Navn))
+        {
+            _error = "Velg komponenttype og skriv inn et navn før du legger til komponenten.";
+            return;
+        }
+
+        _error = null;
+        _components.Add(_draft);
+        _draft = new ComponentDraft { ComponentTypeId = _draft.ComponentTypeId };
+    }
+
+    private async Task SavePackage()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Navn))
+        {
+            _error = "Pakken må ha et navn.";
+            return;
+        }
+
+        if (_components.Count == 0)
+        {
+            _error = "Legg til minst én komponent før du lagrer.";
+            return;
+        }
+
+        _error = null;
+
+        var package = new Package
+        {
+            Navn = _form.Navn.Trim(),
+            Beskrivelse = string.IsNullOrWhiteSpace(_form.Beskrivelse) ? null : _form.Beskrivelse.Trim(),
+            ErManuell = true
+        };
+
+        foreach (var valueId in _selectedValueIds)
+        {
+            package.Krav.Add(new PackageRequirement { RequirementValueId = valueId });
+        }
+
+        foreach (var draft in _components)
+        {
+            var navn = draft.Navn.Trim();
+
+            var component = await Db.Components.FirstOrDefaultAsync(c =>
+                c.ComponentTypeId == draft.ComponentTypeId && c.Navn == navn);
+
+            if (component is null)
+            {
+                component = new Component
+                {
+                    ComponentTypeId = draft.ComponentTypeId,
+                    Navn = navn,
+                    Produsent = string.IsNullOrWhiteSpace(draft.Produsent) ? null : draft.Produsent.Trim(),
+                    Produktkode = string.IsNullOrWhiteSpace(draft.Produktkode) ? null : draft.Produktkode.Trim()
+                };
+                Db.Components.Add(component);
+            }
+
+            package.Komponenter.Add(new PackageComponent
+            {
+                Component = component,
+                Antall = draft.Antall
+            });
+        }
+
+        Db.Packages.Add(package);
+        await Db.SaveChangesAsync();
+
+        _savedMessage = $"Pakken \"{package.Navn}\" er lagret.";
+        _form.Navn = "";
+        _form.Beskrivelse = null;
+        _selectedValueIds = [];
+        _components = [];
+        await LoadReferenceDataAsync();
+        _draft = new ComponentDraft { ComponentTypeId = _componentTypes.FirstOrDefault()?.Id ?? 0 };
+    }
+}
