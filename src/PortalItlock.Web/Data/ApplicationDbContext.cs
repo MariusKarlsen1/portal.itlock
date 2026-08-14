@@ -50,7 +50,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         modelBuilder.Entity<Component>()
             .HasOne(c => c.Type)
             .WithMany(t => t.Komponenter)
-            .HasForeignKey(c => c.ComponentTypeId);
+            .HasForeignKey(c => c.ComponentTypeId)
+            .IsRequired(false);
 
         SeedReferenceData(modelBuilder);
     }
