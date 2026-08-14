@@ -12,6 +12,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Package> Packages => Set<Package>();
     public DbSet<PackageRequirement> PackageRequirements => Set<PackageRequirement>();
     public DbSet<PackageComponent> PackageComponents => Set<PackageComponent>();
+    public DbSet<DoorEnvironmentDocument> DoorEnvironmentDocuments => Set<DoorEnvironmentDocument>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -179,6 +180,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             new ComponentType { Id = 63, Navn = "Diverse 1" },
             new ComponentType { Id = 64, Navn = "Diverse 2" },
             new ComponentType { Id = 65, Navn = "Diverse 3" }
+        );
+
+        modelBuilder.Entity<DoorEnvironmentDocument>().HasData(
+            new DoorEnvironmentDocument { Id = 1, Navn = "Dørmiljø 1", FileName = "dormiljo-1.docx", Rekkefolge = 1 },
+            new DoorEnvironmentDocument { Id = 2, Navn = "Dørmiljø 2", FileName = "dormiljo-2.docx", Rekkefolge = 2 },
+            new DoorEnvironmentDocument { Id = 3, Navn = "Dørmiljø 3", FileName = "dormiljo-3.docx", Rekkefolge = 3 },
+            new DoorEnvironmentDocument { Id = 4, Navn = "Dørmiljø 4", FileName = "dormiljo-4.docx", Rekkefolge = 4 },
+            new DoorEnvironmentDocument { Id = 5, Navn = "Dørmiljø 5", FileName = "dormiljo-5.docx", Rekkefolge = 5 },
+            new DoorEnvironmentDocument { Id = 6, Navn = "Dørmiljø 6", FileName = "dormiljo-6.docx", Rekkefolge = 6 },
+            new DoorEnvironmentDocument { Id = 7, Navn = "Dørmiljø 7", FileName = "dormiljo-7.docx", Rekkefolge = 7 },
+            new DoorEnvironmentDocument { Id = 8, Navn = "Dørmiljø 8", FileName = "dormiljo-8.docx", Rekkefolge = 8 },
+            new DoorEnvironmentDocument { Id = 9, Navn = "Dørmiljø 9", FileName = "dormiljo-9.docx", Rekkefolge = 9 }
         );
     }
 }
