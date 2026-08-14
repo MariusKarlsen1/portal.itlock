@@ -80,34 +80,73 @@ else
                 <p class="component-empty">Ingen komponenter lagt til ennå.</p>
             }
 
-            <div class="component-add">
+            <div class="component-search">
                 <label>
-                    Komponenttype
-                    <select @bind="_draft.ComponentTypeId">
-                        @foreach (var type in _componentTypes)
+                    Søk i komponentregister (aktive varer)
+                    <input @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged"
+                           placeholder="Søk på navn, leverandør eller produktkode" />
+                </label>
+                @if (_searchResults.Count > 0)
+                {
+                    <ul class="search-results">
+                        @foreach (var r in _searchResults)
                         {
-                            <option value="@type.Id">@type.Navn</option>
+                            <li>
+                                <button type="button" class="search-result" @onclick="@(() => AddFromSearch(r))">
+                                    <span class="search-result-name">@r.Navn</span>
+                                    <span class="search-result-meta">
+                                        @r.TypeName
+                                        @if (!string.IsNullOrEmpty(r.Leverandor))
+                                        {
+                                            <text> · @r.Leverandor</text>
+                                        }
+                                        @if (!string.IsNullOrEmpty(r.Produktkode))
+                                        {
+                                            <text> · @r.Produktkode</text>
+                                        }
+                                    </span>
+                                </button>
+                            </li>
                         }
-                    </select>
-                </label>
-                <label>
-                    Navn
-                    <input @bind="_draft.Navn" placeholder="F.eks. Assa 431" />
-                </label>
-                <label>
-                    Produsent (valgfritt)
-                    <input @bind="_draft.Produsent" />
-                </label>
-                <label>
-                    Produktkode (valgfritt)
-                    <input @bind="_draft.Produktkode" />
-                </label>
-                <label class="antall-field">
-                    Antall
-                    <input type="number" min="1" @bind="_draft.Antall" />
-                </label>
-                <button type="button" class="add-button" @onclick="AddComponent">Legg til komponent</button>
+                    </ul>
+                }
+                else if (_componentSearch.Trim().Length >= 2)
+                {
+                    <p class="search-empty">Ingen aktive komponenter matcher søket.</p>
+                }
             </div>
+
+            <details class="component-manual">
+                <summary>Eller legg inn manuelt</summary>
+                <div class="component-add">
+                    <label>
+                        Komponenttype
+                        <select @bind="_draft.ComponentTypeId">
+                            @foreach (var type in _componentTypes)
+                            {
+                                <option value="@type.Id">@type.Navn</option>
+                            }
+                        </select>
+                    </label>
+                    <label>
+                        Navn
+                        <input @bind="_draft.Navn" placeholder="F.eks. Assa 431" />
+                    </label>
+                    <label>
+                        Produsent (valgfritt)
+                        <input @bind="_draft.Produsent" />
+                    </label>
+                    <label>
+                        Produktkode (valgfritt)
+                        <input @bind="_draft.Produktkode" />
+                    </label>
+                    <label class="antall-field">
+                        Antall
+                        <input type="number" min="1" @bind="_draft.Antall" />
+                    </label>
+                    <button type="button" class="add-button" @onclick="AddComponent">Legg til komponent</button>
+                </div>
+            </details>
         </div>
 
         @if (!string.IsNullOrEmpty(_error))
@@ -158,11 +197,22 @@ else
 
     private sealed class ComponentDraft
     {
+        public int? ExistingComponentId { get; set; }
         public int ComponentTypeId { get; set; }
         public string Navn { get; set; } = "";
         public string? Produsent { get; set; }
         public string? Produktkode { get; set; }
         public int Antall { get; set; } = 1;
+    }
+
+    private sealed class SearchResult
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string TypeName { get; set; } = "";
+        public int? ComponentTypeId { get; set; }
+        public string? Leverandor { get; set; }
+        public string? Produktkode { get; set; }
     }
 
     private readonly PackageFormModel _form = new();
@@ -176,6 +226,8 @@ else
     private bool _confirmingDelete;
     private bool _notFound;
     private int? _loadedId;
+    private string _componentSearch = "";
+    private List<SearchResult> _searchResults = [];
 
     protected override async Task OnParametersSetAsync()
     {
@@ -236,6 +288,7 @@ else
         _selectedValueIds = package.Krav.Select(k => k.RequirementValueId).ToHashSet();
         _components = package.Komponenter.Select(pc => new ComponentDraft
         {
+            ExistingComponentId = pc.ComponentId,
             ComponentTypeId = pc.Component!.ComponentTypeId ?? 0,
             Navn = pc.Component.Navn,
             Produsent = pc.Component.Produsent,
@@ -252,6 +305,8 @@ else
         _selectedValueIds = [];
         _components = [];
         _draft = new ComponentDraft { ComponentTypeId = _componentTypes.FirstOrDefault()?.Id ?? 0 };
+        _componentSearch = "";
+        _searchResults = [];
     }
 
     private Task OnSelectionChanged(HashSet<int> selected)
@@ -261,7 +316,53 @@ else
     }
 
     private string ComponentTypeName(int id) =>
-        _componentTypes.FirstOrDefault(t => t.Id == id)?.Navn ?? "?";
+        id == 0 ? "Ikke satt" : _componentTypes.FirstOrDefault(t => t.Id == id)?.Navn ?? "?";
+
+    private async Task OnComponentSearchChanged()
+    {
+        var term = _componentSearch.Trim();
+        if (term.Length < 2)
+        {
+            _searchResults = [];
+            return;
+        }
+
+        _searchResults = await Db.Components
+            .Where(c => c.Aktiv && (
+                c.Navn.Contains(term) ||
+                (c.Leverandor != null && c.Leverandor.Contains(term)) ||
+                (c.Produktkode != null && c.Produktkode.Contains(term))))
+            .Include(c => c.Type)
+            .OrderBy(c => c.Navn)
+            .Take(20)
+            .Select(c => new SearchResult
+            {
+                Id = c.Id,
+                Navn = c.Navn,
+                TypeName = c.Type != null ? c.Type.Navn : "Ikke satt",
+                ComponentTypeId = c.ComponentTypeId,
+                Leverandor = c.Leverandor,
+                Produktkode = c.Produktkode
+            })
+            .ToListAsync();
+    }
+
+    private void AddFromSearch(SearchResult r)
+    {
+        _components.Add(new ComponentDraft
+        {
+            ExistingComponentId = r.Id,
+            ComponentTypeId = r.ComponentTypeId ?? 0,
+            Navn = r.Navn,
+            Produsent = r.Leverandor,
+            Produktkode = r.Produktkode,
+            Antall = 1
+        });
+
+        _componentSearch = "";
+        _searchResults = [];
+        _error = null;
+    }
 
     private void AddComponent()
     {
@@ -321,21 +422,31 @@ else
 
         foreach (var draft in _components)
         {
-            var navn = draft.Navn.Trim();
+            Component component;
 
-            var component = await Db.Components.FirstOrDefaultAsync(c =>
-                c.ComponentTypeId == draft.ComponentTypeId && c.Navn == navn);
-
-            if (component is null)
+            if (draft.ExistingComponentId.HasValue)
             {
-                component = new Component
+                component = await Db.Components.FirstAsync(c => c.Id == draft.ExistingComponentId.Value);
+            }
+            else
+            {
+                var navn = draft.Navn.Trim();
+
+                var found = await Db.Components.FirstOrDefaultAsync(c =>
+                    c.ComponentTypeId == draft.ComponentTypeId && c.Navn == navn);
+
+                component = found ?? new Component
                 {
                     ComponentTypeId = draft.ComponentTypeId,
                     Navn = navn,
                     Produsent = string.IsNullOrWhiteSpace(draft.Produsent) ? null : draft.Produsent.Trim(),
                     Produktkode = string.IsNullOrWhiteSpace(draft.Produktkode) ? null : draft.Produktkode.Trim()
                 };
-                Db.Components.Add(component);
+
+                if (found is null)
+                {
+                    Db.Components.Add(component);
+                }
             }
 
             package.Komponenter.Add(new PackageComponent
