@@ -17,6 +17,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<BefaringDorfelt> BefaringDorfelt => Set<BefaringDorfelt>();
     public DbSet<BefaringLassystem> BefaringLassystemer => Set<BefaringLassystem>();
     public DbSet<BefaringDorfeltBilde> BefaringDorfeltBilder => Set<BefaringDorfeltBilde>();
+    public DbSet<GuideSide> GuideSider => Set<GuideSide>();
     public DbSet<LasUtskifting> LasUtskiftinger => Set<LasUtskifting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
