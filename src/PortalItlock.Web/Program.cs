@@ -38,4 +38,12 @@ app.MapGet("/bilder/{id:int}", async (int id, ApplicationDbContext db) =>
     return bilde is null ? Results.NotFound() : Results.File(bilde.Data, bilde.ContentType);
 });
 
+app.MapGet("/systemvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var vedlegg = await db.SystemVedlegg.FindAsync(id);
+    return vedlegg is null
+        ? Results.NotFound()
+        : Results.File(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
+});
+
 app.Run();

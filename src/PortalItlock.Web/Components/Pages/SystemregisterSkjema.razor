@@ -63,6 +63,76 @@ else
             <button type="button" class="add-button" @onclick="LeggTilRekvirent">Legg til rekvirent</button>
         </section>
 
+        <section class="system-section">
+            <h2>Kvitteringsliste - nøkler</h2>
+            <p class="section-hint">Registrer hvem som har mottatt nøkler/kort for dette systemet.</p>
+
+            @if (_kvitteringer.Count == 0)
+            {
+                <p class="list-empty">Ingen kvitteringer registrert ennå.</p>
+            }
+
+            @foreach (var k in _kvitteringer)
+            {
+                <div class="kvittering-row">
+                    <label>Dato<input type="date" @bind="k.Dato" /></label>
+                    <label>Mottaker<input @bind="k.MottakerNavn" /></label>
+                    <label>Nøkkel/kort<input @bind="k.NokkelBetegnelse" /></label>
+                    <label>Antall<input type="number" min="1" @bind="k.Antall" /></label>
+                    <label>Rekvirert av<input @bind="k.RekvirertAv" /></label>
+                    <button type="button" class="remove-button" @onclick="@(() => _kvitteringer.Remove(k))">Fjern</button>
+                </div>
+            }
+
+            <button type="button" class="add-button" @onclick="LeggTilKvittering">Legg til kvittering</button>
+        </section>
+
+        <section class="system-section">
+            <h2>Vedlegg</h2>
+            <p class="section-hint">Sikkerhetsskjema, bestillingsskjema, låsplan og annen dokumentasjon som tilhører systemet.</p>
+
+            @if (!Id.HasValue)
+            {
+                <p class="list-empty">Lagre systemet først for å kunne legge til vedlegg.</p>
+            }
+            else
+            {
+                @if (_vedlegg.Count > 0)
+                {
+                    <ul class="vedlegg-list">
+                        @foreach (var v in _vedlegg)
+                        {
+                            <li class="vedlegg-item">
+                                <a href="@($"/systemvedlegg/{v.Id}")" target="_blank">@v.Filnavn</a>
+                                <span class="vedlegg-type">@(string.IsNullOrWhiteSpace(v.Type) ? "Ukategorisert" : v.Type)</span>
+                                <button type="button" class="remove-button" @onclick="@(() => RemoveVedlegg(v))">Fjern</button>
+                            </li>
+                        }
+                    </ul>
+                }
+
+                <div class="vedlegg-upload">
+                    <select @bind="_valgtVedleggType">
+                        <option value="">Velg type</option>
+                        <option value="Sikkerhetsskjema">Sikkerhetsskjema</option>
+                        <option value="Bestillingsskjema">Bestillingsskjema</option>
+                        <option value="Låsplan">Låsplan</option>
+                        <option value="Annet">Annet</option>
+                    </select>
+                    <InputFile OnChange="OnVedleggSelected" multiple />
+                </div>
+
+                @if (_uploadingVedlegg)
+                {
+                    <p class="list-empty">Laster opp...</p>
+                }
+                @if (!string.IsNullOrEmpty(_vedleggFeil))
+                {
+                    <p class="form-error">@_vedleggFeil</p>
+                }
+            }
+        </section>
+
         @if (!string.IsNullOrEmpty(_error))
         {
             <p class="form-error">@_error</p>
@@ -102,6 +172,11 @@ else
 
     private Nokkelsystem _form = new() { Systemnummer = "" };
     private List<Rekvirent> _rekvirenter = [];
+    private List<NokkelKvittering> _kvitteringer = [];
+    private List<SystemVedlegg> _vedlegg = [];
+    private string _valgtVedleggType = "";
+    private bool _uploadingVedlegg;
+    private string? _vedleggFeil;
     private bool _notFound;
     private bool _confirmingDelete;
     private int? _loadedId;
@@ -125,6 +200,8 @@ else
         {
             var existing = await Db.Nokkelsystemer
                 .Include(s => s.Rekvirenter)
+                .Include(s => s.Kvitteringer)
+                .Include(s => s.Vedlegg)
                 .FirstOrDefaultAsync(s => s.Id == Id.Value);
 
             if (existing is null)
@@ -135,17 +212,85 @@ else
 
             _form = existing;
             _rekvirenter = existing.Rekvirenter;
+            _kvitteringer = existing.Kvitteringer;
+            _vedlegg = existing.Vedlegg;
         }
         else
         {
             _rekvirenter = [];
-            _form = new Nokkelsystem { Systemnummer = "", Rekvirenter = _rekvirenter };
+            _kvitteringer = [];
+            _vedlegg = [];
+            _form = new Nokkelsystem
+            {
+                Systemnummer = "",
+                Rekvirenter = _rekvirenter,
+                Kvitteringer = _kvitteringer,
+                Vedlegg = _vedlegg
+            };
         }
     }
 
     private void LeggTilRekvirent()
     {
         _rekvirenter.Add(new Rekvirent { Navn = "" });
+    }
+
+    private void LeggTilKvittering()
+    {
+        _kvitteringer.Add(new NokkelKvittering { MottakerNavn = "", Dato = DateTime.Today });
+    }
+
+    private async Task OnVedleggSelected(InputFileChangeEventArgs e)
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        _vedleggFeil = null;
+        _uploadingVedlegg = true;
+
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                if (file.Size > 20_000_000)
+                {
+                    _vedleggFeil = $"\"{file.Name}\" er for stor (maks 20 MB) og ble hoppet over.";
+                    continue;
+                }
+
+                using var buffer = new MemoryStream();
+                await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+                {
+                    await stream.CopyToAsync(buffer);
+                }
+
+                var vedlegg = new SystemVedlegg
+                {
+                    NokkelsystemId = Id.Value,
+                    Filnavn = file.Name,
+                    ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                    Data = buffer.ToArray(),
+                    Type = string.IsNullOrWhiteSpace(_valgtVedleggType) ? null : _valgtVedleggType
+                };
+
+                Db.SystemVedlegg.Add(vedlegg);
+            }
+
+            await Db.SaveChangesAsync();
+        }
+        finally
+        {
+            _uploadingVedlegg = false;
+        }
+    }
+
+    private async Task RemoveVedlegg(SystemVedlegg v)
+    {
+        Db.SystemVedlegg.Remove(v);
+        await Db.SaveChangesAsync();
+        _vedlegg.Remove(v);
     }
 
     private async Task Lagre()
@@ -158,6 +303,7 @@ else
 
         _error = null;
         _form.Rekvirenter = _rekvirenter;
+        _form.Kvitteringer = _kvitteringer;
 
         if (!Id.HasValue)
         {

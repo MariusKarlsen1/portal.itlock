@@ -18,4 +18,6 @@ public class Nokkelsystem
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     public List<Rekvirent> Rekvirenter { get; set; } = [];
+    public List<SystemVedlegg> Vedlegg { get; set; } = [];
+    public List<NokkelKvittering> Kvitteringer { get; set; } = [];
 }

@@ -20,6 +20,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<GuideSide> GuideSider => Set<GuideSide>();
     public DbSet<Nokkelsystem> Nokkelsystemer => Set<Nokkelsystem>();
     public DbSet<Rekvirent> Rekvirenter => Set<Rekvirent>();
+    public DbSet<SystemVedlegg> SystemVedlegg => Set<SystemVedlegg>();
+    public DbSet<NokkelKvittering> NokkelKvitteringer => Set<NokkelKvittering>();
     public DbSet<LasUtskifting> LasUtskiftinger => Set<LasUtskifting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
