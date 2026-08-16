@@ -54,6 +54,7 @@ public class BefaringDorfelt
     public string? Notater { get; set; }
 
     public List<BefaringLassystem> Lassystemer { get; set; } = [];
+    public List<BefaringDorfeltBilde> Bilder { get; set; } = [];
 
     [NotMapped]
     public BefaringLassystem Daglas => GetOrAddLassystem("Daglås");

@@ -4,6 +4,7 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using SkiaSharp
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 
@@ -175,6 +176,38 @@ else
                             <textarea rows="3" @bind="d.Notater"></textarea>
                         </label>
 
+                        <div class="bilder-section">
+                            <h3>Bilder</h3>
+                            @if (d.Id == 0)
+                            {
+                                <p class="bilder-hint">Lagre befaringen først for å kunne legge til bilder.</p>
+                            }
+                            else
+                            {
+                                @if (d.Bilder.Count > 0)
+                                {
+                                    <div class="bilder-grid">
+                                        @foreach (var bilde in d.Bilder)
+                                        {
+                                            <div class="bilde-thumb">
+                                                <img src="@($"/bilder/{bilde.Id}")" alt="@bilde.Filnavn" />
+                                                <button type="button" class="bilde-remove" title="Fjern bilde" @onclick="@(() => RemoveBilde(d, bilde))">×</button>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                <InputFile OnChange="@((e) => OnBilderSelected(d, e))" multiple accept="image/*" capture="environment" />
+                                @if (_uploadingDorfeltId == d.Id)
+                                {
+                                    <p class="bilder-hint">Laster opp...</p>
+                                }
+                                @if (_bildeFeil.TryGetValue(d.Id, out var bildeFeilmelding) && !string.IsNullOrEmpty(bildeFeilmelding))
+                                {
+                                    <p class="form-error">@bildeFeilmelding</p>
+                                }
+                            }
+                        </div>
+
                         <button type="button" class="remove-button" @onclick="@(() => _dorfelt.Remove(d))">Fjern dørfelt</button>
                     </div>
                 </details>
@@ -227,6 +260,8 @@ else
     private int? _loadedId;
     private string? _error;
     private string? _savedMessage;
+    private readonly Dictionary<int, string?> _bildeFeil = [];
+    private int? _uploadingDorfeltId;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -256,6 +291,8 @@ else
         var existing = await Db.Befaringer
             .Include(b => b.Dorfelt)
                 .ThenInclude(d => d.Lassystemer)
+            .Include(b => b.Dorfelt)
+                .ThenInclude(d => d.Bilder)
             .FirstOrDefaultAsync(b => b.Id == id);
 
         if (existing is null)
@@ -277,6 +314,93 @@ else
     private void AddDorfelt()
     {
         _dorfelt.Add(new BefaringDorfelt());
+    }
+
+    private async Task OnBilderSelected(BefaringDorfelt d, InputFileChangeEventArgs e)
+    {
+        if (d.Id == 0)
+        {
+            return;
+        }
+
+        _bildeFeil[d.Id] = null;
+        _uploadingDorfeltId = d.Id;
+
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                if (!file.ContentType.StartsWith("image/"))
+                {
+                    _bildeFeil[d.Id] = $"\"{file.Name}\" er ikke et bilde og ble hoppet over.";
+                    continue;
+                }
+
+                using var buffer = new MemoryStream();
+                await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+                {
+                    await stream.CopyToAsync(buffer);
+                }
+                buffer.Position = 0;
+
+                byte[] jpegBytes;
+                try
+                {
+                    jpegBytes = ResizeToJpeg(buffer);
+                }
+                catch
+                {
+                    _bildeFeil[d.Id] = $"Kunne ikke lese \"{file.Name}\" som bilde.";
+                    continue;
+                }
+
+                var bilde = new BefaringDorfeltBilde
+                {
+                    BefaringDorfeltId = d.Id,
+                    Filnavn = file.Name,
+                    ContentType = "image/jpeg",
+                    Data = jpegBytes
+                };
+
+                Db.BefaringDorfeltBilder.Add(bilde);
+            }
+
+            await Db.SaveChangesAsync();
+        }
+        finally
+        {
+            _uploadingDorfeltId = null;
+        }
+    }
+
+    private async Task RemoveBilde(BefaringDorfelt d, BefaringDorfeltBilde bilde)
+    {
+        Db.BefaringDorfeltBilder.Remove(bilde);
+        await Db.SaveChangesAsync();
+        d.Bilder.Remove(bilde);
+    }
+
+    private static byte[] ResizeToJpeg(Stream input, int maxDimension = 1600, int quality = 82)
+    {
+        using var original = SKBitmap.Decode(input) ?? throw new InvalidOperationException("Ugyldig bildeformat.");
+
+        var longestSide = Math.Max(original.Width, original.Height);
+        SKBitmap? resized = null;
+
+        if (longestSide > maxDimension)
+        {
+            var scale = (double)maxDimension / longestSide;
+            var width = Math.Max(1, (int)(original.Width * scale));
+            var height = Math.Max(1, (int)(original.Height * scale));
+            resized = original.Resize(new SKImageInfo(width, height), SKSamplingOptions.Default);
+        }
+
+        using var _ = resized;
+        var bitmapToEncode = resized ?? original;
+
+        using var image = SKImage.FromBitmap(bitmapToEncode);
+        using var data = image.Encode(SKEncodedImageFormat.Jpeg, quality);
+        return data.ToArray();
     }
 
     private async Task SaveBefaring()

@@ -32,4 +32,10 @@ app.UseAntiforgery();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
+app.MapGet("/bilder/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var bilde = await db.BefaringDorfeltBilder.FindAsync(id);
+    return bilde is null ? Results.NotFound() : Results.File(bilde.Data, bilde.ContentType);
+});
+
 app.Run();
