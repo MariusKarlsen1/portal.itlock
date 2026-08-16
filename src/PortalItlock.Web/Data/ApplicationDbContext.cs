@@ -13,6 +13,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PackageRequirement> PackageRequirements => Set<PackageRequirement>();
     public DbSet<PackageComponent> PackageComponents => Set<PackageComponent>();
     public DbSet<DoorEnvironmentDocument> DoorEnvironmentDocuments => Set<DoorEnvironmentDocument>();
+    public DbSet<Befaring> Befaringer => Set<Befaring>();
+    public DbSet<BefaringDorfelt> BefaringDorfelt => Set<BefaringDorfelt>();
+    public DbSet<BefaringLassystem> BefaringLassystemer => Set<BefaringLassystem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
