@@ -18,6 +18,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<BefaringLassystem> BefaringLassystemer => Set<BefaringLassystem>();
     public DbSet<BefaringDorfeltBilde> BefaringDorfeltBilder => Set<BefaringDorfeltBilde>();
     public DbSet<GuideSide> GuideSider => Set<GuideSide>();
+    public DbSet<Nokkelsystem> Nokkelsystemer => Set<Nokkelsystem>();
+    public DbSet<Rekvirent> Rekvirenter => Set<Rekvirent>();
     public DbSet<LasUtskifting> LasUtskiftinger => Set<LasUtskifting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
