@@ -1,0 +1,275 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<div class="dor-panel">
+    <div class="dor-panel-header">
+        <h2>Dør</h2>
+        <button type="button" class="cancel-button" @onclick="Close">Lukk</button>
+    </div>
+
+    <div class="field-grid">
+        <label>Dørnummer<input @bind="Dor.Dornummer" /></label>
+        <label>Etasje<input @bind="Dor.Etasje" /></label>
+        <label>Sone<input @bind="Dor.Sone" /></label>
+        <label>Dørtype<input @bind="Dor.Dortype" /></label>
+        <label>B x H<input @bind="Dor.BxH" placeholder="F.eks. 1000x2100" /></label>
+        <label>Slagretning<input @bind="Dor.Slagretning" /></label>
+        <label class="span-2">
+            Notater
+            <textarea rows="2" @bind="Dor.Notater"></textarea>
+        </label>
+    </div>
+
+    <label class="checkbox-field">
+        <input type="checkbox" @bind="Dor.FerdigMontert" @bind:after="OnFerdigMontertChanged" />
+        Ferdig montert
+        @if (Dor.MontertDato.HasValue)
+        {
+            <span class="montert-dato">(@Dor.MontertDato.Value.ToString("dd.MM.yyyy"))</span>
+        }
+    </label>
+
+    <h3>Beslag</h3>
+
+    <div class="component-search">
+        <label>
+            Søk i komponentregisteret
+            <input @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged" placeholder="Søk på navn, leverandør eller produktkode" />
+        </label>
+
+        @if (_searchResults.Count > 0)
+        {
+            <ul class="search-results">
+                @foreach (var r in _searchResults)
+                {
+                    <li>
+                        <button type="button" class="search-result" @onclick="@(() => AddFromSearch(r))">
+                            <span class="search-result-name">@r.Navn</span>
+                            <span class="search-result-meta">@r.Leverandor</span>
+                        </button>
+                    </li>
+                }
+            </ul>
+        }
+        else if (_componentSearch.Trim().Length >= 2)
+        {
+            <p class="search-empty">Ingen treff.</p>
+        }
+    </div>
+
+    <div class="pakke-legg-til">
+        <select @bind="_valgtPakkeId">
+            <option value="">Velg pakke...</option>
+            @foreach (var p in _pakker)
+            {
+                <option value="@p.Id">@p.Navn</option>
+            }
+        </select>
+        <button type="button" class="add-button" @onclick="LeggTilPakke" disabled="@(_valgtPakkeId is null)">Legg til pakke</button>
+    </div>
+
+    @if (Dor.Komponenter.Count > 0)
+    {
+        <table class="linje-table">
+            <thead>
+                <tr>
+                    <th>Navn</th>
+                    <th>Antall</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var dk in Dor.Komponenter)
+                {
+                    <tr>
+                        <td>@dk.Component?.Navn</td>
+                        <td><input class="antall-input" @bind="dk.Antall" /></td>
+                        <td><button type="button" class="remove-button" @onclick="@(() => RemoveKomponent(dk))">Fjern</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else
+    {
+        <p class="list-empty">Ingen beslag lagt til ennå.</p>
+    }
+
+    @if (!string.IsNullOrEmpty(_savedMessage))
+    {
+        <p class="save-success">@_savedMessage</p>
+    }
+
+    <div class="form-actions">
+        <button type="button" class="save-button" @onclick="LagreDor">Lagre dør</button>
+
+        @if (Dor.PlantegningId.HasValue)
+        {
+            <button type="button" class="cancel-button" @onclick="FjernFraTegning">Fjern fra tegning</button>
+        }
+
+        @if (_confirmingDelete)
+        {
+            <span class="delete-confirm">
+                Er du sikker?
+                <button type="button" class="delete-confirm-button" @onclick="SlettDor">Ja, slett</button>
+                <button type="button" class="cancel-button" @onclick="@(() => _confirmingDelete = false)">Avbryt</button>
+            </span>
+        }
+        else
+        {
+            <button type="button" class="delete-button" @onclick="@(() => _confirmingDelete = true)">Slett dør</button>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Dor Dor { get; set; } = null!;
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnDeleted { get; set; }
+    [Parameter] public EventCallback OnUnplaced { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private sealed class SearchResult
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Leverandor { get; set; }
+    }
+
+    private sealed class PakkeOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private List<PakkeOption> _pakker = [];
+    private int? _valgtPakkeId;
+    private string _componentSearch = "";
+    private List<SearchResult> _searchResults = [];
+    private bool _confirmingDelete;
+    private string? _savedMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _pakker = await Db.Packages
+            .OrderBy(p => p.Navn)
+            .Select(p => new PakkeOption { Id = p.Id, Navn = p.Navn })
+            .ToListAsync();
+    }
+
+    private Task Close() => OnClose.InvokeAsync();
+
+    private void OnFerdigMontertChanged()
+    {
+        Dor.MontertDato = Dor.FerdigMontert ? DateTime.Today : null;
+    }
+
+    private async Task OnComponentSearchChanged()
+    {
+        var term = _componentSearch.Trim();
+        if (term.Length < 2)
+        {
+            _searchResults = [];
+            return;
+        }
+
+        _searchResults = await Db.Components
+            .Where(c => c.Aktiv && (
+                c.Navn.Contains(term) ||
+                (c.Leverandor != null && c.Leverandor.Contains(term)) ||
+                (c.Produktkode != null && c.Produktkode.Contains(term))))
+            .OrderBy(c => c.Navn)
+            .Take(20)
+            .Select(c => new SearchResult { Id = c.Id, Navn = c.Navn, Leverandor = c.Leverandor })
+            .ToListAsync();
+    }
+
+    private async Task AddFromSearch(SearchResult r)
+    {
+        var existing = Dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == r.Id);
+        if (existing is not null)
+        {
+            existing.Antall += 1;
+        }
+        else
+        {
+            var component = await Db.Components.FindAsync(r.Id);
+            var dk = new DorKomponent { DorId = Dor.Id, ComponentId = r.Id, Component = component, Antall = 1 };
+            Dor.Komponenter.Add(dk);
+            Db.DorKomponenter.Add(dk);
+        }
+
+        await Db.SaveChangesAsync();
+        _componentSearch = "";
+        _searchResults = [];
+    }
+
+    private async Task LeggTilPakke()
+    {
+        if (_valgtPakkeId is null)
+        {
+            return;
+        }
+
+        var pakke = await Db.Packages
+            .Include(p => p.Komponenter).ThenInclude(pc => pc.Component)
+            .FirstOrDefaultAsync(p => p.Id == _valgtPakkeId);
+
+        if (pakke is null)
+        {
+            return;
+        }
+
+        foreach (var pk in pakke.Komponenter)
+        {
+            var existing = Dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == pk.ComponentId);
+            if (existing is not null)
+            {
+                existing.Antall += pk.Antall;
+            }
+            else
+            {
+                var dk = new DorKomponent { DorId = Dor.Id, ComponentId = pk.ComponentId, Component = pk.Component, Antall = pk.Antall };
+                Dor.Komponenter.Add(dk);
+                Db.DorKomponenter.Add(dk);
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _valgtPakkeId = null;
+    }
+
+    private async Task RemoveKomponent(DorKomponent dk)
+    {
+        Db.DorKomponenter.Remove(dk);
+        await Db.SaveChangesAsync();
+        Dor.Komponenter.Remove(dk);
+    }
+
+    private async Task LagreDor()
+    {
+        await Db.SaveChangesAsync();
+        _savedMessage = $"Døren \"{Dor.Dornummer}\" er lagret.";
+        await OnSaved.InvokeAsync();
+    }
+
+    private async Task FjernFraTegning()
+    {
+        Dor.PlantegningId = null;
+        Dor.PosX = null;
+        Dor.PosY = null;
+        await Db.SaveChangesAsync();
+        await OnUnplaced.InvokeAsync();
+    }
+
+    private async Task SlettDor()
+    {
+        Db.Dorer.Remove(Dor);
+        await Db.SaveChangesAsync();
+        _confirmingDelete = false;
+        await OnDeleted.InvokeAsync();
+    }
+}

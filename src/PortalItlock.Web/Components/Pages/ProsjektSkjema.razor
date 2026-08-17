@@ -1,0 +1,503 @@
+@page "/prosjekter/ny"
+@page "/prosjekter/{Id:int}"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>@(Id.HasValue ? _form.Navn : "Nytt prosjekt")</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke prosjektet. Det kan være slettet.</p>
+}
+else
+{
+    <h1>@(Id.HasValue ? _form.Navn : "Nytt prosjekt")</h1>
+
+    @if (Id.HasValue)
+    {
+        <nav class="prosjekt-tabs">
+            <button type="button" class="@TabClass("oversikt")" @onclick="@(() => _activeTab = "oversikt")">Oversikt</button>
+            <button type="button" class="@TabClass("dorer")" @onclick="@(() => _activeTab = "dorer")">Dører</button>
+            <button type="button" class="@TabClass("plantegninger")" @onclick="@(() => _activeTab = "plantegninger")">Plantegninger</button>
+            <button type="button" class="@TabClass("vedlegg")" @onclick="@(() => _activeTab = "vedlegg")">Vedlegg</button>
+        </nav>
+    }
+
+    @if (!Id.HasValue || _activeTab == "oversikt")
+    {
+        <div class="prosjekt-layout">
+            <section class="prosjekt-section">
+                <h2>Prosjektinformasjon</h2>
+                <div class="field-grid">
+                    <label class="span-2">
+                        Navn
+                        <input @bind="_form.Navn" @bind:event="oninput" placeholder="F.eks. Lillesand sparebank" />
+                    </label>
+                    <label>Kunde<input @bind="_form.Kunde" /></label>
+                    <label>Status<input @bind="_form.Status" placeholder="F.eks. Pågående" /></label>
+                    <label>Adresse<input @bind="_form.Adresse" /></label>
+                    <label>Post nr<input @bind="_form.Postnr" /></label>
+                    <label>Sted<input @bind="_form.Sted" /></label>
+                    <label>Kontaktperson<input @bind="_form.Kontaktperson" /></label>
+                    <label>Telefon<input @bind="_form.Telefon" /></label>
+                    <label>E-post<input @bind="_form.Epost" /></label>
+                    <label class="span-2">
+                        Notater
+                        <textarea rows="3" @bind="_form.Notater"></textarea>
+                    </label>
+                </div>
+            </section>
+
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <p class="form-error">@_error</p>
+            }
+
+            @if (!string.IsNullOrEmpty(_savedMessage))
+            {
+                <p class="save-success">@_savedMessage</p>
+            }
+
+            <div class="form-actions">
+                <button type="button" class="save-button" @onclick="Lagre">
+                    @(Id.HasValue ? "Lagre endringer" : "Lagre prosjekt")
+                </button>
+
+                @if (Id.HasValue)
+                {
+                    @if (_confirmingDelete)
+                    {
+                        <span class="delete-confirm">
+                            Er du sikker? Dette sletter også dører og plantegninger i prosjektet.
+                            <button type="button" class="delete-confirm-button" @onclick="ConfirmDelete">Ja, slett</button>
+                            <button type="button" class="cancel-button" @onclick="@(() => _confirmingDelete = false)">Avbryt</button>
+                        </span>
+                    }
+                    else
+                    {
+                        <button type="button" class="delete-button" @onclick="@(() => _confirmingDelete = true)">Slett prosjekt</button>
+                    }
+                }
+            </div>
+        </div>
+    }
+    else if (_activeTab == "dorer")
+    {
+        <div class="dorer-layout">
+            <div class="dorer-list-wrap">
+                <button type="button" class="add-button" @onclick="LeggTilDor">Legg til dør</button>
+
+                @if (_dorer.Count == 0)
+                {
+                    <p class="list-empty">Ingen dører registrert ennå.</p>
+                }
+                else
+                {
+                    <table class="dorer-table">
+                        <thead>
+                            <tr>
+                                <th>Dørnummer</th>
+                                <th>Etasje</th>
+                                <th>Sone</th>
+                                <th>Plassering</th>
+                                <th>Ferdig montert</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var d in _dorer)
+                            {
+                                <tr class="@(_selectedDoor?.Id == d.Id ? "dorer-row-selected" : "")">
+                                    <td>@d.Dornummer</td>
+                                    <td>@d.Etasje</td>
+                                    <td>@d.Sone</td>
+                                    <td>@(d.Plantegning?.Navn ?? "Ikke plassert")</td>
+                                    <td><input type="checkbox" checked="@d.FerdigMontert" @onchange="@((ChangeEventArgs e) => ToggleFerdig(d, e))" /></td>
+                                    <td><button type="button" class="remove-button" @onclick="@(() => SelectDoor(d))">Rediger</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+
+            @if (_selectedDoor is not null)
+            {
+                <DorRedigering Dor="_selectedDoor"
+                                OnClose="@(() => _selectedDoor = null)"
+                                OnDeleted="OnDoorDeleted"
+                                OnUnplaced="OnDoorUnplaced"
+                                OnSaved="StateHasChanged" />
+            }
+        </div>
+    }
+    else if (_activeTab == "plantegninger")
+    {
+        <div class="prosjekt-layout">
+            <p class="section-hint">Last opp plantegninger og plasser dører på dem for å følge opp montasje.</p>
+
+            @if (_plantegninger.Count > 0)
+            {
+                <ul class="vedlegg-list">
+                    @foreach (var p in _plantegninger)
+                    {
+                        <li class="vedlegg-item">
+                            <a href="@($"/plantegning/{p.Id}")">@p.Navn</a>
+                            <span class="vedlegg-type">@(string.IsNullOrWhiteSpace(p.Byggetrinn) ? "Ugruppert" : p.Byggetrinn)</span>
+                            <button type="button" class="remove-button" @onclick="@(() => RemovePlantegning(p))">Fjern</button>
+                        </li>
+                    }
+                </ul>
+            }
+            else
+            {
+                <p class="list-empty">Ingen plantegninger lastet opp ennå.</p>
+            }
+
+            <div class="vedlegg-upload">
+                <input @bind="_nyPlantegningNavn" @bind:event="oninput" placeholder="Navn, f.eks. 1. etasje" />
+                <input @bind="_nyPlantegningByggetrinn" @bind:event="oninput" placeholder="Byggetrinn (valgfritt)" />
+                <InputFile OnChange="OnPlantegningSelected" accept="image/*" />
+            </div>
+
+            @if (_uploadingPlantegning)
+            {
+                <p class="list-empty">Laster opp...</p>
+            }
+            @if (!string.IsNullOrEmpty(_plantegningFeil))
+            {
+                <p class="form-error">@_plantegningFeil</p>
+            }
+        </div>
+    }
+    else if (_activeTab == "vedlegg")
+    {
+        <div class="prosjekt-layout">
+            <p class="section-hint">Sikkerhetsskjema, bestillingsskjema, låsplan og annen dokumentasjon som tilhører prosjektet.</p>
+
+            @if (_vedlegg.Count > 0)
+            {
+                <ul class="vedlegg-list">
+                    @foreach (var v in _vedlegg)
+                    {
+                        <li class="vedlegg-item">
+                            <a href="@($"/prosjektvedlegg/{v.Id}")" target="_blank">@v.Filnavn</a>
+                            <span class="vedlegg-type">@(string.IsNullOrWhiteSpace(v.Type) ? "Ukategorisert" : v.Type)</span>
+                            <button type="button" class="remove-button" @onclick="@(() => RemoveVedlegg(v))">Fjern</button>
+                        </li>
+                    }
+                </ul>
+            }
+
+            <div class="vedlegg-upload">
+                <select @bind="_valgtVedleggType">
+                    <option value="">Velg type</option>
+                    <option value="Sikkerhetsskjema">Sikkerhetsskjema</option>
+                    <option value="Bestillingsskjema">Bestillingsskjema</option>
+                    <option value="Låsplan">Låsplan</option>
+                    <option value="Annet">Annet</option>
+                </select>
+                <InputFile OnChange="OnVedleggSelected" multiple />
+            </div>
+
+            @if (_uploadingVedlegg)
+            {
+                <p class="list-empty">Laster opp...</p>
+            }
+            @if (!string.IsNullOrEmpty(_vedleggFeil))
+            {
+                <p class="form-error">@_vedleggFeil</p>
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private Prosjekt _form = new() { Navn = "" };
+    private List<Dor> _dorer = [];
+    private Dor? _selectedDoor;
+    private List<Plantegning> _plantegninger = [];
+    private string _nyPlantegningNavn = "";
+    private string _nyPlantegningByggetrinn = "";
+    private bool _uploadingPlantegning;
+    private string? _plantegningFeil;
+    private List<ProsjektVedlegg> _vedlegg = [];
+    private string _valgtVedleggType = "";
+    private bool _uploadingVedlegg;
+    private string? _vedleggFeil;
+    private string _activeTab = "oversikt";
+    private bool _notFound;
+    private bool _confirmingDelete;
+    private int? _loadedId;
+    private string? _error;
+    private string? _savedMessage;
+
+    private string TabClass(string tab) => _activeTab == tab ? "tab-button tab-button-active" : "tab-button";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+        {
+            return;
+        }
+
+        _loadedId = Id;
+        _confirmingDelete = false;
+        _savedMessage = null;
+        _error = null;
+        _notFound = false;
+        _activeTab = "oversikt";
+        _selectedDoor = null;
+
+        if (Id.HasValue)
+        {
+            var existing = await Db.Prosjekter
+                .Include(p => p.Plantegninger)
+                .Include(p => p.Vedlegg)
+                .FirstOrDefaultAsync(p => p.Id == Id.Value);
+
+            if (existing is null)
+            {
+                _notFound = true;
+                return;
+            }
+
+            _form = existing;
+            _plantegninger = existing.Plantegninger;
+            _vedlegg = existing.Vedlegg;
+
+            _dorer = await Db.Dorer
+                .Where(d => d.ProsjektId == Id.Value)
+                .Include(d => d.Plantegning)
+                .Include(d => d.Komponenter).ThenInclude(dk => dk.Component)
+                .OrderBy(d => d.Dornummer)
+                .ToListAsync();
+        }
+        else
+        {
+            _plantegninger = [];
+            _vedlegg = [];
+            _dorer = [];
+            _form = new Prosjekt { Navn = "" };
+        }
+    }
+
+    private async Task Lagre()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Navn))
+        {
+            _error = "Prosjektet må ha et navn.";
+            return;
+        }
+
+        _error = null;
+
+        if (!Id.HasValue)
+        {
+            Db.Prosjekter.Add(_form);
+        }
+
+        await Db.SaveChangesAsync();
+
+        if (Id.HasValue)
+        {
+            _savedMessage = $"Prosjektet \"{_form.Navn}\" er oppdatert.";
+        }
+        else
+        {
+            _savedMessage = $"Prosjektet \"{_form.Navn}\" er lagret.";
+            Nav.NavigateTo($"/prosjekter/{_form.Id}");
+        }
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        var existing = await Db.Prosjekter.FirstOrDefaultAsync(p => p.Id == Id.Value);
+        if (existing is not null)
+        {
+            Db.Prosjekter.Remove(existing);
+            await Db.SaveChangesAsync();
+        }
+
+        Nav.NavigateTo("/prosjekter");
+    }
+
+    // Dører
+
+    private async Task LeggTilDor()
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        var dor = new Dor { ProsjektId = Id.Value, Dornummer = "Ny dør" };
+        Db.Dorer.Add(dor);
+        await Db.SaveChangesAsync();
+
+        _dorer.Add(dor);
+        SelectDoor(dor);
+    }
+
+    private void SelectDoor(Dor d)
+    {
+        _selectedDoor = d;
+    }
+
+    private async Task ToggleFerdig(Dor d, ChangeEventArgs e)
+    {
+        d.FerdigMontert = e.Value is bool b && b;
+        d.MontertDato = d.FerdigMontert ? DateTime.Today : null;
+        await Db.SaveChangesAsync();
+    }
+
+    private void OnDoorDeleted()
+    {
+        if (_selectedDoor is null)
+        {
+            return;
+        }
+
+        _dorer.Remove(_selectedDoor);
+        _selectedDoor = null;
+    }
+
+    private void OnDoorUnplaced()
+    {
+        if (_selectedDoor is null)
+        {
+            return;
+        }
+
+        _selectedDoor.Plantegning = null;
+    }
+
+    // Plantegninger
+
+    private async Task OnPlantegningSelected(InputFileChangeEventArgs e)
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        _plantegningFeil = null;
+
+        if (string.IsNullOrWhiteSpace(_nyPlantegningNavn))
+        {
+            _plantegningFeil = "Plantegningen må ha et navn.";
+            return;
+        }
+
+        var file = e.File;
+        if (file.Size > 20_000_000)
+        {
+            _plantegningFeil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        _uploadingPlantegning = true;
+
+        try
+        {
+            using var buffer = new MemoryStream();
+            await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            var plantegning = new Plantegning
+            {
+                ProsjektId = Id.Value,
+                Navn = _nyPlantegningNavn.Trim(),
+                Byggetrinn = string.IsNullOrWhiteSpace(_nyPlantegningByggetrinn) ? null : _nyPlantegningByggetrinn.Trim(),
+                Filnavn = file.Name,
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                Data = buffer.ToArray()
+            };
+
+            Db.Plantegninger.Add(plantegning);
+            await Db.SaveChangesAsync();
+            _plantegninger.Add(plantegning);
+            _nyPlantegningNavn = "";
+            _nyPlantegningByggetrinn = "";
+        }
+        finally
+        {
+            _uploadingPlantegning = false;
+        }
+    }
+
+    private async Task RemovePlantegning(Plantegning p)
+    {
+        Db.Plantegninger.Remove(p);
+        await Db.SaveChangesAsync();
+        _plantegninger.Remove(p);
+    }
+
+    // Vedlegg
+
+    private async Task OnVedleggSelected(InputFileChangeEventArgs e)
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        _vedleggFeil = null;
+        _uploadingVedlegg = true;
+
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                if (file.Size > 20_000_000)
+                {
+                    _vedleggFeil = $"\"{file.Name}\" er for stor (maks 20 MB) og ble hoppet over.";
+                    continue;
+                }
+
+                using var buffer = new MemoryStream();
+                await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+                {
+                    await stream.CopyToAsync(buffer);
+                }
+
+                var vedlegg = new ProsjektVedlegg
+                {
+                    ProsjektId = Id.Value,
+                    Filnavn = file.Name,
+                    ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                    Data = buffer.ToArray(),
+                    Type = string.IsNullOrWhiteSpace(_valgtVedleggType) ? null : _valgtVedleggType
+                };
+
+                Db.ProsjektVedlegg.Add(vedlegg);
+            }
+
+            await Db.SaveChangesAsync();
+        }
+        finally
+        {
+            _uploadingVedlegg = false;
+        }
+    }
+
+    private async Task RemoveVedlegg(ProsjektVedlegg v)
+    {
+        Db.ProsjektVedlegg.Remove(v);
+        await Db.SaveChangesAsync();
+        _vedlegg.Remove(v);
+    }
+}
