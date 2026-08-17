@@ -24,7 +24,98 @@ export function getClickPercent(containerEl, clientX, clientY) {
     return { x, y };
 }
 
-export function attachMarkers(containerEl, dotNetRef) {
+export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
+    if (wrapEl.dataset.zoomPanBound === '1') {
+        return;
+    }
+    wrapEl.dataset.zoomPanBound = '1';
+
+    const minZoom = 0.4;
+    const maxZoom = 3;
+    const step = 0.12;
+    let zoom = 1;
+
+    canvasEl.style.width = '100%';
+
+    wrapEl.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const prevZoom = zoom;
+        const next = zoom + (e.deltaY < 0 ? step : -step);
+        zoom = Math.min(maxZoom, Math.max(minZoom, next));
+        if (zoom === prevZoom) {
+            return;
+        }
+
+        const rect = wrapEl.getBoundingClientRect();
+        const cursorX = e.clientX - rect.left;
+        const cursorY = e.clientY - rect.top;
+        const ratio = zoom / prevZoom;
+
+        canvasEl.style.width = (zoom * 100) + '%';
+
+        wrapEl.scrollLeft = (wrapEl.scrollLeft + cursorX) * ratio - cursorX;
+        wrapEl.scrollTop = (wrapEl.scrollTop + cursorY) * ratio - cursorY;
+    }, { passive: false });
+
+    wrapEl.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+    });
+
+    const dragThreshold = 4;
+    let panning = false;
+    let moved = false;
+    let startX = 0;
+    let startY = 0;
+    let startScrollLeft = 0;
+    let startScrollTop = 0;
+
+    wrapEl.addEventListener('pointerdown', (e) => {
+        if (e.button !== 2) {
+            return;
+        }
+        e.preventDefault();
+        panning = true;
+        moved = false;
+        startX = e.clientX;
+        startY = e.clientY;
+        startScrollLeft = wrapEl.scrollLeft;
+        startScrollTop = wrapEl.scrollTop;
+        wrapEl.setPointerCapture(e.pointerId);
+    });
+
+    wrapEl.addEventListener('pointermove', (e) => {
+        if (!panning) {
+            return;
+        }
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (!moved) {
+            if (Math.sqrt(dx * dx + dy * dy) < dragThreshold) {
+                return;
+            }
+            moved = true;
+        }
+        wrapEl.scrollLeft = startScrollLeft - dx;
+        wrapEl.scrollTop = startScrollTop - dy;
+    });
+
+    wrapEl.addEventListener('pointerup', (e) => {
+        if (!panning || e.button !== 2) {
+            return;
+        }
+        panning = false;
+        wrapEl.releasePointerCapture(e.pointerId);
+
+        if (!moved) {
+            const p = getClickPercent(canvasEl, e.clientX, e.clientY);
+            dotNetRef.invokeMethodAsync('OnCanvasRightClicked', p.x, p.y);
+        }
+    });
+}
+
+export function attachMarkers(containerEl, dotNetRef, locked) {
+    containerEl.dataset.locked = locked ? '1' : '0';
+
     const markers = containerEl.querySelectorAll('.dor-marker[data-dorid]');
 
     markers.forEach(markerEl => {
@@ -44,7 +135,15 @@ export function attachMarkers(containerEl, dotNetRef) {
             e.stopPropagation();
         });
 
+        markerEl.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
         markerEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) {
+                return;
+            }
             e.preventDefault();
             e.stopPropagation();
             dragging = true;
@@ -55,7 +154,7 @@ export function attachMarkers(containerEl, dotNetRef) {
         });
 
         markerEl.addEventListener('pointermove', (e) => {
-            if (!dragging) {
+            if (!dragging || containerEl.dataset.locked === '1') {
                 return;
             }
             if (!moved) {

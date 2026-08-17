@@ -30,19 +30,11 @@ else if (_plantegning is not null)
             @(_placingMode == PlacingMode.NyDor ? "Avbryt plassering" : "Ny dør her")
         </button>
 
-        @if (_uplasserteDorer.Count > 0)
-        {
-            <select @bind="_valgtEksisterendeDorId">
-                <option value="">Plasser eksisterende dør...</option>
-                @foreach (var d in _uplasserteDorer)
-                {
-                    <option value="@d.Id">@d.Dornummer</option>
-                }
-            </select>
-            <button type="button" class="add-button" @onclick="TogglePlasserEksisterende" disabled="@(_valgtEksisterendeDorId is null)">
-                @(_placingMode == PlacingMode.EksisterendeDor ? "Avbryt plassering" : "Plasser")
-            </button>
-        }
+        <button type="button" class="add-button" @onclick="ApneDorVelger">Finn dører</button>
+
+        <button type="button" class="@(_redigerPosisjon ? "edit-button-active" : "add-button")" @onclick="TogglePosisjonRediger">
+            @(_redigerPosisjon ? "Lås posisjoner" : "Rediger posisjoner")
+        </button>
 
         <button type="button" class="save-button" @onclick="LagreAlt">Lagre</button>
 
@@ -55,14 +47,56 @@ else if (_plantegning is not null)
         {
             <span class="placing-hint">Klikk på tegningen der døren skal plasseres.</span>
         }
+        else if (_redigerPosisjon)
+        {
+            <span class="placing-hint">Du kan nå dra dørene til ny posisjon.</span>
+        }
+
         <span class="plan-legend"><span class="legend-dot legend-ferdig"></span> Ferdig montert</span>
         <span class="plan-legend"><span class="legend-dot legend-montert"></span> Montert</span>
         <span class="plan-legend"><span class="legend-dot legend-ikke-startet"></span> Ikke startet</span>
     </div>
 
+    @if (_visDorVelger)
+    {
+        <div class="dor-velger-panel">
+            <div class="dor-velger-header">
+                <strong>@(_velgerFraHoyreklikk ? "Legg til dør her" : "Finn dører å plassere")</strong>
+                <button type="button" class="cancel-button" @onclick="LukkDorVelger">Lukk</button>
+            </div>
+            <input class="dor-velger-search" @bind="_dorVelgerSok" @bind:event="oninput" placeholder="Søk dørnummer..." autofocus />
+
+            @if (FiltrerteDorer.Count > 0 || string.IsNullOrWhiteSpace(_dorVelgerSok))
+            {
+                <ul class="dor-velger-list">
+                    @foreach (var d in FiltrerteDorer)
+                    {
+                        <li @key="d.Id">
+                            <button type="button" class="dor-velger-item" @onclick="@(() => VelgDorFraListe(d))">@d.Dornummer</button>
+                        </li>
+                    }
+                </ul>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_dorVelgerSok) && !FiltrerteDorer.Any(d => d.Dornummer.Equals(_dorVelgerSok.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                <button type="button" class="dor-velger-ny" @onclick="OpprettNyDorFraVelger">+ Opprett ny dør "@_dorVelgerSok.Trim()"</button>
+            }
+
+            @if (_uplasserteDorer.Count == 0 && string.IsNullOrWhiteSpace(_dorVelgerSok))
+            {
+                <p class="list-empty">Ingen uplasserte dører. Søk opp et dørnummer for å opprette en ny.</p>
+            }
+        </div>
+    }
+
+    <p class="placing-hint">Rull med musehjulet for å zoome. Trykk og hold høyre museknapp for å dra rundt på tegningen. Høyreklikk for å legge til en dør.</p>
+
     <div class="plan-layout">
-        <div class="plan-canvas-wrap">
-            <div class="plan-canvas" @ref="_canvasRef" @onclick="OnCanvasClick">
+        <div class="plan-canvas-wrap" @ref="_canvasWrapRef">
+            <div class="plan-canvas @(_redigerPosisjon ? "plan-canvas-rediger" : "")"
+                 @ref="_canvasRef"
+                 @onclick="OnCanvasClick">
                 <img src="@($"/plantegningbilde/{_plantegning.Id}")" alt="@_plantegning.Navn" class="plan-image" />
                 @foreach (var d in _dorer)
                 {
@@ -100,10 +134,22 @@ else if (_plantegning is not null)
     private int? _loadedId;
     private int? _valgtEksisterendeDorId;
     private string? _savedMessage;
+    private bool _redigerPosisjon;
+
+    private bool _visDorVelger;
+    private bool _velgerFraHoyreklikk;
+    private double _hoyreklikkX;
+    private double _hoyreklikkY;
+    private string _dorVelgerSok = "";
 
     private List<Dor> _uplasserteDorer => _alleProsjektDorer.Where(d => d.PlantegningId is null).ToList();
 
+    private List<Dor> FiltrerteDorer => string.IsNullOrWhiteSpace(_dorVelgerSok)
+        ? _uplasserteDorer
+        : _uplasserteDorer.Where(d => d.Dornummer.Contains(_dorVelgerSok.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+
     private ElementReference _canvasRef;
+    private ElementReference _canvasWrapRef;
     private IJSObjectReference? _module;
     private DotNetObjectReference<PlantegningVisning>? _dotNetRef;
 
@@ -118,6 +164,8 @@ else if (_plantegning is not null)
         _notFound = false;
         _selectedDoor = null;
         _placingMode = PlacingMode.Ingen;
+        _redigerPosisjon = false;
+        _visDorVelger = false;
 
         _plantegning = await Db.Plantegninger
             .Include(p => p.Dorer).ThenInclude(d => d.Komponenter).ThenInclude(dk => dk.Component)
@@ -147,11 +195,12 @@ else if (_plantegning is not null)
 
         if (_module is not null && _dotNetRef is not null && _plantegning is not null)
         {
-            await _module.InvokeVoidAsync("attachMarkers", _canvasRef, _dotNetRef);
+            await _module.InvokeVoidAsync("attachMarkers", _canvasRef, _dotNetRef, !_redigerPosisjon);
 
             if (firstRender)
             {
                 await _module.InvokeVoidAsync("initSaveShortcut", _dotNetRef);
+                await _module.InvokeVoidAsync("initZoomPan", _canvasWrapRef, _canvasRef, _dotNetRef);
             }
         }
     }
@@ -173,7 +222,13 @@ else if (_plantegning is not null)
     {
         await Db.SaveChangesAsync();
         _savedMessage = "Lagret.";
+        _redigerPosisjon = false;
         StateHasChanged();
+    }
+
+    private void TogglePosisjonRediger()
+    {
+        _redigerPosisjon = !_redigerPosisjon;
     }
 
     [JSInvokable]
@@ -205,6 +260,7 @@ else if (_plantegning is not null)
 
     private void ToggleNyDor()
     {
+        _visDorVelger = false;
         _placingMode = _placingMode == PlacingMode.NyDor ? PlacingMode.Ingen : PlacingMode.NyDor;
         if (_placingMode == PlacingMode.NyDor)
         {
@@ -212,12 +268,104 @@ else if (_plantegning is not null)
         }
     }
 
-    private void TogglePlasserEksisterende()
+    private void ApneDorVelger()
     {
-        _placingMode = _placingMode == PlacingMode.EksisterendeDor ? PlacingMode.Ingen : PlacingMode.EksisterendeDor;
-        if (_placingMode == PlacingMode.EksisterendeDor)
+        _placingMode = PlacingMode.Ingen;
+        _selectedDoor = null;
+        _dorVelgerSok = "";
+        _velgerFraHoyreklikk = false;
+        _visDorVelger = true;
+    }
+
+    [JSInvokable]
+    public void OnCanvasRightClicked(double x, double y)
+    {
+        if (_plantegning is null)
         {
-            _selectedDoor = null;
+            return;
+        }
+
+        _placingMode = PlacingMode.Ingen;
+        _selectedDoor = null;
+        _dorVelgerSok = "";
+        _hoyreklikkX = x;
+        _hoyreklikkY = y;
+        _velgerFraHoyreklikk = true;
+        _visDorVelger = true;
+        StateHasChanged();
+    }
+
+    private void LukkDorVelger()
+    {
+        _visDorVelger = false;
+    }
+
+    private async Task VelgDorFraListe(Dor d)
+    {
+        if (_plantegning is null)
+        {
+            return;
+        }
+
+        if (_velgerFraHoyreklikk)
+        {
+            d.PlantegningId = _plantegning.Id;
+            d.PosX = _hoyreklikkX;
+            d.PosY = _hoyreklikkY;
+            await Db.SaveChangesAsync();
+
+            d.Komponenter = await Db.DorKomponenter
+                .Where(dk => dk.DorId == d.Id)
+                .Include(dk => dk.Component)
+                .ToListAsync();
+
+            _dorer.Add(d);
+            _visDorVelger = false;
+            SelectDoor(d);
+        }
+        else
+        {
+            _valgtEksisterendeDorId = d.Id;
+            _placingMode = PlacingMode.EksisterendeDor;
+            _visDorVelger = false;
+        }
+    }
+
+    private async Task OpprettNyDorFraVelger()
+    {
+        if (_plantegning is null || string.IsNullOrWhiteSpace(_dorVelgerSok))
+        {
+            return;
+        }
+
+        var dor = new Dor
+        {
+            ProsjektId = _plantegning.ProsjektId,
+            Dornummer = _dorVelgerSok.Trim()
+        };
+
+        if (_velgerFraHoyreklikk)
+        {
+            dor.PlantegningId = _plantegning.Id;
+            dor.PosX = _hoyreklikkX;
+            dor.PosY = _hoyreklikkY;
+        }
+
+        Db.Dorer.Add(dor);
+        await Db.SaveChangesAsync();
+        _alleProsjektDorer.Add(dor);
+
+        if (_velgerFraHoyreklikk)
+        {
+            _dorer.Add(dor);
+            _visDorVelger = false;
+            SelectDoor(dor);
+        }
+        else
+        {
+            _valgtEksisterendeDorId = dor.Id;
+            _placingMode = PlacingMode.EksisterendeDor;
+            _visDorVelger = false;
         }
     }
 
