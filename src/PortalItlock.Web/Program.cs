@@ -7,6 +7,8 @@ using PortalItlock.Web.Data;
 using PortalItlock.Web.Services;
 using System.Security.Claims;
 
+QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -17,6 +19,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<PackageMatchingService>();
+builder.Services.AddScoped<TilbudPdfService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -118,6 +121,12 @@ app.MapGet("/prosjektvedlegg/{id:int}", async (int id, ApplicationDbContext db) 
     return vedlegg is null
         ? Results.NotFound()
         : Results.File(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
+}).RequireAuthorization();
+
+app.MapGet("/tilbud/{id:int}/pdf", async (int id, TilbudPdfService pdfService) =>
+{
+    var pdf = await pdfService.GenerateAsync(id);
+    return pdf is null ? Results.NotFound() : Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
 app.Run();

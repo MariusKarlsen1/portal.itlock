@@ -1,0 +1,400 @@
+@page "/tilbud/{Id:int}"
+@rendermode InteractiveServer
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+
+<PageTitle>@(_tilbud?.Tittel ?? "Tilbud")</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke tilbudet. Det kan være slettet.</p>
+}
+else if (_tilbud is not null)
+{
+    <a class="back-link" href="@($"/prosjekter/{_tilbud.ProsjektId}")">← Tilbake til prosjektet</a>
+    <h1>@_tilbud.Tittel</h1>
+
+    <section class="tilbud-section">
+        <h2>Tilbudsinformasjon</h2>
+        <div class="field-grid">
+            <label class="span-2">
+                Tittel
+                <input @bind="_tilbud.Tittel" @bind:event="oninput" />
+            </label>
+            <label>
+                Type
+                <select @bind="_tilbud.PrisType">
+                    @foreach (var t in Enum.GetValues<TilbudPrisType>())
+                    {
+                        <option value="@t">@t.Visningsnavn()</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Prosentsats
+                <input @bind="_tilbud.Prosentsats" placeholder="%" />
+            </label>
+            <label>
+                Timepris
+                <input @bind="_tilbud.Timepris" placeholder="kr/t" />
+            </label>
+            <label>
+                Montasjekost
+                <input @bind="_tilbud.Montasjekost" placeholder="@FormatKr(KalkulertMontasjekost)" />
+            </label>
+            <label>
+                Estimert arbeidstid
+                <input value="@FormatertArbeidstid" disabled />
+            </label>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
+            <button type="button" class="cancel-button" @onclick="@(() => _tilbud.Montasjekost = KalkulertMontasjekost)">Bruk kalkulert montasjekost</button>
+            @if (!string.IsNullOrEmpty(_savedMessage))
+            {
+                <span class="save-success">@_savedMessage</span>
+            }
+        </div>
+    </section>
+
+    <section class="tilbud-section">
+        <h2>Sammendrag</h2>
+        <div class="sammendrag-grid">
+            <div><span>Varekost</span><strong>@FormatKr(Varekost)</strong></div>
+            <div><span>Utpris varer</span><strong>@FormatKr(UtprisVarer)</strong></div>
+            <div><span>Montasjekost</span><strong>@FormatKr(Montasjekost)</strong></div>
+            <div><span>Totalt uten mva</span><strong>@FormatKr(TotaltUtenMva)</strong></div>
+            <div><span>Dekningsbidrag varer</span><strong>@FormatKr(DekningsbidragVarer) (@DekningsbidragVarerProsent.ToString("N1", Kultur) %)</strong></div>
+        </div>
+    </section>
+
+    <section class="tilbud-section">
+        <h2>Varer</h2>
+        <div class="varer-toolbar">
+            <button type="button" class="add-button" @onclick="SynkVarer">Synk varer</button>
+            <button type="button" class="add-button" @onclick="OppdaterPriser">Oppdater priser</button>
+        </div>
+        @if (!string.IsNullOrEmpty(_syncMessage))
+        {
+            <p class="save-success">@_syncMessage</p>
+        }
+
+        <div class="component-search">
+            <label>
+                Legg til vare - søk i komponentregisteret
+                <input @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged" placeholder="Søk på navn, leverandør eller produktkode" />
+            </label>
+
+            @if (_searchResults.Count > 0)
+            {
+                <ul class="search-results">
+                    @foreach (var r in _searchResults)
+                    {
+                        <li>
+                            <button type="button" class="search-result" @onclick="@(() => AddFromSearch(r))">
+                                <span class="search-result-name">@r.Navn</span>
+                                <span class="search-result-meta">@r.Leverandor</span>
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+            else if (_componentSearch.Trim().Length >= 2)
+            {
+                <p class="search-empty">Ingen treff.</p>
+            }
+        </div>
+
+        <div class="linje-legg-til">
+            <input @bind="_nyLinjeNavn" @bind:event="oninput" placeholder="Fritekstlinje, f.eks. Rigg/drift" />
+            <button type="button" class="add-button" @onclick="LeggTilLinje" disabled="@string.IsNullOrWhiteSpace(_nyLinjeNavn)">Legg til linje</button>
+        </div>
+
+        @if (_tilbud.Linjer.Count > 0)
+        {
+            <table class="varer-table">
+                <thead>
+                    <tr>
+                        <th>Varenavn</th>
+                        <th>Innpris</th>
+                        <th>Antall</th>
+                        <th>Utpris</th>
+                        <th>Totalt</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var l in _tilbud.Linjer.OrderBy(l => l.Rekkefolge))
+                    {
+                        <tr @key="l.Id">
+                            <td>@l.Navn</td>
+                            <td><input class="pris-input" @bind="l.Innpris" /></td>
+                            <td><input class="antall-input" @bind="l.Antall" /></td>
+                            <td><input class="pris-input" @bind="l.Utpris" /></td>
+                            <td class="totalt-cell">@FormatKr(l.Utpris * l.Antall)</td>
+                            <td><button type="button" class="remove-button" @onclick="@(() => FjernLinje(l))">Fjern</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <p class="list-empty">Ingen varer lagt til ennå. Trykk "Synk varer" for å hente inn alt som er registrert på dørene i prosjektet.</p>
+        }
+    </section>
+
+    <section class="tilbud-section">
+        <button type="button" class="save-button" @onclick="@(() => _visGenerer = !_visGenerer)">Generer tilbud</button>
+
+        @if (_visGenerer)
+        {
+            <div class="generer-panel">
+                <h3>Innhold i PDF</h3>
+                <label class="checkbox-row"><input type="checkbox" @bind="_tilbud.VisEnhetspris" /> Vis enhetspris</label>
+                <label class="checkbox-row"><input type="checkbox" @bind="_tilbud.VisProduktkode" /> Vis produktkode</label>
+                <label class="checkbox-row"><input type="checkbox" @bind="_tilbud.VisKunTotalsum" /> Vis kun totalsum per linje</label>
+                <label class="checkbox-row"><input type="checkbox" @bind="_tilbud.VisKunTotaltUtenMva" /> Vis kun totalt uten mva (skjul varelinjer)</label>
+
+                <label class="span-2">
+                    Forside
+                    <textarea rows="8" @bind="_tilbud.Forside" placeholder="Tekst til forsiden av tilbudet, f.eks. presentasjon av itlock og oppdraget."></textarea>
+                </label>
+
+                <div class="form-actions">
+                    <button type="button" class="save-button" @onclick="GenererPdf">Generer PDF</button>
+                    <button type="button" class="cancel-button" @onclick="@(() => _visGenerer = false)">Avbryt</button>
+                </div>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private sealed class SearchResult
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Leverandor { get; set; }
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private Tilbud? _tilbud;
+    private bool _notFound;
+    private string? _savedMessage;
+    private string? _syncMessage;
+    private string _componentSearch = "";
+    private List<SearchResult> _searchResults = [];
+    private string _nyLinjeNavn = "";
+    private bool _visGenerer;
+    private int? _loadedId;
+
+    private decimal Varekost => _tilbud?.Linjer.Sum(l => l.Innpris * l.Antall) ?? 0;
+    private decimal UtprisVarer => _tilbud?.Linjer.Sum(l => l.Utpris * l.Antall) ?? 0;
+    private int EstimertMinutter => _tilbud?.Linjer.Sum(l => (l.MontasjeMinutter ?? 0) * l.Antall) ?? 0;
+    private decimal EstimertArbeidstidTimer => EstimertMinutter / 60m;
+    private decimal KalkulertMontasjekost => Math.Round((_tilbud?.Timepris ?? 0) * EstimertArbeidstidTimer, 2);
+    private decimal Montasjekost => _tilbud?.Montasjekost ?? KalkulertMontasjekost;
+    private decimal TotaltUtenMva => UtprisVarer + Montasjekost;
+    private decimal DekningsbidragVarer => UtprisVarer - Varekost;
+    private decimal DekningsbidragVarerProsent => UtprisVarer == 0 ? 0 : DekningsbidragVarer / UtprisVarer * 100;
+
+    private string FormatertArbeidstid
+    {
+        get
+        {
+            var t = EstimertMinutter / 60;
+            var m = EstimertMinutter % 60;
+            return $"{t}t {m}min";
+        }
+    }
+
+    private static string FormatKr(decimal value) => value.ToString("N2", Kultur) + " kr";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+        {
+            return;
+        }
+
+        _loadedId = Id;
+        _visGenerer = false;
+        _savedMessage = null;
+        _syncMessage = null;
+
+        _tilbud = await Db.Tilbud
+            .Include(t => t.Linjer)
+            .FirstOrDefaultAsync(t => t.Id == Id);
+
+        _notFound = _tilbud is null;
+    }
+
+    private decimal BeregnUtpris(decimal innpris) => _tilbud!.PrisType switch
+    {
+        TilbudPrisType.Paslag => Math.Round(innpris * (1 + _tilbud.Prosentsats / 100m), 2),
+        _ => _tilbud.Prosentsats >= 100 ? innpris : Math.Round(innpris / (1 - _tilbud.Prosentsats / 100m), 2)
+    };
+
+    private async Task Lagre()
+    {
+        _tilbud!.OppdatertDato = DateTime.UtcNow;
+        await Db.SaveChangesAsync();
+        _savedMessage = "Lagret.";
+    }
+
+    private async Task SynkVarer()
+    {
+        var brukt = await Db.DorKomponenter
+            .Where(dk => dk.Dor!.ProsjektId == _tilbud!.ProsjektId)
+            .Include(dk => dk.Component)
+            .ToListAsync();
+
+        var gruppert = brukt
+            .Where(dk => dk.Component is not null)
+            .GroupBy(dk => dk.ComponentId)
+            .Select(g => new { ComponentId = g.Key, Component = g.First().Component!, Antall = g.Sum(x => x.Antall) })
+            .ToList();
+
+        foreach (var g in gruppert)
+        {
+            var innpris = g.Component.PrisNetto ?? 0;
+            var linje = _tilbud!.Linjer.FirstOrDefault(l => l.ComponentId == g.ComponentId);
+
+            if (linje is null)
+            {
+                linje = new TilbudLinje
+                {
+                    TilbudId = _tilbud.Id,
+                    ComponentId = g.ComponentId,
+                    Navn = g.Component.Navn,
+                    Innpris = innpris,
+                    Antall = g.Antall,
+                    MontasjeMinutter = g.Component.MontasjeMinutter,
+                    Utpris = BeregnUtpris(innpris),
+                    Rekkefolge = _tilbud.Linjer.Count
+                };
+                _tilbud.Linjer.Add(linje);
+                Db.TilbudLinjer.Add(linje);
+            }
+            else
+            {
+                linje.Antall = g.Antall;
+                linje.Innpris = innpris;
+                linje.MontasjeMinutter = g.Component.MontasjeMinutter;
+                linje.Utpris = BeregnUtpris(innpris);
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _syncMessage = $"{gruppert.Count} varetyper synkronisert fra prosjektets dører.";
+    }
+
+    private void OppdaterPriser()
+    {
+        foreach (var l in _tilbud!.Linjer.Where(l => l.ComponentId is not null))
+        {
+            l.Utpris = BeregnUtpris(l.Innpris);
+        }
+    }
+
+    private async Task OnComponentSearchChanged()
+    {
+        var term = _componentSearch.Trim();
+        if (term.Length < 2)
+        {
+            _searchResults = [];
+            return;
+        }
+
+        _searchResults = await Db.Components
+            .Where(c => c.Aktiv && (
+                c.Navn.Contains(term) ||
+                (c.Leverandor != null && c.Leverandor.Contains(term)) ||
+                (c.Produktkode != null && c.Produktkode.Contains(term))))
+            .OrderBy(c => c.Navn)
+            .Take(20)
+            .Select(c => new SearchResult { Id = c.Id, Navn = c.Navn, Leverandor = c.Leverandor })
+            .ToListAsync();
+    }
+
+    private async Task AddFromSearch(SearchResult r)
+    {
+        var existing = _tilbud!.Linjer.FirstOrDefault(l => l.ComponentId == r.Id);
+        if (existing is not null)
+        {
+            existing.Antall += 1;
+        }
+        else
+        {
+            var component = await Db.Components.FindAsync(r.Id);
+            if (component is null)
+            {
+                return;
+            }
+
+            var innpris = component.PrisNetto ?? 0;
+            var linje = new TilbudLinje
+            {
+                TilbudId = _tilbud.Id,
+                ComponentId = component.Id,
+                Navn = component.Navn,
+                Innpris = innpris,
+                Utpris = BeregnUtpris(innpris),
+                Antall = 1,
+                MontasjeMinutter = component.MontasjeMinutter,
+                Rekkefolge = _tilbud.Linjer.Count
+            };
+            _tilbud.Linjer.Add(linje);
+            Db.TilbudLinjer.Add(linje);
+        }
+
+        await Db.SaveChangesAsync();
+        _componentSearch = "";
+        _searchResults = [];
+    }
+
+    private async Task LeggTilLinje()
+    {
+        if (string.IsNullOrWhiteSpace(_nyLinjeNavn))
+        {
+            return;
+        }
+
+        var linje = new TilbudLinje
+        {
+            TilbudId = _tilbud!.Id,
+            Navn = _nyLinjeNavn.Trim(),
+            Innpris = 0,
+            Utpris = 0,
+            Antall = 1,
+            Rekkefolge = _tilbud.Linjer.Count
+        };
+        _tilbud.Linjer.Add(linje);
+        Db.TilbudLinjer.Add(linje);
+        await Db.SaveChangesAsync();
+        _nyLinjeNavn = "";
+    }
+
+    private async Task FjernLinje(TilbudLinje l)
+    {
+        Db.TilbudLinjer.Remove(l);
+        await Db.SaveChangesAsync();
+        _tilbud!.Linjer.Remove(l);
+    }
+
+    private async Task GenererPdf()
+    {
+        _tilbud!.OppdatertDato = DateTime.UtcNow;
+        await Db.SaveChangesAsync();
+        await JS.InvokeVoidAsync("open", $"/tilbud/{Id}/pdf", "_blank");
+        _visGenerer = false;
+    }
+}

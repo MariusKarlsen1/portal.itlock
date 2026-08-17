@@ -31,6 +31,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Dor> Dorer => Set<Dor>();
     public DbSet<DorKomponent> DorKomponenter => Set<DorKomponent>();
     public DbSet<DorFunksjon> DorFunksjoner => Set<DorFunksjon>();
+    public DbSet<Tilbud> Tilbud => Set<Tilbud>();
+    public DbSet<TilbudLinje> TilbudLinjer => Set<TilbudLinje>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

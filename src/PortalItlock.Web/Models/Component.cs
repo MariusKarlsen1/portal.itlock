@@ -15,6 +15,7 @@ public class Component
     public string? Varegruppe { get; set; }
     public decimal? PrisNetto { get; set; }
     public decimal? PrisVeiledende { get; set; }
+    public int? MontasjeMinutter { get; set; }
     public bool Aktiv { get; set; } = true;
 
     public List<PackageComponent> Pakker { get; set; } = [];
