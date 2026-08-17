@@ -20,6 +20,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
 builder.Services.AddScoped<PackageMatchingService>();
 builder.Services.AddScoped<TilbudPdfService>();
+builder.Services.AddScoped<TimeoversiktService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -127,6 +128,24 @@ app.MapGet("/tilbud/{id:int}/pdf", async (int id, TilbudPdfService pdfService) =
 {
     var pdf = await pdfService.GenerateAsync(id);
     return pdf is null ? Results.NotFound() : Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/timeoversikt/eksport-csv", async (DateTime fra, DateTime til, int? montorId, TimeoversiktService service) =>
+{
+    var registreringer = await service.HentRegistreringerAsync(fra, til, montorId);
+    var csv = service.GenererCsv(registreringer);
+    var filnavn = $"timeoversikt-{fra:yyyy-MM-dd}-{til:yyyy-MM-dd}.csv";
+    return Results.File(csv, "text/csv", filnavn);
+}).RequireAuthorization();
+
+app.MapGet("/timeoversikt/eksport-pdf", async (DateTime fra, DateTime til, int? montorId, ApplicationDbContext db, TimeoversiktService service) =>
+{
+    var registreringer = await service.HentRegistreringerAsync(fra, til, montorId);
+    var montorNavn = montorId.HasValue
+        ? (await db.Montorer.FindAsync(montorId.Value))?.Navn
+        : null;
+    var pdf = service.GenererPdf(registreringer, fra, til, montorNavn);
+    return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
 app.Run();

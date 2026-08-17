@@ -1,0 +1,204 @@
+@page "/timeoversikt"
+@rendermode InteractiveServer
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject TimeoversiktService TimeoversiktService
+
+<PageTitle>Timeoversikt</PageTitle>
+
+<h1>Timeoversikt</h1>
+<p>Sammendrag og eksport av registrerte timer, til bruk ved lønnskjøring.</p>
+
+<section class="filter-section">
+    <div class="field-grid">
+        <label>
+            Fra dato
+            <input type="date" value="@_fraDato.ToString("yyyy-MM-dd")" @onchange="@(e => OnFraDatoChanged(e))" />
+        </label>
+        <label>
+            Til dato
+            <input type="date" value="@_tilDato.ToString("yyyy-MM-dd")" @onchange="@(e => OnTilDatoChanged(e))" />
+        </label>
+        <label>
+            Montør
+            <select @bind="_montorId" @bind:after="LoadAsync">
+                <option value="">Alle montører</option>
+                @foreach (var m in _montorer)
+                {
+                    <option value="@m.Id">@m.Navn</option>
+                }
+            </select>
+        </label>
+    </div>
+
+    <div class="form-actions">
+        <a class="add-button" href="@CsvUrl" target="_blank">Eksporter CSV</a>
+        <a class="add-button" href="@PdfUrl" target="_blank">Eksporter PDF</a>
+    </div>
+</section>
+
+<section class="oversikt-section">
+    <h2>Sammendrag</h2>
+
+    @if (_sammendrag.Count == 0)
+    {
+        <p class="list-empty">Ingen timer registrert i perioden.</p>
+    }
+    else
+    {
+        <table class="sum-table">
+            <thead>
+                <tr>
+                    <th>Montør</th>
+                    <th>Normal</th>
+                    <th>50% overtid</th>
+                    <th>100% overtid</th>
+                    <th>Avspasering</th>
+                    <th>Totalt</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var m in _sammendrag)
+                {
+                    <tr>
+                        <td>@m.MontorNavn</td>
+                        <td>@FormatTimer(m.Normal)</td>
+                        <td>@FormatTimer(m.Overtid50)</td>
+                        <td>@FormatTimer(m.Overtid100)</td>
+                        <td>@FormatTimer(m.Avspasering)</td>
+                        <td class="sum-total">@FormatTimer(m.Totalt)</td>
+                    </tr>
+                }
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td>Totalt alle</td>
+                    <td colspan="4"></td>
+                    <td class="sum-total">@FormatTimer(_sammendrag.Sum(m => m.Totalt))</td>
+                </tr>
+            </tfoot>
+        </table>
+    }
+</section>
+
+<section class="oversikt-section">
+    <h2>Detaljer</h2>
+
+    @if (_registreringer.Count == 0)
+    {
+        <p class="list-empty">Ingen registreringer i perioden.</p>
+    }
+    else
+    {
+        <table class="detalj-table">
+            <thead>
+                <tr>
+                    <th>Dato</th>
+                    <th>Montør</th>
+                    <th>Type</th>
+                    <th>Timer</th>
+                    <th>Arbeidsordre</th>
+                    <th>Kommentar</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var t in _registreringer)
+                {
+                    <tr @key="t.Id">
+                        <td>@t.Dato.ToString("dd.MM.yyyy")</td>
+                        <td>@t.Montor?.Navn</td>
+                        <td>@t.Type.Visningsnavn()</td>
+                        <td class="sum-total">@FormatTimer(t.TotalTimer)</td>
+                        <td>@t.Arbeidsordre?.Tittel</td>
+                        <td>@t.Kommentar</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    private sealed class MontorOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class MontorSum
+    {
+        public string MontorNavn { get; set; } = "";
+        public decimal Normal { get; set; }
+        public decimal Overtid50 { get; set; }
+        public decimal Overtid100 { get; set; }
+        public decimal Avspasering { get; set; }
+        public decimal Totalt => Normal + Overtid50 + Overtid100 + Avspasering;
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private DateTime _fraDato = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime _tilDato = new(DateTime.Today.Year, DateTime.Today.Month, DateTime.DaysInMonth(DateTime.Today.Year, DateTime.Today.Month));
+    private int? _montorId;
+    private List<MontorOption> _montorer = [];
+    private List<Models.Timeregistrering> _registreringer = [];
+    private List<MontorSum> _sammendrag = [];
+
+    private string CsvUrl => $"/timeoversikt/eksport-csv?fra={_fraDato:yyyy-MM-dd}&til={_tilDato:yyyy-MM-dd}" +
+        (_montorId.HasValue ? $"&montorId={_montorId}" : "");
+
+    private string PdfUrl => $"/timeoversikt/eksport-pdf?fra={_fraDato:yyyy-MM-dd}&til={_tilDato:yyyy-MM-dd}" +
+        (_montorId.HasValue ? $"&montorId={_montorId}" : "");
+
+    protected override async Task OnInitializedAsync()
+    {
+        _montorer = await Db.Montorer
+            .OrderBy(m => m.Navn)
+            .Select(m => new MontorOption { Id = m.Id, Navn = m.Navn })
+            .ToListAsync();
+
+        await LoadAsync();
+    }
+
+    private async Task OnFraDatoChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var dato))
+        {
+            _fraDato = dato;
+            await LoadAsync();
+        }
+    }
+
+    private async Task OnTilDatoChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var dato))
+        {
+            _tilDato = dato;
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _registreringer = await TimeoversiktService.HentRegistreringerAsync(_fraDato, _tilDato, _montorId);
+
+        _sammendrag = _registreringer
+            .GroupBy(t => t.Montor?.Navn ?? "-")
+            .Select(g => new MontorSum
+            {
+                MontorNavn = g.Key,
+                Normal = g.Where(t => t.Type == TimeregistreringType.NormalArbeidstid).Sum(t => t.TotalTimer),
+                Overtid50 = g.Where(t => t.Type == TimeregistreringType.Overtid50).Sum(t => t.TotalTimer),
+                Overtid100 = g.Where(t => t.Type == TimeregistreringType.Overtid100).Sum(t => t.TotalTimer),
+                Avspasering = g.Where(t => t.Type == TimeregistreringType.Avspasering).Sum(t => t.TotalTimer)
+            })
+            .OrderBy(m => m.MontorNavn)
+            .ToList();
+    }
+
+    private static string FormatTimer(decimal value) => value.ToString("N1", Kultur) + " t";
+}
