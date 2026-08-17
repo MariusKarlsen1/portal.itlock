@@ -9,4 +9,7 @@ public class DorKomponent
     public Component? Component { get; set; }
 
     public int Antall { get; set; } = 1;
+
+    public bool Montert { get; set; }
+    public DateTime? MontertDato { get; set; }
 }

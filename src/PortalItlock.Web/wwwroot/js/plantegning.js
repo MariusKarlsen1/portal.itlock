@@ -57,10 +57,16 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
         wrapEl.scrollTop = (wrapEl.scrollTop + cursorY) * ratio - cursorY;
     }, { passive: false });
 
+    // Right-click (no need to hold) opens the door picker at that spot.
     wrapEl.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        const p = getClickPercent(canvasEl, e.clientX, e.clientY);
+        dotNetRef.invokeMethodAsync('OnCanvasRightClicked', p.x, p.y);
     });
 
+    // Left-button hold + drag on empty canvas pans the drawing. Markers
+    // handle their own left-button drag (to reposition) and stop the
+    // event from reaching here, so this only fires for background drags.
     const dragThreshold = 4;
     let panning = false;
     let moved = false;
@@ -68,12 +74,20 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     let startY = 0;
     let startScrollLeft = 0;
     let startScrollTop = 0;
+    let suppressClick = false;
+
+    wrapEl.addEventListener('click', (e) => {
+        if (suppressClick) {
+            suppressClick = false;
+            e.stopPropagation();
+            e.preventDefault();
+        }
+    }, true);
 
     wrapEl.addEventListener('pointerdown', (e) => {
-        if (e.button !== 2) {
+        if (e.button !== 0) {
             return;
         }
-        e.preventDefault();
         panning = true;
         moved = false;
         startX = e.clientX;
@@ -94,21 +108,22 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
                 return;
             }
             moved = true;
+            wrapEl.style.cursor = 'grabbing';
         }
         wrapEl.scrollLeft = startScrollLeft - dx;
         wrapEl.scrollTop = startScrollTop - dy;
     });
 
     wrapEl.addEventListener('pointerup', (e) => {
-        if (!panning || e.button !== 2) {
+        if (!panning) {
             return;
         }
         panning = false;
         wrapEl.releasePointerCapture(e.pointerId);
+        wrapEl.style.cursor = '';
 
-        if (!moved) {
-            const p = getClickPercent(canvasEl, e.clientX, e.clientY);
-            dotNetRef.invokeMethodAsync('OnCanvasRightClicked', p.x, p.y);
+        if (moved) {
+            suppressClick = true;
         }
     });
 }

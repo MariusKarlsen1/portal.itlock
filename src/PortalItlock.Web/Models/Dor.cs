@@ -10,6 +10,7 @@ public class Dor
     public Plantegning? Plantegning { get; set; }
 
     public required string Dornummer { get; set; }
+    public string? Romnr { get; set; }
 
     // Posisjon på plantegningen, i prosent (0-100) av bildets bredde/høyde.
     // Satt først når døren er plassert på en tegning.
