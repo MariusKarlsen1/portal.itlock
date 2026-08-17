@@ -28,4 +28,5 @@ public class Dor
     public DateTime? MontertDato { get; set; }
 
     public List<DorKomponent> Komponenter { get; set; } = [];
+    public List<DorFunksjon> Funksjoner { get; set; } = [];
 }

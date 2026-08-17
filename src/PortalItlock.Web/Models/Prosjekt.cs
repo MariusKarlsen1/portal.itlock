@@ -12,7 +12,8 @@ public class Prosjekt
     public string? Kontaktperson { get; set; }
     public string? Telefon { get; set; }
     public string? Epost { get; set; }
-    public string? Status { get; set; }
+    public string? System { get; set; }
+    public ProsjektStatus? Status { get; set; }
     public string? Notater { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;

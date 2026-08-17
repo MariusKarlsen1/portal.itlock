@@ -30,6 +30,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Plantegning> Plantegninger => Set<Plantegning>();
     public DbSet<Dor> Dorer => Set<Dor>();
     public DbSet<DorKomponent> DorKomponenter => Set<DorKomponent>();
+    public DbSet<DorFunksjon> DorFunksjoner => Set<DorFunksjon>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -71,6 +72,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .WithMany()
                 .HasForeignKey(dk => dk.ComponentId);
         });
+
+        modelBuilder.Entity<Dor>()
+            .HasMany(d => d.Funksjoner)
+            .WithMany(f => f.Dorer)
+            .UsingEntity(j => j.ToTable("DorDorFunksjoner"));
 
         modelBuilder.Entity<RequirementValue>()
             .HasOne(rv => rv.Dimensjon)

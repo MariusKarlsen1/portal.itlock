@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,27 +11,14 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260817145454_ProsjektSystemOgStatus")]
+    partial class ProsjektSystemOgStatus
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
-
-            modelBuilder.Entity("DorDorFunksjon", b =>
-                {
-                    b.Property<int>("DorerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("FunksjonerId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("DorerId", "FunksjonerId");
-
-                    b.HasIndex("FunksjonerId");
-
-                    b.ToTable("DorDorFunksjoner", (string)null);
-                });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Befaring", b =>
                 {
@@ -838,21 +826,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ProsjektId");
 
                     b.ToTable("Dorer");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.DorFunksjon", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("DorFunksjoner");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.DorKomponent", b =>
@@ -1684,21 +1657,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("NokkelsystemId");
 
                     b.ToTable("SystemVedlegg");
-                });
-
-            modelBuilder.Entity("DorDorFunksjon", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Dor", null)
-                        .WithMany()
-                        .HasForeignKey("DorerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.DorFunksjon", null)
-                        .WithMany()
-                        .HasForeignKey("FunksjonerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.BefaringDorfelt", b =>
