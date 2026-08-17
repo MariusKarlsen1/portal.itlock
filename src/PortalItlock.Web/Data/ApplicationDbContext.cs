@@ -37,6 +37,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
     public DbSet<Kunde> Kunder => Set<Kunde>();
+    public DbSet<DorIdMal> DorIdMaler => Set<DorIdMal>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -118,6 +119,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(k => k.Prosjekter)
             .HasForeignKey(p => p.KundeId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Dor>()
+            .HasOne(d => d.DorIdMal)
+            .WithMany(m => m.Dorer)
+            .HasForeignKey(d => d.DorIdMalId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<DorIdMal>()
+            .HasOne(m => m.Prosjekt)
+            .WithMany(p => p.DorIdMaler)
+            .HasForeignKey(m => m.ProsjektId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Timeregistrering>()
             .HasOne(t => t.Arbeidsordre)

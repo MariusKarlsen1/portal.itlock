@@ -26,6 +26,7 @@ else
             <button type="button" class="@TabClass("plantegninger")" @onclick="@(() => _activeTab = "plantegninger")">Plantegninger</button>
             <button type="button" class="@TabClass("vedlegg")" @onclick="@(() => _activeTab = "vedlegg")">Vedlegg</button>
             <button type="button" class="@TabClass("tilbud")" @onclick="@(() => _activeTab = "tilbud")">Tilbud</button>
+            <button type="button" class="@TabClass("dorid")" @onclick="@(() => _activeTab = "dorid")">Dør ID</button>
         </nav>
     }
 
@@ -139,9 +140,9 @@ else
                                     <td>@(d.Plantegning?.Navn ?? "Ikke plassert")</td>
                                     <td>
                                         <select class="status-select @StatusSelectClass(d.Status)" value="@d.Status" @onchange="@((ChangeEventArgs e) => EndreStatus(d, e))">
-                                            <option value="@MontasjeStatus.IkkeStartet">Ikke startet</option>
-                                            <option value="@MontasjeStatus.Montert">Montert</option>
-                                            <option value="@MontasjeStatus.FerdigMontert">Ferdig montert</option>
+                                            <option value="@MontasjeStatus.IkkeStartet">@MontasjeStatus.IkkeStartet.Visningsnavn()</option>
+                                            <option value="@MontasjeStatus.Montert">@MontasjeStatus.Montert.Visningsnavn()</option>
+                                            <option value="@MontasjeStatus.FerdigMontert">@MontasjeStatus.FerdigMontert.Visningsnavn()</option>
                                         </select>
                                     </td>
                                     <td><button type="button" class="remove-button" @onclick="@(() => SelectDoor(d))">Rediger</button></td>
@@ -267,6 +268,71 @@ else
             <button type="button" class="add-button" @onclick="NyttTilbud">Nytt tilbud</button>
         </div>
     }
+    else if (_activeTab == "dorid")
+    {
+        <div class="prosjekt-layout">
+            <p class="section-hint">Lag gjenbrukbare dørspesifikasjoner (Dør ID) som kan hentes inn på dørene i prosjektet.</p>
+
+            @if (_dorIdMaler.Count > 0)
+            {
+                <table class="dorid-table">
+                    <thead>
+                        <tr>
+                            <th>Dør ID</th>
+                            <th>Brann</th>
+                            <th>Lyd</th>
+                            <th>Fri bredde (min 0,86m)</th>
+                            <th>Bredde (mm)</th>
+                            <th>Høyde (mm)</th>
+                            <th>Dørtype</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in _dorIdMaler)
+                        {
+                            <tr @key="m.Id">
+                                <td><input @bind="m.Kode" /></td>
+                                <td><input @bind="m.Brann" /></td>
+                                <td><input @bind="m.Lyd" /></td>
+                                <td>
+                                    <select value="@FriBreddeValue(m.FriBredde086)" @onchange="@(e => m.FriBredde086 = ParseFriBredde(e))">
+                                        <option value="">Ikke satt</option>
+                                        <option value="Ja">Ja</option>
+                                        <option value="Nei">Nei</option>
+                                    </select>
+                                </td>
+                                <td><input @bind="m.Bredde" class="dorid-tall-input" /></td>
+                                <td><input @bind="m.Hoyde" class="dorid-tall-input" /></td>
+                                <td><input @bind="m.Dortype" /></td>
+                                <td><button type="button" class="remove-button" @onclick="@(() => SlettDorIdMal(m))">Slett</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                <div class="form-actions">
+                    <button type="button" class="save-button" @onclick="LagreDorIdMaler">Lagre endringer</button>
+                    @if (!string.IsNullOrEmpty(_dorIdMessage))
+                    {
+                        <span class="save-success">@_dorIdMessage</span>
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="list-empty">Ingen Dør ID opprettet ennå.</p>
+            }
+
+            <div class="new-dorid">
+                <h2>Ny Dør ID</h2>
+                <div class="new-dorid-form">
+                    <input @bind="_nyDorIdKode" @bind:event="oninput" placeholder="Dør ID, f.eks. A.YD100-N" />
+                    <button type="button" class="add-button" @onclick="OpprettDorIdMal" disabled="@string.IsNullOrWhiteSpace(_nyDorIdKode)">Opprett</button>
+                </div>
+            </div>
+        </div>
+    }
 }
 
 @code {
@@ -286,6 +352,9 @@ else
     private string? _vedleggFeil;
     private List<Tilbud> _tilbud = [];
     private List<Kunde> _kunder = [];
+    private List<DorIdMal> _dorIdMaler = [];
+    private string _nyDorIdKode = "";
+    private string? _dorIdMessage;
     private string _activeTab = "oversikt";
     private bool _notFound;
     private bool _confirmingDelete;
@@ -333,6 +402,11 @@ else
             _vedlegg = existing.Vedlegg;
             _tilbud = existing.Tilbud.OrderByDescending(t => t.OpprettetDato).ToList();
 
+            _dorIdMaler = await Db.DorIdMaler
+                .Where(m => m.ProsjektId == Id.Value)
+                .OrderBy(m => m.Kode)
+                .ToListAsync();
+
             _dorer = await Db.Dorer
                 .Where(d => d.ProsjektId == Id.Value)
                 .Include(d => d.Plantegning)
@@ -347,6 +421,7 @@ else
             _vedlegg = [];
             _tilbud = [];
             _dorer = [];
+            _dorIdMaler = [];
             _form = new Prosjekt { Navn = "" };
         }
     }
@@ -627,4 +702,49 @@ else
         await Db.SaveChangesAsync();
         _tilbud.Remove(t);
     }
+
+    // Dør ID
+
+    private async Task OpprettDorIdMal()
+    {
+        if (string.IsNullOrWhiteSpace(_nyDorIdKode) || !Id.HasValue)
+        {
+            return;
+        }
+
+        var mal = new DorIdMal { ProsjektId = Id.Value, Kode = _nyDorIdKode.Trim() };
+        Db.DorIdMaler.Add(mal);
+        await Db.SaveChangesAsync();
+
+        _dorIdMaler.Add(mal);
+        _dorIdMaler = _dorIdMaler.OrderBy(m => m.Kode).ToList();
+        _nyDorIdKode = "";
+    }
+
+    private async Task LagreDorIdMaler()
+    {
+        await Db.SaveChangesAsync();
+        _dorIdMessage = "Lagret.";
+    }
+
+    private async Task SlettDorIdMal(DorIdMal m)
+    {
+        Db.DorIdMaler.Remove(m);
+        await Db.SaveChangesAsync();
+        _dorIdMaler.Remove(m);
+    }
+
+    private static string FriBreddeValue(bool? verdi) => verdi switch
+    {
+        true => "Ja",
+        false => "Nei",
+        null => ""
+    };
+
+    private static bool? ParseFriBredde(ChangeEventArgs e) => e.Value?.ToString() switch
+    {
+        "Ja" => true,
+        "Nei" => false,
+        _ => null
+    };
 }

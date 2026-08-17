@@ -24,4 +24,5 @@ public class Prosjekt
     public List<ProsjektVedlegg> Vedlegg { get; set; } = [];
     public List<Tilbud> Tilbud { get; set; } = [];
     public List<Arbeidsordre> Arbeidsordre { get; set; } = [];
+    public List<DorIdMal> DorIdMaler { get; set; } = [];
 }
