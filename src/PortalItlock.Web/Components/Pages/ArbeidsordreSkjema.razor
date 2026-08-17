@@ -1,0 +1,220 @@
+@page "/arbeidsordre/{Id:int}"
+@rendermode InteractiveServer
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>@(_ordre?.Tittel ?? "Arbeidsordre")</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke arbeidsordren. Den kan være slettet.</p>
+}
+else if (_ordre is not null)
+{
+    <a class="back-link" href="/arbeidsordre">← Tilbake til arbeidsordre</a>
+    <h1>@_ordre.Tittel</h1>
+
+    <section class="ordre-section">
+        <div class="field-grid">
+            <label class="span-2">
+                Tittel
+                <input @bind="_ordre.Tittel" @bind:event="oninput" />
+            </label>
+            <label class="span-2">
+                Beskrivelse
+                <textarea rows="3" @bind="_ordre.Beskrivelse" placeholder="Info om jobben"></textarea>
+            </label>
+            <label>
+                Prosjekt
+                <select @bind="_ordre.ProsjektId">
+                    <option value="">Ikke satt</option>
+                    @foreach (var p in _prosjekter)
+                    {
+                        <option value="@p.Id">@p.Navn</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Ansvarlig montør
+                <select @bind="_ordre.AnsvarligMontorId">
+                    <option value="">Ikke satt</option>
+                    @foreach (var m in _montorer)
+                    {
+                        <option value="@m.Id">@m.Navn</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Status
+                <select @bind="_ordre.Status">
+                    @foreach (var s in Enum.GetValues<ArbeidsordreStatus>())
+                    {
+                        <option value="@s">@s.Visningsnavn()</option>
+                    }
+                </select>
+            </label>
+        </div>
+
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
+            <a class="add-button" href="@($"/timeregistrering?arbeidsordreId={_ordre.Id}")">Registrer timer</a>
+            @if (!string.IsNullOrEmpty(_savedMessage))
+            {
+                <span class="save-success">@_savedMessage</span>
+            }
+        </div>
+    </section>
+
+    <section class="ordre-section">
+        <h2>Registrerte timer <span class="sum-timer">(@_sumTimer.ToString("N1", Kultur) t totalt)</span></h2>
+
+        @if (_registreringer.Count == 0)
+        {
+            <p class="list-empty">Ingen timer registrert på denne arbeidsordren ennå.</p>
+        }
+        else
+        {
+            <table class="reg-table">
+                <thead>
+                    <tr>
+                        <th>Dato</th>
+                        <th>Montør</th>
+                        <th>Type</th>
+                        <th>Timer</th>
+                        <th>Kommentar</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _registreringer)
+                    {
+                        <tr @key="r.Id">
+                            <td>@r.Dato.ToString("dd.MM.yyyy")</td>
+                            <td>@r.MontorNavn</td>
+                            <td>@r.Type.Visningsnavn()</td>
+                            <td class="timer-cell">@r.Timer.ToString("N1", Kultur) t</td>
+                            <td>@r.Kommentar</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="ordre-section">
+        @if (_confirmingDelete)
+        {
+            <span class="delete-confirm">
+                Er du sikker? Dette sletter også registrerte timer på arbeidsordren.
+                <button type="button" class="delete-confirm-button" @onclick="SlettOrdre">Ja, slett</button>
+                <button type="button" class="cancel-button" @onclick="@(() => _confirmingDelete = false)">Avbryt</button>
+            </span>
+        }
+        else
+        {
+            <button type="button" class="delete-button" @onclick="@(() => _confirmingDelete = true)">Slett arbeidsordre</button>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private sealed class ProsjektOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class MontorOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class RegistreringRad
+    {
+        public int Id { get; set; }
+        public DateTime Dato { get; set; }
+        public string MontorNavn { get; set; } = "";
+        public TimeregistreringType Type { get; set; }
+        public decimal Timer { get; set; }
+        public string? Kommentar { get; set; }
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private Arbeidsordre? _ordre;
+    private bool _notFound;
+    private bool _confirmingDelete;
+    private string? _savedMessage;
+    private List<ProsjektOption> _prosjekter = [];
+    private List<MontorOption> _montorer = [];
+    private List<RegistreringRad> _registreringer = [];
+    private decimal _sumTimer;
+    private int? _loadedId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+        {
+            return;
+        }
+
+        _loadedId = Id;
+        _confirmingDelete = false;
+        _savedMessage = null;
+
+        _ordre = await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.Id == Id);
+        _notFound = _ordre is null;
+
+        if (_ordre is null)
+        {
+            return;
+        }
+
+        _prosjekter = await Db.Prosjekter
+            .OrderBy(p => p.Navn)
+            .Select(p => new ProsjektOption { Id = p.Id, Navn = p.Navn })
+            .ToListAsync();
+
+        _montorer = await Db.Montorer
+            .OrderBy(m => m.Navn)
+            .Select(m => new MontorOption { Id = m.Id, Navn = m.Navn })
+            .ToListAsync();
+
+        var registreringer = await Db.Timeregistreringer
+            .Where(t => t.ArbeidsordreId == Id)
+            .Include(t => t.Montor)
+            .OrderByDescending(t => t.Dato)
+            .ToListAsync();
+
+        _registreringer = registreringer.Select(t => new RegistreringRad
+        {
+            Id = t.Id,
+            Dato = t.Dato,
+            MontorNavn = t.Montor?.Navn ?? "-",
+            Type = t.Type,
+            Timer = t.TotalTimer,
+            Kommentar = t.Kommentar
+        }).ToList();
+
+        _sumTimer = _registreringer.Sum(r => r.Timer);
+    }
+
+    private async Task Lagre()
+    {
+        await Db.SaveChangesAsync();
+        _savedMessage = "Lagret.";
+    }
+
+    private async Task SlettOrdre()
+    {
+        Db.Arbeidsordre.Remove(_ordre!);
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo("/arbeidsordre");
+    }
+}

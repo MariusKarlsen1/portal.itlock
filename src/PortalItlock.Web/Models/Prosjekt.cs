@@ -22,4 +22,5 @@ public class Prosjekt
     public List<Dor> Dorer { get; set; } = [];
     public List<ProsjektVedlegg> Vedlegg { get; set; } = [];
     public List<Tilbud> Tilbud { get; set; } = [];
+    public List<Arbeidsordre> Arbeidsordre { get; set; } = [];
 }

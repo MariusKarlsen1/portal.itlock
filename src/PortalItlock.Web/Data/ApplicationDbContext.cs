@@ -33,6 +33,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<DorFunksjon> DorFunksjoner => Set<DorFunksjon>();
     public DbSet<Tilbud> Tilbud => Set<Tilbud>();
     public DbSet<TilbudLinje> TilbudLinjer => Set<TilbudLinje>();
+    public DbSet<Montor> Montorer => Set<Montor>();
+    public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
+    public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -90,6 +93,30 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(t => t.Komponenter)
             .HasForeignKey(c => c.ComponentTypeId)
             .IsRequired(false);
+
+        modelBuilder.Entity<Arbeidsordre>()
+            .HasOne(a => a.Prosjekt)
+            .WithMany(p => p.Arbeidsordre)
+            .HasForeignKey(a => a.ProsjektId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Arbeidsordre>()
+            .HasOne(a => a.AnsvarligMontor)
+            .WithMany(m => m.Arbeidsordre)
+            .HasForeignKey(a => a.AnsvarligMontorId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Timeregistrering>()
+            .HasOne(t => t.Arbeidsordre)
+            .WithMany(a => a.Timeregistreringer)
+            .HasForeignKey(t => t.ArbeidsordreId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Timeregistrering>()
+            .HasOne(t => t.Montor)
+            .WithMany(m => m.Timeregistreringer)
+            .HasForeignKey(t => t.MontorId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         SeedReferenceData(modelBuilder);
     }

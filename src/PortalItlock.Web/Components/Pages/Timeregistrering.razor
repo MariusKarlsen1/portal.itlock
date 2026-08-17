@@ -1,0 +1,286 @@
+@page "/timeregistrering"
+@rendermode InteractiveServer
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Timeregistrering</PageTitle>
+
+<h1>Timeregistrering</h1>
+<p>Registrer timer på en arbeidsordre. Timene summeres per uke og per arbeidsordre.</p>
+
+<section class="reg-section">
+    <div class="field-grid">
+        <label>
+            Dato
+            <input type="date" @bind="_draft.Dato" />
+        </label>
+        <label>
+            Montør
+            <select @bind="_draft.MontorId">
+                <option value="">Velg montør...</option>
+                @foreach (var m in _montorer)
+                {
+                    <option value="@m.Id">@m.Navn</option>
+                }
+            </select>
+        </label>
+        <label class="span-2">
+            Arbeidsordre
+            <select @bind="_draft.ArbeidsordreId">
+                <option value="">Velg arbeidsordre...</option>
+                @foreach (var a in _ordre)
+                {
+                    <option value="@a.Id">@a.Tittel</option>
+                }
+            </select>
+        </label>
+        <label>
+            Type
+            <select @bind="_draft.Type">
+                @foreach (var t in Enum.GetValues<TimeregistreringType>())
+                {
+                    <option value="@t">@t.Visningsnavn()</option>
+                }
+            </select>
+        </label>
+        <label>
+            Start
+            <input type="time" @bind="_draft.Start" />
+        </label>
+        <label>
+            Slutt
+            <input type="time" @bind="_draft.Slutt" />
+        </label>
+        <label>
+            Pause (min)
+            <input @bind="_draft.PauseMinutter" />
+        </label>
+        <label class="span-2">
+            Kommentar
+            <input @bind="_draft.Kommentar" placeholder="Valgfritt" />
+        </label>
+    </div>
+
+    <div class="form-actions">
+        <button type="button" class="save-button" @onclick="Registrer">Registrer timer</button>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <span class="form-error">@_error</span>
+        }
+        @if (!string.IsNullOrEmpty(_savedMessage))
+        {
+            <span class="save-success">@_savedMessage</span>
+        }
+    </div>
+</section>
+
+<section class="reg-section">
+    <h2>Timeliste</h2>
+
+    @if (_uker.Count == 0)
+    {
+        <p class="list-empty">Ingen timer registrert ennå.</p>
+    }
+    else
+    {
+        @foreach (var uke in _uker)
+        {
+            <div class="uke-block">
+                <div class="uke-header">
+                    <span>Uke @uke.Uke, @uke.Ar</span>
+                    <span class="uke-sum">@uke.SumTimer.ToString("N1", Kultur) t</span>
+                </div>
+                <table class="reg-table">
+                    <thead>
+                        <tr>
+                            <th>Dato</th>
+                            <th>Montør</th>
+                            <th>Type</th>
+                            <th>Arbeidsordre</th>
+                            <th>Timer</th>
+                            <th>Kommentar</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in uke.Rader)
+                        {
+                            <tr @key="r.Id">
+                                <td>@r.Dato.ToString("ddd dd.MM.yyyy", Kultur)</td>
+                                <td>@r.MontorNavn</td>
+                                <td>@r.Type.Visningsnavn()</td>
+                                <td><a href="@($"/arbeidsordre/{r.ArbeidsordreId}")">@r.ArbeidsordreTittel</a></td>
+                                <td class="timer-cell">@r.Timer.ToString("N1", Kultur) t</td>
+                                <td>@r.Kommentar</td>
+                                <td><button type="button" class="remove-button" @onclick="@(() => Slett(r.Id))">Slett</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    [SupplyParameterFromQuery] public int? ArbeidsordreId { get; set; }
+
+    private sealed class RegistreringDraft
+    {
+        public int? ArbeidsordreId { get; set; }
+        public int? MontorId { get; set; }
+        public DateTime Dato { get; set; } = DateTime.Today;
+        public TimeregistreringType Type { get; set; } = TimeregistreringType.NormalArbeidstid;
+        public TimeOnly Start { get; set; } = new(7, 0);
+        public TimeOnly Slutt { get; set; } = new(15, 0);
+        public int PauseMinutter { get; set; } = 30;
+        public string? Kommentar { get; set; }
+    }
+
+    private sealed class MontorOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class ArbeidsordreOption
+    {
+        public int Id { get; set; }
+        public string Tittel { get; set; } = "";
+    }
+
+    private sealed class RegistreringRad
+    {
+        public int Id { get; set; }
+        public DateTime Dato { get; set; }
+        public string MontorNavn { get; set; } = "";
+        public TimeregistreringType Type { get; set; }
+        public int ArbeidsordreId { get; set; }
+        public string ArbeidsordreTittel { get; set; } = "";
+        public decimal Timer { get; set; }
+        public string? Kommentar { get; set; }
+    }
+
+    private sealed class UkeGruppe
+    {
+        public int Ar { get; set; }
+        public int Uke { get; set; }
+        public List<RegistreringRad> Rader { get; set; } = [];
+        public decimal SumTimer => Rader.Sum(r => r.Timer);
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private RegistreringDraft _draft = new();
+    private List<MontorOption> _montorer = [];
+    private List<ArbeidsordreOption> _ordre = [];
+    private List<UkeGruppe> _uker = [];
+    private string? _error;
+    private string? _savedMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (ArbeidsordreId.HasValue)
+        {
+            _draft.ArbeidsordreId = ArbeidsordreId;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _montorer = await Db.Montorer
+            .OrderBy(m => m.Navn)
+            .Select(m => new MontorOption { Id = m.Id, Navn = m.Navn })
+            .ToListAsync();
+
+        _ordre = await Db.Arbeidsordre
+            .OrderBy(a => a.Tittel)
+            .Select(a => new ArbeidsordreOption { Id = a.Id, Tittel = a.Tittel })
+            .ToListAsync();
+
+        var registreringer = await Db.Timeregistreringer
+            .Include(t => t.Montor)
+            .Include(t => t.Arbeidsordre)
+            .OrderByDescending(t => t.Dato)
+            .ThenByDescending(t => t.Id)
+            .ToListAsync();
+
+        var rader = registreringer.Select(t => new RegistreringRad
+        {
+            Id = t.Id,
+            Dato = t.Dato,
+            MontorNavn = t.Montor?.Navn ?? "-",
+            Type = t.Type,
+            ArbeidsordreId = t.ArbeidsordreId,
+            ArbeidsordreTittel = t.Arbeidsordre?.Tittel ?? "-",
+            Timer = t.TotalTimer,
+            Kommentar = t.Kommentar
+        });
+
+        _uker = rader
+            .GroupBy(r => (Ar: ISOWeek.GetYear(r.Dato), Uke: ISOWeek.GetWeekOfYear(r.Dato)))
+            .OrderByDescending(g => g.Key.Ar).ThenByDescending(g => g.Key.Uke)
+            .Select(g => new UkeGruppe { Ar = g.Key.Ar, Uke = g.Key.Uke, Rader = g.ToList() })
+            .ToList();
+    }
+
+    private async Task Registrer()
+    {
+        _error = null;
+        _savedMessage = null;
+
+        if (_draft.MontorId is null)
+        {
+            _error = "Velg montør.";
+            return;
+        }
+
+        if (_draft.ArbeidsordreId is null)
+        {
+            _error = "Velg arbeidsordre.";
+            return;
+        }
+
+        if (_draft.Slutt <= _draft.Start)
+        {
+            _error = "Slutt må være etter start.";
+            return;
+        }
+
+        Db.Timeregistreringer.Add(new Models.Timeregistrering
+        {
+            ArbeidsordreId = _draft.ArbeidsordreId.Value,
+            MontorId = _draft.MontorId.Value,
+            Dato = _draft.Dato,
+            Start = _draft.Start.ToTimeSpan(),
+            Slutt = _draft.Slutt.ToTimeSpan(),
+            PauseMinutter = _draft.PauseMinutter,
+            Type = _draft.Type,
+            Kommentar = string.IsNullOrWhiteSpace(_draft.Kommentar) ? null : _draft.Kommentar.Trim()
+        });
+        await Db.SaveChangesAsync();
+
+        _savedMessage = "Timer registrert.";
+        var behold = new RegistreringDraft { ArbeidsordreId = _draft.ArbeidsordreId, MontorId = _draft.MontorId, Dato = _draft.Dato };
+        _draft = behold;
+        await LoadAsync();
+    }
+
+    private async Task Slett(int id)
+    {
+        var reg = await Db.Timeregistreringer.FirstOrDefaultAsync(t => t.Id == id);
+        if (reg is null)
+        {
+            return;
+        }
+
+        Db.Timeregistreringer.Remove(reg);
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+    }
+}
