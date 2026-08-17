@@ -23,7 +23,7 @@ public class Dor
     public string? Slagretning { get; set; }
     public string? Notater { get; set; }
 
-    public bool FerdigMontert { get; set; }
+    public MontasjeStatus Status { get; set; } = MontasjeStatus.IkkeStartet;
     public DateTime? MontertDato { get; set; }
 
     public List<DorKomponent> Komponenter { get; set; } = [];

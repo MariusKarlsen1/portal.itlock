@@ -1,3 +1,22 @@
+let currentSaveRef = null;
+
+export function initSaveShortcut(dotNetRef) {
+    currentSaveRef = dotNetRef;
+
+    if (!document.__plantegningSaveBound) {
+        document.__plantegningSaveBound = true;
+
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+                e.preventDefault();
+                if (currentSaveRef) {
+                    currentSaveRef.invokeMethodAsync('SaveNow');
+                }
+            }
+        });
+    }
+}
+
 export function getClickPercent(containerEl, clientX, clientY) {
     const rect = containerEl.getBoundingClientRect();
     const x = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));

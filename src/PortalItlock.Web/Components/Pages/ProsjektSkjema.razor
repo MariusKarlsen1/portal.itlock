@@ -4,6 +4,7 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using SkiaSharp
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 
@@ -104,19 +105,25 @@ else
                                 <th>Etasje</th>
                                 <th>Sone</th>
                                 <th>Plassering</th>
-                                <th>Ferdig montert</th>
+                                <th>Status</th>
                                 <th></th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach (var d in _dorer)
                             {
-                                <tr class="@(_selectedDoor?.Id == d.Id ? "dorer-row-selected" : "")">
+                                <tr @key="d.Id" class="@(_selectedDoor?.Id == d.Id ? "dorer-row-selected" : "")">
                                     <td>@d.Dornummer</td>
                                     <td>@d.Etasje</td>
                                     <td>@d.Sone</td>
                                     <td>@(d.Plantegning?.Navn ?? "Ikke plassert")</td>
-                                    <td><input type="checkbox" checked="@d.FerdigMontert" @onchange="@((ChangeEventArgs e) => ToggleFerdig(d, e))" /></td>
+                                    <td>
+                                        <select class="status-select @StatusSelectClass(d.Status)" value="@d.Status" @onchange="@((ChangeEventArgs e) => EndreStatus(d, e))">
+                                            <option value="@MontasjeStatus.IkkeStartet">Ikke startet</option>
+                                            <option value="@MontasjeStatus.Montert">Montert</option>
+                                            <option value="@MontasjeStatus.FerdigMontert">Ferdig montert</option>
+                                        </select>
+                                    </td>
                                     <td><button type="button" class="remove-button" @onclick="@(() => SelectDoor(d))">Rediger</button></td>
                                 </tr>
                             }
@@ -145,7 +152,7 @@ else
                 <ul class="vedlegg-list">
                     @foreach (var p in _plantegninger)
                     {
-                        <li class="vedlegg-item">
+                        <li @key="p.Id" class="vedlegg-item">
                             <a href="@($"/plantegning/{p.Id}")">@p.Navn</a>
                             <span class="vedlegg-type">@(string.IsNullOrWhiteSpace(p.Byggetrinn) ? "Ugruppert" : p.Byggetrinn)</span>
                             <button type="button" class="remove-button" @onclick="@(() => RemovePlantegning(p))">Fjern</button>
@@ -161,7 +168,7 @@ else
             <div class="vedlegg-upload">
                 <input @bind="_nyPlantegningNavn" @bind:event="oninput" placeholder="Navn, f.eks. 1. etasje" />
                 <input @bind="_nyPlantegningByggetrinn" @bind:event="oninput" placeholder="Byggetrinn (valgfritt)" />
-                <InputFile OnChange="OnPlantegningSelected" accept="image/*" />
+                <InputFile OnChange="OnPlantegningSelected" accept="image/*,.pdf,application/pdf" />
             </div>
 
             @if (_uploadingPlantegning)
@@ -184,7 +191,7 @@ else
                 <ul class="vedlegg-list">
                     @foreach (var v in _vedlegg)
                     {
-                        <li class="vedlegg-item">
+                        <li @key="v.Id" class="vedlegg-item">
                             <a href="@($"/prosjektvedlegg/{v.Id}")" target="_blank">@v.Filnavn</a>
                             <span class="vedlegg-type">@(string.IsNullOrWhiteSpace(v.Type) ? "Ukategorisert" : v.Type)</span>
                             <button type="button" class="remove-button" @onclick="@(() => RemoveVedlegg(v))">Fjern</button>
@@ -355,12 +362,24 @@ else
         _selectedDoor = d;
     }
 
-    private async Task ToggleFerdig(Dor d, ChangeEventArgs e)
+    private async Task EndreStatus(Dor d, ChangeEventArgs e)
     {
-        d.FerdigMontert = e.Value is bool b && b;
-        d.MontertDato = d.FerdigMontert ? DateTime.Today : null;
+        if (e.Value is not string s || !Enum.TryParse<MontasjeStatus>(s, out var status))
+        {
+            return;
+        }
+
+        d.Status = status;
+        d.MontertDato = status == MontasjeStatus.FerdigMontert ? DateTime.Today : null;
         await Db.SaveChangesAsync();
     }
+
+    private static string StatusSelectClass(MontasjeStatus status) => status switch
+    {
+        MontasjeStatus.FerdigMontert => "status-select-ferdig",
+        MontasjeStatus.Montert => "status-select-montert",
+        _ => "status-select-ikke-startet"
+    };
 
     private void OnDoorDeleted()
     {
@@ -417,14 +436,43 @@ else
                 await stream.CopyToAsync(buffer);
             }
 
+            var rawBytes = buffer.ToArray();
+            var erPdf = file.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(file.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase);
+
+            byte[] bildeData;
+            string contentType;
+
+            if (erPdf)
+            {
+                try
+                {
+                    using var bitmap = PDFtoImage.Conversion.ToImage(rawBytes, page: 0, options: new PDFtoImage.RenderOptions(Dpi: 200));
+                    using var image = SKImage.FromBitmap(bitmap);
+                    using var encoded = image.Encode(SKEncodedImageFormat.Png, 90);
+                    bildeData = encoded.ToArray();
+                    contentType = "image/png";
+                }
+                catch (Exception)
+                {
+                    _plantegningFeil = $"Klarte ikke å lese PDF-filen \"{file.Name}\". Prøv å laste opp den som bilde i stedet.";
+                    return;
+                }
+            }
+            else
+            {
+                bildeData = rawBytes;
+                contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+            }
+
             var plantegning = new Plantegning
             {
                 ProsjektId = Id.Value,
                 Navn = _nyPlantegningNavn.Trim(),
                 Byggetrinn = string.IsNullOrWhiteSpace(_nyPlantegningByggetrinn) ? null : _nyPlantegningByggetrinn.Trim(),
                 Filnavn = file.Name,
-                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
-                Data = buffer.ToArray()
+                ContentType = contentType,
+                Data = bildeData
             };
 
             Db.Plantegninger.Add(plantegning);
