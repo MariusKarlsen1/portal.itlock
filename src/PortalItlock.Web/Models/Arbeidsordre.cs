@@ -12,6 +12,9 @@ public class Arbeidsordre
     public int? AnsvarligMontorId { get; set; }
     public Montor? AnsvarligMontor { get; set; }
 
+    public int? TilbudId { get; set; }
+    public Tilbud? Tilbud { get; set; }
+
     public ArbeidsordreStatus Status { get; set; } = ArbeidsordreStatus.Ny;
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;

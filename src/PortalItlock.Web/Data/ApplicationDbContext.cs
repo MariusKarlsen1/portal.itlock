@@ -36,6 +36,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Montor> Montorer => Set<Montor>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
+    public DbSet<Kunde> Kunder => Set<Kunde>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -104,6 +105,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasOne(a => a.AnsvarligMontor)
             .WithMany(m => m.Arbeidsordre)
             .HasForeignKey(a => a.AnsvarligMontorId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Arbeidsordre>()
+            .HasOne(a => a.Tilbud)
+            .WithMany()
+            .HasForeignKey(a => a.TilbudId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Prosjekt>()
+            .HasOne(p => p.Kunde)
+            .WithMany(k => k.Prosjekter)
+            .HasForeignKey(p => p.KundeId)
             .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<Timeregistrering>()

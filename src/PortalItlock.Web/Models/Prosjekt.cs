@@ -5,7 +5,8 @@ public class Prosjekt
     public int Id { get; set; }
     public required string Navn { get; set; }
 
-    public string? Kunde { get; set; }
+    public int? KundeId { get; set; }
+    public Kunde? Kunde { get; set; }
     public string? Adresse { get; set; }
     public string? Postnr { get; set; }
     public string? Sted { get; set; }
