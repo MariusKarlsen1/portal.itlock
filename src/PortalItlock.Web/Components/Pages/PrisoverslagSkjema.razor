@@ -1,0 +1,305 @@
+@page "/prisoverslag/ny"
+@page "/prisoverslag/{Id:int}"
+@rendermode InteractiveServer
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>@(Id.HasValue ? "Rediger prisoverslag" : "Nytt prisoverslag")</PageTitle>
+
+<h1>@(Id.HasValue ? "Rediger prisoverslag" : "Nytt prisoverslag")</h1>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke prisoverslaget. Det kan være slettet.</p>
+}
+else
+{
+    <div class="overslag-layout">
+        <div class="field-grid">
+            <label class="span-2">
+                Navn på overslag
+                <input @bind="_form.Navn" @bind:event="oninput" placeholder="F.eks. Egersund skole - dørparti" />
+            </label>
+            <label>Kunde<input @bind="_form.Kunde" /></label>
+        </div>
+
+        <section class="overslag-section">
+            <h2>Komponenter</h2>
+
+            <div class="component-search">
+                <label>
+                    Søk i komponentregisteret
+                    <input @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged" placeholder="Søk på navn, leverandør eller produktkode" />
+                </label>
+
+                @if (_searchResults.Count > 0)
+                {
+                    <ul class="search-results">
+                        @foreach (var r in _searchResults)
+                        {
+                            <li>
+                                <button type="button" class="search-result" @onclick="@(() => AddFromSearch(r))">
+                                    <span class="search-result-name">@r.Navn</span>
+                                    <span class="search-result-meta">@r.Leverandor · netto @r.PrisNetto.ToString("N0", Nb) kr / veil. @r.PrisVeiledende.ToString("N0", Nb) kr</span>
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                }
+                else if (_componentSearch.Trim().Length >= 2)
+                {
+                    <p class="search-empty">Ingen treff.</p>
+                }
+            </div>
+
+            @if (_linjer.Count > 0)
+            {
+                <table class="linje-table">
+                    <thead>
+                        <tr>
+                            <th>Navn</th>
+                            <th>Antall</th>
+                            <th>Netto</th>
+                            <th>Veiledende</th>
+                            <th>Sum netto</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var l in _linjer)
+                        {
+                            <tr>
+                                <td><input @bind="l.Navn" /></td>
+                                <td><input class="antall-input" @bind="l.Antall" /></td>
+                                <td><input class="price-input" @bind="l.PrisNetto" /></td>
+                                <td><input class="price-input" @bind="l.PrisVeiledende" /></td>
+                                <td>@((l.PrisNetto * l.Antall).ToString("N0", Nb)) kr</td>
+                                <td><button type="button" class="remove-button" @onclick="@(() => _linjer.Remove(l))">Fjern</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p class="list-empty">Ingen komponenter lagt til ennå.</p>
+            }
+        </section>
+
+        <section class="overslag-section">
+            <h2>Timer og påslag</h2>
+            <div class="field-grid">
+                <label>Antall timer<input @bind="_form.AntallTimer" /></label>
+                <label>Timepris (kr)<input @bind="_form.Timepris" /></label>
+                <label>Påslag på deler (%)<input @bind="_form.PaslagProsent" /></label>
+            </div>
+        </section>
+
+        <section class="overslag-section overslag-sum">
+            <h2>Sum</h2>
+            <dl class="sum-list">
+                <div><dt>Deler, netto (kost)</dt><dd>@SumNetto.ToString("N0", Nb) kr</dd></div>
+                <div><dt>Deler, med påslag (@_form.PaslagProsent.ToString("0.#")%)</dt><dd>@SumMedPaslag.ToString("N0", Nb) kr</dd></div>
+                <div><dt>Deler, veiledende</dt><dd>@SumVeiledende.ToString("N0", Nb) kr</dd></div>
+                <div><dt>Arbeid (@_form.AntallTimer.ToString("0.#") t × @_form.Timepris.ToString("N0", Nb) kr)</dt><dd>@Arbeidskostnad.ToString("N0", Nb) kr</dd></div>
+                <div class="sum-total"><dt>Totalt (påslag + arbeid)</dt><dd>@Totalsum.ToString("N0", Nb) kr</dd></div>
+            </dl>
+        </section>
+
+        <label class="notes-field">
+            Notater
+            <textarea rows="3" @bind="_form.Notater"></textarea>
+        </label>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <p class="form-error">@_error</p>
+        }
+
+        @if (!string.IsNullOrEmpty(_savedMessage))
+        {
+            <p class="save-success">@_savedMessage</p>
+        }
+
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="Lagre">
+                @(Id.HasValue ? "Lagre endringer" : "Lagre overslag")
+            </button>
+
+            @if (Id.HasValue)
+            {
+                @if (_confirmingDelete)
+                {
+                    <span class="delete-confirm">
+                        Er du sikker?
+                        <button type="button" class="delete-confirm-button" @onclick="ConfirmDelete">Ja, slett</button>
+                        <button type="button" class="cancel-button" @onclick="@(() => _confirmingDelete = false)">Avbryt</button>
+                    </span>
+                }
+                else
+                {
+                    <button type="button" class="delete-button" @onclick="@(() => _confirmingDelete = true)">Slett overslag</button>
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+
+    private sealed class SearchResult
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Leverandor { get; set; }
+        public decimal PrisNetto { get; set; }
+        public decimal PrisVeiledende { get; set; }
+    }
+
+    private Prisoverslag _form = new() { Navn = "" };
+    private List<PrisoverslagLinje> _linjer = [];
+    private string _componentSearch = "";
+    private List<SearchResult> _searchResults = [];
+    private bool _notFound;
+    private bool _confirmingDelete;
+    private int? _loadedId;
+    private string? _error;
+    private string? _savedMessage;
+
+    private decimal SumNetto => _linjer.Sum(l => l.PrisNetto * l.Antall);
+    private decimal SumMedPaslag => SumNetto * (1 + _form.PaslagProsent / 100m);
+    private decimal SumVeiledende => _linjer.Sum(l => l.PrisVeiledende * l.Antall);
+    private decimal Arbeidskostnad => _form.AntallTimer * _form.Timepris;
+    private decimal Totalsum => SumMedPaslag + Arbeidskostnad;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+        {
+            return;
+        }
+
+        _loadedId = Id;
+        _confirmingDelete = false;
+        _savedMessage = null;
+        _error = null;
+        _notFound = false;
+        _componentSearch = "";
+        _searchResults = [];
+
+        if (Id.HasValue)
+        {
+            var existing = await Db.Prisoverslag
+                .Include(o => o.Linjer)
+                .FirstOrDefaultAsync(o => o.Id == Id.Value);
+
+            if (existing is null)
+            {
+                _notFound = true;
+                return;
+            }
+
+            _form = existing;
+            _linjer = existing.Linjer;
+        }
+        else
+        {
+            _linjer = [];
+            _form = new Prisoverslag { Navn = "", Linjer = _linjer };
+        }
+    }
+
+    private async Task OnComponentSearchChanged()
+    {
+        var term = _componentSearch.Trim();
+        if (term.Length < 2)
+        {
+            _searchResults = [];
+            return;
+        }
+
+        _searchResults = await Db.Components
+            .Where(c => c.Aktiv && (
+                c.Navn.Contains(term) ||
+                (c.Leverandor != null && c.Leverandor.Contains(term)) ||
+                (c.Produktkode != null && c.Produktkode.Contains(term))))
+            .OrderBy(c => c.Navn)
+            .Take(20)
+            .Select(c => new SearchResult
+            {
+                Id = c.Id,
+                Navn = c.Navn,
+                Leverandor = c.Leverandor,
+                PrisNetto = c.PrisNetto ?? 0,
+                PrisVeiledende = c.PrisVeiledende ?? 0
+            })
+            .ToListAsync();
+    }
+
+    private void AddFromSearch(SearchResult r)
+    {
+        _linjer.Add(new PrisoverslagLinje
+        {
+            Navn = r.Navn,
+            PrisNetto = r.PrisNetto,
+            PrisVeiledende = r.PrisVeiledende,
+            Antall = 1
+        });
+
+        _componentSearch = "";
+        _searchResults = [];
+    }
+
+    private async Task Lagre()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Navn))
+        {
+            _error = "Overslaget må ha et navn.";
+            return;
+        }
+
+        _error = null;
+        _form.Linjer = _linjer;
+
+        if (!Id.HasValue)
+        {
+            Db.Prisoverslag.Add(_form);
+        }
+
+        await Db.SaveChangesAsync();
+
+        if (Id.HasValue)
+        {
+            _savedMessage = $"Overslaget \"{_form.Navn}\" er oppdatert.";
+        }
+        else
+        {
+            _savedMessage = $"Overslaget \"{_form.Navn}\" er lagret.";
+            Nav.NavigateTo($"/prisoverslag/{_form.Id}");
+        }
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        var existing = await Db.Prisoverslag.FirstOrDefaultAsync(o => o.Id == Id.Value);
+        if (existing is not null)
+        {
+            Db.Prisoverslag.Remove(existing);
+            await Db.SaveChangesAsync();
+        }
+
+        Nav.NavigateTo("/prisoverslag");
+    }
+}
