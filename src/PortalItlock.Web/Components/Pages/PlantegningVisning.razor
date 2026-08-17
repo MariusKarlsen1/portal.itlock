@@ -1,0 +1,473 @@
+@page "/plantegning/{Id:int}"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+
+<PageTitle>@(_plantegning?.Navn ?? "Plantegning")</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke plantegningen. Den kan være slettet.</p>
+}
+else if (_plantegning is not null)
+{
+    <h1>@_plantegning.Navn</h1>
+    @if (!string.IsNullOrWhiteSpace(_plantegning.Byggetrinn))
+    {
+        <p class="plan-subtitle">@_plantegning.Byggetrinn</p>
+    }
+
+    <div class="plan-toolbar">
+        <button type="button" class="add-button" @onclick="TogglePlacing">
+            @(_placingNewDoor ? "Avbryt plassering" : "Legg til dør")
+        </button>
+        @if (_placingNewDoor)
+        {
+            <span class="placing-hint">Klikk på tegningen der døren skal plasseres.</span>
+        }
+        <span class="plan-legend"><span class="legend-dot legend-ferdig"></span> Ferdig montert</span>
+        <span class="plan-legend"><span class="legend-dot legend-apen"></span> Ikke montert</span>
+    </div>
+
+    <div class="plan-layout">
+        <div class="plan-canvas-wrap">
+            <div class="plan-canvas" @ref="_canvasRef" @onclick="OnCanvasClick">
+                <img src="@($"/plantegningbilde/{_plantegning.Id}")" alt="@_plantegning.Navn" class="plan-image" />
+                @foreach (var d in _dorer)
+                {
+                    <div @key="d.Id" class="dor-marker @(d.FerdigMontert ? "dor-marker-ferdig" : "dor-marker-apen") @(_selectedDoor?.Id == d.Id ? "dor-marker-selected" : "")"
+                         style="left:@(d.PosX.ToString(CultureInfo.InvariantCulture))%; top:@(d.PosY.ToString(CultureInfo.InvariantCulture))%;"
+                         data-dorid="@d.Id">
+                        @d.Dornummer
+                    </div>
+                }
+            </div>
+        </div>
+
+        @if (_selectedDoor is not null)
+        {
+            <div class="dor-panel">
+                <div class="dor-panel-header">
+                    <h2>Dør</h2>
+                    <button type="button" class="cancel-button" @onclick="@(() => _selectedDoor = null)">Lukk</button>
+                </div>
+
+                <div class="field-grid">
+                    <label>Dørnummer<input @bind="_selectedDoor.Dornummer" /></label>
+                    <label>Etasje<input @bind="_selectedDoor.Etasje" /></label>
+                    <label>Sone<input @bind="_selectedDoor.Sone" /></label>
+                    <label>Dørtype<input @bind="_selectedDoor.Dortype" /></label>
+                    <label>B x H<input @bind="_selectedDoor.BxH" placeholder="F.eks. 1000x2100" /></label>
+                    <label>Slagretning<input @bind="_selectedDoor.Slagretning" /></label>
+                    <label class="span-2">
+                        Notater
+                        <textarea rows="2" @bind="_selectedDoor.Notater"></textarea>
+                    </label>
+                </div>
+
+                <label class="checkbox-field">
+                    <input type="checkbox" @bind="_selectedDoor.FerdigMontert" @bind:after="OnFerdigMontertChanged" />
+                    Ferdig montert
+                    @if (_selectedDoor.MontertDato.HasValue)
+                    {
+                        <span class="montert-dato">(@_selectedDoor.MontertDato.Value.ToString("dd.MM.yyyy"))</span>
+                    }
+                </label>
+
+                <h3>Beslag</h3>
+
+                <div class="component-search">
+                    <label>
+                        Søk i komponentregisteret
+                        <input @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged" placeholder="Søk på navn, leverandør eller produktkode" />
+                    </label>
+
+                    @if (_searchResults.Count > 0)
+                    {
+                        <ul class="search-results">
+                            @foreach (var r in _searchResults)
+                            {
+                                <li>
+                                    <button type="button" class="search-result" @onclick="@(() => AddFromSearch(r))">
+                                        <span class="search-result-name">@r.Navn</span>
+                                        <span class="search-result-meta">@r.Leverandor</span>
+                                    </button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    else if (_componentSearch.Trim().Length >= 2)
+                    {
+                        <p class="search-empty">Ingen treff.</p>
+                    }
+                </div>
+
+                <div class="pakke-legg-til">
+                    <select @bind="_valgtPakkeId">
+                        <option value="">Velg pakke...</option>
+                        @foreach (var p in _pakker)
+                        {
+                            <option value="@p.Id">@p.Navn</option>
+                        }
+                    </select>
+                    <button type="button" class="add-button" @onclick="LeggTilPakke" disabled="@(_valgtPakkeId is null)">Legg til pakke</button>
+                </div>
+
+                @if (_selectedDoor.Komponenter.Count > 0)
+                {
+                    <table class="linje-table">
+                        <thead>
+                            <tr>
+                                <th>Navn</th>
+                                <th>Antall</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var dk in _selectedDoor.Komponenter)
+                            {
+                                <tr>
+                                    <td>@dk.Component?.Navn</td>
+                                    <td><input class="antall-input" @bind="dk.Antall" /></td>
+                                    <td><button type="button" class="remove-button" @onclick="@(() => RemoveKomponent(dk))">Fjern</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else
+                {
+                    <p class="list-empty">Ingen beslag lagt til ennå.</p>
+                }
+
+                @if (!string.IsNullOrEmpty(_savedMessage))
+                {
+                    <p class="save-success">@_savedMessage</p>
+                }
+
+                <div class="form-actions">
+                    <button type="button" class="save-button" @onclick="LagreDor">Lagre dør</button>
+
+                    @if (_confirmingDelete)
+                    {
+                        <span class="delete-confirm">
+                            Er du sikker?
+                            <button type="button" class="delete-confirm-button" @onclick="SlettDor">Ja, slett</button>
+                            <button type="button" class="cancel-button" @onclick="@(() => _confirmingDelete = false)">Avbryt</button>
+                        </span>
+                    }
+                    else
+                    {
+                        <button type="button" class="delete-button" @onclick="@(() => _confirmingDelete = true)">Slett dør</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private sealed class SearchResult
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Leverandor { get; set; }
+    }
+
+    private sealed class PakkeOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class PosResult
+    {
+        public double X { get; set; }
+        public double Y { get; set; }
+    }
+
+    private Plantegning? _plantegning;
+    private List<Dor> _dorer = [];
+    private Dor? _selectedDoor;
+    private bool _placingNewDoor;
+    private bool _confirmingDelete;
+    private bool _notFound;
+    private int? _loadedId;
+
+    private List<PakkeOption> _pakker = [];
+    private int? _valgtPakkeId;
+    private string _componentSearch = "";
+    private List<SearchResult> _searchResults = [];
+    private string? _savedMessage;
+
+    private ElementReference _canvasRef;
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<PlantegningVisning>? _dotNetRef;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+        {
+            return;
+        }
+
+        _loadedId = Id;
+        _notFound = false;
+        _selectedDoor = null;
+        _placingNewDoor = false;
+
+        _plantegning = await Db.Plantegninger
+            .Include(p => p.Dorer).ThenInclude(d => d.Komponenter).ThenInclude(dk => dk.Component)
+            .FirstOrDefaultAsync(p => p.Id == Id);
+
+        if (_plantegning is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        _dorer = _plantegning.Dorer;
+
+        _pakker = await Db.Packages
+            .OrderBy(p => p.Navn)
+            .Select(p => new PakkeOption { Id = p.Id, Navn = p.Navn })
+            .ToListAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/plantegning.js");
+            _dotNetRef = DotNetObjectReference.Create(this);
+        }
+
+        if (_module is not null && _dotNetRef is not null && _plantegning is not null)
+        {
+            await _module.InvokeVoidAsync("attachMarkers", _canvasRef, _dotNetRef);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnDoorMoved(int dorId, double x, double y)
+    {
+        var dor = _dorer.FirstOrDefault(d => d.Id == dorId);
+        if (dor is null)
+        {
+            return;
+        }
+
+        dor.PosX = x;
+        dor.PosY = y;
+        await Db.SaveChangesAsync();
+    }
+
+    [JSInvokable]
+    public void OnDoorClicked(int dorId)
+    {
+        var dor = _dorer.FirstOrDefault(d => d.Id == dorId);
+        if (dor is null)
+        {
+            return;
+        }
+
+        SelectDoor(dor);
+        StateHasChanged();
+    }
+
+    private void TogglePlacing()
+    {
+        _placingNewDoor = !_placingNewDoor;
+        if (_placingNewDoor)
+        {
+            _selectedDoor = null;
+        }
+    }
+
+    private async Task OnCanvasClick(MouseEventArgs e)
+    {
+        if (!_placingNewDoor || _plantegning is null || _module is null)
+        {
+            return;
+        }
+
+        var pos = await _module.InvokeAsync<PosResult>("getClickPercent", _canvasRef, e.ClientX, e.ClientY);
+
+        var dor = new Dor
+        {
+            PlantegningId = _plantegning.Id,
+            Dornummer = "Ny dør",
+            PosX = pos.X,
+            PosY = pos.Y
+        };
+
+        Db.Dorer.Add(dor);
+        await Db.SaveChangesAsync();
+
+        _dorer.Add(dor);
+        _placingNewDoor = false;
+        SelectDoor(dor);
+    }
+
+    private void SelectDoor(Dor d)
+    {
+        _selectedDoor = d;
+        _placingNewDoor = false;
+        _confirmingDelete = false;
+        _componentSearch = "";
+        _searchResults = [];
+        _valgtPakkeId = null;
+        _savedMessage = null;
+    }
+
+    private void OnFerdigMontertChanged()
+    {
+        if (_selectedDoor is null)
+        {
+            return;
+        }
+
+        _selectedDoor.MontertDato = _selectedDoor.FerdigMontert ? DateTime.Today : null;
+    }
+
+    private async Task OnComponentSearchChanged()
+    {
+        var term = _componentSearch.Trim();
+        if (term.Length < 2)
+        {
+            _searchResults = [];
+            return;
+        }
+
+        _searchResults = await Db.Components
+            .Where(c => c.Aktiv && (
+                c.Navn.Contains(term) ||
+                (c.Leverandor != null && c.Leverandor.Contains(term)) ||
+                (c.Produktkode != null && c.Produktkode.Contains(term))))
+            .OrderBy(c => c.Navn)
+            .Take(20)
+            .Select(c => new SearchResult { Id = c.Id, Navn = c.Navn, Leverandor = c.Leverandor })
+            .ToListAsync();
+    }
+
+    private async Task AddFromSearch(SearchResult r)
+    {
+        if (_selectedDoor is null)
+        {
+            return;
+        }
+
+        var existing = _selectedDoor.Komponenter.FirstOrDefault(dk => dk.ComponentId == r.Id);
+        if (existing is not null)
+        {
+            existing.Antall += 1;
+        }
+        else
+        {
+            var component = await Db.Components.FindAsync(r.Id);
+            var dk = new DorKomponent { DorId = _selectedDoor.Id, ComponentId = r.Id, Component = component, Antall = 1 };
+            _selectedDoor.Komponenter.Add(dk);
+            Db.DorKomponenter.Add(dk);
+        }
+
+        await Db.SaveChangesAsync();
+        _componentSearch = "";
+        _searchResults = [];
+    }
+
+    private async Task LeggTilPakke()
+    {
+        if (_selectedDoor is null || _valgtPakkeId is null)
+        {
+            return;
+        }
+
+        var pakke = await Db.Packages
+            .Include(p => p.Komponenter).ThenInclude(pc => pc.Component)
+            .FirstOrDefaultAsync(p => p.Id == _valgtPakkeId);
+
+        if (pakke is null)
+        {
+            return;
+        }
+
+        foreach (var pk in pakke.Komponenter)
+        {
+            var existing = _selectedDoor.Komponenter.FirstOrDefault(dk => dk.ComponentId == pk.ComponentId);
+            if (existing is not null)
+            {
+                existing.Antall += pk.Antall;
+            }
+            else
+            {
+                var dk = new DorKomponent { DorId = _selectedDoor.Id, ComponentId = pk.ComponentId, Component = pk.Component, Antall = pk.Antall };
+                _selectedDoor.Komponenter.Add(dk);
+                Db.DorKomponenter.Add(dk);
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _valgtPakkeId = null;
+    }
+
+    private async Task RemoveKomponent(DorKomponent dk)
+    {
+        if (_selectedDoor is null)
+        {
+            return;
+        }
+
+        Db.DorKomponenter.Remove(dk);
+        await Db.SaveChangesAsync();
+        _selectedDoor.Komponenter.Remove(dk);
+    }
+
+    private async Task LagreDor()
+    {
+        if (_selectedDoor is null)
+        {
+            return;
+        }
+
+        await Db.SaveChangesAsync();
+        _savedMessage = $"Døren \"{_selectedDoor.Dornummer}\" er lagret.";
+    }
+
+    private async Task SlettDor()
+    {
+        if (_selectedDoor is null)
+        {
+            return;
+        }
+
+        Db.Dorer.Remove(_selectedDoor);
+        await Db.SaveChangesAsync();
+        _dorer.Remove(_selectedDoor);
+        _selectedDoor = null;
+        _confirmingDelete = false;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _dotNetRef?.Dispose();
+
+        if (_module is not null)
+        {
+            try
+            {
+                await _module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+    }
+}

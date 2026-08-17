@@ -25,6 +25,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Prisoverslag> Prisoverslag => Set<Prisoverslag>();
     public DbSet<PrisoverslagLinje> PrisoverslagLinjer => Set<PrisoverslagLinje>();
     public DbSet<LasUtskifting> LasUtskiftinger => Set<LasUtskifting>();
+    public DbSet<Plantegning> Plantegninger => Set<Plantegning>();
+    public DbSet<Dor> Dorer => Set<Dor>();
+    public DbSet<DorKomponent> DorKomponenter => Set<DorKomponent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -52,6 +55,19 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasOne(pc => pc.Component)
                 .WithMany(c => c.Pakker)
                 .HasForeignKey(pc => pc.ComponentId);
+        });
+
+        modelBuilder.Entity<DorKomponent>(entity =>
+        {
+            entity.HasKey(dk => new { dk.DorId, dk.ComponentId });
+
+            entity.HasOne(dk => dk.Dor)
+                .WithMany(d => d.Komponenter)
+                .HasForeignKey(dk => dk.DorId);
+
+            entity.HasOne(dk => dk.Component)
+                .WithMany()
+                .HasForeignKey(dk => dk.ComponentId);
         });
 
         modelBuilder.Entity<RequirementValue>()

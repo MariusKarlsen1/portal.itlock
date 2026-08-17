@@ -20,4 +20,5 @@ public class Nokkelsystem
     public List<Rekvirent> Rekvirenter { get; set; } = [];
     public List<SystemVedlegg> Vedlegg { get; set; } = [];
     public List<NokkelKvittering> Kvitteringer { get; set; } = [];
+    public List<Plantegning> Plantegninger { get; set; } = [];
 }

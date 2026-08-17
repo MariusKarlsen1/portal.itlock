@@ -89,6 +89,51 @@ else
         </section>
 
         <section class="system-section">
+            <h2>Plantegninger</h2>
+            <p class="section-hint">Last opp plantegninger og plasser dører på dem for å følge opp montasje.</p>
+
+            @if (!Id.HasValue)
+            {
+                <p class="list-empty">Lagre systemet først for å kunne legge til plantegninger.</p>
+            }
+            else
+            {
+                @if (_plantegninger.Count > 0)
+                {
+                    <ul class="vedlegg-list">
+                        @foreach (var p in _plantegninger)
+                        {
+                            <li class="vedlegg-item">
+                                <a href="@($"/plantegning/{p.Id}")">@p.Navn</a>
+                                <span class="vedlegg-type">@(string.IsNullOrWhiteSpace(p.Byggetrinn) ? "Ugruppert" : p.Byggetrinn)</span>
+                                <button type="button" class="remove-button" @onclick="@(() => RemovePlantegning(p))">Fjern</button>
+                            </li>
+                        }
+                    </ul>
+                }
+                else
+                {
+                    <p class="list-empty">Ingen plantegninger lastet opp ennå.</p>
+                }
+
+                <div class="vedlegg-upload">
+                    <input @bind="_nyPlantegningNavn" @bind:event="oninput" placeholder="Navn, f.eks. 1. etasje" />
+                    <input @bind="_nyPlantegningByggetrinn" @bind:event="oninput" placeholder="Byggetrinn (valgfritt)" />
+                    <InputFile OnChange="OnPlantegningSelected" accept="image/*" />
+                </div>
+
+                @if (_uploadingPlantegning)
+                {
+                    <p class="list-empty">Laster opp...</p>
+                }
+                @if (!string.IsNullOrEmpty(_plantegningFeil))
+                {
+                    <p class="form-error">@_plantegningFeil</p>
+                }
+            }
+        </section>
+
+        <section class="system-section">
             <h2>Vedlegg</h2>
             <p class="section-hint">Sikkerhetsskjema, bestillingsskjema, låsplan og annen dokumentasjon som tilhører systemet.</p>
 
@@ -178,6 +223,11 @@ else
     private string _valgtVedleggType = "";
     private bool _uploadingVedlegg;
     private string? _vedleggFeil;
+    private List<Plantegning> _plantegninger = [];
+    private string _nyPlantegningNavn = "";
+    private string _nyPlantegningByggetrinn = "";
+    private bool _uploadingPlantegning;
+    private string? _plantegningFeil;
     private bool _notFound;
     private bool _confirmingDelete;
     private int? _loadedId;
@@ -203,6 +253,7 @@ else
                 .Include(s => s.Rekvirenter)
                 .Include(s => s.Kvitteringer)
                 .Include(s => s.Vedlegg)
+                .Include(s => s.Plantegninger)
                 .FirstOrDefaultAsync(s => s.Id == Id.Value);
 
             if (existing is null)
@@ -215,18 +266,21 @@ else
             _rekvirenter = existing.Rekvirenter;
             _kvitteringer = existing.Kvitteringer;
             _vedlegg = existing.Vedlegg;
+            _plantegninger = existing.Plantegninger;
         }
         else
         {
             _rekvirenter = [];
             _kvitteringer = [];
             _vedlegg = [];
+            _plantegninger = [];
             _form = new Nokkelsystem
             {
                 Systemnummer = "",
                 Rekvirenter = _rekvirenter,
                 Kvitteringer = _kvitteringer,
-                Vedlegg = _vedlegg
+                Vedlegg = _vedlegg,
+                Plantegninger = _plantegninger
             };
         }
     }
@@ -292,6 +346,67 @@ else
         Db.SystemVedlegg.Remove(v);
         await Db.SaveChangesAsync();
         _vedlegg.Remove(v);
+    }
+
+    private async Task OnPlantegningSelected(InputFileChangeEventArgs e)
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        _plantegningFeil = null;
+
+        if (string.IsNullOrWhiteSpace(_nyPlantegningNavn))
+        {
+            _plantegningFeil = "Plantegningen må ha et navn.";
+            return;
+        }
+
+        var file = e.File;
+        if (file.Size > 20_000_000)
+        {
+            _plantegningFeil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        _uploadingPlantegning = true;
+
+        try
+        {
+            using var buffer = new MemoryStream();
+            await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            var plantegning = new Plantegning
+            {
+                NokkelsystemId = Id.Value,
+                Navn = _nyPlantegningNavn.Trim(),
+                Byggetrinn = string.IsNullOrWhiteSpace(_nyPlantegningByggetrinn) ? null : _nyPlantegningByggetrinn.Trim(),
+                Filnavn = file.Name,
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                Data = buffer.ToArray()
+            };
+
+            Db.Plantegninger.Add(plantegning);
+            await Db.SaveChangesAsync();
+            _plantegninger.Add(plantegning);
+            _nyPlantegningNavn = "";
+            _nyPlantegningByggetrinn = "";
+        }
+        finally
+        {
+            _uploadingPlantegning = false;
+        }
+    }
+
+    private async Task RemovePlantegning(Plantegning p)
+    {
+        Db.Plantegninger.Remove(p);
+        await Db.SaveChangesAsync();
+        _plantegninger.Remove(p);
     }
 
     private async Task Lagre()
