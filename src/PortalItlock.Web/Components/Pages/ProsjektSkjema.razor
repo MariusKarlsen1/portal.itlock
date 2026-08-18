@@ -1,6 +1,7 @@
 @page "/prosjekter/ny"
 @page "/prosjekter/{Id:int}"
 @rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -10,7 +11,11 @@
 
 <PageTitle>@(Id.HasValue ? _form.Navn : "Nytt prosjekt")</PageTitle>
 
-@if (_notFound)
+@if (_ingenTilgang)
+{
+    <p class="form-error">Du har ikke tilgang til dette prosjektet.</p>
+}
+else if (_notFound)
 {
     <p class="form-error">Fant ikke prosjektet. Det kan være slettet.</p>
 }
@@ -22,11 +27,17 @@ else
     {
         <nav class="prosjekt-tabs">
             <button type="button" class="@TabClass("oversikt")" @onclick="@(() => _activeTab = "oversikt")">Oversikt</button>
+            <button type="button" class="@TabClass("status")" @onclick="@(() => _activeTab = "status")">Status</button>
             <button type="button" class="@TabClass("dorer")" @onclick="@(() => _activeTab = "dorer")">Dører</button>
             <button type="button" class="@TabClass("plantegninger")" @onclick="@(() => _activeTab = "plantegninger")">Plantegninger</button>
             <button type="button" class="@TabClass("vedlegg")" @onclick="@(() => _activeTab = "vedlegg")">Vedlegg</button>
             <button type="button" class="@TabClass("tilbud")" @onclick="@(() => _activeTab = "tilbud")">Tilbud</button>
             <button type="button" class="@TabClass("dorid")" @onclick="@(() => _activeTab = "dorid")">Dør ID</button>
+            @if (_naverendeRolle != BrukerRolle.Montor)
+            {
+                <button type="button" class="@TabClass("personer")" @onclick="@(() => _activeTab = "personer")">Personer</button>
+            }
+            <button type="button" class="@TabClass("info")" @onclick="@(() => _activeTab = "info")">Prosjektinformasjon</button>
         </nav>
     }
 
@@ -105,6 +116,30 @@ else
                     }
                 }
             </div>
+        </div>
+    }
+    else if (_activeTab == "status")
+    {
+        <div class="prosjekt-layout">
+            <div class="status-grid">
+                <div class="status-card">
+                    <span class="status-label">Kalkulert montasjetid</span>
+                    <span class="status-value">@FormatTid(KalkulertMontasjeMinutter)</span>
+                </div>
+                <div class="status-card">
+                    <span class="status-label">Total tidsforbruk</span>
+                    <span class="status-value">@FormatTid(BruktMontasjeMinutter)</span>
+                </div>
+                <div class="status-card">
+                    <span class="status-label">Estimert gjenværende montasjetid</span>
+                    <span class="status-value">@FormatTid(GjenstaendeMontasjeMinutter)</span>
+                </div>
+                <div class="status-card">
+                    <span class="status-label">Fremdrift</span>
+                    <span class="status-value">@AntallBeslagMontert/@AntallBeslagTotalt <span class="status-unit">beslag</span></span>
+                </div>
+            </div>
+            <p class="section-hint">Basert på montasjetid registrert per vare i Komponentregisteret og hvilke beslag som er krysset av som montert på prosjektets dører.</p>
         </div>
     }
     else if (_activeTab == "dorer")
@@ -333,6 +368,54 @@ else
             </div>
         </div>
     }
+    else if (_activeTab == "personer" && _naverendeRolle != BrukerRolle.Montor)
+    {
+        <div class="prosjekt-layout">
+            <p class="section-hint">Legg til personer som skal ha tilgang til å åpne dette prosjektet. Admin og prosjektledere har alltid tilgang til alle prosjekter.</p>
+
+            @if (_form.Medlemmer.Count > 0)
+            {
+                <ul class="vedlegg-list">
+                    @foreach (var m in _form.Medlemmer)
+                    {
+                        <li @key="m.Id" class="vedlegg-item">
+                            <span>@m.Navn <span class="vedlegg-type">@m.Rolle.Visningsnavn()</span></span>
+                            <button type="button" class="remove-button" @onclick="@(() => FjernMedlem(m))">Fjern</button>
+                        </li>
+                    }
+                </ul>
+            }
+            else
+            {
+                <p class="list-empty">Ingen personer lagt til ennå.</p>
+            }
+
+            <div class="vedlegg-upload">
+                <select @bind="_valgtNyttMedlemId">
+                    <option value="">Velg person...</option>
+                    @foreach (var b in TilgjengeligeBrukere)
+                    {
+                        <option value="@b.Id">@b.Navn (@b.Rolle.Visningsnavn())</option>
+                    }
+                </select>
+                <button type="button" class="add-button" @onclick="LeggTilMedlem" disabled="@(_valgtNyttMedlemId is null)">Legg til</button>
+            </div>
+        </div>
+    }
+    else if (_activeTab == "info")
+    {
+        <div class="prosjekt-layout">
+            <p class="section-hint">Generell informasjon om prosjektet, tilgangsdetaljer, kontaktpersoner osv.</p>
+            <textarea class="info-textarea" rows="14" @bind="_form.Info" placeholder="Skriv inn informasjon om prosjektet..."></textarea>
+            <div class="form-actions">
+                <button type="button" class="save-button" @onclick="LagreInfo">Lagre</button>
+                @if (!string.IsNullOrEmpty(_infoMessage))
+                {
+                    <span class="save-success">@_infoMessage</span>
+                }
+            </div>
+        </div>
+    }
 }
 
 @code {
@@ -357,16 +440,68 @@ else
     private string? _dorIdMessage;
     private string _activeTab = "oversikt";
     private bool _notFound;
+    private bool _ingenTilgang;
     private bool _confirmingDelete;
     private int? _loadedId;
     private bool _hasLoaded;
     private string? _error;
     private string? _savedMessage;
+    private List<Bruker> _alleBrukere = [];
+    private int? _valgtNyttMedlemId;
+    private string? _infoMessage;
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+    private BrukerRolle? _naverendeRolle;
 
     private string TabClass(string tab) => _activeTab == tab ? "tab-button tab-button-active" : "tab-button";
 
+    private List<Bruker> TilgjengeligeBrukere =>
+        _alleBrukere.Where(b => !_form.Medlemmer.Any(m => m.Id == b.Id)).ToList();
+
+    private int KalkulertMontasjeMinutter =>
+        _dorer.SelectMany(d => d.Komponenter).Sum(dk => dk.Antall * (dk.Component?.MontasjeMinutter ?? 0));
+
+    private int BruktMontasjeMinutter =>
+        _dorer.SelectMany(d => d.Komponenter).Where(dk => dk.Montert).Sum(dk => dk.Antall * (dk.Component?.MontasjeMinutter ?? 0));
+
+    private int GjenstaendeMontasjeMinutter =>
+        Math.Max(0, KalkulertMontasjeMinutter - BruktMontasjeMinutter);
+
+    private int AntallBeslagTotalt => _dorer.SelectMany(d => d.Komponenter).Sum(dk => dk.Antall);
+
+    private int AntallBeslagMontert => _dorer.SelectMany(d => d.Komponenter).Where(dk => dk.Montert).Sum(dk => dk.Antall);
+
+    private static string FormatTid(int minutter)
+    {
+        if (minutter <= 0)
+        {
+            return "0 min";
+        }
+
+        var timer = minutter / 60;
+        var rest = minutter % 60;
+        return timer > 0 ? $"{timer}t {rest}min" : $"{rest} min";
+    }
+
     protected override async Task OnParametersSetAsync()
     {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
+            }
+        }
+
         if (_hasLoaded && _loadedId == Id)
         {
             return;
@@ -376,12 +511,15 @@ else
         _loadedId = Id;
         _confirmingDelete = false;
         _savedMessage = null;
+        _infoMessage = null;
         _error = null;
         _notFound = false;
+        _ingenTilgang = false;
         _activeTab = "oversikt";
         _selectedDoor = null;
 
         _kunder = await Db.Kunder.OrderBy(k => k.Navn).ToListAsync();
+        _alleBrukere = await Db.Brukere.OrderBy(b => b.Navn).ToListAsync();
 
         if (Id.HasValue)
         {
@@ -389,11 +527,18 @@ else
                 .Include(p => p.Plantegninger)
                 .Include(p => p.Vedlegg)
                 .Include(p => p.Tilbud)
+                .Include(p => p.Medlemmer)
                 .FirstOrDefaultAsync(p => p.Id == Id.Value);
 
             if (existing is null)
             {
                 _notFound = true;
+                return;
+            }
+
+            if (_naverendeRolle == BrukerRolle.Montor && !existing.Medlemmer.Any(m => m.Id == _naverendeBrukerId))
+            {
+                _ingenTilgang = true;
                 return;
             }
 
@@ -411,12 +556,19 @@ else
                 .Where(d => d.ProsjektId == Id.Value)
                 .Include(d => d.Plantegning)
                 .Include(d => d.Komponenter).ThenInclude(dk => dk.Component)
+                .Include(d => d.Komponenter).ThenInclude(dk => dk.MontertAvBruker)
                 .Include(d => d.Funksjoner)
                 .OrderBy(d => d.Dornummer)
                 .ToListAsync();
         }
         else
         {
+            if (_naverendeRolle == BrukerRolle.Montor)
+            {
+                _ingenTilgang = true;
+                return;
+            }
+
             _plantegninger = [];
             _vedlegg = [];
             _tilbud = [];
@@ -732,6 +884,40 @@ else
         Db.DorIdMaler.Remove(m);
         await Db.SaveChangesAsync();
         _dorIdMaler.Remove(m);
+    }
+
+    // Personer
+
+    private async Task LeggTilMedlem()
+    {
+        if (_valgtNyttMedlemId is null)
+        {
+            return;
+        }
+
+        var bruker = _alleBrukere.FirstOrDefault(b => b.Id == _valgtNyttMedlemId);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        _form.Medlemmer.Add(bruker);
+        await Db.SaveChangesAsync();
+        _valgtNyttMedlemId = null;
+    }
+
+    private async Task FjernMedlem(Bruker b)
+    {
+        _form.Medlemmer.Remove(b);
+        await Db.SaveChangesAsync();
+    }
+
+    // Prosjektinformasjon
+
+    private async Task LagreInfo()
+    {
+        await Db.SaveChangesAsync();
+        _infoMessage = "Lagret.";
     }
 
     private static string FriBreddeValue(bool? verdi) => verdi switch

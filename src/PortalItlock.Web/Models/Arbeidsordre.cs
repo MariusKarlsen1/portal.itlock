@@ -10,7 +10,7 @@ public class Arbeidsordre
     public Prosjekt? Prosjekt { get; set; }
 
     public int? AnsvarligMontorId { get; set; }
-    public Montor? AnsvarligMontor { get; set; }
+    public Bruker? AnsvarligMontor { get; set; }
 
     public int? TilbudId { get; set; }
     public Tilbud? Tilbud { get; set; }

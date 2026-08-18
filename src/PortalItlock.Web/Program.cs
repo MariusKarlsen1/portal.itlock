@@ -40,6 +40,21 @@ builder.Services.AddCascadingAuthenticationState();
 
 var app = builder.Build();
 
+using (var seedScope = app.Services.CreateScope())
+{
+    var seedDb = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
+    {
+        seedDb.Brukere.Add(new PortalItlock.Web.Models.Bruker
+        {
+            Navn = "Marius Karlsen",
+            Epost = "marius@itlock.no",
+            Rolle = PortalItlock.Web.Models.BrukerRolle.Admin
+        });
+        seedDb.SaveChanges();
+    }
+}
+
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
 {
@@ -59,10 +74,10 @@ app.UseAuthorization();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
-app.MapPost("/account/login", async (HttpContext http, IConfiguration config) =>
+app.MapPost("/account/login", async (HttpContext http, ApplicationDbContext db) =>
 {
     var form = await http.Request.ReadFormAsync();
-    var username = form["username"].ToString();
+    var epost = form["username"].ToString().Trim();
     var password = form["password"].ToString();
     var returnUrl = form["returnUrl"].ToString();
 
@@ -70,22 +85,52 @@ app.MapPost("/account/login", async (HttpContext http, IConfiguration config) =>
         ? returnUrl
         : "/";
 
-    var expectedUsername = config["Auth:Username"] ?? "";
-    var expectedHash = config["Auth:PasswordHash"] ?? "";
+    var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
+    var passwordOk = bruker?.PasswordHash is not null && PasswordHasher.Verify(password, bruker.PasswordHash);
 
-    var usernameOk = string.Equals(username, expectedUsername, StringComparison.OrdinalIgnoreCase);
-    var passwordOk = !string.IsNullOrEmpty(expectedHash) && PasswordHasher.Verify(password, expectedHash);
-
-    if (!usernameOk || !passwordOk)
+    if (bruker is null || !passwordOk)
     {
         return Results.Redirect($"/login?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
     }
 
-    var claims = new List<Claim> { new(ClaimTypes.Name, username) };
+    var claims = new List<Claim>
+    {
+        new(ClaimTypes.Name, bruker.Navn),
+        new(ClaimTypes.Role, bruker.Rolle.ToString()),
+        new("BrukerId", bruker.Id.ToString())
+    };
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
 
     return Results.Redirect(safeReturnUrl);
+}).AllowAnonymous();
+
+app.MapPost("/account/sett-passord", async (HttpContext http, ApplicationDbContext db) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var epost = form["epost"].ToString().Trim();
+    var passord = form["passord"].ToString();
+    var bekreft = form["bekreft"].ToString();
+
+    var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
+
+    if (bruker is null)
+    {
+        return Results.Redirect("/sett-passord?feil=finnes-ikke");
+    }
+    if (bruker.PasswordHash is not null)
+    {
+        return Results.Redirect("/sett-passord?feil=allerede-satt");
+    }
+    if (passord.Length < 8 || passord != bekreft)
+    {
+        return Results.Redirect("/sett-passord?feil=ugyldig");
+    }
+
+    bruker.PasswordHash = PasswordHasher.Hash(passord);
+    await db.SaveChangesAsync();
+
+    return Results.Redirect("/login?satt=1");
 }).AllowAnonymous();
 
 app.MapPost("/account/logout", async (HttpContext http) =>
@@ -142,7 +187,7 @@ app.MapGet("/timeoversikt/eksport-pdf", async (DateTime fra, DateTime til, int? 
 {
     var registreringer = await service.HentRegistreringerAsync(fra, til, montorId);
     var montorNavn = montorId.HasValue
-        ? (await db.Montorer.FindAsync(montorId.Value))?.Navn
+        ? (await db.Brukere.FindAsync(montorId.Value))?.Navn
         : null;
     var pdf = service.GenererPdf(registreringer, fra, til, montorNavn);
     return Results.File(pdf, "application/pdf");

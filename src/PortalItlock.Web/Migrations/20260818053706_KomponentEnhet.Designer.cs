@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,27 +11,14 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260818053706_KomponentEnhet")]
+    partial class KomponentEnhet
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
-
-            modelBuilder.Entity("BrukerProsjekt", b =>
-                {
-                    b.Property<int>("MedlemmerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ProsjekterId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("MedlemmerId", "ProsjekterId");
-
-                    b.HasIndex("ProsjekterId");
-
-                    b.ToTable("ProsjektMedlemmer", (string)null);
-                });
 
             modelBuilder.Entity("DorDorFunksjon", b =>
                 {
@@ -1427,9 +1415,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Epost")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Info")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Kontaktperson")
                         .HasColumnType("TEXT");
 
@@ -2017,21 +2002,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("MontorId");
 
                     b.ToTable("Timeregistreringer");
-                });
-
-            modelBuilder.Entity("BrukerProsjekt", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Bruker", null)
-                        .WithMany()
-                        .HasForeignKey("MedlemmerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.Prosjekt", null)
-                        .WithMany()
-                        .HasForeignKey("ProsjekterId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("DorDorFunksjon", b =>

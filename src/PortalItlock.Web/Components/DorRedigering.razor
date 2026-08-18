@@ -1,3 +1,4 @@
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -157,6 +158,7 @@
                 <tr>
                     <th>Navn</th>
                     <th>Antall</th>
+                    <th>Enhet</th>
                     <th>Status</th>
                     <th></th>
                 </tr>
@@ -167,11 +169,12 @@
                     <tr @key="dk.ComponentId">
                         <td>@dk.Component?.Navn</td>
                         <td><input class="antall-input" @bind="dk.Antall" /></td>
+                        <td><input class="enhet-input" @bind="dk.Enhet" placeholder="stk" /></td>
                         <td>
                             <button type="button" class="beslag-status @(dk.Montert ? "beslag-status-montert" : "beslag-status-ikke-montert")" @onclick="@(() => ToggleBeslagMontert(dk))">
                                 @if (dk.Montert)
                                 {
-                                    <text>Montert @(dk.MontertDato?.ToString("dd.MM.yyyy"))</text>
+                                    <text>Montert @(dk.MontertDato?.ToString("dd.MM.yyyy")) @(dk.MontertAvBruker is not null ? $"({dk.MontertAvBruker.Initialer})" : "")</text>
                                 }
                                 else
                                 {
@@ -225,6 +228,11 @@
     [Parameter] public EventCallback OnUnplaced { get; set; }
     [Parameter] public EventCallback OnSaved { get; set; }
 
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int? _naverendeBrukerId;
+    private Bruker? _naverendeBruker;
+
     private sealed class SearchResult
     {
         public int Id { get; set; }
@@ -274,6 +282,17 @@
             .Where(m => m.ProsjektId == Dor.ProsjektId)
             .OrderBy(m => m.Kode)
             .ToListAsync();
+
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var claim = state.User.FindFirst("BrukerId")?.Value;
+            if (claim is not null && int.TryParse(claim, out var id))
+            {
+                _naverendeBrukerId = id;
+                _naverendeBruker = await Db.Brukere.FindAsync(id);
+            }
+        }
     }
 
     private static string FriBreddeValue(bool? verdi) => verdi switch
@@ -359,7 +378,7 @@
         else
         {
             var component = await Db.Components.FindAsync(r.Id);
-            var dk = new DorKomponent { DorId = Dor.Id, ComponentId = r.Id, Component = component, Antall = 1 };
+            var dk = new DorKomponent { DorId = Dor.Id, ComponentId = r.Id, Component = component, Antall = 1, Enhet = component?.Enhet };
             Dor.Komponenter.Add(dk);
             Db.DorKomponenter.Add(dk);
         }
@@ -394,7 +413,7 @@
             }
             else
             {
-                var dk = new DorKomponent { DorId = Dor.Id, ComponentId = pk.ComponentId, Component = pk.Component, Antall = pk.Antall };
+                var dk = new DorKomponent { DorId = Dor.Id, ComponentId = pk.ComponentId, Component = pk.Component, Antall = pk.Antall, Enhet = pk.Component?.Enhet };
                 Dor.Komponenter.Add(dk);
                 Db.DorKomponenter.Add(dk);
             }
@@ -434,6 +453,8 @@
     {
         dk.Montert = !dk.Montert;
         dk.MontertDato = dk.Montert ? DateTime.Today : null;
+        dk.MontertAvBrukerId = dk.Montert ? _naverendeBrukerId : null;
+        dk.MontertAvBruker = dk.Montert ? _naverendeBruker : null;
         await Db.SaveChangesAsync();
         await OnSaved.InvokeAsync();
     }

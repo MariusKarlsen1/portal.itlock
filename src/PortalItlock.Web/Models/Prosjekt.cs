@@ -16,6 +16,7 @@ public class Prosjekt
     public string? System { get; set; }
     public ProsjektStatus? Status { get; set; }
     public string? Notater { get; set; }
+    public string? Info { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
@@ -25,4 +26,5 @@ public class Prosjekt
     public List<Tilbud> Tilbud { get; set; } = [];
     public List<Arbeidsordre> Arbeidsordre { get; set; } = [];
     public List<DorIdMal> DorIdMaler { get; set; } = [];
+    public List<Bruker> Medlemmer { get; set; } = [];
 }

@@ -10,7 +10,7 @@ public class Timeregistrering
     public Arbeidsordre? Arbeidsordre { get; set; }
 
     public int MontorId { get; set; }
-    public Montor? Montor { get; set; }
+    public Bruker? Montor { get; set; }
 
     public DateTime Dato { get; set; } = DateTime.Today;
     public TimeSpan Start { get; set; }

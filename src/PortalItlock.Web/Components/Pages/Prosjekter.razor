@@ -1,5 +1,6 @@
 @page "/prosjekter"
 @rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -10,7 +11,10 @@
 <h1>Prosjekter</h1>
 <p>Oversikt over prosjekter: dører, plantegninger og montasjestatus. Søk på navn, kunde eller adresse.</p>
 
-<a class="new-button" href="prosjekter/ny">Nytt prosjekt</a>
+@if (_naverendeRolle != BrukerRolle.Montor)
+{
+    <a class="new-button" href="prosjekter/ny">Nytt prosjekt</a>
+}
 <button type="button" class="@(_valgteStatusFilter.Count > 0 ? "edit-button-active" : "filter-button")" @onclick="@(() => _visFilter = !_visFilter)">
     Filtrer@(_valgteStatusFilter.Count > 0 ? $" ({_valgteStatusFilter.Count})" : "")
 </button>
@@ -98,6 +102,10 @@ else
     private HashSet<ProsjektStatus> _valgteStatusFilter = [];
     private bool _visFilter;
 
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+    private BrukerRolle? _naverendeRolle;
+
     private List<ProsjektRad> _filtrert => _alle
         .Where(p => string.IsNullOrWhiteSpace(_search) ||
                 p.Navn.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
@@ -116,7 +124,29 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        _alle = await Db.Prosjekter
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
+            }
+        }
+
+        IQueryable<Prosjekt> query = Db.Prosjekter;
+        if (_naverendeRolle == BrukerRolle.Montor)
+        {
+            query = query.Where(p => p.Medlemmer.Any(m => m.Id == _naverendeBrukerId));
+        }
+
+        _alle = await query
             .OrderByDescending(p => p.OpprettetDato)
             .Select(p => new ProsjektRad
             {

@@ -1,0 +1,231 @@
+@page "/brukere"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Brukere</PageTitle>
+
+<h1>Brukere</h1>
+<p>Alle som skal ha tilgang til portalen legges inn her med e-post og rolle. De setter selv passord første gang via "Sett passord" på innloggingssiden.</p>
+
+@if (_brukere.Count == 0)
+{
+    <p class="list-empty">Ingen brukere opprettet ennå.</p>
+}
+else
+{
+    <table class="bruker-table">
+        <thead>
+            <tr>
+                <th>Navn</th>
+                <th>E-post</th>
+                <th>Stilling</th>
+                <th>Tilgang</th>
+                <th>Passord</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var b in _brukere)
+            {
+                <tr @key="b.Id">
+                    <td><input @bind="b.Navn" @bind:event="oninput" /></td>
+                    <td><input @bind="b.Epost" @bind:event="oninput" /></td>
+                    <td><input @bind="b.Stilling" @bind:event="oninput" /></td>
+                    <td>
+                        <select @bind="b.Rolle">
+                            @foreach (var rolle in Enum.GetValues<BrukerRolle>())
+                            {
+                                <option value="@rolle">@rolle.Visningsnavn()</option>
+                            }
+                        </select>
+                    </td>
+                    <td>
+                        @if (b.HarPassord)
+                        {
+                            <span class="passord-satt">Satt</span>
+                        }
+                        else
+                        {
+                            <span class="passord-ikke-satt">Ikke satt</span>
+                        }
+                    </td>
+                    <td class="bruker-actions">
+                        <button type="button" class="save-button" @onclick="@(() => Lagre(b))">Lagre</button>
+                        @if (b.HarPassord)
+                        {
+                            <button type="button" class="remove-button" @onclick="@(() => NullstillPassord(b))">Nullstill passord</button>
+                        }
+                        <button type="button" class="remove-button" @onclick="@(() => SlettBruker(b))">Slett</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<div class="new-bruker">
+    <h2>Ny bruker</h2>
+    <div class="new-bruker-form">
+        <input @bind="_nyNavn" @bind:event="oninput" placeholder="Navn" />
+        <input @bind="_nyEpost" @bind:event="oninput" placeholder="E-post" />
+        <input @bind="_nyStilling" @bind:event="oninput" placeholder="Stilling (valgfritt)" />
+        <select @bind="_nyRolle">
+            @foreach (var rolle in Enum.GetValues<BrukerRolle>())
+            {
+                <option value="@rolle">@rolle.Visningsnavn()</option>
+            }
+        </select>
+        <button type="button" class="add-button" @onclick="OpprettBruker">Opprett</button>
+    </div>
+    @if (!string.IsNullOrEmpty(_melding))
+    {
+        <p class="save-success">@_melding</p>
+    }
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
+    }
+</div>
+
+@code {
+    private sealed class BrukerRad
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string Epost { get; set; } = "";
+        public string? Stilling { get; set; }
+        public BrukerRolle Rolle { get; set; }
+        public bool HarPassord { get; set; }
+    }
+
+    private List<BrukerRad> _brukere = [];
+    private string _nyNavn = "";
+    private string _nyEpost = "";
+    private string _nyStilling = "";
+    private BrukerRolle _nyRolle = BrukerRolle.Montor;
+    private string? _melding;
+    private string? _feil;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _brukere = await Db.Brukere
+            .OrderBy(b => b.Navn)
+            .Select(b => new BrukerRad
+            {
+                Id = b.Id,
+                Navn = b.Navn,
+                Epost = b.Epost,
+                Stilling = b.Stilling,
+                Rolle = b.Rolle,
+                HarPassord = b.PasswordHash != null
+            })
+            .ToListAsync();
+    }
+
+    private async Task OpprettBruker()
+    {
+        var navn = _nyNavn.Trim();
+        var epost = _nyEpost.Trim();
+        if (navn.Length == 0 || epost.Length == 0)
+        {
+            _feil = "Navn og e-post må fylles ut.";
+            return;
+        }
+
+        if (await Db.Brukere.AnyAsync(b => b.Epost.ToLower() == epost.ToLower()))
+        {
+            _feil = "Det finnes allerede en bruker med denne e-posten.";
+            return;
+        }
+
+        Db.Brukere.Add(new Bruker
+        {
+            Navn = navn,
+            Epost = epost,
+            Stilling = string.IsNullOrWhiteSpace(_nyStilling) ? null : _nyStilling.Trim(),
+            Rolle = _nyRolle
+        });
+        await Db.SaveChangesAsync();
+
+        _nyNavn = "";
+        _nyEpost = "";
+        _nyStilling = "";
+        _nyRolle = BrukerRolle.Montor;
+        _feil = null;
+        _melding = $"Brukeren \"{navn}\" er opprettet. De kan nå sette passord via \"Sett passord\" på innloggingssiden.";
+        await LoadAsync();
+    }
+
+    private async Task Lagre(BrukerRad rad)
+    {
+        var navn = rad.Navn.Trim();
+        var epost = rad.Epost.Trim();
+        if (navn.Length == 0 || epost.Length == 0)
+        {
+            _feil = "Navn og e-post må fylles ut.";
+            return;
+        }
+
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == rad.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        bruker.Navn = navn;
+        bruker.Epost = epost;
+        bruker.Stilling = string.IsNullOrWhiteSpace(rad.Stilling) ? null : rad.Stilling.Trim();
+        bruker.Rolle = rad.Rolle;
+        await Db.SaveChangesAsync();
+        _feil = null;
+        _melding = $"\"{navn}\" er lagret.";
+    }
+
+    private async Task NullstillPassord(BrukerRad rad)
+    {
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == rad.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        bruker.PasswordHash = null;
+        await Db.SaveChangesAsync();
+        _melding = $"Passord nullstilt for \"{rad.Navn}\". De kan sette nytt via \"Sett passord\" på innloggingssiden.";
+        _feil = null;
+        await LoadAsync();
+    }
+
+    private async Task SlettBruker(BrukerRad rad)
+    {
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == rad.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        Db.Brukere.Remove(bruker);
+
+        try
+        {
+            await Db.SaveChangesAsync();
+            _melding = $"\"{rad.Navn}\" er slettet.";
+            _feil = null;
+            await LoadAsync();
+        }
+        catch (DbUpdateException)
+        {
+            Db.Entry(bruker).State = EntityState.Unchanged;
+            _feil = $"\"{rad.Navn}\" har registrerte timer eller arbeidsordre og kan ikke slettes.";
+        }
+    }
+}

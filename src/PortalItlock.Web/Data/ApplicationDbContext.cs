@@ -33,7 +33,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<DorFunksjon> DorFunksjoner => Set<DorFunksjon>();
     public DbSet<Tilbud> Tilbud => Set<Tilbud>();
     public DbSet<TilbudLinje> TilbudLinjer => Set<TilbudLinje>();
-    public DbSet<Montor> Montorer => Set<Montor>();
+    public DbSet<Bruker> Brukere => Set<Bruker>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
     public DbSet<Kunde> Kunder => Set<Kunde>();
@@ -78,6 +78,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasOne(dk => dk.Component)
                 .WithMany()
                 .HasForeignKey(dk => dk.ComponentId);
+
+            entity.HasOne(dk => dk.MontertAvBruker)
+                .WithMany(b => b.MonterteKomponenter)
+                .HasForeignKey(dk => dk.MontertAvBrukerId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<Dor>()
@@ -131,6 +136,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(p => p.DorIdMaler)
             .HasForeignKey(m => m.ProsjektId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Prosjekt>()
+            .HasMany(p => p.Medlemmer)
+            .WithMany(b => b.Prosjekter)
+            .UsingEntity(j => j.ToTable("ProsjektMedlemmer"));
 
         modelBuilder.Entity<Timeregistrering>()
             .HasOne(t => t.Arbeidsordre)
