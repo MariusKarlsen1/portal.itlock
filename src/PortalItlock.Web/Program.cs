@@ -21,6 +21,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 builder.Services.AddScoped<PackageMatchingService>();
 builder.Services.AddScoped<TilbudPdfService>();
 builder.Services.AddScoped<TimeoversiktService>();
+builder.Services.AddScoped<FdvPdfService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -180,6 +181,24 @@ app.MapGet("/tilbud/{id:int}/pdf", async (int id, ApplicationDbContext db, Tilbu
     var tilbud = await db.Tilbud.Include(t => t.Prosjekt).FirstAsync(t => t.Id == id);
     var prosjektNavn = tilbud.Prosjekt?.Navn ?? "";
     var filnavn = $"Tilbud - {tilbud.Tittel} - {prosjektNavn} - itlock AS - {tilbud.OpprettetDato:dd.MM.yyyy}.pdf";
+    foreach (var ugyldig in Path.GetInvalidFileNameChars())
+    {
+        filnavn = filnavn.Replace(ugyldig, '-');
+    }
+
+    return Results.File(pdf, "application/pdf", filnavn);
+}).RequireAuthorization();
+
+app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, ApplicationDbContext db, FdvPdfService fdvService) =>
+{
+    var pdf = await fdvService.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var prosjekt = await db.Prosjekter.FindAsync(id);
+    var filnavn = $"FDV - {prosjekt?.Navn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
     foreach (var ugyldig in Path.GetInvalidFileNameChars())
     {
         filnavn = filnavn.Replace(ugyldig, '-');

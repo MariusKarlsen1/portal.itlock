@@ -19,5 +19,9 @@ public class Component
     public string? Enhet { get; set; }
     public bool Aktiv { get; set; } = true;
 
+    public byte[]? FdvData { get; set; }
+    public string? FdvFilnavn { get; set; }
+    public string? FdvContentType { get; set; }
+
     public List<PackageComponent> Pakker { get; set; } = [];
 }
