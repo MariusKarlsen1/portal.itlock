@@ -36,6 +36,10 @@
 </div>
 
 <p class="result-count">@_filteredCount av @_components.Count komponenter</p>
+@if (!string.IsNullOrEmpty(_fdvFeil))
+{
+    <p class="form-error">@_fdvFeil</p>
+}
 
 <div class="table-wrap">
     <table class="component-table">
@@ -50,6 +54,7 @@
                 <th>Veiledende</th>
                 <th>Montasjetid</th>
                 <th>Enhet</th>
+                <th>FDV</th>
                 <th>Brukt i</th>
                 <th></th>
             </tr>
@@ -90,6 +95,17 @@
                         <td>
                             <input @bind="c.Enhet" class="price-input" placeholder="stk" />
                         </td>
+                        <td class="fdv-cell">
+                            @if (c.HarFdv)
+                            {
+                                <a href="@($"/komponent/{c.Id}/fdv")" target="_blank">@c.FdvFilnavn</a>
+                                <button type="button" class="remove-button" @onclick="@(() => RemoveFdv(c))">Fjern</button>
+                            }
+                            else
+                            {
+                                <InputFile OnChange="@(e => UploadFdv(c, e))" accept=".pdf,application/pdf" />
+                            }
+                        </td>
                         <td>@UsageLabel(c.PackageCount)</td>
                         <td class="actions">
                             <button type="button" class="save-button" @onclick="@(() => Save(c))">Lagre</button>
@@ -106,6 +122,17 @@
                         <td class="price-cell">@FormatPrice(c.PrisVeiledende)</td>
                         <td class="price-cell">@FormatMinutter(c.MontasjeMinutter)</td>
                         <td>@c.Enhet</td>
+                        <td class="fdv-cell">
+                            @if (c.HarFdv)
+                            {
+                                <a href="@($"/komponent/{c.Id}/fdv")" target="_blank">@c.FdvFilnavn</a>
+                                <button type="button" class="remove-button" @onclick="@(() => RemoveFdv(c))">Fjern</button>
+                            }
+                            else
+                            {
+                                <InputFile OnChange="@(e => UploadFdv(c, e))" accept=".pdf,application/pdf" />
+                            }
+                        </td>
                         <td>@UsageLabel(c.PackageCount)</td>
                         <td class="actions">
                             <button type="button" class="edit-button" @onclick="@(() => StartEdit(c))">Rediger</button>
@@ -173,6 +200,8 @@
         public bool Aktiv { get; set; }
         public bool IngenPris { get; set; }
         public int PackageCount { get; set; }
+        public bool HarFdv { get; set; }
+        public string? FdvFilnavn { get; set; }
     }
 
     private sealed class NewComponentDraft
@@ -199,6 +228,7 @@
     private string? _addMessage;
     private string _nyTypeNavn = "";
     private string? _nyTypeMessage;
+    private string? _fdvFeil;
 
     private int TotalPages => (int)Math.Ceiling(_filteredCount / (double)PageSize);
 
@@ -301,7 +331,9 @@
             MontasjeMinutter = c.MontasjeMinutter,
             Enhet = c.Enhet,
             Aktiv = c.Aktiv,
-            PackageCount = c.Pakker.Count
+            PackageCount = c.Pakker.Count,
+            HarFdv = c.FdvData != null,
+            FdvFilnavn = c.FdvFilnavn
         }).ToList();
 
         _leverandorer = _components
@@ -340,6 +372,44 @@
 
         _editingId = null;
         await LoadAsync();
+    }
+
+    private async Task UploadFdv(ComponentDraft draft, InputFileChangeEventArgs e)
+    {
+        _fdvFeil = null;
+        var file = e.File;
+        if (file.Size > 20_000_000)
+        {
+            _fdvFeil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        var entity = await Db.Components.FirstAsync(c => c.Id == draft.Id);
+        entity.FdvData = buffer.ToArray();
+        entity.FdvFilnavn = file.Name;
+        entity.FdvContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType;
+        await Db.SaveChangesAsync();
+
+        draft.HarFdv = true;
+        draft.FdvFilnavn = file.Name;
+    }
+
+    private async Task RemoveFdv(ComponentDraft draft)
+    {
+        var entity = await Db.Components.FirstAsync(c => c.Id == draft.Id);
+        entity.FdvData = null;
+        entity.FdvFilnavn = null;
+        entity.FdvContentType = null;
+        await Db.SaveChangesAsync();
+
+        draft.HarFdv = false;
+        draft.FdvFilnavn = null;
     }
 
     private async Task AddComponent()

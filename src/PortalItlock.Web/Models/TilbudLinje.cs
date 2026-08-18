@@ -13,6 +13,11 @@ public class TilbudLinje
     public decimal Innpris { get; set; }
     public decimal Utpris { get; set; }
     public int Antall { get; set; } = 1;
+    public string? Enhet { get; set; }
     public int? MontasjeMinutter { get; set; }
+
+    public TilbudPrisType? PrisType { get; set; }
+    public decimal? Prosentsats { get; set; }
+    public decimal RabattProsent { get; set; }
     public int Rekkefolge { get; set; }
 }

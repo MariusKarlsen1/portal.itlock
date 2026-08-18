@@ -5,7 +5,6 @@
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
-@inject IJSRuntime JS
 @inject NavigationManager Nav
 
 <PageTitle>@(_tilbud?.Tittel ?? "Tilbud")</PageTitle>
@@ -37,23 +36,36 @@ else if (_tilbud is not null)
             </label>
             <label>
                 Prosentsats
-                <input @bind="_tilbud.Prosentsats" placeholder="%" />
+                <span class="input-suffix-wrap">
+                    <input @bind="_tilbud.Prosentsats" />
+                    <span class="input-suffix">%</span>
+                </span>
             </label>
             <label>
                 Timepris
-                <input @bind="_tilbud.Timepris" placeholder="kr/t" />
+                <span class="input-suffix-wrap">
+                    <input @bind="_tilbud.Timepris" />
+                    <span class="input-suffix">kr/t</span>
+                </span>
+            </label>
+            <label>
+                Estimert monteringstid
+                <span class="input-suffix-wrap">
+                    <input @bind="_tilbud.EstimertTimerOverride" placeholder="@KalkulertArbeidstidTimer.ToString("N2", Kultur)" />
+                    <span class="input-suffix">t</span>
+                </span>
             </label>
             <label>
                 Montasjekost
-                <input @bind="_tilbud.Montasjekost" placeholder="@FormatKr(KalkulertMontasjekost)" />
-            </label>
-            <label>
-                Estimert arbeidstid
-                <input value="@FormatertArbeidstid" disabled />
+                <span class="input-suffix-wrap">
+                    <input @bind="_tilbud.Montasjekost" placeholder="@FormatKr(KalkulertMontasjekost)" />
+                    <span class="input-suffix">kr</span>
+                </span>
             </label>
         </div>
         <div class="form-actions">
             <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
+            <button type="button" class="cancel-button" @onclick="@(() => _tilbud.EstimertTimerOverride = null)">Bruk kalkulert monteringstid</button>
             <button type="button" class="cancel-button" @onclick="@(() => _tilbud.Montasjekost = KalkulertMontasjekost)">Bruk kalkulert montasjekost</button>
             @if (_lenketArbeidsordreId.HasValue)
             {
@@ -131,6 +143,9 @@ else if (_tilbud is not null)
                         <th>Varenavn</th>
                         <th>Innpris</th>
                         <th>Antall</th>
+                        <th>DG/Påslag</th>
+                        <th>%</th>
+                        <th>Rabatt</th>
                         <th>Utpris</th>
                         <th>Totalt</th>
                         <th></th>
@@ -141,9 +156,43 @@ else if (_tilbud is not null)
                     {
                         <tr @key="l.Id">
                             <td>@l.Navn</td>
-                            <td><input class="pris-input" @bind="l.Innpris" /></td>
-                            <td><input class="antall-input" @bind="l.Antall" /></td>
-                            <td><input class="pris-input" @bind="l.Utpris" /></td>
+                            <td>
+                                <span class="input-suffix-wrap">
+                                    <input class="pris-input" @bind="l.Innpris" />
+                                    <span class="input-suffix">kr</span>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="input-suffix-wrap">
+                                    <input class="antall-input" @bind="l.Antall" />
+                                    <span class="input-suffix">@(string.IsNullOrWhiteSpace(l.Enhet) ? "stk" : l.Enhet)</span>
+                                </span>
+                            </td>
+                            <td>
+                                <select class="pris-input" @bind="l.PrisType" @bind:after="@(() => OppdaterLinjePris(l))">
+                                    <option value="">Standard</option>
+                                    <option value="@TilbudPrisType.Dekningsgrad">DG</option>
+                                    <option value="@TilbudPrisType.Paslag">Påslag</option>
+                                </select>
+                            </td>
+                            <td>
+                                <span class="input-suffix-wrap">
+                                    <input class="antall-input" @bind="l.Prosentsats" @bind:after="@(() => OppdaterLinjePris(l))" placeholder="@_tilbud.Prosentsats.ToString("N0", Kultur)" />
+                                    <span class="input-suffix">%</span>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="input-suffix-wrap">
+                                    <input class="antall-input" @bind="l.RabattProsent" @bind:after="@(() => OppdaterLinjePris(l))" />
+                                    <span class="input-suffix">%</span>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="input-suffix-wrap">
+                                    <input class="pris-input" @bind="l.Utpris" />
+                                    <span class="input-suffix">kr</span>
+                                </span>
+                            </td>
                             <td class="totalt-cell">@FormatKr(l.Utpris * l.Antall)</td>
                             <td><button type="button" class="remove-button" @onclick="@(() => FjernLinje(l))">Fjern</button></td>
                         </tr>
@@ -195,6 +244,8 @@ else if (_tilbud is not null)
             </div>
         }
     </section>
+
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av tilbud" OnClose="@(() => _pdfPreviewUrl = null)" />
 }
 
 @code {
@@ -217,6 +268,7 @@ else if (_tilbud is not null)
     private List<SearchResult> _searchResults = [];
     private string _nyLinjeNavn = "";
     private bool _visGenerer;
+    private string? _pdfPreviewUrl;
     private int? _loadedId;
     private int? _lenketArbeidsordreId;
     private List<TilbudForside> _forsideMaler = [];
@@ -225,22 +277,13 @@ else if (_tilbud is not null)
     private decimal Varekost => _tilbud?.Linjer.Sum(l => l.Innpris * l.Antall) ?? 0;
     private decimal UtprisVarer => _tilbud?.Linjer.Sum(l => l.Utpris * l.Antall) ?? 0;
     private int EstimertMinutter => _tilbud?.Linjer.Sum(l => (l.MontasjeMinutter ?? 0) * l.Antall) ?? 0;
-    private decimal EstimertArbeidstidTimer => EstimertMinutter / 60m;
+    private decimal KalkulertArbeidstidTimer => EstimertMinutter / 60m;
+    private decimal EstimertArbeidstidTimer => _tilbud?.EstimertTimerOverride ?? KalkulertArbeidstidTimer;
     private decimal KalkulertMontasjekost => Math.Round((_tilbud?.Timepris ?? 0) * EstimertArbeidstidTimer, 2);
     private decimal Montasjekost => _tilbud?.Montasjekost ?? KalkulertMontasjekost;
     private decimal TotaltUtenMva => UtprisVarer + Montasjekost;
     private decimal DekningsbidragVarer => UtprisVarer - Varekost;
     private decimal DekningsbidragVarerProsent => UtprisVarer == 0 ? 0 : DekningsbidragVarer / UtprisVarer * 100;
-
-    private string FormatertArbeidstid
-    {
-        get
-        {
-            var t = EstimertMinutter / 60;
-            var m = EstimertMinutter % 60;
-            return $"{t}t {m}min";
-        }
-    }
 
     private static string FormatKr(decimal value) => value.ToString("N2", Kultur) + " kr";
 
@@ -253,6 +296,7 @@ else if (_tilbud is not null)
 
         _loadedId = Id;
         _visGenerer = false;
+        _pdfPreviewUrl = null;
         _savedMessage = null;
         _syncMessage = null;
 
@@ -281,11 +325,21 @@ else if (_tilbud is not null)
         Nav.NavigateTo($"/arbeidsordre/{ordre.Id}");
     }
 
-    private decimal BeregnUtpris(decimal innpris) => _tilbud!.PrisType switch
+    private decimal BeregnUtpris(decimal innpris) => BeregnUtpris(innpris, _tilbud!.PrisType, _tilbud.Prosentsats);
+
+    private static decimal BeregnUtpris(decimal innpris, TilbudPrisType prisType, decimal prosentsats) => prisType switch
     {
-        TilbudPrisType.Paslag => Math.Round(innpris * (1 + _tilbud.Prosentsats / 100m), 2),
-        _ => _tilbud.Prosentsats >= 100 ? innpris : Math.Round(innpris / (1 - _tilbud.Prosentsats / 100m), 2)
+        TilbudPrisType.Paslag => Math.Round(innpris * (1 + prosentsats / 100m), 2),
+        _ => prosentsats >= 100 ? innpris : Math.Round(innpris / (1 - prosentsats / 100m), 2)
     };
+
+    private void OppdaterLinjePris(TilbudLinje l)
+    {
+        var prisType = l.PrisType ?? _tilbud!.PrisType;
+        var prosentsats = l.Prosentsats ?? _tilbud!.Prosentsats;
+        var beregnet = BeregnUtpris(l.Innpris, prisType, prosentsats);
+        l.Utpris = Math.Round(beregnet * (1 - l.RabattProsent / 100m), 2);
+    }
 
     private async Task Lagre()
     {
@@ -321,6 +375,7 @@ else if (_tilbud is not null)
                     Navn = g.Component.Navn,
                     Innpris = innpris,
                     Antall = g.Antall,
+                    Enhet = g.Component.Enhet,
                     MontasjeMinutter = g.Component.MontasjeMinutter,
                     Utpris = BeregnUtpris(innpris),
                     Rekkefolge = _tilbud.Linjer.Count
@@ -332,6 +387,7 @@ else if (_tilbud is not null)
             {
                 linje.Antall = g.Antall;
                 linje.Innpris = innpris;
+                linje.Enhet = g.Component.Enhet;
                 linje.MontasjeMinutter = g.Component.MontasjeMinutter;
                 linje.Utpris = BeregnUtpris(innpris);
             }
@@ -345,7 +401,7 @@ else if (_tilbud is not null)
     {
         foreach (var l in _tilbud!.Linjer.Where(l => l.ComponentId is not null))
         {
-            l.Utpris = BeregnUtpris(l.Innpris);
+            OppdaterLinjePris(l);
         }
     }
 
@@ -393,6 +449,7 @@ else if (_tilbud is not null)
                 Innpris = innpris,
                 Utpris = BeregnUtpris(innpris),
                 Antall = 1,
+                Enhet = component.Enhet,
                 MontasjeMinutter = component.MontasjeMinutter,
                 Rekkefolge = _tilbud.Linjer.Count
             };
@@ -454,7 +511,7 @@ else if (_tilbud is not null)
     {
         _tilbud!.OppdatertDato = DateTime.UtcNow;
         await Db.SaveChangesAsync();
-        await JS.InvokeVoidAsync("open", $"/tilbud/{Id}/pdf", "_blank");
+        _pdfPreviewUrl = $"/tilbud/{Id}/pdf?v={DateTime.UtcNow.Ticks}";
         _visGenerer = false;
     }
 }

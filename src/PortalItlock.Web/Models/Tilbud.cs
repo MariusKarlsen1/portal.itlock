@@ -10,6 +10,7 @@ public class Tilbud
     public TilbudPrisType PrisType { get; set; } = TilbudPrisType.Dekningsgrad;
     public decimal Prosentsats { get; set; }
     public decimal Timepris { get; set; }
+    public decimal? EstimertTimerOverride { get; set; }
     public decimal? Montasjekost { get; set; }
     public string? Forside { get; set; }
 

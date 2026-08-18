@@ -31,9 +31,10 @@ public class TilbudPdfService(ApplicationDbContext db)
         }
 
         var linjer = tilbud.Linjer.OrderBy(l => l.Rekkefolge).ToList();
+        var visRabatt = linjer.Any(l => l.RabattProsent > 0);
         var utprisVarer = linjer.Sum(l => l.Utpris * l.Antall);
         var minutter = linjer.Sum(l => (l.MontasjeMinutter ?? 0) * l.Antall);
-        var arbeidstidTimer = minutter / 60m;
+        var arbeidstidTimer = tilbud.EstimertTimerOverride ?? (minutter / 60m);
         var kalkulertMontasjekost = Math.Round(tilbud.Timepris * arbeidstidTimer, 2);
         var montasjekost = tilbud.Montasjekost ?? kalkulertMontasjekost;
         var totaltUtenMva = utprisVarer + montasjekost;
@@ -129,6 +130,10 @@ public class TilbudPdfService(ApplicationDbContext db)
                                 columns.RelativeColumn(1f);
                                 if (tilbud.VisEnhetspris)
                                 {
+                                    if (visRabatt)
+                                    {
+                                        columns.RelativeColumn(1f);
+                                    }
                                     columns.RelativeColumn(1.5f);
                                     columns.RelativeColumn(1.5f);
                                 }
@@ -146,6 +151,10 @@ public class TilbudPdfService(ApplicationDbContext db)
                                 header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Ant.").Bold();
                                 if (tilbud.VisEnhetspris)
                                 {
+                                    if (visRabatt)
+                                    {
+                                        header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Rabatt").Bold();
+                                    }
                                     header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Á-pris").Bold();
                                     header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Totalt").Bold();
                                 }
@@ -163,6 +172,10 @@ public class TilbudPdfService(ApplicationDbContext db)
                                 table.Cell().Text(l.Antall.ToString());
                                 if (tilbud.VisEnhetspris)
                                 {
+                                    if (visRabatt)
+                                    {
+                                        table.Cell().Text(l.RabattProsent > 0 ? $"{l.RabattProsent.ToString("N0", Kultur)} %" : "-");
+                                    }
                                     table.Cell().Text(FormatKr(l.Utpris));
                                     table.Cell().Text(FormatKr(l.Utpris * l.Antall));
                                 }

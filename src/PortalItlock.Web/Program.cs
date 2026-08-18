@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using PortalItlock.Web.Components;
 using PortalItlock.Web.Data;
 using PortalItlock.Web.Services;
+using Microsoft.Net.Http.Headers;
 using System.Security.Claims;
 
 QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
@@ -170,7 +171,7 @@ app.MapGet("/prosjektvedlegg/{id:int}", async (int id, ApplicationDbContext db) 
         : Results.File(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
 }).RequireAuthorization();
 
-app.MapGet("/tilbud/{id:int}/pdf", async (int id, ApplicationDbContext db, TilbudPdfService pdfService) =>
+app.MapGet("/tilbud/{id:int}/pdf", async (int id, HttpContext context, ApplicationDbContext db, TilbudPdfService pdfService) =>
 {
     var pdf = await pdfService.GenerateAsync(id);
     if (pdf is null)
@@ -186,10 +187,22 @@ app.MapGet("/tilbud/{id:int}/pdf", async (int id, ApplicationDbContext db, Tilbu
         filnavn = filnavn.Replace(ugyldig, '-');
     }
 
-    return Results.File(pdf, "application/pdf", filnavn);
+    // Vises i nettleseren først, slik at tilbudet kan leses gjennom før det evt. lastes ned.
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
-app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, ApplicationDbContext db, FdvPdfService fdvService) =>
+app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
+{
+    var komponent = await db.Components.FindAsync(id);
+    return komponent?.FdvData is null
+        ? Results.NotFound()
+        : Results.File(komponent.FdvData, komponent.FdvContentType ?? "application/pdf", komponent.FdvFilnavn);
+}).RequireAuthorization();
+
+app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, HttpContext context, ApplicationDbContext db, FdvPdfService fdvService) =>
 {
     var pdf = await fdvService.GenerateAsync(id);
     if (pdf is null)
@@ -204,7 +217,11 @@ app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, ApplicationDbContext db,
         filnavn = filnavn.Replace(ugyldig, '-');
     }
 
-    return Results.File(pdf, "application/pdf", filnavn);
+    // Vises i nettleseren først, slik at FDV-samlingen kan leses gjennom før den evt. lastes ned.
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
 app.MapGet("/timeoversikt/eksport-csv", async (DateTime fra, DateTime til, int? montorId, TimeoversiktService service) =>
