@@ -169,10 +169,23 @@ app.MapGet("/prosjektvedlegg/{id:int}", async (int id, ApplicationDbContext db) 
         : Results.File(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
 }).RequireAuthorization();
 
-app.MapGet("/tilbud/{id:int}/pdf", async (int id, TilbudPdfService pdfService) =>
+app.MapGet("/tilbud/{id:int}/pdf", async (int id, ApplicationDbContext db, TilbudPdfService pdfService) =>
 {
     var pdf = await pdfService.GenerateAsync(id);
-    return pdf is null ? Results.NotFound() : Results.File(pdf, "application/pdf");
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var tilbud = await db.Tilbud.Include(t => t.Prosjekt).FirstAsync(t => t.Id == id);
+    var prosjektNavn = tilbud.Prosjekt?.Navn ?? "";
+    var filnavn = $"Tilbud - {tilbud.Tittel} - {prosjektNavn} - itlock AS - {tilbud.OpprettetDato:dd.MM.yyyy}.pdf";
+    foreach (var ugyldig in Path.GetInvalidFileNameChars())
+    {
+        filnavn = filnavn.Replace(ugyldig, '-');
+    }
+
+    return Results.File(pdf, "application/pdf", filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/timeoversikt/eksport-csv", async (DateTime fra, DateTime til, int? montorId, TimeoversiktService service) =>

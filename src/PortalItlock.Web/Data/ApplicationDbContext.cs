@@ -38,6 +38,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
     public DbSet<Kunde> Kunder => Set<Kunde>();
     public DbSet<DorIdMal> DorIdMaler => Set<DorIdMal>();
+    public DbSet<TilbudForside> TilbudForsider => Set<TilbudForside>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -294,6 +295,93 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             new DoorEnvironmentDocument { Id = 7, Navn = "Dørmiljø 7", FileName = "dormiljo-7.pdf", Rekkefolge = 7 },
             new DoorEnvironmentDocument { Id = 8, Navn = "Dørmiljø 8", FileName = "dormiljo-8.pdf", Rekkefolge = 8 },
             new DoorEnvironmentDocument { Id = 9, Navn = "Dørmiljø 9", FileName = "dormiljo-9.pdf", Rekkefolge = 9 }
+        );
+
+        modelBuilder.Entity<TilbudForside>().HasData(
+            new TilbudForside
+            {
+                Id = 1,
+                Navn = "Standard - Lås & beslag",
+                Innhold =
+"""
+# Tilbudsforutsetninger og forbehold
+Dette tilbudet er utarbeidet på bakgrunn av mottatt grunnlag fra byggherre/entrepenør/arkitekt og vedlagt beslagsliste.
+
+Tilbudet inkluderer ikke HEPRO dørbladlesere til sengerommene da jeg regner med kommunen leverer dette.
+
+Forutsetter at elektro medtar UPS hvis ikke kan dette leveres og vil da komme tillegg.
+
+## Montering
+Montasje, rigg, drift og kjøring er inkludert i tilbudet.
+
+## Betalingsbetingelser
+Netto pr. 30 dager.
+Varer leveres og faktureres ved oppstart – eller iht. fremdriftsplan.
+Montasje faktureres etter fremdrift – eller iht. kontraktens faktureringsbetingelser.
+
+## Fremdrift og kommunikasjon
+Gjeldende fremdriftsplan legges til grunn og anses som førende for fremdrift.
+E-post regnes som skriftlig kommunikasjon dersom annet ikke er avtalt.
+
+## Leveringstid
+Normalt 4–5 uker.
+
+## Tilbudets gyldighet
+Tilbudet er gyldig i 30 dager fra tilbudsdato.
+
+## Låssystem
+Låssystem leveres med patenterte nøkler. Antall nøkler leveres iht. oppgitt mengde. Dersom antall ikke er oppgitt, avregnes dette etter at låsplan er godkjent.
+Låsplan omfatter én (1) gangs utarbeidelse av produksjonsgrunnlag. Endringer etter produksjonsgrunnlag belastes etter medgått tid.
+Endring til annet låssystem enn tilbudt kan medføre priskonsekvens.
+
+## Endrings- og regningsarbeid
+Endrings- og/eller regningsarbeid utføres kun ved skriftlig bestilling.
+
+# Beslag
+
+## Automatikker (slagdør)
+For dører med slagdørautomatikk må det legges inn spikerslag/forsterkning i dør. Dører med overlysfelt må ha spikerslag minimum 100 mm over karm for montering av slagdørautomatikk.
+Slagdørautomatikk forutsettes levert med standard arm/glideskinne på karmside. Spesialarm kan medføre tillegg og avregnes.
+Døråpner skal monteres utenfor dørens slagradius, være godt synlig og plasseres med betjeningshøyde 0,8–1,1 m over gulv. Prosjekteres av RIE.
+Dørbladbredde på dører med dørautomatikk må være minimum 750 mm. Ved doble dører der aktivt felt er større enn passivt, tas forbehold om at aktivt dørblad alene dekker nødvendig rømningsbredde.
+
+## CE-godkjenning og servicekrav
+Alle automatikker og tilhørende sikkerhetsutstyr er prosjektert i samsvar med gjeldende regelverk og krav i Maskindirektivet og NS-EN 16005.
+Automatikker skal CE-godkjennes som del av installasjonen og skal minimum ha årlig service/vedlikehold utført av kompetent personell. Ved manglende service, bortfaller CE sertifisering og det kan påvirke funksjon, sikkerhet og garanti.
+
+## Elektriske sluttstykker / motorlås / solenoidlås
+Karm–dørblad klaring må være korrekt: 3 mm ± 2 mm.
+Dørprodusent må hensynta listetrykk, utfresing og plassering av låskasse.
+Dørprodusent må melde tilbake dersom andre stolper må benyttes for å tilfredsstille krav/godkjenninger.
+Stolpe til el. sluttstykke er tilfeldig valgt – eventuell endring avregnes.
+Dersom adgangskontroll benytter balansert tilbakemelding, kan det kreves sluttstykker med mikrobryter (STEP) – endring avregnes.
+
+## Panikkbeslag
+Dører med panikkbeslag må være utført slik at begge dørblader kan åpnes samtidig ved rømning – ansvar dørprodusent.
+Montering forutsetter ferdig dørmiljø og gulv.
+
+# Dørprodusent og elektro
+
+## Dørleverandør medtar (Ld i beslagliste)
+Hengsler, låskasser uten mikrobryter, mekaniske sluttstykker, innfelte skåter, karmoverføring med rørføring og trekkertråd ferdig montert, samt skyvedørsautomatikker komplett.
+Alle FG-godkjente dører leveres med godkjent bakkantsikring.
+Dørblad/karm skal være forboret/gjenget/forsterket for tilbudte produkter (F i beslagliste).
+Dørprodusent må melde tilbake dersom prosjektert stolpe til elektrisk sluttstykke må endres.
+
+## Elektroleverandør/RIE medtar (Le i beslagliste)
+Alle beslag merket Le i beslagliste.
+All kabling, rørføringer, bokser, strømforsyninger med batteribackup, tilkobling til brannvarslingsanlegg.
+230V driftsspenning og sentral UPS medtas av elektro. Dersom ikke annet er presisert, leveres elektriske lås som 24VDC.
+Det må være minimum 16 mm klaring mellom karm og veggutsparing for plass til kabler i dørmiljø.
+Ferdige føringsveier forutsettes slik at synlig kabel ikke forekommer.
+
+# Garanti
+
+## Garantivilkår
+Utstyr skal vedlikeholdes iht. instruks i FDV. Vedlikehold skal utføres av kompetent/opplært personell og kunne dokumenteres.
+Dokumentasjon skal vise: hva, når og hvem. Manglende dokumentasjon/feil vedlikehold medfører bortfall av garanti og reklamasjonsrett.
+"""
+            }
         );
     }
 }
