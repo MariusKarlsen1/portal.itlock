@@ -24,6 +24,7 @@ builder.Services.AddScoped<TilbudPdfService>();
 builder.Services.AddScoped<TimeoversiktService>();
 builder.Services.AddScoped<FdvPdfService>();
 builder.Services.AddScoped<DorBeslagslistePdfService>();
+builder.Services.AddSingleton<PdfLogo>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

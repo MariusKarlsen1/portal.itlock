@@ -9,7 +9,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class TilbudPdfService(ApplicationDbContext db)
+public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
 
@@ -95,7 +95,7 @@ public class TilbudPdfService(ApplicationDbContext db)
                     row.RelativeItem(1);
                     row.RelativeItem(2).Column(c =>
                     {
-                        c.Item().AlignRight().Text(t => RenderLogoSpans(t, 14));
+                        c.Item().AlignRight().Element(e => pdfLogo.Render(e, 16));
                         c.Item().AlignRight().Text(FirmaAdresse).FontSize(8);
                         c.Item().AlignRight().Text($"Telefon {FirmaTelefon}").FontSize(8);
                         c.Item().AlignRight().Text($"Epost {FirmaEpost}").FontSize(8);
@@ -114,7 +114,7 @@ public class TilbudPdfService(ApplicationDbContext db)
                 {
                     col.Item().Row(row =>
                     {
-                        row.RelativeItem().Text(t => RenderLogoSpans(t, 13));
+                        row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
                         row.RelativeItem().AlignRight().Text(overskrift).FontSize(9).FontColor(Colors.Grey.Darken1);
                     });
                     col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
@@ -220,26 +220,28 @@ public class TilbudPdfService(ApplicationDbContext db)
 
             foreach (var l in linjer)
             {
+                IContainer Rad() => table.Cell().BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(3);
+
                 if (visVarenummer)
                 {
-                    table.Cell().Text(l.Component?.Produktkode ?? "");
+                    Rad().Text(l.Component?.Produktkode ?? "");
                 }
-                table.Cell().Text(l.Navn);
-                table.Cell().Text(l.Component?.Type?.Navn ?? "");
-                table.Cell().Text(l.Antall.ToString());
+                Rad().Text(l.Navn);
+                Rad().Text(l.Component?.Type?.Navn ?? "");
+                Rad().Text(l.Antall.ToString());
                 if (visLevering)
                 {
-                    table.Cell().Text(l.LevertAv.Visningsnavn());
+                    Rad().Text(l.LevertAv.Visningsnavn());
                 }
                 if (tilbud.VisEnhetspris)
                 {
                     var visPrisPaLinje = l.LevertAv == LevertAv.F;
                     if (visRabatt)
                     {
-                        table.Cell().Text(l.RabattProsent > 0 ? $"{l.RabattProsent.ToString("N0", Kultur)} %" : "-");
+                        Rad().Text(l.RabattProsent > 0 ? $"{l.RabattProsent.ToString("N0", Kultur)} %" : "-");
                     }
-                    table.Cell().Text(visPrisPaLinje ? FormatKr(l.Utpris) : "–");
-                    table.Cell().Text(visPrisPaLinje ? FormatKr(l.Utpris * l.Antall) : "–");
+                    Rad().Text(visPrisPaLinje ? FormatKr(l.Utpris) : "–");
+                    Rad().Text(visPrisPaLinje ? FormatKr(l.Utpris * l.Antall) : "–");
                 }
             }
         });
@@ -258,14 +260,6 @@ public class TilbudPdfService(ApplicationDbContext db)
             var dor = relevanteDorer[i];
             col.Item().PaddingTop(i == 0 ? 8 : 16).Column(inner => DorPdfSeksjoner.RenderDorSide(inner, dor, tilbud.VisPrisPerDor, HentUtpris));
         }
-    }
-
-    private static void RenderLogoSpans(TextDescriptor t, float size)
-    {
-        t.Span("itl").FontColor("#292927").Bold().FontSize(size);
-        t.Span("o").FontColor("#835e41").Bold().FontSize(size);
-        t.Span("ck").FontColor("#292927").Bold().FontSize(size);
-        t.Span(" AS").FontColor("#292927").Bold().FontSize(size);
     }
 
     private static readonly Regex InlineMarkupRegex = new(

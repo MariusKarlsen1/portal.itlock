@@ -6,7 +6,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class DorBeslagslistePdfService(ApplicationDbContext db)
+public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
     public async Task<byte[]?> GenerateAsync(int prosjektId)
     {
@@ -37,7 +37,7 @@ public class DorBeslagslistePdfService(ApplicationDbContext db)
                 {
                     col.Item().Row(row =>
                     {
-                        row.RelativeItem().Text(t => RenderLogoSpans(t, 13));
+                        row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
                         row.RelativeItem().AlignRight().Text($"Beslagsliste – {prosjekt.Navn}").FontSize(9).FontColor(Colors.Grey.Darken1);
                     });
                     col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
@@ -71,13 +71,5 @@ public class DorBeslagslistePdfService(ApplicationDbContext db)
         });
 
         return document.GeneratePdf();
-    }
-
-    private static void RenderLogoSpans(TextDescriptor t, float size)
-    {
-        t.Span("itl").FontColor("#292927").Bold().FontSize(size);
-        t.Span("o").FontColor("#835e41").Bold().FontSize(size);
-        t.Span("ck").FontColor("#292927").Bold().FontSize(size);
-        t.Span(" AS").FontColor("#292927").Bold().FontSize(size);
     }
 }
