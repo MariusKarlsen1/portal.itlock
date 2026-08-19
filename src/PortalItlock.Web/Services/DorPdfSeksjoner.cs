@@ -9,6 +9,7 @@ namespace PortalItlock.Web.Services;
 /// <summary>
 /// Delt oppsett for å rendre én "dørside" (infoboks + dørfunksjoner + beslagsliste),
 /// brukt både av den frittstående beslagslisten og av dør-seksjonen i tilbuds-PDFen.
+/// Alt for én dør sitter i én sammenhengende ramme (kort), slik Probe sin rapport viser det.
 /// </summary>
 public static class DorPdfSeksjoner
 {
@@ -18,9 +19,31 @@ public static class DorPdfSeksjoner
     {
         var komponenter = dor.Komponenter.Where(k => k.Component is not null).OrderBy(k => k.Component!.Type?.Navn).ThenBy(k => k.Component!.Navn).ToList();
 
-        col.Item().Text(dor.Dornummer).FontSize(18).SemiBold();
+        col.Item().Border(1).BorderColor(Colors.Grey.Lighten2).Column(box =>
+        {
+            box.Item().Background(Colors.Grey.Lighten4).Padding(8).Text(dor.Dornummer).FontSize(14).Bold();
+            box.Item().LineHorizontal(0.75f).LineColor(Colors.Grey.Lighten2);
 
-        col.Item().PaddingTop(6).Border(1).BorderColor(Colors.Grey.Lighten1).Padding(10).Table(table =>
+            box.Item().Padding(10).Column(inner =>
+            {
+                RenderInfoGrid(inner, dor);
+
+                if (dor.Funksjoner.Count > 0)
+                {
+                    RenderDorfunksjoner(inner, dor);
+                }
+
+                RenderBeslagsliste(inner, dor, komponenter, visPris, hentUtpris);
+
+                inner.Item().PaddingTop(10).Text("Merknad").FontSize(9).Bold();
+                inner.Item().PaddingTop(2).Text(string.IsNullOrWhiteSpace(dor.Notater) ? "–" : dor.Notater).FontSize(9);
+            });
+        });
+    }
+
+    private static void RenderInfoGrid(ColumnDescriptor inner, Dor dor)
+    {
+        inner.Item().Table(table =>
         {
             table.ColumnsDefinition(c =>
             {
@@ -33,7 +56,7 @@ public static class DorPdfSeksjoner
             {
                 table.Cell().PaddingRight(10).PaddingBottom(6).Column(fc =>
                 {
-                    fc.Item().Text(label).FontSize(7).FontColor(Colors.Grey.Darken1);
+                    fc.Item().Text(label).FontSize(7).Bold().FontColor(Colors.Grey.Darken2);
                     fc.Item().PaddingTop(1).BorderBottom(0.75f).BorderColor(Colors.Grey.Lighten2).PaddingBottom(1)
                         .Text(string.IsNullOrWhiteSpace(verdi) ? " " : verdi).FontSize(9);
                 });
@@ -55,45 +78,58 @@ public static class DorPdfSeksjoner
             Felt("Lyd", dor.Lyd);
             Felt("Montert dato", dor.MontertDato?.ToString("dd.MM.yyyy"));
         });
+    }
 
-        if (dor.Funksjoner.Count > 0)
+    private static void RenderDorfunksjoner(ColumnDescriptor inner, Dor dor)
+    {
+        inner.Item().PaddingTop(10).Table(table =>
         {
-            col.Item().PaddingTop(10).Text("Dørfunksjoner").FontSize(11).SemiBold();
-            col.Item().PaddingTop(3).Table(table =>
+            table.ColumnsDefinition(c =>
             {
-                table.ColumnsDefinition(c =>
-                {
-                    c.ConstantColumn(50);
-                    c.RelativeColumn();
-                });
-
-                foreach (var f in dor.Funksjoner.OrderBy(f => f.Forkortelse ?? f.Navn))
-                {
-                    table.Cell().BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(2).Text(f.Forkortelse ?? "");
-                    table.Cell().BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(2).Text(f.Navn);
-                }
+                c.ConstantColumn(60);
+                c.RelativeColumn();
             });
-        }
 
-        col.Item().PaddingTop(10).Text("Beslagsliste").FontSize(11).SemiBold();
+            table.Header(header =>
+            {
+                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Dørfunk.").Bold();
+                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Beskrivelse").Bold();
+            });
+
+            foreach (var f in dor.Funksjoner.OrderBy(f => f.Forkortelse ?? f.Navn))
+            {
+                table.Cell().BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(2).Text(f.Forkortelse ?? "");
+                table.Cell().BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(2).Text(f.Navn);
+            }
+        });
+    }
+
+    private static void RenderBeslagsliste(ColumnDescriptor inner, Dor dor, List<DorKomponent> komponenter, bool visPris, Func<DorKomponent, decimal> hentUtpris)
+    {
+        inner.Item().PaddingTop(20).Text("Beslagsliste").FontSize(12).Bold();
 
         if (komponenter.Count == 0)
         {
-            col.Item().PaddingTop(3).Text("Ingen beslag registrert på denne døren.").FontColor(Colors.Grey.Darken1);
+            inner.Item().PaddingTop(3).Text("Ingen beslag registrert på denne døren.").FontColor(Colors.Grey.Darken1);
             return;
         }
 
         var sumVarer = 0m;
+        var visOverflate = komponenter.Any(k => !string.IsNullOrWhiteSpace(k.Component!.Overflate));
 
-        col.Item().PaddingTop(3).Table(table =>
+        inner.Item().PaddingTop(3).Table(table =>
         {
             table.ColumnsDefinition(columns =>
             {
                 columns.RelativeColumn(2.5f);
-                columns.RelativeColumn(3.5f);
+                columns.RelativeColumn(3.2f);
+                if (visOverflate)
+                {
+                    columns.RelativeColumn(1.4f);
+                }
                 columns.RelativeColumn(1f);
                 columns.RelativeColumn(1f);
-                columns.RelativeColumn(0.7f);
+                columns.RelativeColumn(1.4f);
                 if (visPris)
                 {
                     columns.RelativeColumn(1.5f);
@@ -103,15 +139,21 @@ public static class DorPdfSeksjoner
 
             table.Header(header =>
             {
-                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Beslagstype").Bold();
-                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Beskrivelse").Bold();
-                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Enhet").Bold();
-                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Antall").Bold();
-                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Lev.").Bold();
+                IContainer Hode() => header.Cell().BorderBottom(1.25f).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).PaddingRight(6);
+
+                Hode().Text("Beslagstype").Bold();
+                Hode().Text("Beskrivelse").Bold();
+                if (visOverflate)
+                {
+                    Hode().Text("Overflate").Bold();
+                }
+                Hode().Text("Enhet").Bold();
+                Hode().Text("Antall").Bold();
+                Hode().Text("Levering").Bold();
                 if (visPris)
                 {
-                    header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Pris").Bold();
-                    header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Totalt").Bold();
+                    Hode().Text("Pris").Bold();
+                    Hode().Text("Totalt").Bold();
                 }
             });
 
@@ -119,11 +161,17 @@ public static class DorPdfSeksjoner
             {
                 var visPrisPaLinje = visPris && k.LevertAv == LevertAv.F;
 
-                table.Cell().Text(k.Component!.Type?.Navn ?? "");
-                table.Cell().Text(k.Component.Navn);
-                table.Cell().Text(k.Enhet ?? k.Component.Enhet ?? "Stk");
-                table.Cell().Text(k.Antall.ToString());
-                table.Cell().Text(k.LevertAv.Visningsnavn());
+                IContainer Rad() => table.Cell().BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(3).PaddingRight(6);
+
+                Rad().Text(k.Component!.Type?.Navn ?? "");
+                Rad().Text(k.Component.Navn);
+                if (visOverflate)
+                {
+                    Rad().Text(k.Component.Overflate ?? "");
+                }
+                Rad().Text(k.Enhet ?? k.Component.Enhet ?? "Stk");
+                Rad().Text(k.Antall.ToString());
+                Rad().Text(k.LevertAv.Visningsnavn());
 
                 if (visPris)
                 {
@@ -133,21 +181,15 @@ public static class DorPdfSeksjoner
                         sumVarer += utpris * k.Antall;
                     }
 
-                    table.Cell().Text(visPrisPaLinje ? FormatKr(utpris) : "–");
-                    table.Cell().Text(visPrisPaLinje ? FormatKr(utpris * k.Antall) : "–");
+                    Rad().Text(visPrisPaLinje ? FormatKr(utpris) : "–");
+                    Rad().Text(visPrisPaLinje ? FormatKr(utpris * k.Antall) : "–");
                 }
             }
         });
 
         if (visPris)
         {
-            col.Item().AlignRight().PaddingTop(3).Text($"Sum varer: {FormatKr(sumVarer)}").Bold().FontSize(9);
-        }
-
-        if (!string.IsNullOrWhiteSpace(dor.Notater))
-        {
-            col.Item().PaddingTop(10).Text("Merknad").FontSize(9).Bold();
-            col.Item().PaddingTop(2).Text(dor.Notater).FontSize(9);
+            inner.Item().AlignRight().PaddingTop(4).Text($"Sum varer: {FormatKr(sumVarer)}").Bold().FontSize(9);
         }
     }
 

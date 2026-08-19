@@ -1,23 +1,33 @@
-<div class="tekstverktoy-toolbar">
-    <button type="button" title="Fet skrift" @onclick="@(() => WrapSelection("**", "**"))"><b>B</b></button>
-    <button type="button" title="STORE BOKSTAVER" @onclick="Uppercase">AA</button>
-    <button type="button" title="Overskrift" @onclick="@(() => LinePrefix("# "))">H1</button>
-    <button type="button" title="Underoverskrift" @onclick="@(() => LinePrefix("## "))">H2</button>
-    <select @bind="_valgtStorrelse" @bind:after="ApplySize" title="Skriftstørrelse">
-        <option value="">Størrelse...</option>
-        <option value="8">Liten</option>
-        <option value="14">Stor</option>
-        <option value="20">Ekstra stor</option>
-    </select>
-    <select @bind="_valgtFont" @bind:after="ApplyFont" title="Skrifttype">
-        <option value="">Skrifttype...</option>
-        <option value="Arial">Arial</option>
-        <option value="Georgia">Georgia</option>
-        <option value="Courier New">Courier New</option>
-        <option value="Times New Roman">Times New Roman</option>
-    </select>
+@implements IAsyncDisposable
+
+<div class="rte">
+    <div class="rte-toolbar">
+        <button type="button" title="Angre" @onclick="@(() => Exec("undo"))">↶</button>
+        <button type="button" title="Gjør om" @onclick="@(() => Exec("redo"))">↷</button>
+        <span class="rte-sep"></span>
+        <select @onchange="OnFormatBlockChanged" title="Avsnittstype">
+            <option value="p">Normal tekst</option>
+            <option value="h1">Overskrift 1</option>
+            <option value="h2">Overskrift 2</option>
+            <option value="h3">Overskrift 3</option>
+        </select>
+        <span class="rte-sep"></span>
+        <button type="button" title="Fet skrift" @onclick="@(() => Exec("bold"))"><b>F</b></button>
+        <button type="button" title="Kursiv" @onclick="@(() => Exec("italic"))"><i>K</i></button>
+        <button type="button" title="Understrek" @onclick="@(() => Exec("underline"))"><u>U</u></button>
+        <span class="rte-sep"></span>
+        <button type="button" title="Punktliste" @onclick="@(() => Exec("insertUnorderedList"))">• Liste</button>
+        <button type="button" title="Nummerert liste" @onclick="@(() => Exec("insertOrderedList"))">1. Liste</button>
+        <span class="rte-sep"></span>
+        <button type="button" title="Venstrejuster" @onclick="@(() => Exec("justifyLeft"))">⟵</button>
+        <button type="button" title="Midtstill" @onclick="@(() => Exec("justifyCenter"))">↔</button>
+        <button type="button" title="Høyrejuster" @onclick="@(() => Exec("justifyRight"))">⟶</button>
+        <span class="rte-sep"></span>
+        <button type="button" title="Sett inn lenke" @onclick="InsertLink">🔗</button>
+    </div>
+    <div id="@_id" class="rte-content" contenteditable="true" style="min-height: @(Rows * 1.6)em"
+         data-placeholder="@Placeholder"></div>
 </div>
-<textarea id="@_id" rows="@Rows" value="@Value" @oninput="OnInput" placeholder="@Placeholder"></textarea>
 
 @code {
     [Parameter] public string? Value { get; set; }
@@ -27,63 +37,57 @@
 
     [Inject] private IJSRuntime JS { get; set; } = default!;
 
-    private readonly string _id = $"forside-tekst-{Guid.NewGuid():N}";
-    private string _valgtStorrelse = "";
-    private string _valgtFont = "";
-    private bool _sporingStartet;
+    private readonly string _id = $"rte-{Guid.NewGuid():N}";
+    private DotNetObjectReference<ForsideTekstRedigering>? _selfRef;
+    private bool _initialized;
+    private string? _lastAppliedValue;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && !_sporingStartet)
+        if (firstRender)
         {
-            _sporingStartet = true;
-            await JS.InvokeVoidAsync("tekstverktoy.trackSelection", _id);
+            _selfRef = DotNetObjectReference.Create(this);
+            _lastAppliedValue = Value;
+            await JS.InvokeVoidAsync("richtext.init", _id, Value, _selfRef);
+            _initialized = true;
+        }
+        else if (_initialized && Value != _lastAppliedValue)
+        {
+            _lastAppliedValue = Value;
+            await JS.InvokeVoidAsync("richtext.setHtml", _id, Value);
         }
     }
 
-    private async Task OnInput(ChangeEventArgs e)
+    [JSInvokable]
+    public async Task OnHtmlChanged(string html)
     {
-        Value = e.Value?.ToString();
+        Value = html;
+        _lastAppliedValue = html;
         await ValueChanged.InvokeAsync(Value);
     }
 
-    private async Task WrapSelection(string before, string after)
+    private async Task Exec(string command)
     {
-        Value = await JS.InvokeAsync<string>("tekstverktoy.wrapSelection", _id, before, after);
-        await ValueChanged.InvokeAsync(Value);
+        await JS.InvokeVoidAsync("richtext.exec", _id, command);
     }
 
-    private async Task Uppercase()
+    private async Task OnFormatBlockChanged(ChangeEventArgs e)
     {
-        Value = await JS.InvokeAsync<string>("tekstverktoy.uppercaseSelection", _id);
-        await ValueChanged.InvokeAsync(Value);
-    }
-
-    private async Task LinePrefix(string prefix)
-    {
-        Value = await JS.InvokeAsync<string>("tekstverktoy.insertAtLineStart", _id, prefix);
-        await ValueChanged.InvokeAsync(Value);
-    }
-
-    private async Task ApplySize()
-    {
-        if (string.IsNullOrEmpty(_valgtStorrelse))
+        var tag = e.Value?.ToString();
+        if (!string.IsNullOrEmpty(tag))
         {
-            return;
+            await JS.InvokeVoidAsync("richtext.formatBlock", _id, tag);
         }
-
-        await WrapSelection($"{{{{size={_valgtStorrelse}}}}}", "{{/size}}");
-        _valgtStorrelse = "";
     }
 
-    private async Task ApplyFont()
+    private async Task InsertLink()
     {
-        if (string.IsNullOrEmpty(_valgtFont))
-        {
-            return;
-        }
+        await JS.InvokeVoidAsync("richtext.insertLink", _id);
+    }
 
-        await WrapSelection($"{{{{font={_valgtFont}}}}}", "{{/font}}");
-        _valgtFont = "";
+    public async ValueTask DisposeAsync()
+    {
+        _selfRef?.Dispose();
+        await Task.CompletedTask;
     }
 }

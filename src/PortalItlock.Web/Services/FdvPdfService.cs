@@ -8,7 +8,7 @@ using SkiaSharp;
 
 namespace PortalItlock.Web.Services;
 
-public class FdvPdfService(ApplicationDbContext db)
+public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
     public async Task<List<Component>> HentKomponenterMedFdvAsync(int prosjektId)
     {
@@ -28,8 +28,32 @@ public class FdvPdfService(ApplicationDbContext db)
             return null;
         }
 
+        var prosjekt = await db.Prosjekter.FindAsync(prosjektId);
+
         var document = Document.Create(doc =>
         {
+            if (!string.IsNullOrWhiteSpace(prosjekt?.FdvForside))
+            {
+                doc.Page(page =>
+                {
+                    page.Size(PageSizes.A4);
+                    page.Margin(2, Unit.Centimetre);
+                    page.DefaultTextStyle(x => x.FontSize(10));
+
+                    page.Header().Column(col =>
+                    {
+                        col.Item().Row(row =>
+                        {
+                            row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
+                            row.RelativeItem().AlignRight().Text($"FDV – {prosjekt.Navn}").FontSize(9).FontColor(Colors.Grey.Darken1);
+                        });
+                        col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
+                    });
+
+                    page.Content().PaddingTop(14).Column(col => ForsideRenderer.Render(col, prosjekt.FdvForside));
+                });
+            }
+
             foreach (var komponent in komponenter)
             {
                 List<SKBitmap> sider;

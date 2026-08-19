@@ -10,6 +10,7 @@ public class Component
     public string? Produsent { get; set; }
     public string? Produktkode { get; set; }
     public string? Beskrivelse { get; set; }
+    public string? Overflate { get; set; }
 
     public string? Leverandor { get; set; }
     public string? Varegruppe { get; set; }

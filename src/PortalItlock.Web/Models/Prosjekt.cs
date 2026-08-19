@@ -17,6 +17,7 @@ public class Prosjekt
     public ProsjektStatus? Status { get; set; }
     public string? Notater { get; set; }
     public string? Info { get; set; }
+    public string? FdvForside { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 

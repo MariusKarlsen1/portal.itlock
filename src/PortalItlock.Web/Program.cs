@@ -196,22 +196,21 @@ app.MapGet("/tilbud/{id:int}/pdf", async (int id, HttpContext context, Applicati
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
-app.MapGet("/tilbud/{id:int}/beslagsliste/pdf", async (int id, HttpContext context, ApplicationDbContext db, DorBeslagslistePdfService beslagslisteService) =>
+app.MapGet("/prosjekt/{id:int}/beslagsliste/pdf", async (int id, HttpContext context, ApplicationDbContext db, DorBeslagslistePdfService beslagslisteService) =>
 {
-    var tilbud = await db.Tilbud.Include(t => t.Prosjekt).FirstOrDefaultAsync(t => t.Id == id);
-    if (tilbud is null)
+    var prosjekt = await db.Prosjekter.FindAsync(id);
+    if (prosjekt is null)
     {
         return Results.NotFound();
     }
 
-    var pdf = await beslagslisteService.GenerateAsync(tilbud.ProsjektId);
+    var pdf = await beslagslisteService.GenerateAsync(id);
     if (pdf is null)
     {
         return Results.NotFound();
     }
 
-    var prosjektNavn = tilbud.Prosjekt?.Navn ?? "";
-    var filnavn = $"Beslagsliste - {prosjektNavn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
+    var filnavn = $"Beslagsliste - {prosjekt.Navn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
     foreach (var ugyldig in Path.GetInvalidFileNameChars())
     {
         filnavn = filnavn.Replace(ugyldig, '-');
