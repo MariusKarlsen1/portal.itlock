@@ -256,6 +256,16 @@ else
                             {
                                 <li @key="p.Id" class="vedlegg-item">
                                     <a href="@($"/plantegning/{p.Id}")">@p.Navn</a>
+                                    @if (AlleGruppeNavn.Count() > 1)
+                                    {
+                                        <select class="plantegning-flytt" @onchange="@(e => FlyttPlantegning(p, e.Value?.ToString()))">
+                                            <option value="">Flytt til...</option>
+                                            @foreach (var g in AlleGruppeNavn.Where(g => g != gruppe.Navn))
+                                            {
+                                                <option value="@g">@g</option>
+                                            }
+                                        </select>
+                                    }
                                     <button type="button" class="remove-button" @onclick="@(() => RemovePlantegning(p))">Fjern</button>
                                 </li>
                             }
@@ -384,26 +394,63 @@ else
                 }
             </div>
 
+            <div class="fdv-vedlegg-section">
+                <h3>Ekstra PDF-vedlegg</h3>
+                <p class="section-hint">Legg til en PDF (f.eks. for en vare uten registrert FDV) som blir med når du genererer FDV for prosjektet.</p>
+
+                @if (_fdvVedlegg.Count > 0)
+                {
+                    <ul class="vedlegg-list">
+                        @foreach (var v in _fdvVedlegg)
+                        {
+                            <li @key="v.Id" class="vedlegg-item">
+                                <span>@v.Navn</span>
+                                <button type="button" class="remove-button" @onclick="@(() => RemoveFdvVedlegg(v))">Fjern</button>
+                            </li>
+                        }
+                    </ul>
+                }
+
+                <div class="vedlegg-upload">
+                    <InputFile OnChange="OnFdvVedleggSelected" accept="application/pdf" multiple />
+                </div>
+                @if (_uploadingFdvVedlegg)
+                {
+                    <p class="list-empty">Laster opp...</p>
+                }
+                @if (!string.IsNullOrEmpty(_fdvVedleggFeil))
+                {
+                    <p class="form-error">@_fdvVedleggFeil</p>
+                }
+            </div>
+
             @if (_fdvKomponenter is null)
             {
                 <p class="list-empty">Laster...</p>
             }
-            else if (_fdvKomponenter.Count > 0)
-            {
-                <ul class="vedlegg-list">
-                    @foreach (var k in _fdvKomponenter)
-                    {
-                        <li @key="k.Id" class="vedlegg-item">
-                            <span>@k.Navn</span>
-                            <span class="vedlegg-type">@k.Produktkode</span>
-                        </li>
-                    }
-                </ul>
-                <button type="button" class="add-button" @onclick="GenererFdv">Generer FDV</button>
-            }
             else
             {
-                <p class="list-empty">Ingen av varene på prosjektets dører har FDV-dokumentasjon registrert ennå.</p>
+                @if (_fdvKomponenter.Count > 0)
+                {
+                    <ul class="vedlegg-list">
+                        @foreach (var k in _fdvKomponenter)
+                        {
+                            <li @key="k.Id" class="vedlegg-item">
+                                <span>@k.Navn</span>
+                                <span class="vedlegg-type">@k.Produktkode</span>
+                            </li>
+                        }
+                    </ul>
+                }
+                else
+                {
+                    <p class="list-empty">Ingen av varene på prosjektets dører har FDV-dokumentasjon registrert ennå.</p>
+                }
+
+                @if (_fdvKomponenter.Count > 0 || _fdvVedlegg.Count > 0)
+                {
+                    <button type="button" class="add-button" @onclick="GenererFdv">Generer FDV</button>
+                }
             }
 
             <PdfPreviewModal Url="@_fdvPreviewUrl" Tittel="Forhåndsvisning av FDV" OnClose="@(() => _fdvPreviewUrl = null)" />
@@ -512,7 +559,11 @@ else
     {
         <div class="prosjekt-layout">
             <p class="section-hint">Genererer én PDF-side per dør med beslag i prosjektet: dørinfo, dørfunksjoner og beslagsliste.</p>
-            <button type="button" class="add-button" @onclick="GenererBeslagsliste">Generer beslagsliste</button>
+            <div class="knapperad">
+                <button type="button" class="add-button" @onclick="GenererBeslagsliste">Generer beslagsliste</button>
+                <a class="cancel-button" href="@($"/prosjekt/{Id}/plukkliste")">Åpne plukkliste</a>
+                <a class="cancel-button" href="@($"/prosjekt/{Id}/produktsammendrag")">Produktsammendrag</a>
+            </div>
             <PdfPreviewModal Url="@_beslagslistePreviewUrl" Tittel="Beslagsliste" OnClose="@(() => _beslagslistePreviewUrl = null)" />
         </div>
     }
@@ -569,6 +620,8 @@ else
             .ThenBy(g => g.Key)
             .Select(g => (g.Key, g.OrderBy(p => p.Navn).ToList()));
 
+    private IEnumerable<string> AlleGruppeNavn => PlantegningGrupper.Select(g => g.Navn);
+
     private string _nyPlantegningNavn = "";
     private string _nyPlantegningByggetrinn = "";
     private bool _uploadingPlantegning;
@@ -598,6 +651,9 @@ else
     private List<Tilbud> _tilbud = [];
     private List<Component>? _fdvKomponenter;
     private string? _fdvPreviewUrl;
+    private List<FdvVedlegg> _fdvVedlegg = [];
+    private bool _uploadingFdvVedlegg;
+    private string? _fdvVedleggFeil;
     private List<Kunde> _kunder = [];
     private List<DorIdMal> _dorIdMaler = [];
     private string _nyDorIdKode = "";
@@ -734,6 +790,11 @@ else
                 .DistinctBy(c => c.Id)
                 .OrderBy(c => c.Navn)
                 .ToList();
+
+            _fdvVedlegg = await Db.FdvVedlegg
+                .Where(v => v.ProsjektId == Id.Value)
+                .OrderBy(v => v.Navn)
+                .ToListAsync();
         }
         else
         {
@@ -978,6 +1039,18 @@ else
         await ReloadPlantegninger();
     }
 
+    private async Task FlyttPlantegning(Plantegning p, string? nyGruppe)
+    {
+        if (string.IsNullOrWhiteSpace(nyGruppe))
+        {
+            return;
+        }
+
+        p.Byggetrinn = nyGruppe == "Ugruppert" ? null : nyGruppe;
+        await Db.SaveChangesAsync();
+        await ReloadPlantegninger();
+    }
+
     private async Task RemovePlantegning(Plantegning p)
     {
         Db.Plantegninger.Remove(p);
@@ -1095,6 +1168,63 @@ else
     {
         await Db.SaveChangesAsync();
         _savedMessage = "Forside lagret.";
+    }
+
+    private async Task OnFdvVedleggSelected(InputFileChangeEventArgs e)
+    {
+        if (!Id.HasValue || _uploadingFdvVedlegg)
+        {
+            return;
+        }
+
+        _fdvVedleggFeil = null;
+        _uploadingFdvVedlegg = true;
+
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                if (file.Size > 20_000_000)
+                {
+                    _fdvVedleggFeil = $"\"{file.Name}\" er for stor (maks 20 MB) og ble hoppet over.";
+                    continue;
+                }
+
+                using var buffer = new MemoryStream();
+                await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+                {
+                    await stream.CopyToAsync(buffer);
+                }
+
+                var vedlegg = new FdvVedlegg
+                {
+                    ProsjektId = Id.Value,
+                    Navn = Path.GetFileNameWithoutExtension(file.Name),
+                    Filnavn = file.Name,
+                    ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType,
+                    Data = buffer.ToArray()
+                };
+
+                Db.FdvVedlegg.Add(vedlegg);
+            }
+
+            await Db.SaveChangesAsync();
+            _fdvVedlegg = await Db.FdvVedlegg
+                .Where(v => v.ProsjektId == Id.Value)
+                .OrderBy(v => v.Navn)
+                .ToListAsync();
+        }
+        finally
+        {
+            _uploadingFdvVedlegg = false;
+        }
+    }
+
+    private async Task RemoveFdvVedlegg(FdvVedlegg v)
+    {
+        Db.FdvVedlegg.Remove(v);
+        await Db.SaveChangesAsync();
+        _fdvVedlegg.Remove(v);
     }
 
     // Dør ID

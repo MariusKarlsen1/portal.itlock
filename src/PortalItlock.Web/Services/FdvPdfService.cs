@@ -23,7 +23,12 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     public async Task<byte[]?> GenerateAsync(int prosjektId)
     {
         var komponenter = await HentKomponenterMedFdvAsync(prosjektId);
-        if (komponenter.Count == 0)
+        var ekstraVedlegg = await db.FdvVedlegg
+            .Where(v => v.ProsjektId == prosjektId)
+            .OrderBy(v => v.Navn)
+            .ToListAsync();
+
+        if (komponenter.Count == 0 && ekstraVedlegg.Count == 0)
         {
             return null;
         }
@@ -54,16 +59,16 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 });
             }
 
-            foreach (var komponent in komponenter)
+            void LeggTilPdfSider(byte[] pdfData, Action<TextDescriptor> renderTittel)
             {
                 List<SKBitmap> sider;
                 try
                 {
-                    sider = PDFtoImage.Conversion.ToImages(komponent.FdvData!, options: new PDFtoImage.RenderOptions(Dpi: 150)).ToList();
+                    sider = PDFtoImage.Conversion.ToImages(pdfData, options: new PDFtoImage.RenderOptions(Dpi: 150)).ToList();
                 }
                 catch (Exception)
                 {
-                    continue;
+                    return;
                 }
 
                 for (var i = 0; i < sider.Count; i++)
@@ -72,28 +77,43 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     using var image = SKImage.FromBitmap(bitmap);
                     using var encoded = image.Encode(SKEncodedImageFormat.Png, 85);
                     var bildeData = encoded.ToArray();
+                    var erForsteSide = i == 0;
 
                     doc.Page(page =>
                     {
                         page.Size(PageSizes.A4);
                         page.Margin(1, Unit.Centimetre);
 
-                        if (i == 0)
+                        if (erForsteSide)
                         {
-                            page.Header().PaddingBottom(6).Text(t =>
-                            {
-                                t.Span("FDV – ").SemiBold();
-                                t.Span(komponent.Navn);
-                                if (!string.IsNullOrWhiteSpace(komponent.Produktkode))
-                                {
-                                    t.Span($" ({komponent.Produktkode})").FontColor(Colors.Grey.Darken1);
-                                }
-                            });
+                            page.Header().PaddingBottom(6).Text(renderTittel);
                         }
 
                         page.Content().AlignCenter().AlignMiddle().Image(bildeData).FitArea();
                     });
                 }
+            }
+
+            foreach (var komponent in komponenter)
+            {
+                LeggTilPdfSider(komponent.FdvData!, t =>
+                {
+                    t.Span("FDV – ").SemiBold();
+                    t.Span(komponent.Navn);
+                    if (!string.IsNullOrWhiteSpace(komponent.Produktkode))
+                    {
+                        t.Span($" ({komponent.Produktkode})").FontColor(Colors.Grey.Darken1);
+                    }
+                });
+            }
+
+            foreach (var vedlegg in ekstraVedlegg)
+            {
+                LeggTilPdfSider(vedlegg.Data, t =>
+                {
+                    t.Span("FDV – ").SemiBold();
+                    t.Span(vedlegg.Navn);
+                });
             }
         });
 

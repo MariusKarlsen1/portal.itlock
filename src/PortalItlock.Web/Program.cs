@@ -24,6 +24,8 @@ builder.Services.AddScoped<TilbudPdfService>();
 builder.Services.AddScoped<TimeoversiktService>();
 builder.Services.AddScoped<FdvPdfService>();
 builder.Services.AddScoped<DorBeslagslistePdfService>();
+builder.Services.AddScoped<PlukklistePdfService>();
+builder.Services.AddScoped<ProduktsammendragPdfService>();
 builder.Services.AddSingleton<PdfLogo>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -211,6 +213,48 @@ app.MapGet("/prosjekt/{id:int}/beslagsliste/pdf", async (int id, HttpContext con
     }
 
     var filnavn = $"Beslagsliste - {prosjekt.Navn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
+    foreach (var ugyldig in Path.GetInvalidFileNameChars())
+    {
+        filnavn = filnavn.Replace(ugyldig, '-');
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/prosjekt/{id:int}/plukkliste/pdf", async (int id, HttpContext context, ApplicationDbContext db, PlukklistePdfService plukklisteService) =>
+{
+    var pdf = await plukklisteService.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var prosjekt = await db.Prosjekter.FindAsync(id);
+    var filnavn = $"Plukkliste - {prosjekt?.Navn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
+    foreach (var ugyldig in Path.GetInvalidFileNameChars())
+    {
+        filnavn = filnavn.Replace(ugyldig, '-');
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/prosjekt/{id:int}/produktsammendrag/pdf", async (int id, HttpContext context, ApplicationDbContext db, ProduktsammendragPdfService sammendragService) =>
+{
+    var pdf = await sammendragService.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var prosjekt = await db.Prosjekter.FindAsync(id);
+    var filnavn = $"Produktsammendrag - {prosjekt?.Navn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
     foreach (var ugyldig in Path.GetInvalidFileNameChars())
     {
         filnavn = filnavn.Replace(ugyldig, '-');

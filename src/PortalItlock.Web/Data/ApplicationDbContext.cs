@@ -39,6 +39,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Kunde> Kunder => Set<Kunde>();
     public DbSet<DorIdMal> DorIdMaler => Set<DorIdMal>();
     public DbSet<TilbudForside> TilbudForsider => Set<TilbudForside>();
+    public DbSet<FdvVedlegg> FdvVedlegg => Set<FdvVedlegg>();
+    public DbSet<PlukklisteLinje> PlukklisteLinjer => Set<PlukklisteLinje>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -154,6 +156,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(m => m.Timeregistreringer)
             .HasForeignKey(t => t.MontorId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<PlukklisteLinje>()
+            .HasIndex(p => new { p.ProsjektId, p.ComponentId })
+            .IsUnique();
 
         SeedReferenceData(modelBuilder);
     }

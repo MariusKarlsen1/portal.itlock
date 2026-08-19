@@ -1,0 +1,143 @@
+@page "/prosjekt/{Id:int}/plukkliste"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Plukkliste - @(_prosjekt?.Navn)</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke prosjektet. Det kan være slettet.</p>
+}
+else if (_prosjekt is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="@($"/prosjekter/{Id}")">&larr; Tilbake til prosjektet</a>
+    <h1>Plukkliste - @_prosjekt.Navn</h1>
+    <p class="section-hint">Alt beslag itlock leverer på prosjektet, summert på tvers av dørene. Fyll inn hvor mye som er plukket og bestilt for å holde kontroll.</p>
+
+    @if (_rader.Count > 0)
+    {
+        <button type="button" class="add-button" @onclick="GenererPdf">Last ned PDF</button>
+        <PdfPreviewModal Url="@_pdfUrl" Tittel="Plukkliste" OnClose="@(() => _pdfUrl = null)" />
+    }
+
+    @if (_rader.Count == 0)
+    {
+        <p class="list-empty">Ingen beslag levert av itlock er registrert på prosjektets dører ennå.</p>
+    }
+    else
+    {
+        <table class="plukk-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Beslagstype</th>
+                    <th>Varenummer</th>
+                    <th>Varenavn</th>
+                    <th>Overflate</th>
+                    <th>Enhet</th>
+                    <th>Antall</th>
+                    <th>Antall plukket</th>
+                    <th>Varer bestilt</th>
+                    <th>Må bestilles</th>
+                </tr>
+            </thead>
+            <tbody>
+                @{ var i = 0; }
+                @foreach (var rad in _rader)
+                {
+                    i++;
+                    <tr @key="rad.Linje.Id">
+                        <td>@i</td>
+                        <td>@rad.Component.Type?.Navn</td>
+                        <td>@rad.Component.Produktkode</td>
+                        <td>@rad.Component.Navn</td>
+                        <td>@rad.Component.Overflate</td>
+                        <td>@(rad.Component.Enhet ?? "Stk")</td>
+                        <td>@rad.AntallTrengs</td>
+                        <td><input class="plukk-input" type="number" min="0" @bind="rad.Linje.AntallPlukket" @bind:after="@(() => LagreLinje(rad.Linje))" /></td>
+                        <td><input class="plukk-input" type="number" min="0" @bind="rad.Linje.VarerBestilt" @bind:after="@(() => LagreLinje(rad.Linje))" /></td>
+                        <td class="@(rad.MaBestilles > 0 ? "ma-bestilles" : "")">@rad.MaBestilles</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private Prosjekt? _prosjekt;
+    private bool _notFound;
+    private List<PlukklisteRad> _rader = [];
+    private string? _pdfUrl;
+
+    private void GenererPdf()
+    {
+        _pdfUrl = $"/prosjekt/{Id}/plukkliste/pdf?v={DateTime.UtcNow.Ticks}";
+    }
+
+    private class PlukklisteRad
+    {
+        public required PlukklisteLinje Linje { get; set; }
+        public required Component Component { get; set; }
+        public int AntallTrengs { get; set; }
+        public int MaBestilles => Math.Max(AntallTrengs - Linje.VarerBestilt, 0);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _prosjekt = await Db.Prosjekter.FindAsync(Id);
+        if (_prosjekt is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        var behov = await Db.DorKomponenter
+            .Where(k => k.Dor!.ProsjektId == Id && k.LevertAv == LevertAv.F && k.ComponentId != 0)
+            .Include(k => k.Component).ThenInclude(c => c!.Type)
+            .ToListAsync();
+
+        var gruppert = behov
+            .Where(k => k.Component is not null)
+            .GroupBy(k => k.ComponentId)
+            .Select(g => new { ComponentId = g.Key, Component = g.First().Component!, Antall = g.Sum(x => x.Antall) })
+            .OrderBy(x => x.Component.Type?.Navn)
+            .ThenBy(x => x.Component.Navn)
+            .ToList();
+
+        var eksisterende = await Db.PlukklisteLinjer
+            .Where(p => p.ProsjektId == Id)
+            .ToListAsync();
+
+        var rader = new List<PlukklisteRad>();
+        foreach (var g in gruppert)
+        {
+            var linje = eksisterende.FirstOrDefault(l => l.ComponentId == g.ComponentId);
+            if (linje is null)
+            {
+                linje = new PlukklisteLinje { ProsjektId = Id, ComponentId = g.ComponentId };
+                Db.PlukklisteLinjer.Add(linje);
+            }
+
+            rader.Add(new PlukklisteRad { Linje = linje, Component = g.Component, AntallTrengs = g.Antall });
+        }
+
+        await Db.SaveChangesAsync();
+        _rader = rader;
+    }
+
+    private async Task LagreLinje(PlukklisteLinje linje)
+    {
+        await Db.SaveChangesAsync();
+    }
+}

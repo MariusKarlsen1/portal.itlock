@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260819132933_FdvVedlegg")]
+    partial class FdvVedlegg
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -1409,34 +1412,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("Plantegninger");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.PlukklisteLinje", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("AntallPlukket")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ComponentId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ProsjektId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("VarerBestilt")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ComponentId");
-
-                    b.HasIndex("ProsjektId", "ComponentId")
-                        .IsUnique();
-
-                    b.ToTable("PlukklisteLinjer");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.Prisoverslag", b =>
                 {
                     b.Property<int>("Id")
@@ -2380,25 +2355,6 @@ namespace PortalItlock.Web.Migrations
                         .HasForeignKey("ProsjektId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("Prosjekt");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.PlukklisteLinje", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Component", "Component")
-                        .WithMany()
-                        .HasForeignKey("ComponentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
-                        .WithMany()
-                        .HasForeignKey("ProsjektId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Component");
 
                     b.Navigation("Prosjekt");
                 });
