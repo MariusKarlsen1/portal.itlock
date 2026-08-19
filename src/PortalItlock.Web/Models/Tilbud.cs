@@ -12,13 +12,15 @@ public class Tilbud
     public decimal Timepris { get; set; }
     public decimal? EstimertTimerOverride { get; set; }
     public decimal? Montasjekost { get; set; }
+    public decimal? MontasjeInnpris { get; set; }
     public string? Forside { get; set; }
 
     // PDF-visningsvalg
     public bool VisEnhetspris { get; set; } = true;
-    public bool VisProduktkode { get; set; }
-    public bool VisKunTotalsum { get; set; }
-    public bool VisKunTotaltUtenMva { get; set; }
+    public bool SummerAlleBeslag { get; set; } = true;
+    public bool VisAlleDorerFraBeslagsliste { get; set; }
+    public bool SkjulVarenummerISammendrag { get; set; }
+    public bool VisPrisPerDor { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
     public DateTime? OppdatertDato { get; set; }

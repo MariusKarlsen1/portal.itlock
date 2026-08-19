@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using PortalItlock.Web.Data;
+using PortalItlock.Web.Models;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -32,12 +34,26 @@ public class TilbudPdfService(ApplicationDbContext db)
 
         var linjer = tilbud.Linjer.OrderBy(l => l.Rekkefolge).ToList();
         var visRabatt = linjer.Any(l => l.RabattProsent > 0);
-        var utprisVarer = linjer.Sum(l => l.Utpris * l.Antall);
-        var minutter = linjer.Sum(l => (l.MontasjeMinutter ?? 0) * l.Antall);
+        var utprisVarer = linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Utpris * l.Antall);
+        var minutter = linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => (l.MontasjeMinutter ?? 0) * l.Antall);
         var arbeidstidTimer = tilbud.EstimertTimerOverride ?? (minutter / 60m);
         var kalkulertMontasjekost = Math.Round(tilbud.Timepris * arbeidstidTimer, 2);
         var montasjekost = tilbud.Montasjekost ?? kalkulertMontasjekost;
         var totaltUtenMva = utprisVarer + montasjekost;
+
+        var utprisPerComponent = linjer.Where(l => l.ComponentId.HasValue)
+            .ToDictionary(l => l.ComponentId!.Value, l => l.Utpris);
+
+        var dorer = new List<Dor>();
+        if (tilbud.VisAlleDorerFraBeslagsliste)
+        {
+            dorer = await db.Dorer
+                .Where(d => d.ProsjektId == tilbud.ProsjektId)
+                .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
+                .Include(d => d.Funksjoner)
+                .OrderBy(d => d.Dornummer)
+                .ToListAsync();
+        }
 
         var overskrift = tilbud.Prosjekt is not null ? $"{tilbud.Prosjekt.Navn} - {tilbud.Tittel}" : tilbud.Tittel;
 
@@ -112,78 +128,25 @@ public class TilbudPdfService(ApplicationDbContext db)
                         col.Item().PageBreak();
                     }
 
-                    if (!tilbud.VisKunTotalsum && linjer.Count > 0)
+                    var visSammendrag = tilbud.SummerAlleBeslag && linjer.Count > 0;
+                    var visDorer = tilbud.VisAlleDorerFraBeslagsliste && dorer.Any(d => d.Komponenter.Any(k => k.Component is not null));
+
+                    if (visSammendrag)
                     {
-                        col.Item().Text("Produktsammendrag").FontSize(16).SemiBold();
-
-                        col.Item().PaddingTop(6).Table(table =>
-                        {
-                            table.ColumnsDefinition(columns =>
-                            {
-                                columns.RelativeColumn(2.5f);
-                                columns.RelativeColumn(3f);
-                                columns.RelativeColumn(2f);
-                                if (tilbud.VisProduktkode)
-                                {
-                                    columns.RelativeColumn(1.5f);
-                                }
-                                columns.RelativeColumn(1f);
-                                if (tilbud.VisEnhetspris)
-                                {
-                                    if (visRabatt)
-                                    {
-                                        columns.RelativeColumn(1f);
-                                    }
-                                    columns.RelativeColumn(1.5f);
-                                    columns.RelativeColumn(1.5f);
-                                }
-                            });
-
-                            table.Header(header =>
-                            {
-                                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Varenavn").Bold();
-                                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Varenavn 2").Bold();
-                                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Beslagstype").Bold();
-                                if (tilbud.VisProduktkode)
-                                {
-                                    header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Produktkode").Bold();
-                                }
-                                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Ant.").Bold();
-                                if (tilbud.VisEnhetspris)
-                                {
-                                    if (visRabatt)
-                                    {
-                                        header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Rabatt").Bold();
-                                    }
-                                    header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Á-pris").Bold();
-                                    header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Totalt").Bold();
-                                }
-                            });
-
-                            foreach (var l in linjer)
-                            {
-                                table.Cell().Text(l.Navn);
-                                table.Cell().Text(l.Component?.Beskrivelse ?? "");
-                                table.Cell().Text(l.Component?.Type?.Navn ?? "");
-                                if (tilbud.VisProduktkode)
-                                {
-                                    table.Cell().Text(l.Component?.Produktkode ?? "");
-                                }
-                                table.Cell().Text(l.Antall.ToString());
-                                if (tilbud.VisEnhetspris)
-                                {
-                                    if (visRabatt)
-                                    {
-                                        table.Cell().Text(l.RabattProsent > 0 ? $"{l.RabattProsent.ToString("N0", Kultur)} %" : "-");
-                                    }
-                                    table.Cell().Text(FormatKr(l.Utpris));
-                                    table.Cell().Text(FormatKr(l.Utpris * l.Antall));
-                                }
-                            }
-                        });
+                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt);
                     }
 
-                    col.Item().PaddingTop(20).AlignRight().Width(260).Element(container => RenderTotalsBox(container, tilbud.VisKunTotaltUtenMva, totaltUtenMva));
+                    if (visDorer)
+                    {
+                        if (visSammendrag)
+                        {
+                            col.Item().PageBreak();
+                        }
+
+                        RenderDorer(col, tilbud, dorer, utprisPerComponent);
+                    }
+
+                    col.Item().PaddingTop(20).AlignRight().Width(260).Element(container => RenderTotalsBox(container, totaltUtenMva));
                 });
 
                 page.Footer().AlignCenter().Text(x =>
@@ -198,12 +161,147 @@ public class TilbudPdfService(ApplicationDbContext db)
         return document.GeneratePdf();
     }
 
+    private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt)
+    {
+        var visVarenummer = !tilbud.SkjulVarenummerISammendrag;
+        var visLevering = linjer.Any(l => l.LevertAv != LevertAv.F);
+
+        col.Item().Text("Produktsammendrag").FontSize(16).SemiBold();
+
+        col.Item().PaddingTop(6).Table(table =>
+        {
+            table.ColumnsDefinition(columns =>
+            {
+                if (visVarenummer)
+                {
+                    columns.RelativeColumn(1.5f);
+                }
+                columns.RelativeColumn(3f);
+                columns.RelativeColumn(2f);
+                columns.RelativeColumn(1f);
+                if (visLevering)
+                {
+                    columns.RelativeColumn(1f);
+                }
+                if (tilbud.VisEnhetspris)
+                {
+                    if (visRabatt)
+                    {
+                        columns.RelativeColumn(1f);
+                    }
+                    columns.RelativeColumn(1.5f);
+                    columns.RelativeColumn(1.5f);
+                }
+            });
+
+            table.Header(header =>
+            {
+                if (visVarenummer)
+                {
+                    header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Varenr").Bold();
+                }
+                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Varenavn").Bold();
+                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Beslagstype").Bold();
+                header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Ant.").Bold();
+                if (visLevering)
+                {
+                    header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Lev.").Bold();
+                }
+                if (tilbud.VisEnhetspris)
+                {
+                    if (visRabatt)
+                    {
+                        header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Rabatt").Bold();
+                    }
+                    header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Pris").Bold();
+                    header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).Text("Totalt").Bold();
+                }
+            });
+
+            foreach (var l in linjer)
+            {
+                if (visVarenummer)
+                {
+                    table.Cell().Text(l.Component?.Produktkode ?? "");
+                }
+                table.Cell().Text(l.Navn);
+                table.Cell().Text(l.Component?.Type?.Navn ?? "");
+                table.Cell().Text(l.Antall.ToString());
+                if (visLevering)
+                {
+                    table.Cell().Text(l.LevertAv.Visningsnavn());
+                }
+                if (tilbud.VisEnhetspris)
+                {
+                    var visPrisPaLinje = l.LevertAv == LevertAv.F;
+                    if (visRabatt)
+                    {
+                        table.Cell().Text(l.RabattProsent > 0 ? $"{l.RabattProsent.ToString("N0", Kultur)} %" : "-");
+                    }
+                    table.Cell().Text(visPrisPaLinje ? FormatKr(l.Utpris) : "–");
+                    table.Cell().Text(visPrisPaLinje ? FormatKr(l.Utpris * l.Antall) : "–");
+                }
+            }
+        });
+    }
+
+    private static void RenderDorer(ColumnDescriptor col, Tilbud tilbud, List<Dor> dorer, Dictionary<int, decimal> utprisPerComponent)
+    {
+        var relevanteDorer = dorer.Where(d => d.Komponenter.Any(k => k.Component is not null)).ToList();
+
+        col.Item().Text("Dører").FontSize(16).SemiBold();
+
+        decimal HentUtpris(DorKomponent k) => utprisPerComponent.GetValueOrDefault(k.ComponentId, k.Component!.PrisVeiledende ?? 0);
+
+        for (var i = 0; i < relevanteDorer.Count; i++)
+        {
+            var dor = relevanteDorer[i];
+            col.Item().PaddingTop(i == 0 ? 8 : 16).Column(inner => DorPdfSeksjoner.RenderDorSide(inner, dor, tilbud.VisPrisPerDor, HentUtpris));
+        }
+    }
+
     private static void RenderLogoSpans(TextDescriptor t, float size)
     {
         t.Span("itl").FontColor("#292927").Bold().FontSize(size);
         t.Span("o").FontColor("#835e41").Bold().FontSize(size);
         t.Span("ck").FontColor("#292927").Bold().FontSize(size);
         t.Span(" AS").FontColor("#292927").Bold().FontSize(size);
+    }
+
+    private static readonly Regex InlineMarkupRegex = new(
+        @"\*\*(?<bold>.+?)\*\*|\{\{size=(?<sizeval>\d+(?:\.\d+)?)\}\}(?<sizetext>.+?)\{\{/size\}\}|\{\{font=(?<fontval>[^}]+)\}\}(?<fonttext>.+?)\{\{/font\}\}",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
+    private static void RenderInlineText(TextDescriptor t, string text)
+    {
+        var lastIndex = 0;
+        foreach (Match m in InlineMarkupRegex.Matches(text))
+        {
+            if (m.Index > lastIndex)
+            {
+                t.Span(text[lastIndex..m.Index]);
+            }
+
+            if (m.Groups["bold"].Success)
+            {
+                t.Span(m.Groups["bold"].Value).Bold();
+            }
+            else if (m.Groups["sizeval"].Success)
+            {
+                t.Span(m.Groups["sizetext"].Value).FontSize(float.Parse(m.Groups["sizeval"].Value, CultureInfo.InvariantCulture));
+            }
+            else if (m.Groups["fontval"].Success)
+            {
+                t.Span(m.Groups["fonttext"].Value).FontFamily([m.Groups["fontval"].Value.Trim()]);
+            }
+
+            lastIndex = m.Index + m.Length;
+        }
+
+        if (lastIndex < text.Length)
+        {
+            t.Span(text[lastIndex..]);
+        }
     }
 
     private static void RenderForside(ColumnDescriptor col, string tekst)
@@ -217,7 +315,12 @@ public class TilbudPdfService(ApplicationDbContext db)
                 return;
             }
 
-            col.Item().PaddingBottom(4).Text(string.Join("\n", paragraph)).LineHeight(1.35f);
+            var joined = string.Join("\n", paragraph);
+            col.Item().PaddingBottom(4).Text(t =>
+            {
+                t.DefaultTextStyle(x => x.LineHeight(1.35f));
+                RenderInlineText(t, joined);
+            });
             paragraph.Clear();
         }
 
@@ -227,12 +330,20 @@ public class TilbudPdfService(ApplicationDbContext db)
             if (line.StartsWith("## "))
             {
                 FlushParagraph();
-                col.Item().PaddingTop(4).Text(line[3..].Trim()).FontSize(11).Bold();
+                col.Item().PaddingTop(4).Text(t =>
+                {
+                    t.DefaultTextStyle(x => x.FontSize(11).Bold());
+                    RenderInlineText(t, line[3..].Trim());
+                });
             }
             else if (line.StartsWith("# "))
             {
                 FlushParagraph();
-                col.Item().PaddingTop(8).Text(line[2..].Trim()).FontSize(19).SemiBold();
+                col.Item().PaddingTop(8).Text(t =>
+                {
+                    t.DefaultTextStyle(x => x.FontSize(19).SemiBold());
+                    RenderInlineText(t, line[2..].Trim());
+                });
             }
             else if (string.IsNullOrWhiteSpace(line))
             {
@@ -247,14 +358,8 @@ public class TilbudPdfService(ApplicationDbContext db)
         FlushParagraph();
     }
 
-    private void RenderTotalsBox(IContainer container, bool visKunTotaltUtenMva, decimal totaltUtenMva)
+    private void RenderTotalsBox(IContainer container, decimal totaltUtenMva)
     {
-        if (visKunTotaltUtenMva)
-        {
-            container.AlignRight().Text($"Totalt uten mva: {FormatKr(totaltUtenMva)}").FontSize(13).Bold();
-            return;
-        }
-
         var mva = Math.Round(totaltUtenMva * MvaSats, 2);
         var totaltInklMva = totaltUtenMva + mva;
 

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260819071437_TilbudMontasjeInnpris")]
+    partial class TilbudMontasjeInnpris
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -1030,9 +1033,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Enhet")
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("LevertAv")
-                        .HasColumnType("INTEGER");
-
                     b.Property<bool>("Montert")
                         .HasColumnType("INTEGER");
 
@@ -1306,9 +1306,6 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Antall")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("LevertAv")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("PackageId", "ComponentId");
@@ -1957,9 +1954,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("VisEnhetspris")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("VisPrisPerDor")
-                        .HasColumnType("INTEGER");
-
                     b.HasKey("Id");
 
                     b.HasIndex("ProsjektId");
@@ -2010,9 +2004,6 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<decimal>("Innpris")
                         .HasColumnType("TEXT");
-
-                    b.Property<int>("LevertAv")
-                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("MontasjeMinutter")
                         .HasColumnType("INTEGER");

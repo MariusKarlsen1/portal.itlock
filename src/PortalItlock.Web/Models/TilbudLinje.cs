@@ -15,6 +15,7 @@ public class TilbudLinje
     public int Antall { get; set; } = 1;
     public string? Enhet { get; set; }
     public int? MontasjeMinutter { get; set; }
+    public LevertAv LevertAv { get; set; } = LevertAv.F;
 
     public TilbudPrisType? PrisType { get; set; }
     public decimal? Prosentsats { get; set; }

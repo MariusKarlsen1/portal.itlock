@@ -23,6 +23,7 @@ builder.Services.AddScoped<PackageMatchingService>();
 builder.Services.AddScoped<TilbudPdfService>();
 builder.Services.AddScoped<TimeoversiktService>();
 builder.Services.AddScoped<FdvPdfService>();
+builder.Services.AddScoped<DorBeslagslistePdfService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -188,6 +189,33 @@ app.MapGet("/tilbud/{id:int}/pdf", async (int id, HttpContext context, Applicati
     }
 
     // Vises i nettleseren først, slik at tilbudet kan leses gjennom før det evt. lastes ned.
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/tilbud/{id:int}/beslagsliste/pdf", async (int id, HttpContext context, ApplicationDbContext db, DorBeslagslistePdfService beslagslisteService) =>
+{
+    var tilbud = await db.Tilbud.Include(t => t.Prosjekt).FirstOrDefaultAsync(t => t.Id == id);
+    if (tilbud is null)
+    {
+        return Results.NotFound();
+    }
+
+    var pdf = await beslagslisteService.GenerateAsync(tilbud.ProsjektId);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var prosjektNavn = tilbud.Prosjekt?.Navn ?? "";
+    var filnavn = $"Beslagsliste - {prosjektNavn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
+    foreach (var ugyldig in Path.GetInvalidFileNameChars())
+    {
+        filnavn = filnavn.Replace(ugyldig, '-');
+    }
+
     var disposisjon = new ContentDispositionHeaderValue("inline");
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();

@@ -9,4 +9,5 @@ public class PackageComponent
     public Component? Component { get; set; }
 
     public int Antall { get; set; } = 1;
+    public LevertAv? LevertAv { get; set; }
 }

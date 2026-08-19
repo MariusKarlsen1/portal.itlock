@@ -10,6 +10,7 @@ public class DorKomponent
 
     public int Antall { get; set; } = 1;
     public string? Enhet { get; set; }
+    public LevertAv LevertAv { get; set; } = LevertAv.F;
 
     public bool Montert { get; set; }
     public DateTime? MontertDato { get; set; }
