@@ -1,0 +1,308 @@
+@page "/prosjekt/{Id:int}/lasplan"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Låsplan - @(_prosjekt?.Navn)</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke prosjektet. Det kan være slettet.</p>
+}
+else if (_prosjekt is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="@($"/prosjekter/{Id}")">&larr; Tilbake til prosjektet</a>
+    <h1>Låsplan - @_prosjekt.Navn</h1>
+    <p class="section-hint">
+        Sylindere hentes fra varer merket som "Låsplan" på prosjektets tilbud <strong>som også er plassert på en dør</strong>
+        (under Dører-fanen). Kryss av hvilke nøkler som åpner hvilke sylindere.
+    </p>
+
+    <div class="field-grid">
+        <label>
+            Låsplan systemnr.
+            <input @bind="_prosjekt.LasplanSystemnr" @bind:event="oninput" />
+        </label>
+        <label>
+            Systemeier
+            <input value="@(_prosjekt.Kunde?.Navn)" disabled />
+        </label>
+        <label>
+            Prosjektnummer
+            <input @bind="_prosjekt.LasplanProsjektnummer" @bind:event="oninput" />
+        </label>
+        <label>
+            Utarbeidet av/dato
+            <input @bind="_prosjekt.LasplanUtarbeidetAv" @bind:event="oninput" placeholder="Navn, dd.mm.åååå" />
+        </label>
+    </div>
+
+    <div class="knapperad">
+        <button type="button" class="save-button" @onclick="LagreInfo">Lagre</button>
+        @if (!string.IsNullOrEmpty(_savedMessage))
+        {
+            <span class="save-success">@_savedMessage</span>
+        }
+        <button type="button" class="cancel-button" @onclick="SynkroniserSylindere">Synkroniser sylindere</button>
+        @if (!string.IsNullOrEmpty(_syncMessage))
+        {
+            <span class="save-success">@_syncMessage</span>
+        }
+        <button type="button" class="@(_prosjekt.LasplanLast ? "add-button" : "cancel-button")" @onclick="ToggleLast">
+            @(_prosjekt.LasplanLast ? "Aktiver redigering av matrise" : "Lås matrise")
+        </button>
+        <button type="button" class="add-button" @onclick="GenererPdf">Last ned PDF</button>
+        <PdfPreviewModal Url="@_pdfUrl" Tittel="Låsplan" OnClose="@(() => _pdfUrl = null)" />
+    </div>
+
+    @if (_uplasserte.Count > 0)
+    {
+        <p class="form-error">
+            @_uplasserte.Count vare(r) er merket "Låsplan" på tilbudet, men ikke lagt til på noen dør ennå, så de vises ikke i matrisen:
+            @string.Join(", ", _uplasserte.Select(l => l.Component!.Navn)).
+            Legg dem til på riktig(e) dør(er) under Dører-fanen.
+        </p>
+    }
+
+    <div class="nokkel-form">
+        <h3>Nøkler</h3>
+        <div class="nokkel-liste">
+            @foreach (var n in _nokler)
+            {
+                <span @key="n.Id" class="nokkel-chip">
+                    @n.Merking: @n.Navn (@n.Antall stk)
+                    <button type="button" class="remove-inline" @onclick="@(() => FjernNokkel(n))">&times;</button>
+                </span>
+            }
+        </div>
+        <div class="nokkel-nytt">
+            <input @bind="_nyNokkelNavn" @bind:event="oninput" placeholder="Nøkkelnavn, f.eks. Hovednøkkel" />
+            <input @bind="_nyNokkelMateriale" @bind:event="oninput" placeholder="Materiale (valgfritt)" />
+            <input type="number" min="0" @bind="_nyNokkelAntall" placeholder="Antall" />
+            <button type="button" class="add-button" @onclick="LeggTilNokkel" disabled="@string.IsNullOrWhiteSpace(_nyNokkelNavn)">Legg til nøkkel</button>
+        </div>
+    </div>
+
+    @if (_rader.Count == 0)
+    {
+        <p class="list-empty">Ingen sylindere plassert på dører ennå. Kryss av "Låsplan" på riktige varer inne på tilbudet, og legg dem til på en dør under Dører-fanen.</p>
+    }
+    else
+    {
+        <div class="matrise-wrap">
+            <table class="matrise-table">
+                <thead>
+                    <tr>
+                        <th>Syl.mrk</th>
+                        <th>Dør til</th>
+                        <th>Dørnr.</th>
+                        <th>Sylindertype</th>
+                        <th>Antall</th>
+                        @foreach (var n in _nokler)
+                        {
+                            <th @key="n.Id" class="nokkel-header"><span>@n.Merking</span></th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var rad in _rader)
+                    {
+                        <tr @key="@($"{rad.DorId}-{rad.ComponentId}-{rad.Visningsnummer}")">
+                            <td>@rad.Visningsnummer</td>
+                            <td>@rad.Dor.DorTil</td>
+                            <td>@rad.Dor.Dornummer</td>
+                            <td>@rad.Component.Navn</td>
+                            <td>1</td>
+                            @foreach (var n in _nokler)
+                            {
+                                var krysset = ApnerDenne(rad, n);
+                                <td @key="n.Id" class="kryss-celle @(krysset ? "krysset" : "")" @onclick="@(() => ToggleKryss(rad, n))">
+                                    @(krysset ? "X" : "")
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private Prosjekt? _prosjekt;
+    private bool _notFound;
+    private List<Nokkel> _nokler = [];
+    private List<SylinderRad> _rader = [];
+    private HashSet<(int NokkelId, int DorId, int ComponentId)> _krysser = [];
+    private string? _savedMessage;
+    private string? _syncMessage;
+    private string? _pdfUrl;
+    private List<TilbudLinje> _uplasserte = [];
+
+    private string _nyNokkelNavn = "";
+    private string _nyNokkelMateriale = "";
+    private int _nyNokkelAntall = 1;
+
+    private class SylinderRad
+    {
+        public required string Visningsnummer { get; set; }
+        public required int DorId { get; set; }
+        public required int ComponentId { get; set; }
+        public required Dor Dor { get; set; }
+        public required Component Component { get; set; }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _prosjekt = await Db.Prosjekter.Include(p => p.Kunde).FirstOrDefaultAsync(p => p.Id == Id);
+        if (_prosjekt is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        await LastInnAsync();
+    }
+
+    private async Task LastInnAsync()
+    {
+        _nokler = await Db.Nokler.Where(n => n.ProsjektId == Id).OrderBy(n => n.Rekkefolge).ToListAsync();
+
+        var dorKomponenter = await Db.DorKomponenter
+            .Where(k => k.Dor!.ProsjektId == Id && k.Component!.ErSylinder)
+            .Include(k => k.Dor)
+            .Include(k => k.Component)
+            .OrderBy(k => k.Dor!.Dornummer)
+            .ToListAsync();
+
+        var rader = new List<SylinderRad>();
+        var nummer = 0;
+        foreach (var dk in dorKomponenter)
+        {
+            nummer++;
+            for (var i = 0; i < dk.Antall; i++)
+            {
+                rader.Add(new SylinderRad
+                {
+                    Visningsnummer = i == 0 ? nummer.ToString() : $"{nummer}.{i}",
+                    DorId = dk.DorId,
+                    ComponentId = dk.ComponentId,
+                    Dor = dk.Dor!,
+                    Component = dk.Component!
+                });
+            }
+        }
+        _rader = rader;
+
+        var nokkelIder = _nokler.Select(n => n.Id).ToList();
+        var krysser = await Db.NokkelSylindere.Where(ns => nokkelIder.Contains(ns.NokkelId)).ToListAsync();
+        _krysser = krysser.Select(k => (k.NokkelId, k.DorId, k.ComponentId)).ToHashSet();
+
+        var plasserteComponentIder = dorKomponenter.Select(dk => dk.ComponentId).ToHashSet();
+        _uplasserte = await Db.TilbudLinjer
+            .Where(l => l.Tilbud!.ProsjektId == Id && l.ComponentId != null && l.Component!.ErSylinder)
+            .Include(l => l.Component)
+            .ToListAsync();
+        _uplasserte = _uplasserte
+            .Where(l => !plasserteComponentIder.Contains(l.ComponentId!.Value))
+            .DistinctBy(l => l.ComponentId)
+            .ToList();
+    }
+
+    private async Task SynkroniserSylindere()
+    {
+        await LastInnAsync();
+        _syncMessage = _rader.Count == 0
+            ? "Fant ingen sylindere plassert på dører ennå."
+            : $"{_rader.Count} sylinder(e) synkronisert.";
+    }
+
+    private bool ApnerDenne(SylinderRad rad, Nokkel nokkel) => _krysser.Contains((nokkel.Id, rad.DorId, rad.ComponentId));
+
+    private async Task ToggleKryss(SylinderRad rad, Nokkel nokkel)
+    {
+        if (_prosjekt!.LasplanLast)
+        {
+            return;
+        }
+
+        var key = (nokkel.Id, rad.DorId, rad.ComponentId);
+        if (_krysser.Contains(key))
+        {
+            var eksisterende = await Db.NokkelSylindere.FindAsync(nokkel.Id, rad.DorId, rad.ComponentId);
+            if (eksisterende is not null)
+            {
+                Db.NokkelSylindere.Remove(eksisterende);
+            }
+
+            _krysser.Remove(key);
+        }
+        else
+        {
+            Db.NokkelSylindere.Add(new NokkelSylinder { NokkelId = nokkel.Id, DorId = rad.DorId, ComponentId = rad.ComponentId });
+            _krysser.Add(key);
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task ToggleLast()
+    {
+        _prosjekt!.LasplanLast = !_prosjekt.LasplanLast;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreInfo()
+    {
+        await Db.SaveChangesAsync();
+        _savedMessage = "Lagret.";
+    }
+
+    private async Task LeggTilNokkel()
+    {
+        if (string.IsNullOrWhiteSpace(_nyNokkelNavn))
+        {
+            return;
+        }
+
+        var nokkel = new Nokkel
+        {
+            ProsjektId = Id,
+            Navn = _nyNokkelNavn.Trim(),
+            Materiale = string.IsNullOrWhiteSpace(_nyNokkelMateriale) ? null : _nyNokkelMateriale.Trim(),
+            Antall = _nyNokkelAntall,
+            Merking = $"N{_nokler.Count + 1}",
+            Rekkefolge = _nokler.Count
+        };
+
+        Db.Nokler.Add(nokkel);
+        await Db.SaveChangesAsync();
+
+        _nokler.Add(nokkel);
+        _nyNokkelNavn = "";
+        _nyNokkelMateriale = "";
+        _nyNokkelAntall = 1;
+    }
+
+    private async Task FjernNokkel(Nokkel n)
+    {
+        Db.Nokler.Remove(n);
+        await Db.SaveChangesAsync();
+        _nokler.Remove(n);
+        _krysser.RemoveWhere(k => k.NokkelId == n.Id);
+    }
+
+    private void GenererPdf()
+    {
+        _pdfUrl = $"/prosjekt/{Id}/lasplan/pdf?v={DateTime.UtcNow.Ticks}";
+    }
+}

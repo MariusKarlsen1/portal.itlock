@@ -1,0 +1,215 @@
+@page "/serviceoppdrag"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject EmailService Epost
+
+<PageTitle>Serviceoppdrag</PageTitle>
+
+<h1>Serviceoppdrag</h1>
+<p class="section-hint">Henvendelser sendt inn av kunder via "For kunden".</p>
+
+@if (_henvendelser.Count == 0)
+{
+    <p class="list-empty">Ingen henvendelser sendt inn ennå.</p>
+}
+else
+{
+    <div class="henvendelse-liste">
+        @foreach (var h in _henvendelser)
+        {
+            <div @key="h.Id" class="henvendelse-kort">
+                <div class="henvendelse-header">
+                    <div>
+                        <strong>@h.Kunde?.Navn</strong> - @h.Dortype
+                        <p class="henvendelse-dato">@h.OpprettetDato.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</p>
+                    </div>
+                    <select @bind="h.Status" @bind:after="@(() => LagreStatus(h))">
+                        @foreach (var status in Enum.GetValues<ServicehenvendelseStatus>())
+                        {
+                            <option value="@status">@status.Visningsnavn()</option>
+                        }
+                    </select>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(h.Adresse))
+                {
+                    <p><strong>Adresse:</strong> @h.Adresse</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(h.Beskrivelse))
+                {
+                    <p>@h.Beskrivelse</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(h.OnsketTidspunkt))
+                {
+                    <p><strong>Ønsket tidspunkt:</strong> @h.OnsketTidspunkt</p>
+                }
+
+                @if (_kundeBilder.TryGetValue(h.Id, out var kundeBilder) && kundeBilder.Count > 0)
+                {
+                    <p class="bilde-etikett">Bilder fra kunde:</p>
+                    <div class="henvendelse-bilder">
+                        @foreach (var bildeId in kundeBilder)
+                        {
+                            <a href="@($"/servicehenvendelse/bilde/{bildeId}")" target="_blank">
+                                <img src="@($"/servicehenvendelse/bilde/{bildeId}")" alt="Bilde" />
+                            </a>
+                        }
+                    </div>
+                }
+
+                <label class="svar-felt">
+                    Svar til kunde (pris, leveringstid o.l. - sendes på e-post til kunden)
+                    <textarea @bind="h.SvarFraItlock" @bind:event="oninput" rows="2"></textarea>
+                    <button type="button" class="save-button" @onclick="@(() => LagreSvar(h))">Lagre svar</button>
+                </label>
+
+                <div class="dok-felt">
+                    <p class="bilde-etikett">Dokumentasjonsbilder (vises og sendes til kunde):</p>
+                    @if (_dokBilder.TryGetValue(h.Id, out var dokBilder) && dokBilder.Count > 0)
+                    {
+                        <div class="henvendelse-bilder">
+                            @foreach (var bildeId in dokBilder)
+                            {
+                                <a href="@($"/servicehenvendelse/bilde/{bildeId}")" target="_blank">
+                                    <img src="@($"/servicehenvendelse/bilde/{bildeId}")" alt="Dokumentasjonsbilde" />
+                                </a>
+                            }
+                        </div>
+                    }
+                    <InputFile OnChange="@(e => LastOppDokBilder(h, e))" accept="image/*" multiple />
+                </div>
+
+                <div class="send-felt">
+                    <button type="button" class="add-button" @onclick="@(() => SendDokumentasjon(h))" disabled="@(h.Kunde?.Epost is null)">
+                        Send dokumentasjon til kunde
+                    </button>
+                    @if (h.Kunde?.Epost is null)
+                    {
+                        <span class="form-error">Kunden mangler e-postadresse.</span>
+                    }
+                    @if (h.EpostSendtDato is not null)
+                    {
+                        <span class="epost-sendt">Sendt @h.EpostSendtDato.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</span>
+                    }
+                    @if (_sendFeil.TryGetValue(h.Id, out var feil))
+                    {
+                        <span class="form-error">@feil</span>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private List<Servicehenvendelse> _henvendelser = [];
+    private Dictionary<int, List<int>> _kundeBilder = [];
+    private Dictionary<int, List<int>> _dokBilder = [];
+    private Dictionary<int, string> _sendFeil = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _henvendelser = await Db.Servicehenvendelser
+            .Include(h => h.Kunde)
+            .OrderByDescending(h => h.OpprettetDato)
+            .ToListAsync();
+
+        var henvendelseIder = _henvendelser.Select(h => h.Id).ToList();
+        var bilder = await Db.ServicehenvendelseBilder
+            .Where(b => henvendelseIder.Contains(b.ServicehenvendelseId))
+            .Select(b => new { b.Id, b.ServicehenvendelseId, b.ErDokumentasjon })
+            .ToListAsync();
+
+        _kundeBilder = bilder
+            .Where(b => !b.ErDokumentasjon)
+            .GroupBy(b => b.ServicehenvendelseId)
+            .ToDictionary(g => g.Key, g => g.Select(b => b.Id).ToList());
+
+        _dokBilder = bilder
+            .Where(b => b.ErDokumentasjon)
+            .GroupBy(b => b.ServicehenvendelseId)
+            .ToDictionary(g => g.Key, g => g.Select(b => b.Id).ToList());
+    }
+
+    private async Task LagreStatus(Servicehenvendelse h)
+    {
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreSvar(Servicehenvendelse h)
+    {
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LastOppDokBilder(Servicehenvendelse h, InputFileChangeEventArgs e)
+    {
+        foreach (var fil in e.GetMultipleFiles(10))
+        {
+            if (fil.Size > 15_000_000)
+            {
+                continue;
+            }
+
+            using var buffer = new MemoryStream();
+            await using (var stream = fil.OpenReadStream(maxAllowedSize: 15_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            Db.ServicehenvendelseBilder.Add(new ServicehenvendelseBilde
+            {
+                ServicehenvendelseId = h.Id,
+                Data = buffer.ToArray(),
+                ContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType,
+                Filnavn = fil.Name,
+                ErDokumentasjon = true
+            });
+        }
+
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task SendDokumentasjon(Servicehenvendelse h)
+    {
+        _sendFeil.Remove(h.Id);
+
+        if (h.Kunde?.Epost is null)
+        {
+            return;
+        }
+
+        var dokBilder = await Db.ServicehenvendelseBilder
+            .Where(b => b.ServicehenvendelseId == h.Id && b.ErDokumentasjon)
+            .ToListAsync();
+
+        var svarHtml = System.Net.WebUtility.HtmlEncode(h.SvarFraItlock ?? "").Replace("\n", "<br>");
+        var html = "<p>Hei " + h.Kunde.Navn + ",</p>"
+            + "<p>Her er dokumentasjon fra jobben på " + h.Dortype.ToLowerInvariant() + ":</p>"
+            + "<p>" + svarHtml + "</p>"
+            + "<p>Mvh itlock AS</p>";
+
+        var vedlegg = dokBilder.Select(b => (b.Filnavn, b.Data));
+        var ok = await Epost.SendAsync(h.Kunde.Epost, $"Dokumentasjon - {h.Dortype}", html, vedlegg);
+
+        if (!ok)
+        {
+            _sendFeil[h.Id] = "Kunne ikke sende e-post. Sjekk at Resend er riktig satt opp.";
+            return;
+        }
+
+        h.EpostSendtDato = DateTime.UtcNow;
+        await Db.SaveChangesAsync();
+    }
+}

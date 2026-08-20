@@ -4,7 +4,8 @@ public enum BrukerRolle
 {
     Admin,
     Prosjektleder,
-    Montor
+    Montor,
+    Kunde
 }
 
 public static class BrukerRolleExtensions
@@ -14,6 +15,7 @@ public static class BrukerRolleExtensions
         BrukerRolle.Admin => "Admin",
         BrukerRolle.Prosjektleder => "Prosjektleder",
         BrukerRolle.Montor => "Montør",
+        BrukerRolle.Kunde => "Kunde",
         _ => rolle.ToString()
     };
 }

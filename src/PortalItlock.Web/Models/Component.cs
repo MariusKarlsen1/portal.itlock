@@ -11,6 +11,7 @@ public class Component
     public string? Produktkode { get; set; }
     public string? Beskrivelse { get; set; }
     public string? Overflate { get; set; }
+    public bool ErSylinder { get; set; }
 
     public string? Leverandor { get; set; }
     public string? Varegruppe { get; set; }

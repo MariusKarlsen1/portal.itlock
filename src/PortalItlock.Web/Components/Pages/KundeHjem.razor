@@ -1,0 +1,128 @@
+@page "/kunde"
+@layout PortalItlock.Web.Components.Layout.KundeLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Kunde")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>For kunden - itlock</PageTitle>
+
+@if (_ikkeAktiv)
+{
+    <p class="form-error">Tilgangen din er deaktivert. Ta kontakt med itlock for å få den aktivert igjen.</p>
+}
+else if (_ikkeKoblet)
+{
+    <p class="form-error">Din bruker er ikke koblet til noen kunde ennå. Ta kontakt med itlock.</p>
+}
+else if (_kunde is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <h1>Hei, @_kunde.Navn</h1>
+    <p class="section-hint">Her kan du melde inn behov for service på dører, og følge status på henvendelsene dine.</p>
+
+    <a class="add-button" href="/kunde/ny">Ny henvendelse</a>
+
+    @if (_henvendelser.Count == 0)
+    {
+        <p class="list-empty">Ingen henvendelser sendt inn ennå.</p>
+    }
+    else
+    {
+        <div class="henvendelse-liste">
+            @foreach (var h in _henvendelser)
+            {
+                <div @key="h.Id" class="henvendelse-kort">
+                    <div class="henvendelse-header">
+                        <strong>@h.Dortype</strong>
+                        <span class="henvendelse-status">@h.Status.Visningsnavn()</span>
+                    </div>
+                    <p class="henvendelse-dato">@h.OpprettetDato.ToLocalTime().ToString("dd.MM.yyyy")</p>
+                    @if (!string.IsNullOrWhiteSpace(h.Beskrivelse))
+                    {
+                        <p>@h.Beskrivelse</p>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(h.OnsketTidspunkt))
+                    {
+                        <p><strong>Ønsket tidspunkt:</strong> @h.OnsketTidspunkt</p>
+                    }
+                    @if (_bildeIder.TryGetValue(h.Id, out var bilder) && bilder.Count > 0)
+                    {
+                        <div class="henvendelse-bilder">
+                            @foreach (var bildeId in bilder)
+                            {
+                                <img @key="bildeId" src="@($"/servicehenvendelse/bilde/{bildeId}")" alt="Bilde" />
+                            }
+                        </div>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(h.SvarFraItlock))
+                    {
+                        <div class="henvendelse-svar">
+                            <strong>Svar fra itlock:</strong>
+                            <p>@h.SvarFraItlock</p>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Kunde? _kunde;
+    private bool _ikkeKoblet;
+    private bool _ikkeAktiv;
+    private List<Servicehenvendelse> _henvendelser = [];
+    private Dictionary<int, List<int>> _bildeIder = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+        {
+            return;
+        }
+
+        var bruker = await Db.Brukere.Include(b => b.Kunde).FirstOrDefaultAsync(b => b.Id == brukerId);
+        if (bruker?.Kunde is null)
+        {
+            _ikkeKoblet = true;
+            return;
+        }
+
+        if (!bruker.Aktiv)
+        {
+            _ikkeAktiv = true;
+            return;
+        }
+
+        _kunde = bruker.Kunde;
+        _henvendelser = await Db.Servicehenvendelser
+            .Where(h => h.KundeId == _kunde.Id)
+            .OrderByDescending(h => h.OpprettetDato)
+            .ToListAsync();
+
+        var henvendelseIder = _henvendelser.Select(h => h.Id).ToList();
+        var bilder = await Db.ServicehenvendelseBilder
+            .Where(b => henvendelseIder.Contains(b.ServicehenvendelseId))
+            .Select(b => new { b.Id, b.ServicehenvendelseId })
+            .ToListAsync();
+        _bildeIder = bilder
+            .GroupBy(b => b.ServicehenvendelseId)
+            .ToDictionary(g => g.Key, g => g.Select(b => b.Id).ToList());
+    }
+}

@@ -11,6 +11,7 @@ public class Kunde
     public string? Postnr { get; set; }
     public string? Sted { get; set; }
     public string? Notater { get; set; }
+    public string? TripletexKundenummer { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 

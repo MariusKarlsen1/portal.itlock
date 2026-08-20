@@ -18,6 +18,12 @@ public class Prosjekt
     public string? Notater { get; set; }
     public string? Info { get; set; }
     public string? FdvForside { get; set; }
+    public string? LasplanSystemnr { get; set; }
+    public string? LasplanProsjektnummer { get; set; }
+    public string? LasplanUtarbeidetAv { get; set; }
+    public bool LasplanLast { get; set; } = true;
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 

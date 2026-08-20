@@ -18,6 +18,7 @@ public class Timeregistrering
     public int PauseMinutter { get; set; }
     public TimeregistreringType Type { get; set; } = TimeregistreringType.NormalArbeidstid;
     public string? Kommentar { get; set; }
+    public decimal Kilometer { get; set; }
 
     [NotMapped]
     public decimal TotalTimer => Math.Max(0, (decimal)(Slutt - Start).TotalHours - PauseMinutter / 60m);

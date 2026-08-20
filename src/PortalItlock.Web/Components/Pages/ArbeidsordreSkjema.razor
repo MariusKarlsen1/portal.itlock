@@ -1,11 +1,15 @@
 @page "/arbeidsordre/{Id:int}"
 @rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using System.Globalization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject GeocodingService Geokoding
+@inject IJSRuntime JS
 
 <PageTitle>@(_ordre?.Tittel ?? "Arbeidsordre")</PageTitle>
 
@@ -61,16 +65,43 @@ else if (_ordre is not null)
                     }
                 </select>
             </label>
+            <label>
+                Planlagt dato
+                <input type="date" @bind="_ordre.PlanlagtDato" />
+            </label>
+            <label>
+                Adresse
+                <input @bind="_ordre.Adresse" @bind:event="oninput" placeholder="F.eks. Gartnerveien 2" />
+            </label>
+            <label>
+                Postnr
+                <input @bind="_ordre.Postnr" @bind:event="oninput" />
+            </label>
+            <label>
+                Sted
+                <input @bind="_ordre.Sted" @bind:event="oninput" />
+            </label>
         </div>
 
         <div class="form-actions">
             <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
             <a class="add-button" href="@($"/timeregistrering?arbeidsordreId={_ordre.Id}")">Registrer timer</a>
+            <button type="button" class="cancel-button" @onclick="VisKart">Vis på kart</button>
             @if (!string.IsNullOrEmpty(_savedMessage))
             {
                 <span class="save-success">@_savedMessage</span>
             }
         </div>
+
+        @if (!string.IsNullOrEmpty(_kartFeil))
+        {
+            <p class="form-error">@_kartFeil</p>
+        }
+
+        @if (_visKart)
+        {
+            <div id="ordre-kart-visning" class="ordre-kart-container"></div>
+        }
     </section>
 
     <section class="ordre-section">
@@ -89,6 +120,7 @@ else if (_ordre is not null)
                         <th>Montør</th>
                         <th>Type</th>
                         <th>Timer</th>
+                        <th>Km</th>
                         <th>Kommentar</th>
                     </tr>
                 </thead>
@@ -100,11 +132,58 @@ else if (_ordre is not null)
                             <td>@r.MontorNavn</td>
                             <td>@r.Type.Visningsnavn()</td>
                             <td class="timer-cell">@r.Timer.ToString("N1", Kultur) t</td>
+                            <td>@(r.Kilometer > 0 ? r.Kilometer.ToString("N0", Kultur) : "")</td>
                             <td>@r.Kommentar</td>
                         </tr>
                     }
                 </tbody>
             </table>
+        }
+    </section>
+
+    <section class="ordre-section">
+        <h2>Sjekkliste @if (_sjekkpunkter.Count > 0) { <span class="sum-timer">(@_sjekkpunkter.Count(p => p.Fullfort)/@_sjekkpunkter.Count fullført)</span> }</h2>
+
+        @if (_sjekkpunkter.Count == 0)
+        {
+            @if (_maler.Count == 0)
+            {
+                <p class="list-empty">Ingen sjekklistemaler er opprettet. Legg til under Sjekklistemaler i admin.</p>
+            }
+            else
+            {
+                <div class="sjekkliste-velg">
+                    <select @bind="_valgtMalId">
+                        <option value="">Velg dørtype...</option>
+                        @foreach (var m in _maler)
+                        {
+                            <option value="@m.Id">@m.Dortype</option>
+                        }
+                    </select>
+                    <button type="button" class="add-button" @onclick="BrukMal" disabled="@(_valgtMalId is null)">Bruk sjekkliste</button>
+                </div>
+            }
+        }
+        else
+        {
+            <ol class="sjekkpunkt-list">
+                @foreach (var p in _sjekkpunkter.OrderBy(p => p.Rekkefolge))
+                {
+                    <li @key="p.Id">
+                        <label>
+                            <input type="checkbox" @bind="p.Fullfort" @bind:after="@(() => LagreSjekkpunkt(p))" />
+                            <span class="@(p.Fullfort ? "sjekkpunkt-fullfort" : "")">@p.Tekst</span>
+                        </label>
+                        @if (p.Fullfort && p.FullfortDato.HasValue)
+                        {
+                            <span class="sjekkpunkt-meta">
+                                @p.FullfortDato.Value.ToString("dd.MM.yyyy HH:mm") @(p.FullfortAvBruker is not null ? $"({p.FullfortAvBruker.Initialer})" : "")
+                            </span>
+                        }
+                    </li>
+                }
+            </ol>
+            <button type="button" class="remove-button" @onclick="FjernSjekkliste">Fjern sjekkliste</button>
         }
     </section>
 
@@ -147,6 +226,7 @@ else if (_ordre is not null)
         public TimeregistreringType Type { get; set; }
         public decimal Timer { get; set; }
         public string? Kommentar { get; set; }
+        public decimal Kilometer { get; set; }
     }
 
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
@@ -161,9 +241,30 @@ else if (_ordre is not null)
     private decimal _sumTimer;
     private int? _loadedId;
     private string? _tilbudTittel;
+    private List<SjekklisteMal> _maler = [];
+    private List<ArbeidsordreSjekkpunkt> _sjekkpunkter = [];
+    private int? _valgtMalId;
+    private bool _visKart;
+    private bool _kartInitialisert;
+    private string? _kartFeil;
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+    private Bruker? _naverendeBruker;
 
     protected override async Task OnParametersSetAsync()
     {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+                _naverendeBruker = await Db.Brukere.FindAsync(bid);
+            }
+        }
+
         if (_loadedId == Id)
         {
             return;
@@ -172,6 +273,9 @@ else if (_ordre is not null)
         _loadedId = Id;
         _confirmingDelete = false;
         _savedMessage = null;
+        _visKart = false;
+        _kartInitialisert = false;
+        _kartFeil = null;
 
         _ordre = await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.Id == Id);
         _notFound = _ordre is null;
@@ -208,16 +312,153 @@ else if (_ordre is not null)
             MontorNavn = t.Montor?.Navn ?? "-",
             Type = t.Type,
             Timer = t.TotalTimer,
-            Kommentar = t.Kommentar
+            Kommentar = t.Kommentar,
+            Kilometer = t.Kilometer
         }).ToList();
 
         _sumTimer = _registreringer.Sum(r => r.Timer);
+
+        _maler = await Db.SjekklisteMaler.OrderBy(m => m.Dortype).ToListAsync();
+        _sjekkpunkter = await Db.ArbeidsordreSjekkpunkter
+            .Where(p => p.ArbeidsordreId == Id)
+            .Include(p => p.FullfortAvBruker)
+            .ToListAsync();
+        _valgtMalId = null;
     }
 
     private async Task Lagre()
     {
         await Db.SaveChangesAsync();
         _savedMessage = "Lagret.";
+    }
+
+    private async Task BrukMal()
+    {
+        if (_valgtMalId is null)
+        {
+            return;
+        }
+
+        var punkter = await Db.SjekklistePunkter
+            .Where(p => p.SjekklisteMalId == _valgtMalId)
+            .OrderBy(p => p.Rekkefolge)
+            .ToListAsync();
+
+        foreach (var punkt in punkter)
+        {
+            Db.ArbeidsordreSjekkpunkter.Add(new ArbeidsordreSjekkpunkt
+            {
+                ArbeidsordreId = Id,
+                Tekst = punkt.Tekst,
+                Rekkefolge = punkt.Rekkefolge
+            });
+        }
+
+        await Db.SaveChangesAsync();
+        _sjekkpunkter = await Db.ArbeidsordreSjekkpunkter
+            .Where(p => p.ArbeidsordreId == Id)
+            .Include(p => p.FullfortAvBruker)
+            .ToListAsync();
+    }
+
+    private async Task LagreSjekkpunkt(ArbeidsordreSjekkpunkt punkt)
+    {
+        var entitet = await Db.ArbeidsordreSjekkpunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Fullfort = punkt.Fullfort;
+        entitet.FullfortDato = punkt.Fullfort ? DateTime.Now : null;
+        entitet.FullfortAvBrukerId = punkt.Fullfort ? _naverendeBrukerId : null;
+        await Db.SaveChangesAsync();
+
+        punkt.FullfortDato = entitet.FullfortDato;
+        punkt.FullfortAvBruker = punkt.Fullfort ? _naverendeBruker : null;
+
+        await OppdaterKartFargeAsync();
+    }
+
+    private async Task FjernSjekkliste()
+    {
+        var punkter = await Db.ArbeidsordreSjekkpunkter
+            .Where(p => p.ArbeidsordreId == Id)
+            .ToListAsync();
+
+        Db.ArbeidsordreSjekkpunkter.RemoveRange(punkter);
+        await Db.SaveChangesAsync();
+        _sjekkpunkter = [];
+
+        await OppdaterKartFargeAsync();
+    }
+
+    private async Task OppdaterKartFargeAsync()
+    {
+        if (!_visKart || !_kartInitialisert)
+        {
+            return;
+        }
+
+        try
+        {
+            await JS.InvokeVoidAsync("kart.oppdaterPunkter", new List<object> { LagKartPunkt() });
+        }
+        catch (JSException)
+        {
+            // Ikke kritisk - kartet oppdateres uansett neste gang siden fylles ut på nytt.
+        }
+    }
+
+    private object LagKartPunkt()
+    {
+        var (farge, statusTekst) = SjekklisteStatusHelper.Beregn(_sjekkpunkter);
+        return new
+        {
+            lat = _ordre!.Latitude!.Value,
+            lng = _ordre.Longitude!.Value,
+            tittel = _ordre.Tittel,
+            undertekst = _ordre.Adresse,
+            status = statusTekst,
+            farge
+        };
+    }
+
+    private async Task VisKart()
+    {
+        _kartFeil = null;
+
+        if (string.IsNullOrWhiteSpace(_ordre!.Adresse))
+        {
+            _kartFeil = "Fyll inn adresse først.";
+            return;
+        }
+
+        if (_ordre.Latitude is null || _ordre.Longitude is null)
+        {
+            var treff = await Geokoding.GeocodeAsync(_ordre.Adresse, _ordre.Postnr, _ordre.Sted);
+            if (treff is null)
+            {
+                _kartFeil = "Fant ikke posisjon for denne adressen.";
+                return;
+            }
+
+            _ordre.Latitude = treff.Value.Latitude;
+            _ordre.Longitude = treff.Value.Longitude;
+            await Db.SaveChangesAsync();
+        }
+
+        _visKart = true;
+        _kartInitialisert = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_visKart && !_kartInitialisert && _ordre?.Latitude is not null && _ordre.Longitude is not null)
+        {
+            await JS.InvokeVoidAsync("kart.init", "ordre-kart-visning", new[] { LagKartPunkt() });
+            _kartInitialisert = true;
+        }
     }
 
     private async Task SlettOrdre()

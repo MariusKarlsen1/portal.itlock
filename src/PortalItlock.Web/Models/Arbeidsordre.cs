@@ -16,8 +16,16 @@ public class Arbeidsordre
     public Tilbud? Tilbud { get; set; }
 
     public ArbeidsordreStatus Status { get; set; } = ArbeidsordreStatus.Ny;
+    public DateTime? PlanlagtDato { get; set; }
+
+    public string? Adresse { get; set; }
+    public string? Postnr { get; set; }
+    public string? Sted { get; set; }
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     public List<Timeregistrering> Timeregistreringer { get; set; } = [];
+    public List<ArbeidsordreSjekkpunkt> Sjekkpunkter { get; set; } = [];
 }

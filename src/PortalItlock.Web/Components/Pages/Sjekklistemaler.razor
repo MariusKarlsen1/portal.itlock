@@ -1,0 +1,199 @@
+@page "/sjekklistemaler"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Sjekklistemaler</PageTitle>
+
+<h1>Sjekklistemaler</h1>
+<p>Digitale sjekklister per dørtype som montør fyller ut på arbeidsordre. Legg til punktene i den rekkefølgen de skal vises.</p>
+
+@if (_maler.Count == 0)
+{
+    <p class="list-empty">Ingen sjekklistemaler opprettet ennå.</p>
+}
+else
+{
+    @foreach (var mal in _maler)
+    {
+        <div class="mal-card" @key="mal.Id">
+            <div class="mal-header">
+                <input class="mal-dortype" @bind="mal.Dortype" @bind:event="oninput" placeholder="Dørtype, f.eks. Ytterdør" />
+                <button type="button" class="save-button" @onclick="@(() => LagreMal(mal))">Lagre</button>
+                <button type="button" class="remove-button" @onclick="@(() => SlettMal(mal))">Slett mal</button>
+            </div>
+
+            @if (mal.Punkter.Count == 0)
+            {
+                <p class="list-empty">Ingen punkter lagt til ennå.</p>
+            }
+            else
+            {
+                <ol class="punkt-list">
+                    @foreach (var punkt in mal.Punkter.OrderBy(p => p.Rekkefolge))
+                    {
+                        <li @key="punkt.Id">
+                            <input @bind="punkt.Tekst" @bind:event="oninput" />
+                            <button type="button" class="remove-button" @onclick="@(() => SlettPunkt(mal, punkt))">Fjern</button>
+                        </li>
+                    }
+                </ol>
+            }
+
+            <div class="ny-punkt-form">
+                <input @bind="mal.NyttPunktTekst" @bind:event="oninput"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilPunkt(mal); } })"
+                       placeholder="Nytt sjekkpunkt" />
+                <button type="button" class="add-button" @onclick="@(() => LeggTilPunkt(mal))">Legg til punkt</button>
+            </div>
+        </div>
+    }
+}
+
+<div class="ny-mal">
+    <h2>Ny sjekklistemal</h2>
+    <div class="ny-mal-form">
+        <input @bind="_nyDortype" @bind:event="oninput" placeholder="Dørtype, f.eks. Verandadør" />
+        <button type="button" class="add-button" @onclick="OpprettMal">Opprett</button>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(_melding))
+{
+    <p class="save-success">@_melding</p>
+}
+@if (!string.IsNullOrEmpty(_feil))
+{
+    <p class="form-error">@_feil</p>
+}
+
+@code {
+    private sealed class MalRad
+    {
+        public int Id { get; set; }
+        public string Dortype { get; set; } = "";
+        public List<SjekklistePunkt> Punkter { get; set; } = [];
+        public string NyttPunktTekst { get; set; } = "";
+    }
+
+    private List<MalRad> _maler = [];
+    private string _nyDortype = "";
+    private string? _melding;
+    private string? _feil;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _maler = await Db.SjekklisteMaler
+            .Include(m => m.Punkter)
+            .OrderBy(m => m.Dortype)
+            .Select(m => new MalRad { Id = m.Id, Dortype = m.Dortype, Punkter = m.Punkter })
+            .ToListAsync();
+    }
+
+    private async Task OpprettMal()
+    {
+        var dortype = _nyDortype.Trim();
+        if (dortype.Length == 0)
+        {
+            _feil = "Dørtype må fylles ut.";
+            return;
+        }
+
+        Db.SjekklisteMaler.Add(new SjekklisteMal { Dortype = dortype });
+        await Db.SaveChangesAsync();
+
+        _nyDortype = "";
+        _feil = null;
+        _melding = $"Sjekklistemal \"{dortype}\" er opprettet.";
+        await LoadAsync();
+    }
+
+    private async Task LagreMal(MalRad mal)
+    {
+        var dortype = mal.Dortype.Trim();
+        if (dortype.Length == 0)
+        {
+            _feil = "Dørtype må fylles ut.";
+            return;
+        }
+
+        var entitet = await Db.SjekklisteMaler.FirstOrDefaultAsync(m => m.Id == mal.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Dortype = dortype;
+
+        foreach (var punkt in mal.Punkter)
+        {
+            var punktEntitet = await Db.SjekklistePunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
+            if (punktEntitet is not null)
+            {
+                punktEntitet.Tekst = punkt.Tekst;
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _feil = null;
+        _melding = $"\"{dortype}\" er lagret.";
+    }
+
+    private async Task SlettMal(MalRad mal)
+    {
+        var entitet = await Db.SjekklisteMaler.FirstOrDefaultAsync(m => m.Id == mal.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        Db.SjekklisteMaler.Remove(entitet);
+        await Db.SaveChangesAsync();
+        _melding = $"\"{mal.Dortype}\" er slettet.";
+        _feil = null;
+        await LoadAsync();
+    }
+
+    private async Task LeggTilPunkt(MalRad mal)
+    {
+        var tekst = mal.NyttPunktTekst.Trim();
+        if (tekst.Length == 0)
+        {
+            return;
+        }
+
+        var nesteRekkefolge = mal.Punkter.Count == 0 ? 1 : mal.Punkter.Max(p => p.Rekkefolge) + 1;
+        Db.SjekklistePunkter.Add(new SjekklistePunkt
+        {
+            SjekklisteMalId = mal.Id,
+            Tekst = tekst,
+            Rekkefolge = nesteRekkefolge
+        });
+        await Db.SaveChangesAsync();
+
+        mal.NyttPunktTekst = "";
+        _feil = null;
+        await LoadAsync();
+    }
+
+    private async Task SlettPunkt(MalRad mal, SjekklistePunkt punkt)
+    {
+        var entitet = await Db.SjekklistePunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        Db.SjekklistePunkter.Remove(entitet);
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+    }
+}

@@ -26,7 +26,17 @@ builder.Services.AddScoped<FdvPdfService>();
 builder.Services.AddScoped<DorBeslagslistePdfService>();
 builder.Services.AddScoped<PlukklistePdfService>();
 builder.Services.AddScoped<ProduktsammendragPdfService>();
+builder.Services.AddScoped<LasplanPdfService>();
+builder.Services.AddScoped<TripletexOrdreCsvService>();
 builder.Services.AddSingleton<PdfLogo>();
+builder.Services.AddHttpClient<EmailService>(client =>
+{
+    client.BaseAddress = new Uri("https://api.resend.com/");
+});
+builder.Services.AddHttpClient<GeocodingService>(client =>
+{
+    client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");
+});
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -94,7 +104,7 @@ app.MapPost("/account/login", async (HttpContext http, ApplicationDbContext db) 
     var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
     var passwordOk = bruker?.PasswordHash is not null && PasswordHasher.Verify(password, bruker.PasswordHash);
 
-    if (bruker is null || !passwordOk)
+    if (bruker is null || !passwordOk || !bruker.Aktiv)
     {
         return Results.Redirect($"/login?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
     }
@@ -198,6 +208,24 @@ app.MapGet("/tilbud/{id:int}/pdf", async (int id, HttpContext context, Applicati
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
+app.MapGet("/tilbud/{id:int}/tripletex-csv", async (int id, ApplicationDbContext db, TripletexOrdreCsvService csvService) =>
+{
+    var (data, feil) = await csvService.GenerateAsync(id);
+    if (data is null)
+    {
+        return Results.BadRequest(feil);
+    }
+
+    var tilbud = await db.Tilbud.FirstAsync(t => t.Id == id);
+    var filnavn = $"Tripletex-ordre - {tilbud.Tittel} - {DateTime.Now:dd.MM.yyyy}.csv";
+    foreach (var ugyldig in Path.GetInvalidFileNameChars())
+    {
+        filnavn = filnavn.Replace(ugyldig, '-');
+    }
+
+    return Results.File(data, "text/csv", filnavn);
+}).RequireAuthorization();
+
 app.MapGet("/prosjekt/{id:int}/beslagsliste/pdf", async (int id, HttpContext context, ApplicationDbContext db, DorBeslagslistePdfService beslagslisteService) =>
 {
     var prosjekt = await db.Prosjekter.FindAsync(id);
@@ -266,6 +294,35 @@ app.MapGet("/prosjekt/{id:int}/produktsammendrag/pdf", async (int id, HttpContex
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
+app.MapGet("/prosjekt/{id:int}/lasplan/pdf", async (int id, HttpContext context, ApplicationDbContext db, LasplanPdfService lasplanService) =>
+{
+    var pdf = await lasplanService.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var prosjekt = await db.Prosjekter.FindAsync(id);
+    var filnavn = $"Låsplan - {prosjekt?.Navn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
+    foreach (var ugyldig in Path.GetInvalidFileNameChars())
+    {
+        filnavn = filnavn.Replace(ugyldig, '-');
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/servicehenvendelse/bilde/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var bilde = await db.ServicehenvendelseBilder.FindAsync(id);
+    return bilde is null
+        ? Results.NotFound()
+        : Results.File(bilde.Data, bilde.ContentType, bilde.Filnavn);
+}).RequireAuthorization();
+
 app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
 {
     var komponent = await db.Components.FindAsync(id);
@@ -294,6 +351,27 @@ app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, HttpContext context, App
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/dor/{id:int}/qr.png", async (int id, HttpContext context, ApplicationDbContext db) =>
+{
+    var finnes = await db.Dorer.AnyAsync(d => d.Id == id);
+    if (!finnes)
+    {
+        return Results.NotFound();
+    }
+
+    var url = $"{context.Request.Scheme}://{context.Request.Host}/dor/{id}";
+    var png = QrCodeService.GeneratePng(url);
+    return Results.File(png, "image/png");
+}).RequireAuthorization();
+
+app.MapGet("/nokkelkvittering/{id:int}/signatur.png", async (int id, ApplicationDbContext db) =>
+{
+    var kvittering = await db.NokkelKvitteringer.FindAsync(id);
+    return kvittering?.Signatur is null
+        ? Results.NotFound()
+        : Results.File(kvittering.Signatur, "image/png");
 }).RequireAuthorization();
 
 app.MapGet("/timeoversikt/eksport-csv", async (DateTime fra, DateTime til, int? montorId, TimeoversiktService service) =>

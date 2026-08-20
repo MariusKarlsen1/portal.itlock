@@ -10,6 +10,10 @@ public class Bruker
     public string? PasswordHash { get; set; }
     public string? Stilling { get; set; }
     public BrukerRolle Rolle { get; set; } = BrukerRolle.Montor;
+    public bool Aktiv { get; set; } = true;
+
+    public int? KundeId { get; set; }
+    public Kunde? Kunde { get; set; }
 
     public List<Arbeidsordre> Arbeidsordre { get; set; } = [];
     public List<Timeregistrering> Timeregistreringer { get; set; } = [];

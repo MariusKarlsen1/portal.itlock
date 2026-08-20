@@ -41,6 +41,13 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<TilbudForside> TilbudForsider => Set<TilbudForside>();
     public DbSet<FdvVedlegg> FdvVedlegg => Set<FdvVedlegg>();
     public DbSet<PlukklisteLinje> PlukklisteLinjer => Set<PlukklisteLinje>();
+    public DbSet<Nokkel> Nokler => Set<Nokkel>();
+    public DbSet<NokkelSylinder> NokkelSylindere => Set<NokkelSylinder>();
+    public DbSet<Servicehenvendelse> Servicehenvendelser => Set<Servicehenvendelse>();
+    public DbSet<ServicehenvendelseBilde> ServicehenvendelseBilder => Set<ServicehenvendelseBilde>();
+    public DbSet<SjekklisteMal> SjekklisteMaler => Set<SjekklisteMal>();
+    public DbSet<SjekklistePunkt> SjekklistePunkter => Set<SjekklistePunkt>();
+    public DbSet<ArbeidsordreSjekkpunkt> ArbeidsordreSjekkpunkter => Set<ArbeidsordreSjekkpunkt>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -160,6 +167,58 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         modelBuilder.Entity<PlukklisteLinje>()
             .HasIndex(p => new { p.ProsjektId, p.ComponentId })
             .IsUnique();
+
+        modelBuilder.Entity<NokkelSylinder>(entity =>
+        {
+            entity.HasKey(ns => new { ns.NokkelId, ns.DorId, ns.ComponentId });
+
+            entity.HasOne(ns => ns.Nokkel)
+                .WithMany()
+                .HasForeignKey(ns => ns.NokkelId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Bruker>()
+            .HasOne(b => b.Kunde)
+            .WithMany()
+            .HasForeignKey(b => b.KundeId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Servicehenvendelse>()
+            .HasOne(s => s.Kunde)
+            .WithMany()
+            .HasForeignKey(s => s.KundeId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ServicehenvendelseBilde>()
+            .HasOne(b => b.Servicehenvendelse)
+            .WithMany(s => s.Bilder)
+            .HasForeignKey(b => b.ServicehenvendelseId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<SjekklistePunkt>()
+            .HasOne(p => p.SjekklisteMal)
+            .WithMany(m => m.Punkter)
+            .HasForeignKey(p => p.SjekklisteMalId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ArbeidsordreSjekkpunkt>()
+            .HasOne(p => p.Arbeidsordre)
+            .WithMany(a => a.Sjekkpunkter)
+            .HasForeignKey(p => p.ArbeidsordreId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ArbeidsordreSjekkpunkt>()
+            .HasOne(p => p.FullfortAvBruker)
+            .WithMany()
+            .HasForeignKey(p => p.FullfortAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Dor>()
+            .HasOne(d => d.MontertAvBruker)
+            .WithMany()
+            .HasForeignKey(d => d.MontertAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         SeedReferenceData(modelBuilder);
     }

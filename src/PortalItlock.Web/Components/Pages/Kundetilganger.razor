@@ -1,0 +1,226 @@
+@page "/kundetilganger"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Kundetilganger</PageTitle>
+
+<h1>Kundetilganger</h1>
+<p>Innlogging for kunder som skal kunne sende inn servicehenvendelser via "For kunden". Sett en tilgang inaktiv for å midlertidig sperre den ute uten å slette den.</p>
+
+@if (_tilganger.Count == 0)
+{
+    <p class="list-empty">Ingen kundetilganger opprettet ennå.</p>
+}
+else
+{
+    <table class="bruker-table">
+        <thead>
+            <tr>
+                <th>Navn</th>
+                <th>E-post</th>
+                <th>Kunde</th>
+                <th>Aktiv</th>
+                <th>Passord</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var t in _tilganger)
+            {
+                <tr @key="t.Id">
+                    <td><input @bind="t.Navn" @bind:event="oninput" /></td>
+                    <td><input @bind="t.Epost" @bind:event="oninput" /></td>
+                    <td>
+                        <select @bind="t.KundeId">
+                            <option value="">Velg kunde...</option>
+                            @foreach (var k in _kunder)
+                            {
+                                <option value="@k.Id">@k.Navn</option>
+                            }
+                        </select>
+                    </td>
+                    <td>
+                        <input type="checkbox" @bind="t.Aktiv" />
+                    </td>
+                    <td>
+                        @if (t.HarPassord)
+                        {
+                            <span class="passord-satt">Satt</span>
+                        }
+                        else
+                        {
+                            <span class="passord-ikke-satt">Ikke satt</span>
+                        }
+                    </td>
+                    <td class="bruker-actions">
+                        <button type="button" class="save-button" @onclick="@(() => Lagre(t))">Lagre</button>
+                        @if (t.HarPassord)
+                        {
+                            <button type="button" class="remove-button" @onclick="@(() => NullstillPassord(t))">Nullstill passord</button>
+                        }
+                        <button type="button" class="remove-button" @onclick="@(() => SlettTilgang(t))">Slett</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+<div class="new-bruker">
+    <h2>Ny kundetilgang</h2>
+    <div class="new-bruker-form">
+        <input @bind="_nyNavn" @bind:event="oninput" placeholder="Kontaktperson hos kunden" />
+        <input @bind="_nyEpost" @bind:event="oninput" placeholder="E-post" />
+        <select @bind="_nyKundeId">
+            <option value="">Velg kunde...</option>
+            @foreach (var k in _kunder)
+            {
+                <option value="@k.Id">@k.Navn</option>
+            }
+        </select>
+        <button type="button" class="add-button" @onclick="OpprettTilgang" disabled="@(_nyKundeId is null)">Opprett</button>
+    </div>
+    @if (!string.IsNullOrEmpty(_melding))
+    {
+        <p class="save-success">@_melding</p>
+    }
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
+    }
+</div>
+
+@code {
+    private sealed class TilgangRad
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string Epost { get; set; } = "";
+        public int? KundeId { get; set; }
+        public bool Aktiv { get; set; }
+        public bool HarPassord { get; set; }
+    }
+
+    private List<TilgangRad> _tilganger = [];
+    private List<Kunde> _kunder = [];
+    private string _nyNavn = "";
+    private string _nyEpost = "";
+    private int? _nyKundeId;
+    private string? _melding;
+    private string? _feil;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _kunder = await Db.Kunder.OrderBy(k => k.Navn).ToListAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _tilganger = await Db.Brukere
+            .Where(b => b.Rolle == BrukerRolle.Kunde)
+            .OrderBy(b => b.Navn)
+            .Select(b => new TilgangRad
+            {
+                Id = b.Id,
+                Navn = b.Navn,
+                Epost = b.Epost,
+                KundeId = b.KundeId,
+                Aktiv = b.Aktiv,
+                HarPassord = b.PasswordHash != null
+            })
+            .ToListAsync();
+    }
+
+    private async Task OpprettTilgang()
+    {
+        var navn = _nyNavn.Trim();
+        var epost = _nyEpost.Trim();
+        if (navn.Length == 0 || epost.Length == 0 || _nyKundeId is null)
+        {
+            _feil = "Navn, e-post og kunde må fylles ut.";
+            return;
+        }
+
+        if (await Db.Brukere.AnyAsync(b => b.Epost.ToLower() == epost.ToLower()))
+        {
+            _feil = "Det finnes allerede en bruker med denne e-posten.";
+            return;
+        }
+
+        Db.Brukere.Add(new Bruker
+        {
+            Navn = navn,
+            Epost = epost,
+            Rolle = BrukerRolle.Kunde,
+            KundeId = _nyKundeId
+        });
+        await Db.SaveChangesAsync();
+
+        _nyNavn = "";
+        _nyEpost = "";
+        _nyKundeId = null;
+        _feil = null;
+        _melding = $"Kundetilgangen \"{navn}\" er opprettet. De kan nå sette passord via \"Sett passord\" på innloggingssiden.";
+        await LoadAsync();
+    }
+
+    private async Task Lagre(TilgangRad rad)
+    {
+        var navn = rad.Navn.Trim();
+        var epost = rad.Epost.Trim();
+        if (navn.Length == 0 || epost.Length == 0 || rad.KundeId is null)
+        {
+            _feil = "Navn, e-post og kunde må fylles ut.";
+            return;
+        }
+
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == rad.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        bruker.Navn = navn;
+        bruker.Epost = epost;
+        bruker.KundeId = rad.KundeId;
+        bruker.Aktiv = rad.Aktiv;
+        await Db.SaveChangesAsync();
+        _feil = null;
+        _melding = $"\"{navn}\" er lagret.";
+    }
+
+    private async Task NullstillPassord(TilgangRad rad)
+    {
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == rad.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        bruker.PasswordHash = null;
+        await Db.SaveChangesAsync();
+        _melding = $"Passord nullstilt for \"{rad.Navn}\". De kan sette nytt via \"Sett passord\" på innloggingssiden.";
+        _feil = null;
+        await LoadAsync();
+    }
+
+    private async Task SlettTilgang(TilgangRad rad)
+    {
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == rad.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        Db.Brukere.Remove(bruker);
+        await Db.SaveChangesAsync();
+        _melding = $"\"{rad.Navn}\" er slettet.";
+        _feil = null;
+        await LoadAsync();
+    }
+}

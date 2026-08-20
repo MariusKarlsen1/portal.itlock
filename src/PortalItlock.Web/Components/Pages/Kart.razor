@@ -1,0 +1,277 @@
+@page "/kart"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject GeocodingService Geokoding
+@inject IJSRuntime JS
+
+<PageTitle>Kart</PageTitle>
+
+<h1>Kart</h1>
+<p>Se dagens (eller en valgt dags) arbeidsordre geografisk. Sett "Planlagt dato" og adresse (eller koble til et prosjekt med adresse) på en arbeidsordre for at den skal vises her.</p>
+
+<div class="kart-filter">
+    <label>
+        Dato
+        <input type="date" value="@_valgtDato.ToString("yyyy-MM-dd")" @onchange="OnDatoEndret" />
+    </label>
+    @if (_naverendeRolle != BrukerRolle.Montor)
+    {
+        <label>
+            Montør
+            <select @bind="_valgtMontorId" @bind:after="LastAsync">
+                <option value="">Alle montører</option>
+                @foreach (var m in _montorer)
+                {
+                    <option value="@m.Id">@m.Navn</option>
+                }
+            </select>
+        </label>
+    }
+</div>
+
+@if (_laster)
+{
+    <p class="list-empty">Laster...</p>
+}
+else
+{
+    <div id="kart-visning" class="kart-container"></div>
+
+    @if (_punkter.Count > 0)
+    {
+        <div class="kart-legende">
+            <span><span class="kart-prikk" style="background:#2f6fb3"></span> Ingen sjekkliste</span>
+            <span><span class="kart-prikk" style="background:#d9a520"></span> Sjekkliste pågår</span>
+            <span><span class="kart-prikk" style="background:#2b7a4b"></span> Sjekkliste fullført</span>
+        </div>
+    }
+
+    @if (_utenAdresse.Count > 0)
+    {
+        <p class="form-error">
+            @_utenAdresse.Count arbeidsordre kunne ikke vises på kartet (mangler adresse på ordren/prosjektet eller fant ikke posisjon):
+            @string.Join(", ", _utenAdresse)
+        </p>
+    }
+
+    @if (_punkter.Count == 0 && _utenAdresse.Count == 0)
+    {
+        <p class="list-empty">Ingen arbeidsordre med planlagt dato @_valgtDato.ToString("dd.MM.yyyy") ennå.</p>
+    }
+    else if (_punkter.Count > 0)
+    {
+        <table class="kart-table">
+            <thead>
+                <tr>
+                    <th>Tittel</th>
+                    <th>Prosjekt</th>
+                    <th>Montør</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in _punkter)
+                {
+                    <tr>
+                        <td>@p.Tittel</td>
+                        <td>@p.Undertekst</td>
+                        <td>@p.MontorNavn</td>
+                        <td><span class="kart-prikk" style="background:@p.Farge"></span> @p.StatusTekst</td>
+                        <td><a href="@($"/arbeidsordre/{p.ArbeidsordreId}")">Åpne</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private sealed class MontorOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class KartPunkt
+    {
+        public int ArbeidsordreId { get; set; }
+        public double Lat { get; set; }
+        public double Lng { get; set; }
+        public string Tittel { get; set; } = "";
+        public string Undertekst { get; set; } = "";
+        public string MontorNavn { get; set; } = "";
+        public string Farge { get; set; } = "";
+        public string StatusTekst { get; set; } = "";
+    }
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+    private BrukerRolle? _naverendeRolle;
+
+    private DateTime _valgtDato = DateTime.Today;
+    private int? _valgtMontorId;
+    private List<MontorOption> _montorer = [];
+    private List<KartPunkt> _punkter = [];
+    private List<string> _utenAdresse = [];
+    private bool _laster = true;
+    private bool _kartInitialisert;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var idClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (idClaim is not null && int.TryParse(idClaim, out var id))
+            {
+                _naverendeBrukerId = id;
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
+            }
+        }
+
+        _montorer = await Db.Brukere
+            .Where(b => b.Rolle == BrukerRolle.Montor)
+            .OrderBy(m => m.Navn)
+            .Select(m => new MontorOption { Id = m.Id, Navn = m.Navn })
+            .ToListAsync();
+
+        await LastAsync();
+    }
+
+    private async Task OnDatoEndret(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var dato))
+        {
+            _valgtDato = dato.Date;
+            await LastAsync();
+        }
+    }
+
+    private async Task LastAsync()
+    {
+        _laster = true;
+        _utenAdresse = [];
+
+        IQueryable<Arbeidsordre> query = Db.Arbeidsordre
+            .Include(a => a.Prosjekt)
+            .Include(a => a.AnsvarligMontor)
+            .Include(a => a.Sjekkpunkter)
+            .Where(a => a.PlanlagtDato != null && a.PlanlagtDato.Value.Date == _valgtDato);
+
+        if (_naverendeRolle == BrukerRolle.Montor)
+        {
+            query = query.Where(a => a.AnsvarligMontorId == _naverendeBrukerId);
+        }
+        else if (_valgtMontorId is not null)
+        {
+            query = query.Where(a => a.AnsvarligMontorId == _valgtMontorId);
+        }
+
+        var ordre = await query.ToListAsync();
+
+        var punkter = new List<KartPunkt>();
+        foreach (var a in ordre)
+        {
+            var brukEgenAdresse = !string.IsNullOrWhiteSpace(a.Adresse);
+            var adresse = brukEgenAdresse ? a.Adresse : a.Prosjekt?.Adresse;
+            var postnr = brukEgenAdresse ? a.Postnr : a.Prosjekt?.Postnr;
+            var sted = brukEgenAdresse ? a.Sted : a.Prosjekt?.Sted;
+
+            if (string.IsNullOrWhiteSpace(adresse))
+            {
+                _utenAdresse.Add(a.Tittel);
+                continue;
+            }
+
+            var lat = brukEgenAdresse ? a.Latitude : a.Prosjekt?.Latitude;
+            var lng = brukEgenAdresse ? a.Longitude : a.Prosjekt?.Longitude;
+
+            if (lat is null || lng is null)
+            {
+                var treff = await Geokoding.GeocodeAsync(adresse, postnr, sted);
+                if (treff is null)
+                {
+                    _utenAdresse.Add(a.Tittel);
+                    continue;
+                }
+
+                if (brukEgenAdresse)
+                {
+                    a.Latitude = treff.Value.Latitude;
+                    a.Longitude = treff.Value.Longitude;
+                }
+                else if (a.Prosjekt is not null)
+                {
+                    a.Prosjekt.Latitude = treff.Value.Latitude;
+                    a.Prosjekt.Longitude = treff.Value.Longitude;
+                }
+
+                await Db.SaveChangesAsync();
+                lat = treff.Value.Latitude;
+                lng = treff.Value.Longitude;
+            }
+
+            var (farge, statusTekst) = SjekklisteStatusHelper.Beregn(a.Sjekkpunkter);
+
+            punkter.Add(new KartPunkt
+            {
+                ArbeidsordreId = a.Id,
+                Lat = lat.Value,
+                Lng = lng.Value,
+                Tittel = a.Tittel,
+                Undertekst = a.Prosjekt?.Navn ?? adresse!,
+                MontorNavn = a.AnsvarligMontor?.Navn ?? "Ikke satt",
+                Farge = farge,
+                StatusTekst = statusTekst
+            });
+        }
+
+        _punkter = punkter;
+        _laster = false;
+
+        if (_kartInitialisert)
+        {
+            await OppdaterKartAsync();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_laster && !_kartInitialisert)
+        {
+            await OppdaterKartAsync();
+        }
+    }
+
+    private async Task OppdaterKartAsync()
+    {
+        if (_laster)
+        {
+            return;
+        }
+
+        var data = _punkter.Select(p => new { lat = p.Lat, lng = p.Lng, tittel = p.Tittel, undertekst = p.Undertekst, status = p.StatusTekst, farge = p.Farge }).ToList();
+
+        if (!_kartInitialisert)
+        {
+            await JS.InvokeVoidAsync("kart.init", "kart-visning", data);
+            _kartInitialisert = true;
+        }
+        else
+        {
+            await JS.InvokeVoidAsync("kart.setPunkter", data);
+        }
+    }
+}

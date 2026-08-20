@@ -68,12 +68,12 @@ else
             <h2>Kvitteringsliste - nøkler</h2>
             <p class="section-hint">Registrer hvem som har mottatt nøkler/kort for dette systemet.</p>
 
-            @if (_kvitteringer.Count == 0)
+            @if (_kvitteringer.Count == 0 && _nyeKvitteringer.Count == 0)
             {
                 <p class="list-empty">Ingen kvitteringer registrert ennå.</p>
             }
 
-            @foreach (var k in _kvitteringer)
+            @foreach (var k in _kvitteringer.Concat(_nyeKvitteringer))
             {
                 <div class="kvittering-row">
                     <label>Dato<input type="date" @bind="k.Dato" /></label>
@@ -82,7 +82,38 @@ else
                     <label>Nøkkelnr<input @bind="k.Nokkelnummer" placeholder="F.eks. K1, K4" /></label>
                     <label>Antall<input type="number" min="1" @bind="k.Antall" /></label>
                     <label>Rekvirert av<input @bind="k.RekvirertAv" /></label>
-                    <button type="button" class="remove-button" @onclick="@(() => _kvitteringer.Remove(k))">Fjern</button>
+                    <button type="button" class="remove-button" @onclick="@(() => FjernKvitteringRad(k))">Fjern</button>
+
+                    @if (k.Id > 0)
+                    {
+                        @if (k.Signatur is not null)
+                        {
+                            <div class="signatur-visning">
+                                <img class="signatur-bilde" src="@($"/nokkelkvittering/{k.Id}/signatur.png?v={k.SignertDato?.Ticks}")" alt="Signatur" />
+                                <span class="signatur-dato">Signert @(k.SignertDato?.ToString("dd.MM.yyyy HH:mm"))</span>
+                                <button type="button" class="remove-button" @onclick="@(() => FjernSignatur(k))">Fjern signatur</button>
+                            </div>
+                        }
+                        else if (_signerendeKvitteringId == k.Id)
+                        {
+                            <div class="signatur-pad-wrap">
+                                <canvas id="@($"sig-canvas-{k.Id}")" width="500" height="180" class="signatur-canvas"></canvas>
+                                <div class="signatur-actions">
+                                    <button type="button" class="cancel-button" @onclick="@(() => RensSignatur(k))">Tøm</button>
+                                    <button type="button" class="save-button" @onclick="@(() => LagreSignatur(k))">Lagre signatur</button>
+                                    <button type="button" class="cancel-button" @onclick="AvbrytSigner">Avbryt</button>
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <button type="button" class="add-button" @onclick="@(() => StartSigner(k))">Signer</button>
+                        }
+                    }
+                    else
+                    {
+                        <span class="signatur-hint">Lagre systemet først for å kunne signere.</span>
+                    }
                 </div>
             }
 
@@ -175,6 +206,7 @@ else
     private Nokkelsystem _form = new() { Systemnummer = "" };
     private List<Rekvirent> _rekvirenter = [];
     private List<NokkelKvittering> _kvitteringer = [];
+    private List<NokkelKvittering> _nyeKvitteringer = [];
     private List<SystemVedlegg> _vedlegg = [];
     private string _valgtVedleggType = "";
     private bool _uploadingVedlegg;
@@ -184,6 +216,10 @@ else
     private int? _loadedId;
     private string? _error;
     private string? _savedMessage;
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+    private int? _signerendeKvitteringId;
+    private int? _sisteInitialisertCanvasId;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -197,6 +233,7 @@ else
         _savedMessage = null;
         _error = null;
         _notFound = false;
+        _nyeKvitteringer = [];
 
         if (Id.HasValue)
         {
@@ -239,7 +276,84 @@ else
 
     private void LeggTilKvittering()
     {
-        _kvitteringer.Add(new NokkelKvittering { MottakerNavn = "", Dato = DateTime.Today });
+        // Legges i en egen, ikke-sporet liste til Lagre() trykkes, slik at en påbegynt
+        // tom kvittering ikke blir lagret som bifangst når f.eks. en signatur lagres.
+        _nyeKvitteringer.Add(new NokkelKvittering { MottakerNavn = "", Dato = DateTime.Today });
+    }
+
+    private void FjernKvitteringRad(NokkelKvittering k)
+    {
+        if (!_kvitteringer.Remove(k))
+        {
+            _nyeKvitteringer.Remove(k);
+        }
+    }
+
+    private void StartSigner(NokkelKvittering k)
+    {
+        _signerendeKvitteringId = k.Id;
+    }
+
+    private void AvbrytSigner()
+    {
+        _signerendeKvitteringId = null;
+        _sisteInitialisertCanvasId = null;
+    }
+
+    private async Task RensSignatur(NokkelKvittering k)
+    {
+        await JS.InvokeVoidAsync("signatur.clear", $"sig-canvas-{k.Id}");
+    }
+
+    private async Task LagreSignatur(NokkelKvittering k)
+    {
+        var canvasId = $"sig-canvas-{k.Id}";
+        var tom = await JS.InvokeAsync<bool>("signatur.isEmpty", canvasId);
+        if (tom)
+        {
+            return;
+        }
+
+        var base64 = await JS.InvokeAsync<string>("signatur.getPngBase64", canvasId);
+        var entitet = await Db.NokkelKvitteringer.FirstOrDefaultAsync(x => x.Id == k.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Signatur = Convert.FromBase64String(base64);
+        entitet.SignertDato = DateTime.Now;
+        await Db.SaveChangesAsync();
+
+        k.Signatur = entitet.Signatur;
+        k.SignertDato = entitet.SignertDato;
+        _signerendeKvitteringId = null;
+        _sisteInitialisertCanvasId = null;
+    }
+
+    private async Task FjernSignatur(NokkelKvittering k)
+    {
+        var entitet = await Db.NokkelKvitteringer.FirstOrDefaultAsync(x => x.Id == k.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Signatur = null;
+        entitet.SignertDato = null;
+        await Db.SaveChangesAsync();
+
+        k.Signatur = null;
+        k.SignertDato = null;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_signerendeKvitteringId.HasValue && _sisteInitialisertCanvasId != _signerendeKvitteringId)
+        {
+            await JS.InvokeVoidAsync("signatur.init", $"sig-canvas-{_signerendeKvitteringId}");
+            _sisteInitialisertCanvasId = _signerendeKvitteringId;
+        }
     }
 
     private async Task OnVedleggSelected(InputFileChangeEventArgs e)
@@ -304,6 +418,8 @@ else
         }
 
         _error = null;
+        _kvitteringer.AddRange(_nyeKvitteringer);
+        _nyeKvitteringer = [];
         _form.Rekvirenter = _rekvirenter;
         _form.Kvitteringer = _kvitteringer;
 

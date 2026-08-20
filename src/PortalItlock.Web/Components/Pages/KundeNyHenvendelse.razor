@@ -1,0 +1,213 @@
+@page "/kunde/ny"
+@layout PortalItlock.Web.Components.Layout.KundeLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Kunde")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+@inject EmailService Epost
+
+<PageTitle>Ny henvendelse - itlock</PageTitle>
+
+<a class="back-link" href="/kunde">&larr; Tilbake</a>
+<h1>Ny henvendelse</h1>
+
+@if (_ikkeAktiv)
+{
+    <p class="form-error">Tilgangen din er deaktivert. Ta kontakt med itlock for å få den aktivert igjen.</p>
+}
+else if (_ikkeKoblet)
+{
+    <p class="form-error">Din bruker er ikke koblet til noen kunde ennå. Ta kontakt med itlock.</p>
+}
+else
+{
+    <div class="skjema">
+        <label>
+            Hvilken dør gjelder det?
+            <select @bind="_dortype">
+                <option value="Ytterdør">Ytterdør</option>
+                <option value="Verandadør">Verandadør</option>
+                <option value="Verandaskyvedør">Verandaskyvedør</option>
+                <option value="Innerdør">Innerdør</option>
+                <option value="Garasjeport">Garasjeport</option>
+                <option value="Annet">Annet</option>
+            </select>
+        </label>
+
+        <label>
+            Beskriv problemet
+            <textarea @bind="_beskrivelse" rows="5" placeholder="F.eks. hva som er galt, når det startet, om det er hastesak..."></textarea>
+        </label>
+
+        <label>
+            Adresse (hvis annet enn tidligere oppgitt)
+            <input @bind="_adresse" placeholder="Adresse for jobben" />
+        </label>
+
+        <label>
+            Ønsket tidspunkt for befaring/montering
+            <input @bind="_onsketTidspunkt" placeholder="F.eks. \"i løpet av uke 35\" eller en konkret dato" />
+        </label>
+
+        <label>
+            Bilder
+            <InputFile OnChange="OnBilderValgt" accept="image/*" multiple />
+        </label>
+
+        @if (_bilder.Count > 0)
+        {
+            <div class="bilde-forhandsvisning">
+                @foreach (var navn in _bilder.Select(b => b.Name))
+                {
+                    <span @key="navn" class="bilde-chip">@navn</span>
+                }
+            </div>
+        }
+
+        @if (_uploading)
+        {
+            <p class="list-empty">Laster opp bilder...</p>
+        }
+        @if (!string.IsNullOrEmpty(_feil))
+        {
+            <p class="form-error">@_feil</p>
+        }
+
+        <button type="button" class="send-button" @onclick="SendInn" disabled="@_uploading">Send inn henvendelse</button>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int? _kundeId;
+    private string _kundeNavn = "";
+    private bool _ikkeKoblet;
+    private bool _ikkeAktiv;
+
+    private string _dortype = "Ytterdør";
+    private string _beskrivelse = "";
+    private string _adresse = "";
+    private string _onsketTidspunkt = "";
+    private List<IBrowserFile> _bilder = [];
+    private bool _uploading;
+    private string? _feil;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+        {
+            return;
+        }
+
+        var bruker = await Db.Brukere.Include(b => b.Kunde).FirstOrDefaultAsync(b => b.Id == brukerId);
+        if (bruker?.KundeId is null)
+        {
+            _ikkeKoblet = true;
+            return;
+        }
+
+        if (!bruker.Aktiv)
+        {
+            _ikkeAktiv = true;
+            return;
+        }
+
+        _kundeId = bruker.KundeId;
+        _kundeNavn = bruker.Kunde?.Navn ?? "";
+    }
+
+    private async Task VarsleAdmin(Servicehenvendelse henvendelse)
+    {
+        var adminEposter = await Db.Brukere
+            .Where(b => b.Rolle == BrukerRolle.Admin && b.Aktiv)
+            .Select(b => b.Epost)
+            .ToListAsync();
+
+        var html = "<p>Ny servicehenvendelse fra <strong>" + _kundeNavn + "</strong>:</p>"
+            + "<p><strong>Dørtype:</strong> " + henvendelse.Dortype + "</p>"
+            + (string.IsNullOrWhiteSpace(henvendelse.Beskrivelse) ? "" : "<p><strong>Beskrivelse:</strong> " + System.Net.WebUtility.HtmlEncode(henvendelse.Beskrivelse) + "</p>")
+            + (string.IsNullOrWhiteSpace(henvendelse.Adresse) ? "" : "<p><strong>Adresse:</strong> " + System.Net.WebUtility.HtmlEncode(henvendelse.Adresse) + "</p>")
+            + (string.IsNullOrWhiteSpace(henvendelse.OnsketTidspunkt) ? "" : "<p><strong>Ønsket tidspunkt:</strong> " + System.Net.WebUtility.HtmlEncode(henvendelse.OnsketTidspunkt) + "</p>")
+            + "<p>Se den under Serviceoppdrag i portalen.</p>";
+
+        foreach (var adminEpost in adminEposter)
+        {
+            await Epost.SendAsync(adminEpost, "Ny servicehenvendelse - " + _kundeNavn, html);
+        }
+    }
+
+    private void OnBilderValgt(InputFileChangeEventArgs e)
+    {
+        _bilder = e.GetMultipleFiles(10).ToList();
+    }
+
+    private async Task SendInn()
+    {
+        if (_kundeId is null || _uploading)
+        {
+            return;
+        }
+
+        _feil = null;
+        _uploading = true;
+
+        try
+        {
+            var henvendelse = new Servicehenvendelse
+            {
+                KundeId = _kundeId.Value,
+                Dortype = _dortype,
+                Beskrivelse = string.IsNullOrWhiteSpace(_beskrivelse) ? null : _beskrivelse.Trim(),
+                Adresse = string.IsNullOrWhiteSpace(_adresse) ? null : _adresse.Trim(),
+                OnsketTidspunkt = string.IsNullOrWhiteSpace(_onsketTidspunkt) ? null : _onsketTidspunkt.Trim()
+            };
+            Db.Servicehenvendelser.Add(henvendelse);
+            await Db.SaveChangesAsync();
+
+            foreach (var fil in _bilder)
+            {
+                if (fil.Size > 15_000_000)
+                {
+                    _feil = $"\"{fil.Name}\" er for stort (maks 15 MB) og ble hoppet over.";
+                    continue;
+                }
+
+                using var buffer = new MemoryStream();
+                await using (var stream = fil.OpenReadStream(maxAllowedSize: 15_000_000))
+                {
+                    await stream.CopyToAsync(buffer);
+                }
+
+                Db.ServicehenvendelseBilder.Add(new ServicehenvendelseBilde
+                {
+                    ServicehenvendelseId = henvendelse.Id,
+                    Data = buffer.ToArray(),
+                    ContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType,
+                    Filnavn = fil.Name
+                });
+            }
+
+            await Db.SaveChangesAsync();
+            await VarsleAdmin(henvendelse);
+            Nav.NavigateTo("/kunde");
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+}

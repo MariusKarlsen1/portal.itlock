@@ -13,4 +13,7 @@ public class NokkelKvittering
     public int Antall { get; set; } = 1;
     public string? RekvirertAv { get; set; }
     public string? Notater { get; set; }
+
+    public byte[]? Signatur { get; set; }
+    public DateTime? SignertDato { get; set; }
 }

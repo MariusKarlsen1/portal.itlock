@@ -1,0 +1,161 @@
+@page "/dor/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Dør @(_dor?.Dornummer)</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke døren. Den kan være slettet.</p>
+}
+else if (_dor is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="@($"/prosjekter/{_dor.ProsjektId}")">&larr; Tilbake til prosjektet</a>
+    <h1>Dør @_dor.Dornummer</h1>
+    <p class="dor-sub">@_dor.Prosjekt?.Navn@(string.IsNullOrWhiteSpace(_dor.DorTil) ? "" : $" · {_dor.DorTil}")</p>
+
+    <div class="dor-info-grid">
+        <div><span class="info-label">Romnr</span><span>@(_dor.Romnr ?? "-")</span></div>
+        <div><span class="info-label">Etasje</span><span>@(_dor.Etasje ?? "-")</span></div>
+        <div><span class="info-label">Sone</span><span>@(_dor.Sone ?? "-")</span></div>
+        <div><span class="info-label">Dørtype</span><span>@(_dor.Dortype ?? "-")</span></div>
+        <div><span class="info-label">B x H</span><span>@(_dor.BxH ?? "-")</span></div>
+        <div><span class="info-label">Brann</span><span>@(_dor.Brann ?? "-")</span></div>
+        <div><span class="info-label">Lyd</span><span>@(_dor.Lyd ?? "-")</span></div>
+        <div>
+            <span class="info-label">Status</span>
+            <span>
+                @_dor.Status.Visningsnavn()
+                @if (_dor.MontertDato.HasValue)
+                {
+                    <text> - @_dor.MontertDato.Value.ToString("dd.MM.yyyy HH:mm") @(_dor.MontertAvBruker is not null ? $"({_dor.MontertAvBruker.Initialer})" : "")</text>
+                }
+            </span>
+        </div>
+    </div>
+
+    @if (_dor.Funksjoner.Count > 0)
+    {
+        <p class="dor-funksjoner">Funksjoner: @string.Join(", ", _dor.Funksjoner.Select(f => f.Navn))</p>
+    }
+
+    <section class="dor-section">
+        <h2>Beslag</h2>
+        @if (_dor.Komponenter.Count == 0)
+        {
+            <p class="list-empty">Ingen beslag registrert.</p>
+        }
+        else
+        {
+            <table class="dor-table">
+                <thead>
+                    <tr><th>Navn</th><th>Antall</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var dk in _dor.Komponenter)
+                    {
+                        <tr @key="dk.ComponentId">
+                            <td>@dk.Component?.Navn</td>
+                            <td>@dk.Antall @dk.Enhet</td>
+                            <td>@(dk.Montert ? $"Montert {dk.MontertDato?.ToString("dd.MM.yyyy HH:mm")} {(dk.MontertAvBruker is not null ? $"({dk.MontertAvBruker.Initialer})" : "")}" : "Ikke montert")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+
+    <section class="dor-section">
+        <h2>Låsplan for denne døren</h2>
+        @if (_sylinderRader.Count == 0)
+        {
+            <p class="list-empty">Ingen sylindere registrert på denne døren.</p>
+        }
+        else
+        {
+            <table class="dor-table">
+                <thead>
+                    <tr><th>Sylinder</th><th>Nøkler som åpner</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var rad in _sylinderRader)
+                    {
+                        <tr @key="rad.ComponentId">
+                            <td>@rad.Navn</td>
+                            <td>@(rad.Nokler.Count > 0 ? string.Join(", ", rad.Nokler) : "Ingen registrert")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        <a class="back-link" href="@($"/prosjekt/{_dor.ProsjektId}/lasplan")">Åpne full låsplan for prosjektet &rarr;</a>
+    </section>
+
+    <section class="dor-section">
+        <h2>QR-kode</h2>
+        <p class="section-hint">Skriv ut og fest på dørkarmen. Skanning åpner denne siden direkte.</p>
+        <img class="qr-bilde" src="@($"/dor/{_dor.Id}/qr.png")" alt="QR-kode for dør @_dor.Dornummer" />
+        <div>
+            <a href="@($"/dor/{_dor.Id}/qr.png")" download="@($"qr-dor-{_dor.Dornummer}.png")" class="add-button">Last ned QR-kode</a>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private sealed class SylinderRad
+    {
+        public int ComponentId { get; set; }
+        public string Navn { get; set; } = "";
+        public List<string> Nokler { get; set; } = [];
+    }
+
+    private Dor? _dor;
+    private bool _notFound;
+    private List<SylinderRad> _sylinderRader = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _dor = await Db.Dorer
+            .Include(d => d.Prosjekt)
+            .Include(d => d.Funksjoner)
+            .Include(d => d.MontertAvBruker)
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component)
+            .Include(d => d.Komponenter).ThenInclude(k => k.MontertAvBruker)
+            .FirstOrDefaultAsync(d => d.Id == Id);
+
+        if (_dor is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        _notFound = false;
+
+        var sylinderKomponenter = _dor.Komponenter.Where(k => k.Component?.ErSylinder == true).ToList();
+        var componentIder = sylinderKomponenter.Select(k => k.ComponentId).ToList();
+
+        var krysser = await Db.NokkelSylindere
+            .Where(ns => ns.DorId == Id && componentIder.Contains(ns.ComponentId))
+            .Include(ns => ns.Nokkel)
+            .ToListAsync();
+
+        _sylinderRader = sylinderKomponenter.Select(k => new SylinderRad
+        {
+            ComponentId = k.ComponentId,
+            Navn = k.Component!.Navn,
+            Nokler = krysser.Where(ns => ns.ComponentId == k.ComponentId)
+                .Select(ns => ns.Nokkel!.Merking ?? ns.Nokkel!.Navn)
+                .ToList()
+        }).ToList();
+    }
+}
