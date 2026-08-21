@@ -1,0 +1,287 @@
+@page "/komponenter/prisimport"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using PortalItlock.Web.Services
+@inject PrisimportService PrisimportSvc
+
+<PageTitle>Prisimport</PageTitle>
+
+<a class="back-link" href="/komponenter">← Tilbake til komponentregisteret</a>
+<h1>Prisimport</h1>
+<p>
+    Last opp en prisliste (Excel) fra en leverandør. Varer som allerede finnes (matchet på produktkode og leverandør) får oppdatert pris. Nye produktkoder legges til som nye varer.
+    Hvis en eksisterende vare har en <a href="/rabattgrupper">rabattgruppe</a> satt, beregnes nettopris automatisk fra veiledende pris i filen og rabattgruppens prosent - da trenger du ikke en egen netto-kolonne for de varene.
+</p>
+
+@if (_steg == 1)
+{
+    <section class="import-section">
+        <div class="field-grid">
+            <label>
+                Leverandør
+                <input @bind="_leverandor" @bind:event="oninput" placeholder="F.eks. ASSA ABLOY" />
+            </label>
+        </div>
+        <p class="section-hint">Alle rader i filen regnes som fra denne leverandøren.</p>
+
+        <InputFile OnChange="LastOppFil" accept=".xlsx" disabled="@string.IsNullOrWhiteSpace(_leverandor)" />
+
+        @if (!string.IsNullOrEmpty(_feil))
+        {
+            <p class="form-error">@_feil</p>
+        }
+    </section>
+}
+else if (_steg == 2)
+{
+    <section class="import-section">
+        <h2>Match kolonner</h2>
+        <p class="section-hint">Velg hvilken kolonne i filen som inneholder hva. Produktkode er obligatorisk.</p>
+
+        <div class="field-grid">
+            <label>
+                Produktkode <span class="krevd">*</span>
+                <select @bind="_produktkodeKolIndeks">
+                    <option value="">Velg kolonne...</option>
+                    @foreach (var k in _kolonner)
+                    {
+                        <option value="@k.Indeks">@k.Overskrift</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Navn
+                <select @bind="_navnKolIndeks">
+                    <option value="">Velg kolonne...</option>
+                    @foreach (var k in _kolonner)
+                    {
+                        <option value="@k.Indeks">@k.Overskrift</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Enhet
+                <select @bind="_enhetKolIndeks">
+                    <option value="">Velg kolonne...</option>
+                    @foreach (var k in _kolonner)
+                    {
+                        <option value="@k.Indeks">@k.Overskrift</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Pris netto
+                <select @bind="_prisNettoKolIndeks">
+                    <option value="">Velg kolonne...</option>
+                    @foreach (var k in _kolonner)
+                    {
+                        <option value="@k.Indeks">@k.Overskrift</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Pris veiledende
+                <select @bind="_prisVeiledendeKolIndeks">
+                    <option value="">Velg kolonne...</option>
+                    @foreach (var k in _kolonner)
+                    {
+                        <option value="@k.Indeks">@k.Overskrift</option>
+                    }
+                </select>
+            </label>
+        </div>
+
+        @if (_radeksempel is not null)
+        {
+            <p class="section-hint">Eksempel fra første rad: @string.Join(" | ", _radeksempel)</p>
+        }
+
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="VisForhandsvisning" disabled="@(_produktkodeKolIndeks is null)">Vis forhåndsvisning</button>
+            <button type="button" class="cancel-button" @onclick="NyImport">Avbryt</button>
+            @if (!string.IsNullOrEmpty(_feil))
+            {
+                <span class="form-error">@_feil</span>
+            }
+        </div>
+    </section>
+}
+else if (_steg == 3)
+{
+    <section class="import-section">
+        <h2>Forhåndsvisning</h2>
+        <p class="section-hint">
+            @_forhandsvisning.Count(r => r.Feil is null && !r.ErNyVare) vare(r) oppdateres,
+            @_forhandsvisning.Count(r => r.Feil is null && r.ErNyVare) nye vare(r) legges til,
+            @_forhandsvisning.Count(r => r.Feil is not null) med feil (utelates automatisk).
+        </p>
+
+        <table class="import-table">
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>Rad</th>
+                    <th>Produktkode</th>
+                    <th>Navn</th>
+                    <th>Enhet</th>
+                    <th>Pris netto</th>
+                    <th>Pris veiledende</th>
+                    <th>Rabattgruppe</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _forhandsvisning)
+                {
+                    <tr @key="r.RadNummer" class="@(r.Feil is not null ? "import-rad-feil" : "")">
+                        <td><input type="checkbox" @bind="r.Inkluder" disabled="@(r.Feil is not null)" /></td>
+                        <td>@r.RadNummer</td>
+                        <td>@r.Produktkode</td>
+                        <td>@(r.ErNyVare ? r.Navn : r.EksisterendeNavn)</td>
+                        <td>@r.Enhet</td>
+                        <td>
+                            @(r.PrisNetto?.ToString("N2", Kultur))
+                            @if (r.NettoErBeregnet)
+                            {
+                                <span class="import-beregnet" title="Beregnet fra veiledende pris og rabattgruppe">(beregnet)</span>
+                            }
+                        </td>
+                        <td>@(r.PrisVeiledende?.ToString("N2", Kultur))</td>
+                        <td>@r.RabattgruppeKode</td>
+                        <td>
+                            @if (r.Feil is not null)
+                            {
+                                <span class="import-status-feil">@r.Feil</span>
+                            }
+                            else if (r.ErNyVare)
+                            {
+                                <span class="import-status-ny">Ny vare</span>
+                            }
+                            else
+                            {
+                                <span class="import-status-oppdater">Oppdaterer</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="Importer">Importer @_forhandsvisning.Count(r => r.Inkluder && r.Feil is null) vare(r)</button>
+            <button type="button" class="cancel-button" @onclick="@(() => _steg = 2)">Tilbake</button>
+        </div>
+    </section>
+}
+else if (_steg == 4)
+{
+    <section class="import-section">
+        <h2>Ferdig</h2>
+        <p class="save-success">@_oppdatertAntall pris(er) oppdatert. @_nyeAntall ny(e) vare(r) lagt til.</p>
+        <button type="button" class="save-button" @onclick="NyImport">Ny import</button>
+    </section>
+}
+
+@code {
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+    private int _steg = 1;
+    private string _leverandor = "";
+    private string? _feil;
+
+    private List<PrisimportService.ArkKolonne> _kolonner = [];
+    private List<string[]> _rader = [];
+    private string[]? _radeksempel;
+
+    private int? _produktkodeKolIndeks;
+    private int? _navnKolIndeks;
+    private int? _enhetKolIndeks;
+    private int? _prisNettoKolIndeks;
+    private int? _prisVeiledendeKolIndeks;
+
+    private List<PrisimportService.ImportRad> _forhandsvisning = [];
+    private int _oppdatertAntall;
+    private int _nyeAntall;
+
+    private async Task LastOppFil(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        var file = e.File;
+
+        if (file.Size > 20_000_000)
+        {
+            _feil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        buffer.Position = 0;
+
+        try
+        {
+            (_kolonner, _rader) = PrisimportSvc.LesFil(buffer);
+        }
+        catch (Exception ex)
+        {
+            _feil = $"Klarte ikke å lese filen: {ex.Message}";
+            return;
+        }
+
+        if (_kolonner.Count == 0)
+        {
+            _feil = "Fant ingen data i filen.";
+            return;
+        }
+
+        _radeksempel = _rader.Count > 0 ? _rader[0] : null;
+        _steg = 2;
+    }
+
+    private async Task VisForhandsvisning()
+    {
+        if (_produktkodeKolIndeks is null)
+        {
+            return;
+        }
+
+        _forhandsvisning = await PrisimportSvc.ForhandsvisAsync(
+            _rader, _leverandor,
+            _produktkodeKolIndeks.Value, _navnKolIndeks, _enhetKolIndeks, _prisNettoKolIndeks, _prisVeiledendeKolIndeks);
+
+        if (_forhandsvisning.Count == 0)
+        {
+            _feil = "Fant ingen gyldige rader å importere.";
+            return;
+        }
+
+        _feil = null;
+        _steg = 3;
+    }
+
+    private async Task Importer()
+    {
+        (_oppdatertAntall, _nyeAntall) = await PrisimportSvc.ImporterAsync(_forhandsvisning, _leverandor);
+        _steg = 4;
+    }
+
+    private void NyImport()
+    {
+        _steg = 1;
+        _leverandor = "";
+        _feil = null;
+        _kolonner = [];
+        _rader = [];
+        _radeksempel = null;
+        _produktkodeKolIndeks = null;
+        _navnKolIndeks = null;
+        _enhetKolIndeks = null;
+        _prisNettoKolIndeks = null;
+        _prisVeiledendeKolIndeks = null;
+        _forhandsvisning = [];
+    }
+}

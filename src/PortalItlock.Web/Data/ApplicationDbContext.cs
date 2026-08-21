@@ -46,6 +46,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Servicehenvendelse> Servicehenvendelser => Set<Servicehenvendelse>();
     public DbSet<ServicehenvendelseBilde> ServicehenvendelseBilder => Set<ServicehenvendelseBilde>();
     public DbSet<SjekklisteMal> SjekklisteMaler => Set<SjekklisteMal>();
+    public DbSet<Rabattgruppe> Rabattgrupper => Set<Rabattgruppe>();
     public DbSet<SjekklistePunkt> SjekklistePunkter => Set<SjekklistePunkt>();
     public DbSet<ArbeidsordreSjekkpunkt> ArbeidsordreSjekkpunkter => Set<ArbeidsordreSjekkpunkt>();
 
@@ -218,6 +219,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasOne(d => d.MontertAvBruker)
             .WithMany()
             .HasForeignKey(d => d.MontertAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Component>()
+            .HasOne(c => c.Rabattgruppe)
+            .WithMany(r => r.Komponenter)
+            .HasForeignKey(c => c.RabattgruppeId)
             .OnDelete(DeleteBehavior.SetNull);
 
         SeedReferenceData(modelBuilder);

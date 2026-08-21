@@ -17,6 +17,9 @@ public class Component
     public string? Varegruppe { get; set; }
     public decimal? PrisNetto { get; set; }
     public decimal? PrisVeiledende { get; set; }
+
+    public int? RabattgruppeId { get; set; }
+    public Rabattgruppe? Rabattgruppe { get; set; }
     public int? MontasjeMinutter { get; set; }
     public string? Enhet { get; set; }
     public bool Aktiv { get; set; } = true;

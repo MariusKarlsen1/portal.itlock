@@ -1,0 +1,211 @@
+@page "/kalender"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Kalender</PageTitle>
+
+<h1>Kalender</h1>
+<p>Arbeidsordre med "Planlagt dato" satt vises her. Sett datoen på arbeidsordren for at den skal dukke opp i kalenderen.</p>
+
+<div class="kalender-verktoylinje">
+    <div class="kalender-nav">
+        <button type="button" class="cancel-button" @onclick="ForrigeManed">&larr;</button>
+        <span class="kalender-manednavn">@Kultur.TextInfo.ToTitleCase(_visningsManed.ToString("MMMM yyyy", Kultur))</span>
+        <button type="button" class="cancel-button" @onclick="NesteManed">&rarr;</button>
+    </div>
+    <button type="button" class="cancel-button" @onclick="GaTilIDag">I dag</button>
+
+    @if (_naverendeRolle != BrukerRolle.Montor)
+    {
+        <label class="kalender-filter">
+            Montør
+            <select @bind="_valgtMontorId" @bind:after="LastAsync">
+                <option value="">Alle montører</option>
+                @foreach (var m in _montorer)
+                {
+                    <option value="@m.Id">@m.Navn</option>
+                }
+            </select>
+        </label>
+    }
+</div>
+
+@if (_laster)
+{
+    <p class="list-empty">Laster...</p>
+}
+else
+{
+    <div class="kalender-ukedager">
+        @foreach (var dagnavn in Ukedagnavn)
+        {
+            <div class="kalender-ukedag">@dagnavn</div>
+        }
+    </div>
+
+    <div class="kalender-grid">
+        @foreach (var dag in _dager)
+        {
+            <div class="kalender-dag @(dag.Dato.Month != _visningsManed.Month ? "kalender-dag-annen-maned" : "") @(dag.Dato == DateTime.Today ? "kalender-dag-idag" : "")">
+                <span class="kalender-dagnummer">@dag.Dato.Day</span>
+                @foreach (var o in dag.Ordre)
+                {
+                    <a class="kalender-ordre @StatusKlasse(o.Status)" href="@($"/arbeidsordre/{o.Id}")" title="@o.Tittel @(o.MontorNavn is not null ? $"- {o.MontorNavn}" : "")">
+                        @o.Tittel
+                    </a>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private sealed class MontorOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class OrdreRad
+    {
+        public int Id { get; set; }
+        public string Tittel { get; set; } = "";
+        public string? MontorNavn { get; set; }
+        public ArbeidsordreStatus Status { get; set; }
+    }
+
+    private sealed class DagRad
+    {
+        public required DateTime Dato { get; set; }
+        public List<OrdreRad> Ordre { get; set; } = [];
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly string[] Ukedagnavn = ["Man", "Tir", "Ons", "Tor", "Fre", "Lør", "Søn"];
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+    private BrukerRolle? _naverendeRolle;
+
+    private DateTime _visningsManed = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private int? _valgtMontorId;
+    private List<MontorOption> _montorer = [];
+    private List<DagRad> _dager = [];
+    private bool _laster = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var idClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (idClaim is not null && int.TryParse(idClaim, out var id))
+            {
+                _naverendeBrukerId = id;
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
+            }
+        }
+
+        _montorer = await Db.Brukere
+            .Where(b => b.Rolle == BrukerRolle.Montor)
+            .OrderBy(m => m.Navn)
+            .Select(m => new MontorOption { Id = m.Id, Navn = m.Navn })
+            .ToListAsync();
+
+        await LastAsync();
+    }
+
+    private async Task ForrigeManed()
+    {
+        _visningsManed = _visningsManed.AddMonths(-1);
+        await LastAsync();
+    }
+
+    private async Task NesteManed()
+    {
+        _visningsManed = _visningsManed.AddMonths(1);
+        await LastAsync();
+    }
+
+    private async Task GaTilIDag()
+    {
+        _visningsManed = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        _laster = true;
+
+        var forsteIGrid = FinnForrigeMandag(_visningsManed);
+        var sisteIManed = _visningsManed.AddMonths(1).AddDays(-1);
+        var sisteIGrid = FinnNesteSondag(sisteIManed);
+
+        IQueryable<Arbeidsordre> query = Db.Arbeidsordre
+            .Include(a => a.AnsvarligMontor)
+            .Where(a => a.PlanlagtDato != null && a.PlanlagtDato.Value.Date >= forsteIGrid && a.PlanlagtDato.Value.Date <= sisteIGrid);
+
+        if (_naverendeRolle == BrukerRolle.Montor)
+        {
+            query = query.Where(a => a.AnsvarligMontorId == _naverendeBrukerId);
+        }
+        else if (_valgtMontorId is not null)
+        {
+            query = query.Where(a => a.AnsvarligMontorId == _valgtMontorId);
+        }
+
+        var ordre = await query.ToListAsync();
+        var ordrePerDag = ordre
+            .GroupBy(a => a.PlanlagtDato!.Value.Date)
+            .ToDictionary(g => g.Key, g => g.Select(a => new OrdreRad
+            {
+                Id = a.Id,
+                Tittel = a.Tittel,
+                MontorNavn = a.AnsvarligMontor?.Navn,
+                Status = a.Status
+            }).ToList());
+
+        var dager = new List<DagRad>();
+        for (var dato = forsteIGrid; dato <= sisteIGrid; dato = dato.AddDays(1))
+        {
+            dager.Add(new DagRad
+            {
+                Dato = dato,
+                Ordre = ordrePerDag.GetValueOrDefault(dato, [])
+            });
+        }
+
+        _dager = dager;
+        _laster = false;
+    }
+
+    private static DateTime FinnForrigeMandag(DateTime dato)
+    {
+        var diff = ((int)dato.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        return dato.AddDays(-diff);
+    }
+
+    private static DateTime FinnNesteSondag(DateTime dato)
+    {
+        var diff = ((int)DayOfWeek.Sunday - (int)dato.DayOfWeek + 7) % 7;
+        return dato.AddDays(diff);
+    }
+
+    private static string StatusKlasse(ArbeidsordreStatus status) => status switch
+    {
+        ArbeidsordreStatus.Ferdig => "kalender-ordre-ferdig",
+        ArbeidsordreStatus.Pagaende => "kalender-ordre-pagaende",
+        _ => "kalender-ordre-ny"
+    };
+}

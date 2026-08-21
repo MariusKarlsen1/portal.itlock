@@ -28,6 +28,7 @@ builder.Services.AddScoped<PlukklistePdfService>();
 builder.Services.AddScoped<ProduktsammendragPdfService>();
 builder.Services.AddScoped<LasplanPdfService>();
 builder.Services.AddScoped<TripletexOrdreCsvService>();
+builder.Services.AddScoped<PrisimportService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddHttpClient<EmailService>(client =>
 {
