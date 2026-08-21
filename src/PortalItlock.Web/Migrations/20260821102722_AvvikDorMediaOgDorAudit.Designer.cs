@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260821102722_AvvikDorMediaOgDorAudit")]
+    partial class AvvikDorMediaOgDorAudit
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -1595,34 +1598,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("PackageRequirements");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.PlanUtstyr", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Notat")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("PlantegningId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double>("PosX")
-                        .HasColumnType("REAL");
-
-                    b.Property<double>("PosY")
-                        .HasColumnType("REAL");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PlantegningId");
-
-                    b.ToTable("PlanUtstyr");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.Plantegning", b =>
                 {
                     b.Property<int>("Id")
@@ -2921,17 +2896,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Package");
 
                     b.Navigation("RequirementValue");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.PlanUtstyr", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Plantegning", "Plantegning")
-                        .WithMany()
-                        .HasForeignKey("PlantegningId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Plantegning");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Plantegning", b =>

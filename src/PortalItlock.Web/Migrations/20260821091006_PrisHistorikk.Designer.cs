@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260821091006_PrisHistorikk")]
+    partial class PrisHistorikk
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -136,55 +139,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("FullfortAvBrukerId");
 
                     b.ToTable("ArbeidsordreSjekkpunkter");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.Avvik", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Beskrivelse")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("DorId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("OpprettetAvBrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<decimal?>("Pris")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("SendtTilKundeDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("Signatur")
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("SignertAvNavn")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("SignertDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("UtbedringBeskrivelse")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DorId");
-
-                    b.HasIndex("OpprettetAvBrukerId");
-
-                    b.ToTable("Avvik");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Befaring", b =>
@@ -1048,15 +1002,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Notater")
                         .HasColumnType("TEXT");
 
-                    b.Property<int?>("OppdatertAvBrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime?>("OppdatertDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
                     b.Property<int?>("PlantegningId")
                         .HasColumnType("INTEGER");
 
@@ -1086,8 +1031,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("DorIdMalId");
 
                     b.HasIndex("MontertAvBrukerId");
-
-                    b.HasIndex("OppdatertAvBrukerId");
 
                     b.HasIndex("PlantegningId");
 
@@ -1185,40 +1128,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("MontertAvBrukerId");
 
                     b.ToTable("DorKomponenter");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.DorMedia", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("ContentType")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<int>("DorId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Filnavn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Tidspunkt")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DorId");
-
-                    b.ToTable("DorMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.FdvVedlegg", b =>
@@ -1593,34 +1502,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("RequirementValueId");
 
                     b.ToTable("PackageRequirements");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.PlanUtstyr", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Notat")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("PlantegningId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double>("PosX")
-                        .HasColumnType("REAL");
-
-                    b.Property<double>("PosY")
-                        .HasColumnType("REAL");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PlantegningId");
-
-                    b.ToTable("PlanUtstyr");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Plantegning", b =>
@@ -2678,24 +2559,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("FullfortAvBruker");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.Avvik", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Dor", "Dor")
-                        .WithMany()
-                        .HasForeignKey("DorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "OpprettetAvBruker")
-                        .WithMany()
-                        .HasForeignKey("OpprettetAvBrukerId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Dor");
-
-                    b.Navigation("OpprettetAvBruker");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.BefaringDorfelt", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Befaring", "Befaring")
@@ -2767,11 +2630,6 @@ namespace PortalItlock.Web.Migrations
                         .HasForeignKey("MontertAvBrukerId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "OppdatertAvBruker")
-                        .WithMany()
-                        .HasForeignKey("OppdatertAvBrukerId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("PortalItlock.Web.Models.Plantegning", "Plantegning")
                         .WithMany("Dorer")
                         .HasForeignKey("PlantegningId");
@@ -2785,8 +2643,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("DorIdMal");
 
                     b.Navigation("MontertAvBruker");
-
-                    b.Navigation("OppdatertAvBruker");
 
                     b.Navigation("Plantegning");
 
@@ -2828,17 +2684,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Dor");
 
                     b.Navigation("MontertAvBruker");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.DorMedia", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Dor", "Dor")
-                        .WithMany()
-                        .HasForeignKey("DorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Dor");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.FdvVedlegg", b =>
@@ -2921,17 +2766,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Package");
 
                     b.Navigation("RequirementValue");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.PlanUtstyr", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Plantegning", "Plantegning")
-                        .WithMany()
-                        .HasForeignKey("PlantegningId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Plantegning");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Plantegning", b =>

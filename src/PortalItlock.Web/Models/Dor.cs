@@ -40,6 +40,11 @@ public class Dor
     public int? MontertAvBrukerId { get; set; }
     public Bruker? MontertAvBruker { get; set; }
 
+    public DateTime OpprettetDato { get; set; } = DateTime.Now;
+    public DateTime? OppdatertDato { get; set; }
+    public int? OppdatertAvBrukerId { get; set; }
+    public Bruker? OppdatertAvBruker { get; set; }
+
     public List<DorKomponent> Komponenter { get; set; } = [];
     public List<DorFunksjon> Funksjoner { get; set; } = [];
 }

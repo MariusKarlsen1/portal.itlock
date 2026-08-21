@@ -13,6 +13,11 @@
         </div>
     </div>
 
+    <div class="klone-felt">
+        <label>Klon denne døren, antall <input type="number" min="1" max="50" @bind="_kloneAntall" class="antall-input" /></label>
+        <button type="button" class="cancel-button" @onclick="KlonDor">Klon dør</button>
+    </div>
+
     <div class="field-grid">
         <label>Dørnummer<input @bind="Dor.Dornummer" /></label>
         <label>Romnr<input @bind="Dor.Romnr" /></label>
@@ -170,6 +175,7 @@
         <table class="linje-table">
             <thead>
                 <tr>
+                    <th></th>
                     <th>Navn</th>
                     <th>Antall</th>
                     <th>Enhet</th>
@@ -181,6 +187,7 @@
                 @foreach (var dk in Dor.Komponenter)
                 {
                     <tr @key="dk.ComponentId">
+                        <td><input type="checkbox" checked="@_valgteBeslagComponentIds.Contains(dk.ComponentId)" @onchange="@(() => ToggleBeslagValg(dk.ComponentId))" /></td>
                         <td>@dk.Component?.Navn</td>
                         <td><input class="antall-input" @bind="dk.Antall" /></td>
                         <td><input class="enhet-input" @bind="dk.Enhet" placeholder="stk" /></td>
@@ -201,6 +208,41 @@
                 }
             </tbody>
         </table>
+
+        <div class="kopier-beslag-felt">
+            <button type="button" class="cancel-button" disabled="@(_valgteBeslagComponentIds.Count == 0)" @onclick="@(() => _visKopierPanel = !_visKopierPanel)">
+                Kopier valgte beslag til andre dører
+            </button>
+        </div>
+
+        @if (_visKopierPanel)
+        {
+            <div class="kopier-panel">
+                <p class="section-hint">Velg hvilke dører beslaget skal kopieres til.</p>
+                @if (AndreDorer.Count == 0)
+                {
+                    <p class="list-empty">Ingen andre dører i prosjektet.</p>
+                }
+                else
+                {
+                    <ul class="kopier-dor-liste">
+                        @foreach (var d in AndreDorer)
+                        {
+                            <li @key="d.Id">
+                                <label>
+                                    <input type="checkbox" checked="@_valgteMalDorIds.Contains(d.Id)" @onchange="@(() => ToggleMalDor(d.Id))" />
+                                    @d.Dornummer
+                                </label>
+                            </li>
+                        }
+                    </ul>
+                }
+                <div class="kopier-panel-actions">
+                    <button type="button" class="save-button" disabled="@(_valgteMalDorIds.Count == 0)" @onclick="KopierBeslagTilValgteDorer">Kopier</button>
+                    <button type="button" class="cancel-button" @onclick="@(() => _visKopierPanel = false)">Avbryt</button>
+                </div>
+            </div>
+        }
     }
     else
     {
@@ -237,10 +279,19 @@
 
 @code {
     [Parameter, EditorRequired] public Dor Dor { get; set; } = null!;
+    [Parameter] public List<Dor> AlleDorer { get; set; } = [];
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback OnDeleted { get; set; }
     [Parameter] public EventCallback OnUnplaced { get; set; }
     [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback<List<Dor>> OnCloned { get; set; }
+
+    private int _kloneAntall = 1;
+    private HashSet<int> _valgteBeslagComponentIds = [];
+    private HashSet<int> _valgteMalDorIds = [];
+    private bool _visKopierPanel;
+
+    private List<Dor> AndreDorer => AlleDorer.Where(d => d.Id != Dor.Id).OrderBy(d => d.Dornummer).ToList();
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
@@ -521,6 +572,9 @@
 
     private async Task LagreDor()
     {
+        Dor.OppdatertDato = DateTime.Now;
+        Dor.OppdatertAvBrukerId = _naverendeBrukerId;
+        Dor.OppdatertAvBruker = _naverendeBruker;
         await Db.SaveChangesAsync();
         _savedMessage = $"Døren \"{Dor.Dornummer}\" er lagret.";
         await OnSaved.InvokeAsync();
@@ -541,5 +595,133 @@
         await Db.SaveChangesAsync();
         _confirmingDelete = false;
         await OnDeleted.InvokeAsync();
+    }
+
+    private async Task KlonDor()
+    {
+        if (_kloneAntall < 1)
+        {
+            return;
+        }
+
+        var nyeDorer = new List<Dor>();
+        for (var i = 1; i <= _kloneAntall; i++)
+        {
+            var kopi = new Dor
+            {
+                ProsjektId = Dor.ProsjektId,
+                Dornummer = $"{Dor.Dornummer} - kopi {i}",
+                Romnr = Dor.Romnr,
+                DorTil = Dor.DorTil,
+                Etasje = Dor.Etasje,
+                Sone = Dor.Sone,
+                Dortype = Dor.Dortype,
+                BxH = Dor.BxH,
+                Slagretning = Dor.Slagretning,
+                Brann = Dor.Brann,
+                Lyd = Dor.Lyd,
+                FriBredde086 = Dor.FriBredde086,
+                Bredde = Dor.Bredde,
+                Hoyde = Dor.Hoyde,
+                DorIdMalId = Dor.DorIdMalId,
+                Notater = Dor.Notater
+            };
+            Db.Dorer.Add(kopi);
+            nyeDorer.Add(kopi);
+        }
+
+        await Db.SaveChangesAsync();
+
+        foreach (var kopi in nyeDorer)
+        {
+            foreach (var f in Dor.Funksjoner)
+            {
+                kopi.Funksjoner.Add(f);
+            }
+
+            foreach (var dk in Dor.Komponenter)
+            {
+                var kopiDk = new DorKomponent
+                {
+                    DorId = kopi.Id,
+                    ComponentId = dk.ComponentId,
+                    Component = dk.Component,
+                    Antall = dk.Antall,
+                    Enhet = dk.Enhet,
+                    LevertAv = dk.LevertAv
+                };
+                kopi.Komponenter.Add(kopiDk);
+                Db.DorKomponenter.Add(kopiDk);
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _savedMessage = $"{_kloneAntall} kopi(er) av \"{Dor.Dornummer}\" opprettet.";
+        await OnCloned.InvokeAsync(nyeDorer);
+    }
+
+    private void ToggleBeslagValg(int componentId)
+    {
+        if (!_valgteBeslagComponentIds.Add(componentId))
+        {
+            _valgteBeslagComponentIds.Remove(componentId);
+        }
+    }
+
+    private void ToggleMalDor(int dorId)
+    {
+        if (!_valgteMalDorIds.Add(dorId))
+        {
+            _valgteMalDorIds.Remove(dorId);
+        }
+    }
+
+    private async Task KopierBeslagTilValgteDorer()
+    {
+        if (_valgteBeslagComponentIds.Count == 0 || _valgteMalDorIds.Count == 0)
+        {
+            return;
+        }
+
+        var kildeKomponenter = Dor.Komponenter.Where(dk => _valgteBeslagComponentIds.Contains(dk.ComponentId)).ToList();
+
+        foreach (var malDorId in _valgteMalDorIds)
+        {
+            var malDor = AlleDorer.FirstOrDefault(d => d.Id == malDorId);
+            if (malDor is null)
+            {
+                continue;
+            }
+
+            foreach (var kilde in kildeKomponenter)
+            {
+                var funnet = malDor.Komponenter.FirstOrDefault(dk => dk.ComponentId == kilde.ComponentId);
+                if (funnet is not null)
+                {
+                    funnet.Antall += kilde.Antall;
+                }
+                else
+                {
+                    var ny = new DorKomponent
+                    {
+                        DorId = malDorId,
+                        ComponentId = kilde.ComponentId,
+                        Component = kilde.Component,
+                        Antall = kilde.Antall,
+                        Enhet = kilde.Enhet,
+                        LevertAv = kilde.LevertAv
+                    };
+                    malDor.Komponenter.Add(ny);
+                    Db.DorKomponenter.Add(ny);
+                }
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _savedMessage = $"Kopierte {_valgteBeslagComponentIds.Count} beslagstype(r) til {_valgteMalDorIds.Count} dør(er).";
+        _valgteBeslagComponentIds.Clear();
+        _valgteMalDorIds.Clear();
+        _visKopierPanel = false;
+        await OnSaved.InvokeAsync();
     }
 }

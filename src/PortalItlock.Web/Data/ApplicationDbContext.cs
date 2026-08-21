@@ -49,6 +49,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Rabattgruppe> Rabattgrupper => Set<Rabattgruppe>();
     public DbSet<SjekklistePunkt> SjekklistePunkter => Set<SjekklistePunkt>();
     public DbSet<ArbeidsordreSjekkpunkt> ArbeidsordreSjekkpunkter => Set<ArbeidsordreSjekkpunkt>();
+    public DbSet<PrisHistorikk> PrisHistorikk => Set<PrisHistorikk>();
+    public DbSet<Avvik> Avvik => Set<Avvik>();
+    public DbSet<DorMedia> DorMedia => Set<DorMedia>();
+    public DbSet<PlanUtstyr> PlanUtstyr => Set<PlanUtstyr>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -221,11 +225,47 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(d => d.MontertAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        modelBuilder.Entity<Dor>()
+            .HasOne(d => d.OppdatertAvBruker)
+            .WithMany()
+            .HasForeignKey(d => d.OppdatertAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         modelBuilder.Entity<Component>()
             .HasOne(c => c.Rabattgruppe)
             .WithMany(r => r.Komponenter)
             .HasForeignKey(c => c.RabattgruppeId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<PrisHistorikk>()
+            .HasOne(p => p.Component)
+            .WithMany()
+            .HasForeignKey(p => p.ComponentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Avvik>()
+            .HasOne(a => a.Dor)
+            .WithMany()
+            .HasForeignKey(a => a.DorId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Avvik>()
+            .HasOne(a => a.OpprettetAvBruker)
+            .WithMany()
+            .HasForeignKey(a => a.OpprettetAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<DorMedia>()
+            .HasOne(m => m.Dor)
+            .WithMany()
+            .HasForeignKey(m => m.DorId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<PlanUtstyr>()
+            .HasOne(p => p.Plantegning)
+            .WithMany()
+            .HasForeignKey(p => p.PlantegningId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         SeedReferenceData(modelBuilder);
     }

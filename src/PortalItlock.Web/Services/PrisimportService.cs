@@ -141,15 +141,12 @@ public class PrisimportService(ApplicationDbContext db)
                     continue;
                 }
 
-                if (rad.PrisNetto.HasValue)
-                {
-                    comp.PrisNetto = rad.PrisNetto;
-                }
+                var nyNetto = rad.PrisNetto ?? comp.PrisNetto;
+                var nyVeil = rad.PrisVeiledende ?? comp.PrisVeiledende;
+                PrisHistorikkLogger.Logg(db, comp, nyNetto, nyVeil, $"Prisimport ({leverandor})");
 
-                if (rad.PrisVeiledende.HasValue)
-                {
-                    comp.PrisVeiledende = rad.PrisVeiledende;
-                }
+                comp.PrisNetto = nyNetto;
+                comp.PrisVeiledende = nyVeil;
 
                 oppdatert++;
             }

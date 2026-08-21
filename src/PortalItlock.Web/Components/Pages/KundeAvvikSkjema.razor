@@ -1,0 +1,166 @@
+@page "/kunde/avvik/{Id:int}"
+@layout PortalItlock.Web.Components.Layout.KundeLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Kunde")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+
+<PageTitle>Avvik til godkjenning</PageTitle>
+
+@if (_ikkeFunnet)
+{
+    <p class="form-error">Fant ikke avviket, eller det tilhører ikke deg.</p>
+    <a class="back-link" href="/kunde">&larr; Tilbake</a>
+}
+else if (_avvik is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="/kunde">&larr; Tilbake</a>
+    <h1>Avvik - dør @_avvik.Dor?.Dornummer</h1>
+    <p class="section-hint">@_avvik.Dor?.Prosjekt?.Navn</p>
+
+    <section class="avvik-detalj-section">
+        <h2>Beskrivelse av avvik</h2>
+        <p>@_avvik.Beskrivelse</p>
+
+        @if (!string.IsNullOrWhiteSpace(_avvik.UtbedringBeskrivelse))
+        {
+            <h2>Foreslått utbedring</h2>
+            <p>@_avvik.UtbedringBeskrivelse</p>
+        }
+
+        @if (_avvik.Pris.HasValue)
+        {
+            <p><strong>Pris for utbedring:</strong> @_avvik.Pris.Value.ToString("N2") kr eks. mva</p>
+        }
+
+        <a href="@($"/avvik/{_avvik.Id}/pdf")" target="_blank" class="back-link">Vis PDF</a>
+    </section>
+
+    @if (_avvik.Status == AvvikStatus.Godkjent)
+    {
+        <p class="save-success">Du godkjente dette avviket @_avvik.SignertDato?.ToString("dd.MM.yyyy HH:mm").</p>
+    }
+    else
+    {
+        <section class="avvik-detalj-section">
+            <h2>Godkjenning</h2>
+            <p class="section-hint">Signer under for å godkjenne avviket og prisen for utbedring.</p>
+
+            <input @bind="_signertAvNavn" @bind:event="oninput" placeholder="Fullt navn" class="navn-input" />
+
+            <div class="signatur-pad-wrap">
+                <canvas id="sig-canvas-avvik" width="500" height="180" class="signatur-canvas"></canvas>
+                <div class="signatur-actions">
+                    <button type="button" class="cancel-button" @onclick="RensSignatur">Tøm</button>
+                    <button type="button" class="save-button" @onclick="Godkjenn">Godkjenn og signer</button>
+                </div>
+            </div>
+            @if (!string.IsNullOrEmpty(_feil))
+            {
+                <p class="form-error">@_feil</p>
+            }
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Avvik? _avvik;
+    private bool _ikkeFunnet;
+    private string _signertAvNavn = "";
+    private string? _feil;
+    private bool _canvasInitialisert;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        var bruker = await Db.Brukere.Include(b => b.Kunde).FirstOrDefaultAsync(b => b.Id == brukerId);
+        if (bruker?.KundeId is null)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        var avvik = await Db.Avvik
+            .Include(a => a.Dor).ThenInclude(d => d!.Prosjekt)
+            .FirstOrDefaultAsync(a => a.Id == Id);
+
+        if (avvik?.Dor?.Prosjekt?.KundeId != bruker.KundeId)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        _avvik = avvik;
+        _signertAvNavn = bruker.Kunde?.Navn ?? "";
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_canvasInitialisert && _avvik is not null && _avvik.Status != AvvikStatus.Godkjent)
+        {
+            await JS.InvokeVoidAsync("signatur.init", "sig-canvas-avvik");
+            _canvasInitialisert = true;
+        }
+    }
+
+    private async Task RensSignatur()
+    {
+        await JS.InvokeVoidAsync("signatur.clear", "sig-canvas-avvik");
+    }
+
+    private async Task Godkjenn()
+    {
+        _feil = null;
+        if (string.IsNullOrWhiteSpace(_signertAvNavn))
+        {
+            _feil = "Skriv inn fullt navn.";
+            return;
+        }
+
+        var tom = await JS.InvokeAsync<bool>("signatur.isEmpty", "sig-canvas-avvik");
+        if (tom)
+        {
+            _feil = "Signer i feltet før du godkjenner.";
+            return;
+        }
+
+        var base64 = await JS.InvokeAsync<string>("signatur.getPngBase64", "sig-canvas-avvik");
+        var entitet = await Db.Avvik.FindAsync(Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Signatur = Convert.FromBase64String(base64);
+        entitet.SignertAvNavn = _signertAvNavn.Trim();
+        entitet.SignertDato = DateTime.Now;
+        entitet.Status = AvvikStatus.Godkjent;
+        await Db.SaveChangesAsync();
+
+        _avvik!.Status = AvvikStatus.Godkjent;
+        _avvik.SignertDato = entitet.SignertDato;
+    }
+}

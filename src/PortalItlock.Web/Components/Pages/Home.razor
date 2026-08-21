@@ -1,6 +1,10 @@
 @page "/"
 @rendermode InteractiveServer
 @using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
 
 <PageTitle>Itlock Full Kontroll</PageTitle>
 
@@ -10,6 +14,25 @@
         Internt verktøy for prosjektering, befaring og det daglige arbeidet med dørpakker,
         komponenter og krav. Velg hvem du er, så finner du raskt det du trenger.
     </p>
+</div>
+
+<div class="dashboard-grid">
+    <a href="/prosjekter" class="dashboard-card">
+        <span class="dashboard-tall">@_aktiveProsjekter</span>
+        <span class="dashboard-label">Aktive prosjekter</span>
+    </a>
+    <div class="dashboard-card">
+        <span class="dashboard-tall">@_avvikSomVenter</span>
+        <span class="dashboard-label">Avvik som venter på godkjenning</span>
+    </div>
+    <a href="/kalender" class="dashboard-card">
+        <span class="dashboard-tall">@_dagensJobber</span>
+        <span class="dashboard-label">Dagens jobber</span>
+    </a>
+    <a href="/arbeidsordre" class="dashboard-card">
+        <span class="dashboard-tall">@_ferdigDenneUken</span>
+        <span class="dashboard-label">Ferdigstilt denne uken</span>
+    </a>
 </div>
 
 <div class="role-grid">
@@ -50,6 +73,11 @@
 
     private string? _valgtRolle;
 
+    private int _aktiveProsjekter;
+    private int _avvikSomVenter;
+    private int _dagensJobber;
+    private int _ferdigDenneUken;
+
     protected override async Task OnInitializedAsync()
     {
         if (AuthStateTask is null)
@@ -62,7 +90,41 @@
         if (rolleClaim == "Kunde")
         {
             Nav.NavigateTo("/kunde", forceLoad: true);
+            return;
         }
+
+        BrukerRolle? rolle = rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var r) ? r : null;
+        int? brukerId = null;
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+        {
+            brukerId = bid;
+        }
+
+        var mandag = FinnForrigeMandag(DateTime.Today);
+        var sondag = mandag.AddDays(6);
+
+        _aktiveProsjekter = await Db.Prosjekter.CountAsync(p => p.Status == ProsjektStatus.Aktiv);
+        _avvikSomVenter = await Db.Avvik.CountAsync(a => a.Status == AvvikStatus.SendtTilKunde);
+
+        var dagensQuery = Db.Arbeidsordre.Where(a => a.PlanlagtDato != null && a.PlanlagtDato.Value.Date == DateTime.Today);
+        var ferdigQuery = Db.Arbeidsordre.Where(a => a.Status == ArbeidsordreStatus.Ferdig
+            && a.PlanlagtDato != null && a.PlanlagtDato.Value.Date >= mandag && a.PlanlagtDato.Value.Date <= sondag);
+
+        if (rolle == BrukerRolle.Montor && brukerId.HasValue)
+        {
+            dagensQuery = dagensQuery.Where(a => a.AnsvarligMontorId == brukerId.Value);
+            ferdigQuery = ferdigQuery.Where(a => a.AnsvarligMontorId == brukerId.Value);
+        }
+
+        _dagensJobber = await dagensQuery.CountAsync();
+        _ferdigDenneUken = await ferdigQuery.CountAsync();
+    }
+
+    private static DateTime FinnForrigeMandag(DateTime dato)
+    {
+        var diff = ((int)dato.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        return dato.AddDays(-diff);
     }
 
     private void VelgRolle(string nokkel)

@@ -29,6 +29,7 @@ builder.Services.AddScoped<ProduktsammendragPdfService>();
 builder.Services.AddScoped<LasplanPdfService>();
 builder.Services.AddScoped<TripletexOrdreCsvService>();
 builder.Services.AddScoped<PrisimportService>();
+builder.Services.AddScoped<AvvikPdfService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddHttpClient<EmailService>(client =>
 {
@@ -373,6 +374,27 @@ app.MapGet("/nokkelkvittering/{id:int}/signatur.png", async (int id, Application
     return kvittering?.Signatur is null
         ? Results.NotFound()
         : Results.File(kvittering.Signatur, "image/png");
+}).RequireAuthorization();
+
+app.MapGet("/avvik/{id:int}/pdf", async (int id, HttpContext context, AvvikPdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var filnavn = $"Avvik-{id}-itlock-AS.pdf";
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/dormedia/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var media = await db.DorMedia.FindAsync(id);
+    return media is null ? Results.NotFound() : Results.File(media.Data, media.ContentType, media.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/timeoversikt/eksport-csv", async (DateTime fra, DateTime til, int? montorId, TimeoversiktService service) =>

@@ -1,10 +1,13 @@
 @page "/dor/{Id:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>Dør @(_dor?.Dornummer)</PageTitle>
 
@@ -37,6 +40,21 @@ else
                 @if (_dor.MontertDato.HasValue)
                 {
                     <text> - @_dor.MontertDato.Value.ToString("dd.MM.yyyy HH:mm") @(_dor.MontertAvBruker is not null ? $"({_dor.MontertAvBruker.Initialer})" : "")</text>
+                }
+            </span>
+        </div>
+        <div><span class="info-label">Opprettet</span><span>@_dor.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span></div>
+        <div>
+            <span class="info-label">Sist oppdatert</span>
+            <span>
+                @if (_dor.OppdatertDato.HasValue)
+                {
+                    @_dor.OppdatertDato.Value.ToString("dd.MM.yyyy HH:mm")
+                    @(_dor.OppdatertAvBruker is not null ? $" ({_dor.OppdatertAvBruker.Initialer})" : "")
+                }
+                else
+                {
+                    <text>-</text>
                 }
             </span>
         </div>
@@ -100,6 +118,113 @@ else
     </section>
 
     <section class="dor-section">
+        <h2>Bilder og video</h2>
+        <p class="section-hint">Dokumenter tilstand før og etter arbeid på døren.</p>
+
+        <div class="media-upload">
+            <select @bind="_nyMediaTidspunkt">
+                <option value="@DorMediaTidspunkt.For">Før</option>
+                <option value="@DorMediaTidspunkt.Etter">Etter</option>
+            </select>
+            <InputFile OnChange="LastOppMedia" accept="image/*,video/*" />
+        </div>
+        @if (!string.IsNullOrEmpty(_mediaFeil))
+        {
+            <p class="form-error">@_mediaFeil</p>
+        }
+
+        @foreach (var gruppe in new[] { DorMediaTidspunkt.For, DorMediaTidspunkt.Etter })
+        {
+            var bilder = _media.Where(m => m.Tidspunkt == gruppe).ToList();
+            <h3 class="media-gruppe-tittel">@gruppe.Visningsnavn()</h3>
+            @if (bilder.Count == 0)
+            {
+                <p class="list-empty">Ingen filer lagt til.</p>
+            }
+            else
+            {
+                <div class="media-grid">
+                    @foreach (var m in bilder)
+                    {
+                        <div @key="m.Id" class="media-item">
+                            @if (m.ContentType.StartsWith("video/"))
+                            {
+                                <video controls src="@($"/dormedia/{m.Id}")"></video>
+                            }
+                            else
+                            {
+                                <img src="@($"/dormedia/{m.Id}")" alt="@m.Filnavn" />
+                            }
+                            <button type="button" class="remove-button" @onclick="@(() => SlettMedia(m))">Slett</button>
+                        </div>
+                    }
+                </div>
+            }
+        }
+    </section>
+
+    <section class="dor-section">
+        <h2>Avvik</h2>
+
+        @if (_avvik.Count == 0)
+        {
+            <p class="list-empty">Ingen avvik registrert på denne døren.</p>
+        }
+        else
+        {
+            <div class="avvik-liste">
+                @foreach (var a in _avvik)
+                {
+                    <div @key="a.Id" class="avvik-kort">
+                        <div class="avvik-header">
+                            <span class="avvik-status avvik-status-@a.Status">@a.Status.Visningsnavn()</span>
+                            <span class="avvik-dato">@a.OpprettetDato.ToString("dd.MM.yyyy HH:mm") @(a.OpprettetAvBruker is not null ? $"({a.OpprettetAvBruker.Initialer})" : "")</span>
+                        </div>
+                        <p>@a.Beskrivelse</p>
+
+                        <AuthorizeView Roles="Admin,Prosjektleder">
+                            <Authorized>
+                                @if (a.Status == AvvikStatus.Apent)
+                                {
+                                    <div class="avvik-prisform">
+                                        <textarea @bind="a.UtbedringBeskrivelse" placeholder="Foreslått utbedring (valgfritt)"></textarea>
+                                        <input @bind="a.Pris" placeholder="Pris eks. mva" class="price-input" />
+                                        <button type="button" class="save-button" @onclick="@(() => LagreAvvikPris(a))">Lagre</button>
+                                        <a href="@($"/avvik/{a.Id}/pdf")" target="_blank" class="back-link">Forhåndsvis PDF</a>
+                                        <button type="button" class="edit-button" disabled="@(!a.Pris.HasValue)" @onclick="@(() => SendTilKunde(a))">Send til kunde</button>
+                                    </div>
+                                }
+                                else
+                                {
+                                    @if (a.Pris.HasValue)
+                                    {
+                                        <p><strong>Pris for utbedring:</strong> @a.Pris.Value.ToString("N2", Kultur) kr eks. mva</p>
+                                    }
+                                    <a href="@($"/avvik/{a.Id}/pdf")" target="_blank" class="back-link">Vis PDF</a>
+                                }
+                            </Authorized>
+                        </AuthorizeView>
+
+                        @if (a.Status == AvvikStatus.Godkjent)
+                        {
+                            <p class="save-success">Godkjent av @a.SignertAvNavn - @a.SignertDato?.ToString("dd.MM.yyyy HH:mm")</p>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        <div class="nytt-avvik-form">
+            <textarea @bind="_nyAvvikBeskrivelse" placeholder="Beskriv avviket..."></textarea>
+            <button type="button" class="add-button" @onclick="MeldAvvik">Meld avvik</button>
+        </div>
+        @if (!string.IsNullOrEmpty(_avvikFeil))
+        {
+            <p class="form-error">@_avvikFeil</p>
+        }
+    </section>
+
+    <section class="dor-section">
         <h2>QR-kode</h2>
         <p class="section-hint">Skriv ut og fest på dørkarmen. Skanning åpner denne siden direkte.</p>
         <img class="qr-bilde" src="@($"/dor/{_dor.Id}/qr.png")" alt="QR-kode for dør @_dor.Dornummer" />
@@ -119,16 +244,38 @@ else
         public List<string> Nokler { get; set; } = [];
     }
 
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
     private Dor? _dor;
     private bool _notFound;
     private List<SylinderRad> _sylinderRader = [];
+    private List<DorMedia> _media = [];
+    private List<Avvik> _avvik = [];
+    private DorMediaTidspunkt _nyMediaTidspunkt = DorMediaTidspunkt.For;
+    private string? _mediaFeil;
+    private string _nyAvvikBeskrivelse = "";
+    private string? _avvikFeil;
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
 
     protected override async Task OnParametersSetAsync()
     {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+        }
+
         _dor = await Db.Dorer
             .Include(d => d.Prosjekt)
             .Include(d => d.Funksjoner)
             .Include(d => d.MontertAvBruker)
+            .Include(d => d.OppdatertAvBruker)
             .Include(d => d.Komponenter).ThenInclude(k => k.Component)
             .Include(d => d.Komponenter).ThenInclude(k => k.MontertAvBruker)
             .FirstOrDefaultAsync(d => d.Id == Id);
@@ -140,6 +287,10 @@ else
         }
 
         _notFound = false;
+
+        _media = await Db.DorMedia.Where(m => m.DorId == Id).OrderByDescending(m => m.OpprettetDato).ToListAsync();
+        _avvik = await Db.Avvik.Where(a => a.DorId == Id).Include(a => a.OpprettetAvBruker)
+            .OrderByDescending(a => a.OpprettetDato).ToListAsync();
 
         var sylinderKomponenter = _dor.Komponenter.Where(k => k.Component?.ErSylinder == true).ToList();
         var componentIder = sylinderKomponenter.Select(k => k.ComponentId).ToList();
@@ -157,5 +308,101 @@ else
                 .Select(ns => ns.Nokkel!.Merking ?? ns.Nokkel!.Navn)
                 .ToList()
         }).ToList();
+    }
+
+    private async Task LastOppMedia(InputFileChangeEventArgs e)
+    {
+        _mediaFeil = null;
+        var file = e.File;
+
+        if (file.Size > 50_000_000)
+        {
+            _mediaFeil = $"\"{file.Name}\" er for stor (maks 50 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 50_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        var media = new DorMedia
+        {
+            DorId = Id,
+            Data = buffer.ToArray(),
+            ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+            Filnavn = file.Name,
+            Tidspunkt = _nyMediaTidspunkt
+        };
+        Db.DorMedia.Add(media);
+        await Db.SaveChangesAsync();
+
+        _media.Insert(0, media);
+    }
+
+    private async Task SlettMedia(DorMedia media)
+    {
+        var entitet = await Db.DorMedia.FindAsync(media.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        Db.DorMedia.Remove(entitet);
+        await Db.SaveChangesAsync();
+        _media.Remove(media);
+    }
+
+    private async Task MeldAvvik()
+    {
+        _avvikFeil = null;
+        if (string.IsNullOrWhiteSpace(_nyAvvikBeskrivelse))
+        {
+            _avvikFeil = "Skriv en beskrivelse av avviket.";
+            return;
+        }
+
+        var avvik = new Avvik
+        {
+            DorId = Id,
+            Beskrivelse = _nyAvvikBeskrivelse.Trim(),
+            OpprettetAvBrukerId = _naverendeBrukerId
+        };
+        Db.Avvik.Add(avvik);
+        await Db.SaveChangesAsync();
+
+        avvik.OpprettetAvBruker = _naverendeBrukerId.HasValue ? await Db.Brukere.FindAsync(_naverendeBrukerId.Value) : null;
+        _avvik.Insert(0, avvik);
+        _nyAvvikBeskrivelse = "";
+    }
+
+    private async Task LagreAvvikPris(Avvik avvik)
+    {
+        var entitet = await Db.Avvik.FindAsync(avvik.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.UtbedringBeskrivelse = string.IsNullOrWhiteSpace(avvik.UtbedringBeskrivelse) ? null : avvik.UtbedringBeskrivelse.Trim();
+        entitet.Pris = avvik.Pris;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SendTilKunde(Avvik avvik)
+    {
+        var entitet = await Db.Avvik.FindAsync(avvik.Id);
+        if (entitet is null || !entitet.Pris.HasValue)
+        {
+            return;
+        }
+
+        entitet.Status = AvvikStatus.SendtTilKunde;
+        entitet.SendtTilKundeDato = DateTime.Now;
+        await Db.SaveChangesAsync();
+
+        avvik.Status = AvvikStatus.SendtTilKunde;
+        avvik.SendtTilKundeDato = entitet.SendtTilKundeDato;
     }
 }
