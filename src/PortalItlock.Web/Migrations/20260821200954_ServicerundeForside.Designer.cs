@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260821200954_ServicerundeForside")]
+    partial class ServicerundeForside
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -2419,89 +2422,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("Servicerunder");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeDel", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Beskrivelse")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("Dato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("DorId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Feil")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("ServicerundeId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DorId");
-
-                    b.HasIndex("ServicerundeId");
-
-                    b.ToTable("ServicerundeDeler");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeSjekklistepunkt", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("Rekkefolge")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Tekst")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("ServicerundeSjekklistepunkter");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeSjekkpunkt", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("Fullfort")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("FullfortAvBrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime?>("FullfortDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Rekkefolge")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ServicerundeId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Tekst")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("FullfortAvBrukerId");
-
-                    b.HasIndex("ServicerundeId");
-
-                    b.ToTable("ServicerundeSjekkpunkter");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklisteMal", b =>
                 {
                     b.Property<int>("Id")
@@ -3241,42 +3161,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("UtfortAvBruker");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeDel", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Dor", "Dor")
-                        .WithMany()
-                        .HasForeignKey("DorId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("PortalItlock.Web.Models.Servicerunde", "Servicerunde")
-                        .WithMany("Deler")
-                        .HasForeignKey("ServicerundeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Dor");
-
-                    b.Navigation("Servicerunde");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeSjekkpunkt", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "FullfortAvBruker")
-                        .WithMany()
-                        .HasForeignKey("FullfortAvBrukerId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("PortalItlock.Web.Models.Servicerunde", "Servicerunde")
-                        .WithMany("Sjekkpunkter")
-                        .HasForeignKey("ServicerundeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("FullfortAvBruker");
-
-                    b.Navigation("Servicerunde");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePunkt", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.SjekklisteMal", "SjekklisteMal")
@@ -3458,13 +3342,6 @@ namespace PortalItlock.Web.Migrations
             modelBuilder.Entity("PortalItlock.Web.Models.Servicehenvendelse", b =>
                 {
                     b.Navigation("Bilder");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.Servicerunde", b =>
-                {
-                    b.Navigation("Deler");
-
-                    b.Navigation("Sjekkpunkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklisteMal", b =>

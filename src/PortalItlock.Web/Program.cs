@@ -32,6 +32,7 @@ builder.Services.AddScoped<PrisimportService>();
 builder.Services.AddScoped<AvvikPdfService>();
 builder.Services.AddScoped<PlanUtstyrPdfService>();
 builder.Services.AddScoped<PlantegningDorPdfService>();
+builder.Services.AddScoped<ServicerapportPdfService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddHttpClient<EmailService>(client =>
 {
@@ -387,6 +388,21 @@ app.MapGet("/avvik/{id:int}/pdf", async (int id, HttpContext context, AvvikPdfSe
     }
 
     var filnavn = $"Avvik-{id}-itlock-AS.pdf";
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/servicerunde/{id:int}/pdf", async (int id, HttpContext context, ServicerapportPdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var filnavn = $"Servicerapport-{id}-itlock-AS.pdf";
     var disposisjon = new ContentDispositionHeaderValue("inline");
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();

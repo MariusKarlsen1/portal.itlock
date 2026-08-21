@@ -17,6 +17,7 @@ public class Arbeidsordre
 
     public ArbeidsordreStatus Status { get; set; } = ArbeidsordreStatus.Ny;
     public DateTime? PlanlagtDato { get; set; }
+    public DateTime? PlanlagtSlutt { get; set; }
 
     public string? Adresse { get; set; }
     public string? Postnr { get; set; }

@@ -1,0 +1,96 @@
+@page "/serviceavtaler"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Serviceavtaler</PageTitle>
+
+<h1>Serviceavtaler</h1>
+<p>Prosjekter med status "Serviceavtale". Sett prosjektstatusen på et prosjekt for at det skal dukke opp her.</p>
+
+@if (_avtaler.Count == 0)
+{
+    <p class="list-empty">Ingen prosjekter har status "Serviceavtale" ennå.</p>
+}
+else
+{
+    <ul class="avtale-list">
+        @foreach (var a in _avtaler)
+        {
+            <li>
+                <a class="avtale-row @(a.ErForfalt ? "avtale-row-forfalt" : "")" href="@($"serviceavtaler/{a.ProsjektId}")">
+                    <span class="avtale-navn">@a.ProsjektNavn</span>
+                    @if (a.ErForfalt)
+                    {
+                        <span class="avtale-badge avtale-badge-forfalt">Service forfalt</span>
+                    }
+                    else if (a.ErSnartForfalt)
+                    {
+                        <span class="avtale-badge avtale-badge-snart">Nærmer seg forfall</span>
+                    }
+                    else if (a.NesteServiceDato.HasValue)
+                    {
+                        <span class="avtale-badge">Neste service @a.NesteServiceDato.Value.ToString("dd.MM.yyyy")</span>
+                    }
+                    <span class="avtale-meta">
+                        @(string.IsNullOrWhiteSpace(a.KundeNavn) ? "Ingen kunde satt" : a.KundeNavn)
+                        @if (a.SisteServiceDato.HasValue)
+                        {
+                            <text> · Sist service: @a.SisteServiceDato.Value.ToString("dd.MM.yyyy")</text>
+                        }
+                        else
+                        {
+                            <text> · Ingen servicerunder registrert ennå</text>
+                        }
+                    </span>
+                </a>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    private sealed class AvtaleRad
+    {
+        public int ProsjektId { get; set; }
+        public string ProsjektNavn { get; set; } = "";
+        public string? KundeNavn { get; set; }
+        public DateTime? SisteServiceDato { get; set; }
+        public DateTime? NesteServiceDato { get; set; }
+        public bool ErForfalt => NesteServiceDato.HasValue && NesteServiceDato.Value.Date < DateTime.Today;
+        public bool ErSnartForfalt => NesteServiceDato.HasValue && !ErForfalt && NesteServiceDato.Value.Date <= DateTime.Today.AddDays(14);
+    }
+
+    private List<AvtaleRad> _avtaler = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var prosjekter = await Db.Prosjekter
+            .Where(p => p.Status == ProsjektStatus.Serviceavtale)
+            .Include(p => p.Kunde)
+            .OrderBy(p => p.Navn)
+            .ToListAsync();
+
+        var prosjektIder = prosjekter.Select(p => p.Id).ToList();
+
+        var runder = await Db.Servicerunder
+            .Where(s => prosjektIder.Contains(s.ProsjektId))
+            .ToListAsync();
+
+        _avtaler = prosjekter.Select(p =>
+        {
+            var proRunder = runder.Where(r => r.ProsjektId == p.Id).OrderByDescending(r => r.Dato).ToList();
+            return new AvtaleRad
+            {
+                ProsjektId = p.Id,
+                ProsjektNavn = p.Navn,
+                KundeNavn = p.Kunde?.Navn,
+                SisteServiceDato = proRunder.FirstOrDefault()?.Dato,
+                NesteServiceDato = proRunder.FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato
+            };
+        }).ToList();
+    }
+}

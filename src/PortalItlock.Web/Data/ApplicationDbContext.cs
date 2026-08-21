@@ -54,6 +54,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<DorMedia> DorMedia => Set<DorMedia>();
     public DbSet<PlanUtstyr> PlanUtstyr => Set<PlanUtstyr>();
     public DbSet<PlanForbindelse> PlanForbindelser => Set<PlanForbindelse>();
+    public DbSet<Servicerunde> Servicerunder => Set<Servicerunde>();
+    public DbSet<ServicerundeDel> ServicerundeDeler => Set<ServicerundeDel>();
+    public DbSet<ServicerundeSjekklistepunkt> ServicerundeSjekklistepunkter => Set<ServicerundeSjekklistepunkt>();
+    public DbSet<ServicerundeSjekkpunkt> ServicerundeSjekkpunkter => Set<ServicerundeSjekkpunkt>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -279,6 +283,42 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(f => f.TilUtstyrId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Servicerunde>()
+            .HasOne(s => s.Prosjekt)
+            .WithMany()
+            .HasForeignKey(s => s.ProsjektId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Servicerunde>()
+            .HasOne(s => s.UtfortAvBruker)
+            .WithMany()
+            .HasForeignKey(s => s.UtfortAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<ServicerundeDel>()
+            .HasOne(d => d.Servicerunde)
+            .WithMany(s => s.Deler)
+            .HasForeignKey(d => d.ServicerundeId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ServicerundeDel>()
+            .HasOne(d => d.Dor)
+            .WithMany()
+            .HasForeignKey(d => d.DorId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<ServicerundeSjekkpunkt>()
+            .HasOne(p => p.Servicerunde)
+            .WithMany(s => s.Sjekkpunkter)
+            .HasForeignKey(p => p.ServicerundeId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ServicerundeSjekkpunkt>()
+            .HasOne(p => p.FullfortAvBruker)
+            .WithMany()
+            .HasForeignKey(p => p.FullfortAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         SeedReferenceData(modelBuilder);
     }

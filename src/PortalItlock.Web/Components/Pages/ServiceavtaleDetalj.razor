@@ -1,0 +1,430 @@
+@page "/serviceavtaler/{ProsjektId:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>@(_prosjekt?.Navn ?? "Serviceavtale")</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke prosjektet.</p>
+}
+else if (_prosjekt is not null)
+{
+    <a class="back-link" href="/serviceavtaler">&larr; Tilbake til serviceavtaler</a>
+
+    <h1>@_prosjekt.Navn</h1>
+    <p class="avtale-meta-tekst">
+        @(_prosjekt.Kunde is not null ? _prosjekt.Kunde.Navn : "Ingen kunde satt")
+        @if (!string.IsNullOrWhiteSpace(_prosjekt.Adresse))
+        {
+            <text> · @_prosjekt.Adresse</text>
+        }
+    </p>
+
+    <section class="avtale-section">
+        <h2>Registrer ny servicerunde</h2>
+        <div class="field-grid">
+            <label>
+                Dato
+                <input type="date" @bind="_nyDato" />
+            </label>
+            <label class="span-2">
+                Status og utført arbeid
+                <textarea rows="4" @bind="_nyStatusBeskrivelse" placeholder="Hva ble sjekket/gjort på denne servicerunden?"></textarea>
+            </label>
+            <label class="span-2">
+                Anbefalinger (valgfritt)
+                <textarea rows="3" @bind="_nyAnbefalinger" placeholder="Eventuelle anbefalinger dersom noe ble oppdaget"></textarea>
+            </label>
+            <label>
+                Neste planlagte service (valgfritt)
+                <input type="date" @bind="_nyNesteServiceDato" />
+            </label>
+            <label class="span-2">
+                Forside-mal (valgfritt)
+                <div class="forside-mal-rad">
+                    <select @bind="_valgtForsideMalId">
+                        <option value="">Velg forside...</option>
+                        @foreach (var f in _forsideMaler)
+                        {
+                            <option value="@f.Id">@f.Navn</option>
+                        }
+                    </select>
+                    <button type="button" class="cancel-button" @onclick="BrukForsideMal" disabled="@(_valgtForsideMalId is null)">Bruk</button>
+                </div>
+            </label>
+            <label class="span-2">
+                Forside til rapporten (valgfritt)
+                <ForsideTekstRedigering @bind-Value="_nyForside" Rows="6" Placeholder="Forsidetekst som legges først i den genererte servicerapporten." />
+            </label>
+        </div>
+
+        <div class="deler-seksjon">
+            <div class="deler-header">
+                <h3>Byttede deler (valgfritt)</h3>
+                <button type="button" class="cancel-button" @onclick="LeggTilDelRad">+ Legg til byttet del</button>
+            </div>
+            @foreach (var d in _nyeDeler)
+            {
+                <div @key="d" class="del-rad">
+                    <select @bind="d.DorId">
+                        <option value="">Ingen spesifikk dør</option>
+                        @foreach (var dor in _dorer)
+                        {
+                            <option value="@dor.Id">@dor.Dornummer</option>
+                        }
+                    </select>
+                    <input type="date" @bind="d.Dato" />
+                    <input type="text" @bind="d.Beskrivelse" placeholder="Hva ble byttet" />
+                    <input type="text" @bind="d.Feil" placeholder="Hva var galt (valgfritt)" />
+                    <button type="button" class="remove-button" @onclick="@(() => _nyeDeler.Remove(d))">Fjern</button>
+                </div>
+            }
+        </div>
+
+        @if (_sjekklistemal.Count > 0)
+        {
+            <p class="section-hint">Sjekkliste (@_sjekklistemal.Count punkter) legges automatisk ved denne runden. Rediger malen under Sjekklistemaler.</p>
+        }
+
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="RegistrerRunde" disabled="@string.IsNullOrWhiteSpace(_nyStatusBeskrivelse)">
+                Registrer servicerunde
+            </button>
+            @if (!string.IsNullOrEmpty(_savedMessage))
+            {
+                <span class="save-success">@_savedMessage</span>
+            }
+        </div>
+    </section>
+
+    <section class="avtale-section">
+        <h2>Historikk</h2>
+
+        @if (_runder.Count == 0)
+        {
+            <p class="list-empty">Ingen servicerunder registrert ennå.</p>
+        }
+        else
+        {
+            @foreach (var r in _runder)
+            {
+                <div @key="r.Id" class="runde-kort">
+                    <div class="runde-header">
+                        <strong>@r.Dato.ToString("dd.MM.yyyy")</strong>
+                        @if (!string.IsNullOrWhiteSpace(r.UtfortAvNavn))
+                        {
+                            <span class="runde-utfortav">@r.UtfortAvNavn</span>
+                        }
+                        <button type="button" class="add-button" @onclick="@(() => _pdfPreviewUrl = $"/servicerunde/{r.Id}/pdf")">Generer rapport</button>
+                    </div>
+                    <p class="runde-tekst">@r.StatusBeskrivelse</p>
+                    @if (!string.IsNullOrWhiteSpace(r.Anbefalinger))
+                    {
+                        <p class="runde-anbefaling"><strong>Anbefaling:</strong> @r.Anbefalinger</p>
+                    }
+                    @if (r.NesteServiceDato.HasValue)
+                    {
+                        <p class="runde-neste">Neste planlagte service: @r.NesteServiceDato.Value.ToString("dd.MM.yyyy")</p>
+                    }
+
+                    @if (r.Deler.Count > 0)
+                    {
+                        <div class="runde-deler">
+                            <strong>Byttede deler:</strong>
+                            <ul>
+                                @foreach (var d in r.Deler)
+                                {
+                                    <li @key="d.Id">
+                                        @d.Dato.ToString("dd.MM.yyyy")
+                                        @if (!string.IsNullOrWhiteSpace(d.DorNummer))
+                                        {
+                                            <text> · Dør @d.DorNummer</text>
+                                        }
+                                        · @d.Beskrivelse
+                                        @if (!string.IsNullOrWhiteSpace(d.Feil))
+                                        {
+                                            <text> (Feil: @d.Feil)</text>
+                                        }
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                    }
+
+                    @if (r.Sjekkpunkter.Count > 0)
+                    {
+                        <div class="runde-sjekkliste">
+                            <strong>Sjekkliste (@r.Sjekkpunkter.Count(p => p.Fullfort)/@r.Sjekkpunkter.Count fullført):</strong>
+                            <ul class="sjekkpunkt-list">
+                                @foreach (var p in r.Sjekkpunkter)
+                                {
+                                    <li @key="p.Id">
+                                        <label>
+                                            <input type="checkbox" @bind="p.Fullfort" @bind:after="@(() => ToggleSjekkpunkt(p))" />
+                                            <span class="@(p.Fullfort ? "sjekkpunkt-fullfort" : "")">@p.Tekst</span>
+                                        </label>
+                                        @if (p.Fullfort && p.FullfortDato.HasValue)
+                                        {
+                                            <span class="sjekkpunkt-meta">@p.FullfortDato.Value.ToString("dd.MM.yyyy HH:mm") @(p.FullfortAvNavn is not null ? $"({p.FullfortAvNavn})" : "")</span>
+                                        }
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                </div>
+            }
+        }
+    </section>
+
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av servicerapport" OnClose="@(() => _pdfPreviewUrl = null)" />
+}
+
+@code {
+    [Parameter] public int ProsjektId { get; set; }
+
+    private sealed class DelRad
+    {
+        public int Id { get; set; }
+        public string? DorNummer { get; set; }
+        public string Beskrivelse { get; set; } = "";
+        public string? Feil { get; set; }
+        public DateTime Dato { get; set; }
+    }
+
+    private sealed class SjekkRad
+    {
+        public int Id { get; set; }
+        public string Tekst { get; set; } = "";
+        public int Rekkefolge { get; set; }
+        public bool Fullfort { get; set; }
+        public DateTime? FullfortDato { get; set; }
+        public string? FullfortAvNavn { get; set; }
+    }
+
+    private sealed class RundeRad
+    {
+        public int Id { get; set; }
+        public DateTime Dato { get; set; }
+        public string? UtfortAvNavn { get; set; }
+        public string StatusBeskrivelse { get; set; } = "";
+        public string? Anbefalinger { get; set; }
+        public DateTime? NesteServiceDato { get; set; }
+        public List<DelRad> Deler { get; set; } = [];
+        public List<SjekkRad> Sjekkpunkter { get; set; } = [];
+    }
+
+    private sealed class DorOption
+    {
+        public int Id { get; set; }
+        public string Dornummer { get; set; } = "";
+    }
+
+    private sealed class NyDelRad
+    {
+        public int? DorId { get; set; }
+        public string Beskrivelse { get; set; } = "";
+        public string? Feil { get; set; }
+        public DateOnly Dato { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    }
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+
+    private Prosjekt? _prosjekt;
+    private bool _notFound;
+    private int? _loadedId;
+    private List<RundeRad> _runder = [];
+    private string? _savedMessage;
+    private string? _pdfPreviewUrl;
+
+    private DateOnly _nyDato = DateOnly.FromDateTime(DateTime.Today);
+    private string _nyStatusBeskrivelse = "";
+    private string? _nyAnbefalinger;
+    private DateOnly? _nyNesteServiceDato;
+    private string? _nyForside;
+    private List<TilbudForside> _forsideMaler = [];
+    private int? _valgtForsideMalId;
+    private List<DorOption> _dorer = [];
+    private List<NyDelRad> _nyeDeler = [];
+    private List<ServicerundeSjekklistepunkt> _sjekklistemal = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+        }
+
+        if (_loadedId == ProsjektId)
+        {
+            return;
+        }
+
+        _loadedId = ProsjektId;
+        _notFound = false;
+        _savedMessage = null;
+        _nyDato = DateOnly.FromDateTime(DateTime.Today);
+        _nyStatusBeskrivelse = "";
+        _nyAnbefalinger = null;
+        _nyNesteServiceDato = null;
+        _nyForside = null;
+        _valgtForsideMalId = null;
+        _nyeDeler = [];
+
+        _prosjekt = await Db.Prosjekter
+            .Include(p => p.Kunde)
+            .FirstOrDefaultAsync(p => p.Id == ProsjektId);
+
+        if (_prosjekt is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        _forsideMaler = await Db.TilbudForsider.OrderBy(f => f.Navn).ToListAsync();
+        _dorer = await Db.Dorer
+            .Where(d => d.ProsjektId == ProsjektId)
+            .OrderBy(d => d.Dornummer)
+            .Select(d => new DorOption { Id = d.Id, Dornummer = d.Dornummer })
+            .ToListAsync();
+        _sjekklistemal = await Db.ServicerundeSjekklistepunkter.OrderBy(p => p.Rekkefolge).ToListAsync();
+
+        await LastRunderAsync();
+    }
+
+    private void BrukForsideMal()
+    {
+        if (_valgtForsideMalId is null)
+        {
+            return;
+        }
+
+        var mal = _forsideMaler.FirstOrDefault(f => f.Id == _valgtForsideMalId);
+        if (mal is not null)
+        {
+            _nyForside = mal.Innhold;
+        }
+    }
+
+    private async Task LastRunderAsync()
+    {
+        _runder = await Db.Servicerunder
+            .Where(r => r.ProsjektId == ProsjektId)
+            .Include(r => r.UtfortAvBruker)
+            .OrderByDescending(r => r.Dato)
+            .Select(r => new RundeRad
+            {
+                Id = r.Id,
+                Dato = r.Dato,
+                UtfortAvNavn = r.UtfortAvBruker != null ? r.UtfortAvBruker.Navn : null,
+                StatusBeskrivelse = r.StatusBeskrivelse,
+                Anbefalinger = r.Anbefalinger,
+                NesteServiceDato = r.NesteServiceDato,
+                Deler = r.Deler.OrderBy(d => d.Dato).Select(d => new DelRad
+                {
+                    Id = d.Id,
+                    DorNummer = d.Dor != null ? d.Dor.Dornummer : null,
+                    Beskrivelse = d.Beskrivelse,
+                    Feil = d.Feil,
+                    Dato = d.Dato
+                }).ToList(),
+                Sjekkpunkter = r.Sjekkpunkter.OrderBy(p => p.Rekkefolge).Select(p => new SjekkRad
+                {
+                    Id = p.Id,
+                    Tekst = p.Tekst,
+                    Rekkefolge = p.Rekkefolge,
+                    Fullfort = p.Fullfort,
+                    FullfortDato = p.FullfortDato,
+                    FullfortAvNavn = p.FullfortAvBruker != null ? p.FullfortAvBruker.Navn : null
+                }).ToList()
+            })
+            .ToListAsync();
+    }
+
+    private void LeggTilDelRad()
+    {
+        _nyeDeler.Add(new NyDelRad());
+    }
+
+    private async Task RegistrerRunde()
+    {
+        if (string.IsNullOrWhiteSpace(_nyStatusBeskrivelse))
+        {
+            return;
+        }
+
+        var runde = new Servicerunde
+        {
+            ProsjektId = ProsjektId,
+            Dato = _nyDato.ToDateTime(TimeOnly.MinValue),
+            UtfortAvBrukerId = _naverendeBrukerId,
+            StatusBeskrivelse = _nyStatusBeskrivelse.Trim(),
+            Anbefalinger = string.IsNullOrWhiteSpace(_nyAnbefalinger) ? null : _nyAnbefalinger.Trim(),
+            NesteServiceDato = _nyNesteServiceDato?.ToDateTime(TimeOnly.MinValue),
+            Forside = string.IsNullOrWhiteSpace(_nyForside) ? null : _nyForside
+        };
+
+        foreach (var d in _nyeDeler.Where(d => !string.IsNullOrWhiteSpace(d.Beskrivelse)))
+        {
+            runde.Deler.Add(new ServicerundeDel
+            {
+                DorId = d.DorId,
+                Beskrivelse = d.Beskrivelse.Trim(),
+                Feil = string.IsNullOrWhiteSpace(d.Feil) ? null : d.Feil.Trim(),
+                Dato = d.Dato.ToDateTime(TimeOnly.MinValue)
+            });
+        }
+
+        foreach (var punkt in _sjekklistemal)
+        {
+            runde.Sjekkpunkter.Add(new ServicerundeSjekkpunkt
+            {
+                Tekst = punkt.Tekst,
+                Rekkefolge = punkt.Rekkefolge
+            });
+        }
+
+        Db.Servicerunder.Add(runde);
+        await Db.SaveChangesAsync();
+
+        _nyDato = DateOnly.FromDateTime(DateTime.Today);
+        _nyStatusBeskrivelse = "";
+        _nyAnbefalinger = null;
+        _nyNesteServiceDato = null;
+        _nyForside = null;
+        _valgtForsideMalId = null;
+        _nyeDeler = [];
+        _savedMessage = "Servicerunde registrert.";
+
+        await LastRunderAsync();
+    }
+
+    private async Task ToggleSjekkpunkt(SjekkRad rad)
+    {
+        var entitet = await Db.ServicerundeSjekkpunkter.FirstOrDefaultAsync(p => p.Id == rad.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Fullfort = rad.Fullfort;
+        entitet.FullfortDato = rad.Fullfort ? DateTime.Now : null;
+        entitet.FullfortAvBrukerId = rad.Fullfort ? _naverendeBrukerId : null;
+        await Db.SaveChangesAsync();
+
+        await LastRunderAsync();
+    }
+}

@@ -21,7 +21,8 @@ public enum PlanUtstyrType
     Iq,
     Node,
     Gateway,
-    Hub
+    Hub,
+    Porttelefon
 }
 
 public static class PlanUtstyrTypeExtensions
@@ -48,6 +49,7 @@ public static class PlanUtstyrTypeExtensions
         PlanUtstyrType.Node => "Trådløs node",
         PlanUtstyrType.Gateway => "Gateway",
         PlanUtstyrType.Hub => "Hub",
+        PlanUtstyrType.Porttelefon => "Porttelefon",
         _ => type.ToString()
     };
 
@@ -73,6 +75,7 @@ public static class PlanUtstyrTypeExtensions
         PlanUtstyrType.Node => "NOD",
         PlanUtstyrType.Gateway => "GW",
         PlanUtstyrType.Hub => "HUB",
+        PlanUtstyrType.Porttelefon => "PT",
         _ => "?"
     };
 
@@ -98,6 +101,7 @@ public static class PlanUtstyrTypeExtensions
         PlanUtstyrType.Node => "#1e40af",
         PlanUtstyrType.Gateway => "#78716c",
         PlanUtstyrType.Hub => "#166534",
+        PlanUtstyrType.Porttelefon => "#334155",
         _ => "#333333"
     };
 
@@ -253,6 +257,16 @@ public static class PlanUtstyrTypeExtensions
             "<rect x='6' y='13' width='2.4' height='2.8' fill='currentColor'/>" +
             "<rect x='10.8' y='13' width='2.4' height='2.8' fill='currentColor'/>" +
             "<rect x='15.6' y='13' width='2.4' height='2.8' fill='currentColor'/>",
+
+        // Porttelefon: veggpanel med kameralinse øverst, høyttalergrill og en
+        // ringeknapp nederst.
+        PlanUtstyrType.Porttelefon =>
+            "<rect x='7' y='2' width='10' height='20' rx='2.5' fill='none' stroke='currentColor' stroke-width='1.6'/>" +
+            "<circle cx='12' cy='6.2' r='1.3' fill='currentColor'/>" +
+            "<line x1='9.5' y1='10' x2='14.5' y2='10' stroke='currentColor' stroke-width='1'/>" +
+            "<line x1='9.5' y1='11.7' x2='14.5' y2='11.7' stroke='currentColor' stroke-width='1'/>" +
+            "<line x1='9.5' y1='13.4' x2='14.5' y2='13.4' stroke='currentColor' stroke-width='1'/>" +
+            "<circle cx='12' cy='17.8' r='1.7' fill='currentColor'/>",
 
         _ => ""
     };
