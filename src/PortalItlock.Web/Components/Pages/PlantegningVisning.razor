@@ -32,24 +32,7 @@ else if (_plantegning is not null)
 
         <button type="button" class="add-button" @onclick="ApneDorVelger">Finn dører</button>
 
-        <div class="utstyr-toolbar-item">
-            <button type="button" class="@(_utstyrPlacingType.HasValue ? "edit-button-active" : "add-button")" @onclick="ToggleUtstyrVelger">
-                @(_utstyrPlacingType.HasValue ? $"Legger til: {_utstyrPlacingType.Value.Visningsnavn()}" : "Legg til utstyr")
-            </button>
-
-            @if (_visUtstyrVelger)
-            {
-                <div class="utstyr-velger-panel">
-                    @foreach (var type in UtstyrTyper)
-                    {
-                        <button type="button" class="utstyr-velger-item" @onclick="@(() => VelgUtstyrType(type))">
-                            <span class="utstyr-badge" style="background:@type.Farge()">@type.Kode()</span>
-                            @type.Visningsnavn()
-                        </button>
-                    }
-                </div>
-            }
-        </div>
+        <a class="add-button" href="@($"/plantegning/{Id}/utstyr")">Plassering utstyr og trekking</a>
 
         <button type="button" class="@(_redigerPosisjon ? "edit-button-active" : "add-button")" @onclick="TogglePosisjonRediger">
             @(_redigerPosisjon ? "Lås posisjoner" : "Rediger posisjoner")
@@ -62,6 +45,8 @@ else if (_plantegning is not null)
             </button>
         }
 
+        <button type="button" class="add-button" @onclick="VisPdfForhandsvisning">Generer PDF</button>
+
         <button type="button" class="save-button" @onclick="LagreAlt">Lagre</button>
 
         @if (!string.IsNullOrEmpty(_savedMessage))
@@ -73,10 +58,6 @@ else if (_plantegning is not null)
         {
             <span class="placing-hint">Klikk på tegningen der døren skal plasseres.</span>
         }
-        else if (_utstyrPlacingType.HasValue)
-        {
-            <span class="placing-hint">Klikk på tegningen for å legge til flere. <button type="button" class="cancel-button" @onclick="AvbrytUtstyrPlassering">Avbryt plassering</button></span>
-        }
         else if (_redigerPosisjon)
         {
             <span class="placing-hint">Du kan nå dra dørene til ny posisjon.</span>
@@ -85,16 +66,6 @@ else if (_plantegning is not null)
         <span class="plan-legend"><span class="legend-dot legend-ferdig"></span> @MontasjeStatus.FerdigMontert.Visningsnavn()</span>
         <span class="plan-legend"><span class="legend-dot legend-montert"></span> @MontasjeStatus.Montert.Visningsnavn()</span>
         <span class="plan-legend"><span class="legend-dot legend-ikke-startet"></span> @MontasjeStatus.IkkeStartet.Visningsnavn()</span>
-    </div>
-
-    <div class="utstyr-legend">
-        @foreach (var type in UtstyrTyper)
-        {
-            <span class="utstyr-legend-item">
-                <span class="utstyr-badge utstyr-badge-small" style="background:@type.Farge()">@type.Kode()</span>
-                @type.Visningsnavn()
-            </span>
-        }
     </div>
 
     @if (_visDorVelger)
@@ -179,14 +150,6 @@ else if (_plantegning is not null)
                         <span class="dor-marker-label">@(string.IsNullOrWhiteSpace(d.Romnr) ? d.Dornummer : d.Romnr)</span>
                     </div>
                 }
-                @foreach (var u in _utstyr)
-                {
-                    <div @key="u.Id" class="utstyr-marker @(_selectedUtstyr?.Id == u.Id ? "utstyr-marker-selected" : "")"
-                         style="left:@(u.PosX.ToString(CultureInfo.InvariantCulture))%; top:@(u.PosY.ToString(CultureInfo.InvariantCulture))%;"
-                         data-utstyrid="@u.Id">
-                        <span class="utstyr-badge" style="background:@u.Type.Farge()">@u.Type.Kode()</span>
-                    </div>
-                }
             </div>
         </div>
 
@@ -200,24 +163,9 @@ else if (_plantegning is not null)
                             OnCloned="OnDoorsCloned"
                             OnSaved="StateHasChanged" />
         }
-        else if (_selectedUtstyr is not null)
-        {
-            <div class="utstyr-panel">
-                <div class="utstyr-panel-header">
-                    <h2><span class="utstyr-badge" style="background:@_selectedUtstyr.Type.Farge()">@_selectedUtstyr.Type.Kode()</span> @_selectedUtstyr.Type.Visningsnavn()</h2>
-                    <button type="button" class="cancel-button" @onclick="@(() => _selectedUtstyr = null)">Lukk</button>
-                </div>
-                <label class="utstyr-notat-label">
-                    Notat
-                    <textarea rows="3" @bind="_selectedUtstyr.Notat"></textarea>
-                </label>
-                <div class="utstyr-panel-actions">
-                    <button type="button" class="save-button" @onclick="LagreUtstyr">Lagre</button>
-                    <button type="button" class="delete-button" @onclick="SlettUtstyr">Slett</button>
-                </div>
-            </div>
-        }
     </div>
+
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av dørplantegning" OnClose="@(() => _pdfPreviewUrl = null)" />
 }
 
 @code {
@@ -235,6 +183,7 @@ else if (_plantegning is not null)
     private int? _valgtEksisterendeDorId;
     private string? _savedMessage;
     private bool _redigerPosisjon;
+    private string? _pdfPreviewUrl;
 
     private bool _visDorVelger;
     private bool _velgerFraHoyreklikk;
@@ -252,24 +201,14 @@ else if (_plantegning is not null)
     private HashSet<int> _valgteFilterIds = [];
     private bool _visFilter;
 
-    private static readonly PlanUtstyrType[] UtstyrTyper =
-    [
-        PlanUtstyrType.Kortleser,
-        PlanUtstyrType.Kac,
-        PlanUtstyrType.Apneknapp,
-        PlanUtstyrType.Sentral,
-        PlanUtstyrType.Stikkontakt,
-        PlanUtstyrType.Ups
-    ];
-
-    private List<PlanUtstyr> _utstyr = [];
-    private PlanUtstyr? _selectedUtstyr;
-    private bool _visUtstyrVelger;
-    private PlanUtstyrType? _utstyrPlacingType;
-
     private List<Dor> SynligeDorer => _valgteFilterIds.Count == 0
         ? _dorer
         : _dorer.Where(d => d.Funksjoner.Any(f => _valgteFilterIds.Contains(f.Id))).ToList();
+
+    private void VisPdfForhandsvisning()
+    {
+        _pdfPreviewUrl = $"/plantegning/{Id}/pdf?v={DateTime.UtcNow.Ticks}";
+    }
 
     private void ToggleFilter(int funksjonId)
     {
@@ -303,9 +242,6 @@ else if (_plantegning is not null)
         _placingMode = PlacingMode.Ingen;
         _redigerPosisjon = false;
         _visDorVelger = false;
-        _selectedUtstyr = null;
-        _visUtstyrVelger = false;
-        _utstyrPlacingType = null;
 
         _plantegning = await Db.Plantegninger
             .Include(p => p.Dorer).ThenInclude(d => d.Komponenter).ThenInclude(dk => dk.Component)
@@ -331,10 +267,6 @@ else if (_plantegning is not null)
             .OrderBy(f => f.Navn)
             .Select(f => new FunksjonOption { Id = f.Id, Navn = f.Navn })
             .ToListAsync();
-
-        _utstyr = await Db.PlanUtstyr
-            .Where(u => u.PlantegningId == Id)
-            .ToListAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -348,7 +280,6 @@ else if (_plantegning is not null)
         if (_module is not null && _dotNetRef is not null && _plantegning is not null)
         {
             await _module.InvokeVoidAsync("attachMarkers", _canvasRef, _dotNetRef, !_redigerPosisjon);
-            await _module.InvokeVoidAsync("attachUtstyrMarkers", _canvasRef, _dotNetRef, !_redigerPosisjon);
 
             if (firstRender)
             {
@@ -419,7 +350,6 @@ else if (_plantegning is not null)
     private void ToggleNyDor()
     {
         _visDorVelger = false;
-        _utstyrPlacingType = null;
         _placingMode = _placingMode == PlacingMode.NyDor ? PlacingMode.Ingen : PlacingMode.NyDor;
         if (_placingMode == PlacingMode.NyDor)
         {
@@ -430,7 +360,6 @@ else if (_plantegning is not null)
     private void ApneDorVelger()
     {
         _placingMode = PlacingMode.Ingen;
-        _utstyrPlacingType = null;
         _selectedDoor = null;
         _dorVelgerSok = "";
         _velgerFraHoyreklikk = false;
@@ -536,22 +465,6 @@ else if (_plantegning is not null)
             return;
         }
 
-        if (_utstyrPlacingType.HasValue)
-        {
-            var posU = await _module.InvokeAsync<PosResult>("getClickPercent", _canvasRef, e.ClientX, e.ClientY);
-            var utstyr = new PlanUtstyr
-            {
-                PlantegningId = _plantegning.Id,
-                Type = _utstyrPlacingType.Value,
-                PosX = posU.X,
-                PosY = posU.Y
-            };
-            Db.PlanUtstyr.Add(utstyr);
-            await Db.SaveChangesAsync();
-            _utstyr.Add(utstyr);
-            return;
-        }
-
         if (_placingMode == PlacingMode.Ingen)
         {
             return;
@@ -606,7 +519,6 @@ else if (_plantegning is not null)
     private void SelectDoor(Dor d)
     {
         _selectedDoor = d;
-        _selectedUtstyr = null;
         _placingMode = PlacingMode.Ingen;
     }
 
@@ -636,85 +548,6 @@ else if (_plantegning is not null)
     private void OnDoorsCloned(List<Dor> nyeDorer)
     {
         _alleProsjektDorer.AddRange(nyeDorer);
-    }
-
-    private void ToggleUtstyrVelger()
-    {
-        if (_utstyrPlacingType.HasValue)
-        {
-            AvbrytUtstyrPlassering();
-            return;
-        }
-
-        _visUtstyrVelger = !_visUtstyrVelger;
-    }
-
-    private void VelgUtstyrType(PlanUtstyrType type)
-    {
-        _placingMode = PlacingMode.Ingen;
-        _selectedDoor = null;
-        _selectedUtstyr = null;
-        _utstyrPlacingType = type;
-        _visUtstyrVelger = false;
-    }
-
-    private void AvbrytUtstyrPlassering()
-    {
-        _utstyrPlacingType = null;
-        _visUtstyrVelger = false;
-    }
-
-    [JSInvokable]
-    public async Task OnUtstyrMoved(int utstyrId, double x, double y)
-    {
-        var utstyr = _utstyr.FirstOrDefault(u => u.Id == utstyrId);
-        if (utstyr is null)
-        {
-            return;
-        }
-
-        utstyr.PosX = x;
-        utstyr.PosY = y;
-        await Db.SaveChangesAsync();
-    }
-
-    [JSInvokable]
-    public void OnUtstyrClicked(int utstyrId)
-    {
-        var utstyr = _utstyr.FirstOrDefault(u => u.Id == utstyrId);
-        if (utstyr is null)
-        {
-            return;
-        }
-
-        _selectedUtstyr = utstyr;
-        _selectedDoor = null;
-        _placingMode = PlacingMode.Ingen;
-        StateHasChanged();
-    }
-
-    private async Task LagreUtstyr()
-    {
-        if (_selectedUtstyr is null)
-        {
-            return;
-        }
-
-        await Db.SaveChangesAsync();
-        _savedMessage = "Lagret.";
-    }
-
-    private async Task SlettUtstyr()
-    {
-        if (_selectedUtstyr is null)
-        {
-            return;
-        }
-
-        Db.PlanUtstyr.Remove(_selectedUtstyr);
-        await Db.SaveChangesAsync();
-        _utstyr.Remove(_selectedUtstyr);
-        _selectedUtstyr = null;
     }
 
     private sealed class PosResult

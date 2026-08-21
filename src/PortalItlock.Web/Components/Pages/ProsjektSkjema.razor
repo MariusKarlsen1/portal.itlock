@@ -150,6 +150,71 @@ else
             <div class="dorer-list-wrap">
                 <button type="button" class="add-button" @onclick="LeggTilDor">Legg til dør</button>
 
+                @if (_dorer.Count > 0)
+                {
+                    <div class="bytt-komponent-panel">
+                        <h3>Bytt komponent på alle dører</h3>
+                        <p class="section-hint">
+                            Velg en komponent som er i bruk i prosjektet og en erstatning. Alle dører med den gamle
+                            komponenten oppdateres til den nye, og monteringsstatus nullstilles siden det er en ny fysisk del.
+                        </p>
+
+                        <div class="bytt-komponent-felt">
+                            <select @bind="_byttGammelComponentId" @bind:after="OnByttGammelChanged">
+                                <option value="">Velg komponent å bytte ut...</option>
+                                @foreach (var k in KomponenterIBruk)
+                                {
+                                    <option value="@k.ComponentId">@k.Navn (@k.AntallDorer dør(er))</option>
+                                }
+                            </select>
+
+                            <div class="bytt-sok-wrap">
+                                <input @bind="_byttSok" @bind:event="oninput" @bind:after="OnByttSokChanged"
+                                       placeholder="Søk ny komponent..." disabled="@(_byttGammelComponentId is null)" />
+                                @if (_byttSearchResults.Count > 0)
+                                {
+                                    <ul class="search-results">
+                                        @foreach (var r in _byttSearchResults)
+                                        {
+                                            <li>
+                                                <button type="button" class="search-result" @onclick="@(() => VelgNyKomponent(r))">
+                                                    <span class="search-result-name">@r.Navn</span>
+                                                    <span class="search-result-meta">@r.Leverandor</span>
+                                                </button>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            </div>
+                        </div>
+
+                        @if (_byttNyKomponentNavn is not null)
+                        {
+                            <p class="section-hint">Ny komponent: <strong>@_byttNyKomponentNavn</strong></p>
+
+                            @if (!_confirmingBytte)
+                            {
+                                <button type="button" class="save-button" @onclick="@(() => _confirmingBytte = true)">
+                                    Bytt ut på @AntallDorerMedValgtKomponent dør(er)
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="delete-confirm">
+                                    Er du sikker? Dette kan ikke angres.
+                                    <button type="button" class="delete-confirm-button" @onclick="ByttKomponentOveralt">Ja, bytt ut</button>
+                                    <button type="button" class="cancel-button" @onclick="@(() => _confirmingBytte = false)">Avbryt</button>
+                                </span>
+                            }
+                        }
+
+                        @if (!string.IsNullOrEmpty(_byttMelding))
+                        {
+                            <p class="save-success">@_byttMelding</p>
+                        }
+                    </div>
+                }
+
                 @if (_dorer.Count == 0)
                 {
                     <p class="list-empty">Ingen dører registrert ennå.</p>
@@ -591,6 +656,136 @@ else
     private string _dorSok = "";
     private string _dorEtasjeFilter = "";
     private string _dorSoneFilter = "";
+
+    private sealed class KomponentIBrukOption
+    {
+        public int ComponentId { get; set; }
+        public string Navn { get; set; } = "";
+        public int AntallDorer { get; set; }
+    }
+
+    private sealed class ByttSearchResult
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Leverandor { get; set; }
+    }
+
+    private int? _byttGammelComponentId;
+    private int? _byttNyKomponentId;
+    private string? _byttNyKomponentNavn;
+    private string _byttSok = "";
+    private List<ByttSearchResult> _byttSearchResults = [];
+    private bool _confirmingBytte;
+    private string? _byttMelding;
+
+    private List<KomponentIBrukOption> KomponenterIBruk => _dorer
+        .SelectMany(d => d.Komponenter)
+        .Where(dk => dk.Component is not null)
+        .GroupBy(dk => dk.ComponentId)
+        .Select(g => new KomponentIBrukOption
+        {
+            ComponentId = g.Key,
+            Navn = g.First().Component!.Navn,
+            AntallDorer = g.Select(dk => dk.DorId).Distinct().Count()
+        })
+        .OrderBy(k => k.Navn)
+        .ToList();
+
+    private int AntallDorerMedValgtKomponent => _byttGammelComponentId is null
+        ? 0
+        : _dorer.Count(d => d.Komponenter.Any(dk => dk.ComponentId == _byttGammelComponentId));
+
+    private void OnByttGammelChanged()
+    {
+        _byttNyKomponentId = null;
+        _byttNyKomponentNavn = null;
+        _byttSok = "";
+        _byttSearchResults = [];
+        _confirmingBytte = false;
+        _byttMelding = null;
+    }
+
+    private async Task OnByttSokChanged()
+    {
+        var term = _byttSok.Trim();
+        if (term.Length < 2)
+        {
+            _byttSearchResults = [];
+            return;
+        }
+
+        _byttSearchResults = await Db.Components
+            .Where(c => c.Aktiv && (
+                EF.Functions.Like(c.Navn, $"%{term}%") ||
+                (c.Leverandor != null && EF.Functions.Like(c.Leverandor, $"%{term}%")) ||
+                (c.Produktkode != null && EF.Functions.Like(c.Produktkode, $"%{term}%"))))
+            .OrderBy(c => c.Navn)
+            .Take(20)
+            .Select(c => new ByttSearchResult { Id = c.Id, Navn = c.Navn, Leverandor = c.Leverandor })
+            .ToListAsync();
+    }
+
+    private void VelgNyKomponent(ByttSearchResult r)
+    {
+        _byttNyKomponentId = r.Id;
+        _byttNyKomponentNavn = r.Navn;
+        _byttSok = "";
+        _byttSearchResults = [];
+    }
+
+    private async Task ByttKomponentOveralt()
+    {
+        if (_byttGammelComponentId is null || _byttNyKomponentId is null)
+        {
+            return;
+        }
+
+        var gammelId = _byttGammelComponentId.Value;
+        var nyId = _byttNyKomponentId.Value;
+        var nyComponent = await Db.Components.FindAsync(nyId);
+        var antallOppdatert = 0;
+
+        foreach (var dor in _dorer)
+        {
+            var gammel = dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == gammelId);
+            if (gammel is null)
+            {
+                continue;
+            }
+
+            var eksisterendeNy = dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == nyId);
+            if (eksisterendeNy is not null)
+            {
+                eksisterendeNy.Antall += gammel.Antall;
+            }
+            else
+            {
+                var nyDk = new DorKomponent
+                {
+                    DorId = dor.Id,
+                    ComponentId = nyId,
+                    Component = nyComponent,
+                    Antall = gammel.Antall,
+                    Enhet = gammel.Enhet,
+                    LevertAv = gammel.LevertAv
+                };
+                dor.Komponenter.Add(nyDk);
+                Db.DorKomponenter.Add(nyDk);
+            }
+
+            dor.Komponenter.Remove(gammel);
+            Db.DorKomponenter.Remove(gammel);
+            antallOppdatert++;
+        }
+
+        await Db.SaveChangesAsync();
+        _byttMelding = $"Byttet ut komponent på {antallOppdatert} dør(er).";
+        _byttGammelComponentId = null;
+        _byttNyKomponentId = null;
+        _byttNyKomponentNavn = null;
+        _confirmingBytte = false;
+    }
 
     private List<string> DistinkteEtasjer =>
         _dorer.Select(d => d.Etasje).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct().OrderBy(e => e).ToList()!;

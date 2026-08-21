@@ -53,6 +53,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Avvik> Avvik => Set<Avvik>();
     public DbSet<DorMedia> DorMedia => Set<DorMedia>();
     public DbSet<PlanUtstyr> PlanUtstyr => Set<PlanUtstyr>();
+    public DbSet<PlanForbindelse> PlanForbindelser => Set<PlanForbindelse>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -266,6 +267,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(p => p.PlantegningId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<PlanForbindelse>()
+            .HasOne(f => f.FraUtstyr)
+            .WithMany()
+            .HasForeignKey(f => f.FraUtstyrId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<PlanForbindelse>()
+            .HasOne(f => f.TilUtstyr)
+            .WithMany()
+            .HasForeignKey(f => f.TilUtstyrId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         SeedReferenceData(modelBuilder);
     }
