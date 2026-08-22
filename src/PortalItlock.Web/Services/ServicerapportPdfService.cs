@@ -20,12 +20,17 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             .Include(r => r.UtfortAvBruker)
             .Include(r => r.Deler).ThenInclude(d => d.Dor)
             .Include(r => r.Sjekkpunkter)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(r => r.Id == servicerundeId);
 
         if (runde is null)
         {
             return null;
         }
+
+        runde.Media = await db.ServicerundeMedia
+            .Where(m => m.ServicerundeId == servicerundeId)
+            .ToListAsync();
 
         var prosjekt = runde.Prosjekt;
         var prosjektNavn = prosjekt?.Navn ?? "";
@@ -168,6 +173,15 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                                 });
                             }
                         });
+                    }
+
+                    if (runde.Media.Count > 0)
+                    {
+                        col.Item().PaddingTop(10).Text("Bilder").Bold();
+                        foreach (var bilde in runde.Media)
+                        {
+                            col.Item().PaddingTop(6).Width(220).Image(PdfBilde.Forminsk(bilde.Data));
+                        }
                     }
                 });
 

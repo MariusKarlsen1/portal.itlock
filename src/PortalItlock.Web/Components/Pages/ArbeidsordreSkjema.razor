@@ -196,6 +196,60 @@ else if (_ordre is not null)
     </section>
 
     <section class="ordre-section">
+        <h2>Sluttrapport</h2>
+        <div class="field-grid">
+            <label class="span-2">
+                Hva er gjort
+                <textarea rows="4" @bind="_ordre.UtfortArbeid" placeholder="Beskriv hva som ble utført på jobben"></textarea>
+            </label>
+            <label class="span-2">
+                Hva var galt / anbefalinger (valgfritt)
+                <textarea rows="3" @bind="_ordre.Anbefalinger" placeholder="Eventuelle avvik, feil eller anbefalinger"></textarea>
+            </label>
+        </div>
+
+        <div class="bilder-seksjon">
+            <h3>Bilder</h3>
+            <InputFile OnChange="LastOppBilder" accept="image/*" multiple />
+            @if (!string.IsNullOrEmpty(_bildeFeil))
+            {
+                <p class="form-error">@_bildeFeil</p>
+            }
+            @if (_media.Count > 0)
+            {
+                <div class="media-grid">
+                    @foreach (var m in _media)
+                    {
+                        <div @key="m.Id" class="media-item">
+                            <img src="@($"/arbeidsordremedia/{m.Id}")" alt="@m.Filnavn" />
+                            <button type="button" class="remove-button" @onclick="@(() => SlettMedia(m))">Slett</button>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
+            <button type="button" class="add-button" @onclick="@(() => _pdfPreviewUrl = $"/arbeidsordre/{Id}/rapport/pdf")">Generer rapport</button>
+            @if (_ordre.Status == ArbeidsordreStatus.Fakturert)
+            {
+                <span class="save-success">Ferdigmeldt og fakturert @(_ordre.FakturertDato?.ToString("dd.MM.yyyy"))</span>
+            }
+            else
+            {
+                <button type="button" class="ferdigmeld-button" @onclick="Ferdigmeld">Ferdigmeld</button>
+            }
+            @if (!string.IsNullOrEmpty(_ferdigmeldtMelding))
+            {
+                <span class="save-success">@_ferdigmeldtMelding</span>
+            }
+        </div>
+    </section>
+
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av arbeidsordrerapport" OnClose="@(() => _pdfPreviewUrl = null)" />
+
+    <section class="ordre-section">
         @if (_confirmingDelete)
         {
             <span class="delete-confirm">
@@ -258,6 +312,10 @@ else if (_ordre is not null)
     private bool _visKart;
     private bool _kartInitialisert;
     private string? _kartFeil;
+    private List<ArbeidsordreMedia> _media = [];
+    private string? _bildeFeil;
+    private string? _pdfPreviewUrl;
+    private string? _ferdigmeldtMelding;
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -284,6 +342,7 @@ else if (_ordre is not null)
         _loadedId = Id;
         _confirmingDelete = false;
         _savedMessage = null;
+        _ferdigmeldtMelding = null;
         _visKart = false;
         _kartInitialisert = false;
         _kartFeil = null;
@@ -339,6 +398,55 @@ else if (_ordre is not null)
             .Include(p => p.FullfortAvBruker)
             .ToListAsync();
         _valgtMalId = null;
+
+        _media = await Db.ArbeidsordreMedia.Where(m => m.ArbeidsordreId == Id).OrderByDescending(m => m.OpprettetDato).ToListAsync();
+        _bildeFeil = null;
+        _pdfPreviewUrl = null;
+    }
+
+    private async Task LastOppBilder(InputFileChangeEventArgs e)
+    {
+        _bildeFeil = null;
+
+        foreach (var file in e.GetMultipleFiles(10))
+        {
+            if (file.Size > 20_000_000)
+            {
+                _bildeFeil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+                continue;
+            }
+
+            using var buffer = new MemoryStream();
+            await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            var media = new ArbeidsordreMedia
+            {
+                ArbeidsordreId = Id,
+                Data = buffer.ToArray(),
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                Filnavn = file.Name
+            };
+            Db.ArbeidsordreMedia.Add(media);
+            await Db.SaveChangesAsync();
+
+            _media.Insert(0, media);
+        }
+    }
+
+    private async Task SlettMedia(ArbeidsordreMedia media)
+    {
+        var entitet = await Db.ArbeidsordreMedia.FindAsync(media.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        Db.ArbeidsordreMedia.Remove(entitet);
+        await Db.SaveChangesAsync();
+        _media.Remove(media);
     }
 
     private async Task Lagre()
@@ -358,6 +466,14 @@ else if (_ordre is not null)
 
         await Db.SaveChangesAsync();
         _savedMessage = "Lagret.";
+    }
+
+    private async Task Ferdigmeld()
+    {
+        _ordre!.Status = ArbeidsordreStatus.Fakturert;
+        _ordre.FakturertDato = DateTime.Now;
+        await Db.SaveChangesAsync();
+        _ferdigmeldtMelding = "Ordren er ferdigmeldt og fakturert.";
     }
 
     private async Task BrukMal()

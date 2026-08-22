@@ -27,6 +27,11 @@ public class Arbeidsordre
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
+    public string? UtfortArbeid { get; set; }
+    public string? Anbefalinger { get; set; }
+    public DateTime? FakturertDato { get; set; }
+
     public List<Timeregistrering> Timeregistreringer { get; set; } = [];
     public List<ArbeidsordreSjekkpunkt> Sjekkpunkter { get; set; } = [];
+    public List<ArbeidsordreMedia> Media { get; set; } = [];
 }

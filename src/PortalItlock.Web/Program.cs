@@ -33,6 +33,7 @@ builder.Services.AddScoped<AvvikPdfService>();
 builder.Services.AddScoped<PlanUtstyrPdfService>();
 builder.Services.AddScoped<PlantegningDorPdfService>();
 builder.Services.AddScoped<ServicerapportPdfService>();
+builder.Services.AddScoped<ArbeidsordrePdfService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddHttpClient<EmailService>(client =>
 {
@@ -443,6 +444,33 @@ app.MapGet("/dormedia/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var media = await db.DorMedia.FindAsync(id);
     return media is null ? Results.NotFound() : Results.File(media.Data, media.ContentType, media.Filnavn);
+}).RequireAuthorization();
+
+app.MapGet("/servicerundemedia/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var media = await db.ServicerundeMedia.FindAsync(id);
+    return media is null ? Results.NotFound() : Results.File(media.Data, media.ContentType, media.Filnavn);
+}).RequireAuthorization();
+
+app.MapGet("/arbeidsordremedia/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var media = await db.ArbeidsordreMedia.FindAsync(id);
+    return media is null ? Results.NotFound() : Results.File(media.Data, media.ContentType, media.Filnavn);
+}).RequireAuthorization();
+
+app.MapGet("/arbeidsordre/{id:int}/rapport/pdf", async (int id, HttpContext context, ArbeidsordrePdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var filnavn = $"Arbeidsordre-{id}-itlock-AS.pdf";
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
 app.MapGet("/timeoversikt/eksport-csv", async (DateTime fra, DateTime til, int? montorId, TimeoversiktService service) =>

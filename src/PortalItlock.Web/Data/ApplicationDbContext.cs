@@ -58,6 +58,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServicerundeDel> ServicerundeDeler => Set<ServicerundeDel>();
     public DbSet<ServicerundeSjekklistepunkt> ServicerundeSjekklistepunkter => Set<ServicerundeSjekklistepunkt>();
     public DbSet<ServicerundeSjekkpunkt> ServicerundeSjekkpunkter => Set<ServicerundeSjekkpunkt>();
+    public DbSet<ServicerundeMedia> ServicerundeMedia => Set<ServicerundeMedia>();
+    public DbSet<ArbeidsordreMedia> ArbeidsordreMedia => Set<ArbeidsordreMedia>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -319,6 +321,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(p => p.FullfortAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<ServicerundeMedia>()
+            .HasOne(m => m.Servicerunde)
+            .WithMany(s => s.Media)
+            .HasForeignKey(m => m.ServicerundeId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ArbeidsordreMedia>()
+            .HasOne(m => m.Arbeidsordre)
+            .WithMany(a => a.Media)
+            .HasForeignKey(m => m.ArbeidsordreId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         SeedReferenceData(modelBuilder);
     }

@@ -20,4 +20,5 @@ public class Servicerunde
 
     public List<ServicerundeDel> Deler { get; set; } = [];
     public List<ServicerundeSjekkpunkt> Sjekkpunkter { get; set; } = [];
+    public List<ServicerundeMedia> Media { get; set; } = [];
 }

@@ -88,6 +88,27 @@ else if (_prosjekt is not null)
             }
         </div>
 
+        <div class="bilder-seksjon">
+            <h3>Bilder (valgfritt)</h3>
+            <InputFile OnChange="LastOppBilder" accept="image/*" multiple />
+            @if (!string.IsNullOrEmpty(_bildeFeil))
+            {
+                <p class="form-error">@_bildeFeil</p>
+            }
+            @if (_nyeBilder.Count > 0)
+            {
+                <div class="media-grid">
+                    @foreach (var b in _nyeBilder)
+                    {
+                        <div @key="b" class="media-item">
+                            <img src="@b.DataUrl" alt="@b.Filnavn" />
+                            <button type="button" class="remove-button" @onclick="@(() => _nyeBilder.Remove(b))">Fjern</button>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
         @if (_sjekklistemal.Count > 0)
         {
             <p class="section-hint">Sjekkliste (@_sjekklistemal.Count punkter) legges automatisk ved denne runden. Rediger malen under Sjekklistemaler.</p>
@@ -158,6 +179,18 @@ else if (_prosjekt is not null)
                         </div>
                     }
 
+                    @if (r.BildeIder.Count > 0)
+                    {
+                        <div class="runde-bilder media-grid">
+                            @foreach (var bildeId in r.BildeIder)
+                            {
+                                <div @key="bildeId" class="media-item">
+                                    <img src="@($"/servicerundemedia/{bildeId}")" alt="Bilde" />
+                                </div>
+                            }
+                        </div>
+                    }
+
                     @if (r.Sjekkpunkter.Count > 0)
                     {
                         <div class="runde-sjekkliste">
@@ -219,6 +252,7 @@ else if (_prosjekt is not null)
         public DateTime? NesteServiceDato { get; set; }
         public List<DelRad> Deler { get; set; } = [];
         public List<SjekkRad> Sjekkpunkter { get; set; } = [];
+        public List<int> BildeIder { get; set; } = [];
     }
 
     private sealed class DorOption
@@ -233,6 +267,14 @@ else if (_prosjekt is not null)
         public string Beskrivelse { get; set; } = "";
         public string? Feil { get; set; }
         public DateOnly Dato { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    }
+
+    private sealed class NyttBildeRad
+    {
+        public required byte[] Data { get; set; }
+        public required string ContentType { get; set; }
+        public required string Filnavn { get; set; }
+        public string DataUrl => $"data:{ContentType};base64,{Convert.ToBase64String(Data)}";
     }
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
@@ -255,6 +297,8 @@ else if (_prosjekt is not null)
     private List<DorOption> _dorer = [];
     private List<NyDelRad> _nyeDeler = [];
     private List<ServicerundeSjekklistepunkt> _sjekklistemal = [];
+    private List<NyttBildeRad> _nyeBilder = [];
+    private string? _bildeFeil;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -283,6 +327,8 @@ else if (_prosjekt is not null)
         _nyForside = null;
         _valgtForsideMalId = null;
         _nyeDeler = [];
+        _nyeBilder = [];
+        _bildeFeil = null;
 
         _prosjekt = await Db.Prosjekter
             .Include(p => p.Kunde)
@@ -349,7 +395,8 @@ else if (_prosjekt is not null)
                     Fullfort = p.Fullfort,
                     FullfortDato = p.FullfortDato,
                     FullfortAvNavn = p.FullfortAvBruker != null ? p.FullfortAvBruker.Navn : null
-                }).ToList()
+                }).ToList(),
+                BildeIder = r.Media.Select(m => m.Id).ToList()
             })
             .ToListAsync();
     }
@@ -357,6 +404,33 @@ else if (_prosjekt is not null)
     private void LeggTilDelRad()
     {
         _nyeDeler.Add(new NyDelRad());
+    }
+
+    private async Task LastOppBilder(InputFileChangeEventArgs e)
+    {
+        _bildeFeil = null;
+
+        foreach (var file in e.GetMultipleFiles(10))
+        {
+            if (file.Size > 20_000_000)
+            {
+                _bildeFeil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+                continue;
+            }
+
+            using var buffer = new MemoryStream();
+            await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            _nyeBilder.Add(new NyttBildeRad
+            {
+                Data = buffer.ToArray(),
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                Filnavn = file.Name
+            });
+        }
     }
 
     private async Task RegistrerRunde()
@@ -397,6 +471,16 @@ else if (_prosjekt is not null)
             });
         }
 
+        foreach (var b in _nyeBilder)
+        {
+            runde.Media.Add(new ServicerundeMedia
+            {
+                Data = b.Data,
+                ContentType = b.ContentType,
+                Filnavn = b.Filnavn
+            });
+        }
+
         Db.Servicerunder.Add(runde);
         await Db.SaveChangesAsync();
 
@@ -407,6 +491,8 @@ else if (_prosjekt is not null)
         _nyForside = null;
         _valgtForsideMalId = null;
         _nyeDeler = [];
+        _nyeBilder = [];
+        _bildeFeil = null;
         _savedMessage = "Servicerunde registrert.";
 
         await LastRunderAsync();

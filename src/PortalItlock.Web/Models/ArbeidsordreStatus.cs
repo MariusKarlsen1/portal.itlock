@@ -1,6 +1,6 @@
 namespace PortalItlock.Web.Models;
 
-public enum ArbeidsordreStatus { Ny, Klar, Pagaende, Ferdig }
+public enum ArbeidsordreStatus { Ny, Klar, Pagaende, Ferdig, Fakturert }
 
 public static class ArbeidsordreStatusExtensions
 {
@@ -10,6 +10,7 @@ public static class ArbeidsordreStatusExtensions
         ArbeidsordreStatus.Klar => "Klar",
         ArbeidsordreStatus.Pagaende => "Pågående",
         ArbeidsordreStatus.Ferdig => "Ferdig",
+        ArbeidsordreStatus.Fakturert => "Fakturert",
         _ => status.ToString()
     };
 }

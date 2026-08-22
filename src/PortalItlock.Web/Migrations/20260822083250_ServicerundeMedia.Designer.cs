@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260822083250_ServicerundeMedia")]
+    partial class ServicerundeMedia
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -56,16 +59,10 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Adresse")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Anbefalinger")
-                        .HasColumnType("TEXT");
-
                     b.Property<int?>("AnsvarligMontorId")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Beskrivelse")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("FakturertDato")
                         .HasColumnType("TEXT");
 
                     b.Property<double?>("Latitude")
@@ -102,9 +99,6 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("UtfortArbeid")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
                     b.HasIndex("AnsvarligMontorId");
@@ -114,37 +108,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("TilbudId");
 
                     b.ToTable("Arbeidsordre");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreMedia", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ArbeidsordreId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("ContentType")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("Filnavn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ArbeidsordreId");
-
-                    b.ToTable("ArbeidsordreMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreSjekkpunkt", b =>
@@ -2884,17 +2847,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Tilbud");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreMedia", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
-                        .WithMany("Media")
-                        .HasForeignKey("ArbeidsordreId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Arbeidsordre");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreSjekkpunkt", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
@@ -3441,8 +3393,6 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Arbeidsordre", b =>
                 {
-                    b.Navigation("Media");
-
                     b.Navigation("Sjekkpunkter");
 
                     b.Navigation("Timeregistreringer");
