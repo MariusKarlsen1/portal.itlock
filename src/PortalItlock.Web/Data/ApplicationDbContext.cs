@@ -61,6 +61,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServicerundeMedia> ServicerundeMedia => Set<ServicerundeMedia>();
     public DbSet<ArbeidsordreMedia> ArbeidsordreMedia => Set<ArbeidsordreMedia>();
     public DbSet<KundeOppfolgingNotat> KundeOppfolgingNotater => Set<KundeOppfolgingNotat>();
+    public DbSet<FravarSoknad> FravarSoknader => Set<FravarSoknad>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -345,6 +346,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasOne(n => n.OpprettetAvBruker)
             .WithMany()
             .HasForeignKey(n => n.OpprettetAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<FravarSoknad>()
+            .HasOne(f => f.Bruker)
+            .WithMany()
+            .HasForeignKey(f => f.BrukerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<FravarSoknad>()
+            .HasOne(f => f.BehandletAvBruker)
+            .WithMany()
+            .HasForeignKey(f => f.BehandletAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
 
         SeedReferenceData(modelBuilder);

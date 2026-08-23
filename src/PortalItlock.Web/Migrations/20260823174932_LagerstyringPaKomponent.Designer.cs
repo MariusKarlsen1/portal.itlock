@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260823174932_LagerstyringPaKomponent")]
+    partial class LagerstyringPaKomponent
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -1312,51 +1315,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ProsjektId");
 
                     b.ToTable("FdvVedlegg");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.FravarSoknad", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("AvslagsBegrunnelse")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("BehandletAvBrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime?>("BehandletDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("BrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("FraDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Kommentar")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("TilDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BehandletAvBrukerId");
-
-                    b.HasIndex("BrukerId");
-
-                    b.ToTable("FravarSoknader");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.GuideSide", b =>
@@ -3185,24 +3143,6 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Prosjekt");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.FravarSoknad", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "BehandletAvBruker")
-                        .WithMany()
-                        .HasForeignKey("BehandletAvBrukerId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "Bruker")
-                        .WithMany()
-                        .HasForeignKey("BrukerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("BehandletAvBruker");
-
-                    b.Navigation("Bruker");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KundeOppfolgingNotat", b =>

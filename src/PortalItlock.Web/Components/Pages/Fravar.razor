@@ -1,0 +1,385 @@
+@page "/fravar"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Fravær</PageTitle>
+
+<h1>Fravær</h1>
+<p class="section-hint">Send inn søknad om ferie, sykdom eller annet fravær, og følg status på søknadene dine.</p>
+
+<section class="fravar-section">
+    <h2>Send inn søknad</h2>
+    <div class="soknad-form">
+        <label>
+            Type
+            <select @bind="_nyType">
+                @foreach (var t in Enum.GetValues<FravarType>())
+                {
+                    <option value="@t">@t.Visningsnavn()</option>
+                }
+            </select>
+        </label>
+        <label>
+            Fra dato
+            <input type="date" @bind="_nyFraDato" />
+        </label>
+        <label>
+            Til dato
+            <input type="date" @bind="_nyTilDato" />
+        </label>
+        <label class="span-full">
+            Kommentar (valgfritt)
+            <textarea rows="2" @bind="_nyKommentar" placeholder="F.eks. grunn eller annen info"></textarea>
+        </label>
+    </div>
+    <button type="button" class="save-button" @onclick="SendSoknad">Send inn søknad</button>
+    @if (!string.IsNullOrEmpty(_soknadFeil))
+    {
+        <p class="form-error">@_soknadFeil</p>
+    }
+    @if (!string.IsNullOrEmpty(_soknadMelding))
+    {
+        <p class="save-success">@_soknadMelding</p>
+    }
+</section>
+
+<section class="fravar-section">
+    <h2>Mine søknader</h2>
+    @if (_mineSoknader.Count == 0)
+    {
+        <p class="list-empty">Ingen søknader sendt inn ennå.</p>
+    }
+    else
+    {
+        <div class="soknad-liste">
+            @foreach (var s in _mineSoknader)
+            {
+                <div @key="s.Id" class="soknad-kort">
+                    <div class="soknad-header">
+                        <strong>@s.Type.Visningsnavn()</strong>
+                        <span class="soknad-status soknad-status-@s.Status">@s.Status.Visningsnavn()</span>
+                    </div>
+                    <p class="soknad-periode">@s.FraDato.ToString("dd.MM.yyyy") &ndash; @s.TilDato.ToString("dd.MM.yyyy")</p>
+                    @if (!string.IsNullOrWhiteSpace(s.Kommentar))
+                    {
+                        <p>@s.Kommentar</p>
+                    }
+                    @if (s.Status == FravarStatus.Avslatt && !string.IsNullOrWhiteSpace(s.AvslagsBegrunnelse))
+                    {
+                        <p class="soknad-begrunnelse"><strong>Begrunnelse:</strong> @s.AvslagsBegrunnelse</p>
+                    }
+                </div>
+            }
+        </div>
+    }
+</section>
+
+<AuthorizeView Roles="Admin">
+    <Authorized>
+        <section class="fravar-section">
+            <h2>Søknader til behandling</h2>
+            @if (_venterSoknader.Count == 0)
+            {
+                <p class="list-empty">Ingen søknader venter på behandling.</p>
+            }
+            else
+            {
+                <div class="soknad-liste">
+                    @foreach (var s in _venterSoknader)
+                    {
+                        <div @key="s.Id" class="soknad-kort">
+                            <div class="soknad-header">
+                                <strong>@s.Bruker?.Navn</strong> - @s.Type.Visningsnavn()
+                            </div>
+                            <p class="soknad-periode">@s.FraDato.ToString("dd.MM.yyyy") &ndash; @s.TilDato.ToString("dd.MM.yyyy")</p>
+                            @if (!string.IsNullOrWhiteSpace(s.Kommentar))
+                            {
+                                <p>@s.Kommentar</p>
+                            }
+
+                            @if (_avslarId == s.Id)
+                            {
+                                <div class="avslag-felt">
+                                    <textarea rows="2" @bind="_avslagsBegrunnelse" placeholder="Begrunnelse (valgfritt)"></textarea>
+                                    <button type="button" class="delete-button" @onclick="@(() => Avsla(s))">Bekreft avslag</button>
+                                    <button type="button" class="cancel-button" @onclick="@(() => _avslarId = null)">Avbryt</button>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="soknad-actions">
+                                    <button type="button" class="save-button" @onclick="@(() => Godkjenn(s))">Godkjenn</button>
+                                    <button type="button" class="delete-button" @onclick="@(() => { _avslarId = s.Id; _avslagsBegrunnelse = ""; })">Avslå</button>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="fravar-section">
+            <h2>Kalender per person</h2>
+            <div class="kalender-verktoylinje">
+                <label class="kalender-filter">
+                    Person
+                    <select @bind="_valgtPersonId" @bind:after="LastKalenderAsync">
+                        <option value="">Velg person...</option>
+                        @foreach (var p in _personer)
+                        {
+                            <option value="@p.Id">@p.Navn</option>
+                        }
+                    </select>
+                </label>
+                <div class="kalender-nav">
+                    <button type="button" class="cancel-button" @onclick="ForrigeManed">&larr;</button>
+                    <span class="kalender-manednavn">@Kultur.TextInfo.ToTitleCase(_visningsManed.ToString("MMMM yyyy", Kultur))</span>
+                    <button type="button" class="cancel-button" @onclick="NesteManed">&rarr;</button>
+                </div>
+            </div>
+
+            @if (_valgtPersonId is null)
+            {
+                <p class="list-empty">Velg en person for å se fraværskalenderen.</p>
+            }
+            else
+            {
+                <div class="kalender-ukedager">
+                    @foreach (var dagnavn in Ukedagnavn)
+                    {
+                        <div class="kalender-ukedag">@dagnavn</div>
+                    }
+                </div>
+                <div class="kalender-grid">
+                    @foreach (var dag in _kalenderDager)
+                    {
+                        <div class="kalender-dag @(dag.Dato.Month != _visningsManed.Month ? "kalender-dag-annen-maned" : "")">
+                            <span class="kalender-dagnummer">@dag.Dato.Day</span>
+                            @foreach (var s in dag.Soknader)
+                            {
+                                <span class="fravar-blokk fravar-blokk-@s.Status">@s.Type.Visningsnavn()</span>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+    </Authorized>
+</AuthorizeView>
+
+@code {
+    private sealed class PersonOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class KalenderDag
+    {
+        public required DateTime Dato { get; set; }
+        public List<FravarSoknad> Soknader { get; set; } = [];
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly string[] Ukedagnavn = ["Man", "Tir", "Ons", "Tor", "Fre", "Lør", "Søn"];
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+
+    private FravarType _nyType = FravarType.Ferie;
+    private DateOnly? _nyFraDato = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly? _nyTilDato = DateOnly.FromDateTime(DateTime.Today);
+    private string _nyKommentar = "";
+    private string? _soknadFeil;
+    private string? _soknadMelding;
+
+    private List<FravarSoknad> _mineSoknader = [];
+    private List<FravarSoknad> _venterSoknader = [];
+    private int? _avslarId;
+    private string _avslagsBegrunnelse = "";
+
+    private List<PersonOption> _personer = [];
+    private int? _valgtPersonId;
+    private DateTime _visningsManed = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private List<KalenderDag> _kalenderDager = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var idClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (idClaim is not null && int.TryParse(idClaim, out var id))
+            {
+                _naverendeBrukerId = id;
+            }
+        }
+
+        await LastMineSoknaderAsync();
+        await LastVenterSoknaderAsync();
+
+        _personer = await Db.Brukere
+            .OrderBy(b => b.Navn)
+            .Select(b => new PersonOption { Id = b.Id, Navn = b.Navn })
+            .ToListAsync();
+    }
+
+    private async Task LastMineSoknaderAsync()
+    {
+        if (_naverendeBrukerId is null)
+        {
+            return;
+        }
+
+        _mineSoknader = await Db.FravarSoknader
+            .Where(f => f.BrukerId == _naverendeBrukerId)
+            .OrderByDescending(f => f.OpprettetDato)
+            .ToListAsync();
+    }
+
+    private async Task LastVenterSoknaderAsync()
+    {
+        _venterSoknader = await Db.FravarSoknader
+            .Include(f => f.Bruker)
+            .Where(f => f.Status == FravarStatus.Venter)
+            .OrderBy(f => f.FraDato)
+            .ToListAsync();
+    }
+
+    private async Task SendSoknad()
+    {
+        _soknadFeil = null;
+        _soknadMelding = null;
+
+        if (_naverendeBrukerId is null || !_nyFraDato.HasValue || !_nyTilDato.HasValue)
+        {
+            _soknadFeil = "Fyll ut fra- og til-dato.";
+            return;
+        }
+
+        if (_nyTilDato.Value < _nyFraDato.Value)
+        {
+            _soknadFeil = "Til dato kan ikke være før fra dato.";
+            return;
+        }
+
+        var soknad = new FravarSoknad
+        {
+            BrukerId = _naverendeBrukerId.Value,
+            Type = _nyType,
+            FraDato = _nyFraDato.Value.ToDateTime(TimeOnly.MinValue),
+            TilDato = _nyTilDato.Value.ToDateTime(TimeOnly.MinValue),
+            Kommentar = string.IsNullOrWhiteSpace(_nyKommentar) ? null : _nyKommentar.Trim()
+        };
+        Db.FravarSoknader.Add(soknad);
+        await Db.SaveChangesAsync();
+
+        _mineSoknader.Insert(0, soknad);
+        _nyKommentar = "";
+        _soknadMelding = "Søknad sendt inn.";
+
+        if (soknad.BrukerId == _valgtPersonId)
+        {
+            await LastKalenderAsync();
+        }
+    }
+
+    private async Task Godkjenn(FravarSoknad s)
+    {
+        var entitet = await Db.FravarSoknader.FindAsync(s.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Status = FravarStatus.Godkjent;
+        entitet.BehandletDato = DateTime.Now;
+        entitet.BehandletAvBrukerId = _naverendeBrukerId;
+        await Db.SaveChangesAsync();
+
+        _venterSoknader.Remove(s);
+        if (s.BrukerId == _valgtPersonId)
+        {
+            await LastKalenderAsync();
+        }
+    }
+
+    private async Task Avsla(FravarSoknad s)
+    {
+        var entitet = await Db.FravarSoknader.FindAsync(s.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Status = FravarStatus.Avslatt;
+        entitet.BehandletDato = DateTime.Now;
+        entitet.BehandletAvBrukerId = _naverendeBrukerId;
+        entitet.AvslagsBegrunnelse = string.IsNullOrWhiteSpace(_avslagsBegrunnelse) ? null : _avslagsBegrunnelse.Trim();
+        await Db.SaveChangesAsync();
+
+        _venterSoknader.Remove(s);
+        _avslarId = null;
+    }
+
+    private async Task ForrigeManed()
+    {
+        _visningsManed = _visningsManed.AddMonths(-1);
+        await LastKalenderAsync();
+    }
+
+    private async Task NesteManed()
+    {
+        _visningsManed = _visningsManed.AddMonths(1);
+        await LastKalenderAsync();
+    }
+
+    private async Task LastKalenderAsync()
+    {
+        if (_valgtPersonId is null)
+        {
+            _kalenderDager = [];
+            return;
+        }
+
+        var forsteIGrid = FinnForrigeMandag(_visningsManed);
+        var sisteIManed = _visningsManed.AddMonths(1).AddDays(-1);
+        var sisteIGrid = FinnNesteSondag(sisteIManed);
+
+        var soknader = await Db.FravarSoknader
+            .Where(f => f.BrukerId == _valgtPersonId
+                && f.Status != FravarStatus.Avslatt
+                && f.FraDato.Date <= sisteIGrid && f.TilDato.Date >= forsteIGrid)
+            .ToListAsync();
+
+        var dager = new List<KalenderDag>();
+        for (var dato = forsteIGrid; dato <= sisteIGrid; dato = dato.AddDays(1))
+        {
+            dager.Add(new KalenderDag
+            {
+                Dato = dato,
+                Soknader = soknader.Where(s => s.FraDato.Date <= dato && s.TilDato.Date >= dato).ToList()
+            });
+        }
+
+        _kalenderDager = dager;
+    }
+
+    private static DateTime FinnForrigeMandag(DateTime dato)
+    {
+        var diff = ((int)dato.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        return dato.AddDays(-diff);
+    }
+
+    private static DateTime FinnNesteSondag(DateTime dato)
+    {
+        var diff = ((int)DayOfWeek.Sunday - (int)dato.DayOfWeek + 7) % 7;
+        return dato.AddDays(diff);
+    }
+}

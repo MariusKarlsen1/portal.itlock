@@ -1,0 +1,115 @@
+@page "/lager"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Lagerstyring</PageTitle>
+
+<h1>Lagerstyring</h1>
+<p class="section-hint">Hold oversikt over hva dere har på lager. Skriv inn antall på lager og eventuell minimumsbeholdning, så varsles dere når noe bør bestilles.</p>
+
+<div class="filters">
+    <input @bind="_search" @bind:event="oninput" placeholder="Søk på navn, leverandør eller produktkode" class="search-input" />
+    <label class="lav-toggle">
+        <input type="checkbox" @bind="_kunLavBeholdning" /> Vis kun lav beholdning
+    </label>
+</div>
+
+<p class="result-count">
+    @_filtrert.Count varer
+    @if (_lavtAntall > 0)
+    {
+        <span class="lav-varsel"> - @_lavtAntall med lav beholdning</span>
+    }
+</p>
+
+@if (_filtrert.Count == 0)
+{
+    <p class="list-empty">Ingen varer funnet.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="lager-table">
+            <thead>
+                <tr>
+                    <th>Navn</th>
+                    <th>Leverandør</th>
+                    <th>Produktkode</th>
+                    <th>Enhet</th>
+                    <th>På lager</th>
+                    <th>Minimum</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in _filtrert)
+                {
+                    <tr @key="c.Id" class="@(ErLavtPa(c) ? "lav-rad" : "")">
+                        <td>@c.Navn</td>
+                        <td>@c.Leverandor</td>
+                        <td>@c.Produktkode</td>
+                        <td>@(c.Enhet ?? "stk")</td>
+                        <td>
+                            <input type="number" min="0" class="antall-input" @bind="c.Lagerantall" @bind:after="@(() => Lagre(c))" />
+                        </td>
+                        <td>
+                            <input type="number" min="0" class="antall-input" @bind="c.Minimumsbeholdning" @bind:after="@(() => Lagre(c))" placeholder="Ingen" />
+                        </td>
+                        <td>
+                            @if (ErLavtPa(c))
+                            {
+                                <span class="lav-badge">Lav beholdning</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<Component> _komponenter = [];
+    private string _search = "";
+    private bool _kunLavBeholdning;
+
+    private List<Component> _filtrert => _komponenter
+        .Where(c => string.IsNullOrWhiteSpace(_search) ||
+            c.Navn.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+            (c.Leverandor?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+            (c.Produktkode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false))
+        .Where(c => !_kunLavBeholdning || ErLavtPa(c))
+        .OrderByDescending(ErLavtPa)
+        .ThenBy(c => c.Navn)
+        .ToList();
+
+    private int _lavtAntall => _komponenter.Count(ErLavtPa);
+
+    private static bool ErLavtPa(Component c) => c.Minimumsbeholdning.HasValue && c.Lagerantall <= c.Minimumsbeholdning.Value;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _komponenter = await Db.Components
+            .Where(c => c.Aktiv)
+            .OrderBy(c => c.Navn)
+            .ToListAsync();
+    }
+
+    private async Task Lagre(Component c)
+    {
+        if (c.Lagerantall < 0)
+        {
+            c.Lagerantall = 0;
+        }
+        if (c.Minimumsbeholdning.HasValue && c.Minimumsbeholdning.Value < 0)
+        {
+            c.Minimumsbeholdning = 0;
+        }
+
+        await Db.SaveChangesAsync();
+    }
+}
