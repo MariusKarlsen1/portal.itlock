@@ -47,7 +47,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         if (tilbud.VisAlleDorerFraBeslagsliste)
         {
             dorer = await db.Dorer
-                .Where(d => d.ProsjektId == tilbud.ProsjektId)
+                .Where(d => d.ProsjektId == tilbud.ProsjektId
+                    && (tilbud.ByggetrinnFilter == null || (d.Plantegning != null && d.Plantegning.Byggetrinn == tilbud.ByggetrinnFilter)))
                 .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
                 .Include(d => d.Funksjoner)
                 .OrderBy(d => d.Dornummer)

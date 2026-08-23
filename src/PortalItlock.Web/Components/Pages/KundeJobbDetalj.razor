@@ -1,0 +1,194 @@
+@page "/kunde/jobb/{Id:int}"
+@layout PortalItlock.Web.Components.Layout.KundeLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Kunde")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>@(_ordre?.Tittel ?? "Jobb") - itlock</PageTitle>
+
+<a class="back-link" href="/kunde/jobber">&larr; Tilbake til mine jobber</a>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke jobben.</p>
+}
+else if (_ordre is not null)
+{
+    <h1>@_ordre.Tittel</h1>
+    <p class="jobb-dato">
+        @(_ordre.PlanlagtDato.HasValue ? _ordre.PlanlagtDato.Value.ToString("dd.MM.yyyy") : "Dato ikke satt ennå")
+    </p>
+
+    @if (!string.IsNullOrWhiteSpace(_ordre.Beskrivelse))
+    {
+        <p>@_ordre.Beskrivelse</p>
+    }
+
+    @if (_ordre.Status == ArbeidsordreStatus.Fakturert)
+    {
+        <section class="jobb-seksjon">
+            <h2>Rapport fra jobben</h2>
+            @if (!string.IsNullOrWhiteSpace(_ordre.UtfortArbeid))
+            {
+                <p><strong>Utført arbeid:</strong> @_ordre.UtfortArbeid</p>
+            }
+            @if (!string.IsNullOrWhiteSpace(_ordre.Anbefalinger))
+            {
+                <p><strong>Anbefalinger:</strong> @_ordre.Anbefalinger</p>
+            }
+
+            @if (_fullforingsBilder.Count > 0)
+            {
+                <div class="jobb-bilder">
+                    @foreach (var m in _fullforingsBilder)
+                    {
+                        <a href="@($"/arbeidsordremedia/{m.Id}")" target="_blank">
+                            <img src="@($"/arbeidsordremedia/{m.Id}")" alt="Bilde fra jobben" />
+                        </a>
+                    }
+                </div>
+            }
+        </section>
+    }
+    else
+    {
+        <section class="jobb-seksjon">
+            <h2>Informasjon før vi kommer</h2>
+            <p class="section-hint">Skriv gjerne inn ekstra info, og last opp bilder av det som gjelder, så er montøren bedre forberedt.</p>
+
+            <textarea rows="4" @bind="_ordre.KundeInfoForJobb" @bind:event="oninput" placeholder="F.eks. hvor nøkkelen ligger, hva som er galt, adkomst..."></textarea>
+            <button type="button" class="save-button" @onclick="LagreInfo">Lagre</button>
+            @if (!string.IsNullOrEmpty(_lagretMelding))
+            {
+                <span class="save-success">@_lagretMelding</span>
+            }
+
+            <div class="bilder-seksjon">
+                <InputFile OnChange="LastOppBilder" accept="image/*" multiple />
+                @if (!string.IsNullOrEmpty(_bildeFeil))
+                {
+                    <p class="form-error">@_bildeFeil</p>
+                }
+                @if (_kundeBilder.Count > 0)
+                {
+                    <div class="jobb-bilder">
+                        @foreach (var m in _kundeBilder)
+                        {
+                            <div @key="m.Id" class="jobb-bilde-item">
+                                <img src="@($"/arbeidsordremedia/{m.Id}")" alt="@m.Filnavn" />
+                                <button type="button" class="remove-button" @onclick="@(() => SlettBilde(m))">Slett</button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Arbeidsordre? _ordre;
+    private bool _notFound;
+    private List<ArbeidsordreMedia> _kundeBilder = [];
+    private List<ArbeidsordreMedia> _fullforingsBilder = [];
+    private string? _bildeFeil;
+    private string? _lagretMelding;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+        {
+            _notFound = true;
+            return;
+        }
+
+        var bruker = await Db.Brukere.FindAsync(brukerId);
+        if (bruker?.KundeId is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        _ordre = await Db.Arbeidsordre
+            .Include(a => a.Prosjekt)
+            .FirstOrDefaultAsync(a => a.Id == Id);
+
+        if (_ordre?.Prosjekt?.KundeId != bruker.KundeId)
+        {
+            _notFound = true;
+            _ordre = null;
+            return;
+        }
+
+        var media = await Db.ArbeidsordreMedia.Where(m => m.ArbeidsordreId == Id).OrderByDescending(m => m.OpprettetDato).ToListAsync();
+        _kundeBilder = media.Where(m => m.LastetOppAvKunde).ToList();
+        _fullforingsBilder = media.Where(m => !m.LastetOppAvKunde).ToList();
+    }
+
+    private async Task LagreInfo()
+    {
+        await Db.SaveChangesAsync();
+        _lagretMelding = "Lagret.";
+    }
+
+    private async Task LastOppBilder(InputFileChangeEventArgs e)
+    {
+        _bildeFeil = null;
+
+        foreach (var file in e.GetMultipleFiles(10))
+        {
+            if (file.Size > 20_000_000)
+            {
+                _bildeFeil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+                continue;
+            }
+
+            using var buffer = new MemoryStream();
+            await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            var media = new ArbeidsordreMedia
+            {
+                ArbeidsordreId = Id,
+                Data = buffer.ToArray(),
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                Filnavn = file.Name,
+                LastetOppAvKunde = true
+            };
+            Db.ArbeidsordreMedia.Add(media);
+            await Db.SaveChangesAsync();
+
+            _kundeBilder.Insert(0, media);
+        }
+    }
+
+    private async Task SlettBilde(ArbeidsordreMedia media)
+    {
+        var entitet = await Db.ArbeidsordreMedia.FindAsync(media.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        Db.ArbeidsordreMedia.Remove(entitet);
+        await Db.SaveChangesAsync();
+        _kundeBilder.Remove(media);
+    }
+}

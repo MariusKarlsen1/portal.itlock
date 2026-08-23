@@ -30,6 +30,8 @@ public class Arbeidsordre
     public string? UtfortArbeid { get; set; }
     public string? Anbefalinger { get; set; }
     public DateTime? FakturertDato { get; set; }
+    public string? KundeInfoForJobb { get; set; }
+    public DateTime? DokumentasjonEpostSendtDato { get; set; }
 
     public List<Timeregistrering> Timeregistreringer { get; set; } = [];
     public List<ArbeidsordreSjekkpunkt> Sjekkpunkter { get; set; } = [];

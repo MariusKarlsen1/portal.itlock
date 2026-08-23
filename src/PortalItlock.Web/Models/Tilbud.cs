@@ -21,6 +21,7 @@ public class Tilbud
     public bool VisAlleDorerFraBeslagsliste { get; set; }
     public bool SkjulVarenummerISammendrag { get; set; }
     public bool VisPrisPerDor { get; set; }
+    public string? ByggetrinnFilter { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
     public DateTime? OppdatertDato { get; set; }

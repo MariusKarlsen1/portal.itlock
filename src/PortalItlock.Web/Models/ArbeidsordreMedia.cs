@@ -10,4 +10,5 @@ public class ArbeidsordreMedia
     public required string ContentType { get; set; }
     public required string Filnavn { get; set; }
     public DateTime OpprettetDato { get; set; } = DateTime.Now;
+    public bool LastetOppAvKunde { get; set; }
 }

@@ -10,6 +10,7 @@
 @inject NavigationManager Nav
 @inject GeocodingService Geokoding
 @inject IJSRuntime JS
+@inject EmailService Epost
 
 <PageTitle>@(_ordre?.Tittel ?? "Arbeidsordre")</PageTitle>
 
@@ -195,6 +196,28 @@ else if (_ordre is not null)
         }
     </section>
 
+    @if (!string.IsNullOrWhiteSpace(_ordre.KundeInfoForJobb) || _kundeBilder.Count > 0)
+    {
+        <section class="ordre-section">
+            <h2>Info fra kunde</h2>
+            @if (!string.IsNullOrWhiteSpace(_ordre.KundeInfoForJobb))
+            {
+                <p>@_ordre.KundeInfoForJobb</p>
+            }
+            @if (_kundeBilder.Count > 0)
+            {
+                <div class="media-grid">
+                    @foreach (var m in _kundeBilder)
+                    {
+                        <div @key="m.Id" class="media-item">
+                            <img src="@($"/arbeidsordremedia/{m.Id}")" alt="@m.Filnavn" />
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+    }
+
     <section class="ordre-section">
         <h2>Sluttrapport</h2>
         <div class="field-grid">
@@ -234,7 +257,10 @@ else if (_ordre is not null)
             <button type="button" class="add-button" @onclick="@(() => _pdfPreviewUrl = $"/arbeidsordre/{Id}/rapport/pdf")">Generer rapport</button>
             @if (_ordre.Status == ArbeidsordreStatus.Fakturert)
             {
-                <span class="save-success">Ferdigmeldt og fakturert @(_ordre.FakturertDato?.ToString("dd.MM.yyyy"))</span>
+                <span class="save-success">
+                    Ferdigmeldt og fakturert @(_ordre.FakturertDato?.ToString("dd.MM.yyyy"))
+                    @(_ordre.DokumentasjonEpostSendtDato.HasValue ? " - dokumentasjon sendt til kunde" : "")
+                </span>
             }
             else
             {
@@ -313,6 +339,7 @@ else if (_ordre is not null)
     private bool _kartInitialisert;
     private string? _kartFeil;
     private List<ArbeidsordreMedia> _media = [];
+    private List<ArbeidsordreMedia> _kundeBilder = [];
     private string? _bildeFeil;
     private string? _pdfPreviewUrl;
     private string? _ferdigmeldtMelding;
@@ -347,7 +374,9 @@ else if (_ordre is not null)
         _kartInitialisert = false;
         _kartFeil = null;
 
-        _ordre = await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.Id == Id);
+        _ordre = await Db.Arbeidsordre
+            .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
+            .FirstOrDefaultAsync(a => a.Id == Id);
         _notFound = _ordre is null;
 
         if (_ordre is null)
@@ -399,7 +428,9 @@ else if (_ordre is not null)
             .ToListAsync();
         _valgtMalId = null;
 
-        _media = await Db.ArbeidsordreMedia.Where(m => m.ArbeidsordreId == Id).OrderByDescending(m => m.OpprettetDato).ToListAsync();
+        var alleBilder = await Db.ArbeidsordreMedia.Where(m => m.ArbeidsordreId == Id).OrderByDescending(m => m.OpprettetDato).ToListAsync();
+        _media = alleBilder.Where(m => !m.LastetOppAvKunde).ToList();
+        _kundeBilder = alleBilder.Where(m => m.LastetOppAvKunde).ToList();
         _bildeFeil = null;
         _pdfPreviewUrl = null;
     }
@@ -474,6 +505,26 @@ else if (_ordre is not null)
         _ordre.FakturertDato = DateTime.Now;
         await Db.SaveChangesAsync();
         _ferdigmeldtMelding = "Ordren er ferdigmeldt og fakturert.";
+
+        var kundeEpost = _ordre.Prosjekt?.Kunde?.Epost;
+        if (!string.IsNullOrWhiteSpace(kundeEpost))
+        {
+            var utfortHtml = string.IsNullOrWhiteSpace(_ordre.UtfortArbeid) ? "" : "<p><strong>Utført arbeid:</strong> " + System.Net.WebUtility.HtmlEncode(_ordre.UtfortArbeid).Replace("\n", "<br>") + "</p>";
+            var anbefalingerHtml = string.IsNullOrWhiteSpace(_ordre.Anbefalinger) ? "" : "<p><strong>Anbefalinger:</strong> " + System.Net.WebUtility.HtmlEncode(_ordre.Anbefalinger).Replace("\n", "<br>") + "</p>";
+            var html = "<p>Hei " + (_ordre.Prosjekt?.Kunde?.Navn ?? "") + ",</p>"
+                + "<p>Her er dokumentasjon fra jobben \"" + System.Net.WebUtility.HtmlEncode(_ordre.Tittel) + "\":</p>"
+                + utfortHtml + anbefalingerHtml
+                + "<p>Mvh itlock AS</p>";
+
+            var vedlegg = _media.Select(m => (m.Filnavn, m.Data));
+            var ok = await Epost.SendAsync(kundeEpost, $"Dokumentasjon - {_ordre.Tittel}", html, vedlegg);
+            if (ok)
+            {
+                _ordre.DokumentasjonEpostSendtDato = DateTime.Now;
+                await Db.SaveChangesAsync();
+                _ferdigmeldtMelding = "Ordren er ferdigmeldt og fakturert. Dokumentasjon sendt til kunden.";
+            }
+        }
     }
 
     private async Task BrukMal()

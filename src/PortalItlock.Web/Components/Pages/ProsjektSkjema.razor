@@ -5,6 +5,7 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @using SkiaSharp
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
@@ -22,6 +23,11 @@ else if (_notFound)
 else
 {
     <h1>@(Id.HasValue ? _form.Navn : "Nytt prosjekt")</h1>
+
+    @if (Id.HasValue && _form.Status == ProsjektStatus.Serviceavtale)
+    {
+        <a class="back-link" href="@($"/serviceavtaler/{Id}")">&larr; Til serviceavtalen</a>
+    }
 
     @if (Id.HasValue)
     {
@@ -492,33 +498,40 @@ else
                 }
             </div>
 
-            @if (_fdvKomponenter is null)
+            @if (_byggetrinnListe.Count > 1)
             {
-                <p class="list-empty">Laster...</p>
+                <label class="byggetrinn-velger">
+                    Byggetrinn
+                    <select @bind="_valgtByggetrinn">
+                        <option value="">Alle byggetrinn</option>
+                        @foreach (var b in _byggetrinnListe)
+                        {
+                            <option value="@b">@b</option>
+                        }
+                    </select>
+                </label>
+            }
+
+            @if (FdvKomponenterFiltrert.Count > 0)
+            {
+                <ul class="vedlegg-list">
+                    @foreach (var k in FdvKomponenterFiltrert)
+                    {
+                        <li @key="k.Id" class="vedlegg-item">
+                            <span>@k.Navn</span>
+                            <span class="vedlegg-type">@k.Produktkode</span>
+                        </li>
+                    }
+                </ul>
             }
             else
             {
-                @if (_fdvKomponenter.Count > 0)
-                {
-                    <ul class="vedlegg-list">
-                        @foreach (var k in _fdvKomponenter)
-                        {
-                            <li @key="k.Id" class="vedlegg-item">
-                                <span>@k.Navn</span>
-                                <span class="vedlegg-type">@k.Produktkode</span>
-                            </li>
-                        }
-                    </ul>
-                }
-                else
-                {
-                    <p class="list-empty">Ingen av varene på prosjektets dører har FDV-dokumentasjon registrert ennå.</p>
-                }
+                <p class="list-empty">Ingen av varene på prosjektets dører har FDV-dokumentasjon registrert ennå.</p>
+            }
 
-                @if (_fdvKomponenter.Count > 0 || _fdvVedlegg.Count > 0)
-                {
-                    <button type="button" class="add-button" @onclick="GenererFdv">Generer FDV</button>
-                }
+            @if (FdvKomponenterFiltrert.Count > 0 || _fdvVedlegg.Count > 0)
+            {
+                <button type="button" class="add-button" @onclick="GenererFdv">Generer FDV</button>
             }
 
             <PdfPreviewModal Url="@_fdvPreviewUrl" Tittel="Forhåndsvisning av FDV" OnClose="@(() => _fdvPreviewUrl = null)" />
@@ -627,6 +640,19 @@ else
     {
         <div class="prosjekt-layout">
             <p class="section-hint">Genererer én PDF-side per dør med beslag i prosjektet: dørinfo, dørfunksjoner og beslagsliste.</p>
+            @if (_byggetrinnListe.Count > 1)
+            {
+                <label class="byggetrinn-velger">
+                    Byggetrinn
+                    <select @bind="_valgtByggetrinn">
+                        <option value="">Alle byggetrinn</option>
+                        @foreach (var b in _byggetrinnListe)
+                        {
+                            <option value="@b">@b</option>
+                        }
+                    </select>
+                </label>
+            }
             <div class="knapperad">
                 <button type="button" class="add-button" @onclick="GenererBeslagsliste">Generer beslagsliste</button>
                 <a class="cancel-button" href="@($"/prosjekt/{Id}/plukkliste")">Åpne plukkliste</a>
@@ -857,7 +883,16 @@ else
     private bool _uploadingVedlegg;
     private string? _vedleggFeil;
     private List<Tilbud> _tilbud = [];
-    private List<Component>? _fdvKomponenter;
+    private List<string> _byggetrinnListe = [];
+    private string _valgtByggetrinn = "";
+    private List<Component> FdvKomponenterFiltrert => _dorer
+        .Where(d => _valgtByggetrinn == "" || d.Plantegning?.Byggetrinn == _valgtByggetrinn)
+        .SelectMany(d => d.Komponenter)
+        .Select(dk => dk.Component!)
+        .Where(c => c.FdvData != null)
+        .DistinctBy(c => c.Id)
+        .OrderBy(c => c.Navn)
+        .ToList();
     private string? _fdvPreviewUrl;
     private List<FdvVedlegg> _fdvVedlegg = [];
     private bool _uploadingFdvVedlegg;
@@ -995,12 +1030,10 @@ else
                 .OrderBy(d => d.Dornummer)
                 .ToListAsync();
 
-            _fdvKomponenter = _dorer.SelectMany(d => d.Komponenter)
-                .Select(dk => dk.Component!)
-                .Where(c => c.FdvData != null)
-                .DistinctBy(c => c.Id)
-                .OrderBy(c => c.Navn)
-                .ToList();
+            _byggetrinnListe = ByggetrinnHelper.Sorter(_dorer
+                .Where(d => !string.IsNullOrWhiteSpace(d.Plantegning?.Byggetrinn))
+                .Select(d => d.Plantegning!.Byggetrinn!.Trim())
+                .Distinct()).ToList();
 
             _fdvVedlegg = await Db.FdvVedlegg
                 .Where(v => v.ProsjektId == Id.Value)
@@ -1363,7 +1396,8 @@ else
 
     private void GenererFdv()
     {
-        _fdvPreviewUrl = $"/prosjekt/{Id}/fdv/pdf?v={DateTime.UtcNow.Ticks}";
+        var byggetrinnParam = string.IsNullOrEmpty(_valgtByggetrinn) ? "" : $"&byggetrinn={Uri.EscapeDataString(_valgtByggetrinn)}";
+        _fdvPreviewUrl = $"/prosjekt/{Id}/fdv/pdf?v={DateTime.UtcNow.Ticks}{byggetrinnParam}";
     }
 
     private void BrukFdvForsideMal()
@@ -1506,7 +1540,8 @@ else
 
     private void GenererBeslagsliste()
     {
-        _beslagslistePreviewUrl = $"/prosjekt/{Id}/beslagsliste/pdf?v={DateTime.UtcNow.Ticks}";
+        var byggetrinnParam = string.IsNullOrEmpty(_valgtByggetrinn) ? "" : $"&byggetrinn={Uri.EscapeDataString(_valgtByggetrinn)}";
+        _beslagslistePreviewUrl = $"/prosjekt/{Id}/beslagsliste/pdf?v={DateTime.UtcNow.Ticks}{byggetrinnParam}";
     }
 
     private static string FriBreddeValue(bool? verdi) => verdi switch

@@ -232,7 +232,7 @@ app.MapGet("/tilbud/{id:int}/tripletex-csv", async (int id, ApplicationDbContext
     return Results.File(data, "text/csv", filnavn);
 }).RequireAuthorization();
 
-app.MapGet("/prosjekt/{id:int}/beslagsliste/pdf", async (int id, HttpContext context, ApplicationDbContext db, DorBeslagslistePdfService beslagslisteService) =>
+app.MapGet("/prosjekt/{id:int}/beslagsliste/pdf", async (int id, string? byggetrinn, HttpContext context, ApplicationDbContext db, DorBeslagslistePdfService beslagslisteService) =>
 {
     var prosjekt = await db.Prosjekter.FindAsync(id);
     if (prosjekt is null)
@@ -240,7 +240,7 @@ app.MapGet("/prosjekt/{id:int}/beslagsliste/pdf", async (int id, HttpContext con
         return Results.NotFound();
     }
 
-    var pdf = await beslagslisteService.GenerateAsync(id);
+    var pdf = await beslagslisteService.GenerateAsync(id, byggetrinn);
     if (pdf is null)
     {
         return Results.NotFound();
@@ -258,9 +258,9 @@ app.MapGet("/prosjekt/{id:int}/beslagsliste/pdf", async (int id, HttpContext con
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
-app.MapGet("/prosjekt/{id:int}/plukkliste/pdf", async (int id, HttpContext context, ApplicationDbContext db, PlukklistePdfService plukklisteService) =>
+app.MapGet("/prosjekt/{id:int}/plukkliste/pdf", async (int id, string? byggetrinn, HttpContext context, ApplicationDbContext db, PlukklistePdfService plukklisteService) =>
 {
-    var pdf = await plukklisteService.GenerateAsync(id);
+    var pdf = await plukklisteService.GenerateAsync(id, byggetrinn);
     if (pdf is null)
     {
         return Results.NotFound();
@@ -337,9 +337,9 @@ app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
         : Results.File(komponent.FdvData, komponent.FdvContentType ?? "application/pdf", komponent.FdvFilnavn);
 }).RequireAuthorization();
 
-app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, HttpContext context, ApplicationDbContext db, FdvPdfService fdvService) =>
+app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, string? byggetrinn, HttpContext context, ApplicationDbContext db, FdvPdfService fdvService) =>
 {
-    var pdf = await fdvService.GenerateAsync(id);
+    var pdf = await fdvService.GenerateAsync(id, byggetrinn);
     if (pdf is null)
     {
         return Results.NotFound();

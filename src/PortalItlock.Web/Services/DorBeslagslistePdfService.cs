@@ -8,7 +8,7 @@ namespace PortalItlock.Web.Services;
 
 public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
-    public async Task<byte[]?> GenerateAsync(int prosjektId)
+    public async Task<byte[]?> GenerateAsync(int prosjektId, string? byggetrinn = null)
     {
         var prosjekt = await db.Prosjekter.FindAsync(prosjektId);
         if (prosjekt is null)
@@ -17,7 +17,8 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         }
 
         var dorer = await db.Dorer
-            .Where(d => d.ProsjektId == prosjektId)
+            .Where(d => d.ProsjektId == prosjektId
+                && (byggetrinn == null || (d.Plantegning != null && d.Plantegning.Byggetrinn == byggetrinn)))
             .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
             .Include(d => d.Funksjoner)
             .OrderBy(d => d.Dornummer)
@@ -38,7 +39,7 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     col.Item().Row(row =>
                     {
                         row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                        row.RelativeItem().AlignRight().Text($"Beslagsliste – {prosjekt.Navn}").FontSize(9).FontColor(Colors.Grey.Darken1);
+                        row.RelativeItem().AlignRight().Text($"Beslagsliste – {prosjekt.Navn}{(byggetrinn is not null ? $" ({byggetrinn})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
                     });
                     col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
                 });

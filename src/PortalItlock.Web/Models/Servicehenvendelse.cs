@@ -10,10 +10,12 @@ public class Servicehenvendelse
     public string? Beskrivelse { get; set; }
     public string? Adresse { get; set; }
     public string? OnsketTidspunkt { get; set; }
+    public DateTime? OnsketDato { get; set; }
 
     public ServicehenvendelseStatus Status { get; set; } = ServicehenvendelseStatus.Ny;
     public string? SvarFraItlock { get; set; }
     public DateTime? EpostSendtDato { get; set; }
+    public DateTime? AntattLeveringsdato { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 

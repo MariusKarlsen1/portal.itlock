@@ -1,6 +1,7 @@
 @page "/kunder/{Id:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -34,6 +35,10 @@ else if (_kunde is not null)
             <label>
                 Tripletex kundenr.
                 <input @bind="_kunde.TripletexKundenummer" placeholder="F.eks. 10010" />
+            </label>
+            <label>
+                Neste oppfølging
+                <input type="date" @bind="_nesteOppfolgingsDato" />
             </label>
             <label class="span-2">
                 Notater
@@ -72,6 +77,33 @@ else if (_kunde is not null)
     </section>
 
     <section class="kunde-section">
+        <h2>Oppfølgingslogg</h2>
+        <p class="section-hint">Loggfør kontakt og avtaler med kunden, og sett en dato for når dere bør følge opp igjen.</p>
+
+        <div class="notat-legg-til">
+            <textarea rows="2" @bind="_nyttNotat" @bind:event="oninput" placeholder="F.eks. Ringte kunden, avtalte befaring i uke 40..."></textarea>
+            <button type="button" class="save-button" @onclick="LeggTilNotat" disabled="@string.IsNullOrWhiteSpace(_nyttNotat)">Logg oppfølging</button>
+        </div>
+
+        @if (_notater.Count == 0)
+        {
+            <p class="list-empty">Ingen loggførte oppfølginger ennå.</p>
+        }
+        else
+        {
+            <ul class="notat-list">
+                @foreach (var n in _notater)
+                {
+                    <li @key="n.Id">
+                        <p class="notat-meta">@n.OpprettetDato.ToString("dd.MM.yyyy HH:mm") @(n.OpprettetAvBruker is not null ? $"- {n.OpprettetAvBruker.Navn}" : "")</p>
+                        <p>@n.Tekst</p>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+
+    <section class="kunde-section">
         @if (_confirmingDelete)
         {
             <span class="delete-confirm">
@@ -103,9 +135,27 @@ else if (_kunde is not null)
     private string? _savedMessage;
     private List<ProsjektOption> _prosjekter = [];
     private int? _loadedId;
+    private DateOnly? _nesteOppfolgingsDato;
+    private List<KundeOppfolgingNotat> _notater = [];
+    private string _nyttNotat = "";
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+    private Bruker? _naverendeBruker;
 
     protected override async Task OnParametersSetAsync()
     {
+        if (AuthStateTask is not null && _naverendeBrukerId is null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+                _naverendeBruker = await Db.Brukere.FindAsync(bid);
+            }
+        }
+
         if (_loadedId == Id)
         {
             return;
@@ -115,6 +165,7 @@ else if (_kunde is not null)
         _confirmingDelete = false;
         _error = null;
         _savedMessage = null;
+        _nyttNotat = "";
 
         _kunde = await Db.Kunder.FirstOrDefaultAsync(k => k.Id == Id);
         _notFound = _kunde is null;
@@ -124,10 +175,20 @@ else if (_kunde is not null)
             return;
         }
 
+        _nesteOppfolgingsDato = _kunde.NesteOppfolgingsDato.HasValue
+            ? DateOnly.FromDateTime(_kunde.NesteOppfolgingsDato.Value)
+            : null;
+
         _prosjekter = await Db.Prosjekter
             .Where(p => p.KundeId == Id)
             .OrderBy(p => p.Navn)
             .Select(p => new ProsjektOption { Id = p.Id, Navn = p.Navn })
+            .ToListAsync();
+
+        _notater = await Db.KundeOppfolgingNotater
+            .Where(n => n.KundeId == Id)
+            .Include(n => n.OpprettetAvBruker)
+            .OrderByDescending(n => n.OpprettetDato)
             .ToListAsync();
     }
 
@@ -140,8 +201,30 @@ else if (_kunde is not null)
         }
 
         _error = null;
+        _kunde.NesteOppfolgingsDato = _nesteOppfolgingsDato?.ToDateTime(TimeOnly.MinValue);
         await Db.SaveChangesAsync();
         _savedMessage = "Lagret.";
+    }
+
+    private async Task LeggTilNotat()
+    {
+        if (string.IsNullOrWhiteSpace(_nyttNotat))
+        {
+            return;
+        }
+
+        var notat = new KundeOppfolgingNotat
+        {
+            KundeId = Id,
+            Tekst = _nyttNotat.Trim(),
+            OpprettetAvBrukerId = _naverendeBrukerId,
+            OpprettetAvBruker = _naverendeBruker
+        };
+        Db.KundeOppfolgingNotater.Add(notat);
+        await Db.SaveChangesAsync();
+
+        _notater.Insert(0, notat);
+        _nyttNotat = "";
     }
 
     private async Task SlettKunde()

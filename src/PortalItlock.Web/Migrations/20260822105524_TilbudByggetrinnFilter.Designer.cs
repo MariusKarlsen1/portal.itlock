@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260822105524_TilbudByggetrinnFilter")]
+    partial class TilbudByggetrinnFilter
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -65,13 +68,7 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Beskrivelse")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTime?>("DokumentasjonEpostSendtDato")
-                        .HasColumnType("TEXT");
-
                     b.Property<DateTime?>("FakturertDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("KundeInfoForJobb")
                         .HasColumnType("TEXT");
 
                     b.Property<double?>("Latitude")
@@ -142,9 +139,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Filnavn")
                         .IsRequired()
                         .HasColumnType("TEXT");
-
-                    b.Property<bool>("LastetOppAvKunde")
-                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("OpprettetDato")
                         .HasColumnType("TEXT");
@@ -1352,9 +1346,6 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTime?>("NesteOppfolgingsDato")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Notater")
                         .HasColumnType("TEXT");
 
@@ -1376,34 +1367,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Kunder");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.KundeOppfolgingNotat", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("KundeId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("OpprettetAvBrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Tekst")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("KundeId");
-
-                    b.HasIndex("OpprettetAvBrukerId");
-
-                    b.ToTable("KundeOppfolgingNotater");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LasUtskifting", b =>
@@ -2396,9 +2359,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Adresse")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTime?>("AntattLeveringsdato")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Beskrivelse")
                         .HasColumnType("TEXT");
 
@@ -2411,9 +2371,6 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<int>("KundeId")
                         .HasColumnType("INTEGER");
-
-                    b.Property<DateTime?>("OnsketDato")
-                        .HasColumnType("TEXT");
 
                     b.Property<string>("OnsketTidspunkt")
                         .HasColumnType("TEXT");
@@ -3136,24 +3093,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Prosjekt");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.KundeOppfolgingNotat", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Kunde", "Kunde")
-                        .WithMany("OppfolgingNotater")
-                        .HasForeignKey("KundeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "OpprettetAvBruker")
-                        .WithMany()
-                        .HasForeignKey("OpprettetAvBrukerId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Kunde");
-
-                    b.Navigation("OpprettetAvBruker");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.Nokkel", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
@@ -3558,8 +3497,6 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Kunde", b =>
                 {
-                    b.Navigation("OppfolgingNotater");
-
                     b.Navigation("Prosjekter");
                 });
 

@@ -1,0 +1,162 @@
+@page "/kundeoppfolging"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Kundeoppfølging</PageTitle>
+
+<h1>Kundeoppfølging</h1>
+<p class="section-hint">Oversikt over kunder som bør følges opp, med logg over hva som er gjort og når dere bør ta kontakt igjen.</p>
+
+<input class="search-input" @bind="_search" @bind:event="oninput" placeholder="Søk på navn, kontaktperson eller sted" />
+
+@if (_filtrert.Count == 0)
+{
+    <p class="list-empty">Ingen kunder funnet.</p>
+}
+else
+{
+    <div class="oppfolging-liste">
+        @foreach (var rad in _filtrert)
+        {
+            <div @key="rad.Kunde.Id" class="oppfolging-kort @(rad.ErForfalt ? "oppfolging-kort-forfalt" : "")">
+                <div class="oppfolging-header">
+                    <div>
+                        <strong>@rad.Kunde.Navn</strong>
+                        @if (!string.IsNullOrWhiteSpace(rad.Kunde.Kontaktperson))
+                        {
+                            <span class="oppfolging-kontakt"> - @rad.Kunde.Kontaktperson</span>
+                        }
+                        <p class="oppfolging-kontaktinfo">
+                            @(rad.Kunde.Telefon ?? "Ingen telefon") · @(rad.Kunde.Epost ?? "Ingen e-post")
+                        </p>
+                    </div>
+                    <a class="edit-link" href="@($"/kunder/{rad.Kunde.Id}")">Åpne kunde →</a>
+                </div>
+
+                <div class="oppfolging-felter">
+                    <label>
+                        Neste oppfølging
+                        <input type="date" @bind="rad.NesteOppfolgingsDato" @bind:after="@(() => LagreDato(rad))" />
+                    </label>
+                </div>
+
+                @if (rad.SisteNotat is not null)
+                {
+                    <p class="oppfolging-siste">
+                        <strong>Siste:</strong> @rad.SisteNotat.Tekst
+                        <span class="oppfolging-siste-dato">(@rad.SisteNotat.OpprettetDato.ToString("dd.MM.yyyy"))</span>
+                    </p>
+                }
+
+                @if (rad.VisLoggFelt)
+                {
+                    <div class="oppfolging-logg-felt">
+                        <textarea rows="2" @bind="rad.NyttNotat" placeholder="Hva ble gjort/avtalt?"></textarea>
+                        <button type="button" class="save-button" @onclick="@(() => LeggTilNotat(rad))" disabled="@string.IsNullOrWhiteSpace(rad.NyttNotat)">Lagre</button>
+                        <button type="button" class="cancel-button" @onclick="@(() => rad.VisLoggFelt = false)">Avbryt</button>
+                    </div>
+                }
+                else
+                {
+                    <button type="button" class="add-button" @onclick="@(() => rad.VisLoggFelt = true)">Logg oppfølging</button>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private sealed class OppfolgingRad
+    {
+        public required Kunde Kunde { get; set; }
+        public DateOnly? NesteOppfolgingsDato { get; set; }
+        public KundeOppfolgingNotat? SisteNotat { get; set; }
+        public bool ErForfalt { get; set; }
+        public bool VisLoggFelt { get; set; }
+        public string NyttNotat { get; set; } = "";
+    }
+
+    private List<OppfolgingRad> _alle = [];
+    private string _search = "";
+
+    private List<OppfolgingRad> _filtrert => (string.IsNullOrWhiteSpace(_search)
+            ? _alle
+            : _alle.Where(r =>
+                    r.Kunde.Navn.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                    (r.Kunde.Kontaktperson?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (r.Kunde.Sted?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false))
+                .ToList())
+        .OrderBy(r => r.NesteOppfolgingsDato ?? DateOnly.MaxValue)
+        .ThenBy(r => r.Kunde.Navn)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LastInnAsync();
+    }
+
+    private async Task LastInnAsync()
+    {
+        var kunder = await Db.Kunder
+            .OrderBy(k => k.Navn)
+            .ToListAsync();
+
+        var kundeIder = kunder.Select(k => k.Id).ToList();
+        var notater = await Db.KundeOppfolgingNotater
+            .Where(n => kundeIder.Contains(n.KundeId))
+            .OrderByDescending(n => n.OpprettetDato)
+            .ToListAsync();
+
+        var idag = DateOnly.FromDateTime(DateTime.Today);
+        _alle = kunder.Select(k =>
+        {
+            var neste = k.NesteOppfolgingsDato.HasValue ? DateOnly.FromDateTime(k.NesteOppfolgingsDato.Value) : (DateOnly?)null;
+            return new OppfolgingRad
+            {
+                Kunde = k,
+                NesteOppfolgingsDato = neste,
+                SisteNotat = notater.FirstOrDefault(n => n.KundeId == k.Id),
+                ErForfalt = neste.HasValue && neste.Value <= idag
+            };
+        }).ToList();
+    }
+
+    private async Task LagreDato(OppfolgingRad rad)
+    {
+        var kunde = await Db.Kunder.FindAsync(rad.Kunde.Id);
+        if (kunde is null)
+        {
+            return;
+        }
+
+        kunde.NesteOppfolgingsDato = rad.NesteOppfolgingsDato?.ToDateTime(TimeOnly.MinValue);
+        await Db.SaveChangesAsync();
+
+        var idag = DateOnly.FromDateTime(DateTime.Today);
+        rad.ErForfalt = rad.NesteOppfolgingsDato.HasValue && rad.NesteOppfolgingsDato.Value <= idag;
+    }
+
+    private async Task LeggTilNotat(OppfolgingRad rad)
+    {
+        if (string.IsNullOrWhiteSpace(rad.NyttNotat))
+        {
+            return;
+        }
+
+        var notat = new KundeOppfolgingNotat
+        {
+            KundeId = rad.Kunde.Id,
+            Tekst = rad.NyttNotat.Trim()
+        };
+        Db.KundeOppfolgingNotater.Add(notat);
+        await Db.SaveChangesAsync();
+
+        rad.SisteNotat = notat;
+        rad.NyttNotat = "";
+        rad.VisLoggFelt = false;
+    }
+}

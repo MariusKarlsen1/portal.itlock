@@ -12,8 +12,10 @@ public class Kunde
     public string? Sted { get; set; }
     public string? Notater { get; set; }
     public string? TripletexKundenummer { get; set; }
+    public DateTime? NesteOppfolgingsDato { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     public List<Prosjekt> Prosjekter { get; set; } = [];
+    public List<KundeOppfolgingNotat> OppfolgingNotater { get; set; } = [];
 }

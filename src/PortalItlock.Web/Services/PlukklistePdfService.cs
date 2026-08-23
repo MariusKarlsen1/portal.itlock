@@ -9,7 +9,7 @@ namespace PortalItlock.Web.Services;
 
 public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
-    public async Task<byte[]?> GenerateAsync(int prosjektId)
+    public async Task<byte[]?> GenerateAsync(int prosjektId, string? byggetrinn = null)
     {
         var prosjekt = await db.Prosjekter.FindAsync(prosjektId);
         if (prosjekt is null)
@@ -18,7 +18,8 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         }
 
         var behov = await db.DorKomponenter
-            .Where(k => k.Dor!.ProsjektId == prosjektId && k.LevertAv == LevertAv.F && k.ComponentId != 0)
+            .Where(k => k.Dor!.ProsjektId == prosjektId && k.LevertAv == LevertAv.F && k.ComponentId != 0
+                && (byggetrinn == null || (k.Dor!.Plantegning != null && k.Dor!.Plantegning!.Byggetrinn == byggetrinn)))
             .Include(k => k.Component).ThenInclude(c => c!.Type)
             .ToListAsync();
 
@@ -52,7 +53,7 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     col.Item().Row(row =>
                     {
                         row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                        row.RelativeItem().AlignRight().Text($"Plukkliste – {prosjekt.Navn}").FontSize(9).FontColor(Colors.Grey.Darken1);
+                        row.RelativeItem().AlignRight().Text($"Plukkliste – {prosjekt.Navn}{(byggetrinn is not null ? $" ({byggetrinn})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
                     });
                     col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
                 });
