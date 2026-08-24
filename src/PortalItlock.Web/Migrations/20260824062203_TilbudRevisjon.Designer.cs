@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260824062203_TilbudRevisjon")]
+    partial class TilbudRevisjon
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -2772,9 +2775,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime>("OpprettetDato")
                         .HasColumnType("TEXT");
 
-                    b.Property<int?>("OpprinneligTilbudId")
-                        .HasColumnType("INTEGER");
-
                     b.Property<int>("PrisType")
                         .HasColumnType("INTEGER");
 
@@ -2787,9 +2787,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("SkjulVarenummerISammendrag")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("Status")
-                        .HasColumnType("INTEGER");
-
                     b.Property<bool>("SummerAlleBeslag")
                         .HasColumnType("INTEGER");
 
@@ -2799,9 +2796,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Tittel")
                         .IsRequired()
                         .HasColumnType("TEXT");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("VisAlleDorerFraBeslagsliste")
                         .HasColumnType("INTEGER");
@@ -2813,8 +2807,6 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("OpprinneligTilbudId");
 
                     b.HasIndex("ProsjektId");
 
@@ -3586,18 +3578,11 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Tilbud", b =>
                 {
-                    b.HasOne("PortalItlock.Web.Models.Tilbud", "OpprinneligTilbud")
-                        .WithMany()
-                        .HasForeignKey("OpprinneligTilbudId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
                         .WithMany("Tilbud")
                         .HasForeignKey("ProsjektId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("OpprinneligTilbud");
 
                     b.Navigation("Prosjekt");
                 });

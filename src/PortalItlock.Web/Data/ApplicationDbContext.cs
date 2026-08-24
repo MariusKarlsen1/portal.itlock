@@ -62,6 +62,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ArbeidsordreMedia> ArbeidsordreMedia => Set<ArbeidsordreMedia>();
     public DbSet<KundeOppfolgingNotat> KundeOppfolgingNotater => Set<KundeOppfolgingNotat>();
     public DbSet<FravarSoknad> FravarSoknader => Set<FravarSoknad>();
+    public DbSet<TilbudRevisjon> TilbudRevisjoner => Set<TilbudRevisjon>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -358,6 +359,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasOne(f => f.BehandletAvBruker)
             .WithMany()
             .HasForeignKey(f => f.BehandletAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<TilbudRevisjon>()
+            .HasOne(r => r.Tilbud)
+            .WithMany()
+            .HasForeignKey(r => r.TilbudId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Tilbud>()
+            .HasOne(t => t.OpprinneligTilbud)
+            .WithMany()
+            .HasForeignKey(t => t.OpprinneligTilbudId)
             .OnDelete(DeleteBehavior.SetNull);
 
         SeedReferenceData(modelBuilder);

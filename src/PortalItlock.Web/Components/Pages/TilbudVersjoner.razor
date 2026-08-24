@@ -1,0 +1,245 @@
+@page "/tilbud/{Id:int}/versjoner"
+@rendermode InteractiveServer
+@using System.Globalization
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Versjonshistorikk - @(_tilbud?.Tittel ?? "Tilbud")</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke tilbudet. Det kan være slettet.</p>
+}
+else if (_tilbud is not null)
+{
+    <a class="back-link" href="@($"/tilbud/{Id}")">← Tilbake til tilbudet</a>
+    <h1>Versjonshistorikk</h1>
+    <p class="undertekst">@_tilbud.Tittel</p>
+
+    @if (_versjoner.Count == 0)
+    {
+        <p class="list-empty">Ingen versjoner er lagret ennå. En versjon lagres automatisk hver gang du genererer PDF-tilbudet.</p>
+    }
+    else
+    {
+        <section class="tilbud-section">
+            <div class="versjon-velger">
+                <label>
+                    Fra versjon
+                    <select @bind="_fraVersjon" @bind:after="OppdaterDiff">
+                        @foreach (var v in _versjoner)
+                        {
+                            <option value="@v.Versjonsnummer">v@(v.Versjonsnummer) - @v.OpprettetDato.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</option>
+                        }
+                    </select>
+                </label>
+                <span class="versjon-pil">→</span>
+                <label>
+                    Til versjon
+                    <select @bind="_tilVersjon" @bind:after="OppdaterDiff">
+                        @foreach (var v in _versjoner)
+                        {
+                            <option value="@v.Versjonsnummer">v@(v.Versjonsnummer) - @v.OpprettetDato.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</option>
+                        }
+                    </select>
+                </label>
+            </div>
+        </section>
+
+        @if (_fra is not null && _til is not null)
+        {
+            if (_fra.Versjonsnummer == _til.Versjonsnummer)
+            {
+                <p class="list-empty">Velg to ulike versjoner for å se forskjeller.</p>
+            }
+            else
+            {
+                <section class="tilbud-section">
+                    <h2>Endringer i tilbudsinformasjon</h2>
+                    @if (_feltEndringer.Count == 0)
+                    {
+                        <p class="list-empty">Ingen endringer i tilbudsfeltene.</p>
+                    }
+                    else
+                    {
+                        <table class="varer-table">
+                            <thead>
+                                <tr>
+                                    <th>Felt</th>
+                                    <th>v@(_fra.Versjonsnummer)</th>
+                                    <th>v@(_til.Versjonsnummer)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var (felt, fraVerdi, tilVerdi) in _feltEndringer)
+                                {
+                                    <tr>
+                                        <td>@felt</td>
+                                        <td>@fraVerdi</td>
+                                        <td>@tilVerdi</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+
+                <section class="tilbud-section">
+                    <h2>Endringer i varelinjer</h2>
+                    @if (_linjeEndringer.Count == 0)
+                    {
+                        <p class="list-empty">Ingen endringer i varelinjene.</p>
+                    }
+                    else
+                    {
+                        <table class="varer-table">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Vare</th>
+                                    <th>Endring</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var rad in _linjeEndringer)
+                                {
+                                    <tr class="@LinjeRadKlasse(rad.Type)">
+                                        <td>@rad.Type</td>
+                                        <td>@rad.Navn</td>
+                                        <td>
+                                            @foreach (var e in rad.Endringer)
+                                            {
+                                                <div>@e</div>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+            }
+        }
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private sealed class LinjeDiffRad
+    {
+        public string Type { get; set; } = "";
+        public string Navn { get; set; } = "";
+        public List<string> Endringer { get; } = [];
+    }
+
+    private Tilbud? _tilbud;
+    private bool _notFound;
+    private List<TilbudRevisjon> _versjoner = [];
+    private int _fraVersjon;
+    private int _tilVersjon;
+    private TilbudRevisjon? _fra;
+    private TilbudRevisjon? _til;
+    private List<(string Felt, string Fra, string Til)> _feltEndringer = [];
+    private List<LinjeDiffRad> _linjeEndringer = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _tilbud = await Db.Tilbud.FirstOrDefaultAsync(t => t.Id == Id);
+        _notFound = _tilbud is null;
+
+        if (_tilbud is null)
+        {
+            return;
+        }
+
+        _versjoner = await Db.TilbudRevisjoner
+            .Where(r => r.TilbudId == Id)
+            .OrderByDescending(r => r.Versjonsnummer)
+            .ToListAsync();
+
+        if (_versjoner.Count > 0)
+        {
+            _tilVersjon = _versjoner[0].Versjonsnummer;
+            _fraVersjon = _versjoner.Count > 1 ? _versjoner[1].Versjonsnummer : _versjoner[0].Versjonsnummer;
+            OppdaterDiff();
+        }
+    }
+
+    private void OppdaterDiff()
+    {
+        _fra = _versjoner.FirstOrDefault(v => v.Versjonsnummer == _fraVersjon);
+        _til = _versjoner.FirstOrDefault(v => v.Versjonsnummer == _tilVersjon);
+        _feltEndringer = [];
+        _linjeEndringer = [];
+
+        if (_fra is null || _til is null || _fra.Versjonsnummer == _til.Versjonsnummer)
+        {
+            return;
+        }
+
+        LeggTilFeltEndring("Tittel", _fra.Tittel, _til.Tittel);
+        LeggTilFeltEndring("Type", _fra.PrisType.Visningsnavn(), _til.PrisType.Visningsnavn());
+        LeggTilFeltEndring("Prosentsats", $"{_fra.Prosentsats.ToString("N1", Kultur)} %", $"{_til.Prosentsats.ToString("N1", Kultur)} %");
+        LeggTilFeltEndring("Timepris", FormatKr(_fra.Timepris), FormatKr(_til.Timepris));
+        LeggTilFeltEndring("Montasjekost (overstyrt)", _fra.Montasjekost is null ? "–" : FormatKr(_fra.Montasjekost.Value), _til.Montasjekost is null ? "–" : FormatKr(_til.Montasjekost.Value));
+
+        var fraLinjer = JsonSerializer.Deserialize<List<TilbudLinjeSnapshot>>(_fra.LinjerJson) ?? [];
+        var tilLinjer = JsonSerializer.Deserialize<List<TilbudLinjeSnapshot>>(_til.LinjerJson) ?? [];
+        var fraMap = fraLinjer.ToDictionary(l => l.LinjeId);
+        var tilMap = tilLinjer.ToDictionary(l => l.LinjeId);
+
+        foreach (var linje in tilLinjer)
+        {
+            if (!fraMap.TryGetValue(linje.LinjeId, out var gammel))
+            {
+                _linjeEndringer.Add(new LinjeDiffRad { Type = "Lagt til", Navn = linje.Navn });
+                continue;
+            }
+
+            var rad = new LinjeDiffRad { Type = "Endret", Navn = linje.Navn };
+            if (gammel.Navn != linje.Navn) rad.Endringer.Add($"Navn: {gammel.Navn} → {linje.Navn}");
+            if (gammel.Antall != linje.Antall) rad.Endringer.Add($"Antall: {gammel.Antall} → {linje.Antall}");
+            if (gammel.Innpris != linje.Innpris) rad.Endringer.Add($"Innpris: {FormatKr(gammel.Innpris)} → {FormatKr(linje.Innpris)}");
+            if (gammel.Utpris != linje.Utpris) rad.Endringer.Add($"Utpris: {FormatKr(gammel.Utpris)} → {FormatKr(linje.Utpris)}");
+            if (gammel.RabattProsent != linje.RabattProsent) rad.Endringer.Add($"Rabatt: {gammel.RabattProsent.ToString("N1", Kultur)}% → {linje.RabattProsent.ToString("N1", Kultur)}%");
+            if (gammel.LevertAv != linje.LevertAv) rad.Endringer.Add($"Levert av: {gammel.LevertAv.Visningsnavn()} → {linje.LevertAv.Visningsnavn()}");
+            if (gammel.Enhet != linje.Enhet) rad.Endringer.Add($"Enhet: {gammel.Enhet ?? "–"} → {linje.Enhet ?? "–"}");
+
+            if (rad.Endringer.Count > 0)
+            {
+                _linjeEndringer.Add(rad);
+            }
+        }
+
+        foreach (var linje in fraLinjer)
+        {
+            if (!tilMap.ContainsKey(linje.LinjeId))
+            {
+                _linjeEndringer.Add(new LinjeDiffRad { Type = "Fjernet", Navn = linje.Navn });
+            }
+        }
+    }
+
+    private void LeggTilFeltEndring(string felt, string fraVerdi, string tilVerdi)
+    {
+        if (fraVerdi != tilVerdi)
+        {
+            _feltEndringer.Add((felt, fraVerdi, tilVerdi));
+        }
+    }
+
+    private static string LinjeRadKlasse(string type) => type switch
+    {
+        "Lagt til" => "linje-lagt-til",
+        "Fjernet" => "linje-fjernet",
+        _ => "linje-endret"
+    };
+
+    private static string FormatKr(decimal value) => value.ToString("N2", Kultur) + " kr";
+}

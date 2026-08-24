@@ -7,6 +7,10 @@ public class Tilbud
     public Prosjekt? Prosjekt { get; set; }
 
     public required string Tittel { get; set; }
+    public TilbudType Type { get; set; } = TilbudType.Tilbud;
+    public int? OpprinneligTilbudId { get; set; }
+    public Tilbud? OpprinneligTilbud { get; set; }
+    public EndringsmeldingStatus Status { get; set; } = EndringsmeldingStatus.Utkast;
     public TilbudPrisType PrisType { get; set; } = TilbudPrisType.Dekningsgrad;
     public decimal Prosentsats { get; set; }
     public decimal Timepris { get; set; }

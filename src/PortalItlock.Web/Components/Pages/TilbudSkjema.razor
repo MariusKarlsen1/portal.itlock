@@ -19,6 +19,17 @@ else if (_tilbud is not null)
     <a class="back-link" href="@($"/prosjekter/{_tilbud.ProsjektId}")">← Tilbake til prosjektet</a>
     <h1>@_tilbud.Tittel</h1>
 
+    @if (_tilbud.Type == TilbudType.Endringsmelding)
+    {
+        <p class="endringsmelding-info">
+            <span class="endringsmelding-badge">Endringsmelding/tillegg</span>
+            @if (_tilbud.OpprinneligTilbud is not null)
+            {
+                <span>Tillegg til: @_tilbud.OpprinneligTilbud.Tittel</span>
+            }
+        </p>
+    }
+
     <section class="tilbud-section">
         <h2>Tilbudsinformasjon</h2>
         <div class="field-grid">
@@ -26,6 +37,18 @@ else if (_tilbud is not null)
                 Tittel
                 <input @bind="_tilbud.Tittel" @bind:event="oninput" />
             </label>
+            @if (_tilbud.Type == TilbudType.Endringsmelding)
+            {
+                <label>
+                    Status
+                    <select @bind="_tilbud.Status">
+                        @foreach (var s in Enum.GetValues<EndringsmeldingStatus>())
+                        {
+                            <option value="@s">@s.Visningsnavn()</option>
+                        }
+                    </select>
+                </label>
+            }
             <label>
                 Type
                 <select @bind="_tilbud.PrisType" @bind:after="OppdaterPriser">
@@ -235,6 +258,10 @@ else if (_tilbud is not null)
     <section class="tilbud-section">
         <button type="button" class="save-button" @onclick="@(() => _visGenerer = !_visGenerer)">Generer tilbud</button>
         <a class="cancel-button" href="@($"/tilbud/{Id}/tripletex-csv")" target="_blank">Eksporter til Tripletex (CSV)</a>
+        @if (_antallVersjoner > 0)
+        {
+            <a class="cancel-button" href="@($"/tilbud/{Id}/versjoner")">Versjonshistorikk (@_antallVersjoner)</a>
+        }
 
         @if (_visGenerer)
         {
@@ -318,6 +345,7 @@ else if (_tilbud is not null)
     private List<TilbudForside> _forsideMaler = [];
     private List<string> _byggetrinnListe = [];
     private int? _valgtForsideMalId;
+    private int _antallVersjoner;
 
     private decimal Varekost => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Innpris * l.Antall) ?? 0;
     private decimal UtprisVarer => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Utpris * l.Antall) ?? 0;
@@ -352,6 +380,7 @@ else if (_tilbud is not null)
 
         _tilbud = await Db.Tilbud
             .Include(t => t.Linjer).ThenInclude(l => l.Component)
+            .Include(t => t.OpprinneligTilbud)
             .FirstOrDefaultAsync(t => t.Id == Id);
 
         _notFound = _tilbud is null;
@@ -370,6 +399,8 @@ else if (_tilbud is not null)
         _lenketArbeidsordreId = _tilbud is null
             ? null
             : (await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.TilbudId == _tilbud.Id))?.Id;
+
+        _antallVersjoner = await Db.TilbudRevisjoner.CountAsync(r => r.TilbudId == Id);
     }
 
     private async Task OpprettArbeidsordre()
@@ -578,7 +609,42 @@ else if (_tilbud is not null)
     {
         _tilbud!.OppdatertDato = DateTime.UtcNow;
         await Db.SaveChangesAsync();
+        await LagreRevisjonAsync();
         _pdfPreviewUrl = $"/tilbud/{Id}/pdf?v={DateTime.UtcNow.Ticks}";
         _visGenerer = false;
+    }
+
+    private async Task LagreRevisjonAsync()
+    {
+        var sisteVersjon = await Db.TilbudRevisjoner
+            .Where(r => r.TilbudId == Id)
+            .Select(r => (int?)r.Versjonsnummer)
+            .MaxAsync() ?? 0;
+
+        var linjer = _tilbud!.Linjer.Select(l => new TilbudLinjeSnapshot
+        {
+            LinjeId = l.Id,
+            Navn = l.Navn,
+            Innpris = l.Innpris,
+            Utpris = l.Utpris,
+            Antall = l.Antall,
+            Enhet = l.Enhet,
+            LevertAv = l.LevertAv,
+            RabattProsent = l.RabattProsent,
+        }).ToList();
+
+        Db.TilbudRevisjoner.Add(new TilbudRevisjon
+        {
+            TilbudId = Id,
+            Versjonsnummer = sisteVersjon + 1,
+            Tittel = _tilbud.Tittel,
+            PrisType = _tilbud.PrisType,
+            Prosentsats = _tilbud.Prosentsats,
+            Timepris = _tilbud.Timepris,
+            Montasjekost = _tilbud.Montasjekost,
+            LinjerJson = System.Text.Json.JsonSerializer.Serialize(linjer),
+        });
+        await Db.SaveChangesAsync();
+        _antallVersjoner = sisteVersjon + 1;
     }
 }

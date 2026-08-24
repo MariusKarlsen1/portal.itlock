@@ -56,6 +56,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         }
 
         var overskrift = tilbud.Prosjekt is not null ? $"{tilbud.Prosjekt.Navn} - {tilbud.Tittel}" : tilbud.Tittel;
+        var dokumentTittel = tilbud.Type == Models.TilbudType.Endringsmelding ? "Endringsmelding" : "Tilbud";
 
         var document = Document.Create(doc =>
         {
@@ -68,7 +69,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
                 page.Content().Column(col =>
                 {
-                    col.Item().PaddingTop(140).AlignCenter().Text("Tilbud").FontSize(34).SemiBold();
+                    col.Item().PaddingTop(140).AlignCenter().Text(dokumentTittel).FontSize(34).SemiBold();
                     col.Item().PaddingTop(8).AlignCenter().Text(overskrift).FontSize(17).FontColor(Colors.Grey.Darken2);
                 });
 
