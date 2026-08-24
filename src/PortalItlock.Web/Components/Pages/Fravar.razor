@@ -49,6 +49,35 @@
     }
 </section>
 
+@if (_mineStats is not null)
+{
+    <section class="fravar-section">
+        <h2>Min oversikt @_mineStats.Ar</h2>
+        <div class="stat-grid">
+            <div class="stat-boks">
+                <Icon Name="sun" />
+                <span class="stat-tall">@_mineStats.FerieBrukt/@_mineStats.FerieKvote</span>
+                <span class="stat-label">Feriedager brukt</span>
+            </div>
+            <div class="stat-boks">
+                <Icon Name="calendar" />
+                <span class="stat-tall">@_mineStats.FerieKommende</span>
+                <span class="stat-label">Godkjente feriedager som kommer</span>
+            </div>
+            <div class="stat-boks">
+                <Icon Name="cross-medical" />
+                <span class="stat-tall">@_mineStats.EgenmeldingBrukt</span>
+                <span class="stat-label">Egenmeldingsdager</span>
+            </div>
+            <div class="stat-boks">
+                <Icon Name="heart" />
+                <span class="stat-tall">@_mineStats.SyktBarnBrukt</span>
+                <span class="stat-label">Sykt barn-dager</span>
+            </div>
+        </div>
+    </section>
+}
+
 <section class="fravar-section">
     <h2>Mine søknader</h2>
     @if (_mineSoknader.Count == 0)
@@ -150,6 +179,32 @@
             }
             else
             {
+                @if (_valgtPersonStats is not null)
+                {
+                    <div class="stat-grid">
+                        <div class="stat-boks">
+                            <Icon Name="sun" />
+                            <span class="stat-tall">@_valgtPersonStats.FerieBrukt/@_valgtPersonStats.FerieKvote</span>
+                            <span class="stat-label">Feriedager brukt @_valgtPersonStats.Ar</span>
+                        </div>
+                        <div class="stat-boks">
+                            <Icon Name="calendar" />
+                            <span class="stat-tall">@_valgtPersonStats.FerieKommende</span>
+                            <span class="stat-label">Godkjente feriedager som kommer</span>
+                        </div>
+                        <div class="stat-boks">
+                            <Icon Name="cross-medical" />
+                            <span class="stat-tall">@_valgtPersonStats.EgenmeldingBrukt</span>
+                            <span class="stat-label">Egenmeldingsdager</span>
+                        </div>
+                        <div class="stat-boks">
+                            <Icon Name="heart" />
+                            <span class="stat-tall">@_valgtPersonStats.SyktBarnBrukt</span>
+                            <span class="stat-label">Sykt barn-dager</span>
+                        </div>
+                    </div>
+                }
+
                 <div class="kalender-ukedager">
                     @foreach (var dagnavn in Ukedagnavn)
                     {
@@ -178,6 +233,17 @@
     {
         public int Id { get; set; }
         public string Navn { get; set; } = "";
+        public int FerieKvote { get; set; }
+    }
+
+    private sealed class FravarStats
+    {
+        public int Ar { get; set; }
+        public int FerieBrukt { get; set; }
+        public int FerieKommende { get; set; }
+        public int FerieKvote { get; set; }
+        public int EgenmeldingBrukt { get; set; }
+        public int SyktBarnBrukt { get; set; }
     }
 
     private sealed class KalenderDag
@@ -208,6 +274,8 @@
     private int? _valgtPersonId;
     private DateTime _visningsManed = new(DateTime.Today.Year, DateTime.Today.Month, 1);
     private List<KalenderDag> _kalenderDager = [];
+    private FravarStats? _mineStats;
+    private FravarStats? _valgtPersonStats;
 
     protected override async Task OnInitializedAsync()
     {
@@ -225,9 +293,70 @@
         await LastVenterSoknaderAsync();
 
         _personer = await Db.Brukere
+            .Where(b => b.Rolle != BrukerRolle.Kunde)
             .OrderBy(b => b.Navn)
-            .Select(b => new PersonOption { Id = b.Id, Navn = b.Navn })
+            .Select(b => new PersonOption
+            {
+                Id = b.Id,
+                Navn = b.Navn,
+                FerieKvote = b.FerieKvote
+            })
             .ToListAsync();
+
+        if (_naverendeBrukerId is not null)
+        {
+            var meg = _personer.FirstOrDefault(p => p.Id == _naverendeBrukerId);
+            if (meg is not null)
+            {
+                _mineStats = await BeregnStatsAsync(meg.Id, meg.FerieKvote);
+            }
+        }
+    }
+
+    private async Task<FravarStats> BeregnStatsAsync(int brukerId, int ferieKvote)
+    {
+        var ar = DateTime.Today.Year;
+        var arStart = new DateTime(ar, 1, 1);
+        var arSlutt = new DateTime(ar, 12, 31);
+
+        var soknader = await Db.FravarSoknader
+            .Where(f => f.BrukerId == brukerId && f.Status == FravarStatus.Godkjent
+                && f.FraDato.Date <= arSlutt && f.TilDato.Date >= arStart)
+            .ToListAsync();
+
+        var stats = new FravarStats
+        {
+            Ar = ar,
+            FerieKvote = ferieKvote
+        };
+
+        foreach (var s in soknader)
+        {
+            var fra = s.FraDato.Date < arStart ? arStart : s.FraDato.Date;
+            var til = s.TilDato.Date > arSlutt ? arSlutt : s.TilDato.Date;
+
+            for (var dato = fra; dato <= til; dato = dato.AddDays(1))
+            {
+                var erKommende = dato > DateTime.Today;
+                switch (s.Type)
+                {
+                    case FravarType.Ferie when erKommende:
+                        stats.FerieKommende++;
+                        break;
+                    case FravarType.Ferie:
+                        stats.FerieBrukt++;
+                        break;
+                    case FravarType.Egenmelding:
+                        stats.EgenmeldingBrukt++;
+                        break;
+                    case FravarType.SyktBarn:
+                        stats.SyktBarnBrukt++;
+                        break;
+                }
+            }
+        }
+
+        return stats;
     }
 
     private async Task LastMineSoknaderAsync()
@@ -345,7 +474,14 @@
         if (_valgtPersonId is null)
         {
             _kalenderDager = [];
+            _valgtPersonStats = null;
             return;
+        }
+
+        var valgtPerson = _personer.FirstOrDefault(p => p.Id == _valgtPersonId);
+        if (valgtPerson is not null)
+        {
+            _valgtPersonStats = await BeregnStatsAsync(valgtPerson.Id, valgtPerson.FerieKvote);
         }
 
         var forsteIGrid = FinnForrigeMandag(_visningsManed);

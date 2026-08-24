@@ -6,7 +6,8 @@ public enum FravarType
     Egenmelding,
     Sykemelding,
     Permisjon,
-    Annet
+    Annet,
+    SyktBarn
 }
 
 public static class FravarTypeExtensions
@@ -18,6 +19,7 @@ public static class FravarTypeExtensions
         FravarType.Sykemelding => "Sykemelding",
         FravarType.Permisjon => "Permisjon",
         FravarType.Annet => "Annet",
+        FravarType.SyktBarn => "Sykt barn",
         _ => type.ToString()
     };
 }

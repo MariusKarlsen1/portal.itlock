@@ -12,6 +12,8 @@ public class Bruker
     public BrukerRolle Rolle { get; set; } = BrukerRolle.Montor;
     public bool Aktiv { get; set; } = true;
 
+    public int FerieKvote { get; set; } = 25;
+
     public int? KundeId { get; set; }
     public Kunde? Kunde { get; set; }
 

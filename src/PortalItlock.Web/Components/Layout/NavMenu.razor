@@ -1,3 +1,12 @@
+@rendermode InteractiveServer
+@implements IDisposable
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
 <div class="top-row ps-3 navbar">
     <div class="container-fluid">
         <a class="navbar-brand" href="">
@@ -10,10 +19,62 @@
 
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
     <nav class="flex-column">
+        <div class="nav-item px-3 varsel-wrap" @onclick:stopPropagation="true">
+            <button type="button" class="nav-link varsel-knapp" @onclick="ToggleVarsler">
+                <Icon Name="bell" />
+                <span>Varsler</span>
+                @if (TotaltAntallVarsler > 0)
+                {
+                    <span class="varsel-badge">@TotaltAntallVarsler</span>
+                }
+            </button>
+
+            @if (_visVarsler)
+            {
+                <div class="varsel-panel">
+                    @if (TotaltAntallVarsler == 0)
+                    {
+                        <p class="varsel-tom">Ingen varsler akkurat nå.</p>
+                    }
+                    else
+                    {
+                        @if (_avvikSomVenter > 0)
+                        {
+                            <span class="varsel-rad">
+                                <span class="varsel-tall">@_avvikSomVenter</span>
+                                <span>Avvik som venter på godkjenning</span>
+                            </span>
+                        }
+                        @if (_serviceavtalerVarsel > 0)
+                        {
+                            <a class="varsel-rad" href="/serviceavtaler" @onclick="LukkVarsler">
+                                <span class="varsel-tall">@_serviceavtalerVarsel</span>
+                                <span>Serviceavtaler som nærmer seg forfall</span>
+                            </a>
+                        }
+                        @if (_kunderTrengerOppfolging > 0)
+                        {
+                            <a class="varsel-rad" href="/kundeoppfolging" @onclick="LukkVarsler">
+                                <span class="varsel-tall">@_kunderTrengerOppfolging</span>
+                                <span>Kunder som trenger oppfølging</span>
+                            </a>
+                        }
+                        @if (_varerLavBeholdning > 0)
+                        {
+                            <a class="varsel-rad" href="/lager" @onclick="LukkVarsler">
+                                <span class="varsel-tall">@_varerLavBeholdning</span>
+                                <span>Varer med lav lagerbeholdning</span>
+                            </a>
+                        }
+                    }
+                </div>
+            }
+        </div>
+
         <div class="nav-item px-3">
-            <a class="nav-link" href="javascript:void(0)" onclick="history.back()">
+            <button type="button" class="nav-link nav-link-button" @onclick="GaTilbake">
                 <span class="nav-back-arrow" aria-hidden="true">←</span> Tilbake
-            </a>
+            </button>
         </div>
 
         <div class="nav-item px-3">
@@ -56,12 +117,114 @@
             <ThemeToggle />
         </div>
 
-        <div class="nav-item px-3">
-            <BilerToggle />
-        </div>
+        @if (VisBiler)
+        {
+            <div class="nav-item px-3">
+                <BilerToggle />
+            </div>
+        }
 
         <form method="post" action="/account/logout" class="logout-form">
             <button type="submit" class="logout-button">Logg ut</button>
         </form>
     </nav>
 </div>
+
+@code {
+    // Sett til true igjen for å vise av/på-knappen for de kjørende servicebilene på forsiden.
+    private const bool VisBiler = false;
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _visUtvidetVarsel;
+    private bool _visVarsler;
+    private int _avvikSomVenter;
+    private int _serviceavtalerVarsel;
+    private int _kunderTrengerOppfolging;
+    private int _varerLavBeholdning;
+
+    private string? _forrigeUrl;
+    private string _naverendeUrl = "";
+
+    private int TotaltAntallVarsler => _avvikSomVenter + _serviceavtalerVarsel + _kunderTrengerOppfolging + _varerLavBeholdning;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _naverendeUrl = Nav.Uri;
+        Nav.LocationChanged += OnLocationChanged;
+
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            _visUtvidetVarsel = rolleClaim is "Admin" or "Prosjektleder";
+        }
+
+        await LastVarslerAsync();
+    }
+
+    private async void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _forrigeUrl = _naverendeUrl;
+        _naverendeUrl = e.Location;
+        _visVarsler = false;
+        await LastVarslerAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LastVarslerAsync()
+    {
+        _avvikSomVenter = await Db.Avvik.CountAsync(a => a.Status == AvvikStatus.SendtTilKunde);
+
+        if (_visUtvidetVarsel)
+        {
+            var serviceProsjektIder = await Db.Prosjekter
+                .Where(p => p.Status == ProsjektStatus.Serviceavtale)
+                .Select(p => p.Id)
+                .ToListAsync();
+
+            _serviceavtalerVarsel = 0;
+            if (serviceProsjektIder.Count > 0)
+            {
+                var runder = await Db.Servicerunder
+                    .Where(r => serviceProsjektIder.Contains(r.ProsjektId))
+                    .ToListAsync();
+
+                var terskel = DateTime.Today.AddDays(14);
+                _serviceavtalerVarsel = serviceProsjektIder.Count(pid =>
+                {
+                    var neste = runder.Where(r => r.ProsjektId == pid)
+                        .OrderByDescending(r => r.Dato)
+                        .FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato;
+                    return neste.HasValue && neste.Value.Date <= terskel;
+                });
+            }
+
+            _kunderTrengerOppfolging = await Db.Kunder.CountAsync(k =>
+                k.NesteOppfolgingsDato != null && k.NesteOppfolgingsDato.Value.Date <= DateTime.Today);
+
+            _varerLavBeholdning = await Db.Components.CountAsync(c =>
+                c.Aktiv && c.Minimumsbeholdning != null && c.Lagerantall <= c.Minimumsbeholdning.Value);
+        }
+    }
+
+    private void ToggleVarsler()
+    {
+        _visVarsler = !_visVarsler;
+    }
+
+    private void LukkVarsler()
+    {
+        _visVarsler = false;
+    }
+
+    private void GaTilbake()
+    {
+        Nav.NavigateTo(_forrigeUrl ?? "/");
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+}
