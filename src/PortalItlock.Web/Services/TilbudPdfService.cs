@@ -31,7 +31,44 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             return null;
         }
 
+        var valgteByggetrinn = string.IsNullOrWhiteSpace(tilbud.ByggetrinnFilter)
+            ? null
+            : tilbud.ByggetrinnFilter.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+
         var linjer = tilbud.Linjer.OrderBy(l => l.Rekkefolge).ToList();
+
+        if (valgteByggetrinn is not null)
+        {
+            var antallPerComponent = await db.DorKomponenter
+                .Where(dk => dk.Dor!.ProsjektId == tilbud.ProsjektId
+                    && dk.Dor.Plantegning != null && valgteByggetrinn.Contains(dk.Dor.Plantegning.Byggetrinn))
+                .GroupBy(dk => dk.ComponentId)
+                .Select(g => new { ComponentId = g.Key, Antall = g.Sum(x => x.Antall) })
+                .ToDictionaryAsync(x => x.ComponentId, x => x.Antall);
+
+            linjer = linjer
+                .Select(l => l.ComponentId is null ? l : new TilbudLinje
+                {
+                    Id = l.Id,
+                    TilbudId = l.TilbudId,
+                    ComponentId = l.ComponentId,
+                    Component = l.Component,
+                    Navn = l.Navn,
+                    Innpris = l.Innpris,
+                    Utpris = l.Utpris,
+                    Antall = antallPerComponent.GetValueOrDefault(l.ComponentId.Value),
+                    Enhet = l.Enhet,
+                    MontasjeMinutter = l.MontasjeMinutter,
+                    LevertAv = l.LevertAv,
+                    PrisType = l.PrisType,
+                    Prosentsats = l.Prosentsats,
+                    RabattProsent = l.RabattProsent,
+                    Rekkefolge = l.Rekkefolge
+                })
+                .Where(l => l.ComponentId is null || l.Antall > 0)
+                .ToList();
+        }
+
         var visRabatt = linjer.Any(l => l.RabattProsent > 0);
         var utprisVarer = linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Utpris * l.Antall);
         var minutter = linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => (l.MontasjeMinutter ?? 0) * l.Antall);
@@ -48,7 +85,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         {
             dorer = await db.Dorer
                 .Where(d => d.ProsjektId == tilbud.ProsjektId
-                    && (tilbud.ByggetrinnFilter == null || (d.Plantegning != null && d.Plantegning.Byggetrinn == tilbud.ByggetrinnFilter)))
+                    && (valgteByggetrinn == null || (d.Plantegning != null && valgteByggetrinn.Contains(d.Plantegning.Byggetrinn))))
                 .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
                 .Include(d => d.Funksjoner)
                 .OrderBy(d => d.Dornummer)

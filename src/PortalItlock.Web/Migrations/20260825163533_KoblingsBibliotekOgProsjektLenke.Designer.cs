@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260825163533_KoblingsBibliotekOgProsjektLenke")]
+    partial class KoblingsBibliotekOgProsjektLenke
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -1447,6 +1450,31 @@ namespace PortalItlock.Web.Migrations
                         });
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsPunkt", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("KoblingsSymbolId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("RelX")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("RelY")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("Storrelse")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KoblingsSymbolId");
+
+                    b.ToTable("KoblingsPunkter");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSkjema", b =>
                 {
                     b.Property<int>("Id")
@@ -1489,15 +1517,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("KoblingsSkjemaId")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("Navn")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("PunkterJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
-
-                    b.Property<bool>("Stiplet")
-                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Tykkelse")
                         .HasColumnType("INTEGER");
@@ -1519,9 +1541,6 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("REAL");
 
                     b.Property<int>("ElementType")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("ErLaast")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Farge")
@@ -1558,9 +1577,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Tekst")
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("ZIndex")
-                        .HasColumnType("INTEGER");
-
                     b.HasKey("Id");
 
                     b.HasIndex("KoblingsSkjemaId");
@@ -1583,6 +1599,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<byte[]>("BildeData")
                         .IsRequired()
                         .HasColumnType("BLOB");
+
+                    b.Property<int>("Kategori")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Navn")
                         .HasColumnType("TEXT");
@@ -3469,6 +3488,17 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Bruker");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsPunkt", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.KoblingsSymbol", "KoblingsSymbol")
+                        .WithMany("Punkter")
+                        .HasForeignKey("KoblingsSymbolId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("KoblingsSymbol");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSkjema", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
@@ -3951,6 +3981,11 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Streker");
 
                     b.Navigation("Symboler");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSymbol", b =>
+                {
+                    b.Navigation("Punkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Kunde", b =>

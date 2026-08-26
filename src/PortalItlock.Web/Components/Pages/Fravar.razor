@@ -154,6 +154,53 @@
         </section>
 
         <section class="fravar-section">
+            <h2>Registrer fravær for ansatt</h2>
+            <p class="section-hint">Registreres direkte som godkjent, uten søknadsflyt. Bruk dette f.eks. ved telefonsykmelding.</p>
+            <div class="soknad-form">
+                <label>
+                    Person
+                    <select @bind="_regPersonId">
+                        <option value="">Velg person...</option>
+                        @foreach (var p in _personer)
+                        {
+                            <option value="@p.Id">@p.Navn</option>
+                        }
+                    </select>
+                </label>
+                <label>
+                    Type
+                    <select @bind="_regType">
+                        @foreach (var t in Enum.GetValues<FravarType>())
+                        {
+                            <option value="@t">@t.Visningsnavn()</option>
+                        }
+                    </select>
+                </label>
+                <label>
+                    Fra dato
+                    <input type="date" @bind="_regFraDato" />
+                </label>
+                <label>
+                    Til dato
+                    <input type="date" @bind="_regTilDato" />
+                </label>
+                <label class="span-full">
+                    Kommentar (valgfritt)
+                    <textarea rows="2" @bind="_regKommentar" placeholder="F.eks. grunn eller annen info"></textarea>
+                </label>
+            </div>
+            <button type="button" class="save-button" @onclick="RegistrerFravar">Registrer fravær</button>
+            @if (!string.IsNullOrEmpty(_regFeil))
+            {
+                <p class="form-error">@_regFeil</p>
+            }
+            @if (!string.IsNullOrEmpty(_regMelding))
+            {
+                <p class="save-success">@_regMelding</p>
+            }
+        </section>
+
+        <section class="fravar-section">
             <h2>Kalender per person</h2>
             <div class="kalender-verktoylinje">
                 <label class="kalender-filter">
@@ -269,6 +316,14 @@
     private List<FravarSoknad> _venterSoknader = [];
     private int? _avslarId;
     private string _avslagsBegrunnelse = "";
+
+    private int? _regPersonId;
+    private FravarType _regType = FravarType.Ferie;
+    private DateOnly? _regFraDato = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly? _regTilDato = DateOnly.FromDateTime(DateTime.Today);
+    private string _regKommentar = "";
+    private string? _regFeil;
+    private string? _regMelding;
 
     private List<PersonOption> _personer = [];
     private int? _valgtPersonId;
@@ -455,6 +510,56 @@
 
         _venterSoknader.Remove(s);
         _avslarId = null;
+    }
+
+    private async Task RegistrerFravar()
+    {
+        _regFeil = null;
+        _regMelding = null;
+
+        if (_regPersonId is null || !_regFraDato.HasValue || !_regTilDato.HasValue)
+        {
+            _regFeil = "Velg person og fyll ut fra- og til-dato.";
+            return;
+        }
+
+        if (_regTilDato.Value < _regFraDato.Value)
+        {
+            _regFeil = "Til dato kan ikke være før fra dato.";
+            return;
+        }
+
+        var soknad = new FravarSoknad
+        {
+            BrukerId = _regPersonId.Value,
+            Type = _regType,
+            FraDato = _regFraDato.Value.ToDateTime(TimeOnly.MinValue),
+            TilDato = _regTilDato.Value.ToDateTime(TimeOnly.MinValue),
+            Kommentar = string.IsNullOrWhiteSpace(_regKommentar) ? null : _regKommentar.Trim(),
+            Status = FravarStatus.Godkjent,
+            BehandletDato = DateTime.Now,
+            BehandletAvBrukerId = _naverendeBrukerId
+        };
+        Db.FravarSoknader.Add(soknad);
+        await Db.SaveChangesAsync();
+
+        var person = _personer.FirstOrDefault(p => p.Id == soknad.BrukerId);
+        _regMelding = $"Fravær registrert for {person?.Navn}.";
+        _regKommentar = "";
+
+        if (soknad.BrukerId == _naverendeBrukerId)
+        {
+            await LastMineSoknaderAsync();
+            if (person is not null)
+            {
+                _mineStats = await BeregnStatsAsync(person.Id, person.FerieKvote);
+            }
+        }
+
+        if (soknad.BrukerId == _valgtPersonId)
+        {
+            await LastKalenderAsync();
+        }
     }
 
     private async Task ForrigeManed()

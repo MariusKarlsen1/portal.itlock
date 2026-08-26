@@ -17,9 +17,11 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             return null;
         }
 
+        var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
+
         var behov = await db.DorKomponenter
             .Where(k => k.Dor!.ProsjektId == prosjektId && k.LevertAv == LevertAv.F && k.ComponentId != 0
-                && (byggetrinn == null || (k.Dor!.Plantegning != null && k.Dor!.Plantegning!.Byggetrinn == byggetrinn)))
+                && (valgteByggetrinn == null || (k.Dor!.Plantegning != null && valgteByggetrinn.Contains(k.Dor!.Plantegning!.Byggetrinn))))
             .Include(k => k.Component).ThenInclude(c => c!.Type)
             .ToListAsync();
 
@@ -53,7 +55,7 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     col.Item().Row(row =>
                     {
                         row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                        row.RelativeItem().AlignRight().Text($"Plukkliste – {prosjekt.Navn}{(byggetrinn is not null ? $" ({byggetrinn})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
+                        row.RelativeItem().AlignRight().Text($"Plukkliste – {prosjekt.Navn}{(valgteByggetrinn is not null ? $" ({string.Join(", ", valgteByggetrinn)})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
                     });
                     col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
                 });

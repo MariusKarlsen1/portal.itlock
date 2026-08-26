@@ -12,9 +12,11 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
     public async Task<List<Component>> HentKomponenterMedFdvAsync(int prosjektId, string? byggetrinn = null)
     {
+        var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
+
         return await db.DorKomponenter
             .Where(dk => dk.Dor!.ProsjektId == prosjektId && dk.Component!.FdvData != null
-                && (byggetrinn == null || (dk.Dor!.Plantegning != null && dk.Dor!.Plantegning!.Byggetrinn == byggetrinn)))
+                && (valgteByggetrinn == null || (dk.Dor!.Plantegning != null && valgteByggetrinn.Contains(dk.Dor!.Plantegning!.Byggetrinn))))
             .Select(dk => dk.Component!)
             .Distinct()
             .OrderBy(c => c.Navn)
@@ -23,6 +25,7 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
     public async Task<byte[]?> GenerateAsync(int prosjektId, string? byggetrinn = null)
     {
+        var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
         var komponenter = await HentKomponenterMedFdvAsync(prosjektId, byggetrinn);
         var ekstraVedlegg = await db.FdvVedlegg
             .Where(v => v.ProsjektId == prosjektId)
@@ -51,7 +54,7 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                         col.Item().Row(row =>
                         {
                             row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                            row.RelativeItem().AlignRight().Text($"FDV – {prosjekt.Navn}{(byggetrinn is not null ? $" ({byggetrinn})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
+                            row.RelativeItem().AlignRight().Text($"FDV – {prosjekt.Navn}{(valgteByggetrinn is not null ? $" ({string.Join(", ", valgteByggetrinn)})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
                         });
                         col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
                     });

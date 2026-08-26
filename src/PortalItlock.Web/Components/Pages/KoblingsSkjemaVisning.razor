@@ -1,0 +1,1104 @@
+@page "/koblingsskjema/{Id:int}"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using System.Globalization
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>@(_skjema?.Navn is null ? "Koblingsskjema" : _skjema.Navn)</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke koblingsskjemaet. Det kan være slettet.</p>
+}
+else if (_skjema is not null)
+{
+    <a class="back-link" href="@($"/guide/kobling/{_skjema.Kategori}")">&larr; Tilbake til @_skjema.Kategori.Visningsnavn()</a>
+    <h1>@_skjema.Navn</h1>
+
+    @if (_skjema.Prosjekt is not null)
+    {
+        <p class="kobling-prosjekt-lenke">
+            Koblet til prosjekt: <a href="@($"/prosjekter/{_skjema.Prosjekt.Id}")">@_skjema.Prosjekt.Navn</a>
+        </p>
+    }
+
+    <button type="button" class="cancel-button" @onclick="VisPdfForhandsvisning">Forhåndsvis PDF</button>
+
+    <AuthorizeView Roles="Admin">
+        <div class="kobling-toolbar">
+            <button type="button" class="@(_redigerModus ? "edit-button-active" : "add-button")" @onclick="ToggleRedigerModus">
+                @(_redigerModus ? "Avslutt redigering" : "Rediger")
+            </button>
+
+            @if (_redigerModus)
+            {
+                <label class="kobling-prosjekt-velger">
+                    Koble til prosjekt
+                    <select @bind="_valgtProsjektId" @bind:after="LagreProsjektKobling">
+                        <option value="">(ingen kobling)</option>
+                        @foreach (var p in _prosjekter)
+                        {
+                            <option value="@p.Id">@p.Navn</option>
+                        }
+                    </select>
+                </label>
+
+                <div class="kobling-legg-til-wrap">
+                    <button type="button" class="add-button" @onclick="@(() => _visLeggTilMeny = !_visLeggTilMeny)">Legg til</button>
+                    @if (_visLeggTilMeny)
+                    {
+                        <div class="kobling-legg-til-panel">
+                            <div class="kobling-mine-komponenter">
+                                <span>Mine komponenter</span>
+                                @if (_bibliotek.Count > 0)
+                                {
+                                    <div class="kobling-bibliotek-grid">
+                                        @foreach (var b in _bibliotek)
+                                        {
+                                            <button type="button" class="kobling-bibliotek-item" title="@b.Navn" @onclick="@(() => LeggTilFraBibliotek(b))">
+                                                <img src="@($"/koblingsbibliotek/{b.Id}")" alt="@b.Navn" />
+                                            </button>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <p class="kobling-bibliotek-tom">Ingen komponenter lastet opp ennå.</p>
+                                }
+                                <label class="kobling-legg-til-bilde">
+                                    Last opp nytt bilde
+                                    <InputFile OnChange="OnSymbolFilValgt" accept="image/*" />
+                                </label>
+                            </div>
+                            <button type="button" @onclick="@(() => LeggTilFigur(KoblingsElementType.Rektangel))">Rektangel</button>
+                            <button type="button" @onclick="@(() => LeggTilFigur(KoblingsElementType.Sirkel))">Sirkel</button>
+                            <button type="button" @onclick="@(() => LeggTilFigur(KoblingsElementType.Linje))">Linje</button>
+                            <button type="button" @onclick="@(() => LeggTilFigur(KoblingsElementType.Pil))">Pil</button>
+                            <button type="button" @onclick="@(() => LeggTilFigur(KoblingsElementType.Tekstboks))">Tekstboks</button>
+                            <button type="button" @onclick="@(() => LeggTilFigur(KoblingsElementType.Punkt))">Punkter</button>
+                        </div>
+                    }
+                </div>
+
+                <button type="button" class="@(_tegnStrekModus ? "edit-button-active" : "add-button")" @onclick="ToggleTegnStrekModus">
+                    @(_tegnStrekModus ? "Avslutt strek" : "Tegn strek")
+                </button>
+
+                <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
+
+                <button type="button" class="add-button" disabled="@(_undoStack.Count == 0)" @onclick="Angre">Angre</button>
+                <button type="button" class="add-button" disabled="@(_redoStack.Count == 0)" @onclick="GjorOm">Gjør om</button>
+
+                <button type="button" class="add-button" @onclick="DupliserSkjema">Dupliser skjema</button>
+            }
+
+            @if (!string.IsNullOrEmpty(_savedMessage))
+            {
+                <span class="saved-hint">@_savedMessage</span>
+            }
+        </div>
+    </AuthorizeView>
+
+    @if (_tegnStrekModus)
+    {
+        <div class="kobling-strek-panel">
+            <p class="placing-hint">Klikk for å starte streken (linjen går rett vannrett/loddrett), klikk igjen for å skifte retning, og dobbeltklikk eller "Fullfør strek" for å avslutte. Klikk på et tilkoblingspunkt for å feste enden dit. Esc avbryter.</p>
+            <label>
+                Farge
+                <input type="color" @bind="_nyStrekFarge" />
+            </label>
+            <label>
+                Tykkelse
+                <input type="number" min="1" max="20" @bind="_nyStrekTykkelse" style="width:4rem" />
+                <span>px</span>
+            </label>
+            <label class="checkbox-row">
+                <input type="checkbox" @bind="_nyStrekStiplet" /> Stiplet
+            </label>
+            <button type="button" class="add-button" @onclick="FullforStrek">Fullfør strek</button>
+        </div>
+    }
+
+    <div class="kobling-layout">
+        <div class="kobling-canvas-wrap" @ref="_canvasWrapRef">
+            <div class="kobling-canvas @(_redigerModus && !_tegnStrekModus ? "kobling-canvas-rediger" : "")"
+                 @ref="_canvasRef">
+                <svg class="kobling-strek-svg-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    @foreach (var s in _streker)
+                    {
+                        <polyline points="@PunkterTilSvgPoints(s.PunkterJson)" fill="none"
+                                  stroke="@s.Farge" stroke-width="@s.Tykkelse"
+                                  stroke-dasharray="@(s.Stiplet ? "6,4" : null)"
+                                  vector-effect="non-scaling-stroke" />
+                    }
+                </svg>
+
+                @foreach (var symbol in _symboler.OrderBy(s => s.ZIndex).ThenBy(s => s.Id))
+                {
+                    <KoblingsSymbolElement @key="symbol.Id" Symbol="symbol"
+                                            Selected="@(_valgteSymbolIds.Contains(symbol.Id))"
+                                            VisResizeHandle="@(_redigerModus && !_tegnStrekModus && !symbol.ErLaast)" />
+                }
+
+                @foreach (var s in _streker)
+                {
+                    if (!string.IsNullOrWhiteSpace(s.Navn))
+                    {
+                        var midt = StrekMidtpunkt(s.PunkterJson);
+                        <div @key="@($"label-{s.Id}")" class="kobling-strek-label"
+                             style="left:@(midt.X.ToString(CultureInfo.InvariantCulture))%; top:@(midt.Y.ToString(CultureInfo.InvariantCulture))%; color:@s.Farge;">
+                            @s.Navn
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        @if (_redigerModus)
+        {
+            <div class="kobling-side-panel">
+                @if (_valgteSymbolIds.Count > 1)
+                {
+                    <div class="kobling-symbol-panel">
+                        <div class="kobling-symbol-panel-header">
+                            <h2>@_valgteSymbolIds.Count valgt</h2>
+                            <button type="button" class="cancel-button" @onclick="AvbrytValg">Lukk</button>
+                        </div>
+                        <div class="kobling-symbol-panel-actions">
+                            <button type="button" class="save-button" @onclick="DupliserValgte">Dupliser valgte</button>
+                            <button type="button" class="delete-button" @onclick="SlettValgte">Slett valgte</button>
+                        </div>
+                    </div>
+                }
+                else if (_selectedSymbol is not null)
+                {
+                    <div class="kobling-symbol-panel">
+                        <div class="kobling-symbol-panel-header">
+                            <h2>@_selectedSymbol.ElementType.ToString()</h2>
+                            <button type="button" class="cancel-button" @onclick="@(() => _selectedSymbol = null)">Lukk</button>
+                        </div>
+
+                        @if (_selectedSymbol.ElementType == KoblingsElementType.Tekstboks)
+                        {
+                            <label>
+                                Tekst
+                                <textarea rows="2" @bind="_selectedSymbol.Tekst" @bind:event="oninput"></textarea>
+                            </label>
+                            <label>
+                                Skriftstørrelse (px)
+                                <input type="number" min="8" max="72" @bind="_selectedSymbol.FontStorrelse" />
+                            </label>
+                            <label>
+                                Farge
+                                <input type="color" @bind="_selectedSymbol.Farge" />
+                            </label>
+                        }
+                        else
+                        {
+                            <label>
+                                Navn
+                                <input @bind="_selectedSymbol.Navn" @bind:event="oninput" />
+                            </label>
+                        }
+
+                        @if (_selectedSymbol.ElementType is KoblingsElementType.Rektangel or KoblingsElementType.Sirkel or KoblingsElementType.Linje or KoblingsElementType.Pil)
+                        {
+                            <label>
+                                Farge
+                                <input type="color" @bind="_selectedSymbol.Farge" />
+                            </label>
+                            <label>
+                                Strøkbredde
+                                <input type="number" min="1" max="20" @bind="_selectedSymbol.Strokbredde" />
+                            </label>
+                            @if (_selectedSymbol.ElementType is KoblingsElementType.Rektangel or KoblingsElementType.Sirkel)
+                            {
+                                <label class="checkbox-row">
+                                    <input type="checkbox" @bind="_selectedSymbol.Fylt" /> Fylt
+                                </label>
+                            }
+                        }
+                        else if (_selectedSymbol.ElementType == KoblingsElementType.Punkt)
+                        {
+                            <label>
+                                Farge
+                                <input type="color" @bind="_selectedSymbol.Farge" />
+                            </label>
+                        }
+
+                        <label>
+                            Bredde (%)
+                            <input type="number" min="2" max="100" @bind="_selectedSymbol.Bredde" />
+                        </label>
+                        <label>
+                            Høyde (%)
+                            <input type="number" min="2" max="100" @bind="_selectedSymbol.Hoyde" />
+                        </label>
+
+                        <div class="kobling-symbol-panel-actions">
+                            <button type="button" class="cancel-button" @onclick="SendBakerst">Send bakerst</button>
+                            <button type="button" class="cancel-button" @onclick="SendFremst">Send fremst</button>
+                            <button type="button" class="cancel-button" @onclick="ToggleErLaast">@(_selectedSymbol.ErLaast ? "Lås opp" : "Lås")</button>
+                        </div>
+
+                        <div class="kobling-symbol-panel-actions">
+                            <button type="button" class="save-button" @onclick="LagreSymbol">Lagre</button>
+                            <button type="button" class="delete-button" @onclick="SlettSymbol">Slett</button>
+                        </div>
+                    </div>
+                }
+
+                <div class="kobling-strek-liste">
+                    <strong>Streker</strong>
+                    @if (_streker.Count == 0)
+                    {
+                        <p class="list-empty">Ingen streker tegnet ennå.</p>
+                    }
+                    else
+                    {
+                        <ul class="kobling-forbindelse-list">
+                            @foreach (var s in _streker)
+                            {
+                                <li @key="s.Id" class="kobling-forbindelse-item">
+                                    <svg width="22" height="10">
+                                        <line x1="1" y1="5" x2="21" y2="5" stroke="@s.Farge" stroke-width="@s.Tykkelse"
+                                              stroke-dasharray="@(s.Stiplet ? "4,3" : null)" />
+                                    </svg>
+                                    <input class="kobling-strek-navn-input" placeholder="Merkelapp"
+                                           value="@s.Navn" @onchange="@(e => LagreStrekNavn(s, e))" />
+                                    <button type="button" class="remove-button" @onclick="@(() => SlettStrek(s))">Slett</button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av koblingsskjema" OnClose="@(() => _pdfPreviewUrl = null)" />
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private KoblingsSkjema? _skjema;
+    private bool _notFound;
+    private int? _loadedId;
+    private string? _savedMessage;
+
+    private List<KoblingsSymbol> _symboler = [];
+    private List<KoblingsStrek> _streker = [];
+    private List<KoblingsSymbolBibliotek> _bibliotek = [];
+    private List<Prosjekt> _prosjekter = [];
+    private string _valgtProsjektId = "";
+    private KoblingsSymbol? _selectedSymbol;
+    private readonly HashSet<int> _valgteSymbolIds = [];
+    private string? _pdfPreviewUrl;
+
+    private sealed class KoblingsSnapshot
+    {
+        public required List<KoblingsSymbol> Symboler { get; init; }
+        public required List<KoblingsStrek> Streker { get; init; }
+    }
+
+    private readonly List<KoblingsSnapshot> _undoStack = [];
+    private readonly List<KoblingsSnapshot> _redoStack = [];
+    private const int MaxUndoTrinn = 50;
+
+    private bool _redigerModus;
+    private bool _tegnStrekModus;
+    private bool _visLeggTilMeny;
+    private string _nyStrekFarge = "#835e41";
+    private int _nyStrekTykkelse = 2;
+    private bool _nyStrekStiplet;
+
+    private ElementReference _canvasRef;
+    private ElementReference _canvasWrapRef;
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<KoblingsSkjemaVisning>? _dotNetRef;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+        {
+            return;
+        }
+
+        _loadedId = Id;
+        _notFound = false;
+        _selectedSymbol = null;
+        _valgteSymbolIds.Clear();
+        _undoStack.Clear();
+        _redoStack.Clear();
+        _redigerModus = false;
+        _tegnStrekModus = false;
+        _visLeggTilMeny = false;
+        _pdfPreviewUrl = null;
+
+        _skjema = await Db.KoblingsSkjemaer.Include(s => s.Prosjekt).FirstOrDefaultAsync(s => s.Id == Id);
+        if (_skjema is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        _valgtProsjektId = _skjema.ProsjektId?.ToString() ?? "";
+        _prosjekter = await Db.Prosjekter.OrderBy(p => p.Navn).ToListAsync();
+
+        _symboler = await Db.KoblingsSymboler
+            .Where(s => s.KoblingsSkjemaId == Id)
+            .ToListAsync();
+
+        _streker = await Db.KoblingsStreker
+            .Where(s => s.KoblingsSkjemaId == Id)
+            .ToListAsync();
+
+        _bibliotek = await Db.KoblingsSymbolBibliotek
+            .OrderBy(b => b.Navn)
+            .ToListAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=9");
+            _dotNetRef = DotNetObjectReference.Create(this);
+        }
+
+        if (_module is not null && _dotNetRef is not null && _skjema is not null)
+        {
+            await _module.InvokeVoidAsync("attachSymbolMarkers", _canvasRef, _dotNetRef, !(_redigerModus && !_tegnStrekModus));
+
+            if (firstRender)
+            {
+                await _module.InvokeVoidAsync("initZoomPan", _canvasWrapRef, _canvasRef);
+                await _module.InvokeVoidAsync("enableKeyboardShortcuts", _canvasRef, _dotNetRef);
+                await _module.InvokeVoidAsync("enableRubberBandSelect", _canvasRef, _dotNetRef);
+            }
+        }
+    }
+
+    private static string PunkterTilSvgPoints(string punkterJson)
+    {
+        var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(punkterJson) ?? [];
+        return string.Join(" ", punkter.Select(p => $"{p.X.ToString(CultureInfo.InvariantCulture)},{p.Y.ToString(CultureInfo.InvariantCulture)}"));
+    }
+
+    private static KoblingsStrekPunkt StrekMidtpunkt(string punkterJson)
+    {
+        var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(punkterJson) ?? [];
+        if (punkter.Count == 0)
+        {
+            return new KoblingsStrekPunkt();
+        }
+
+        var midtIndex = punkter.Count / 2;
+        if (punkter.Count % 2 == 1)
+        {
+            return punkter[midtIndex];
+        }
+
+        var a = punkter[midtIndex - 1];
+        var b = punkter[midtIndex];
+        return new KoblingsStrekPunkt { X = (a.X + b.X) / 2, Y = (a.Y + b.Y) / 2 };
+    }
+
+    private async Task LagreStrekNavn(KoblingsStrek s, ChangeEventArgs e)
+    {
+        PushUndo();
+        s.Navn = e.Value?.ToString();
+        await Db.SaveChangesAsync();
+    }
+
+    private void VisPdfForhandsvisning()
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        _pdfPreviewUrl = $"/koblingsskjema/{_skjema.Id}/pdf?v={DateTime.UtcNow.Ticks}";
+    }
+
+    private async Task LagreProsjektKobling()
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        var prosjektId = int.TryParse(_valgtProsjektId, out var parsedId) ? parsedId : (int?)null;
+        _skjema.ProsjektId = prosjektId;
+        await Db.SaveChangesAsync();
+        _skjema.Prosjekt = prosjektId is null ? null : _prosjekter.FirstOrDefault(p => p.Id == prosjektId);
+        _savedMessage = "Lagret.";
+    }
+
+    private static List<KoblingsSymbol> KloneSymboler(List<KoblingsSymbol> kilde) =>
+        kilde.Select(s => new KoblingsSymbol
+        {
+            Id = s.Id,
+            KoblingsSkjemaId = s.KoblingsSkjemaId,
+            ElementType = s.ElementType,
+            Navn = s.Navn,
+            SymbolBibliotekId = s.SymbolBibliotekId,
+            Farge = s.Farge,
+            Strokbredde = s.Strokbredde,
+            Fylt = s.Fylt,
+            Tekst = s.Tekst,
+            FontStorrelse = s.FontStorrelse,
+            PosX = s.PosX,
+            PosY = s.PosY,
+            Bredde = s.Bredde,
+            Hoyde = s.Hoyde,
+            ZIndex = s.ZIndex,
+            ErLaast = s.ErLaast
+        }).ToList();
+
+    private static List<KoblingsStrek> KloneStreker(List<KoblingsStrek> kilde) =>
+        kilde.Select(s => new KoblingsStrek
+        {
+            Id = s.Id,
+            KoblingsSkjemaId = s.KoblingsSkjemaId,
+            PunkterJson = s.PunkterJson,
+            Farge = s.Farge,
+            Tykkelse = s.Tykkelse,
+            Navn = s.Navn,
+            Stiplet = s.Stiplet
+        }).ToList();
+
+    private void PushUndo()
+    {
+        _undoStack.Add(new KoblingsSnapshot
+        {
+            Symboler = KloneSymboler(_symboler),
+            Streker = KloneStreker(_streker)
+        });
+
+        if (_undoStack.Count > MaxUndoTrinn)
+        {
+            _undoStack.RemoveAt(0);
+        }
+
+        _redoStack.Clear();
+    }
+
+    private async Task ApplySnapshot(KoblingsSnapshot snapshot)
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        Db.KoblingsSymboler.RemoveRange(_symboler);
+        Db.KoblingsStreker.RemoveRange(_streker);
+        await Db.SaveChangesAsync();
+
+        var nyeSymboler = KloneSymboler(snapshot.Symboler);
+        var nyeStreker = KloneStreker(snapshot.Streker);
+
+        foreach (var s in nyeSymboler)
+        {
+            s.Id = 0;
+        }
+
+        foreach (var s in nyeStreker)
+        {
+            s.Id = 0;
+        }
+
+        Db.KoblingsSymboler.AddRange(nyeSymboler);
+        Db.KoblingsStreker.AddRange(nyeStreker);
+        await Db.SaveChangesAsync();
+
+        _symboler = nyeSymboler;
+        _streker = nyeStreker;
+        _selectedSymbol = null;
+        _valgteSymbolIds.Clear();
+    }
+
+    private async Task Angre()
+    {
+        if (_undoStack.Count == 0)
+        {
+            return;
+        }
+
+        _redoStack.Add(new KoblingsSnapshot
+        {
+            Symboler = KloneSymboler(_symboler),
+            Streker = KloneStreker(_streker)
+        });
+
+        var snapshot = _undoStack[^1];
+        _undoStack.RemoveAt(_undoStack.Count - 1);
+        await ApplySnapshot(snapshot);
+    }
+
+    private async Task GjorOm()
+    {
+        if (_redoStack.Count == 0)
+        {
+            return;
+        }
+
+        _undoStack.Add(new KoblingsSnapshot
+        {
+            Symboler = KloneSymboler(_symboler),
+            Streker = KloneStreker(_streker)
+        });
+
+        var snapshot = _redoStack[^1];
+        _redoStack.RemoveAt(_redoStack.Count - 1);
+        await ApplySnapshot(snapshot);
+    }
+
+    private async Task DupliserSkjema()
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        var nyttSkjema = new KoblingsSkjema
+        {
+            Kategori = _skjema.Kategori,
+            Navn = _skjema.Navn + " (kopi)"
+        };
+
+        Db.KoblingsSkjemaer.Add(nyttSkjema);
+        await Db.SaveChangesAsync();
+
+        foreach (var s in _symboler)
+        {
+            Db.KoblingsSymboler.Add(new KoblingsSymbol
+            {
+                KoblingsSkjemaId = nyttSkjema.Id,
+                ElementType = s.ElementType,
+                Navn = s.Navn,
+                SymbolBibliotekId = s.SymbolBibliotekId,
+                Farge = s.Farge,
+                Strokbredde = s.Strokbredde,
+                Fylt = s.Fylt,
+                Tekst = s.Tekst,
+                FontStorrelse = s.FontStorrelse,
+                PosX = s.PosX,
+                PosY = s.PosY,
+                Bredde = s.Bredde,
+                Hoyde = s.Hoyde,
+                ZIndex = s.ZIndex,
+                ErLaast = s.ErLaast
+            });
+        }
+
+        foreach (var s in _streker)
+        {
+            Db.KoblingsStreker.Add(new KoblingsStrek
+            {
+                KoblingsSkjemaId = nyttSkjema.Id,
+                PunkterJson = s.PunkterJson,
+                Farge = s.Farge,
+                Tykkelse = s.Tykkelse,
+                Navn = s.Navn,
+                Stiplet = s.Stiplet
+            });
+        }
+
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo($"/koblingsskjema/{nyttSkjema.Id}");
+    }
+
+    private void ToggleRedigerModus()
+    {
+        _redigerModus = !_redigerModus;
+        _tegnStrekModus = false;
+        _visLeggTilMeny = false;
+        _selectedSymbol = null;
+        _valgteSymbolIds.Clear();
+    }
+
+    private async Task ToggleTegnStrekModus()
+    {
+        _tegnStrekModus = !_tegnStrekModus;
+        _selectedSymbol = null;
+        _visLeggTilMeny = false;
+
+        if (_module is null)
+        {
+            return;
+        }
+
+        if (_tegnStrekModus)
+        {
+            await _module.InvokeVoidAsync("startStrekTegning", _canvasRef, _dotNetRef, _nyStrekFarge, _nyStrekTykkelse);
+        }
+        else
+        {
+            await _module.InvokeVoidAsync("stopStrekTegning");
+        }
+    }
+
+    private async Task OnSymbolFilValgt(InputFileChangeEventArgs e)
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        var file = e.File;
+        if (file.Size > 5_000_000)
+        {
+            _savedMessage = "Bildet er for stort (maks 5 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 5_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        var navn = Path.GetFileNameWithoutExtension(file.Name);
+        var bibliotekSymbol = new KoblingsSymbolBibliotek
+        {
+            Navn = navn,
+            BildeData = buffer.ToArray(),
+            BildeContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/png" : file.ContentType
+        };
+
+        Db.KoblingsSymbolBibliotek.Add(bibliotekSymbol);
+        await Db.SaveChangesAsync();
+        _bibliotek.Add(bibliotekSymbol);
+
+        PushUndo();
+        var symbol = new KoblingsSymbol
+        {
+            KoblingsSkjemaId = _skjema.Id,
+            ElementType = KoblingsElementType.Bilde,
+            SymbolBibliotekId = bibliotekSymbol.Id,
+            Navn = navn
+        };
+
+        Db.KoblingsSymboler.Add(symbol);
+        await Db.SaveChangesAsync();
+        _symboler.Add(symbol);
+        _visLeggTilMeny = false;
+    }
+
+    private async Task LeggTilFraBibliotek(KoblingsSymbolBibliotek b)
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        PushUndo();
+        var symbol = new KoblingsSymbol
+        {
+            KoblingsSkjemaId = _skjema.Id,
+            ElementType = KoblingsElementType.Bilde,
+            SymbolBibliotekId = b.Id,
+            Navn = b.Navn
+        };
+
+        Db.KoblingsSymboler.Add(symbol);
+        await Db.SaveChangesAsync();
+        _symboler.Add(symbol);
+        _visLeggTilMeny = false;
+    }
+
+    private async Task LeggTilFigur(KoblingsElementType type)
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        PushUndo();
+        var symbol = new KoblingsSymbol
+        {
+            KoblingsSkjemaId = _skjema.Id,
+            ElementType = type,
+            Tekst = type == KoblingsElementType.Tekstboks ? "Tekst" : null,
+            Bredde = type switch { KoblingsElementType.Tekstboks => 15, KoblingsElementType.Punkt => 3, _ => 10 },
+            Hoyde = type switch { KoblingsElementType.Tekstboks => 6, KoblingsElementType.Punkt => 3, _ => 10 }
+        };
+
+        Db.KoblingsSymboler.Add(symbol);
+        await Db.SaveChangesAsync();
+        _symboler.Add(symbol);
+        _visLeggTilMeny = false;
+    }
+
+    [JSInvokable]
+    public async Task OnStrekFerdig(string punkterJson)
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(punkterJson) ?? [];
+        if (punkter.Count < 2)
+        {
+            return;
+        }
+
+        PushUndo();
+        var strek = new KoblingsStrek
+        {
+            KoblingsSkjemaId = _skjema.Id,
+            PunkterJson = punkterJson,
+            Farge = _nyStrekFarge,
+            Tykkelse = _nyStrekTykkelse,
+            Stiplet = _nyStrekStiplet
+        };
+
+        Db.KoblingsStreker.Add(strek);
+        await Db.SaveChangesAsync();
+        _streker.Add(strek);
+        StateHasChanged();
+
+        if (_tegnStrekModus && _module is not null)
+        {
+            await _module.InvokeVoidAsync("startStrekTegning", _canvasRef, _dotNetRef, _nyStrekFarge, _nyStrekTykkelse);
+        }
+    }
+
+    private async Task FullforStrek()
+    {
+        if (_module is null)
+        {
+            return;
+        }
+
+        await _module.InvokeVoidAsync("fullforStrek");
+    }
+
+    [JSInvokable]
+    public void OnStrekAvbrutt()
+    {
+    }
+
+    private async Task SlettStrek(KoblingsStrek s)
+    {
+        PushUndo();
+        Db.KoblingsStreker.Remove(s);
+        await Db.SaveChangesAsync();
+        _streker.Remove(s);
+    }
+
+    [JSInvokable]
+    public void OnSymbolClicked(int symbolId, bool shiftKey)
+    {
+        var valgt = _symboler.FirstOrDefault(s => s.Id == symbolId);
+        if (valgt is null)
+        {
+            return;
+        }
+
+        if (shiftKey)
+        {
+            if (!_valgteSymbolIds.Add(symbolId))
+            {
+                _valgteSymbolIds.Remove(symbolId);
+            }
+        }
+        else
+        {
+            _valgteSymbolIds.Clear();
+            _valgteSymbolIds.Add(symbolId);
+        }
+
+        if (_valgteSymbolIds.Count == 1)
+        {
+            PushUndo();
+            _selectedSymbol = valgt;
+        }
+        else
+        {
+            _selectedSymbol = null;
+        }
+
+        StateHasChanged();
+    }
+
+    private void AvbrytValg()
+    {
+        _valgteSymbolIds.Clear();
+        _selectedSymbol = null;
+    }
+
+    [JSInvokable]
+    public async Task OnSymbolMoved(int symbolId, double x, double y)
+    {
+        var symbol = _symboler.FirstOrDefault(s => s.Id == symbolId);
+        if (symbol is null)
+        {
+            return;
+        }
+
+        PushUndo();
+        symbol.PosX = x;
+        symbol.PosY = y;
+        await Db.SaveChangesAsync();
+    }
+
+    [JSInvokable]
+    public async Task OnSymbolsMoved(string flyttetJson)
+    {
+        var flyttet = JsonSerializer.Deserialize<List<FlyttetSymbol>>(flyttetJson) ?? [];
+        if (flyttet.Count == 0)
+        {
+            return;
+        }
+
+        PushUndo();
+
+        foreach (var f in flyttet)
+        {
+            var symbol = _symboler.FirstOrDefault(s => s.Id == f.Id);
+            if (symbol is not null)
+            {
+                symbol.PosX = f.X;
+                symbol.PosY = f.Y;
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        StateHasChanged();
+    }
+
+    private sealed class FlyttetSymbol
+    {
+        public int Id { get; set; }
+        public double X { get; set; }
+        public double Y { get; set; }
+    }
+
+    [JSInvokable]
+    public async Task OnSymbolResized(int symbolId, double bredde, double hoyde)
+    {
+        var symbol = _symboler.FirstOrDefault(s => s.Id == symbolId);
+        if (symbol is null)
+        {
+            return;
+        }
+
+        PushUndo();
+        symbol.Bredde = bredde;
+        symbol.Hoyde = hoyde;
+        await Db.SaveChangesAsync();
+    }
+
+    [JSInvokable]
+    public async Task OnSlettTastetrykk()
+    {
+        if (_valgteSymbolIds.Count > 1)
+        {
+            await SlettValgte();
+        }
+        else if (_selectedSymbol is not null)
+        {
+            await SlettSymbol();
+        }
+
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnRubberBandValgt(string idsJson, bool shiftKey)
+    {
+        var ids = JsonSerializer.Deserialize<List<int>>(idsJson) ?? [];
+
+        if (!shiftKey)
+        {
+            _valgteSymbolIds.Clear();
+        }
+
+        foreach (var id in ids)
+        {
+            _valgteSymbolIds.Add(id);
+        }
+
+        _selectedSymbol = _valgteSymbolIds.Count == 1
+            ? _symboler.FirstOrDefault(s => s.Id == _valgteSymbolIds.First())
+            : null;
+
+        if (_valgteSymbolIds.Count == 1)
+        {
+            PushUndo();
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task SendBakerst()
+    {
+        if (_selectedSymbol is null)
+        {
+            return;
+        }
+
+        PushUndo();
+        var min = _symboler.Count > 0 ? _symboler.Min(s => s.ZIndex) : 0;
+        _selectedSymbol.ZIndex = min - 1;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SendFremst()
+    {
+        if (_selectedSymbol is null)
+        {
+            return;
+        }
+
+        PushUndo();
+        var max = _symboler.Count > 0 ? _symboler.Max(s => s.ZIndex) : 0;
+        _selectedSymbol.ZIndex = max + 1;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task ToggleErLaast()
+    {
+        if (_selectedSymbol is null)
+        {
+            return;
+        }
+
+        PushUndo();
+        _selectedSymbol.ErLaast = !_selectedSymbol.ErLaast;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task DupliserValgte()
+    {
+        if (_valgteSymbolIds.Count == 0)
+        {
+            return;
+        }
+
+        PushUndo();
+
+        var kilder = _symboler.Where(s => _valgteSymbolIds.Contains(s.Id)).ToList();
+        var nye = new List<KoblingsSymbol>();
+        var nesteZIndex = (_symboler.Count > 0 ? _symboler.Max(s => s.ZIndex) : 0) + 1;
+
+        foreach (var s in kilder)
+        {
+            var kopi = new KoblingsSymbol
+            {
+                KoblingsSkjemaId = s.KoblingsSkjemaId,
+                ElementType = s.ElementType,
+                Navn = s.Navn,
+                SymbolBibliotekId = s.SymbolBibliotekId,
+                Farge = s.Farge,
+                Strokbredde = s.Strokbredde,
+                Fylt = s.Fylt,
+                Tekst = s.Tekst,
+                FontStorrelse = s.FontStorrelse,
+                PosX = s.PosX + 4,
+                PosY = s.PosY + 4,
+                Bredde = s.Bredde,
+                Hoyde = s.Hoyde,
+                ZIndex = nesteZIndex
+            };
+            Db.KoblingsSymboler.Add(kopi);
+            nye.Add(kopi);
+        }
+
+        await Db.SaveChangesAsync();
+        _symboler.AddRange(nye);
+        _valgteSymbolIds.Clear();
+        foreach (var n in nye)
+        {
+            _valgteSymbolIds.Add(n.Id);
+        }
+        _selectedSymbol = null;
+    }
+
+    private async Task SlettValgte()
+    {
+        if (_valgteSymbolIds.Count == 0)
+        {
+            return;
+        }
+
+        PushUndo();
+
+        var kilder = _symboler.Where(s => _valgteSymbolIds.Contains(s.Id)).ToList();
+        Db.KoblingsSymboler.RemoveRange(kilder);
+        await Db.SaveChangesAsync();
+
+        foreach (var s in kilder)
+        {
+            _symboler.Remove(s);
+        }
+
+        _valgteSymbolIds.Clear();
+        _selectedSymbol = null;
+    }
+
+    private async Task LagreSymbol()
+    {
+        if (_selectedSymbol is null)
+        {
+            return;
+        }
+
+        await Db.SaveChangesAsync();
+        _savedMessage = "Lagret.";
+    }
+
+    private async Task SlettSymbol()
+    {
+        if (_selectedSymbol is null)
+        {
+            return;
+        }
+
+        PushUndo();
+        Db.KoblingsSymboler.Remove(_selectedSymbol);
+        await Db.SaveChangesAsync();
+        _symboler.Remove(_selectedSymbol);
+        _valgteSymbolIds.Remove(_selectedSymbol.Id);
+        _selectedSymbol = null;
+    }
+
+    private async Task Lagre()
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        _skjema.OppdatertDato = DateTime.UtcNow;
+        await Db.SaveChangesAsync();
+        _savedMessage = "Lagret.";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _dotNetRef?.Dispose();
+
+        if (_module is not null)
+        {
+            try
+            {
+                await _module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+    }
+}

@@ -63,6 +63,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<KundeOppfolgingNotat> KundeOppfolgingNotater => Set<KundeOppfolgingNotat>();
     public DbSet<FravarSoknad> FravarSoknader => Set<FravarSoknad>();
     public DbSet<TilbudRevisjon> TilbudRevisjoner => Set<TilbudRevisjon>();
+    public DbSet<HjemmesideTekst> HjemmesideTekster => Set<HjemmesideTekst>();
+    public DbSet<KoblingsSkjema> KoblingsSkjemaer => Set<KoblingsSkjema>();
+    public DbSet<KoblingsSymbol> KoblingsSymboler => Set<KoblingsSymbol>();
+    public DbSet<KoblingsStrek> KoblingsStreker => Set<KoblingsStrek>();
+    public DbSet<KoblingsSymbolBibliotek> KoblingsSymbolBibliotek => Set<KoblingsSymbolBibliotek>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -373,6 +378,30 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(t => t.OpprinneligTilbudId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        modelBuilder.Entity<KoblingsSymbol>()
+            .HasOne(s => s.KoblingsSkjema)
+            .WithMany(k => k.Symboler)
+            .HasForeignKey(s => s.KoblingsSkjemaId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<KoblingsStrek>()
+            .HasOne(s => s.KoblingsSkjema)
+            .WithMany(k => k.Streker)
+            .HasForeignKey(s => s.KoblingsSkjemaId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<KoblingsSymbol>()
+            .HasOne(s => s.SymbolBibliotek)
+            .WithMany()
+            .HasForeignKey(s => s.SymbolBibliotekId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<KoblingsSkjema>()
+            .HasOne(k => k.Prosjekt)
+            .WithMany()
+            .HasForeignKey(k => k.ProsjektId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         SeedReferenceData(modelBuilder);
     }
 
@@ -513,6 +542,21 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             new DoorEnvironmentDocument { Id = 7, Navn = "Dørmiljø 7", FileName = "dormiljo-7.pdf", Rekkefolge = 7 },
             new DoorEnvironmentDocument { Id = 8, Navn = "Dørmiljø 8", FileName = "dormiljo-8.pdf", Rekkefolge = 8 },
             new DoorEnvironmentDocument { Id = 9, Navn = "Dørmiljø 9", FileName = "dormiljo-9.pdf", Rekkefolge = 9 }
+        );
+
+        modelBuilder.Entity<HjemmesideTekst>().HasData(
+            new HjemmesideTekst
+            {
+                Id = 1,
+                Tittel = "Itlock Full Kontroll",
+                Ingress = "Internt verktøy for prosjektering, befaring og det daglige arbeidet med dørpakker, komponenter og krav. Velg hvem du er, så finner du raskt det du trenger.",
+                MontorerTittel = "For montører",
+                MontorerBeskrivelse = "Guide, befaring og vedlegg til bruk i felt",
+                ProsjektlederTittel = "For prosjektledere",
+                ProsjektlederBeskrivelse = "Systemer, prosjektering og prosjekter",
+                AdminTittel = "For admin",
+                AdminBeskrivelse = "Opprett og vedlikehold grunnlagsdata",
+            }
         );
 
         modelBuilder.Entity<TilbudForside>().HasData(

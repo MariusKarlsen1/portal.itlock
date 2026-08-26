@@ -24,6 +24,7 @@ public class Component
     public string? Enhet { get; set; }
     public bool Aktiv { get; set; } = true;
 
+    public bool ILagerstyring { get; set; }
     public int Lagerantall { get; set; }
     public int? Minimumsbeholdning { get; set; }
 

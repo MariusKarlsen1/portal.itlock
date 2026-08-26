@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260824072127_LagerstyringOptIn")]
+    partial class LagerstyringOptIn
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -1445,154 +1448,6 @@ namespace PortalItlock.Web.Migrations
                             ProsjektlederTittel = "For prosjektledere",
                             Tittel = "Itlock Full Kontroll"
                         });
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSkjema", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("Kategori")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("OppdatertDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("ProsjektId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProsjektId");
-
-                    b.ToTable("KoblingsSkjemaer");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsStrek", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Farge")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("KoblingsSkjemaId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Navn")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("PunkterJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("Stiplet")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("Tykkelse")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("KoblingsSkjemaId");
-
-                    b.ToTable("KoblingsStreker");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSymbol", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double>("Bredde")
-                        .HasColumnType("REAL");
-
-                    b.Property<int>("ElementType")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("ErLaast")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Farge")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("FontStorrelse")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("Fylt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double>("Hoyde")
-                        .HasColumnType("REAL");
-
-                    b.Property<int>("KoblingsSkjemaId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Navn")
-                        .HasColumnType("TEXT");
-
-                    b.Property<double>("PosX")
-                        .HasColumnType("REAL");
-
-                    b.Property<double>("PosY")
-                        .HasColumnType("REAL");
-
-                    b.Property<int>("Strokbredde")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("SymbolBibliotekId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Tekst")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("ZIndex")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("KoblingsSkjemaId");
-
-                    b.HasIndex("SymbolBibliotekId");
-
-                    b.ToTable("KoblingsSymboler");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSymbolBibliotek", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("BildeContentType")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("BildeData")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("Navn")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("KoblingsSymbolBibliotek");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Kunde", b =>
@@ -3469,45 +3324,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Bruker");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSkjema", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
-                        .WithMany()
-                        .HasForeignKey("ProsjektId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Prosjekt");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsStrek", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.KoblingsSkjema", "KoblingsSkjema")
-                        .WithMany("Streker")
-                        .HasForeignKey("KoblingsSkjemaId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("KoblingsSkjema");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSymbol", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.KoblingsSkjema", "KoblingsSkjema")
-                        .WithMany("Symboler")
-                        .HasForeignKey("KoblingsSkjemaId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.KoblingsSymbolBibliotek", "SymbolBibliotek")
-                        .WithMany()
-                        .HasForeignKey("SymbolBibliotekId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("KoblingsSkjema");
-
-                    b.Navigation("SymbolBibliotek");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.KundeOppfolgingNotat", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Kunde", "Kunde")
@@ -3944,13 +3760,6 @@ namespace PortalItlock.Web.Migrations
             modelBuilder.Entity("PortalItlock.Web.Models.DorIdMal", b =>
                 {
                     b.Navigation("Dorer");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSkjema", b =>
-                {
-                    b.Navigation("Streker");
-
-                    b.Navigation("Symboler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Kunde", b =>

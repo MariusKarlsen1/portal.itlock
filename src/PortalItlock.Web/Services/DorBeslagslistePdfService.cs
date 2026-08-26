@@ -16,9 +16,11 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             return null;
         }
 
+        var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
+
         var dorer = await db.Dorer
             .Where(d => d.ProsjektId == prosjektId
-                && (byggetrinn == null || (d.Plantegning != null && d.Plantegning.Byggetrinn == byggetrinn)))
+                && (valgteByggetrinn == null || (d.Plantegning != null && valgteByggetrinn.Contains(d.Plantegning.Byggetrinn))))
             .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
             .Include(d => d.Funksjoner)
             .OrderBy(d => d.Dornummer)
@@ -39,7 +41,7 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     col.Item().Row(row =>
                     {
                         row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                        row.RelativeItem().AlignRight().Text($"Beslagsliste – {prosjekt.Navn}{(byggetrinn is not null ? $" ({byggetrinn})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
+                        row.RelativeItem().AlignRight().Text($"Beslagsliste – {prosjekt.Navn}{(valgteByggetrinn is not null ? $" ({string.Join(", ", valgteByggetrinn)})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
                     });
                     col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
                 });

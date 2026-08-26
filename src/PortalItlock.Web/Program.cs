@@ -31,6 +31,7 @@ builder.Services.AddScoped<TripletexOrdreCsvService>();
 builder.Services.AddScoped<PrisimportService>();
 builder.Services.AddScoped<AvvikPdfService>();
 builder.Services.AddScoped<PlanUtstyrPdfService>();
+builder.Services.AddScoped<KoblingsSkjemaPdfService>();
 builder.Services.AddScoped<PlantegningDorPdfService>();
 builder.Services.AddScoped<ServicerapportPdfService>();
 builder.Services.AddScoped<ArbeidsordrePdfService>();
@@ -189,6 +190,14 @@ app.MapGet("/prosjektvedlegg/{id:int}", async (int id, ApplicationDbContext db) 
     return vedlegg is null
         ? Results.NotFound()
         : Results.File(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
+}).RequireAuthorization();
+
+app.MapGet("/koblingsbibliotek/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var symbol = await db.KoblingsSymbolBibliotek.FindAsync(id);
+    return symbol is null
+        ? Results.NotFound()
+        : Results.File(symbol.BildeData, symbol.BildeContentType);
 }).RequireAuthorization();
 
 app.MapGet("/tilbud/{id:int}/pdf", async (int id, HttpContext context, ApplicationDbContext db, TilbudPdfService pdfService) =>
@@ -419,6 +428,21 @@ app.MapGet("/plantegning/{id:int}/utstyr/pdf", async (int id, HttpContext contex
     }
 
     var filnavn = $"Utstyr-og-kabeltrekk-{id}-itlock-AS.pdf";
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/koblingsskjema/{id:int}/pdf", async (int id, HttpContext context, KoblingsSkjemaPdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var filnavn = $"Koblingsskjema-{id}-itlock-AS.pdf";
     var disposisjon = new ContentDispositionHeaderValue("inline");
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
