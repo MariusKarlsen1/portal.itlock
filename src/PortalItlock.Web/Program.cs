@@ -35,6 +35,9 @@ builder.Services.AddScoped<KoblingsSkjemaPdfService>();
 builder.Services.AddScoped<PlantegningDorPdfService>();
 builder.Services.AddScoped<ServicerapportPdfService>();
 builder.Services.AddScoped<ArbeidsordrePdfService>();
+builder.Services.AddScoped<BefaringPdfService>();
+builder.Services.AddScoped<SjekklistePdfService>();
+builder.Services.AddScoped<LagretPdfService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddHttpClient<EmailService>(client =>
 {
@@ -338,6 +341,22 @@ app.MapGet("/servicehenvendelse/bilde/{id:int}", async (int id, ApplicationDbCon
         : Results.File(bilde.Data, bilde.ContentType, bilde.Filnavn);
 }).RequireAuthorization();
 
+app.MapGet("/tilvalgalternativ/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
+{
+    var alternativ = await db.TilvalgAlternativer.FindAsync(id);
+    return alternativ?.BildeData is null
+        ? Results.NotFound()
+        : Results.File(alternativ.BildeData, alternativ.BildeContentType ?? "application/octet-stream");
+}).RequireAuthorization();
+
+app.MapGet("/tilvalgmalalternativ/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
+{
+    var alternativ = await db.TilvalgMalAlternativer.FindAsync(id);
+    return alternativ?.BildeData is null
+        ? Results.NotFound()
+        : Results.File(alternativ.BildeData, alternativ.BildeContentType ?? "application/octet-stream");
+}).RequireAuthorization();
+
 app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
 {
     var komponent = await db.Components.FindAsync(id);
@@ -402,6 +421,60 @@ app.MapGet("/avvik/{id:int}/pdf", async (int id, HttpContext context, AvvikPdfSe
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/befaring/{id:int}/pdf", async (int id, HttpContext context, BefaringPdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var filnavn = $"Befaring-{id}-itlock-AS.pdf";
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/befaringpdf/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var pdf = await db.BefaringPdfer.FindAsync(id);
+    return pdf is null
+        ? Results.NotFound()
+        : Results.File(pdf.Data, "application/pdf", pdf.Navn);
+}).RequireAuthorization();
+
+app.MapGet("/arbeidsordre/{id:int}/sjekkliste/pdf", async (int id, HttpContext context, SjekklistePdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var filnavn = $"Sjekkliste-{id}-itlock-AS.pdf";
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/sjekklistepdf/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var pdf = await db.SjekklistePdfer.FindAsync(id);
+    return pdf is null
+        ? Results.NotFound()
+        : Results.File(pdf.Data, "application/pdf", pdf.Navn);
+}).RequireAuthorization();
+
+app.MapGet("/lagretpdf/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var pdf = await db.LagredePdfer.FindAsync(id);
+    return pdf is null
+        ? Results.NotFound()
+        : Results.File(pdf.Data, "application/pdf", pdf.Navn);
 }).RequireAuthorization();
 
 app.MapGet("/servicerunde/{id:int}/pdf", async (int id, HttpContext context, ServicerapportPdfService service) =>

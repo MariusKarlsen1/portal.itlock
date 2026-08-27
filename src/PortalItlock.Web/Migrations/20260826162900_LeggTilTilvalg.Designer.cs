@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260826162900_LeggTilTilvalg")]
+    partial class LeggTilTilvalg
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -514,33 +517,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("BefaringDorfeltId");
 
                     b.ToTable("BefaringLassystemer");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.BefaringPdf", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("BefaringId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BefaringId");
-
-                    b.ToTable("BefaringPdfer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Bruker", b =>
@@ -1690,40 +1666,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("OpprettetAvBrukerId");
 
                     b.ToTable("KundeOppfolgingNotater");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.LagretPdf", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("DataJson")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("EntityId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("EntityType")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EntityType", "EntityId");
-
-                    b.ToTable("LagredePdfer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LasUtskifting", b =>
@@ -2954,33 +2896,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("SjekklisteMaler");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePdf", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ArbeidsordreId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ArbeidsordreId");
-
-                    b.ToTable("SjekklistePdfer");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePunkt", b =>
                 {
                     b.Property<int>("Id")
@@ -3309,9 +3224,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("TilvalgId")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("Utforelse")
-                        .HasColumnType("TEXT");
-
                     b.Property<int>("ValgtAntall")
                         .HasColumnType("INTEGER");
 
@@ -3320,62 +3232,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("TilvalgId");
 
                     b.ToTable("TilvalgAlternativer");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.TilvalgMal", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Beskrivelse")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("TilvalgMaler");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.TilvalgMalAlternativ", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("BildeContentType")
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("BildeData")
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<decimal>("Pris")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Rekkefolge")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("TilvalgMalId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Utforelse")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TilvalgMalId");
-
-                    b.ToTable("TilvalgMalAlternativer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Timeregistrering", b =>
@@ -3552,17 +3408,6 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Dorfelt");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.BefaringPdf", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Befaring", "Befaring")
-                        .WithMany()
-                        .HasForeignKey("BefaringId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Befaring");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Bruker", b =>
@@ -4046,17 +3891,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Servicerunde");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePdf", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
-                        .WithMany()
-                        .HasForeignKey("ArbeidsordreId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Arbeidsordre");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePunkt", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.SjekklisteMal", "SjekklisteMal")
@@ -4145,17 +3979,6 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Tilvalg");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.TilvalgMalAlternativ", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.TilvalgMal", "TilvalgMal")
-                        .WithMany("Alternativer")
-                        .HasForeignKey("TilvalgMalId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("TilvalgMal");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Timeregistrering", b =>
@@ -4322,11 +4145,6 @@ namespace PortalItlock.Web.Migrations
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Tilvalg", b =>
-                {
-                    b.Navigation("Alternativer");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.TilvalgMal", b =>
                 {
                     b.Navigation("Alternativer");
                 });

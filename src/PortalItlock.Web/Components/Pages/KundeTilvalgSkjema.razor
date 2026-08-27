@@ -1,0 +1,258 @@
+@page "/kunde/tilvalg/{Id:int}"
+@layout PortalItlock.Web.Components.Layout.KundeLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Kunde")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+
+<PageTitle>@(_tilvalg?.Tittel ?? "Tilvalg")</PageTitle>
+
+@if (_ikkeFunnet)
+{
+    <p class="form-error">Fant ikke tilvalget, eller det tilhører ikke deg.</p>
+    <a class="back-link" href="/kunde">&larr; Tilbake</a>
+}
+else if (_tilvalg is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="/kunde">&larr; Tilbake</a>
+    <h1>@_tilvalg.Tittel</h1>
+    <p class="section-hint">@_tilvalg.Prosjekt?.Navn</p>
+
+    @if (!string.IsNullOrWhiteSpace(_tilvalg.Beskrivelse))
+    {
+        <p>@_tilvalg.Beskrivelse</p>
+    }
+
+    @if (_tilvalg.Status == TilvalgStatus.Besvart)
+    {
+        <p class="save-success">Du sendte inn dette tilvalget @_tilvalg.BesvartDato?.ToString("dd.MM.yyyy HH:mm").</p>
+
+        <div class="tilvalg-alternativ-liste">
+            @foreach (var alt in _tilvalg.Alternativer.OrderBy(a => a.Rekkefolge))
+            {
+                <div @key="alt.Id" class="tilvalg-alternativ-kort @(alt.ValgtAntall > 0 ? "tilvalg-alternativ-valgt" : "")">
+                    @if (alt.BildeData is not null)
+                    {
+                        <img src="@($"/tilvalgalternativ/{alt.Id}/bilde")" alt="@alt.Navn" />
+                    }
+                    <div class="tilvalg-alternativ-tekst">
+                        <strong>@alt.Navn</strong>
+                        @if (!string.IsNullOrWhiteSpace(alt.Utforelse))
+                        {
+                            <span>@alt.Utforelse</span>
+                        }
+                        <span>@alt.Pris.ToString("N2") kr/stk</span>
+                        @if (alt.ValgtAntall > 0)
+                        {
+                            <span>Valgt: @alt.ValgtAntall stk</span>
+                        }
+                        else
+                        {
+                            <span class="tilvalg-ikke-valgt">Ikke valgt</span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        <p class="tilvalg-sum">Totalsum: <strong>@(_tilvalg.SumTotal?.ToString("N2")) kr eks. mva</strong></p>
+    }
+    else
+    {
+        <div class="tilvalg-alternativ-liste">
+            @foreach (var v in _valg)
+            {
+                <div @key="v.AlternativId" class="tilvalg-alternativ-kort @(v.Valgt ? "tilvalg-alternativ-valgt" : "")">
+                    @if (v.HarBilde)
+                    {
+                        <img src="@($"/tilvalgalternativ/{v.AlternativId}/bilde")" alt="@v.Navn" />
+                    }
+                    <div class="tilvalg-alternativ-tekst">
+                        <strong>@v.Navn</strong>
+                        @if (!string.IsNullOrWhiteSpace(v.Utforelse))
+                        {
+                            <span>@v.Utforelse</span>
+                        }
+                        <span>@v.Pris.ToString("N2") kr/stk</span>
+                        <label class="checkbox-row">
+                            <input type="checkbox" @bind="v.Valgt" @bind:after="OppdaterSum" />
+                            Jeg vil ha denne
+                        </label>
+                        @if (v.Valgt)
+                        {
+                            <label class="tilvalg-antall-felt">
+                                Antall
+                                <input type="number" min="1" @bind="v.Antall" @bind:event="oninput" @bind:after="OppdaterSum" />
+                            </label>
+                            <span class="tilvalg-linjesum">@((v.Pris * Math.Max(1, v.Antall)).ToString("N2")) kr</span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        <p class="tilvalg-sum">Sum så langt: <strong>@_sum.ToString("N2") kr eks. mva</strong></p>
+
+        <section class="avvik-detalj-section">
+            <h2>Send inn</h2>
+            <p class="section-hint">Signer under for å bekrefte valgene dine og sende dem til itlock.</p>
+
+            <input @bind="_signertAvNavn" @bind:event="oninput" placeholder="Fullt navn" class="navn-input" />
+
+            <div class="signatur-pad-wrap">
+                <canvas id="sig-canvas-tilvalg" width="500" height="180" class="signatur-canvas"></canvas>
+                <div class="signatur-actions">
+                    <button type="button" class="cancel-button" @onclick="RensSignatur">Tøm</button>
+                    <button type="button" class="save-button" @onclick="SendInn">Send inn</button>
+                </div>
+            </div>
+            @if (!string.IsNullOrEmpty(_feil))
+            {
+                <p class="form-error">@_feil</p>
+            }
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed class AlternativValg
+    {
+        public int AlternativId { get; set; }
+        public required string Navn { get; set; }
+        public string? Utforelse { get; set; }
+        public decimal Pris { get; set; }
+        public bool HarBilde { get; set; }
+        public bool Valgt { get; set; }
+        public int Antall { get; set; } = 1;
+    }
+
+    private Tilvalg? _tilvalg;
+    private bool _ikkeFunnet;
+    private List<AlternativValg> _valg = [];
+    private decimal _sum;
+    private string _signertAvNavn = "";
+    private string? _feil;
+    private bool _canvasInitialisert;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        var bruker = await Db.Brukere.Include(b => b.Kunde).FirstOrDefaultAsync(b => b.Id == brukerId);
+        if (bruker?.KundeId is null)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        var tilvalg = await Db.Tilvalg
+            .Include(t => t.Prosjekt)
+            .Include(t => t.Alternativer)
+            .FirstOrDefaultAsync(t => t.Id == Id);
+
+        if (tilvalg?.Prosjekt?.KundeId != bruker.KundeId || tilvalg.Status == TilvalgStatus.Utkast)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        _tilvalg = tilvalg;
+        _signertAvNavn = bruker.Kunde?.Navn ?? "";
+
+        if (_valg.Count == 0)
+        {
+            _valg = tilvalg.Alternativer.OrderBy(a => a.Rekkefolge).Select(a => new AlternativValg
+            {
+                AlternativId = a.Id,
+                Navn = a.Navn,
+                Utforelse = a.Utforelse,
+                Pris = a.Pris,
+                HarBilde = a.BildeData is not null
+            }).ToList();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_canvasInitialisert && _tilvalg is not null && _tilvalg.Status == TilvalgStatus.Publisert)
+        {
+            await JS.InvokeVoidAsync("signatur.init", "sig-canvas-tilvalg");
+            _canvasInitialisert = true;
+        }
+    }
+
+    private void OppdaterSum()
+    {
+        _sum = _valg.Where(v => v.Valgt).Sum(v => v.Pris * Math.Max(1, v.Antall));
+    }
+
+    private async Task RensSignatur()
+    {
+        await JS.InvokeVoidAsync("signatur.clear", "sig-canvas-tilvalg");
+    }
+
+    private async Task SendInn()
+    {
+        _feil = null;
+
+        if (string.IsNullOrWhiteSpace(_signertAvNavn))
+        {
+            _feil = "Skriv inn fullt navn.";
+            return;
+        }
+
+        if (!_valg.Any(v => v.Valgt && v.Antall > 0))
+        {
+            _feil = "Velg minst ett alternativ.";
+            return;
+        }
+
+        var tom = await JS.InvokeAsync<bool>("signatur.isEmpty", "sig-canvas-tilvalg");
+        if (tom)
+        {
+            _feil = "Signer i feltet før du sender inn.";
+            return;
+        }
+
+        var base64 = await JS.InvokeAsync<string>("signatur.getPngBase64", "sig-canvas-tilvalg");
+
+        decimal sum = 0;
+        foreach (var alt in _tilvalg!.Alternativer)
+        {
+            var valg = _valg.FirstOrDefault(v => v.AlternativId == alt.Id);
+            var antall = valg is { Valgt: true } ? Math.Max(1, valg.Antall) : 0;
+            alt.ValgtAntall = antall;
+            sum += alt.Pris * antall;
+        }
+
+        _tilvalg.Signatur = Convert.FromBase64String(base64);
+        _tilvalg.SignertAvNavn = _signertAvNavn.Trim();
+        _tilvalg.SumTotal = sum;
+        _tilvalg.Status = TilvalgStatus.Besvart;
+        _tilvalg.BesvartDato = DateTime.Now;
+        _tilvalg.LestAvAnsatt = false;
+        await Db.SaveChangesAsync();
+    }
+}

@@ -17,6 +17,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<BefaringDorfelt> BefaringDorfelt => Set<BefaringDorfelt>();
     public DbSet<BefaringLassystem> BefaringLassystemer => Set<BefaringLassystem>();
     public DbSet<BefaringDorfeltBilde> BefaringDorfeltBilder => Set<BefaringDorfeltBilde>();
+    public DbSet<BefaringPdf> BefaringPdfer => Set<BefaringPdf>();
     public DbSet<GuideSide> GuideSider => Set<GuideSide>();
     public DbSet<Nokkelsystem> Nokkelsystemer => Set<Nokkelsystem>();
     public DbSet<Rekvirent> Rekvirenter => Set<Rekvirent>();
@@ -51,6 +52,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ArbeidsordreSjekkpunkt> ArbeidsordreSjekkpunkter => Set<ArbeidsordreSjekkpunkt>();
     public DbSet<PrisHistorikk> PrisHistorikk => Set<PrisHistorikk>();
     public DbSet<Avvik> Avvik => Set<Avvik>();
+    public DbSet<Tilvalg> Tilvalg => Set<Tilvalg>();
+    public DbSet<TilvalgAlternativ> TilvalgAlternativer => Set<TilvalgAlternativ>();
+    public DbSet<TilvalgMal> TilvalgMaler => Set<TilvalgMal>();
+    public DbSet<TilvalgMalAlternativ> TilvalgMalAlternativer => Set<TilvalgMalAlternativ>();
     public DbSet<DorMedia> DorMedia => Set<DorMedia>();
     public DbSet<PlanUtstyr> PlanUtstyr => Set<PlanUtstyr>();
     public DbSet<PlanForbindelse> PlanForbindelser => Set<PlanForbindelse>();
@@ -60,6 +65,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServicerundeSjekkpunkt> ServicerundeSjekkpunkter => Set<ServicerundeSjekkpunkt>();
     public DbSet<ServicerundeMedia> ServicerundeMedia => Set<ServicerundeMedia>();
     public DbSet<ArbeidsordreMedia> ArbeidsordreMedia => Set<ArbeidsordreMedia>();
+    public DbSet<SjekklistePdf> SjekklistePdfer => Set<SjekklistePdf>();
     public DbSet<KundeOppfolgingNotat> KundeOppfolgingNotater => Set<KundeOppfolgingNotat>();
     public DbSet<FravarSoknad> FravarSoknader => Set<FravarSoknad>();
     public DbSet<TilbudRevisjon> TilbudRevisjoner => Set<TilbudRevisjon>();
@@ -68,6 +74,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<KoblingsSymbol> KoblingsSymboler => Set<KoblingsSymbol>();
     public DbSet<KoblingsStrek> KoblingsStreker => Set<KoblingsStrek>();
     public DbSet<KoblingsSymbolBibliotek> KoblingsSymbolBibliotek => Set<KoblingsSymbolBibliotek>();
+    public DbSet<LagretPdf> LagredePdfer => Set<LagretPdf>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -216,6 +223,24 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(b => b.ServicehenvendelseId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        modelBuilder.Entity<Tilvalg>()
+            .HasOne(t => t.Prosjekt)
+            .WithMany()
+            .HasForeignKey(t => t.ProsjektId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<TilvalgAlternativ>()
+            .HasOne(a => a.Tilvalg)
+            .WithMany(t => t.Alternativer)
+            .HasForeignKey(a => a.TilvalgId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<TilvalgMalAlternativ>()
+            .HasOne(a => a.TilvalgMal)
+            .WithMany(t => t.Alternativer)
+            .HasForeignKey(a => a.TilvalgMalId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         modelBuilder.Entity<SjekklistePunkt>()
             .HasOne(p => p.SjekklisteMal)
             .WithMany(m => m.Punkter)
@@ -342,6 +367,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(m => m.ArbeidsordreId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        modelBuilder.Entity<BefaringPdf>()
+            .HasOne(p => p.Befaring)
+            .WithMany()
+            .HasForeignKey(p => p.BefaringId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<SjekklistePdf>()
+            .HasOne(p => p.Arbeidsordre)
+            .WithMany()
+            .HasForeignKey(p => p.ArbeidsordreId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         modelBuilder.Entity<KundeOppfolgingNotat>()
             .HasOne(n => n.Kunde)
             .WithMany(k => k.OppfolgingNotater)
@@ -401,6 +438,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(k => k.ProsjektId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<LagretPdf>()
+            .HasIndex(p => new { p.EntityType, p.EntityId });
 
         SeedReferenceData(modelBuilder);
     }

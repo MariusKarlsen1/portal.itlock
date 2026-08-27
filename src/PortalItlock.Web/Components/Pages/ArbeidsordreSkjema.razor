@@ -11,6 +11,9 @@
 @inject GeocodingService Geokoding
 @inject IJSRuntime JS
 @inject EmailService Epost
+@inject SjekklistePdfService SjekklistePdfService
+@inject ArbeidsordrePdfService ArbeidsordrePdfService
+@inject LagretPdfService LagretPdfService
 
 <PageTitle>@(_ordre?.Tittel ?? "Arbeidsordre")</PageTitle>
 
@@ -192,7 +195,26 @@ else if (_ordre is not null)
                     </li>
                 }
             </ol>
-            <button type="button" class="remove-button" @onclick="FjernSjekkliste">Fjern sjekkliste</button>
+            <div class="form-actions">
+                <button type="button" class="add-button" @onclick="VisSjekklistePdfForhandsvisning">Lagre som PDF</button>
+                <button type="button" class="remove-button" @onclick="FjernSjekkliste">Fjern sjekkliste</button>
+            </div>
+
+            @if (_lagredeSjekklistePdfer.Count > 0)
+            {
+                <ul class="vedlegg-list">
+                    @foreach (var pdf in _lagredeSjekklistePdfer.OrderByDescending(p => p.OpprettetDato))
+                    {
+                        <li @key="pdf.Id" class="vedlegg-item">
+                            <a href="@($"/sjekklistepdf/{pdf.Id}")" target="_blank">@pdf.Navn</a>
+                            <span class="vedlegg-type">@pdf.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
+                        </li>
+                    }
+                </ul>
+            }
+
+            <PdfPreviewModal Url="@_sjekklistePdfPreviewUrl" Tittel="Forhåndsvisning av sjekkliste" SaveMessage="@_sjekklistePdfSavedMessage"
+                              OnSave="LagreSjekklistePdf" OnClose="@(() => _sjekklistePdfPreviewUrl = null)" />
         }
     </section>
 
@@ -254,7 +276,7 @@ else if (_ordre is not null)
 
         <div class="form-actions">
             <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
-            <button type="button" class="add-button" @onclick="@(() => _pdfPreviewUrl = $"/arbeidsordre/{Id}/rapport/pdf")">Generer rapport</button>
+            <button type="button" class="add-button" @onclick="VisRapportForhandsvisning">Generer rapport</button>
             @if (_ordre.Status == ArbeidsordreStatus.Fakturert)
             {
                 <span class="save-success">
@@ -273,7 +295,13 @@ else if (_ordre is not null)
         </div>
     </section>
 
-    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av arbeidsordrerapport" OnClose="@(() => _pdfPreviewUrl = null)" />
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av arbeidsordrerapport" SaveMessage="@_rapportPdfSavedMessage"
+                      OnSave="LagreRapportPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
+
+    <section class="ordre-section">
+        <h2>Lagrede rapport-PDF-er</h2>
+        <LagredePdfListe Pdfer="_lagredeRapportPdfer" />
+    </section>
 
     <section class="ordre-section">
         @if (_confirmingDelete)
@@ -342,7 +370,12 @@ else if (_ordre is not null)
     private List<ArbeidsordreMedia> _kundeBilder = [];
     private string? _bildeFeil;
     private string? _pdfPreviewUrl;
+    private string? _rapportPdfSavedMessage;
+    private List<LagretPdf> _lagredeRapportPdfer = [];
     private string? _ferdigmeldtMelding;
+    private string? _sjekklistePdfPreviewUrl;
+    private string? _sjekklistePdfSavedMessage;
+    private List<SjekklistePdf> _lagredeSjekklistePdfer = [];
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -426,6 +459,10 @@ else if (_ordre is not null)
             .Where(p => p.ArbeidsordreId == Id)
             .Include(p => p.FullfortAvBruker)
             .ToListAsync();
+        _lagredeSjekklistePdfer = await Db.SjekklistePdfer
+            .Where(p => p.ArbeidsordreId == Id)
+            .ToListAsync();
+        _lagredeRapportPdfer = await LagretPdfService.HentAsync("ArbeidsordreRapport", Id);
         _valgtMalId = null;
 
         var alleBilder = await Db.ArbeidsordreMedia.Where(m => m.ArbeidsordreId == Id).OrderByDescending(m => m.OpprettetDato).ToListAsync();
@@ -497,6 +534,27 @@ else if (_ordre is not null)
 
         await Db.SaveChangesAsync();
         _savedMessage = "Lagret.";
+    }
+
+    private void VisRapportForhandsvisning()
+    {
+        _rapportPdfSavedMessage = null;
+        _pdfPreviewUrl = $"/arbeidsordre/{Id}/rapport/pdf";
+    }
+
+    private async Task LagreRapportPdf()
+    {
+        var bytes = await ArbeidsordrePdfService.GenerateAsync(Id);
+        if (bytes is null || _ordre is null)
+        {
+            return;
+        }
+
+        var pdf = await LagretPdfService.LagreAsync(
+            "ArbeidsordreRapport", Id, $"Rapport - {_ordre.Tittel} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes);
+
+        _lagredeRapportPdfer.Add(pdf);
+        _rapportPdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
     private async Task Ferdigmeld()
@@ -586,6 +644,34 @@ else if (_ordre is not null)
         _sjekkpunkter = [];
 
         await OppdaterKartFargeAsync();
+    }
+
+    private void VisSjekklistePdfForhandsvisning()
+    {
+        _sjekklistePdfSavedMessage = null;
+        _sjekklistePdfPreviewUrl = $"/arbeidsordre/{Id}/sjekkliste/pdf";
+    }
+
+    private async Task LagreSjekklistePdf()
+    {
+        var bytes = await SjekklistePdfService.GenerateAsync(Id);
+        if (bytes is null || _ordre is null)
+        {
+            return;
+        }
+
+        var pdf = new SjekklistePdf
+        {
+            ArbeidsordreId = Id,
+            Navn = $"Sjekkliste - {_ordre.Tittel} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf",
+            Data = bytes
+        };
+
+        Db.SjekklistePdfer.Add(pdf);
+        await Db.SaveChangesAsync();
+
+        _lagredeSjekklistePdfer.Add(pdf);
+        _sjekklistePdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
     private async Task OppdaterKartFargeAsync()

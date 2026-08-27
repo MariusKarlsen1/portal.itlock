@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260826181711_LeggTilUtforelse")]
+    partial class LeggTilUtforelse
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -514,33 +517,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("BefaringDorfeltId");
 
                     b.ToTable("BefaringLassystemer");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.BefaringPdf", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("BefaringId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BefaringId");
-
-                    b.ToTable("BefaringPdfer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Bruker", b =>
@@ -1690,40 +1666,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("OpprettetAvBrukerId");
 
                     b.ToTable("KundeOppfolgingNotater");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.LagretPdf", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("DataJson")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("EntityId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("EntityType")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EntityType", "EntityId");
-
-                    b.ToTable("LagredePdfer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LasUtskifting", b =>
@@ -2954,33 +2896,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("SjekklisteMaler");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePdf", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ArbeidsordreId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ArbeidsordreId");
-
-                    b.ToTable("SjekklistePdfer");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePunkt", b =>
                 {
                     b.Property<int>("Id")
@@ -3554,17 +3469,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Dorfelt");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.BefaringPdf", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Befaring", "Befaring")
-                        .WithMany()
-                        .HasForeignKey("BefaringId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Befaring");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.Bruker", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Kunde", "Kunde")
@@ -4044,17 +3948,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("FullfortAvBruker");
 
                     b.Navigation("Servicerunde");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePdf", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
-                        .WithMany()
-                        .HasForeignKey("ArbeidsordreId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Arbeidsordre");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePunkt", b =>

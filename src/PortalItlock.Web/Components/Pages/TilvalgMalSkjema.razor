@@ -1,0 +1,227 @@
+@page "/tilvalgmaler/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>@(_mal?.Navn ?? "Tilvalgsmal") - itlock</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke malen. Den kan være slettet.</p>
+}
+else if (_mal is not null)
+{
+    <a class="back-link" href="/tilvalgmaler">&larr; Tilbake til Tilvalgsmaler</a>
+    <h1>@_mal.Navn</h1>
+
+    <section class="tilvalg-section">
+        <div class="field-grid">
+            <label class="span-2">
+                Navn på mal
+                <input @bind="_mal.Navn" @bind:event="oninput" placeholder="F.eks. Velg type vrider" />
+            </label>
+            <label class="span-2">
+                Beskrivelse til kunden
+                <textarea rows="3" @bind="_mal.Beskrivelse" @bind:event="oninput" placeholder="Fritekst kunden ser øverst når tilvalget er opprettet fra denne malen"></textarea>
+            </label>
+        </div>
+        <button type="button" class="save-button" @onclick="LagreTekst">Lagre</button>
+        @if (!string.IsNullOrEmpty(_lagretMelding))
+        {
+            <span class="save-success">@_lagretMelding</span>
+        }
+    </section>
+
+    <section class="tilvalg-section">
+        <h2>Alternativer</h2>
+        @if (_mal.Alternativer.Count == 0)
+        {
+            <p class="list-empty">Ingen alternativer lagt til ennå.</p>
+        }
+        else
+        {
+            <div class="tilvalg-alternativ-liste">
+                @foreach (var alt in _mal.Alternativer.OrderBy(a => a.Rekkefolge))
+                {
+                    <div @key="alt.Id" class="tilvalg-alternativ-rad">
+                        <div class="tilvalg-alternativ-bilde">
+                            @if (alt.BildeData is not null)
+                            {
+                                <img src="@($"/tilvalgmalalternativ/{alt.Id}/bilde")" alt="@alt.Navn" />
+                            }
+                            else
+                            {
+                                <span class="tilvalg-bilde-tom">Ingen bilde</span>
+                            }
+                            <InputFile OnChange="@(e => LastOppBilde(alt, e))" accept="image/*" />
+                        </div>
+                        <div class="tilvalg-alternativ-felt">
+                            <label>
+                                Navn
+                                <input @bind="alt.Navn" @bind:event="oninput" />
+                            </label>
+                            <label>
+                                Utførelse
+                                <input @bind="alt.Utforelse" @bind:event="oninput" placeholder="F.eks. Krom, Sort matt" />
+                            </label>
+                            <label>
+                                Pris (eks. mva)
+                                <input type="number" step="0.01" min="0" @bind="alt.Pris" @bind:event="oninput" />
+                            </label>
+                        </div>
+                        <button type="button" class="remove-button" @onclick="@(() => SlettAlternativ(alt))">Slett</button>
+                    </div>
+                }
+            </div>
+            <button type="button" class="save-button" @onclick="LagreAlternativer">Lagre alternativer</button>
+            @if (!string.IsNullOrEmpty(_lagretAlternativerMelding))
+            {
+                <span class="save-success">@_lagretAlternativerMelding</span>
+            }
+        }
+
+        <div class="tilvalg-nytt-alternativ">
+            <input @bind="_nyttNavn" @bind:event="oninput" placeholder="Navn på nytt alternativ" />
+            <input @bind="_nyUtforelse" @bind:event="oninput" placeholder="Utførelse (f.eks. Krom)" />
+            <input type="number" step="0.01" min="0" @bind="_nyPris" placeholder="Pris" />
+            <button type="button" class="add-button" @onclick="LeggTilAlternativ">Legg til alternativ</button>
+        </div>
+        @if (!string.IsNullOrEmpty(_feilmelding))
+        {
+            <p class="form-error">@_feilmelding</p>
+        }
+    </section>
+
+    <button type="button" class="delete-button" @onclick="SlettMal">Slett malen</button>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private TilvalgMal? _mal;
+    private bool _notFound;
+    private string? _feilmelding;
+    private string? _lagretMelding;
+    private string? _lagretAlternativerMelding;
+    private string _nyttNavn = "";
+    private string _nyUtforelse = "";
+    private decimal _nyPris;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _mal = await Db.TilvalgMaler
+            .Include(m => m.Alternativer)
+            .FirstOrDefaultAsync(m => m.Id == Id);
+
+        if (_mal is null)
+        {
+            _notFound = true;
+        }
+    }
+
+    private async Task LagreTekst()
+    {
+        await Db.SaveChangesAsync();
+        _lagretMelding = "Lagret.";
+    }
+
+    private async Task LagreAlternativer()
+    {
+        await Db.SaveChangesAsync();
+        _lagretAlternativerMelding = "Lagret.";
+    }
+
+    private async Task LeggTilAlternativ()
+    {
+        if (_mal is null || string.IsNullOrWhiteSpace(_nyttNavn))
+        {
+            return;
+        }
+
+        var alternativ = new TilvalgMalAlternativ
+        {
+            TilvalgMalId = _mal.Id,
+            Navn = _nyttNavn.Trim(),
+            Utforelse = string.IsNullOrWhiteSpace(_nyUtforelse) ? null : _nyUtforelse.Trim(),
+            Pris = _nyPris,
+            Rekkefolge = _mal.Alternativer.Count
+        };
+
+        Db.TilvalgMalAlternativer.Add(alternativ);
+        await Db.SaveChangesAsync();
+
+        _nyttNavn = "";
+        _nyUtforelse = "";
+        _nyPris = 0;
+    }
+
+    private async Task SlettAlternativ(TilvalgMalAlternativ alt)
+    {
+        if (_mal is null)
+        {
+            return;
+        }
+
+        var entitet = await Db.TilvalgMalAlternativer.FindAsync(alt.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        Db.TilvalgMalAlternativer.Remove(entitet);
+        await Db.SaveChangesAsync();
+        _mal.Alternativer.Remove(alt);
+    }
+
+    private async Task LastOppBilde(TilvalgMalAlternativ alt, InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null)
+        {
+            return;
+        }
+
+        if (file.Size > 10_000_000)
+        {
+            _feilmelding = $"\"{file.Name}\" er for stort (maks 10 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 10_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        var entitet = await Db.TilvalgMalAlternativer.FindAsync(alt.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.BildeData = buffer.ToArray();
+        entitet.BildeContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+        await Db.SaveChangesAsync();
+
+        alt.BildeData = entitet.BildeData;
+        alt.BildeContentType = entitet.BildeContentType;
+        _feilmelding = null;
+    }
+
+    private async Task SlettMal()
+    {
+        if (_mal is null)
+        {
+            return;
+        }
+
+        Db.TilvalgMaler.Remove(_mal);
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo("/tilvalgmaler");
+    }
+}
