@@ -11,7 +11,6 @@ public class KoblingsStrek
 
     public string Farge { get; set; } = "#835e41";
     public int Tykkelse { get; set; } = 2;
-    public string? Navn { get; set; }
     public bool Stiplet { get; set; }
 }
 

@@ -1,3 +1,19 @@
+function safeCapture(el, pointerId) {
+    try {
+        el.setPointerCapture(pointerId);
+    } catch {
+        // Kan skje for syntetiske/inaktive pointere - ignorer.
+    }
+}
+
+function safeRelease(el, pointerId) {
+    try {
+        el.releasePointerCapture(pointerId);
+    } catch {
+        // Kan skje for syntetiske/inaktive pointere - ignorer.
+    }
+}
+
 export function getClickPercent(containerEl, clientX, clientY) {
     const rect = containerEl.getBoundingClientRect();
     const x = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
@@ -65,7 +81,7 @@ export function initZoomPan(wrapEl, canvasEl) {
         startY = e.clientY;
         startScrollLeft = wrapEl.scrollLeft;
         startScrollTop = wrapEl.scrollTop;
-        wrapEl.setPointerCapture(e.pointerId);
+        safeCapture(wrapEl, e.pointerId);
     });
 
     wrapEl.addEventListener('pointermove', (e) => {
@@ -90,7 +106,7 @@ export function initZoomPan(wrapEl, canvasEl) {
             return;
         }
         panning = false;
-        wrapEl.releasePointerCapture(e.pointerId);
+        safeRelease(wrapEl, e.pointerId);
         wrapEl.style.cursor = '';
 
         if (moved) {
@@ -99,35 +115,88 @@ export function initZoomPan(wrapEl, canvasEl) {
     });
 }
 
-function axisConstrain(from, to) {
-    if (!from) {
-        return to;
-    }
-    const dx = Math.abs(to.x - from.x);
-    const dy = Math.abs(to.y - from.y);
-    return dx > dy ? { x: to.x, y: from.y } : { x: from.x, y: to.y };
-}
-
 let currentStrekTegning = null;
 
+const SNAP_RADIUS_PX = 14;
+
+function findPunktNaer(canvasEl, clientX, clientY) {
+    const punkter = canvasEl.querySelectorAll('.kobling-symbol-marker[data-elementtype="Punkt"]');
+    const rect = canvasEl.getBoundingClientRect();
+    let best = null;
+    let bestDist = SNAP_RADIUS_PX;
+
+    punkter.forEach(m => {
+        const px = rect.left + (parseFloat(m.dataset.x) / 100) * rect.width;
+        const py = rect.top + (parseFloat(m.dataset.y) / 100) * rect.height;
+        const dist = Math.hypot(clientX - px, clientY - py);
+        if (dist <= bestDist) {
+            bestDist = dist;
+            best = { x: parseFloat(m.dataset.x), y: parseFloat(m.dataset.y) };
+        }
+    });
+
+    return best;
+}
+
+function avstandTilLinjestykke(p, a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengdeKvadrat = dx * dx + dy * dy;
+    if (lengdeKvadrat === 0) {
+        return Math.hypot(p.x - a.x, p.y - a.y);
+    }
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengdeKvadrat;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+const STREK_HIT_PX = 8;
+
+function finnStrekNaer(canvasEl, clientX, clientY) {
+    const rect = canvasEl.getBoundingClientRect();
+    const polylines = canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]');
+    let best = null;
+    let bestDist = STREK_HIT_PX;
+
+    polylines.forEach(pl => {
+        const raw = pl.getAttribute('points') || '';
+        const pts = raw.trim().split(/\s+/).filter(Boolean).map(par => {
+            const [px, py] = par.split(',').map(Number);
+            return {
+                x: rect.left + (px / 100) * rect.width,
+                y: rect.top + (py / 100) * rect.height
+            };
+        });
+        for (let i = 0; i < pts.length - 1; i++) {
+            const dist = avstandTilLinjestykke({ x: clientX, y: clientY }, pts[i], pts[i + 1]);
+            if (dist <= bestDist) {
+                bestDist = dist;
+                best = parseInt(pl.dataset.strekid, 10);
+            }
+        }
+    });
+
+    return best;
+}
+
+const MIN_TURN_PX = 10;
+
+// Tegn strek = trykk ned, dra i den retningen streken skal gå, slipp.
+// Snur du retning underveis (uten å slippe museknappen) settes det automatisk et
+// hjørne der du snur, slik at hele streken blir én sammenhengende, vinkelrett linje.
 export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse) {
     stopStrekTegning();
 
     const svgOverlay = canvasEl.querySelector('.kobling-strek-svg-overlay');
-    const points = [];
     let previewLine = null;
-
-    function findPunktUnder(target) {
-        const markerEl = target.closest ? target.closest('.kobling-symbol-marker') : null;
-        if (!markerEl || markerEl.dataset.elementtype !== 'Punkt') {
-            return null;
-        }
-        return { x: parseFloat(markerEl.dataset.x), y: parseFloat(markerEl.dataset.y) };
-    }
-
-    function pointsToStr(pts) {
-        return pts.map(p => `${p.x},${p.y}`).join(' ');
-    }
+    let dragging = false;
+    let mode = null; // 'draw' | 'move'
+    let vertices = [];
+    let currentAxis = null;
+    let moveStrekId = null;
+    let moveOrigPunkter = null;
+    let moveStartRaw = null;
+    let moveMoved = false;
 
     function ensurePreview() {
         if (!previewLine) {
@@ -143,85 +212,205 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse) {
         return previewLine;
     }
 
-    function onMouseMove(e) {
-        if (points.length === 0) {
-            return;
-        }
-        const raw = getClickPercent(canvasEl, e.clientX, e.clientY);
-        const cur = axisConstrain(points[points.length - 1], raw);
-        ensurePreview().setAttribute('points', pointsToStr([...points, cur]));
+    function pointsToStr(pts) {
+        return pts.map(p => `${p.x},${p.y}`).join(' ');
     }
 
-    function onClick(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        const snap = findPunktUnder(e.target);
-        const raw = snap ?? getClickPercent(canvasEl, e.clientX, e.clientY);
-        const p = points.length === 0 ? raw : axisConstrain(points[points.length - 1], raw);
-        points.push(p);
-        ensurePreview().setAttribute('points', pointsToStr(points));
-
-        if (snap) {
-            finish();
-        }
+    function parsePointsAttr(str) {
+        return (str || '').trim().split(/\s+/).filter(Boolean).map(par => {
+            const [x, y] = par.split(',').map(Number);
+            return { x, y };
+        });
     }
 
-    function onDblClick(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (points.length < 1) {
-            return;
-        }
-        const snap = findPunktUnder(e.target);
-        const raw = snap ?? getClickPercent(canvasEl, e.clientX, e.clientY);
-        const p = axisConstrain(points[points.length - 1], raw);
-        points.push(p);
-        finish();
-    }
-
-    function finish() {
-        if (points.length < 2) {
-            return;
-        }
-        const result = JSON.stringify(points.map(pt => ({ X: pt.x, Y: pt.y })));
-        cleanup();
-        dotNetRef.invokeMethodAsync('OnStrekFerdig', result);
-    }
-
-    function onKeyDown(e) {
-        if (e.key === 'Escape') {
-            cleanup();
-            dotNetRef.invokeMethodAsync('OnStrekAvbrutt');
-        }
-    }
-
-    function cleanup() {
-        canvasEl.removeEventListener('click', onClick, true);
-        canvasEl.removeEventListener('dblclick', onDblClick, true);
-        canvasEl.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('keydown', onKeyDown);
+    function fjernPreview() {
         if (previewLine) {
             previewLine.remove();
             previewLine = null;
         }
+    }
+
+    function tentativeEnd(raw) {
+        const last = vertices[vertices.length - 1];
+        if (currentAxis === 'y') {
+            return { x: last.x, y: raw.y };
+        }
+        if (currentAxis === 'x') {
+            return { x: raw.x, y: last.y };
+        }
+        return last;
+    }
+
+    function onPointerDown(e) {
+        if (e.button !== 0) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+
+        const strekId = finnStrekNaer(canvasEl, e.clientX, e.clientY);
+        if (strekId !== null) {
+            const polyEl = canvasEl.querySelector(`.kobling-strek-svg-overlay polyline[data-strekid="${strekId}"]`);
+            if (polyEl) {
+                mode = 'move';
+                moveStrekId = strekId;
+                moveOrigPunkter = parsePointsAttr(polyEl.getAttribute('points'));
+                moveStartRaw = getClickPercent(canvasEl, e.clientX, e.clientY);
+                moveMoved = false;
+                dragging = true;
+                safeCapture(canvasEl, e.pointerId);
+                return;
+            }
+        }
+
+        mode = 'draw';
+        const snap = findPunktNaer(canvasEl, e.clientX, e.clientY);
+        vertices = [snap ?? getClickPercent(canvasEl, e.clientX, e.clientY)];
+        currentAxis = null;
+        dragging = true;
+        safeCapture(canvasEl, e.pointerId);
+    }
+
+    function onPointerMove(e) {
+        if (!dragging) {
+            return;
+        }
+
+        if (mode === 'move') {
+            const raw = getClickPercent(canvasEl, e.clientX, e.clientY);
+            const dx = raw.x - moveStartRaw.x;
+            const dy = raw.y - moveStartRaw.y;
+            const rectPx = canvasEl.getBoundingClientRect();
+            if (!moveMoved) {
+                const movedPx = Math.hypot((dx / 100) * rectPx.width, (dy / 100) * rectPx.height);
+                if (movedPx > 4) {
+                    moveMoved = true;
+                }
+            }
+            const polyEl = canvasEl.querySelector(`.kobling-strek-svg-overlay polyline[data-strekid="${moveStrekId}"]`);
+            if (polyEl) {
+                polyEl.setAttribute('points', pointsToStr(moveOrigPunkter.map(p => ({ x: p.x + dx, y: p.y + dy }))));
+            }
+            return;
+        }
+
+        const snap = findPunktNaer(canvasEl, e.clientX, e.clientY);
+        const raw = snap ?? getClickPercent(canvasEl, e.clientX, e.clientY);
+        const last = vertices[vertices.length - 1];
+        const dx = raw.x - last.x;
+        const dy = raw.y - last.y;
+        const rectPx = canvasEl.getBoundingClientRect();
+
+        if (currentAxis === null) {
+            const movedPx = Math.hypot((dx / 100) * rectPx.width, (dy / 100) * rectPx.height);
+            if (movedPx > 4) {
+                currentAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+            }
+        } else {
+            const annenDeltaPct = currentAxis === 'x' ? dy : dx;
+            const annenPx = currentAxis === 'x'
+                ? (Math.abs(annenDeltaPct) / 100) * rectPx.height
+                : (Math.abs(annenDeltaPct) / 100) * rectPx.width;
+            if (annenPx > MIN_TURN_PX) {
+                vertices.push(tentativeEnd(raw));
+                currentAxis = currentAxis === 'x' ? 'y' : 'x';
+            }
+        }
+
+        ensurePreview().setAttribute('points', pointsToStr([...vertices, tentativeEnd(raw)]));
+    }
+
+    function onPointerUp(e) {
+        if (!dragging) {
+            return;
+        }
+        dragging = false;
+        safeRelease(canvasEl, e.pointerId);
+
+        if (mode === 'move') {
+            const strekId = moveStrekId;
+            const origPunkter = moveOrigPunkter;
+            const flyttet = moveMoved;
+            const raw = getClickPercent(canvasEl, e.clientX, e.clientY);
+            const dx = raw.x - moveStartRaw.x;
+            const dy = raw.y - moveStartRaw.y;
+            mode = null;
+            moveStrekId = null;
+            moveOrigPunkter = null;
+
+            if (!flyttet) {
+                // Klikk uten drag - slett streken.
+                dotNetRef.invokeMethodAsync('OnStrekKlikkSlett', strekId);
+                return;
+            }
+
+            const nyePunkter = origPunkter.map(p => ({ X: p.x + dx, Y: p.y + dy }));
+            dotNetRef.invokeMethodAsync('OnStrekFlyttet', strekId, JSON.stringify(nyePunkter));
+            return;
+        }
+
+        fjernPreview();
+
+        if (currentAxis === null) {
+            vertices = [];
+            return;
+        }
+
+        const snap = findPunktNaer(canvasEl, e.clientX, e.clientY);
+        const raw = snap ?? getClickPercent(canvasEl, e.clientX, e.clientY);
+        const last = vertices[vertices.length - 1];
+        const slutt = tentativeEnd(raw);
+        const dist = Math.hypot(slutt.x - last.x, slutt.y - last.y);
+        const alle = dist < 1 ? vertices : [...vertices, slutt];
+
+        vertices = [];
+        currentAxis = null;
+
+        if (alle.length < 2) {
+            return;
+        }
+
+        const result = JSON.stringify(alle.map(p => ({ X: p.x, Y: p.y })));
+        dotNetRef.invokeMethodAsync('OnStrekFerdig', result);
+    }
+
+    function onKeyDown(e) {
+        if (e.key === 'Escape' && dragging) {
+            dragging = false;
+            if (mode === 'move') {
+                const polyEl = canvasEl.querySelector(`.kobling-strek-svg-overlay polyline[data-strekid="${moveStrekId}"]`);
+                if (polyEl && moveOrigPunkter) {
+                    polyEl.setAttribute('points', pointsToStr(moveOrigPunkter));
+                }
+            } else {
+                fjernPreview();
+            }
+            mode = null;
+            moveStrekId = null;
+            moveOrigPunkter = null;
+            vertices = [];
+            currentAxis = null;
+        }
+    }
+
+    function cleanup() {
+        canvasEl.removeEventListener('pointerdown', onPointerDown);
+        canvasEl.removeEventListener('pointermove', onPointerMove);
+        canvasEl.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('keydown', onKeyDown);
+        fjernPreview();
         if (currentStrekTegning === api) {
             currentStrekTegning = null;
         }
     }
 
-    canvasEl.addEventListener('click', onClick, true);
-    canvasEl.addEventListener('dblclick', onDblClick, true);
-    canvasEl.addEventListener('mousemove', onMouseMove);
+    canvasEl.addEventListener('pointerdown', onPointerDown);
+    canvasEl.addEventListener('pointermove', onPointerMove);
+    canvasEl.addEventListener('pointerup', onPointerUp);
     document.addEventListener('keydown', onKeyDown);
 
-    const api = { cleanup, finish };
+    const api = { cleanup };
     currentStrekTegning = api;
-}
-
-export function fullforStrek() {
-    if (currentStrekTegning && currentStrekTegning.finish) {
-        currentStrekTegning.finish();
-    }
 }
 
 export function stopStrekTegning() {
@@ -288,7 +477,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                     groupMarkers = [];
                 }
 
-                markerEl.setPointerCapture(e.pointerId);
+                safeCapture(markerEl, e.pointerId);
             });
 
             markerEl.addEventListener('pointermove', (e) => {
@@ -324,7 +513,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                     return;
                 }
                 dragging = false;
-                markerEl.releasePointerCapture(e.pointerId);
+                safeRelease(markerEl, e.pointerId);
 
                 if (moved) {
                     const payload = groupMarkers.map(g => ({
@@ -365,7 +554,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                 startClientY = e.clientY;
                 startWidthPct = parseFloat(markerEl.style.width) || 10;
                 startHeightPct = parseFloat(markerEl.style.height) || 10;
-                handleEl.setPointerCapture(e.pointerId);
+                safeCapture(handleEl, e.pointerId);
             });
 
             handleEl.addEventListener('pointermove', (e) => {
@@ -392,7 +581,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                     return;
                 }
                 resizing = false;
-                handleEl.releasePointerCapture(e.pointerId);
+                safeRelease(handleEl, e.pointerId);
                 const w = parseFloat(markerEl.dataset.w) || startWidthPct;
                 const h = parseFloat(markerEl.dataset.h) || startHeightPct;
                 dotNetRef.invokeMethodAsync('OnSymbolResized', symbolId, w, h);
@@ -490,7 +679,7 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         box = document.createElement('div');
         box.className = 'kobling-rubber-band';
         canvasEl.appendChild(box);
-        canvasEl.setPointerCapture(e.pointerId);
+        safeCapture(canvasEl, e.pointerId);
     });
 
     canvasEl.addEventListener('pointermove', (e) => {
@@ -513,7 +702,7 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
             return;
         }
         active = false;
-        canvasEl.releasePointerCapture(e.pointerId);
+        safeRelease(canvasEl, e.pointerId);
 
         if (!box) {
             return;

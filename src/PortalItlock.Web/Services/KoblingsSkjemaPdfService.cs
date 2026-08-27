@@ -152,13 +152,6 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             var dashAttr = strek.Stiplet ? $"stroke-dasharray='{Inv(strek.Tykkelse * 0.5)},{Inv(strek.Tykkelse * 0.35)}'" : "";
             sb.Append(CultureInfo.InvariantCulture,
                 $"<polyline points='{pts}' fill='none' stroke='{strek.Farge}' stroke-width='{Inv(strek.Tykkelse * 0.15)}' {dashAttr} />");
-
-            if (!string.IsNullOrWhiteSpace(strek.Navn))
-            {
-                var midt = punkter[punkter.Count / 2];
-                sb.Append(CultureInfo.InvariantCulture,
-                    $"<text x='{Inv(midt.X)}' y='{Inv(YtilVb(midt.Y) - 1.5)}' font-size='2.4' font-family='Arial, sans-serif' text-anchor='middle' fill='{strek.Farge}'>{System.Net.WebUtility.HtmlEncode(strek.Navn)}</text>");
-            }
         }
 
         foreach (var s in symboler)
