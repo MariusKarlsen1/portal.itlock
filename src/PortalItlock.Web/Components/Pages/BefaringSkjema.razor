@@ -5,8 +5,10 @@
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @using SkiaSharp
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject BefaringPdfService PdfService
 
 <PageTitle>@(Id.HasValue ? "Rediger befaring" : "Ny befaring")</PageTitle>
 
@@ -233,6 +235,11 @@ else
 
             @if (Id.HasValue)
             {
+                <button type="button" class="add-button" @onclick="VisPdfForhandsvisning">Lagre som PDF</button>
+            }
+
+            @if (Id.HasValue)
+            {
                 @if (_confirmingDelete)
                 {
                     <span class="delete-confirm">
@@ -247,7 +254,33 @@ else
                 }
             }
         </div>
+
+        @if (Id.HasValue)
+        {
+            <section class="befaring-section">
+                <h2>Lagrede PDF-er</h2>
+                @if (_lagredePdfer.Count == 0)
+                {
+                    <p class="list-empty">Ingen PDF-er lagret ennå.</p>
+                }
+                else
+                {
+                    <ul class="vedlegg-list">
+                        @foreach (var pdf in _lagredePdfer.OrderByDescending(p => p.OpprettetDato))
+                        {
+                            <li @key="pdf.Id" class="vedlegg-item">
+                                <a href="@($"/befaringpdf/{pdf.Id}")" target="_blank">@pdf.Navn</a>
+                                <span class="vedlegg-type">@pdf.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
+        }
     </div>
+
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av befaring" SaveMessage="@_pdfSavedMessage"
+                      OnSave="LagreBefaringPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
 }
 
 @code {
@@ -262,6 +295,9 @@ else
     private string? _savedMessage;
     private readonly Dictionary<int, string?> _bildeFeil = [];
     private int? _uploadingDorfeltId;
+    private string? _pdfPreviewUrl;
+    private string? _pdfSavedMessage;
+    private List<BefaringPdf> _lagredePdfer = [];
 
     protected override async Task OnParametersSetAsync()
     {
@@ -303,6 +339,10 @@ else
 
         _form = existing;
         _dorfelt = existing.Dorfelt;
+
+        _lagredePdfer = await Db.BefaringPdfer
+            .Where(p => p.BefaringId == id)
+            .ToListAsync();
     }
 
     private void ResetForm()
@@ -430,6 +470,44 @@ else
             _savedMessage = $"Befaringen \"{_form.Navn}\" er lagret.";
             ResetForm();
         }
+    }
+
+    private void VisPdfForhandsvisning()
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        _pdfSavedMessage = null;
+        _pdfPreviewUrl = $"/befaring/{Id.Value}/pdf";
+    }
+
+    private async Task LagreBefaringPdf()
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        var bytes = await PdfService.GenerateAsync(Id.Value);
+        if (bytes is null)
+        {
+            return;
+        }
+
+        var pdf = new BefaringPdf
+        {
+            BefaringId = Id.Value,
+            Navn = $"Befaring - {_form.Navn} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf",
+            Data = bytes
+        };
+
+        Db.BefaringPdfer.Add(pdf);
+        await Db.SaveChangesAsync();
+
+        _lagredePdfer.Add(pdf);
+        _pdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
     private async Task ConfirmDelete()
