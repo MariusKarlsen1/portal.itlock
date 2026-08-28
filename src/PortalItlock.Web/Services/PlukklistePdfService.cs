@@ -9,6 +9,24 @@ namespace PortalItlock.Web.Services;
 
 public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
+    public async Task<List<LagretPdfLinje>> GetSnapshotLinjerAsync(int prosjektId, string? byggetrinn = null)
+    {
+        var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
+
+        var behov = await db.DorKomponenter
+            .Where(k => k.Dor!.ProsjektId == prosjektId && k.LevertAv == LevertAv.F && k.ComponentId != 0
+                && (valgteByggetrinn == null || (k.Dor!.Plantegning != null && valgteByggetrinn.Contains(k.Dor!.Plantegning!.Byggetrinn))))
+            .Include(k => k.Component)
+            .ToListAsync();
+
+        return behov
+            .Where(k => k.Component is not null)
+            .GroupBy(k => k.Component!.Navn)
+            .Select(g => new LagretPdfLinje(g.Key, g.Sum(x => x.Antall), null))
+            .OrderBy(l => l.Navn)
+            .ToList();
+    }
+
     public async Task<byte[]?> GenerateAsync(int prosjektId, string? byggetrinn = null)
     {
         var prosjekt = await db.Prosjekter.FindAsync(prosjektId);

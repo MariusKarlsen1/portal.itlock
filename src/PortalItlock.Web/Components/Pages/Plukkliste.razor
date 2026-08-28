@@ -5,7 +5,10 @@
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
+@using System.Text.Json
 @inject ApplicationDbContext Db
+@inject PlukklistePdfService PdfService
+@inject LagretPdfService LagretPdfService
 
 <PageTitle>Plukkliste - @(_prosjekt?.Navn)</PageTitle>
 
@@ -42,7 +45,11 @@ else
     @if (_rader.Count > 0)
     {
         <button type="button" class="add-button" @onclick="GenererPdf">Last ned PDF</button>
-        <PdfPreviewModal Url="@_pdfUrl" Tittel="Plukkliste" OnClose="@(() => _pdfUrl = null)" />
+        <PdfPreviewModal Url="@_pdfUrl" Tittel="Plukkliste" SaveMessage="@_pdfSavedMessage"
+                          OnSave="LagrePlukklistePdf" OnClose="@(() => _pdfUrl = null)" />
+
+        <h2>Lagrede PDF-er</h2>
+        <LagredePdfListe Pdfer="_lagredePdfer" TillatSammenligning="true" />
     }
 
     @if (_rader.Count == 0)
@@ -98,11 +105,52 @@ else
     private string? _pdfUrl;
     private List<string> _byggetrinnListe = [];
     private HashSet<string> _valgteByggetrinn = [];
+    private List<LagretPdf> _lagredePdfer = [];
+    private string? _pdfSavedMessage;
 
     private void GenererPdf()
     {
         var byggetrinnParam = _valgteByggetrinn.Count == 0 ? "" : $"&byggetrinn={Uri.EscapeDataString(string.Join(",", _valgteByggetrinn))}";
+        _pdfSavedMessage = null;
         _pdfUrl = $"/prosjekt/{Id}/plukkliste/pdf?v={DateTime.UtcNow.Ticks}{byggetrinnParam}";
+    }
+
+    private async Task LagrePlukklistePdf()
+    {
+        var byggetrinn = _valgteByggetrinn.Count == 0 ? null : string.Join(",", _valgteByggetrinn);
+        var bytes = await PdfService.GenerateAsync(Id, byggetrinn);
+        if (bytes is null)
+        {
+            return;
+        }
+
+        var linjer = await PdfService.GetSnapshotLinjerAsync(Id, byggetrinn);
+        var forrige = _lagredePdfer.OrderByDescending(p => p.OpprettetDato).FirstOrDefault();
+
+        if (forrige is not null && ErUendretSidenForrige(forrige, linjer))
+        {
+            _pdfSavedMessage = "Ingen endringer siden forrige lagring.";
+            return;
+        }
+
+        var etikett = _valgteByggetrinn.Count == 0 ? "" : $" ({string.Join(", ", _valgteByggetrinn)})";
+        var pdf = await LagretPdfService.LagreAsync(
+            "Plukkliste", Id, $"Plukkliste - {_prosjekt!.Navn}{etikett} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes, linjer);
+
+        _lagredePdfer.Add(pdf);
+        _pdfSavedMessage = "PDF-en er lagret nedenfor.";
+    }
+
+    private static bool ErUendretSidenForrige(LagretPdf forrige, List<LagretPdfLinje> nyLinjer)
+    {
+        if (string.IsNullOrEmpty(forrige.DataJson))
+        {
+            return false;
+        }
+
+        var gamleLinjer = JsonSerializer.Deserialize<List<LagretPdfLinje>>(forrige.DataJson) ?? [];
+        return gamleLinjer.Count == nyLinjer.Count
+            && gamleLinjer.OrderBy(l => l.Navn).SequenceEqual(nyLinjer.OrderBy(l => l.Navn));
     }
 
     private async Task VelgAlleByggetrinn(bool valgt)
@@ -151,6 +199,7 @@ else
             .Distinct()
             .ToListAsync();
         _byggetrinnListe = ByggetrinnHelper.Sorter(byggetrinnFraPlantegninger).ToList();
+        _lagredePdfer = await LagretPdfService.HentAsync("Plukkliste", Id);
 
         await LastRader();
     }

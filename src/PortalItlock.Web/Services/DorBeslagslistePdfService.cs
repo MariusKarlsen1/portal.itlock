@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PortalItlock.Web.Data;
+using PortalItlock.Web.Models;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -8,6 +9,25 @@ namespace PortalItlock.Web.Services;
 
 public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
+    public async Task<List<LagretPdfLinje>> GetSnapshotLinjerAsync(int prosjektId, string? byggetrinn = null)
+    {
+        var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
+
+        var dorer = await db.Dorer
+            .Where(d => d.ProsjektId == prosjektId
+                && (valgteByggetrinn == null || (d.Plantegning != null && valgteByggetrinn.Contains(d.Plantegning.Byggetrinn))))
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component)
+            .ToListAsync();
+
+        return dorer
+            .SelectMany(d => d.Komponenter)
+            .Where(k => k.Component is not null)
+            .GroupBy(k => k.Component!.Navn)
+            .Select(g => new LagretPdfLinje(g.Key, g.Sum(x => x.Antall), null))
+            .OrderBy(l => l.Navn)
+            .ToList();
+    }
+
     public async Task<byte[]?> GenerateAsync(int prosjektId, string? byggetrinn = null)
     {
         var prosjekt = await db.Prosjekter.FindAsync(prosjektId);

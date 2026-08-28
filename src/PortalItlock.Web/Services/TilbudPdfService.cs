@@ -19,10 +19,9 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     private const string FirmaKontaktperson = "Marius Karlsen";
     private const decimal MvaSats = 0.25m;
 
-    public async Task<byte[]?> GenerateAsync(int tilbudId)
+    public async Task<List<LagretPdfLinje>?> GetSnapshotLinjerAsync(int tilbudId)
     {
         var tilbud = await db.Tilbud
-            .Include(t => t.Prosjekt)
             .Include(t => t.Linjer).ThenInclude(l => l.Component).ThenInclude(c => c!.Type)
             .FirstOrDefaultAsync(t => t.Id == tilbudId);
 
@@ -31,6 +30,14 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             return null;
         }
 
+        var linjer = await BuildLinjerAsync(tilbud);
+        return linjer
+            .Select(l => new LagretPdfLinje(l.Navn, l.Antall, l.LevertAv == LevertAv.F ? l.Utpris : null))
+            .ToList();
+    }
+
+    private async Task<List<TilbudLinje>> BuildLinjerAsync(Tilbud tilbud)
+    {
         var valgteByggetrinn = string.IsNullOrWhiteSpace(tilbud.ByggetrinnFilter)
             ? null
             : tilbud.ByggetrinnFilter.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
@@ -68,6 +75,27 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 .Where(l => l.ComponentId is null || l.Antall > 0)
                 .ToList();
         }
+
+        return linjer;
+    }
+
+    public async Task<byte[]?> GenerateAsync(int tilbudId)
+    {
+        var tilbud = await db.Tilbud
+            .Include(t => t.Prosjekt)
+            .Include(t => t.Linjer).ThenInclude(l => l.Component).ThenInclude(c => c!.Type)
+            .FirstOrDefaultAsync(t => t.Id == tilbudId);
+
+        if (tilbud is null)
+        {
+            return null;
+        }
+
+        var valgteByggetrinn = string.IsNullOrWhiteSpace(tilbud.ByggetrinnFilter)
+            ? null
+            : tilbud.ByggetrinnFilter.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+
+        var linjer = await BuildLinjerAsync(tilbud);
 
         var visRabatt = linjer.Any(l => l.RabattProsent > 0);
         var utprisVarer = linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Utpris * l.Antall);

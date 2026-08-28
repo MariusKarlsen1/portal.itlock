@@ -5,8 +5,11 @@
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
+@using System.Text.Json
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject TilbudPdfService TilbudPdfService
+@inject LagretPdfService LagretPdfService
 
 <PageTitle>@(_tilbud?.Tittel ?? "Tilbud")</PageTitle>
 
@@ -319,7 +322,13 @@ else if (_tilbud is not null)
         }
     </section>
 
-    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av tilbud" OnClose="@(() => _pdfPreviewUrl = null)" />
+    <section class="tilbud-section">
+        <h2>Lagrede PDF-er</h2>
+        <LagredePdfListe Pdfer="_lagredePdfer" />
+    </section>
+
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av tilbud" SaveMessage="@_pdfSavedMessage"
+                      OnSave="LagreTilbudPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
 }
 
 @code {
@@ -349,6 +358,8 @@ else if (_tilbud is not null)
     private List<string> _byggetrinnListe = [];
     private int? _valgtForsideMalId;
     private int _antallVersjoner;
+    private List<LagretPdf> _lagredePdfer = [];
+    private string? _pdfSavedMessage;
 
     private decimal Varekost => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Innpris * l.Antall) ?? 0;
     private decimal UtprisVarer => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Utpris * l.Antall) ?? 0;
@@ -404,6 +415,7 @@ else if (_tilbud is not null)
             : (await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.TilbudId == _tilbud.Id))?.Id;
 
         _antallVersjoner = await Db.TilbudRevisjoner.CountAsync(r => r.TilbudId == Id);
+        _lagredePdfer = await LagretPdfService.HentAsync("Tilbud", Id);
     }
 
     private async Task OpprettArbeidsordre()
@@ -641,16 +653,17 @@ else if (_tilbud is not null)
         _tilbud!.OppdatertDato = DateTime.UtcNow;
         await Db.SaveChangesAsync();
         await LagreRevisjonAsync();
+        _pdfSavedMessage = null;
         _pdfPreviewUrl = $"/tilbud/{Id}/pdf?v={DateTime.UtcNow.Ticks}";
         _visGenerer = false;
     }
 
     private async Task LagreRevisjonAsync()
     {
-        var sisteVersjon = await Db.TilbudRevisjoner
+        var siste = await Db.TilbudRevisjoner
             .Where(r => r.TilbudId == Id)
-            .Select(r => (int?)r.Versjonsnummer)
-            .MaxAsync() ?? 0;
+            .OrderByDescending(r => r.Versjonsnummer)
+            .FirstOrDefaultAsync();
 
         var linjer = _tilbud!.Linjer.Select(l => new TilbudLinjeSnapshot
         {
@@ -663,19 +676,71 @@ else if (_tilbud is not null)
             LevertAv = l.LevertAv,
             RabattProsent = l.RabattProsent,
         }).ToList();
+        var linjerJson = JsonSerializer.Serialize(linjer);
+
+        var uendret = siste is not null
+            && siste.Tittel == _tilbud.Tittel
+            && siste.PrisType == _tilbud.PrisType
+            && siste.Prosentsats == _tilbud.Prosentsats
+            && siste.Timepris == _tilbud.Timepris
+            && siste.Montasjekost == _tilbud.Montasjekost
+            && siste.LinjerJson == linjerJson;
+
+        if (uendret)
+        {
+            return;
+        }
+
+        var nyttVersjonsnummer = (siste?.Versjonsnummer ?? 0) + 1;
 
         Db.TilbudRevisjoner.Add(new TilbudRevisjon
         {
             TilbudId = Id,
-            Versjonsnummer = sisteVersjon + 1,
+            Versjonsnummer = nyttVersjonsnummer,
             Tittel = _tilbud.Tittel,
             PrisType = _tilbud.PrisType,
             Prosentsats = _tilbud.Prosentsats,
             Timepris = _tilbud.Timepris,
             Montasjekost = _tilbud.Montasjekost,
-            LinjerJson = System.Text.Json.JsonSerializer.Serialize(linjer),
+            LinjerJson = linjerJson,
         });
         await Db.SaveChangesAsync();
-        _antallVersjoner = sisteVersjon + 1;
+        _antallVersjoner = nyttVersjonsnummer;
+    }
+
+    private async Task LagreTilbudPdf()
+    {
+        var bytes = await TilbudPdfService.GenerateAsync(Id);
+        if (bytes is null || _tilbud is null)
+        {
+            return;
+        }
+
+        var linjer = await TilbudPdfService.GetSnapshotLinjerAsync(Id);
+        var forrige = _lagredePdfer.OrderByDescending(p => p.OpprettetDato).FirstOrDefault();
+
+        if (forrige is not null && linjer is not null && ErUendretSidenForrige(forrige, linjer))
+        {
+            _pdfSavedMessage = "Ingen endringer siden forrige lagring.";
+            return;
+        }
+
+        var pdf = await LagretPdfService.LagreAsync(
+            "Tilbud", Id, $"Tilbud - {_tilbud.Tittel} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes, linjer);
+
+        _lagredePdfer.Add(pdf);
+        _pdfSavedMessage = "PDF-en er lagret nedenfor.";
+    }
+
+    private static bool ErUendretSidenForrige(LagretPdf forrige, List<LagretPdfLinje> nyLinjer)
+    {
+        if (string.IsNullOrEmpty(forrige.DataJson))
+        {
+            return false;
+        }
+
+        var gamleLinjer = JsonSerializer.Deserialize<List<LagretPdfLinje>>(forrige.DataJson) ?? [];
+        return gamleLinjer.Count == nyLinjer.Count
+            && gamleLinjer.OrderBy(l => l.Navn).SequenceEqual(nyLinjer.OrderBy(l => l.Navn));
     }
 }

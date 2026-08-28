@@ -7,9 +7,12 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@inject KoblingsSkjemaPdfService PdfService
+@inject LagretPdfService LagretPdfService
 
 <PageTitle>@(_skjema?.Navn is null ? "Koblingsskjema" : _skjema.Navn)</PageTitle>
 
@@ -30,6 +33,9 @@ else if (_skjema is not null)
     }
 
     <button type="button" class="cancel-button" @onclick="VisPdfForhandsvisning">Forhåndsvis PDF</button>
+
+    <h2>Lagrede PDF-er</h2>
+    <LagredePdfListe Pdfer="_lagredePdfer" />
 
     <AuthorizeView Roles="Admin">
         <div class="kobling-toolbar">
@@ -270,7 +276,8 @@ else if (_skjema is not null)
         }
     </div>
 
-    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av koblingsskjema" OnClose="@(() => _pdfPreviewUrl = null)" />
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av koblingsskjema" SaveMessage="@_pdfSavedMessage"
+                      OnSave="LagreKoblingsskjemaPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
 }
 
 @code {
@@ -289,6 +296,8 @@ else if (_skjema is not null)
     private KoblingsSymbol? _selectedSymbol;
     private readonly HashSet<int> _valgteSymbolIds = [];
     private string? _pdfPreviewUrl;
+    private List<LagretPdf> _lagredePdfer = [];
+    private string? _pdfSavedMessage;
 
     private sealed class KoblingsSnapshot
     {
@@ -339,6 +348,7 @@ else if (_skjema is not null)
 
         _valgtProsjektId = _skjema.ProsjektId?.ToString() ?? "";
         _prosjekter = await Db.Prosjekter.OrderBy(p => p.Navn).ToListAsync();
+        _lagredePdfer = await LagretPdfService.HentAsync("Koblingsskjema", Id);
 
         _symboler = await Db.KoblingsSymboler
             .Where(s => s.KoblingsSkjemaId == Id)
@@ -406,7 +416,28 @@ else if (_skjema is not null)
             return;
         }
 
+        _pdfSavedMessage = null;
         _pdfPreviewUrl = $"/koblingsskjema/{_skjema.Id}/pdf?v={DateTime.UtcNow.Ticks}";
+    }
+
+    private async Task LagreKoblingsskjemaPdf()
+    {
+        if (_skjema is null)
+        {
+            return;
+        }
+
+        var bytes = await PdfService.GenerateAsync(_skjema.Id);
+        if (bytes is null)
+        {
+            return;
+        }
+
+        var pdf = await LagretPdfService.LagreAsync(
+            "Koblingsskjema", _skjema.Id, $"Koblingsskjema - {_skjema.Navn} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes);
+
+        _lagredePdfer.Add(pdf);
+        _pdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
     private async Task LagreProsjektKobling()

@@ -9,6 +9,9 @@
 @using SkiaSharp
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject FdvPdfService FdvPdfService
+@inject DorBeslagslistePdfService BeslagslistePdfService
+@inject LagretPdfService LagretPdfService
 
 <PageTitle>@(Id.HasValue ? _form.Navn : "Nytt prosjekt")</PageTitle>
 
@@ -595,7 +598,11 @@ else
                 <button type="button" class="add-button" @onclick="GenererFdv">Generer FDV</button>
             }
 
-            <PdfPreviewModal Url="@_fdvPreviewUrl" Tittel="Forhåndsvisning av FDV" OnClose="@(() => _fdvPreviewUrl = null)" />
+            <h2>Lagrede PDF-er</h2>
+            <LagredePdfListe Pdfer="_lagredeFdvPdfer" />
+
+            <PdfPreviewModal Url="@_fdvPreviewUrl" Tittel="Forhåndsvisning av FDV" SaveMessage="@_fdvPdfSavedMessage"
+                              OnSave="LagreFdvPdf" OnClose="@(() => _fdvPreviewUrl = null)" />
         </div>
     }
     else if (_activeTab == "dorid")
@@ -721,7 +728,12 @@ else
                 <a class="cancel-button" href="@($"/prosjekt/{Id}/plukkliste")">Åpne plukkliste</a>
                 <a class="cancel-button" href="@($"/prosjekt/{Id}/produktsammendrag")">Produktsammendrag</a>
             </div>
-            <PdfPreviewModal Url="@_beslagslistePreviewUrl" Tittel="Beslagsliste" OnClose="@(() => _beslagslistePreviewUrl = null)" />
+
+            <h2>Lagrede PDF-er</h2>
+            <LagredePdfListe Pdfer="_lagredeBeslagslistePdfer" TillatSammenligning="true" />
+
+            <PdfPreviewModal Url="@_beslagslistePreviewUrl" Tittel="Beslagsliste" SaveMessage="@_beslagslistePdfSavedMessage"
+                              OnSave="LagreBeslagslistePdf" OnClose="@(() => _beslagslistePreviewUrl = null)" />
         </div>
     }
     else if (_activeTab == "lasplan")
@@ -991,6 +1003,10 @@ else
     private List<Bruker> _alleBrukere = [];
     private int? _valgtNyttMedlemId;
     private string? _beslagslistePreviewUrl;
+    private List<LagretPdf> _lagredeFdvPdfer = [];
+    private string? _fdvPdfSavedMessage;
+    private List<LagretPdf> _lagredeBeslagslistePdfer = [];
+    private string? _beslagslistePdfSavedMessage;
     private List<TilbudForside> _forsideMaler = [];
     private int? _valgtFdvForsideMalId;
 
@@ -1123,6 +1139,9 @@ else
                 .Where(v => v.ProsjektId == Id.Value)
                 .OrderBy(v => v.Navn)
                 .ToListAsync();
+
+            _lagredeFdvPdfer = await LagretPdfService.HentAsync("Fdv", Id.Value);
+            _lagredeBeslagslistePdfer = await LagretPdfService.HentAsync("Beslagsliste", Id.Value);
         }
         else
         {
@@ -1510,7 +1529,30 @@ else
     private void GenererFdv()
     {
         var byggetrinnParam = _valgteByggetrinn.Count == 0 ? "" : $"&byggetrinn={Uri.EscapeDataString(string.Join(",", _valgteByggetrinn))}";
+        _fdvPdfSavedMessage = null;
         _fdvPreviewUrl = $"/prosjekt/{Id}/fdv/pdf?v={DateTime.UtcNow.Ticks}{byggetrinnParam}";
+    }
+
+    private async Task LagreFdvPdf()
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        var byggetrinn = _valgteByggetrinn.Count == 0 ? null : string.Join(",", _valgteByggetrinn);
+        var bytes = await FdvPdfService.GenerateAsync(Id.Value, byggetrinn);
+        if (bytes is null)
+        {
+            return;
+        }
+
+        var etikett = _valgteByggetrinn.Count == 0 ? "" : $" ({string.Join(", ", _valgteByggetrinn)})";
+        var pdf = await LagretPdfService.LagreAsync(
+            "Fdv", Id.Value, $"FDV - {_form.Navn}{etikett} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes);
+
+        _lagredeFdvPdfer.Add(pdf);
+        _fdvPdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
     private void VelgAlleByggetrinn(bool valgt)
@@ -1674,7 +1716,51 @@ else
     private void GenererBeslagsliste()
     {
         var byggetrinnParam = _valgteByggetrinn.Count == 0 ? "" : $"&byggetrinn={Uri.EscapeDataString(string.Join(",", _valgteByggetrinn))}";
+        _beslagslistePdfSavedMessage = null;
         _beslagslistePreviewUrl = $"/prosjekt/{Id}/beslagsliste/pdf?v={DateTime.UtcNow.Ticks}{byggetrinnParam}";
+    }
+
+    private async Task LagreBeslagslistePdf()
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        var byggetrinn = _valgteByggetrinn.Count == 0 ? null : string.Join(",", _valgteByggetrinn);
+        var bytes = await BeslagslistePdfService.GenerateAsync(Id.Value, byggetrinn);
+        if (bytes is null)
+        {
+            return;
+        }
+
+        var linjer = await BeslagslistePdfService.GetSnapshotLinjerAsync(Id.Value, byggetrinn);
+        var forrige = _lagredeBeslagslistePdfer.OrderByDescending(p => p.OpprettetDato).FirstOrDefault();
+
+        if (forrige is not null && ErUendretSidenForrige(forrige, linjer))
+        {
+            _beslagslistePdfSavedMessage = "Ingen endringer siden forrige lagring.";
+            return;
+        }
+
+        var etikett = _valgteByggetrinn.Count == 0 ? "" : $" ({string.Join(", ", _valgteByggetrinn)})";
+        var pdf = await LagretPdfService.LagreAsync(
+            "Beslagsliste", Id.Value, $"Beslagsliste - {_form.Navn}{etikett} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes, linjer);
+
+        _lagredeBeslagslistePdfer.Add(pdf);
+        _beslagslistePdfSavedMessage = "PDF-en er lagret nedenfor.";
+    }
+
+    private static bool ErUendretSidenForrige(LagretPdf forrige, List<LagretPdfLinje> nyLinjer)
+    {
+        if (string.IsNullOrEmpty(forrige.DataJson))
+        {
+            return false;
+        }
+
+        var gamleLinjer = System.Text.Json.JsonSerializer.Deserialize<List<LagretPdfLinje>>(forrige.DataJson) ?? [];
+        return gamleLinjer.Count == nyLinjer.Count
+            && gamleLinjer.OrderBy(l => l.Navn).SequenceEqual(nyLinjer.OrderBy(l => l.Navn));
     }
 
     private static string FriBreddeValue(bool? verdi) => verdi switch

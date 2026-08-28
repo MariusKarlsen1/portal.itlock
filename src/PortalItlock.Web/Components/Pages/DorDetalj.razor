@@ -6,8 +6,11 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject IJSRuntime JS
+@inject AvvikPdfService AvvikPdfService
+@inject LagretPdfService LagretPdfService
 
 <PageTitle>Dør @(_dor?.Dornummer)</PageTitle>
 
@@ -190,7 +193,7 @@ else
                                         <textarea @bind="a.UtbedringBeskrivelse" placeholder="Foreslått utbedring (valgfritt)"></textarea>
                                         <input @bind="a.Pris" placeholder="Pris eks. mva" class="price-input" />
                                         <button type="button" class="save-button" @onclick="@(() => LagreAvvikPris(a))">Lagre</button>
-                                        <button type="button" class="edit-button" @onclick="@(() => _pdfPreviewUrl = $"/avvik/{a.Id}/pdf")">Forhåndsvis PDF</button>
+                                        <button type="button" class="edit-button" @onclick="@(() => VisAvvikPdf(a.Id))">Forhåndsvis PDF</button>
                                         <button type="button" class="edit-button" disabled="@(!a.Pris.HasValue)" @onclick="@(() => SendTilKunde(a))">Send til kunde</button>
                                     </div>
                                 }
@@ -200,7 +203,7 @@ else
                                     {
                                         <p><strong>Pris for utbedring:</strong> @a.Pris.Value.ToString("N2", Kultur) kr eks. mva</p>
                                     }
-                                    <button type="button" class="edit-button" @onclick="@(() => _pdfPreviewUrl = $"/avvik/{a.Id}/pdf")">Vis PDF</button>
+                                    <button type="button" class="edit-button" @onclick="@(() => VisAvvikPdf(a.Id))">Vis PDF</button>
                                 }
                             </Authorized>
                         </AuthorizeView>
@@ -209,6 +212,14 @@ else
                         {
                             <p class="save-success">Godkjent av @a.SignertAvNavn - @a.SignertDato?.ToString("dd.MM.yyyy HH:mm")</p>
                         }
+
+                        <AuthorizeView Roles="Admin,Prosjektleder">
+                            <Authorized>
+                                <div class="avvik-pdfliste">
+                                    <LagredePdfListe Pdfer="@_lagredePdfer.GetValueOrDefault(a.Id, [])" />
+                                </div>
+                            </Authorized>
+                        </AuthorizeView>
                     </div>
                 }
             </div>
@@ -223,7 +234,8 @@ else
             <p class="form-error">@_avvikFeil</p>
         }
 
-        <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Avvik" OnClose="@(() => _pdfPreviewUrl = null)" />
+        <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Avvik" SaveMessage="@_pdfSavedMessage"
+                          OnSave="LagreAvvikPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
     </section>
 
     <section class="dor-section">
@@ -258,6 +270,9 @@ else
     private string _nyAvvikBeskrivelse = "";
     private string? _avvikFeil;
     private string? _pdfPreviewUrl;
+    private string? _pdfSavedMessage;
+    private int? _aktivAvvikId;
+    private Dictionary<int, List<LagretPdf>> _lagredePdfer = [];
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -294,6 +309,12 @@ else
         _media = await Db.DorMedia.Where(m => m.DorId == Id).OrderByDescending(m => m.OpprettetDato).ToListAsync();
         _avvik = await Db.Avvik.Where(a => a.DorId == Id).Include(a => a.OpprettetAvBruker)
             .OrderByDescending(a => a.OpprettetDato).ToListAsync();
+
+        _lagredePdfer = [];
+        foreach (var a in _avvik)
+        {
+            _lagredePdfer[a.Id] = await LagretPdfService.HentAsync("Avvik", a.Id);
+        }
 
         var sylinderKomponenter = _dor.Komponenter.Where(k => k.Component?.ErSylinder == true).ToList();
         var componentIder = sylinderKomponenter.Select(k => k.ComponentId).ToList();
@@ -391,6 +412,38 @@ else
         entitet.UtbedringBeskrivelse = string.IsNullOrWhiteSpace(avvik.UtbedringBeskrivelse) ? null : avvik.UtbedringBeskrivelse.Trim();
         entitet.Pris = avvik.Pris;
         await Db.SaveChangesAsync();
+    }
+
+    private void VisAvvikPdf(int avvikId)
+    {
+        _aktivAvvikId = avvikId;
+        _pdfSavedMessage = null;
+        _pdfPreviewUrl = $"/avvik/{avvikId}/pdf";
+    }
+
+    private async Task LagreAvvikPdf()
+    {
+        if (_aktivAvvikId is not { } avvikId)
+        {
+            return;
+        }
+
+        var bytes = await AvvikPdfService.GenerateAsync(avvikId);
+        if (bytes is null)
+        {
+            return;
+        }
+
+        var pdf = await LagretPdfService.LagreAsync(
+            "Avvik", avvikId, $"Avvik - {_dor?.Dornummer} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes);
+
+        if (!_lagredePdfer.TryGetValue(avvikId, out var liste))
+        {
+            liste = [];
+            _lagredePdfer[avvikId] = liste;
+        }
+        liste.Add(pdf);
+        _pdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
     private async Task SendTilKunde(Avvik avvik)

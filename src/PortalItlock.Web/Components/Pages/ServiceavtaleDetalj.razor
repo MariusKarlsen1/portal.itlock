@@ -6,7 +6,10 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject ServicerapportPdfService PdfService
+@inject LagretPdfService LagretPdfService
 
 <PageTitle>@(_prosjekt?.Navn ?? "Serviceavtale")</PageTitle>
 
@@ -145,7 +148,7 @@ else if (_prosjekt is not null)
                         {
                             <span class="runde-utfortav">@r.UtfortAvNavn</span>
                         }
-                        <button type="button" class="add-button" @onclick="@(() => _pdfPreviewUrl = $"/servicerunde/{r.Id}/pdf")">Generer rapport</button>
+                        <button type="button" class="add-button" @onclick="@(() => VisRapportForhandsvisning(r.Id))">Generer rapport</button>
                     </div>
                     <p class="runde-tekst">@r.StatusBeskrivelse</p>
                     @if (!string.IsNullOrWhiteSpace(r.Anbefalinger))
@@ -214,12 +217,18 @@ else if (_prosjekt is not null)
                             </ul>
                         </div>
                     }
+
+                    <div class="runde-pdfliste">
+                        <strong>Lagrede PDF-er</strong>
+                        <LagredePdfListe Pdfer="@_lagredePdfer.GetValueOrDefault(r.Id, [])" />
+                    </div>
                 </div>
             }
         }
     </section>
 
-    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av servicerapport" OnClose="@(() => _pdfPreviewUrl = null)" />
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av servicerapport" SaveMessage="@_pdfSavedMessage"
+                      OnSave="LagreServicerapportPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
 }
 
 @code {
@@ -288,6 +297,9 @@ else if (_prosjekt is not null)
     private List<RundeRad> _runder = [];
     private string? _savedMessage;
     private string? _pdfPreviewUrl;
+    private string? _pdfSavedMessage;
+    private int? _aktivRundeId;
+    private Dictionary<int, List<LagretPdf>> _lagredePdfer = [];
 
     private DateOnly _nyDato = DateOnly.FromDateTime(DateTime.Today);
     private string _nyStatusBeskrivelse = "";
@@ -401,6 +413,45 @@ else if (_prosjekt is not null)
                 BildeIder = r.Media.Select(m => m.Id).ToList()
             })
             .ToListAsync();
+
+        _lagredePdfer = [];
+        foreach (var r in _runder)
+        {
+            _lagredePdfer[r.Id] = await LagretPdfService.HentAsync("Servicerunde", r.Id);
+        }
+    }
+
+    private void VisRapportForhandsvisning(int rundeId)
+    {
+        _aktivRundeId = rundeId;
+        _pdfSavedMessage = null;
+        _pdfPreviewUrl = $"/servicerunde/{rundeId}/pdf";
+    }
+
+    private async Task LagreServicerapportPdf()
+    {
+        if (_aktivRundeId is not { } rundeId)
+        {
+            return;
+        }
+
+        var bytes = await PdfService.GenerateAsync(rundeId);
+        if (bytes is null)
+        {
+            return;
+        }
+
+        var runde = _runder.FirstOrDefault(r => r.Id == rundeId);
+        var pdf = await LagretPdfService.LagreAsync(
+            "Servicerunde", rundeId, $"Servicerapport - {runde?.Dato.ToString("dd.MM.yyyy")} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes);
+
+        if (!_lagredePdfer.TryGetValue(rundeId, out var liste))
+        {
+            liste = [];
+            _lagredePdfer[rundeId] = liste;
+        }
+        liste.Add(pdf);
+        _pdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
     private void LeggTilDelRad()
