@@ -67,7 +67,10 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     // Left-button hold + drag on empty canvas pans the drawing. Markers
     // handle their own left-button drag (to reposition) and stop the
     // event from reaching here, so this only fires for background drags.
-    const dragThreshold = 4;
+    // Threshold is generous because a real click (e.g. placing new utstyr/dør)
+    // almost always has a few px of hand jitter between press and release -
+    // too low a threshold misclassifies that as a pan and silently eats the click.
+    const dragThreshold = 12;
     let panning = false;
     let moved = false;
     let startX = 0;
@@ -205,6 +208,10 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
     });
 }
 
+export function setUtstyrPlacing(containerEl, placing) {
+    containerEl.dataset.placing = placing ? '1' : '0';
+}
+
 export function attachUtstyrMarkers(containerEl, dotNetRef, locked) {
     const markers = containerEl.querySelectorAll('.utstyr-marker[data-utstyrid]');
 
@@ -222,6 +229,12 @@ export function attachUtstyrMarkers(containerEl, dotNetRef, locked) {
         let startY = 0;
 
         markerEl.addEventListener('click', (e) => {
+            // While placing new utstyr, let the click fall through to the canvas so it
+            // places the new item - otherwise clicking near an existing marker silently
+            // selects it instead, and the user's "legg til" click appears to do nothing.
+            if (containerEl.dataset.placing === '1') {
+                return;
+            }
             e.stopPropagation();
         });
 
@@ -232,6 +245,9 @@ export function attachUtstyrMarkers(containerEl, dotNetRef, locked) {
 
         markerEl.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) {
+                return;
+            }
+            if (containerEl.dataset.placing === '1') {
                 return;
             }
             e.preventDefault();

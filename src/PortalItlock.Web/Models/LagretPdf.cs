@@ -20,4 +20,5 @@ public class LagretPdf
 
 public record LagretPdfLinje(string Navn, int Antall, decimal? Pris);
 
-public record LagretPdfNokkeltall(string Navn, string Verdi);
+/// Tall/Enhet brukes til å beregne og vise differansen ved sammenligning (f.eks. "+1,2 t" eller "−1 746 kr").
+public record LagretPdfNokkeltall(string Navn, string Verdi, decimal Tall = 0, string Enhet = "");

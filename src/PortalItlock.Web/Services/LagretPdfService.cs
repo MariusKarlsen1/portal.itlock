@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PortalItlock.Web.Data;
@@ -9,7 +10,8 @@ public enum LagretPdfEndringType { LagtTil, Fjernet, Endret }
 
 public record LagretPdfEndring(string Navn, LagretPdfEndringType Type, int GammelAntall, int NyAntall, decimal? GammelPris, decimal? NyPris);
 
-public record LagretPdfNokkeltallEndring(string Navn, string GammelVerdi, string NyVerdi);
+/// Retning: 1 = økt, -1 = redusert, 0 = ny/uten sammenligningsgrunnlag.
+public record LagretPdfNokkeltallEndring(string Navn, string GammelVerdi, string NyVerdi, string DeltaTekst, int Retning);
 
 public class LagretPdfService(ApplicationDbContext db)
 {
@@ -84,22 +86,54 @@ public class LagretPdfService(ApplicationDbContext db)
             ? []
             : JsonSerializer.Deserialize<List<LagretPdfNokkeltall>>(ny.NokkeltallJson) ?? [];
 
-        var gammelPerNavn = gammelNokkeltall.ToDictionary(n => n.Navn, n => n.Verdi);
-        var nyPerNavn = nyNokkeltall.ToDictionary(n => n.Navn, n => n.Verdi);
+        var gammelPerNavn = gammelNokkeltall.ToDictionary(n => n.Navn);
 
         var endringer = new List<LagretPdfNokkeltallEndring>();
 
-        foreach (var navn in nyNokkeltall.Select(n => n.Navn))
+        foreach (var n in nyNokkeltall)
         {
-            var gammelVerdi = gammelPerNavn.GetValueOrDefault(navn, "-");
-            var nyVerdi = nyPerNavn.GetValueOrDefault(navn, "-");
+            var harGammel = gammelPerNavn.TryGetValue(n.Navn, out var g);
+            var gammelVerdi = harGammel ? g!.Verdi : "-";
 
-            if (gammelVerdi != nyVerdi)
+            if (harGammel && g!.Verdi == n.Verdi)
             {
-                endringer.Add(new LagretPdfNokkeltallEndring(navn, gammelVerdi, nyVerdi));
+                continue;
             }
+
+            if (!harGammel)
+            {
+                endringer.Add(new LagretPdfNokkeltallEndring(n.Navn, gammelVerdi, n.Verdi, "ny", 0));
+                continue;
+            }
+
+            var harTallgrunnlag = n.Tall != 0 || g!.Tall != 0 || !string.IsNullOrEmpty(n.Enhet) || !string.IsNullOrEmpty(g.Enhet);
+            if (!harTallgrunnlag)
+            {
+                // Eldre lagrede versjoner (før tall/enhet ble sporet) - vi vet verdien endret seg, men ikke retning/størrelse.
+                endringer.Add(new LagretPdfNokkeltallEndring(n.Navn, gammelVerdi, n.Verdi, "endret", 0));
+                continue;
+            }
+
+            var delta = n.Tall - g!.Tall;
+            var retning = delta > 0 ? 1 : delta < 0 ? -1 : 0;
+            endringer.Add(new LagretPdfNokkeltallEndring(n.Navn, gammelVerdi, n.Verdi, FormatDelta(delta, n.Enhet), retning));
         }
 
         return endringer;
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private static string FormatDelta(decimal delta, string enhet)
+    {
+        if (delta == 0)
+        {
+            return "uendret";
+        }
+
+        var fortegn = delta > 0 ? "+" : "−";
+        var format = enhet == "kr" ? "N0" : "N1";
+        var tall = Math.Abs(delta).ToString(format, Kultur);
+        return string.IsNullOrEmpty(enhet) ? $"{fortegn}{tall}" : $"{fortegn}{tall} {enhet}";
     }
 }
