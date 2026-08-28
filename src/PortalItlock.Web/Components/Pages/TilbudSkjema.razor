@@ -261,10 +261,6 @@ else if (_tilbud is not null)
     <section class="tilbud-section">
         <button type="button" class="save-button" @onclick="@(() => _visGenerer = !_visGenerer)">Generer tilbud</button>
         <a class="cancel-button" href="@($"/tilbud/{Id}/tripletex-csv")" target="_blank">Eksporter til Tripletex (CSV)</a>
-        @if (_antallVersjoner > 0)
-        {
-            <a class="cancel-button" href="@($"/tilbud/{Id}/versjoner")">Versjonshistorikk (@_antallVersjoner)</a>
-        }
 
         @if (_visGenerer)
         {
@@ -324,7 +320,7 @@ else if (_tilbud is not null)
 
     <section class="tilbud-section">
         <h2>Lagrede PDF-er</h2>
-        <LagredePdfListe Pdfer="_lagredePdfer" />
+        <LagredePdfListe Pdfer="_lagredePdfer" TillatSammenligning="true" />
     </section>
 
     <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av tilbud" SaveMessage="@_pdfSavedMessage"
@@ -357,7 +353,6 @@ else if (_tilbud is not null)
     private List<TilbudForside> _forsideMaler = [];
     private List<string> _byggetrinnListe = [];
     private int? _valgtForsideMalId;
-    private int _antallVersjoner;
     private List<LagretPdf> _lagredePdfer = [];
     private string? _pdfSavedMessage;
 
@@ -414,7 +409,6 @@ else if (_tilbud is not null)
             ? null
             : (await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.TilbudId == _tilbud.Id))?.Id;
 
-        _antallVersjoner = await Db.TilbudRevisjoner.CountAsync(r => r.TilbudId == Id);
         _lagredePdfer = await LagretPdfService.HentAsync("Tilbud", Id);
     }
 
@@ -652,60 +646,9 @@ else if (_tilbud is not null)
     {
         _tilbud!.OppdatertDato = DateTime.UtcNow;
         await Db.SaveChangesAsync();
-        await LagreRevisjonAsync();
         _pdfSavedMessage = null;
         _pdfPreviewUrl = $"/tilbud/{Id}/pdf?v={DateTime.UtcNow.Ticks}";
         _visGenerer = false;
-    }
-
-    private async Task LagreRevisjonAsync()
-    {
-        var siste = await Db.TilbudRevisjoner
-            .Where(r => r.TilbudId == Id)
-            .OrderByDescending(r => r.Versjonsnummer)
-            .FirstOrDefaultAsync();
-
-        var linjer = _tilbud!.Linjer.Select(l => new TilbudLinjeSnapshot
-        {
-            LinjeId = l.Id,
-            Navn = l.Navn,
-            Innpris = l.Innpris,
-            Utpris = l.Utpris,
-            Antall = l.Antall,
-            Enhet = l.Enhet,
-            LevertAv = l.LevertAv,
-            RabattProsent = l.RabattProsent,
-        }).ToList();
-        var linjerJson = JsonSerializer.Serialize(linjer);
-
-        var uendret = siste is not null
-            && siste.Tittel == _tilbud.Tittel
-            && siste.PrisType == _tilbud.PrisType
-            && siste.Prosentsats == _tilbud.Prosentsats
-            && siste.Timepris == _tilbud.Timepris
-            && siste.Montasjekost == _tilbud.Montasjekost
-            && siste.LinjerJson == linjerJson;
-
-        if (uendret)
-        {
-            return;
-        }
-
-        var nyttVersjonsnummer = (siste?.Versjonsnummer ?? 0) + 1;
-
-        Db.TilbudRevisjoner.Add(new TilbudRevisjon
-        {
-            TilbudId = Id,
-            Versjonsnummer = nyttVersjonsnummer,
-            Tittel = _tilbud.Tittel,
-            PrisType = _tilbud.PrisType,
-            Prosentsats = _tilbud.Prosentsats,
-            Timepris = _tilbud.Timepris,
-            Montasjekost = _tilbud.Montasjekost,
-            LinjerJson = linjerJson,
-        });
-        await Db.SaveChangesAsync();
-        _antallVersjoner = nyttVersjonsnummer;
     }
 
     private async Task LagreTilbudPdf()
@@ -717,22 +660,29 @@ else if (_tilbud is not null)
         }
 
         var linjer = await TilbudPdfService.GetSnapshotLinjerAsync(Id);
+        var nokkeltall = new List<LagretPdfNokkeltall>
+        {
+            new("Estimert timer", EstimertArbeidstidTimer.ToString("N1", Kultur)),
+            new("Montasjekost", FormatKr(Montasjekost)),
+            new("Totalt uten mva", FormatKr(TotaltUtenMva)),
+        };
+
         var forrige = _lagredePdfer.OrderByDescending(p => p.OpprettetDato).FirstOrDefault();
 
-        if (forrige is not null && linjer is not null && ErUendretSidenForrige(forrige, linjer))
+        if (forrige is not null && linjer is not null && ErUendretSidenForrige(forrige, linjer, nokkeltall))
         {
             _pdfSavedMessage = "Ingen endringer siden forrige lagring.";
             return;
         }
 
         var pdf = await LagretPdfService.LagreAsync(
-            "Tilbud", Id, $"Tilbud - {_tilbud.Tittel} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes, linjer);
+            "Tilbud", Id, $"Tilbud - {_tilbud.Tittel} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes, linjer, nokkeltall);
 
         _lagredePdfer.Add(pdf);
         _pdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
-    private static bool ErUendretSidenForrige(LagretPdf forrige, List<LagretPdfLinje> nyLinjer)
+    private static bool ErUendretSidenForrige(LagretPdf forrige, List<LagretPdfLinje> nyLinjer, List<LagretPdfNokkeltall> nyeNokkeltall)
     {
         if (string.IsNullOrEmpty(forrige.DataJson))
         {
@@ -740,7 +690,18 @@ else if (_tilbud is not null)
         }
 
         var gamleLinjer = JsonSerializer.Deserialize<List<LagretPdfLinje>>(forrige.DataJson) ?? [];
-        return gamleLinjer.Count == nyLinjer.Count
+        var linjerLike = gamleLinjer.Count == nyLinjer.Count
             && gamleLinjer.OrderBy(l => l.Navn).SequenceEqual(nyLinjer.OrderBy(l => l.Navn));
+
+        if (!linjerLike)
+        {
+            return false;
+        }
+
+        var gamleNokkeltall = string.IsNullOrEmpty(forrige.NokkeltallJson)
+            ? []
+            : JsonSerializer.Deserialize<List<LagretPdfNokkeltall>>(forrige.NokkeltallJson) ?? [];
+
+        return gamleNokkeltall.OrderBy(n => n.Navn).SequenceEqual(nyeNokkeltall.OrderBy(n => n.Navn));
     }
 }

@@ -68,7 +68,6 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<SjekklistePdf> SjekklistePdfer => Set<SjekklistePdf>();
     public DbSet<KundeOppfolgingNotat> KundeOppfolgingNotater => Set<KundeOppfolgingNotat>();
     public DbSet<FravarSoknad> FravarSoknader => Set<FravarSoknad>();
-    public DbSet<TilbudRevisjon> TilbudRevisjoner => Set<TilbudRevisjon>();
     public DbSet<HjemmesideTekst> HjemmesideTekster => Set<HjemmesideTekst>();
     public DbSet<KoblingsSkjema> KoblingsSkjemaer => Set<KoblingsSkjema>();
     public DbSet<KoblingsSymbol> KoblingsSymboler => Set<KoblingsSymbol>();
@@ -402,12 +401,6 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(f => f.BehandletAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
-
-        modelBuilder.Entity<TilbudRevisjon>()
-            .HasOne(r => r.Tilbud)
-            .WithMany()
-            .HasForeignKey(r => r.TilbudId)
-            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Tilbud>()
             .HasOne(t => t.OpprinneligTilbud)

@@ -9,6 +9,8 @@ public enum LagretPdfEndringType { LagtTil, Fjernet, Endret }
 
 public record LagretPdfEndring(string Navn, LagretPdfEndringType Type, int GammelAntall, int NyAntall, decimal? GammelPris, decimal? NyPris);
 
+public record LagretPdfNokkeltallEndring(string Navn, string GammelVerdi, string NyVerdi);
+
 public class LagretPdfService(ApplicationDbContext db)
 {
     public async Task<List<LagretPdf>> HentAsync(string entityType, int entityId)
@@ -19,7 +21,8 @@ public class LagretPdfService(ApplicationDbContext db)
             .ToListAsync();
     }
 
-    public async Task<LagretPdf> LagreAsync(string entityType, int entityId, string navn, byte[] data, List<LagretPdfLinje>? linjer = null)
+    public async Task<LagretPdf> LagreAsync(string entityType, int entityId, string navn, byte[] data,
+        List<LagretPdfLinje>? linjer = null, List<LagretPdfNokkeltall>? nokkeltall = null)
     {
         var pdf = new LagretPdf
         {
@@ -27,7 +30,8 @@ public class LagretPdfService(ApplicationDbContext db)
             EntityId = entityId,
             Navn = navn,
             Data = data,
-            DataJson = linjer is null ? null : JsonSerializer.Serialize(linjer)
+            DataJson = linjer is null ? null : JsonSerializer.Serialize(linjer),
+            NokkeltallJson = nokkeltall is null ? null : JsonSerializer.Serialize(nokkeltall)
         };
 
         db.LagredePdfer.Add(pdf);
@@ -65,6 +69,34 @@ public class LagretPdfService(ApplicationDbContext db)
             else if (g!.Antall != n!.Antall || g.Pris != n.Pris)
             {
                 endringer.Add(new LagretPdfEndring(navn, LagretPdfEndringType.Endret, g.Antall, n.Antall, g.Pris, n.Pris));
+            }
+        }
+
+        return endringer;
+    }
+
+    public static List<LagretPdfNokkeltallEndring> SammenlignNokkeltall(LagretPdf gammel, LagretPdf ny)
+    {
+        var gammelNokkeltall = string.IsNullOrEmpty(gammel.NokkeltallJson)
+            ? []
+            : JsonSerializer.Deserialize<List<LagretPdfNokkeltall>>(gammel.NokkeltallJson) ?? [];
+        var nyNokkeltall = string.IsNullOrEmpty(ny.NokkeltallJson)
+            ? []
+            : JsonSerializer.Deserialize<List<LagretPdfNokkeltall>>(ny.NokkeltallJson) ?? [];
+
+        var gammelPerNavn = gammelNokkeltall.ToDictionary(n => n.Navn, n => n.Verdi);
+        var nyPerNavn = nyNokkeltall.ToDictionary(n => n.Navn, n => n.Verdi);
+
+        var endringer = new List<LagretPdfNokkeltallEndring>();
+
+        foreach (var navn in nyNokkeltall.Select(n => n.Navn))
+        {
+            var gammelVerdi = gammelPerNavn.GetValueOrDefault(navn, "-");
+            var nyVerdi = nyPerNavn.GetValueOrDefault(navn, "-");
+
+            if (gammelVerdi != nyVerdi)
+            {
+                endringer.Add(new LagretPdfNokkeltallEndring(navn, gammelVerdi, nyVerdi));
             }
         }
 
