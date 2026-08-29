@@ -80,6 +80,11 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     let suppressClick = false;
 
     wrapEl.addEventListener('click', (e) => {
+        // While placing something new (utstyr), never eat the click - the user's
+        // click must always reach the canvas so it places the item.
+        if (canvasEl.dataset.placing === '1') {
+            return;
+        }
         if (suppressClick) {
             suppressClick = false;
             e.stopPropagation();
@@ -89,6 +94,11 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
 
     wrapEl.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) {
+            return;
+        }
+        // Don't engage pan-detection at all while placing - there is nothing to
+        // pan-vs-click disambiguate here, and doing so only risks losing the click.
+        if (canvasEl.dataset.placing === '1') {
             return;
         }
         panning = true;
