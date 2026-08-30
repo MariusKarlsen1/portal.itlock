@@ -44,6 +44,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PlukklisteLinje> PlukklisteLinjer => Set<PlukklisteLinje>();
     public DbSet<Nokkel> Nokler => Set<Nokkel>();
     public DbSet<NokkelSylinder> NokkelSylindere => Set<NokkelSylinder>();
+    public DbSet<LasplanReserve> LasplanReserver => Set<LasplanReserve>();
+    public DbSet<NokkelLasplanReserve> NokkelLasplanReserver => Set<NokkelLasplanReserve>();
     public DbSet<Servicehenvendelse> Servicehenvendelser => Set<Servicehenvendelse>();
     public DbSet<ServicehenvendelseBilde> ServicehenvendelseBilder => Set<ServicehenvendelseBilde>();
     public DbSet<SjekklisteMal> SjekklisteMaler => Set<SjekklisteMal>();
@@ -201,6 +203,27 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasOne(ns => ns.Nokkel)
                 .WithMany()
                 .HasForeignKey(ns => ns.NokkelId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LasplanReserve>()
+            .HasOne(r => r.Prosjekt)
+            .WithMany()
+            .HasForeignKey(r => r.ProsjektId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<NokkelLasplanReserve>(entity =>
+        {
+            entity.HasKey(nr => new { nr.NokkelId, nr.LasplanReserveId });
+
+            entity.HasOne(nr => nr.Nokkel)
+                .WithMany()
+                .HasForeignKey(nr => nr.NokkelId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(nr => nr.LasplanReserve)
+                .WithMany()
+                .HasForeignKey(nr => nr.LasplanReserveId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

@@ -78,15 +78,16 @@ else
         {
             <table class="dor-table">
                 <thead>
-                    <tr><th>Navn</th><th>Antall</th><th>Status</th></tr>
+                    <tr><th>Navn</th><th>Antall</th><th>Status</th><th></th></tr>
                 </thead>
                 <tbody>
-                    @foreach (var dk in _dor.Komponenter)
+                    @foreach (var dk in _dor.Komponenter.ToList())
                     {
                         <tr @key="dk.ComponentId">
                             <td>@dk.Component?.Navn</td>
                             <td>@dk.Antall @dk.Enhet</td>
                             <td>@(dk.Montert ? $"Montert {dk.MontertDato?.ToString("dd.MM.yyyy HH:mm")} {(dk.MontertAvBruker is not null ? $"({dk.MontertAvBruker.Initialer})" : "")}" : "Ikke montert")</td>
+                            <td><button type="button" class="remove-inline" title="Fjern beslag" @onclick="@(() => FjernBeslag(dk))">&times;</button></td>
                         </tr>
                     }
                 </tbody>
@@ -104,12 +105,13 @@ else
         {
             <table class="dor-table">
                 <thead>
-                    <tr><th>Sylinder</th><th>Nøkler som åpner</th></tr>
+                    <tr><th>Syl.mrk</th><th>Sylinder</th><th>Nøkler som åpner</th></tr>
                 </thead>
                 <tbody>
                     @foreach (var rad in _sylinderRader)
                     {
                         <tr @key="rad.ComponentId">
+                            <td>@rad.SylMrk</td>
                             <td>@rad.Navn</td>
                             <td>@(rad.Nokler.Count > 0 ? string.Join(", ", rad.Nokler) : "Ingen registrert")</td>
                         </tr>
@@ -255,6 +257,7 @@ else
     {
         public int ComponentId { get; set; }
         public string Navn { get; set; } = "";
+        public string SylMrk { get; set; } = "-";
         public List<string> Nokler { get; set; } = [];
     }
 
@@ -324,14 +327,45 @@ else
             .Include(ns => ns.Nokkel)
             .ToListAsync();
 
+        // Syl.mrk-nummeret følger samme rekkefølge som i låsplan-matrisen/PDF-en for hele prosjektet.
+        var alleSylinderKomponenter = await Db.DorKomponenter
+            .Where(k => k.Dor!.ProsjektId == _dor.ProsjektId && k.Component!.ErSylinder)
+            .Include(k => k.Dor)
+            .OrderBy(k => k.Dor!.Dornummer)
+            .ToListAsync();
+
+        var sylMrkPerComponent = new Dictionary<int, string>();
+        var sylNummer = 0;
+        foreach (var dk in alleSylinderKomponenter)
+        {
+            sylNummer++;
+            if (dk.DorId == Id)
+            {
+                sylMrkPerComponent[dk.ComponentId] = sylNummer.ToString();
+            }
+        }
+
         _sylinderRader = sylinderKomponenter.Select(k => new SylinderRad
         {
             ComponentId = k.ComponentId,
             Navn = k.Component!.Navn,
+            SylMrk = sylMrkPerComponent.TryGetValue(k.ComponentId, out var mrk) ? mrk : "-",
             Nokler = krysser.Where(ns => ns.ComponentId == k.ComponentId)
                 .Select(ns => ns.Nokkel!.Merking ?? ns.Nokkel!.Navn)
                 .ToList()
         }).ToList();
+    }
+
+    private async Task FjernBeslag(DorKomponent dk)
+    {
+        Db.DorKomponenter.Remove(dk);
+        _dor!.Komponenter.Remove(dk);
+
+        var krysser = await Db.NokkelSylindere.Where(ns => ns.DorId == Id && ns.ComponentId == dk.ComponentId).ToListAsync();
+        Db.NokkelSylindere.RemoveRange(krysser);
+
+        await Db.SaveChangesAsync();
+        await OnParametersSetAsync();
     }
 
     private async Task LastOppMedia(InputFileChangeEventArgs e)

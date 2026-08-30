@@ -8,6 +8,7 @@
 @inject ApplicationDbContext Db
 @inject LasplanPdfService PdfService
 @inject LagretPdfService LagretPdfService
+@inject TilbudSyncService TilbudSync
 
 <PageTitle>Låsplan - @(_prosjekt?.Navn)</PageTitle>
 
@@ -78,6 +79,58 @@ else
         </p>
     }
 
+    <div class="manuell-legg-til">
+        <h3>Legg til sylinder manuelt</h3>
+        <p class="section-hint">
+            Bruk dette dersom en sylinder ikke ligger på tilbudet, eller du vil legge den til direkte uten å gå via Dører-fanen.
+            Velg "Legg til ny" for en sylinder som skal leveres, men som ikke er montert på noen dør ennå.
+        </p>
+        <div class="manuell-felter">
+            <select @bind="_valgtDorId">
+                <option value="">Velg dør...</option>
+                <option value="-1">Legg til ny</option>
+                @foreach (var d in _dorer)
+                {
+                    <option value="@d.Id">@d.Dornummer@(string.IsNullOrWhiteSpace(d.DorTil) ? "" : $" – {d.DorTil}")</option>
+                }
+            </select>
+            <input type="number" min="1" @bind="_manuellAntall" placeholder="Antall" />
+            @if (_valgtDorId == -1)
+            {
+                <input @bind="_manuellDornr" @bind:event="oninput" placeholder="Dørnr. (valgfritt)" />
+                <input @bind="_manuellDorTil" @bind:event="oninput" placeholder="Dør til (valgfritt)" />
+            }
+        </div>
+        <div class="component-search">
+            <label>
+                Søk sylinder
+                <input @bind="_komponentSok" @bind:event="oninput" @bind:after="SokSylinderKomponent" placeholder="Søk på navn, leverandør eller produktkode" />
+            </label>
+            @if (_sokeResultater.Count > 0)
+            {
+                <ul class="search-results">
+                    @foreach (var r in _sokeResultater)
+                    {
+                        <li>
+                            <button type="button" class="search-result" @onclick="@(() => LeggTilManuellSylinder(r))">
+                                <span class="search-result-name">@r.Navn</span>
+                                <span class="search-result-meta">@r.Leverandor</span>
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+            else if (_komponentSok.Trim().Length >= 2)
+            {
+                <p class="search-empty">Ingen treff.</p>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_manuellMessage))
+        {
+            <p class="save-success">@_manuellMessage</p>
+        }
+    </div>
+
     <div class="nokkel-form">
         <h3>Nøkler</h3>
         <div class="nokkel-liste">
@@ -89,6 +142,10 @@ else
                 </span>
             }
         </div>
+        @if (_nokler.Any(n => n.Merking is null || !n.Merking.StartsWith('K')))
+        {
+            <button type="button" class="cancel-button" @onclick="FiksNokkelmerking">Fiks merking (K1, K2, ...)</button>
+        }
         <div class="nokkel-nytt">
             <input @bind="_nyNokkelNavn" @bind:event="oninput" placeholder="Nøkkelnavn, f.eks. Hovednøkkel" />
             <input @bind="_nyNokkelMateriale" @bind:event="oninput" placeholder="Materiale (valgfritt)" />
@@ -121,11 +178,27 @@ else
                 <tbody>
                     @foreach (var rad in _rader)
                     {
-                        <tr @key="@($"{rad.DorId}-{rad.ComponentId}-{rad.Visningsnummer}")">
+                        <tr @key="rad.RadKey">
                             <td>@rad.Visningsnummer</td>
-                            <td>@rad.Dor.DorTil</td>
-                            <td>@rad.Dor.Dornummer</td>
-                            <td>@rad.Component.Navn</td>
+                            <td>@(rad.Dor?.DorTil ?? (string.IsNullOrWhiteSpace(rad.ReserveDorTil) ? "–" : rad.ReserveDorTil))</td>
+                            <td>@(rad.Dor?.Dornummer ?? (string.IsNullOrWhiteSpace(rad.ReserveDornr) ? "Reserve" : rad.ReserveDornr))</td>
+                            <td>
+                                @rad.Component.Navn
+                                <button type="button" class="remove-inline" title="Fjern sylinder" @onclick="@(() => FjernRad(rad))">&times;</button>
+                                @if (rad.ReserveId is not null)
+                                {
+                                    <span class="koble-rad">
+                                        <select @bind="rad.ValgtKoblingDorId">
+                                            <option value="">Koble til dør...</option>
+                                            @foreach (var d in _dorer)
+                                            {
+                                                <option value="@d.Id">@d.Dornummer@(string.IsNullOrWhiteSpace(d.DorTil) ? "" : $" – {d.DorTil}")</option>
+                                            }
+                                        </select>
+                                        <button type="button" class="cancel-button" disabled="@(rad.ValgtKoblingDorId is null)" @onclick="@(() => KobleReserveTilDor(rad))">Koble</button>
+                                    </span>
+                                }
+                            </td>
                             <td>1</td>
                             @foreach (var n in _nokler)
                             {
@@ -150,24 +223,48 @@ else
     private List<Nokkel> _nokler = [];
     private List<SylinderRad> _rader = [];
     private HashSet<(int NokkelId, int DorId, int ComponentId)> _krysser = [];
+    private List<LasplanReserve> _reserver = [];
+    private HashSet<(int NokkelId, int ReserveId)> _reserveKrysser = [];
     private string? _savedMessage;
     private string? _syncMessage;
     private string? _pdfUrl;
     private string? _pdfSavedMessage;
     private List<LagretPdf> _lagredePdfer = [];
     private List<TilbudLinje> _uplasserte = [];
+    private List<Dor> _dorer = [];
 
     private string _nyNokkelNavn = "";
     private string _nyNokkelMateriale = "";
     private int _nyNokkelAntall = 1;
 
+    private int? _valgtDorId;
+    private int _manuellAntall = 1;
+    private string _manuellDornr = "";
+    private string _manuellDorTil = "";
+    private string _komponentSok = "";
+    private List<SearchResult> _sokeResultater = [];
+    private string? _manuellMessage;
+
     private class SylinderRad
     {
         public required string Visningsnummer { get; set; }
-        public required int DorId { get; set; }
+        public int? DorId { get; set; }
         public required int ComponentId { get; set; }
-        public required Dor Dor { get; set; }
+        public Dor? Dor { get; set; }
         public required Component Component { get; set; }
+        public int? ReserveId { get; set; }
+        public string? ReserveDorTil { get; set; }
+        public string? ReserveDornr { get; set; }
+        public int? ValgtKoblingDorId { get; set; }
+
+        public string RadKey => ReserveId is not null ? $"R{ReserveId}-{ComponentId}-{Visningsnummer}" : $"{DorId}-{ComponentId}-{Visningsnummer}";
+    }
+
+    private class SearchResult
+    {
+        public int Id { get; set; }
+        public required string Navn { get; set; }
+        public string? Leverandor { get; set; }
     }
 
     protected override async Task OnParametersSetAsync()
@@ -187,6 +284,7 @@ else
     private async Task LastInnAsync()
     {
         _nokler = await Db.Nokler.Where(n => n.ProsjektId == Id).OrderBy(n => n.Rekkefolge).ToListAsync();
+        _dorer = await Db.Dorer.Where(d => d.ProsjektId == Id).OrderBy(d => d.Dornummer).ToListAsync();
 
         var dorKomponenter = await Db.DorKomponenter
             .Where(k => k.Dor!.ProsjektId == Id && k.Component!.ErSylinder)
@@ -212,11 +310,38 @@ else
                 });
             }
         }
+
+        _reserver = await Db.LasplanReserver
+            .Where(r => r.ProsjektId == Id)
+            .Include(r => r.Component)
+            .OrderBy(r => r.Id)
+            .ToListAsync();
+
+        foreach (var res in _reserver)
+        {
+            nummer++;
+            for (var i = 0; i < res.Antall; i++)
+            {
+                rader.Add(new SylinderRad
+                {
+                    Visningsnummer = i == 0 ? nummer.ToString() : $"{nummer}.{i}",
+                    ComponentId = res.ComponentId,
+                    Component = res.Component!,
+                    ReserveId = res.Id,
+                    ReserveDorTil = res.DorTil,
+                    ReserveDornr = res.Dornr
+                });
+            }
+        }
         _rader = rader;
 
         var nokkelIder = _nokler.Select(n => n.Id).ToList();
         var krysser = await Db.NokkelSylindere.Where(ns => nokkelIder.Contains(ns.NokkelId)).ToListAsync();
         _krysser = krysser.Select(k => (k.NokkelId, k.DorId, k.ComponentId)).ToHashSet();
+
+        var reserveIder = _reserver.Select(r => r.Id).ToList();
+        var reserveKrysser = await Db.NokkelLasplanReserver.Where(nr => nokkelIder.Contains(nr.NokkelId) && reserveIder.Contains(nr.LasplanReserveId)).ToListAsync();
+        _reserveKrysser = reserveKrysser.Select(k => (k.NokkelId, k.LasplanReserveId)).ToHashSet();
 
         var plasserteComponentIder = dorKomponenter.Select(dk => dk.ComponentId).ToHashSet();
         _uplasserte = await Db.TilbudLinjer
@@ -237,7 +362,187 @@ else
             : $"{_rader.Count} sylinder(e) synkronisert.";
     }
 
-    private bool ApnerDenne(SylinderRad rad, Nokkel nokkel) => _krysser.Contains((nokkel.Id, rad.DorId, rad.ComponentId));
+    private async Task SokSylinderKomponent()
+    {
+        var term = _komponentSok.Trim();
+        if (term.Length < 2)
+        {
+            _sokeResultater = [];
+            return;
+        }
+
+        _sokeResultater = await Db.Components
+            .Where(c => c.Aktiv && (
+                EF.Functions.Like(c.Navn, $"%{term}%") ||
+                (c.Leverandor != null && EF.Functions.Like(c.Leverandor, $"%{term}%")) ||
+                (c.Produktkode != null && EF.Functions.Like(c.Produktkode, $"%{term}%"))))
+            .OrderBy(c => c.Navn)
+            .Take(20)
+            .Select(c => new SearchResult { Id = c.Id, Navn = c.Navn, Leverandor = c.Leverandor })
+            .ToListAsync();
+    }
+
+    private async Task LeggTilManuellSylinder(SearchResult r)
+    {
+        if (_valgtDorId is null)
+        {
+            _manuellMessage = "Velg en dør (eller reserve/lager) først.";
+            return;
+        }
+
+        var valgtComponent = await Db.Components.FindAsync(r.Id);
+        if (valgtComponent is not null && !valgtComponent.ErSylinder)
+        {
+            valgtComponent.ErSylinder = true;
+        }
+
+        if (_valgtDorId == -1)
+        {
+            var eksisterendeReserve = await Db.LasplanReserver.FirstOrDefaultAsync(x => x.ProsjektId == Id && x.ComponentId == r.Id);
+            if (eksisterendeReserve is not null)
+            {
+                eksisterendeReserve.Antall += _manuellAntall;
+            }
+            else
+            {
+                Db.LasplanReserver.Add(new LasplanReserve
+                {
+                    ProsjektId = Id,
+                    ComponentId = r.Id,
+                    Antall = _manuellAntall,
+                    DorTil = string.IsNullOrWhiteSpace(_manuellDorTil) ? null : _manuellDorTil.Trim(),
+                    Dornr = string.IsNullOrWhiteSpace(_manuellDornr) ? null : _manuellDornr.Trim()
+                });
+            }
+        }
+        else
+        {
+            var eksisterende = await Db.DorKomponenter.FindAsync(_valgtDorId.Value, r.Id);
+            if (eksisterende is not null)
+            {
+                eksisterende.Antall += _manuellAntall;
+            }
+            else
+            {
+                Db.DorKomponenter.Add(new DorKomponent
+                {
+                    DorId = _valgtDorId.Value,
+                    ComponentId = r.Id,
+                    Antall = _manuellAntall,
+                    Enhet = valgtComponent?.Enhet
+                });
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        if (_valgtDorId != -1)
+        {
+            await TilbudSync.SyncSylinderAsync(Id, r.Id);
+        }
+        await LastInnAsync();
+
+        _komponentSok = "";
+        _sokeResultater = [];
+        _manuellDornr = "";
+        _manuellDorTil = "";
+        _manuellMessage = $"{r.Navn} lagt til.";
+    }
+
+    private async Task FjernReserve(SylinderRad rad)
+    {
+        if (rad.ReserveId is null)
+        {
+            return;
+        }
+
+        var reserve = await Db.LasplanReserver.FindAsync(rad.ReserveId.Value);
+        if (reserve is not null)
+        {
+            Db.LasplanReserver.Remove(reserve);
+            await Db.SaveChangesAsync();
+        }
+
+        await LastInnAsync();
+    }
+
+    private async Task FjernRad(SylinderRad rad)
+    {
+        if (rad.ReserveId is not null)
+        {
+            await FjernReserve(rad);
+            return;
+        }
+
+        if (rad.DorId is null)
+        {
+            return;
+        }
+
+        var dk = await Db.DorKomponenter.FindAsync(rad.DorId.Value, rad.ComponentId);
+        if (dk is not null)
+        {
+            Db.DorKomponenter.Remove(dk);
+        }
+
+        var krysser = await Db.NokkelSylindere.Where(ns => ns.DorId == rad.DorId.Value && ns.ComponentId == rad.ComponentId).ToListAsync();
+        Db.NokkelSylindere.RemoveRange(krysser);
+
+        await Db.SaveChangesAsync();
+        await LastInnAsync();
+    }
+
+    private async Task KobleReserveTilDor(SylinderRad rad)
+    {
+        if (rad.ReserveId is null || rad.ValgtKoblingDorId is null)
+        {
+            return;
+        }
+
+        var reserve = await Db.LasplanReserver.FindAsync(rad.ReserveId.Value);
+        if (reserve is null)
+        {
+            return;
+        }
+
+        var dorId = rad.ValgtKoblingDorId.Value;
+        var eksisterende = await Db.DorKomponenter.FindAsync(dorId, reserve.ComponentId);
+        if (eksisterende is not null)
+        {
+            eksisterende.Antall += reserve.Antall;
+        }
+        else
+        {
+            var component = await Db.Components.FindAsync(reserve.ComponentId);
+            Db.DorKomponenter.Add(new DorKomponent
+            {
+                DorId = dorId,
+                ComponentId = reserve.ComponentId,
+                Antall = reserve.Antall,
+                Enhet = component?.Enhet
+            });
+        }
+
+        // Flytt nøkkelkryssene fra reserven over til den ekte døren.
+        var reserveKrysser = await Db.NokkelLasplanReserver.Where(nr => nr.LasplanReserveId == reserve.Id).ToListAsync();
+        foreach (var rk in reserveKrysser)
+        {
+            var finnesAllerede = await Db.NokkelSylindere.FindAsync(rk.NokkelId, dorId, reserve.ComponentId);
+            if (finnesAllerede is null)
+            {
+                Db.NokkelSylindere.Add(new NokkelSylinder { NokkelId = rk.NokkelId, DorId = dorId, ComponentId = reserve.ComponentId });
+            }
+        }
+        Db.NokkelLasplanReserver.RemoveRange(reserveKrysser);
+        Db.LasplanReserver.Remove(reserve);
+
+        await Db.SaveChangesAsync();
+        await TilbudSync.SyncSylinderAsync(Id, reserve.ComponentId);
+        await LastInnAsync();
+    }
+
+    private bool ApnerDenne(SylinderRad rad, Nokkel nokkel) => rad.ReserveId is not null
+        ? _reserveKrysser.Contains((nokkel.Id, rad.ReserveId.Value))
+        : _krysser.Contains((nokkel.Id, rad.DorId!.Value, rad.ComponentId));
 
     private async Task ToggleKryss(SylinderRad rad, Nokkel nokkel)
     {
@@ -246,10 +551,33 @@ else
             return;
         }
 
-        var key = (nokkel.Id, rad.DorId, rad.ComponentId);
+        if (rad.ReserveId is not null)
+        {
+            var reserveKey = (nokkel.Id, rad.ReserveId.Value);
+            if (_reserveKrysser.Contains(reserveKey))
+            {
+                var eksisterendeKryss = await Db.NokkelLasplanReserver.FindAsync(nokkel.Id, rad.ReserveId.Value);
+                if (eksisterendeKryss is not null)
+                {
+                    Db.NokkelLasplanReserver.Remove(eksisterendeKryss);
+                }
+
+                _reserveKrysser.Remove(reserveKey);
+            }
+            else
+            {
+                Db.NokkelLasplanReserver.Add(new NokkelLasplanReserve { NokkelId = nokkel.Id, LasplanReserveId = rad.ReserveId.Value });
+                _reserveKrysser.Add(reserveKey);
+            }
+
+            await Db.SaveChangesAsync();
+            return;
+        }
+
+        var key = (nokkel.Id, rad.DorId!.Value, rad.ComponentId);
         if (_krysser.Contains(key))
         {
-            var eksisterende = await Db.NokkelSylindere.FindAsync(nokkel.Id, rad.DorId, rad.ComponentId);
+            var eksisterende = await Db.NokkelSylindere.FindAsync(nokkel.Id, rad.DorId!.Value, rad.ComponentId);
             if (eksisterende is not null)
             {
                 Db.NokkelSylindere.Remove(eksisterende);
@@ -259,7 +587,7 @@ else
         }
         else
         {
-            Db.NokkelSylindere.Add(new NokkelSylinder { NokkelId = nokkel.Id, DorId = rad.DorId, ComponentId = rad.ComponentId });
+            Db.NokkelSylindere.Add(new NokkelSylinder { NokkelId = nokkel.Id, DorId = rad.DorId!.Value, ComponentId = rad.ComponentId });
             _krysser.Add(key);
         }
 
@@ -304,12 +632,24 @@ else
         _nyNokkelAntall = 1;
     }
 
+    private async Task FiksNokkelmerking()
+    {
+        var sortert = _nokler.OrderBy(n => n.Rekkefolge).ToList();
+        for (var i = 0; i < sortert.Count; i++)
+        {
+            sortert[i].Merking = $"K{i + 1}";
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
     private async Task FjernNokkel(Nokkel n)
     {
         Db.Nokler.Remove(n);
         await Db.SaveChangesAsync();
         _nokler.Remove(n);
         _krysser.RemoveWhere(k => k.NokkelId == n.Id);
+        _reserveKrysser.RemoveWhere(k => k.NokkelId == n.Id);
     }
 
     private void GenererPdf()

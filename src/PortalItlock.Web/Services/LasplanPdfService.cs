@@ -26,25 +26,46 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             .OrderBy(k => k.Dor!.Dornummer)
             .ToListAsync();
 
-        if (dorKomponenter.Count == 0)
+        var reserver = await db.LasplanReserver
+            .Where(r => r.ProsjektId == prosjektId)
+            .Include(r => r.Component)
+            .OrderBy(r => r.Id)
+            .ToListAsync();
+
+        if (dorKomponenter.Count == 0 && reserver.Count == 0)
         {
             return null;
         }
 
-        var rader = new List<(string Nummer, DorKomponent Dk)>();
+        var rader = new List<(string Nummer, string DorTil, string Dornr, string Sylindertype, int ComponentId, int? DorId, int? ReserveId)>();
         var nummer = 0;
         foreach (var dk in dorKomponenter)
         {
             nummer++;
             for (var i = 0; i < dk.Antall; i++)
             {
-                rader.Add((i == 0 ? nummer.ToString() : $"{nummer}.{i}", dk));
+                rader.Add((i == 0 ? nummer.ToString() : $"{nummer}.{i}", dk.Dor!.DorTil ?? "", dk.Dor.Dornummer, dk.Component!.Navn, dk.ComponentId, dk.DorId, null));
+            }
+        }
+
+        foreach (var res in reserver)
+        {
+            nummer++;
+            var dorTil = string.IsNullOrWhiteSpace(res.DorTil) ? "–" : res.DorTil;
+            var dornr = string.IsNullOrWhiteSpace(res.Dornr) ? "Reserve" : res.Dornr;
+            for (var i = 0; i < res.Antall; i++)
+            {
+                rader.Add((i == 0 ? nummer.ToString() : $"{nummer}.{i}", dorTil, dornr, res.Component!.Navn, res.ComponentId, null, res.Id));
             }
         }
 
         var nokkelIder = nokler.Select(n => n.Id).ToList();
         var krysser = await db.NokkelSylindere.Where(ns => nokkelIder.Contains(ns.NokkelId)).ToListAsync();
         var krysserSett = krysser.Select(k => (k.NokkelId, k.DorId, k.ComponentId)).ToHashSet();
+
+        var reserveIder = reserver.Select(r => r.Id).ToList();
+        var reserveKrysser = await db.NokkelLasplanReserver.Where(nr => nokkelIder.Contains(nr.NokkelId) && reserveIder.Contains(nr.LasplanReserveId)).ToListAsync();
+        var reserveKrysserSett = reserveKrysser.Select(k => (k.NokkelId, k.LasplanReserveId)).ToHashSet();
 
         var document = Document.Create(doc =>
         {
@@ -114,9 +135,9 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                             // Alt som gjelder nøkler skrives på skrå (rotert), som i malen, i fet skrift lik resten av headeren.
                             header.Cell().BorderTop(0.75f).BorderBottom(0.75f).BorderLeft(0.75f).BorderRight(0.5f).BorderColor(Colors.Black).Background(Colors.Grey.Lighten3).PaddingLeft(2).Column(c =>
                             {
-                                c.Item().Height(20).BorderBottom(0.5f).BorderColor(Colors.Grey.Darken1).RotateLeft().AlignMiddle().Text("Mrk.").FontSize(8).Bold();
+                                c.Item().Height(50).BorderBottom(0.5f).BorderColor(Colors.Grey.Darken1).RotateLeft().AlignMiddle().Text("Nøkkelnavn").FontSize(8).Bold();
                                 c.Item().PaddingTop(1).Height(20).BorderBottom(0.5f).BorderColor(Colors.Grey.Darken1).RotateLeft().AlignMiddle().Text("Ant.").FontSize(8).Bold();
-                                c.Item().PaddingTop(1).Height(50).RotateLeft().AlignMiddle().Text("Nøkkelnavn").FontSize(8).Bold();
+                                c.Item().PaddingTop(1).Height(20).RotateLeft().AlignMiddle().Text("Mrk.").FontSize(8).Bold();
                             });
                         }
 
@@ -124,21 +145,21 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                         {
                             header.Cell().BorderTop(0.75f).BorderBottom(0.75f).BorderLeft(0.5f).BorderColor(Colors.Black).Column(c =>
                             {
-                                c.Item().Height(20).BorderBottom(0.5f).BorderColor(Colors.Grey.Darken1).RotateLeft().AlignMiddle().Text(n.Merking).FontSize(8).Bold();
+                                c.Item().Height(50).BorderBottom(0.5f).BorderColor(Colors.Grey.Darken1).RotateLeft().AlignMiddle().Text(n.Navn).FontSize(8).Bold();
                                 c.Item().PaddingTop(1).Height(20).BorderBottom(0.5f).BorderColor(Colors.Grey.Darken1).RotateLeft().AlignMiddle().Text(n.Antall.ToString()).FontSize(8).Bold();
-                                c.Item().PaddingTop(1).Height(50).RotateLeft().AlignMiddle().Text(n.Navn).FontSize(8).Bold();
+                                c.Item().PaddingTop(1).Height(20).RotateLeft().AlignMiddle().Text(n.Merking).FontSize(8).Bold();
                             });
                         }
                     });
 
-                    foreach (var (visningsnummer, dk) in rader)
+                    foreach (var rad in rader)
                     {
                         IContainer Rad() => table.Cell().Border(0.5f).BorderColor(Colors.Black).PaddingVertical(2).PaddingHorizontal(2);
 
-                        Rad().Text(visningsnummer);
-                        Rad().Text(dk.Dor!.DorTil ?? "");
-                        Rad().Text(dk.Dor.Dornummer);
-                        Rad().Text(dk.Component!.Navn);
+                        Rad().Text(rad.Nummer);
+                        Rad().Text(rad.DorTil);
+                        Rad().Text(rad.Dornr);
+                        Rad().Text(rad.Sylindertype);
                         Rad().Text("1");
 
                         if (nokler.Count > 0)
@@ -148,7 +169,9 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
                         foreach (var n in nokler)
                         {
-                            var krysset = krysserSett.Contains((n.Id, dk.DorId, dk.ComponentId));
+                            var krysset = rad.ReserveId is not null
+                                ? reserveKrysserSett.Contains((n.Id, rad.ReserveId.Value))
+                                : krysserSett.Contains((n.Id, rad.DorId!.Value, rad.ComponentId));
                             table.Cell().Border(0.5f).BorderColor(Colors.Black).AlignCenter()
                                 .Text(krysset ? "X" : "").Bold();
                         }

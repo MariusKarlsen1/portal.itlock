@@ -38,6 +38,7 @@ builder.Services.AddScoped<ArbeidsordrePdfService>();
 builder.Services.AddScoped<BefaringPdfService>();
 builder.Services.AddScoped<SjekklistePdfService>();
 builder.Services.AddScoped<LagretPdfService>();
+builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddHttpClient<EmailService>(client =>
 {
