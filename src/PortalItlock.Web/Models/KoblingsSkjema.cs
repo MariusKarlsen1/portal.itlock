@@ -3,7 +3,8 @@ namespace PortalItlock.Web.Models;
 public class KoblingsSkjema
 {
     public int Id { get; set; }
-    public KoblingsKategori Kategori { get; set; }
+    public int KategoriId { get; set; }
+    public KoblingsKategori? Kategori { get; set; }
     public required string Navn { get; set; }
 
     // Valgfri kobling til et prosjekt - skjemaet vises da som vedlegg på prosjektet.

@@ -1,0 +1,239 @@
+@page "/drift/dor/{Id:int}"
+@layout PortalItlock.Web.Components.Layout.DriftLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Driftslisens")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>@(_dor?.Dornummer ?? "Dør") - itlock</PageTitle>
+
+@if (_ikkeTilgang)
+{
+    <p class="form-error">Du har ikke tilgang til denne døren.</p>
+    <a class="back-link" href="/drift">&larr; Tilbake</a>
+}
+else if (_dor is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="@($"/drift/prosjekt/{_dor.ProsjektId}")">&larr; Tilbake til prosjektet</a>
+    <h1>Dør @_dor.Dornummer</h1>
+    @if (!string.IsNullOrWhiteSpace(_dor.Romnr) || !string.IsNullOrWhiteSpace(_dor.Etasje))
+    {
+        <p class="section-hint">
+            @(string.IsNullOrWhiteSpace(_dor.Romnr) ? "" : $"Rom {_dor.Romnr}")
+            @(string.IsNullOrWhiteSpace(_dor.Etasje) ? "" : $" · {_dor.Etasje}")
+        </p>
+    }
+
+    <section class="drift-melding-section">
+        <h2>Meld inn driftsmelding</h2>
+        <textarea rows="4" @bind="_nyTekst" @bind:event="oninput" placeholder="Beskriv hva som er feil eller trenger oppfølging..."></textarea>
+
+        <InputFile OnChange="OnFilesSelected" multiple accept="image/*,video/*" />
+        @if (_valgteFiler.Count > 0)
+        {
+            <ul class="drift-filer-liste">
+                @foreach (var f in _valgteFiler)
+                {
+                    <li>
+                        @f.Filnavn
+                        <button type="button" class="drift-fil-fjern" @onclick="@(() => _valgteFiler.Remove(f))">&times;</button>
+                    </li>
+                }
+            </ul>
+        }
+
+        @if (!string.IsNullOrEmpty(_feil))
+        {
+            <p class="form-error">@_feil</p>
+        }
+        @if (!string.IsNullOrEmpty(_melding))
+        {
+            <p class="save-success">@_melding</p>
+        }
+
+        <button type="button" class="save-button" @onclick="SendInn" disabled="@_sender">Send inn driftsmelding</button>
+    </section>
+
+    <section class="drift-historikk-section">
+        <h2>Tidligere driftsmeldinger</h2>
+        @if (_meldinger.Count == 0)
+        {
+            <p class="list-empty">Ingen driftsmeldinger registrert på denne døren ennå.</p>
+        }
+        else
+        {
+            @foreach (var m in _meldinger)
+            {
+                <div class="drift-melding-kort" @key="m.Id">
+                    <p class="drift-melding-meta">@m.OpprettetDato.ToString("dd.MM.yyyy HH:mm") @(m.InnmeldtAvBruker is not null ? $"- {m.InnmeldtAvBruker.Navn}" : "")</p>
+                    <p class="drift-melding-tekst">@m.Tekst</p>
+                    @if (m.Media.Count > 0)
+                    {
+                        <div class="drift-melding-media">
+                            @foreach (var media in m.Media)
+                            {
+                                @if (media.ContentType.StartsWith("video/"))
+                                {
+                                    <video controls class="drift-melding-video" src="@($"/driftsmeldingmedia/{media.Id}/fil")"></video>
+                                }
+                                else
+                                {
+                                    <a href="@($"/driftsmeldingmedia/{media.Id}/fil")" target="_blank">
+                                        <img src="@($"/driftsmeldingmedia/{media.Id}/fil")" alt="@media.Filnavn" class="drift-melding-bilde" />
+                                    </a>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed class ValgtFil
+    {
+        public required string Filnavn { get; set; }
+        public required string ContentType { get; set; }
+        public required byte[] Data { get; set; }
+    }
+
+    private Dor? _dor;
+    private bool _ikkeTilgang;
+    private int? _brukerId;
+    private List<Driftsmelding> _meldinger = [];
+    private string _nyTekst = "";
+    private List<ValgtFil> _valgteFiler = [];
+    private string? _feil;
+    private string? _melding;
+    private bool _sender;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+        {
+            _ikkeTilgang = true;
+            return;
+        }
+
+        _brukerId = brukerId;
+
+        var dor = await Db.Dorer.FirstOrDefaultAsync(d => d.Id == Id);
+        if (dor is null)
+        {
+            _ikkeTilgang = true;
+            return;
+        }
+
+        var harTilgang = await Db.Prosjekter
+            .Where(p => p.Id == dor.ProsjektId)
+            .AnyAsync(p => p.Medlemmer.Any(m => m.Id == brukerId));
+
+        if (!harTilgang)
+        {
+            _ikkeTilgang = true;
+            return;
+        }
+
+        _dor = dor;
+
+        _meldinger = await Db.Driftsmeldinger
+            .Include(m => m.InnmeldtAvBruker)
+            .Include(m => m.Media)
+            .Where(m => m.DorId == Id)
+            .OrderByDescending(m => m.OpprettetDato)
+            .ToListAsync();
+    }
+
+    private async Task OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+
+        foreach (var file in e.GetMultipleFiles(10))
+        {
+            if (file.Size > 50_000_000)
+            {
+                _feil = $"\"{file.Name}\" er for stort (maks 50 MB).";
+                continue;
+            }
+
+            using var buffer = new MemoryStream();
+            await using (var stream = file.OpenReadStream(maxAllowedSize: 50_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            _valgteFiler.Add(new ValgtFil
+            {
+                Filnavn = file.Name,
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                Data = buffer.ToArray()
+            });
+        }
+    }
+
+    private async Task SendInn()
+    {
+        _feil = null;
+        _melding = null;
+
+        if (string.IsNullOrWhiteSpace(_nyTekst))
+        {
+            _feil = "Skriv en beskrivelse av driftsmeldingen.";
+            return;
+        }
+
+        _sender = true;
+
+        var melding = new Driftsmelding
+        {
+            DorId = Id,
+            Tekst = _nyTekst.Trim(),
+            InnmeldtAvBrukerId = _brukerId
+        };
+
+        foreach (var fil in _valgteFiler)
+        {
+            melding.Media.Add(new DriftsmeldingMedia
+            {
+                Filnavn = fil.Filnavn,
+                ContentType = fil.ContentType,
+                Data = fil.Data
+            });
+        }
+
+        Db.Driftsmeldinger.Add(melding);
+        await Db.SaveChangesAsync();
+
+        _nyTekst = "";
+        _valgteFiler.Clear();
+        _sender = false;
+        _melding = "Driftsmeldingen er sendt inn.";
+
+        _meldinger = await Db.Driftsmeldinger
+            .Include(m => m.InnmeldtAvBruker)
+            .Include(m => m.Media)
+            .Where(m => m.DorId == Id)
+            .OrderByDescending(m => m.OpprettetDato)
+            .ToListAsync();
+    }
+}

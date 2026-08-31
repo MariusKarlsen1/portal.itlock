@@ -366,6 +366,14 @@ app.MapGet("/tilvalg/{id:int}/kundebilde", async (int id, ApplicationDbContext d
         : Results.File(tilvalg.KundeOnskeBildeData, tilvalg.KundeOnskeBildeContentType ?? "application/octet-stream");
 }).RequireAuthorization();
 
+app.MapGet("/driftsmeldingmedia/{id:int}/fil", async (int id, ApplicationDbContext db) =>
+{
+    var media = await db.DriftsmeldingMedia.FindAsync(id);
+    return media is null
+        ? Results.NotFound()
+        : Results.File(media.Data, media.ContentType, enableRangeProcessing: true);
+}).RequireAuthorization();
+
 app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
 {
     var komponent = await db.Components.FindAsync(id);

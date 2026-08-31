@@ -71,11 +71,14 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<KundeOppfolgingNotat> KundeOppfolgingNotater => Set<KundeOppfolgingNotat>();
     public DbSet<FravarSoknad> FravarSoknader => Set<FravarSoknad>();
     public DbSet<HjemmesideTekst> HjemmesideTekster => Set<HjemmesideTekst>();
+    public DbSet<KoblingsKategori> KoblingsKategorier => Set<KoblingsKategori>();
     public DbSet<KoblingsSkjema> KoblingsSkjemaer => Set<KoblingsSkjema>();
     public DbSet<KoblingsSymbol> KoblingsSymboler => Set<KoblingsSymbol>();
     public DbSet<KoblingsStrek> KoblingsStreker => Set<KoblingsStrek>();
     public DbSet<KoblingsSymbolBibliotek> KoblingsSymbolBibliotek => Set<KoblingsSymbolBibliotek>();
     public DbSet<LagretPdf> LagredePdfer => Set<LagretPdf>();
+    public DbSet<Driftsmelding> Driftsmeldinger => Set<Driftsmelding>();
+    public DbSet<DriftsmeldingMedia> DriftsmeldingMedia => Set<DriftsmeldingMedia>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -329,6 +332,24 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(m => m.DorId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        modelBuilder.Entity<Driftsmelding>()
+            .HasOne(d => d.Dor)
+            .WithMany()
+            .HasForeignKey(d => d.DorId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Driftsmelding>()
+            .HasOne(d => d.InnmeldtAvBruker)
+            .WithMany()
+            .HasForeignKey(d => d.InnmeldtAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<DriftsmeldingMedia>()
+            .HasOne(m => m.Driftsmelding)
+            .WithMany(d => d.Media)
+            .HasForeignKey(m => m.DriftsmeldingId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         modelBuilder.Entity<PlanUtstyr>()
             .HasOne(p => p.Plantegning)
             .WithMany()
@@ -460,6 +481,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(k => k.ProsjektId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<KoblingsSkjema>()
+            .HasOne(k => k.Kategori)
+            .WithMany(k => k.Skjemaer)
+            .HasForeignKey(k => k.KategoriId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<LagretPdf>()
             .HasIndex(p => new { p.EntityType, p.EntityId });
@@ -604,6 +631,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             new DoorEnvironmentDocument { Id = 7, Navn = "Dørmiljø 7", FileName = "dormiljo-7.pdf", Rekkefolge = 7 },
             new DoorEnvironmentDocument { Id = 8, Navn = "Dørmiljø 8", FileName = "dormiljo-8.pdf", Rekkefolge = 8 },
             new DoorEnvironmentDocument { Id = 9, Navn = "Dørmiljø 9", FileName = "dormiljo-9.pdf", Rekkefolge = 9 }
+        );
+
+        modelBuilder.Entity<KoblingsKategori>().HasData(
+            new KoblingsKategori { Id = 1, Navn = "ARX", Rekkefolge = 1 },
+            new KoblingsKategori { Id = 2, Navn = "Salto", Rekkefolge = 2 },
+            new KoblingsKategori { Id = 3, Navn = "Diverse", Rekkefolge = 3 }
         );
 
         modelBuilder.Entity<HjemmesideTekst>().HasData(

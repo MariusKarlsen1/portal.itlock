@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260831171039_KoblingsKategoriEntitet")]
+    partial class KoblingsKategoriEntitet
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -1310,65 +1313,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("DorId");
 
                     b.ToTable("DorMedia");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.Driftsmelding", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("DorId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("InnmeldtAvBrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("LestAvAnsatt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Tekst")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DorId");
-
-                    b.HasIndex("InnmeldtAvBrukerId");
-
-                    b.ToTable("Driftsmeldinger");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.DriftsmeldingMedia", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("ContentType")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
-                    b.Property<int>("DriftsmeldingId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Filnavn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DriftsmeldingId");
-
-                    b.ToTable("DriftsmeldingMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.FdvVedlegg", b =>
@@ -3805,35 +3749,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Dor");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.Driftsmelding", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Dor", "Dor")
-                        .WithMany()
-                        .HasForeignKey("DorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "InnmeldtAvBruker")
-                        .WithMany()
-                        .HasForeignKey("InnmeldtAvBrukerId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Dor");
-
-                    b.Navigation("InnmeldtAvBruker");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.DriftsmeldingMedia", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Driftsmelding", "Driftsmelding")
-                        .WithMany("Media")
-                        .HasForeignKey("DriftsmeldingId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Driftsmelding");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.FdvVedlegg", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
@@ -4424,11 +4339,6 @@ namespace PortalItlock.Web.Migrations
             modelBuilder.Entity("PortalItlock.Web.Models.DorIdMal", b =>
                 {
                     b.Navigation("Dorer");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.Driftsmelding", b =>
-                {
-                    b.Navigation("Media");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsKategori", b =>

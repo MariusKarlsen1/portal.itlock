@@ -1,0 +1,134 @@
+@page "/drift/prosjekt/{Id:int}"
+@layout PortalItlock.Web.Components.Layout.DriftLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Driftslisens")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>@(_prosjekt?.Navn ?? "Prosjekt") - itlock</PageTitle>
+
+@if (_ikkeTilgang)
+{
+    <p class="form-error">Du har ikke tilgang til dette prosjektet.</p>
+    <a class="back-link" href="/drift">&larr; Tilbake</a>
+}
+else if (_prosjekt is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="/drift">&larr; Tilbake til mine prosjekter</a>
+    <h1>@_prosjekt.Navn</h1>
+
+    @if (_plantegninger.Count == 0)
+    {
+        <p class="list-empty">Ingen plantegninger lagt til på dette prosjektet ennå.</p>
+    }
+    else
+    {
+        @foreach (var p in _plantegninger)
+        {
+            <section class="drift-plan-section" @key="p.Id">
+                <h2>@p.Navn</h2>
+                <div class="drift-plan-canvas">
+                    <img src="@($"/plantegningbilde/{p.Id}")" alt="@p.Navn" class="drift-plan-image" />
+                    @foreach (var d in p.Dorer.Where(d => d.PosX.HasValue && d.PosY.HasValue))
+                    {
+                        <a @key="d.Id" class="drift-dor-marker" href="@($"/drift/dor/{d.Id}")"
+                           style="left:@(d.PosX!.Value.ToString(CultureInfo.InvariantCulture))%; top:@(d.PosY!.Value.ToString(CultureInfo.InvariantCulture))%;">
+                            <span class="drift-dor-marker-label">@(string.IsNullOrWhiteSpace(d.Romnr) ? d.Dornummer : d.Romnr)</span>
+                        </a>
+                    }
+                </div>
+            </section>
+        }
+    }
+
+    <section class="drift-dor-section">
+        <h2>Dører</h2>
+        @if (_dorer.Count == 0)
+        {
+            <p class="list-empty">Ingen dører registrert på dette prosjektet ennå.</p>
+        }
+        else
+        {
+            <ul class="drift-dor-liste">
+                @foreach (var d in _dorer)
+                {
+                    <li @key="d.Id">
+                        <a class="drift-dor-rad" href="@($"/drift/dor/{d.Id}")">
+                            <span class="drift-dor-nummer">@d.Dornummer</span>
+                            @if (!string.IsNullOrWhiteSpace(d.Romnr))
+                            {
+                                <span class="drift-dor-meta">Rom @d.Romnr</span>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(d.Etasje))
+                            {
+                                <span class="drift-dor-meta">@d.Etasje</span>
+                            }
+                        </a>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Prosjekt? _prosjekt;
+    private bool _ikkeTilgang;
+    private List<Plantegning> _plantegninger = [];
+    private List<Dor> _dorer = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+        {
+            _ikkeTilgang = true;
+            return;
+        }
+
+        var harTilgang = await Db.Prosjekter
+            .Where(p => p.Id == Id)
+            .AnyAsync(p => p.Medlemmer.Any(m => m.Id == brukerId));
+
+        if (!harTilgang)
+        {
+            _ikkeTilgang = true;
+            return;
+        }
+
+        _prosjekt = await Db.Prosjekter.FirstOrDefaultAsync(p => p.Id == Id);
+        if (_prosjekt is null)
+        {
+            _ikkeTilgang = true;
+            return;
+        }
+
+        _plantegninger = await Db.Plantegninger
+            .Include(p => p.Dorer)
+            .Where(p => p.ProsjektId == Id)
+            .OrderBy(p => p.Navn)
+            .ToListAsync();
+
+        _dorer = await Db.Dorer
+            .Where(d => d.ProsjektId == Id)
+            .OrderBy(d => d.Dornummer)
+            .ToListAsync();
+    }
+}

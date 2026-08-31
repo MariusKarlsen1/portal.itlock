@@ -19,7 +19,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
     public async Task<byte[]?> GenerateAsync(int skjemaId)
     {
-        var skjema = await db.KoblingsSkjemaer.Include(s => s.Prosjekt).FirstOrDefaultAsync(s => s.Id == skjemaId);
+        var skjema = await db.KoblingsSkjemaer.Include(s => s.Prosjekt).Include(s => s.Kategori).FirstOrDefaultAsync(s => s.Id == skjemaId);
         if (skjema is null)
         {
             return null;
@@ -76,7 +76,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     col.Item().Text(t =>
                     {
                         t.Span("Kategori: ").Bold();
-                        t.Span(skjema.Kategori.Visningsnavn());
+                        t.Span(skjema.Kategori?.Navn ?? "-");
                         t.Span("     Prosjekt: ").Bold();
                         t.Span(skjema.Prosjekt?.Navn ?? "-");
                         t.Span("     Dato: ").Bold();

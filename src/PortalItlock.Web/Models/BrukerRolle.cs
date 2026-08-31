@@ -5,7 +5,8 @@ public enum BrukerRolle
     Admin,
     Prosjektleder,
     Montor,
-    Kunde
+    Kunde,
+    Driftslisens
 }
 
 public static class BrukerRolleExtensions
@@ -16,6 +17,7 @@ public static class BrukerRolleExtensions
         BrukerRolle.Prosjektleder => "Prosjektleder",
         BrukerRolle.Montor => "Montør",
         BrukerRolle.Kunde => "Kunde",
+        BrukerRolle.Driftslisens => "Driftslisens",
         _ => rolle.ToString()
     };
 }

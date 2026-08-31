@@ -1,0 +1,279 @@
+@page "/driftslisenser"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Driftslisenser</PageTitle>
+
+<h1>Driftslisenser</h1>
+<p>
+    Gi vaktmestere eller driftspersonell en egen innlogging med tilgang til kun de prosjektene du velger.
+    De ser plantegning og dører der, og kan sende inn driftsmeldinger med bilder, video og tekst - ingenting annet i portalen.
+</p>
+
+@if (_lisenser.Count == 0)
+{
+    <p class="list-empty">Ingen driftslisenser opprettet ennå.</p>
+}
+else
+{
+    @foreach (var l in _lisenser)
+    {
+        <div class="lisens-card" @key="l.Id">
+            <button type="button" class="lisens-toggle" @onclick="@(() => ToggleApen(l.Id))">
+                <span class="lisens-pil @(ErApen(l.Id) ? "lisens-pil-apen" : "")">▶</span>
+                <span class="lisens-navn">@l.Navn</span>
+                <span class="lisens-status @(l.Aktiv ? "lisens-aktiv" : "lisens-inaktiv")">@(l.Aktiv ? "Aktiv" : "Inaktiv")</span>
+                <span class="lisens-meta">@l.AntallProsjekter prosjekt@(l.AntallProsjekter == 1 ? "" : "er")</span>
+            </button>
+
+            @if (ErApen(l.Id))
+            {
+                <div class="lisens-innhold">
+                    <div class="field-grid">
+                        <label>
+                            Navn
+                            <input @bind="l.Navn" @bind:event="oninput" />
+                        </label>
+                        <label>
+                            E-post
+                            <input @bind="l.Epost" @bind:event="oninput" />
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" @bind="l.Aktiv" />
+                            Aktiv
+                        </label>
+                    </div>
+
+                    <h3>Prosjekter denne lisensen har tilgang til</h3>
+                    @if (_prosjekter.Count == 0)
+                    {
+                        <p class="list-empty">Ingen prosjekter opprettet ennå.</p>
+                    }
+                    else
+                    {
+                        <ul class="prosjekt-chip-list">
+                            @foreach (var p in _prosjekter)
+                            {
+                                <li>
+                                    <label class="filter-option">
+                                        <input type="checkbox" checked="@l.ValgteProsjektIder.Contains(p.Id)" @onchange="@(() => ToggleProsjekt(l, p.Id))" />
+                                        @p.Navn
+                                    </label>
+                                </li>
+                            }
+                        </ul>
+                    }
+
+                    <div class="lisens-actions">
+                        <button type="button" class="save-button" @onclick="@(() => Lagre(l))">Lagre</button>
+                        @if (l.HarPassord)
+                        {
+                            <span class="passord-satt">Passord satt</span>
+                            <button type="button" class="remove-button" @onclick="@(() => NullstillPassord(l))">Nullstill passord</button>
+                        }
+                        else
+                        {
+                            <span class="passord-ikke-satt">Passord ikke satt</span>
+                        }
+                        <button type="button" class="delete-button" @onclick="@(() => SlettLisens(l))">Slett</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+<div class="ny-lisens">
+    <h2>Ny driftslisens</h2>
+    <div class="ny-lisens-form">
+        <input @bind="_nyNavn" @bind:event="oninput" placeholder="Navn på vaktmester/driftspersonell" />
+        <input @bind="_nyEpost" @bind:event="oninput" placeholder="E-post" />
+        <button type="button" class="add-button" @onclick="OpprettLisens" disabled="@(string.IsNullOrWhiteSpace(_nyNavn) || string.IsNullOrWhiteSpace(_nyEpost))">Opprett</button>
+    </div>
+    @if (!string.IsNullOrEmpty(_melding))
+    {
+        <p class="save-success">@_melding</p>
+    }
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
+    }
+</div>
+
+@code {
+    private sealed class LisensRad
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string Epost { get; set; } = "";
+        public bool Aktiv { get; set; }
+        public bool HarPassord { get; set; }
+        public HashSet<int> ValgteProsjektIder { get; set; } = [];
+        public int AntallProsjekter => ValgteProsjektIder.Count;
+    }
+
+    private sealed class ProsjektOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private List<LisensRad> _lisenser = [];
+    private List<ProsjektOption> _prosjekter = [];
+    private HashSet<int> _apne = [];
+    private string _nyNavn = "";
+    private string _nyEpost = "";
+    private string? _melding;
+    private string? _feil;
+
+    private bool ErApen(int id) => _apne.Contains(id);
+
+    private void ToggleApen(int id)
+    {
+        if (!_apne.Add(id))
+        {
+            _apne.Remove(id);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _prosjekter = await Db.Prosjekter
+            .OrderBy(p => p.Navn)
+            .Select(p => new ProsjektOption { Id = p.Id, Navn = p.Navn })
+            .ToListAsync();
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _lisenser = await Db.Brukere
+            .Where(b => b.Rolle == BrukerRolle.Driftslisens)
+            .Include(b => b.Prosjekter)
+            .OrderBy(b => b.Navn)
+            .Select(b => new LisensRad
+            {
+                Id = b.Id,
+                Navn = b.Navn,
+                Epost = b.Epost,
+                Aktiv = b.Aktiv,
+                HarPassord = b.PasswordHash != null,
+                ValgteProsjektIder = b.Prosjekter.Select(p => p.Id).ToHashSet()
+            })
+            .ToListAsync();
+    }
+
+    private async Task OpprettLisens()
+    {
+        var navn = _nyNavn.Trim();
+        var epost = _nyEpost.Trim();
+        if (navn.Length == 0 || epost.Length == 0)
+        {
+            _feil = "Navn og e-post må fylles ut.";
+            return;
+        }
+
+        if (await Db.Brukere.AnyAsync(b => b.Epost.ToLower() == epost.ToLower()))
+        {
+            _feil = "Det finnes allerede en bruker med denne e-posten.";
+            return;
+        }
+
+        Db.Brukere.Add(new Bruker { Navn = navn, Epost = epost, Rolle = BrukerRolle.Driftslisens, Aktiv = true });
+        await Db.SaveChangesAsync();
+
+        _nyNavn = "";
+        _nyEpost = "";
+        _feil = null;
+        _melding = $"Driftslisensen \"{navn}\" er opprettet. Velg hvilke prosjekter den skal ha tilgang til under, så kan personen sette passord via \"Sett passord første gang\" på innloggingssiden.";
+        await LoadAsync();
+    }
+
+    private void ToggleProsjekt(LisensRad l, int prosjektId)
+    {
+        if (!l.ValgteProsjektIder.Add(prosjektId))
+        {
+            l.ValgteProsjektIder.Remove(prosjektId);
+        }
+    }
+
+    private async Task Lagre(LisensRad l)
+    {
+        var navn = l.Navn.Trim();
+        var epost = l.Epost.Trim();
+        if (navn.Length == 0 || epost.Length == 0)
+        {
+            _feil = "Navn og e-post må fylles ut.";
+            return;
+        }
+
+        var bruker = await Db.Brukere.Include(b => b.Prosjekter).FirstOrDefaultAsync(b => b.Id == l.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        bruker.Navn = navn;
+        bruker.Epost = epost;
+        bruker.Aktiv = l.Aktiv;
+
+        var gjeldende = bruker.Prosjekter.Select(p => p.Id).ToHashSet();
+        var skalFjerne = gjeldende.Except(l.ValgteProsjektIder).ToList();
+        var skalLeggeTil = l.ValgteProsjektIder.Except(gjeldende).ToList();
+
+        foreach (var id in skalFjerne)
+        {
+            var p = bruker.Prosjekter.First(p => p.Id == id);
+            bruker.Prosjekter.Remove(p);
+        }
+
+        foreach (var id in skalLeggeTil)
+        {
+            var p = await Db.Prosjekter.FindAsync(id);
+            if (p is not null)
+            {
+                bruker.Prosjekter.Add(p);
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _feil = null;
+        _melding = $"\"{navn}\" er lagret.";
+        await LoadAsync();
+    }
+
+    private async Task NullstillPassord(LisensRad l)
+    {
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == l.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        bruker.PasswordHash = null;
+        await Db.SaveChangesAsync();
+        _melding = $"Passord nullstilt for \"{l.Navn}\".";
+        _feil = null;
+        await LoadAsync();
+    }
+
+    private async Task SlettLisens(LisensRad l)
+    {
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == l.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+
+        Db.Brukere.Remove(bruker);
+        await Db.SaveChangesAsync();
+        _melding = $"\"{l.Navn}\" er slettet.";
+        _feil = null;
+        await LoadAsync();
+    }
+}

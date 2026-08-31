@@ -1,14 +1,10 @@
 namespace PortalItlock.Web.Models;
 
-public enum KoblingsKategori { ARX, Salto, Diverse }
-
-public static class KoblingsKategoriExtensions
+public class KoblingsKategori
 {
-    public static string Visningsnavn(this KoblingsKategori kategori) => kategori switch
-    {
-        KoblingsKategori.ARX => "ARX",
-        KoblingsKategori.Salto => "Salto",
-        KoblingsKategori.Diverse => "Diverse",
-        _ => kategori.ToString()
-    };
+    public int Id { get; set; }
+    public required string Navn { get; set; }
+    public int Rekkefolge { get; set; }
+
+    public List<KoblingsSkjema> Skjemaer { get; set; } = [];
 }
