@@ -13,7 +13,7 @@ public class TimeoversiktService(ApplicationDbContext db)
 {
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
 
-    public async Task<List<Timeregistrering>> HentRegistreringerAsync(DateTime fra, DateTime til, int? montorId)
+    public async Task<List<Timeregistrering>> HentRegistreringerAsync(DateTime fra, DateTime til, int? montorId, bool kunGodkjent = false)
     {
         var query = db.Timeregistreringer
             .Include(t => t.Montor)
@@ -24,6 +24,11 @@ public class TimeoversiktService(ApplicationDbContext db)
         if (montorId.HasValue)
         {
             query = query.Where(t => t.MontorId == montorId.Value);
+        }
+
+        if (kunGodkjent)
+        {
+            query = query.Where(t => t.Status == TimeregistreringStatus.Godkjent);
         }
 
         return await query

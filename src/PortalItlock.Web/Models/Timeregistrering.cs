@@ -20,6 +20,11 @@ public class Timeregistrering
     public string? Kommentar { get; set; }
     public decimal Kilometer { get; set; }
 
+    public TimeregistreringStatus Status { get; set; } = TimeregistreringStatus.Venter;
+    public DateTime? BehandletDato { get; set; }
+    public int? BehandletAvBrukerId { get; set; }
+    public Bruker? BehandletAvBruker { get; set; }
+
     [NotMapped]
     public decimal TotalTimer => Math.Max(0, (decimal)(Slutt - Start).TotalHours - PauseMinutter / 60m);
 }

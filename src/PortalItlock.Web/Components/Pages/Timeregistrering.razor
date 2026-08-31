@@ -119,6 +119,7 @@
                             <th>Timer</th>
                             <th>Km</th>
                             <th>Kommentar</th>
+                            <th>Status</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -133,7 +134,20 @@
                                 <td class="timer-cell">@r.Timer.ToString("N1", Kultur) t</td>
                                 <td>@(r.Kilometer > 0 ? r.Kilometer.ToString("N0", Kultur) : "")</td>
                                 <td>@r.Kommentar</td>
-                                <td><button type="button" class="remove-button" @onclick="@(() => Slett(r.Id))">Slett</button></td>
+                                <td>
+                                    <span class="status-badge @StatusCss(r.Status)">@r.Status.Visningsnavn()</span>
+                                </td>
+                                <td class="handling-cell">
+                                    @if (KanGodkjenne && r.Status == TimeregistreringStatus.Venter)
+                                    {
+                                        <button type="button" class="approve-button" @onclick="@(() => Behandle(r.Id, TimeregistreringStatus.Godkjent))">Godkjenn</button>
+                                        <button type="button" class="reject-button" @onclick="@(() => Behandle(r.Id, TimeregistreringStatus.Avslatt))">Avslå</button>
+                                    }
+                                    @if (KanGodkjenne || r.Status != TimeregistreringStatus.Godkjent)
+                                    {
+                                        <button type="button" class="remove-button" @onclick="@(() => Slett(r.Id))">Slett</button>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -182,6 +196,7 @@
         public decimal Timer { get; set; }
         public string? Kommentar { get; set; }
         public decimal Kilometer { get; set; }
+        public TimeregistreringStatus Status { get; set; }
     }
 
     private sealed class UkeGruppe
@@ -203,11 +218,29 @@
     private string? _error;
     private string? _savedMessage;
 
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+    private bool KanGodkjenne { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         if (ArbeidsordreId.HasValue)
         {
             _draft.ArbeidsordreId = ArbeidsordreId;
+        }
+
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                var bruker = await Db.Brukere.FindAsync(bid);
+                _naverendeBrukerId = bruker?.Id;
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            KanGodkjenne = rolleClaim is "Admin" or "Prosjektleder";
         }
 
         await LoadAsync();
@@ -242,7 +275,8 @@
             ArbeidsordreTittel = t.Arbeidsordre?.Tittel ?? "-",
             Timer = t.TotalTimer,
             Kommentar = t.Kommentar,
-            Kilometer = t.Kilometer
+            Kilometer = t.Kilometer,
+            Status = t.Status
         });
 
         _uker = rader
@@ -303,8 +337,40 @@
             return;
         }
 
+        if (reg.Status == TimeregistreringStatus.Godkjent && !KanGodkjenne)
+        {
+            return;
+        }
+
         Db.Timeregistreringer.Remove(reg);
         await Db.SaveChangesAsync();
         await LoadAsync();
     }
+
+    private async Task Behandle(int id, TimeregistreringStatus status)
+    {
+        if (!KanGodkjenne)
+        {
+            return;
+        }
+
+        var reg = await Db.Timeregistreringer.FirstOrDefaultAsync(t => t.Id == id);
+        if (reg is null)
+        {
+            return;
+        }
+
+        reg.Status = status;
+        reg.BehandletDato = DateTime.Now;
+        reg.BehandletAvBrukerId = _naverendeBrukerId;
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private static string StatusCss(TimeregistreringStatus status) => status switch
+    {
+        TimeregistreringStatus.Godkjent => "status-godkjent",
+        TimeregistreringStatus.Avslatt => "status-avslatt",
+        _ => "status-venter"
+    };
 }

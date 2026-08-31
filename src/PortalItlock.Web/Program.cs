@@ -358,6 +358,14 @@ app.MapGet("/tilvalgmalalternativ/{id:int}/bilde", async (int id, ApplicationDbC
         : Results.File(alternativ.BildeData, alternativ.BildeContentType ?? "application/octet-stream");
 }).RequireAuthorization();
 
+app.MapGet("/tilvalg/{id:int}/kundebilde", async (int id, ApplicationDbContext db) =>
+{
+    var tilvalg = await db.Tilvalg.FindAsync(id);
+    return tilvalg?.KundeOnskeBildeData is null
+        ? Results.NotFound()
+        : Results.File(tilvalg.KundeOnskeBildeData, tilvalg.KundeOnskeBildeContentType ?? "application/octet-stream");
+}).RequireAuthorization();
+
 app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
 {
     var komponent = await db.Components.FindAsync(id);
@@ -573,7 +581,7 @@ app.MapGet("/arbeidsordre/{id:int}/rapport/pdf", async (int id, HttpContext cont
 
 app.MapGet("/timeoversikt/eksport-csv", async (DateTime fra, DateTime til, int? montorId, TimeoversiktService service) =>
 {
-    var registreringer = await service.HentRegistreringerAsync(fra, til, montorId);
+    var registreringer = await service.HentRegistreringerAsync(fra, til, montorId, kunGodkjent: true);
     var csv = service.GenererCsv(registreringer);
     var filnavn = $"timeoversikt-{fra:yyyy-MM-dd}-{til:yyyy-MM-dd}.csv";
     return Results.File(csv, "text/csv", filnavn);
@@ -581,7 +589,7 @@ app.MapGet("/timeoversikt/eksport-csv", async (DateTime fra, DateTime til, int? 
 
 app.MapGet("/timeoversikt/eksport-pdf", async (DateTime fra, DateTime til, int? montorId, ApplicationDbContext db, TimeoversiktService service) =>
 {
-    var registreringer = await service.HentRegistreringerAsync(fra, til, montorId);
+    var registreringer = await service.HentRegistreringerAsync(fra, til, montorId, kunGodkjent: true);
     var montorNavn = montorId.HasValue
         ? (await db.Brukere.FindAsync(montorId.Value))?.Navn
         : null;

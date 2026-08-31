@@ -192,6 +192,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(t => t.MontorId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        modelBuilder.Entity<Timeregistrering>()
+            .HasOne(t => t.BehandletAvBruker)
+            .WithMany()
+            .HasForeignKey(t => t.BehandletAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         modelBuilder.Entity<PlukklisteLinje>()
             .HasIndex(p => new { p.ProsjektId, p.ComponentId })
             .IsUnique();

@@ -29,6 +29,7 @@ else
                 <div class="mal-header">
                     <input class="mal-dortype" @bind="mal.Dortype" @bind:event="oninput" placeholder="Dørtype, f.eks. Ytterdør" />
                     <button type="button" class="save-button" @onclick="@(() => LagreMal(mal))">Lagre</button>
+                    <button type="button" class="add-button" @onclick="@(() => DupliserMal(mal))">Dupliser</button>
                     <button type="button" class="remove-button" @onclick="@(() => SlettMal(mal))">Slett mal</button>
                 </div>
 
@@ -41,7 +42,12 @@ else
                     <ol class="punkt-list">
                         @foreach (var punkt in mal.Punkter.OrderBy(p => p.Rekkefolge))
                         {
-                            <li @key="punkt.Id">
+                            <li @key="punkt.Id" class="@(_dragPunkt?.Id == punkt.Id ? "punkt-dragging" : "")"
+                                draggable="true"
+                                @ondragstart="@(() => OnDragStart(punkt))"
+                                @ondragover="@(() => { })" @ondragover:preventDefault
+                                @ondrop="@(() => OnDrop(mal, punkt))">
+                                <span class="punkt-handle" title="Dra for å endre rekkefølge">⠿</span>
                                 <input @bind="punkt.Tekst" @bind:event="oninput" />
                                 <button type="button" class="remove-button" @onclick="@(() => SlettPunkt(mal, punkt))">Fjern</button>
                             </li>
@@ -91,6 +97,7 @@ else
     private string? _melding;
     private string? _feil;
     private HashSet<int> _apne = [];
+    private SjekklistePunkt? _dragPunkt;
 
     private bool ErApen(int id) => _apne.Contains(id);
 
@@ -215,5 +222,62 @@ else
         Db.SjekklistePunkter.Remove(entitet);
         await Db.SaveChangesAsync();
         await LoadAsync();
+    }
+
+    private void OnDragStart(SjekklistePunkt punkt)
+    {
+        _dragPunkt = punkt;
+    }
+
+    private async Task OnDrop(MalRad mal, SjekklistePunkt target)
+    {
+        if (_dragPunkt is null || _dragPunkt.Id == target.Id)
+        {
+            _dragPunkt = null;
+            return;
+        }
+
+        var ordnet = mal.Punkter.OrderBy(p => p.Rekkefolge).ToList();
+        var dragget = ordnet.FirstOrDefault(p => p.Id == _dragPunkt.Id);
+        if (dragget is null)
+        {
+            _dragPunkt = null;
+            return;
+        }
+
+        ordnet.Remove(dragget);
+        var targetIndex = ordnet.FindIndex(p => p.Id == target.Id);
+        ordnet.Insert(targetIndex, dragget);
+
+        for (var i = 0; i < ordnet.Count; i++)
+        {
+            var nyRekkefolge = i + 1;
+            var entitet = await Db.SjekklistePunkter.FirstOrDefaultAsync(p => p.Id == ordnet[i].Id);
+            if (entitet is not null)
+            {
+                entitet.Rekkefolge = nyRekkefolge;
+            }
+            ordnet[i].Rekkefolge = nyRekkefolge;
+        }
+
+        await Db.SaveChangesAsync();
+        _dragPunkt = null;
+    }
+
+    private async Task DupliserMal(MalRad mal)
+    {
+        var kopi = new SjekklisteMal { Dortype = $"{mal.Dortype} (kopi)" };
+        foreach (var punkt in mal.Punkter.OrderBy(p => p.Rekkefolge))
+        {
+            kopi.Punkter.Add(new SjekklistePunkt { Tekst = punkt.Tekst, Rekkefolge = punkt.Rekkefolge });
+        }
+
+        Db.SjekklisteMaler.Add(kopi);
+        await Db.SaveChangesAsync();
+
+        _melding = $"\"{mal.Dortype}\" er duplisert.";
+        _feil = null;
+        await LoadAsync();
+        _apne.Add(kopi.Id);
     }
 }

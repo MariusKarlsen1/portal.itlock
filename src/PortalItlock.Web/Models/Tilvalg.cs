@@ -21,5 +21,10 @@ public class Tilvalg
     public string? SignertAvNavn { get; set; }
     public decimal? SumTotal { get; set; }
 
+    // Kundens eget fritekst-ønske/referansebilde, i tillegg til de ferdige alternativene.
+    public string? KundeOnskeTekst { get; set; }
+    public byte[]? KundeOnskeBildeData { get; set; }
+    public string? KundeOnskeBildeContentType { get; set; }
+
     public List<TilvalgAlternativ> Alternativer { get; set; } = [];
 }
