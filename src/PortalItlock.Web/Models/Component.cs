@@ -8,6 +8,11 @@ public class Component
 
     public required string Navn { get; set; }
     public string? Produsent { get; set; }
+    public string? ProdusentAdresse { get; set; }
+    public string? ProdusentPostnr { get; set; }
+    public string? ProdusentSted { get; set; }
+    public string? ProdusentLand { get; set; }
+    public string? ProdusentOrgnr { get; set; }
     public string? Produktkode { get; set; }
     public string? Beskrivelse { get; set; }
     public string? Overflate { get; set; }

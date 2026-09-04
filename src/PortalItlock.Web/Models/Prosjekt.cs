@@ -14,6 +14,9 @@ public class Prosjekt
     public string? Telefon { get; set; }
     public string? Epost { get; set; }
     public string? System { get; set; }
+    public string? Byggkategori { get; set; }
+    public string? Risikoklasse { get; set; }
+    public int CeGyldighetMåneder { get; set; } = 12;
     public ProsjektStatus? Status { get; set; }
     public string? Notater { get; set; }
     public string? Info { get; set; }

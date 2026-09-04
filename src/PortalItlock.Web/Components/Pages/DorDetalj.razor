@@ -95,6 +95,49 @@ else
         }
     </section>
 
+    @if (_harAutomatikk)
+    {
+        <section class="dor-section">
+            <h2>CE-godkjenning</h2>
+            @if (_apenCeId is not null)
+            {
+                <div class="ce-modal-overlay">
+                    <div class="ce-modal">
+                        <CeGodkjenningPanel Id="_apenCeId.Value" OnClose="LukkCePanel" />
+                    </div>
+                </div>
+            }
+            else
+            {
+                @if (_ceGodkjenninger.Count > 0)
+                {
+                    <table class="dor-table">
+                        <thead>
+                            <tr><th>Nummer</th><th>Status</th><th>Vilkår</th><th>Gyldig til</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var ce in _ceGodkjenninger)
+                            {
+                                <tr @key="ce.Id">
+                                    <td>@ce.Sertifiseringsnummer</td>
+                                    <td>@ce.Status.Visningsnavn()</td>
+                                    <td>@(CeValideringsService.ErGodkjent(ce, _dor.Komponenter) ? "Oppfylt" : "Ikke oppfylt")</td>
+                                    <td>@ce.GyldigTil.ToString("dd.MM.yyyy")</td>
+                                    <td><button type="button" class="edit-button" @onclick="@(() => _apenCeId = ce.Id)">Åpne</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+                else
+                {
+                    <p class="list-empty">Ingen CE-godkjenning startet på denne døren.</p>
+                }
+                <button type="button" class="add-button" @onclick="StartCeGodkjenning">Start CE-godkjenning</button>
+            }
+        </section>
+    }
+
     <section class="dor-section">
         <h2>Låsplan for denne døren</h2>
         @if (_sylinderRader.Count == 0)
@@ -306,6 +349,9 @@ else
     private List<DorMedia> _media = [];
     private List<Avvik> _avvik = [];
     private List<Driftsmelding> _driftsmeldinger = [];
+    private List<CeGodkjenning> _ceGodkjenninger = [];
+    private bool _harAutomatikk;
+    private int? _apenCeId;
     private DorMediaTidspunkt _nyMediaTidspunkt = DorMediaTidspunkt.For;
     private string? _mediaFeil;
     private string _nyAvvikBeskrivelse = "";
@@ -331,11 +377,12 @@ else
         }
 
         _dor = await Db.Dorer
-            .Include(d => d.Prosjekt)
+            .Include(d => d.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Include(d => d.DorIdMal)
             .Include(d => d.Funksjoner)
             .Include(d => d.MontertAvBruker)
             .Include(d => d.OppdatertAvBruker)
-            .Include(d => d.Komponenter).ThenInclude(k => k.Component)
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
             .Include(d => d.Komponenter).ThenInclude(k => k.MontertAvBruker)
             .FirstOrDefaultAsync(d => d.Id == Id);
 
@@ -346,6 +393,13 @@ else
         }
 
         _notFound = false;
+
+        _harAutomatikk = _dor.Komponenter.Any(k => k.Component?.Type?.CeKategori == CeTilbehorKategori.DorAutomatikk);
+        _ceGodkjenninger = await Db.CeGodkjenninger
+            .Where(c => c.DorId == Id)
+            .Include(c => c.Media)
+            .OrderByDescending(c => c.OpprettetDato)
+            .ToListAsync();
 
         _media = await Db.DorMedia.Where(m => m.DorId == Id).OrderByDescending(m => m.OpprettetDato).ToListAsync();
         _avvik = await Db.Avvik.Where(a => a.DorId == Id).Include(a => a.OpprettetAvBruker)
@@ -528,6 +582,81 @@ else
         }
         liste.Add(pdf);
         _pdfSavedMessage = "PDF-en er lagret nedenfor.";
+    }
+
+    private async Task StartCeGodkjenning()
+    {
+        if (_dor is null)
+        {
+            return;
+        }
+
+        var antall = await Db.CeGodkjenninger.CountAsync();
+        var nummer = $"CE-ITL-DOR-{DateTime.Now:yyMM}-{antall + 1:0000}";
+
+        var automatikk = _dor.Komponenter.FirstOrDefault(k => k.Component?.Type?.CeKategori == CeTilbehorKategori.DorAutomatikk);
+        var gyldighetMåneder = _dor.Prosjekt?.CeGyldighetMåneder is > 0 ? _dor.Prosjekt!.CeGyldighetMåneder : 12;
+        var gyldigFra = DateTime.Now;
+
+        var ce = new CeGodkjenning
+        {
+            DorId = _dor.Id,
+            Sertifiseringsnummer = nummer,
+            OpprettetAvBrukerId = _naverendeBrukerId,
+            KundeNavn = _dor.Prosjekt?.Kunde?.Navn,
+            Kontaktperson = _dor.Prosjekt?.Kontaktperson,
+            ProsjektNavn = _dor.Prosjekt?.Navn,
+            Adresse = _dor.Prosjekt?.Adresse,
+            Etasje = _dor.Etasje,
+            DorTil = _dor.DorTil,
+            Dornummer = _dor.Dornummer,
+            DorIdKode = _dor.DorIdMal?.Kode,
+            Byggkategori = _dor.Prosjekt?.Byggkategori,
+            Risikoklasse = _dor.Prosjekt?.Risikoklasse,
+            EnergiKlasse = _dor.Energi,
+            GyldighetMåneder = gyldighetMåneder,
+            GyldigFra = gyldigFra,
+            GyldigTil = gyldigFra.AddMonths(gyldighetMåneder),
+            Produsent = automatikk?.Component?.Produsent,
+            ProdusentAdresse = automatikk?.Component?.ProdusentAdresse,
+            ProdusentPostnr = automatikk?.Component?.ProdusentPostnr,
+            ProdusentSted = automatikk?.Component?.ProdusentSted,
+            ProdusentLand = automatikk?.Component?.ProdusentLand,
+            ProdusentOrgnr = automatikk?.Component?.ProdusentOrgnr,
+            ItemNavn = automatikk?.Component?.Navn,
+            Antall = automatikk?.Antall,
+            BreddeMm = _dor.Bredde,
+            HoydeMm = _dor.Hoyde,
+            Brannklasse = _dor.Brann,
+            FriBredde086 = _dor.FriBredde086,
+            Dorkonstruksjon = _dor.DorIdMal?.Dorkonstruksjon,
+            Karmkonstruksjon = _dor.DorIdMal?.Karmkonstruksjon,
+            GlassIDor = _dor.DorIdMal?.GlassIDor,
+            FargeKarm = _dor.DorIdMal?.FargeKarm,
+            FargeDorblad = _dor.DorIdMal?.FargeDorblad,
+            Karmtype = _dor.DorIdMal?.Karmtype,
+            Terskeltype = _dor.DorIdMal?.Terskel,
+            Sparkeplate = _dor.DorIdMal?.Sparkeplate,
+            AMal = _dor.DorIdMal?.AMal,
+            BMal = _dor.DorIdMal?.BMal,
+            Dorblad = _dor.DorIdMal?.CeDorblad,
+            Glasstykkelse = _dor.DorIdMal?.CeGlasstykkelse
+        };
+
+        Db.CeGodkjenninger.Add(ce);
+        await Db.SaveChangesAsync();
+
+        _apenCeId = ce.Id;
+    }
+
+    private async Task LukkCePanel()
+    {
+        _apenCeId = null;
+        _ceGodkjenninger = await Db.CeGodkjenninger
+            .Where(c => c.DorId == Id)
+            .Include(c => c.Media)
+            .OrderByDescending(c => c.OpprettetDato)
+            .ToListAsync();
     }
 
     private async Task SendTilKunde(Avvik avvik)

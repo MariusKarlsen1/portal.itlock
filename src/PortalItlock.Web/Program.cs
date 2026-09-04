@@ -39,6 +39,7 @@ builder.Services.AddScoped<BefaringPdfService>();
 builder.Services.AddScoped<SjekklistePdfService>();
 builder.Services.AddScoped<LagretPdfService>();
 builder.Services.AddScoped<TilbudSyncService>();
+builder.Services.AddScoped<CeGodkjenningPdfService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddHttpClient<EmailService>(client =>
 {
@@ -47,6 +48,7 @@ builder.Services.AddHttpClient<EmailService>(client =>
 builder.Services.AddHttpClient<GeocodingService>(client =>
 {
     client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");
+    client.Timeout = TimeSpan.FromSeconds(5);
 });
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -438,6 +440,37 @@ app.MapGet("/avvik/{id:int}/pdf", async (int id, HttpContext context, AvvikPdfSe
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/ce/{id:int}/pdf", async (int id, HttpContext context, CeGodkjenningPdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var filnavn = $"CE-godkjenning-{id}-itlock-AS.pdf";
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/cegodkjenningmedia/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var media = await db.CeGodkjenningMedia.FindAsync(id);
+    return media is null
+        ? Results.NotFound()
+        : Results.File(media.Data, media.ContentType, enableRangeProcessing: true);
+}).RequireAuthorization();
+
+app.MapGet("/komponenttype/{id:int}/ce-dokument", async (int id, ApplicationDbContext db) =>
+{
+    var type = await db.ComponentTypes.FindAsync(id);
+    return type?.CeDokumentData is null
+        ? Results.NotFound()
+        : Results.File(type.CeDokumentData, type.CeDokumentContentType ?? "application/pdf", type.CeDokumentFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/befaring/{id:int}/pdf", async (int id, HttpContext context, BefaringPdfService service) =>

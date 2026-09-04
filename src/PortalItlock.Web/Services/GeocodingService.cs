@@ -19,7 +19,17 @@ public class GeocodingService(HttpClient http)
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("PortalItlockFullKontroll", "1.0"));
 
-        var response = await http.SendAsync(request);
+        HttpResponseMessage response;
+        try
+        {
+            response = await http.SendAsync(request);
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or HttpRequestException)
+        {
+            // Nettverket kan være utilgjengelig eller for tregt - ikke la kartoppslag blokkere siden.
+            return null;
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             return null;

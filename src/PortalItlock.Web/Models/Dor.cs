@@ -27,6 +27,7 @@ public class Dor
 
     public string? Brann { get; set; }
     public string? Lyd { get; set; }
+    public string? Energi { get; set; }
     public bool? FriBredde086 { get; set; }
     public int? Bredde { get; set; }
     public int? Hoyde { get; set; }

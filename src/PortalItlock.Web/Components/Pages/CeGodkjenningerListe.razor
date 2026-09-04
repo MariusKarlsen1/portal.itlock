@@ -1,0 +1,88 @@
+@page "/ce-godkjenninger"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+<PageTitle>CE-godkjenninger - itlock</PageTitle>
+
+<h1>CE-godkjenninger</h1>
+<p class="section-hint">Alle CE-sertifiseringer på tvers av prosjekter. Start en ny fra dørsiden til en dør med automatikk.</p>
+
+@if (_rader.Count == 0)
+{
+    <p class="list-empty">Ingen CE-godkjenninger opprettet ennå.</p>
+}
+else
+{
+    <ul class="godkjenning-list">
+        @foreach (var r in _rader)
+        {
+            <li>
+                <a class="godkjenning-row @(r.ErUtgatt ? "godkjenning-row-utgatt" : "")" href="@($"/ce/{r.Id}")">
+                    <span class="godkjenning-nummer">@r.Sertifiseringsnummer</span>
+                    <span class="godkjenning-badge godkjenning-badge-@r.Status">@r.Status.Visningsnavn()</span>
+                    <span class="godkjenning-badge @(r.Godkjent ? "godkjenning-badge-ok" : "godkjenning-badge-feil")">
+                        @(r.Godkjent ? "Vilkår oppfylt" : "Vilkår ikke oppfylt")
+                    </span>
+                    <span class="godkjenning-meta">
+                        @r.ProsjektNavn - Dør @r.Dornummer
+                        @if (r.ErUtgatt)
+                        {
+                            <text> · Utgått @r.GyldigTil.ToString("dd.MM.yyyy")</text>
+                        }
+                        else
+                        {
+                            <text> · Gyldig til @r.GyldigTil.ToString("dd.MM.yyyy")</text>
+                        }
+                    </span>
+                </a>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    private sealed class Rad
+    {
+        public int Id { get; set; }
+        public required string Sertifiseringsnummer { get; set; }
+        public CeGodkjenningStatus Status { get; set; }
+        public DateTime GyldigTil { get; set; }
+        public bool Godkjent { get; set; }
+        public string? ProsjektNavn { get; set; }
+        public string? Dornummer { get; set; }
+        public bool ErUtgatt => GyldigTil.Date < DateTime.Today;
+    }
+
+    private List<Rad> _rader = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var godkjenninger = await Db.CeGodkjenninger
+            .Include(c => c.Dor).ThenInclude(d => d!.Prosjekt)
+            .Include(c => c.Media)
+            .OrderByDescending(c => c.OpprettetDato)
+            .ToListAsync();
+
+        var dorIder = godkjenninger.Select(c => c.DorId).Distinct().ToList();
+        var alleKomponenter = await Db.DorKomponenter
+            .Where(k => dorIder.Contains(k.DorId))
+            .Include(k => k.Component).ThenInclude(c => c!.Type)
+            .ToListAsync();
+
+        _rader = godkjenninger.Select(c => new Rad
+        {
+            Id = c.Id,
+            Sertifiseringsnummer = c.Sertifiseringsnummer,
+            Status = c.Status,
+            GyldigTil = c.GyldigTil,
+            Godkjent = CeValideringsService.ErGodkjent(c, alleKomponenter.Where(k => k.DorId == c.DorId).ToList()),
+            ProsjektNavn = c.Dor?.Prosjekt?.Navn,
+            Dornummer = c.Dor?.Dornummer
+        }).ToList();
+    }
+}

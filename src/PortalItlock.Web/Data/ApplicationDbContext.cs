@@ -79,6 +79,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<LagretPdf> LagredePdfer => Set<LagretPdf>();
     public DbSet<Driftsmelding> Driftsmeldinger => Set<Driftsmelding>();
     public DbSet<DriftsmeldingMedia> DriftsmeldingMedia => Set<DriftsmeldingMedia>();
+    public DbSet<CeGodkjenning> CeGodkjenninger => Set<CeGodkjenning>();
+    public DbSet<CeGodkjenningMedia> CeGodkjenningMedia => Set<CeGodkjenningMedia>();
+    public DbSet<CeMaleGrenseverdier> CeMaleGrenseverdier => Set<CeMaleGrenseverdier>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -490,6 +493,24 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         modelBuilder.Entity<LagretPdf>()
             .HasIndex(p => new { p.EntityType, p.EntityId });
+
+        modelBuilder.Entity<CeGodkjenning>()
+            .HasOne(c => c.Dor)
+            .WithMany()
+            .HasForeignKey(c => c.DorId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<CeGodkjenning>()
+            .HasOne(c => c.OpprettetAvBruker)
+            .WithMany()
+            .HasForeignKey(c => c.OpprettetAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<CeGodkjenningMedia>()
+            .HasOne(m => m.CeGodkjenning)
+            .WithMany(c => c.Media)
+            .HasForeignKey(m => m.CeGodkjenningId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         SeedReferenceData(modelBuilder);
     }

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260904161008_CeKundeinfoUtvidelse")]
+    partial class CeKundeinfoUtvidelse
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -588,9 +591,6 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<int?>("AMal")
-                        .HasColumnType("INTEGER");
-
                     b.Property<string>("Adresse")
                         .HasColumnType("TEXT");
 
@@ -633,9 +633,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("AvstandVeggUnntatt")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int?>("BMal")
-                        .HasColumnType("INTEGER");
-
                     b.Property<string>("Brannklasse")
                         .HasColumnType("TEXT");
 
@@ -660,9 +657,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("DorTil")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Dorblad")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Dorkonstruksjon")
                         .HasColumnType("TEXT");
 
@@ -681,12 +675,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Etasje")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("FargeDorblad")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("FargeKarm")
-                        .HasColumnType("TEXT");
-
                     b.Property<bool?>("ForsinkelseForLukking")
                         .HasColumnType("INTEGER");
 
@@ -696,17 +684,8 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool?>("FriBredde086")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool?>("GlassFareKuttSkade")
-                        .HasColumnType("INTEGER");
-
                     b.Property<bool?>("GlassIDor")
                         .HasColumnType("INTEGER");
-
-                    b.Property<bool?>("GlassSynligTiltak")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Glasstykkelse")
-                        .HasColumnType("TEXT");
 
                     b.Property<DateTime>("GyldigFra")
                         .HasColumnType("TEXT");
@@ -730,9 +709,6 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Karmkonstruksjon")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Karmtype")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Kontaktperson")
@@ -783,21 +759,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Produsent")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("ProdusentAdresse")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProdusentLand")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProdusentOrgnr")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProdusentPostnr")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProdusentSted")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("ProsjektNavn")
                         .HasColumnType("TEXT");
 
@@ -813,9 +774,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool?>("SensorplasseringKorrekt")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("Serienummer")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Sertifiseringsnummer")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -829,17 +787,11 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool?>("SikkerhetssensorUtkoblingBrannalarm")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("Sparkeplate")
-                        .HasColumnType("TEXT");
-
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool?>("TerskelUnder25mm")
                         .HasColumnType("INTEGER");
-
-                    b.Property<string>("Terskeltype")
-                        .HasColumnType("TEXT");
 
                     b.Property<bool?>("TydeligSkilting")
                         .HasColumnType("INTEGER");
@@ -850,9 +802,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("UtfortAvNavn")
                         .HasColumnType("TEXT");
 
-                    b.Property<byte[]>("UtfortAvSignatur")
-                        .HasColumnType("BLOB");
-
                     b.Property<double?>("VektKg")
                         .HasColumnType("REAL");
 
@@ -861,9 +810,6 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<string>("VerifisertAvNavn")
                         .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("VerifisertAvSignatur")
-                        .HasColumnType("BLOB");
 
                     b.HasKey("Id");
 
@@ -993,21 +939,6 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Produsent")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProdusentAdresse")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProdusentLand")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProdusentOrgnr")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProdusentPostnr")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ProdusentSted")
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("RabattgruppeId")
@@ -1655,50 +1586,20 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<int?>("AMal")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("BMal")
-                        .HasColumnType("INTEGER");
-
                     b.Property<string>("Brann")
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("Bredde")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("CeDorblad")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CeGlasstykkelse")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Dorkonstruksjon")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Dortype")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("FargeDorblad")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("FargeKarm")
                         .HasColumnType("TEXT");
 
                     b.Property<bool?>("FriBredde086")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool?>("GlassIDor")
-                        .HasColumnType("INTEGER");
-
                     b.Property<int?>("Hoyde")
                         .HasColumnType("INTEGER");
-
-                    b.Property<string>("Karmkonstruksjon")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Karmtype")
-                        .HasColumnType("TEXT");
 
                     b.Property<string>("Kode")
                         .IsRequired()
@@ -1707,17 +1608,8 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Lyd")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Merknad")
-                        .HasColumnType("TEXT");
-
                     b.Property<int>("ProsjektId")
                         .HasColumnType("INTEGER");
-
-                    b.Property<string>("Sparkeplate")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Terskel")
-                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 

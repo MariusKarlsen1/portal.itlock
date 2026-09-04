@@ -1,0 +1,195 @@
+@page "/ce-oppsett"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>CE-oppsett - itlock</PageTitle>
+
+<a class="back-link" href="/oppsettmodul">&larr; Tilbake til oppsett</a>
+<h1>CE-oppsett</h1>
+<p class="section-hint">
+    Sett CE-kategori på beslagstypene. Komponenter av en type kategorisert som "Dørautomatikk" vises som
+    maskinen i en CE-godkjenning, "Sikkerhetstilbehør" og "Annet tilbehør" vises i tilbehørslistene.
+    Et dokument lastet opp her brukes automatisk som sertifikat/produktark for alle varer av typen som
+    ikke har sin egen FDV-fil.
+</p>
+
+@if (!string.IsNullOrEmpty(_feil))
+{
+    <p class="form-error">@_feil</p>
+}
+
+<div class="table-wrap">
+    <table class="component-table">
+        <thead>
+            <tr>
+                <th>Beslagstype</th>
+                <th>CE-kategori</th>
+                <th>CE-dokument</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var t in _typer)
+            {
+                <tr @key="t.Id">
+                    <td>@t.Navn</td>
+                    <td>
+                        <select @bind="t.CeKategori" @bind:after="@(() => LagreKategori(t))">
+                            @foreach (var k in Kategorier)
+                            {
+                                <option value="@k">@k.Visningsnavn()</option>
+                            }
+                        </select>
+                    </td>
+                    <td class="fdv-cell">
+                        @if (t.HarDokument)
+                        {
+                            <a href="@($"/komponenttype/{t.Id}/ce-dokument")" target="_blank">@t.DokumentFilnavn</a>
+                            <button type="button" class="remove-button" @onclick="@(() => FjernDokument(t))">Fjern</button>
+                        }
+                        else
+                        {
+                            <InputFile OnChange="@(e => LastOppDokument(t, e))" accept=".pdf,application/pdf" />
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="new-component">
+    <h2>Grenseverdier for målte verdier</h2>
+    <p class="section-hint">Standardverdier iht. NS-EN 16005, brukes til å validere Mål-steget i CE-godkjenningen.</p>
+    @if (_grenseverdier is not null)
+    {
+        <div class="grenseverdi-form">
+            <label>Maks åpningstid (sek)<input @bind="_grenseverdier.MaksApningstidSek" type="number" step="0.1" /></label>
+            <label>Maks lukketid 90-10° (sek)<input @bind="_grenseverdier.MaksLukketidHoySek" type="number" step="0.1" /></label>
+            <label>Maks lukketid 10-0° (sek)<input @bind="_grenseverdier.MaksLukketidLavSek" type="number" step="0.1" /></label>
+            <label>Maks åpningskraft (N)<input @bind="_grenseverdier.MaksApningskraftN" type="number" step="0.1" /></label>
+            <button type="button" class="save-button" @onclick="LagreGrenseverdier">Lagre grenseverdier</button>
+        </div>
+        @if (!string.IsNullOrEmpty(_grenseverdiMelding))
+        {
+            <p class="save-success">@_grenseverdiMelding</p>
+        }
+    }
+</div>
+
+@code {
+    private sealed class TypeDraft
+    {
+        public int Id { get; set; }
+        public required string Navn { get; set; }
+        public CeTilbehorKategori CeKategori { get; set; }
+        public bool HarDokument { get; set; }
+        public string? DokumentFilnavn { get; set; }
+    }
+
+    private static readonly CeTilbehorKategori[] Kategorier =
+    [
+        CeTilbehorKategori.Ingen,
+        CeTilbehorKategori.DorAutomatikk,
+        CeTilbehorKategori.SikkerhetsTilbehor,
+        CeTilbehorKategori.AnnetTilbehor
+    ];
+
+    private List<TypeDraft> _typer = [];
+    private CeMaleGrenseverdier? _grenseverdier;
+    private string? _feil;
+    private string? _grenseverdiMelding;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _typer = await Db.ComponentTypes
+            .OrderBy(t => t.Navn)
+            .Select(t => new TypeDraft
+            {
+                Id = t.Id,
+                Navn = t.Navn,
+                CeKategori = t.CeKategori,
+                HarDokument = t.CeDokumentData != null,
+                DokumentFilnavn = t.CeDokumentFilnavn
+            })
+            .ToListAsync();
+
+        _grenseverdier = await Db.CeMaleGrenseverdier.FirstOrDefaultAsync();
+        if (_grenseverdier is null)
+        {
+            _grenseverdier = new CeMaleGrenseverdier();
+            Db.CeMaleGrenseverdier.Add(_grenseverdier);
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    private async Task LagreKategori(TypeDraft draft)
+    {
+        var entity = await Db.ComponentTypes.FirstAsync(t => t.Id == draft.Id);
+        entity.CeKategori = draft.CeKategori;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LastOppDokument(TypeDraft draft, InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        var file = e.File;
+        if (file.Size > 20_000_000)
+        {
+            _feil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        var entity = await Db.ComponentTypes.FirstAsync(t => t.Id == draft.Id);
+        entity.CeDokumentData = buffer.ToArray();
+        entity.CeDokumentFilnavn = file.Name;
+        entity.CeDokumentContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType;
+        await Db.SaveChangesAsync();
+
+        draft.HarDokument = true;
+        draft.DokumentFilnavn = file.Name;
+    }
+
+    private async Task FjernDokument(TypeDraft draft)
+    {
+        var entity = await Db.ComponentTypes.FirstAsync(t => t.Id == draft.Id);
+        entity.CeDokumentData = null;
+        entity.CeDokumentFilnavn = null;
+        entity.CeDokumentContentType = null;
+        await Db.SaveChangesAsync();
+
+        draft.HarDokument = false;
+        draft.DokumentFilnavn = null;
+    }
+
+    private async Task LagreGrenseverdier()
+    {
+        if (_grenseverdier is null)
+        {
+            return;
+        }
+
+        var entity = await Db.CeMaleGrenseverdier.FirstAsync(g => g.Id == _grenseverdier.Id);
+        entity.MaksApningstidSek = _grenseverdier.MaksApningstidSek;
+        entity.MaksLukketidHoySek = _grenseverdier.MaksLukketidHoySek;
+        entity.MaksLukketidLavSek = _grenseverdier.MaksLukketidLavSek;
+        entity.MaksApningskraftN = _grenseverdier.MaksApningskraftN;
+        await Db.SaveChangesAsync();
+
+        _grenseverdiMelding = "Grenseverdiene er lagret.";
+    }
+}
