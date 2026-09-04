@@ -32,6 +32,8 @@ public static class CeAlternativer
 
     public static readonly string[] DorbladAlternativer = ["Enkel", "Dobbel"];
 
+    public static readonly string[] DekningsomradeAlternativer = ["No coverage", "Full width door", "According to annex G"];
+
     public static readonly string[] GlasstykkelseAlternativer =
     [
         "Aluminum/glass 8/24/8",

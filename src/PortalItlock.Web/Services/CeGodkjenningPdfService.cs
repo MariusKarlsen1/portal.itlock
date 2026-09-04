@@ -127,11 +127,14 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     Overskrift(col, "Kontroll");
                     FeltGrid(col, 2,
                     [
-                        ("Sensorplassering korrekt iht. instruksjoner", JaNei(ce.SensorplasseringKorrekt)), ("Reaksjonstid tilfredsstillende (ingen forsinkelse)", JaNei(ce.ReaksjonstidOk)),
+                        ("Sensorplassering korrekt iht. instruksjoner", JaNei(ce.SensorplasseringKorrekt)), ("Dekningsområde hoveddørblad", ce.DekningsomradeHovedDorblad),
+                        ("Beskyttet bredde hoveddørblad, mm", ce.DekningsomradeHovedDorblad == "According to annex G" ? ce.BeskyttetBreddeHovedDorbladMm?.ToString() : null),
+                        ("Reaksjonstid tilfredsstillende (ingen forsinkelse)", JaNei(ce.ReaksjonstidOk)),
                         ("Sikkerhetssensor frigjøres ved brannalarm", JaNei(ce.SikkerhetssensorUtkoblingBrannalarm)), ("Nødåpningsfunksjon testet", JaNei(ce.NodapningTestet)),
+                        ("Har impulssensor IR eller laser", JaNei(ce.HarImpulssensorIrLaser)),
                         ("Impulsgivere plassert i riktig høyde og tilgjengelighet", JaNei(ce.ImpulsbryterKorrektHoyde)), ("Betjeningsbrytere med tilstrekkelig fri sideplass", JaNei(ce.AktiveringsbryterFriPlass)),
                         ("Klar merking for alle brukergrupper", JaNei(ce.TydeligSkilting)), ("Hengselarealets beskyttelse", JaNei(ce.HengselsideBeskyttet)),
-                        ("Elektronisk låskobling testet", JaNei(ce.ElektroniskLasKoblingTestet)), ("Ekstra funksjoner testet og logget", JaNei(ce.EkstraFunksjonerTestet))
+                        ("Elektronisk låskobling testet", JaNei(ce.ElektroniskLasKoblingTestet)), ("Ekstra funksjoner testet og logget", ce.EkstraFunksjonerKommentar)
                     ]);
 
                     Overskrift(col, "Funksjonstest");

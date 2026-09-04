@@ -93,15 +93,18 @@ public class CeGodkjenning
 
     // Steg 5: Control
     public bool? SensorplasseringKorrekt { get; set; }
+    public string? DekningsomradeHovedDorblad { get; set; }
+    public double? BeskyttetBreddeHovedDorbladMm { get; set; }
     public bool? ReaksjonstidOk { get; set; }
     public bool? SikkerhetssensorUtkoblingBrannalarm { get; set; }
     public bool? NodapningTestet { get; set; }
+    public bool? HarImpulssensorIrLaser { get; set; }
     public bool? ImpulsbryterKorrektHoyde { get; set; }
     public bool? AktiveringsbryterFriPlass { get; set; }
     public bool? TydeligSkilting { get; set; }
     public bool? HengselsideBeskyttet { get; set; }
     public bool? ElektroniskLasKoblingTestet { get; set; }
-    public bool? EkstraFunksjonerTestet { get; set; }
+    public string? EkstraFunksjonerKommentar { get; set; }
 
     // Steg 6: Function test
     public bool FotograferingIkkeTillatt { get; set; }
