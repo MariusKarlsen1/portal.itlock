@@ -34,6 +34,11 @@ public static class CeAlternativer
 
     public static readonly string[] DekningsomradeAlternativer = ["No coverage", "Full width door", "According to annex G"];
 
+    public static readonly string[] GlassIDorAlternativer = ["With glass", "Without glass"];
+
+    public static readonly string[] TypeAvGlassAlternativer =
+        ["No glass", "Tempered", "Laminated", "Safety film", "Untreated glass", "Wired glass", "Tempered/Laminated"];
+
     public static readonly string[] GlasstykkelseAlternativer =
     [
         "Aluminum/glass 8/24/8",

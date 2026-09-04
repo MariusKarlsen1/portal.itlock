@@ -51,7 +51,7 @@ public static class CeValideringsService
     public static bool ErGlassFareOk(CeGodkjenning ce) => ce.GlassFareKuttSkade != true;
 
     // Krav-/funksjonsfelt - "Nei" er svaret som feiler.
-    public static bool ErGlassSynligTiltakOk(CeGodkjenning ce) => ce.GlassIDor != true || ce.GlassSynligTiltak == true;
+    public static bool ErGlassSynligTiltakOk(CeGodkjenning ce) => ce.GlassIDor != "With glass" || ce.GlassSynligTiltak == true;
     public static bool ErGlassOk(CeGodkjenning ce) => ErGlassSynligTiltakOk(ce) && ErGlassFareOk(ce);
     public static bool ErFriBreddeOk(CeGodkjenning ce) => ce.FriBredde086 == true;
     public static bool ErTerskelOk(CeGodkjenning ce) => ce.TerskelUnder25mm == true;
@@ -80,7 +80,7 @@ public static class CeValideringsService
         ce.ApningskraftUnntatt || ce.ApningskraftN is null || ce.ApningskraftN <= g.MaksApningskraftN;
 
     private static bool AlleFeltFyltUt(CeGodkjenning ce) =>
-        ce.GlassIDor.HasValue
+        !string.IsNullOrWhiteSpace(ce.GlassIDor)
         && ce.FriBredde086.HasValue
         && ce.TerskelUnder25mm.HasValue
         && ce.KuttskadeRisiko.HasValue

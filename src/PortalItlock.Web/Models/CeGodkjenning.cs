@@ -31,11 +31,9 @@ public class CeGodkjenning
     public string? DorTil { get; set; }
     public string? Dornummer { get; set; }
     public string? DorIdKode { get; set; }
-    public string? EnergiKlasse { get; set; }
     public int GyldighetMåneder { get; set; } = 12;
     public string? Arbeidsordre { get; set; }
     public bool? Serviceavtale { get; set; }
-    public string? Serviceadresse { get; set; }
 
     // Steg 2: Machine details (forhåndsfylt fra komponenten med CeKategori = DorAutomatikk)
     public string? Produsent { get; set; }
@@ -55,25 +53,17 @@ public class CeGodkjenning
     public double? VektKg { get; set; }
     public string? Dorkonstruksjon { get; set; }
     public string? Karmkonstruksjon { get; set; }
-    public bool? GlassIDor { get; set; }
+    public string? GlassIDor { get; set; }
+    public string? TypeAvGlass { get; set; }
     public bool? GlassSynligTiltak { get; set; }
     public bool? GlassFareKuttSkade { get; set; }
     public bool? FriBredde086 { get; set; }
     public bool? TerskelUnder25mm { get; set; }
     public string? Brannklasse { get; set; }
     public bool? KuttskadeRisiko { get; set; }
-    public string? FargeKarm { get; set; }
-    public string? FargeDorblad { get; set; }
-    public string? Karmtype { get; set; }
-    public string? Terskeltype { get; set; }
-    public string? Sparkeplate { get; set; }
-    public int? AMal { get; set; }
-    public int? BMal { get; set; }
-    public string? Dorblad { get; set; }
-    public string? Glasstykkelse { get; set; }
 
     // Steg 4: Measurements
-    public double? Apningsvinkel { get; set; }
+    public double? Apningsvinkel { get; set; } = 100;
     public double? ApningstidSek { get; set; }
     public bool ApningstidUnntatt { get; set; }
     public double? LukketidHoySek { get; set; }

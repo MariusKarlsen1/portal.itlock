@@ -83,7 +83,7 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                         ("Arbeidsordre", ce.Arbeidsordre), ("Bygnings risikoklasse", ce.Risikoklasse),
                         ("Serviceavtale", JaNei(ce.Serviceavtale)), ("Dør til", ce.DorTil),
                         ("Bygning adresse", ce.Adresse), ("Dørnr.", ce.Dornummer),
-                        ("Serviceadr.", ce.Serviceadresse), ("Dør ID", ce.DorIdKode)
+                        ("Dør ID", ce.DorIdKode)
                     ]);
 
                     Overskrift(col, "Maskindetaljer");
@@ -100,13 +100,13 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     Overskrift(col, "Dørdesign");
                     FeltGrid(col, 3,
                     [
-                        ("Hoved dør, mm", ce.BreddeMm?.ToString()), ("Dørkonstruksjon", ce.Dorkonstruksjon), ("Brannklassifisering", ce.Brannklasse),
-                        ("Dørbladhøyde, mm", ce.HoydeMm?.ToString()), ("Karmkonstruksjon", ce.Karmkonstruksjon), ("Terskelhøyde <25mm", JaNei(ce.TerskelUnder25mm)),
-                        ("Hoved dørvekt, kg", ce.VektKg?.ToString()), ("Glass i dør", JaNei(ce.GlassIDor)), ("Fri passasjebredde ≥0,86m", JaNei(ce.FriBredde086)),
-                        ("Glass har synlig tiltak", JaNei(ce.GlassSynligTiltak)), ("Glass fare for kutt og skade", JaNei(ce.GlassFareKuttSkade)), ("Fare for kutt/skade i dørmiljø", JaNei(ce.KuttskadeRisiko)),
-                        ("Farge karm", ce.FargeKarm), ("Farge dørblad", ce.FargeDorblad), ("Karmtype", ce.Karmtype),
-                        ("Terskel", ce.Terskeltype), ("Sparkeplate", ce.Sparkeplate), ("A mål", ce.AMal?.ToString()),
-                        ("B mål", ce.BMal?.ToString()), ("Dørblad", ce.Dorblad), ("Glasstykkelse eller dørtype", ce.Glasstykkelse)
+                        ("Hoved dør, mm", ce.BreddeMm?.ToString()), ("Dørkonstruksjon", ce.Dorkonstruksjon), ("Dørbladhøyde, mm", ce.HoydeMm?.ToString()),
+                        ("Karmkonstruksjon", ce.Karmkonstruksjon), ("Hoved dørvekt, kg", ce.VektKg?.ToString()), ("Glass i dør", ce.GlassIDor),
+                        ("Fri passasjebredde ≥0,86m", JaNei(ce.FriBredde086)), ("Terskelhøyde <25mm", JaNei(ce.TerskelUnder25mm)), ("Brannklassifisering", ce.Brannklasse),
+                        ("Fare for kutt/skade i dørmiljø", JaNei(ce.KuttskadeRisiko)),
+                        ("Glasstype", ce.GlassIDor == "With glass" ? ce.TypeAvGlass : null),
+                        ("Glass har synlighetstiltak", ce.GlassIDor == "With glass" ? JaNei(ce.GlassSynligTiltak) : null),
+                        ("Glass fare for kutt og skade", ce.GlassIDor == "With glass" ? JaNei(ce.GlassFareKuttSkade) : null)
                     ]);
 
                     Overskrift(col, "Målinger");
