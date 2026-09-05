@@ -145,7 +145,6 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     {
         var base64 = Convert.ToBase64String(plantegning.Data);
         var diagonal = Math.Sqrt((double)bildeBredde * bildeBredde + (double)bildeHoyde * bildeHoyde);
-        var radius = diagonal * 0.014;
         var strekbredde = diagonal * 0.0035;
 
         var sb = new StringBuilder();
@@ -153,6 +152,25 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             $"<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 {bildeBredde} {bildeHoyde}'>");
         sb.Append(CultureInfo.InvariantCulture,
             $"<image xlink:href='data:{plantegning.ContentType};base64,{base64}' href='data:{plantegning.ContentType};base64,{base64}' x='0' y='0' width='{bildeBredde}' height='{bildeHoyde}' preserveAspectRatio='none' />");
+
+        var ikonStorrelse = diagonal * 0.013;
+        var skala = ikonStorrelse / 24.0;
+        var fontSize = diagonal * 0.005;
+        var haloRadius = ikonStorrelse * 0.62;
+
+        // Kabler tegnes over gloriene, men under selve symbolene, slik at
+        // kabelen alltid er synlig helt inn til utstyret - selv når to
+        // enheter står tett og gloriene deres ellers ville dekket streken.
+        foreach (var u in utstyr)
+        {
+            var cx = (u.PosX / 100.0) * bildeBredde;
+            var cy = (u.PosY / 100.0) * bildeHoyde;
+
+            // Hvit "glorie" bak symbolet for kontrast mot tegningen, tilsvarer
+            // drop-shadow-haloen rundt symbolet på skjermen.
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<circle cx='{Inv(cx)}' cy='{Inv(cy)}' r='{Inv(haloRadius)}' fill='white' opacity='0.85' />");
+        }
 
         foreach (var f in forbindelser)
         {
@@ -172,10 +190,6 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 $"<line x1='{Inv(x1)}' y1='{Inv(y1)}' x2='{Inv(x2)}' y2='{Inv(y2)}' stroke='{f.Type.Farge()}' stroke-width='{Inv(strekbredde)}' {dashAttr} />");
         }
 
-        var ikonStorrelse = diagonal * 0.02;
-        var skala = ikonStorrelse / 24.0;
-        var fontSize = diagonal * 0.0075;
-
         foreach (var u in utstyr)
         {
             var cx = (u.PosX / 100.0) * bildeBredde;
@@ -183,10 +197,6 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             var x0 = cx - ikonStorrelse / 2;
             var y0 = cy - ikonStorrelse / 2;
 
-            // Hvit "glorie" bak symbolet for kontrast mot tegningen, tilsvarer
-            // drop-shadow-haloen rundt symbolet på skjermen.
-            sb.Append(CultureInfo.InvariantCulture,
-                $"<circle cx='{Inv(cx)}' cy='{Inv(cy)}' r='{Inv(ikonStorrelse * 0.62)}' fill='white' opacity='0.85' />");
             var ikonSvg = u.Type.IkonSvg().Replace("currentColor", u.Type.Farge());
             sb.Append(CultureInfo.InvariantCulture,
                 $"<g transform='translate({Inv(x0)},{Inv(y0)}) scale({Inv(skala)})' stroke-linecap='round' stroke-linejoin='round'>{ikonSvg}</g>");

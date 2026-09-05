@@ -112,7 +112,7 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     {
         var base64 = Convert.ToBase64String(plantegning.Data);
         var diagonal = Math.Sqrt((double)bildeBredde * bildeBredde + (double)bildeHoyde * bildeHoyde);
-        var radius = diagonal * 0.0065;
+        var radius = diagonal * 0.0055;
 
         var sb = new StringBuilder();
         sb.Append(CultureInfo.InvariantCulture,
@@ -120,7 +120,7 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         sb.Append(CultureInfo.InvariantCulture,
             $"<image xlink:href='data:{plantegning.ContentType};base64,{base64}' href='data:{plantegning.ContentType};base64,{base64}' x='0' y='0' width='{bildeBredde}' height='{bildeHoyde}' preserveAspectRatio='none' />");
 
-        var fontSize = radius * 1.1;
+        var fontSize = radius * 0.95;
 
         foreach (var d in dorer)
         {
