@@ -51,7 +51,7 @@ public static class CeValideringsService
     public static bool ErGlassFareOk(CeGodkjenning ce) => ce.GlassFareKuttSkade != true;
 
     // Krav-/funksjonsfelt - "Nei" er svaret som feiler.
-    public static bool ErGlassSynligTiltakOk(CeGodkjenning ce) => ce.GlassIDor != "With glass" || ce.GlassSynligTiltak == true;
+    public static bool ErGlassSynligTiltakOk(CeGodkjenning ce) => ce.GlassIDor != "Med glass" || ce.GlassSynligTiltak == true;
     public static bool ErGlassOk(CeGodkjenning ce) => ErGlassSynligTiltakOk(ce) && ErGlassFareOk(ce);
     public static bool ErFriBreddeOk(CeGodkjenning ce) => ce.FriBredde086 == true;
     public static bool ErTerskelOk(CeGodkjenning ce) => ce.TerskelUnder25mm == true;
