@@ -34,6 +34,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<DorFunksjon> DorFunksjoner => Set<DorFunksjon>();
     public DbSet<Tilbud> Tilbud => Set<Tilbud>();
     public DbSet<TilbudLinje> TilbudLinjer => Set<TilbudLinje>();
+    public DbSet<MonteringLinje> MonteringLinjer => Set<MonteringLinje>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
@@ -504,6 +505,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasOne(c => c.OpprettetAvBruker)
             .WithMany()
             .HasForeignKey(c => c.OpprettetAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Prosjekt>()
+            .HasOne(p => p.Prosjektleder)
+            .WithMany()
+            .HasForeignKey(p => p.ProsjektlederId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Prosjekt>()
+            .HasOne(p => p.AnsvarligMontor)
+            .WithMany()
+            .HasForeignKey(p => p.AnsvarligMontorId)
             .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<CeGodkjenningMedia>()

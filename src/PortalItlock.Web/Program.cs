@@ -41,6 +41,7 @@ builder.Services.AddScoped<LagretPdfService>();
 builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
 builder.Services.AddSingleton<PdfLogo>();
+builder.Services.AddSingleton<PostnummerService>();
 builder.Services.AddHttpClient<EmailService>(client =>
 {
     client.BaseAddress = new Uri("https://api.resend.com/");

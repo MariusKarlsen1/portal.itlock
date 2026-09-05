@@ -30,10 +30,16 @@ public class Prosjekt
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
+    public int? ProsjektlederId { get; set; }
+    public Bruker? Prosjektleder { get; set; }
+    public int? AnsvarligMontorId { get; set; }
+    public Bruker? AnsvarligMontor { get; set; }
+
     public List<Plantegning> Plantegninger { get; set; } = [];
     public List<Dor> Dorer { get; set; } = [];
     public List<ProsjektVedlegg> Vedlegg { get; set; } = [];
     public List<Tilbud> Tilbud { get; set; } = [];
+    public List<MonteringLinje> MonteringLinjer { get; set; } = [];
     public List<Arbeidsordre> Arbeidsordre { get; set; } = [];
     public List<DorIdMal> DorIdMaler { get; set; } = [];
     public List<Bruker> Medlemmer { get; set; } = [];

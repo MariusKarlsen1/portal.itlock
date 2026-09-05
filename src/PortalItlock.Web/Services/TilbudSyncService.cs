@@ -57,7 +57,7 @@ public class TilbudSyncService(ApplicationDbContext db)
                     Innpris = innpris,
                     Antall = antall,
                     Enhet = component.Enhet,
-                    MontasjeMinutter = component.MontasjeMinutter,
+                    MontasjeMinutter = component.MontasjeMinutterProsjekt,
                     Utpris = BeregnUtpris(innpris, tilbud.PrisType, tilbud.Prosentsats),
                     LevertAv = levertAv,
                     Rekkefolge = tilbud.Linjer.Count

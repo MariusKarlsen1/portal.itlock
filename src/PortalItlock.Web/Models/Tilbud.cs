@@ -15,6 +15,7 @@ public class Tilbud
     public decimal Prosentsats { get; set; }
     public decimal Timepris { get; set; }
     public decimal? EstimertTimerOverride { get; set; }
+    public decimal? RiggDriftProsent { get; set; }
     public decimal? Montasjekost { get; set; }
     public decimal? MontasjeInnpris { get; set; }
     public string? Forside { get; set; }

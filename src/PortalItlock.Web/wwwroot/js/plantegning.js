@@ -36,6 +36,7 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     let zoom = 1;
 
     canvasEl.style.width = '100%';
+    canvasEl.style.setProperty('--plan-zoom', zoom);
 
     wrapEl.addEventListener('wheel', (e) => {
         e.preventDefault();
@@ -52,6 +53,7 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
         const ratio = zoom / prevZoom;
 
         canvasEl.style.width = (zoom * 100) + '%';
+        canvasEl.style.setProperty('--plan-zoom', zoom);
 
         wrapEl.scrollLeft = (wrapEl.scrollLeft + cursorX) * ratio - cursorX;
         wrapEl.scrollTop = (wrapEl.scrollTop + cursorY) * ratio - cursorY;

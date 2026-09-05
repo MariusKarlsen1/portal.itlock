@@ -62,6 +62,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     Component = l.Component,
                     Navn = l.Navn,
                     Innpris = l.Innpris,
+                    EkstraRabattInnProsent = l.EkstraRabattInnProsent,
                     Utpris = l.Utpris,
                     Antall = antallPerComponent.GetValueOrDefault(l.ComponentId.Value),
                     Enhet = l.Enhet,
@@ -97,10 +98,16 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
         var linjer = await BuildLinjerAsync(tilbud);
 
+        var monteringMinutterPerComponent = await db.MonteringLinjer
+            .Where(m => m.ProsjektId == tilbud.ProsjektId && m.ComponentId != null)
+            .ToDictionaryAsync(m => m.ComponentId!.Value, m => m.Minutter);
+
         var visRabatt = linjer.Any(l => l.RabattProsent > 0);
         var utprisVarer = linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Utpris * l.Antall);
-        var minutter = linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => (l.MontasjeMinutter ?? 0) * l.Antall);
-        var arbeidstidTimer = tilbud.EstimertTimerOverride ?? (minutter / 60m);
+        var minutter = linjer.Where(l => l.LevertAv == LevertAv.F)
+            .Sum(l => ((l.ComponentId.HasValue && monteringMinutterPerComponent.TryGetValue(l.ComponentId.Value, out var m) ? m : null) ?? l.MontasjeMinutter ?? 0) * l.Antall);
+        var arbeidstidTimerBase = tilbud.EstimertTimerOverride ?? (minutter / 60m);
+        var arbeidstidTimer = arbeidstidTimerBase * (1 + (tilbud.RiggDriftProsent ?? 0) / 100m);
         var kalkulertMontasjekost = Math.Round(tilbud.Timepris * arbeidstidTimer, 2);
         var montasjekost = tilbud.Montasjekost ?? kalkulertMontasjekost;
         var totaltUtenMva = utprisVarer + montasjekost;

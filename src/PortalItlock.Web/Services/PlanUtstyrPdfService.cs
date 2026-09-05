@@ -172,19 +172,47 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 $"<line x1='{Inv(x1)}' y1='{Inv(y1)}' x2='{Inv(x2)}' y2='{Inv(y2)}' stroke='{f.Type.Farge()}' stroke-width='{Inv(strekbredde)}' {dashAttr} />");
         }
 
+        var ikonStorrelse = diagonal * 0.02;
+        var skala = ikonStorrelse / 24.0;
+        var fontSize = diagonal * 0.0075;
+
         foreach (var u in utstyr)
         {
             var cx = (u.PosX / 100.0) * bildeBredde;
             var cy = (u.PosY / 100.0) * bildeHoyde;
+            var x0 = cx - ikonStorrelse / 2;
+            var y0 = cy - ikonStorrelse / 2;
 
+            // Hvit "glorie" bak symbolet for kontrast mot tegningen, tilsvarer
+            // drop-shadow-haloen rundt symbolet på skjermen.
             sb.Append(CultureInfo.InvariantCulture,
-                $"<circle cx='{Inv(cx)}' cy='{Inv(cy)}' r='{Inv(radius)}' fill='{u.Type.Farge()}' stroke='white' stroke-width='{Inv(radius * 0.18)}' />");
+                $"<circle cx='{Inv(cx)}' cy='{Inv(cy)}' r='{Inv(ikonStorrelse * 0.62)}' fill='white' opacity='0.85' />");
+            var ikonSvg = u.Type.IkonSvg().Replace("currentColor", u.Type.Farge());
             sb.Append(CultureInfo.InvariantCulture,
-                $"<text x='{Inv(cx)}' y='{Inv(cy + radius * 0.32)}' font-size='{Inv(radius * 0.85)}' font-family='Arial, sans-serif' font-weight='bold' fill='white' text-anchor='middle'>{u.Type.Kode()}</text>");
+                $"<g transform='translate({Inv(x0)},{Inv(y0)}) scale({Inv(skala)})' stroke-linecap='round' stroke-linejoin='round'>{ikonSvg}</g>");
+
+            AppendSentrertLabel(sb, cx, cy + ikonStorrelse / 2 + fontSize * 1.35, u.Type.Kode(), fontSize, "#292927", "white", "#00000026");
         }
 
         sb.Append("</svg>");
         return sb.ToString();
+    }
+
+    private static void AppendSentrertLabel(StringBuilder sb, double cx, double baselineY, string tekst, double fontSize, string tekstfarge, string bakgrunnsfarge, string? kantfarge)
+    {
+        if (string.IsNullOrEmpty(tekst))
+        {
+            return;
+        }
+
+        var bredde = tekst.Length * fontSize * 0.62 + fontSize * 0.6;
+        var hoyde = fontSize * 1.4;
+        var kantAttr = kantfarge is null ? "" : $"stroke='{kantfarge}' stroke-width='{Inv(fontSize * 0.06)}'";
+
+        sb.Append(CultureInfo.InvariantCulture,
+            $"<rect x='{Inv(cx - bredde / 2)}' y='{Inv(baselineY - fontSize * 1.05)}' width='{Inv(bredde)}' height='{Inv(hoyde)}' fill='{bakgrunnsfarge}' {kantAttr} />");
+        sb.Append(CultureInfo.InvariantCulture,
+            $"<text x='{Inv(cx)}' y='{Inv(baselineY)}' font-size='{Inv(fontSize)}' font-family='Arial, sans-serif' font-weight='bold' fill='{tekstfarge}' text-anchor='middle'>{System.Net.WebUtility.HtmlEncode(tekst)}</text>");
     }
 
     private static string? SkalerStrekMonster(string monster, double diagonal)

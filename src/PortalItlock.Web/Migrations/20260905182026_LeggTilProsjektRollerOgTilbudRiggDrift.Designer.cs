@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260905182026_LeggTilProsjektRollerOgTilbudRiggDrift")]
+    partial class LeggTilProsjektRollerOgTilbudRiggDrift
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -952,13 +955,7 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("Minimumsbeholdning")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int?>("MontasjeMinutterArbeidsordre")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("MontasjeMinutterProsjekt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("MontasjeMinutterService")
+                    b.Property<int?>("MontasjeMinutter")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Navn")
@@ -2404,43 +2401,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("LasplanReserver");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.MonteringLinje", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("Antall")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("ComponentId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Enhet")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("Minutter")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Navn")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("ProsjektId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("Rekkefolge")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ComponentId");
-
-                    b.HasIndex("ProsjektId");
-
-                    b.ToTable("MonteringLinjer");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.Nokkel", b =>
                 {
                     b.Property<int>("Id")
@@ -3832,9 +3792,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("ComponentId")
                         .HasColumnType("INTEGER");
 
-                    b.Property<decimal>("EkstraRabattInnProsent")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Enhet")
                         .HasColumnType("TEXT");
 
@@ -4509,23 +4466,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Prosjekt");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.MonteringLinje", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Component", "Component")
-                        .WithMany()
-                        .HasForeignKey("ComponentId");
-
-                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
-                        .WithMany("MonteringLinjer")
-                        .HasForeignKey("ProsjektId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Component");
-
-                    b.Navigation("Prosjekt");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.Nokkel", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
@@ -5081,8 +5021,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("DorIdMaler");
 
                     b.Navigation("Dorer");
-
-                    b.Navigation("MonteringLinjer");
 
                     b.Navigation("Plantegninger");
 

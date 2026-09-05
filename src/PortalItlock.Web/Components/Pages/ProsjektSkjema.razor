@@ -13,6 +13,7 @@
 @inject DorBeslagslistePdfService BeslagslistePdfService
 @inject LagretPdfService LagretPdfService
 @inject TilbudSyncService TilbudSync
+@inject PostnummerService Postnummer
 
 <PageTitle>@(Id.HasValue ? _form.Navn : "Nytt prosjekt")</PageTitle>
 
@@ -42,6 +43,7 @@ else
             <button type="button" class="@TabClass("plantegninger")" @onclick="@(() => _activeTab = "plantegninger")">Plantegninger</button>
             <button type="button" class="@TabClass("vedlegg")" @onclick="@(() => _activeTab = "vedlegg")">Vedlegg</button>
             <button type="button" class="@TabClass("tilbud")" @onclick="@(() => _activeTab = "tilbud")">Tilbud</button>
+            <button type="button" class="@TabClass("montering")" @onclick="@(() => _activeTab = "montering")">Montering</button>
             <button type="button" class="@TabClass("fdv")" @onclick="@(() => _activeTab = "fdv")">FDV</button>
             <button type="button" class="@TabClass("dorid")" @onclick="@(() => _activeTab = "dorid")">Dør ID</button>
             @if (_naverendeRolle != BrukerRolle.Montor)
@@ -85,7 +87,7 @@ else
                         </select>
                     </label>
                     <label>Adresse<input @bind="_form.Adresse" /></label>
-                    <label>Post nr<input @bind="_form.Postnr" /></label>
+                    <label>Post nr<input @bind="_form.Postnr" @bind:after="OppdaterStedFraPostnr" /></label>
                     <label>Sted<input @bind="_form.Sted" /></label>
                     <label>Kontaktperson<input @bind="_form.Kontaktperson" /></label>
                     <label>Telefon<input @bind="_form.Telefon" /></label>
@@ -301,7 +303,14 @@ else
                                 <option value="@sone">@sone</option>
                             }
                         </select>
-                        @if (!string.IsNullOrWhiteSpace(_dorSok) || !string.IsNullOrWhiteSpace(_dorEtasjeFilter) || !string.IsNullOrWhiteSpace(_dorSoneFilter))
+                        <select @bind="_dorByggetrinnFilter">
+                            <option value="">Alle byggetrinn</option>
+                            @foreach (var bt in DistinkteByggetrinn)
+                            {
+                                <option value="@bt">@bt</option>
+                            }
+                        </select>
+                        @if (!string.IsNullOrWhiteSpace(_dorSok) || !string.IsNullOrWhiteSpace(_dorEtasjeFilter) || !string.IsNullOrWhiteSpace(_dorSoneFilter) || !string.IsNullOrWhiteSpace(_dorByggetrinnFilter))
                         {
                             <button type="button" class="cancel-button" @onclick="NullstillDorFilter">Nullstill filter</button>
                         }
@@ -549,6 +558,52 @@ else
                     <button type="button" class="add-button" @onclick="NyEndringsmelding">Ny endringsmelding/tillegg</button>
                 </div>
             </div>
+        </div>
+    }
+    else if (_activeTab == "montering")
+    {
+        <div class="prosjekt-layout">
+            <p class="section-hint">Monteringstid per vare for dette prosjektet. "Synk" henter alle varer fra prosjektets dører; "Hent minutt fra vare" henter standardtiden fra komponentregisteret, men minuttene kan også skrives inn manuelt.</p>
+
+            <div class="varer-toolbar">
+                <button type="button" class="add-button" @onclick="SynkMontering">Synk</button>
+            </div>
+            @if (!string.IsNullOrEmpty(_monteringSyncMessage))
+            {
+                <p class="save-success">@_monteringSyncMessage</p>
+            }
+
+            @if (_monteringLinjer.Count == 0)
+            {
+                <p class="list-empty">Ingen varer lagt til ennå. Trykk "Synk" for å hente inn alt som er registrert på dørene i prosjektet.</p>
+            }
+            else
+            {
+                <p class="result-count">Totalt: @FormatTid(TotaltMonteringMinutter)</p>
+                <table class="dor-table">
+                    <thead>
+                        <tr><th>Navn</th><th>Antall</th><th>Enhet</th><th>Minutter</th><th></th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var l in _monteringLinjer)
+                        {
+                            <tr @key="l.Id">
+                                <td>@l.Navn</td>
+                                <td><input class="antall-input" @bind="l.Antall" @bind:after="LagreMontering" /></td>
+                                <td>@l.Enhet</td>
+                                <td><input class="antall-input" @bind="l.Minutter" @bind:after="LagreMontering" placeholder="min" /></td>
+                                <td>
+                                    @if (l.ComponentId.HasValue)
+                                    {
+                                        <button type="button" class="cancel-button" @onclick="@(() => HentMinuttFraVare(l))">Hent minutt fra vare</button>
+                                    }
+                                </td>
+                                <td><button type="button" class="remove-button" @onclick="@(() => FjernMonteringLinje(l))">Fjern</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
         </div>
     }
     else if (_activeTab == "fdv")
@@ -830,6 +885,32 @@ else
                 </select>
                 <button type="button" class="add-button" @onclick="LeggTilMedlem" disabled="@(_valgtNyttMedlemId is null)">Legg til</button>
             </div>
+
+            @if (_form.Medlemmer.Count > 0)
+            {
+                <div class="field-grid">
+                    <label>
+                        Prosjektleder
+                        <select value="@(_form.ProsjektlederId?.ToString() ?? "")" @onchange="EndreProsjektleder">
+                            <option value="">Ikke satt</option>
+                            @foreach (var m in _form.Medlemmer)
+                            {
+                                <option value="@m.Id">@m.Navn</option>
+                            }
+                        </select>
+                    </label>
+                    <label>
+                        Ansvarlig montør
+                        <select value="@(_form.AnsvarligMontorId?.ToString() ?? "")" @onchange="EndreAnsvarligMontor">
+                            <option value="">Ikke satt</option>
+                            @foreach (var m in _form.Medlemmer)
+                            {
+                                <option value="@m.Id">@m.Navn</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+            }
         </div>
     }
     else if (_activeTab == "beslagsliste")
@@ -885,6 +966,7 @@ else
     private string _dorSok = "";
     private string _dorEtasjeFilter = "";
     private string _dorSoneFilter = "";
+    private string _dorByggetrinnFilter = "";
 
     private sealed class KomponentIBrukOption
     {
@@ -1026,9 +1108,13 @@ else
     private List<string> DistinkteSoner =>
         _dorer.Select(d => d.Sone).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().OrderBy(s => s).ToList()!;
 
+    private List<string> DistinkteByggetrinn =>
+        ByggetrinnHelper.Sorter(_dorer.Select(d => d.Plantegning?.Byggetrinn).Where(b => !string.IsNullOrWhiteSpace(b)).Distinct()!).ToList();
+
     private List<Dor> FiltrerteDorer => _dorer.Where(d =>
         (string.IsNullOrWhiteSpace(_dorEtasjeFilter) || d.Etasje == _dorEtasjeFilter) &&
         (string.IsNullOrWhiteSpace(_dorSoneFilter) || d.Sone == _dorSoneFilter) &&
+        (string.IsNullOrWhiteSpace(_dorByggetrinnFilter) || d.Plantegning?.Byggetrinn == _dorByggetrinnFilter) &&
         MatcherDorSok(d, _dorSok)).ToList();
 
     private static bool MatcherDorSok(Dor d, string sok)
@@ -1051,6 +1137,7 @@ else
         _dorSok = "";
         _dorEtasjeFilter = "";
         _dorSoneFilter = "";
+        _dorByggetrinnFilter = "";
     }
     private List<Plantegning> _plantegninger = [];
 
@@ -1105,6 +1192,8 @@ else
     private bool _uploadingVedlegg;
     private string? _vedleggFeil;
     private List<Tilbud> _tilbud = [];
+    private List<MonteringLinje> _monteringLinjer = [];
+    private string? _monteringSyncMessage;
     private string _valgtOpprinneligTilbudId = "";
     private List<string> _byggetrinnListe = [];
     private HashSet<string> _valgteByggetrinn = [];
@@ -1154,10 +1243,10 @@ else
         _alleBrukere.Where(b => !_form.Medlemmer.Any(m => m.Id == b.Id)).ToList();
 
     private int KalkulertMontasjeMinutter =>
-        _dorer.SelectMany(d => d.Komponenter).Sum(dk => dk.Antall * (dk.Component?.MontasjeMinutter ?? 0));
+        _dorer.SelectMany(d => d.Komponenter).Sum(dk => dk.Antall * (dk.Component?.MontasjeMinutterProsjekt ?? 0));
 
     private int BruktMontasjeMinutter =>
-        _dorer.SelectMany(d => d.Komponenter).Where(dk => dk.Montert).Sum(dk => dk.Antall * (dk.Component?.MontasjeMinutter ?? 0));
+        _dorer.SelectMany(d => d.Komponenter).Where(dk => dk.Montert).Sum(dk => dk.Antall * (dk.Component?.MontasjeMinutterProsjekt ?? 0));
 
     private int GjenstaendeMontasjeMinutter =>
         Math.Max(0, KalkulertMontasjeMinutter - BruktMontasjeMinutter);
@@ -1231,6 +1320,7 @@ else
                 .Include(p => p.Plantegninger)
                 .Include(p => p.Vedlegg)
                 .Include(p => p.Tilbud).ThenInclude(t => t.OpprinneligTilbud)
+                .Include(p => p.MonteringLinjer).ThenInclude(m => m.Component)
                 .Include(p => p.Medlemmer)
                 .FirstOrDefaultAsync(p => p.Id == Id.Value);
 
@@ -1250,6 +1340,7 @@ else
             _plantegninger = existing.Plantegninger;
             _vedlegg = existing.Vedlegg;
             _tilbud = existing.Tilbud.OrderByDescending(t => t.OpprettetDato).ToList();
+            _monteringLinjer = existing.MonteringLinjer.OrderBy(m => m.Rekkefolge).ToList();
 
             _koblingsskjemaer = await Db.KoblingsSkjemaer
                 .Include(k => k.Kategori)
@@ -1296,6 +1387,7 @@ else
             _plantegninger = [];
             _vedlegg = [];
             _tilbud = [];
+            _monteringLinjer = [];
             _dorer = [];
             _dorIdMaler = [];
             _form = new Prosjekt { Navn = "" };
@@ -1644,6 +1736,69 @@ else
         _tilbud.Remove(t);
     }
 
+    private int TotaltMonteringMinutter => _monteringLinjer.Sum(l => (l.Minutter ?? 0) * l.Antall);
+
+    private async Task SynkMontering()
+    {
+        var gruppert = _dorer.SelectMany(d => d.Komponenter)
+            .Where(dk => dk.Component is not null)
+            .GroupBy(dk => dk.ComponentId)
+            .Select(g => new { ComponentId = g.Key, Component = g.First().Component!, Antall = g.Sum(x => x.Antall) })
+            .ToList();
+
+        foreach (var g in gruppert)
+        {
+            var linje = _monteringLinjer.FirstOrDefault(l => l.ComponentId == g.ComponentId);
+            if (linje is null)
+            {
+                linje = new MonteringLinje
+                {
+                    ProsjektId = _form.Id,
+                    ComponentId = g.ComponentId,
+                    Component = g.Component,
+                    Navn = g.Component.Navn,
+                    Antall = g.Antall,
+                    Enhet = g.Component.Enhet,
+                    Minutter = g.Component.MontasjeMinutterProsjekt,
+                    Rekkefolge = _monteringLinjer.Count
+                };
+                _monteringLinjer.Add(linje);
+                Db.MonteringLinjer.Add(linje);
+            }
+            else
+            {
+                linje.Antall = g.Antall;
+                linje.Enhet = g.Component.Enhet;
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _monteringSyncMessage = $"{gruppert.Count} varetyper synkronisert fra prosjektets dører.";
+    }
+
+    private async Task HentMinuttFraVare(MonteringLinje linje)
+    {
+        if (linje.Component is null)
+        {
+            return;
+        }
+
+        linje.Minutter = linje.Component.MontasjeMinutterProsjekt;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreMontering()
+    {
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task FjernMonteringLinje(MonteringLinje linje)
+    {
+        Db.MonteringLinjer.Remove(linje);
+        await Db.SaveChangesAsync();
+        _monteringLinjer.Remove(linje);
+    }
+
     private async Task NyEndringsmelding()
     {
         if (!Id.HasValue)
@@ -1858,6 +2013,37 @@ else
     private async Task FjernMedlem(Bruker b)
     {
         _form.Medlemmer.Remove(b);
+        if (_form.ProsjektlederId == b.Id)
+        {
+            _form.ProsjektlederId = null;
+        }
+        if (_form.AnsvarligMontorId == b.Id)
+        {
+            _form.AnsvarligMontorId = null;
+        }
+        await Db.SaveChangesAsync();
+    }
+
+    private void OppdaterStedFraPostnr()
+    {
+        var sted = Postnummer.SlaOpp(_form.Postnr);
+        if (sted is not null)
+        {
+            _form.Sted = sted;
+        }
+    }
+
+    private async Task EndreProsjektleder(ChangeEventArgs e)
+    {
+        var verdi = e.Value as string;
+        _form.ProsjektlederId = string.IsNullOrEmpty(verdi) ? null : int.Parse(verdi);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task EndreAnsvarligMontor(ChangeEventArgs e)
+    {
+        var verdi = e.Value as string;
+        _form.AnsvarligMontorId = string.IsNullOrEmpty(verdi) ? null : int.Parse(verdi);
         await Db.SaveChangesAsync();
     }
 

@@ -11,6 +11,7 @@ public class TilbudLinje
 
     public required string Navn { get; set; }
     public decimal Innpris { get; set; }
+    public decimal EkstraRabattInnProsent { get; set; }
     public decimal Utpris { get; set; }
     public int Antall { get; set; } = 1;
     public string? Enhet { get; set; }
