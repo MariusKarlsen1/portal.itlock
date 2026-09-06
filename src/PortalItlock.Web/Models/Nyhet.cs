@@ -6,4 +6,5 @@ public class Nyhet
     public required string Tittel { get; set; }
     public required string Innhold { get; set; }
     public DateTime OpprettetDato { get; set; } = DateTime.Now;
+    public string? CommitSha { get; set; }
 }

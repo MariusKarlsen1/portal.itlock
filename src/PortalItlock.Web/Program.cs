@@ -101,6 +101,23 @@ using (var seedScope = app.Services.CreateScope())
     var seedDb = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     seedDb.Database.Migrate();
 
+    var commitFilePath = Path.Combine(AppContext.BaseDirectory, "commit.txt");
+    if (File.Exists(commitFilePath))
+    {
+        var commit = PortalItlock.Web.Services.GitEndringsloggLeser.Tolk(File.ReadAllText(commitFilePath));
+        if (commit is not null && !seedDb.Nyheter.Any(n => n.CommitSha == commit.Sha))
+        {
+            seedDb.Nyheter.Add(new PortalItlock.Web.Models.Nyhet
+            {
+                Tittel = commit.Tittel,
+                Innhold = commit.Innhold,
+                OpprettetDato = commit.Dato,
+                CommitSha = commit.Sha,
+            });
+            seedDb.SaveChanges();
+        }
+    }
+
     if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
     {
         seedDb.Brukere.Add(new PortalItlock.Web.Models.Bruker
