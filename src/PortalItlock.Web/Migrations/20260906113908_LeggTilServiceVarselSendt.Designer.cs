@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260906113908_LeggTilServiceVarselSendt")]
+    partial class LeggTilServiceVarselSendt
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -1909,42 +1912,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ProsjektId");
 
                     b.ToTable("FdvVedlegg");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.Foresporsel", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Emne")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("FraEpost")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("FraNavn")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Innhold")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("Lest")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("MottattDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("RawJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Foresporsler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.FravarSoknad", b =>

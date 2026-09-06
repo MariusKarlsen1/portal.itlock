@@ -38,6 +38,9 @@ public static class PortalModulRegister
                 new LenkeGruppe("Drift", [
                     new Lenke("Drift", "Kart, kalender og fravær samlet på ett sted", "driftmodul"),
                 ]),
+                new LenkeGruppe("Forespørsler", [
+                    new Lenke("Forespørsler", "E-poster sendt til post@itlock.no", "foresporsler"),
+                ]),
                 new LenkeGruppe("Service modul", [
                     new Lenke("Service modul", "Serviceavtaler, serviceoppdrag og tilbud service samlet på ett sted", "servicemodul"),
                 ]),

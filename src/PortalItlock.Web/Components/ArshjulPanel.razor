@@ -1,9 +1,23 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject ServiceVarselService VarselService
 
 <p class="section-hint">Oversikt over alle serviceavtaler basert på "Neste planlagte service"-datoen som fylles ut når en servicerunde registreres, og estimerte timer fra Service-minutter på hver avtale.</p>
+
+@if (_erAdmin)
+{
+    <div class="arshjul-varsel-rad">
+        <button type="button" class="save-button" @onclick="SendVarselNaa" disabled="@_sender">Send varsel-epost nå</button>
+        <span class="section-hint">E-postvarsel om avtaler som nærmer seg forfall (innen 14 dager) sendes automatisk til marius&#64;itlock.no hver dag det er noe å varsle om. Denne knappen sender med en gang, uavhengig av om det er sendt i dag.</span>
+        @if (_varselMelding is not null)
+        {
+            <p class="save-success">@_varselMelding</p>
+        }
+    </div>
+}
 
 <div class="arshjul-nokkeltall">
     <div class="arshjul-tall-boks">
@@ -67,6 +81,12 @@ else
 }
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _erAdmin;
+    private bool _sender;
+    private string? _varselMelding;
+
     private sealed class AvtaleRad
     {
         public int ProsjektId { get; set; }
@@ -84,6 +104,12 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            _erAdmin = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value is "Admin";
+        }
+
         var iAr = DateTime.Today.Year;
 
         var avtaler = await Db.Prosjekter
@@ -121,6 +147,25 @@ else
                 EstimerteTimer = minutter / 60m
             };
         }).ToList();
+    }
+
+    private async Task SendVarselNaa()
+    {
+        _sender = true;
+        _varselMelding = null;
+        try
+        {
+            var (sendt, antall) = await VarselService.SjekkOgSendVarselAsync(tvingSending: true);
+            _varselMelding = sendt
+                ? $"Varsel sendt til marius@itlock.no ({antall} avtale(r) nærmer seg forfall)."
+                : antall > 0
+                    ? "Fant avtaler som nærmer seg forfall, men sending feilet - sjekk Resend-oppsettet."
+                    : "Ingen avtaler nærmer seg forfall akkurat nå - ingen e-post sendt.";
+        }
+        finally
+        {
+            _sender = false;
+        }
     }
 
     private static string FormatTimer(decimal timer)

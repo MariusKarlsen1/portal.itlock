@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using PortalItlock.Web.Components;
 using PortalItlock.Web.Data;
@@ -11,6 +12,12 @@ using System.Security.Claims;
 QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var railwayPort = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(railwayPort))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{railwayPort}");
+}
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -40,6 +47,8 @@ builder.Services.AddScoped<SjekklistePdfService>();
 builder.Services.AddScoped<LagretPdfService>();
 builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
+builder.Services.AddScoped<ServiceVarselService>();
+builder.Services.AddHostedService<ServiceVarselBackgroundService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddSingleton<PostnummerService>();
 builder.Services.AddHttpClient<EmailService>(client =>
@@ -73,6 +82,8 @@ var app = builder.Build();
 using (var seedScope = app.Services.CreateScope())
 {
     var seedDb = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    seedDb.Database.Migrate();
+
     if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
     {
         seedDb.Brukere.Add(new PortalItlock.Web.Models.Bruker
@@ -86,6 +97,14 @@ using (var seedScope = app.Services.CreateScope())
 }
 
 // Configure the HTTP request pipeline.
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+forwardedHeadersOptions.KnownNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
@@ -638,5 +657,32 @@ app.MapGet("/timeoversikt/eksport-pdf", async (DateTime fra, DateTime til, int? 
     var pdf = service.GenererPdf(registreringer, fra, til, montorNavn);
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
+
+app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, ApplicationDbContext db, IConfiguration config, ILogger<Program> logger) =>
+{
+    using var reader = new StreamReader(http.Request.Body);
+    var body = await reader.ReadToEndAsync();
+
+    var hemmelighet = config["Resend:InboundWebhookSecret"];
+    if (string.IsNullOrWhiteSpace(hemmelighet) || !ResendWebhookVerifier.ErGyldig(http.Request.Headers, body, hemmelighet))
+    {
+        logger.LogWarning("Avviste innkommende Resend-webhook: ugyldig eller manglende signatur.");
+        return Results.Unauthorized();
+    }
+
+    var tolket = ResendInboundParser.Tolk(body);
+
+    db.Foresporsler.Add(new PortalItlock.Web.Models.Foresporsel
+    {
+        FraEpost = tolket.FraEpost,
+        FraNavn = tolket.FraNavn,
+        Emne = tolket.Emne,
+        Innhold = tolket.Innhold,
+        RawJson = body
+    });
+    await db.SaveChangesAsync();
+
+    return Results.Ok();
+}).AllowAnonymous();
 
 app.Run();

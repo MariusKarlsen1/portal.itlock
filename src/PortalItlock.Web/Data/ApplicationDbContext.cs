@@ -39,6 +39,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServiceKategoriPris> ServiceKategoriPriser => Set<ServiceKategoriPris>();
     public DbSet<DorHendelse> DorHendelser => Set<DorHendelse>();
     public DbSet<Nyhet> Nyheter => Set<Nyhet>();
+    public DbSet<ServiceVarselSendt> ServiceVarselSendt => Set<ServiceVarselSendt>();
+    public DbSet<Foresporsel> Foresporsler => Set<Foresporsel>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
