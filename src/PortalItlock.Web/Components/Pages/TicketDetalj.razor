@@ -152,7 +152,13 @@ else
                 <ul class="tilbud-liste">
                     @foreach (var t in _prosjektTilbud)
                     {
-                        <li><a href="@($"/tilbud/{t.Id}")">@t.Tittel</a></li>
+                        <li>
+                            <a href="@($"/tilbud/{t.Id}")">@t.Tittel</a>
+                            @if (_ticket.ForesporselId is not null && string.IsNullOrWhiteSpace(t.ForesporselBeskrivelse))
+                            {
+                                <button type="button" class="cancel-button" @onclick="@(() => KopierForesporselTilTilbud(t))">Kopier forespørsel-tekst hit</button>
+                            }
+                        </li>
                     }
                 </ul>
             }
@@ -204,6 +210,20 @@ else
                 Knyttet til: <strong>@_ticket.Foresporsel?.Emne</strong> fra @(_ticket.Foresporsel?.FraNavn ?? _ticket.Foresporsel?.FraEpost)
                 <button type="button" class="cancel-button" @onclick="@(() => _ticket.ForesporselId = null)">Fjern kobling</button>
             </p>
+            @if (!string.IsNullOrWhiteSpace(_ticket.Foresporsel?.Innhold))
+            {
+                <p class="foresporsel-tekst-visning">@_ticket.Foresporsel.Innhold</p>
+            }
+            @if (_ticket.Foresporsel?.Media.Count > 0)
+            {
+                <p class="section-hint">Vedlegg fra forespørselen (kopieres til prosjektets Grunnlag-mappe når knyttet til et vanlig prosjekt):</p>
+                <ul class="vedlegg-liste">
+                    @foreach (var m in _ticket.Foresporsel.Media)
+                    {
+                        <li>@m.Filnavn</li>
+                    }
+                </ul>
+            }
         }
     </section>
 
@@ -316,7 +336,7 @@ else
             .Include(t => t.GodkjentAvBruker)
             .Include(t => t.Prosjekt)
             .Include(t => t.Arbeidsordre)
-            .Include(t => t.Foresporsel)
+            .Include(t => t.Foresporsel).ThenInclude(f => f!.Media)
             .Include(t => t.Hendelser).ThenInclude(h => h.UtfortAvBruker)
             .Include(t => t.Media)
             .FirstOrDefaultAsync(t => t.Id == Id);
@@ -420,6 +440,65 @@ else
 
         var navn = _prosjekter.FirstOrDefault(p => p.Id == _valgtProsjektId)?.Visningsnavn ?? "";
         LoggHendelse($"Knyttet til prosjekt/serviceavtale: {navn}");
+
+        if (_ticket.ForesporselId is not null)
+        {
+            var prosjekt = await Db.Prosjekter.FindAsync(_valgtProsjektId.Value);
+            var foresporsel = await Db.Foresporsler
+                .Include(f => f.Media)
+                .FirstOrDefaultAsync(f => f.Id == _ticket.ForesporselId);
+
+            if (prosjekt is not null && foresporsel is not null)
+            {
+                if (prosjekt.Status != ProsjektStatus.Serviceavtale)
+                {
+                    if (foresporsel.Media.Count > 0)
+                    {
+                        foreach (var m in foresporsel.Media)
+                        {
+                            Db.ProsjektVedlegg.Add(new ProsjektVedlegg
+                            {
+                                ProsjektId = prosjekt.Id,
+                                Filnavn = m.Filnavn,
+                                ContentType = m.ContentType,
+                                Data = m.Data,
+                                Type = "Grunnlag"
+                            });
+                        }
+                        LoggHendelse($"Kopierte {foresporsel.Media.Count} vedlegg fra forespørselen til prosjektets Grunnlag-mappe.");
+                    }
+                }
+                else
+                {
+                    var forsteTilbud = await Db.Tilbud.FirstOrDefaultAsync(t => t.ProsjektId == prosjekt.Id);
+                    if (forsteTilbud is not null && string.IsNullOrWhiteSpace(forsteTilbud.ForesporselBeskrivelse))
+                    {
+                        forsteTilbud.ForesporselBeskrivelse = foresporsel.Innhold;
+                        LoggHendelse($"Kopierte forespørsel-tekst til tilbud: {forsteTilbud.Tittel}");
+                    }
+                }
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        await OnParametersSetAsync();
+    }
+
+    private async Task KopierForesporselTilTilbud(Tilbud tilbud)
+    {
+        if (_ticket!.ForesporselId is null)
+        {
+            return;
+        }
+
+        var foresporsel = await Db.Foresporsler.FindAsync(_ticket.ForesporselId.Value);
+        if (foresporsel is null)
+        {
+            return;
+        }
+
+        tilbud.ForesporselBeskrivelse = foresporsel.Innhold;
+        LoggHendelse($"Kopierte forespørsel-tekst til tilbud: {tilbud.Tittel}");
         await Db.SaveChangesAsync();
         await OnParametersSetAsync();
     }

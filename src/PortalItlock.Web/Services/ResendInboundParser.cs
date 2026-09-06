@@ -4,7 +4,7 @@ namespace PortalItlock.Web.Services;
 
 public static class ResendInboundParser
 {
-    public record Resultat(string FraEpost, string? FraNavn, string Emne, string Innhold);
+    public record Resultat(string FraEpost, string? FraNavn, string Emne, string Innhold, string? EmailId);
 
     public static Resultat Tolk(string rawJson)
     {
@@ -28,11 +28,13 @@ public static class ResendInboundParser
 
             var innhold = HentTekst(data, "text") ?? HentTekst(data, "html") ?? HentTekst(data, "body") ?? "";
 
-            return new Resultat(fraEpost, fraNavn, emne, innhold);
+            var emailId = HentTekst(data, "email_id") ?? HentTekst(data, "id");
+
+            return new Resultat(fraEpost, fraNavn, emne, innhold, emailId);
         }
         catch (JsonException)
         {
-            return new Resultat("ukjent avsender", null, "(uten emne)", "");
+            return new Resultat("ukjent avsender", null, "(uten emne)", "", null);
         }
     }
 

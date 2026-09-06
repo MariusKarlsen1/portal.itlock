@@ -10,4 +10,5 @@ public class Foresporsel
     public DateTime MottattDato { get; set; } = DateTime.Now;
     public bool Lest { get; set; }
     public string RawJson { get; set; } = "";
+    public List<ForesporselMedia> Media { get; set; } = [];
 }

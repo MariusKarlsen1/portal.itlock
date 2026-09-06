@@ -68,6 +68,10 @@ builder.Services.AddHttpClient<EmailService>(client =>
 {
     client.BaseAddress = new Uri("https://api.resend.com/");
 });
+builder.Services.AddHttpClient<ResendReceivingClient>(client =>
+{
+    client.BaseAddress = new Uri("https://api.resend.com/");
+});
 builder.Services.AddHttpClient<GeocodingService>(client =>
 {
     client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");
@@ -679,7 +683,7 @@ app.MapGet("/timeoversikt/eksport-pdf", async (DateTime fra, DateTime til, int? 
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
-app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, ApplicationDbContext db, IConfiguration config, ILogger<Program> logger) =>
+app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, ApplicationDbContext db, IConfiguration config, ILogger<Program> logger, ResendReceivingClient receivingClient) =>
 {
     using var reader = new StreamReader(http.Request.Body);
     var body = await reader.ReadToEndAsync();
@@ -692,15 +696,42 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
     }
 
     var tolket = ResendInboundParser.Tolk(body);
+    var innhold = tolket.Innhold;
+    var vedlegg = new List<ResendReceivingClient.VedleggData>();
 
-    db.Foresporsler.Add(new PortalItlock.Web.Models.Foresporsel
+    if (!string.IsNullOrEmpty(tolket.EmailId))
+    {
+        var fullInnhold = await receivingClient.HentFullInnholdAsync(tolket.EmailId);
+        if (fullInnhold is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(fullInnhold.Tekst))
+            {
+                innhold = fullInnhold.Tekst;
+            }
+            vedlegg = fullInnhold.Vedlegg;
+        }
+    }
+
+    var foresporsel = new PortalItlock.Web.Models.Foresporsel
     {
         FraEpost = tolket.FraEpost,
         FraNavn = tolket.FraNavn,
         Emne = tolket.Emne,
-        Innhold = tolket.Innhold,
+        Innhold = innhold,
         RawJson = body
-    });
+    };
+    db.Foresporsler.Add(foresporsel);
+
+    foreach (var v in vedlegg)
+    {
+        foresporsel.Media.Add(new PortalItlock.Web.Models.ForesporselMedia
+        {
+            Filnavn = v.Filnavn,
+            ContentType = v.ContentType,
+            Data = v.Data
+        });
+    }
+
     await db.SaveChangesAsync();
 
     return Results.Ok();

@@ -7,6 +7,7 @@ public class Tilbud
     public Prosjekt? Prosjekt { get; set; }
 
     public required string Tittel { get; set; }
+    public string? ForesporselBeskrivelse { get; set; }
     public TilbudType Type { get; set; } = TilbudType.Tilbud;
     public int? OpprinneligTilbudId { get; set; }
     public Tilbud? OpprinneligTilbud { get; set; }
