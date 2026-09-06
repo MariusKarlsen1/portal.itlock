@@ -1,0 +1,177 @@
+@page "/tickets"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>Tickets</PageTitle>
+
+<h1>Tickets</h1>
+<p class="section-hint">Samlet oversikt over alle henvendelser og saker - fra e-post, kundeportal eller opprettet manuelt.</p>
+
+<div class="ny-ticket">
+    <h2>Ny ticket</h2>
+    <div class="field-grid">
+        <label class="span-2">
+            Tittel
+            <input @bind="_nyTittel" @bind:event="oninput" placeholder="Kort beskrivelse av saken" />
+        </label>
+        <label>
+            Kunde (valgfritt)
+            <select @bind="_nyKundeId">
+                <option value="">Ingen kunde satt</option>
+                @foreach (var k in _kunder)
+                {
+                    <option value="@k.Id">@k.Navn</option>
+                }
+            </select>
+        </label>
+    </div>
+    <div class="form-actions">
+        <button type="button" class="add-button" @onclick="OpprettTicket" disabled="@string.IsNullOrWhiteSpace(_nyTittel)">Opprett ticket</button>
+    </div>
+</div>
+
+<div class="filter-rad">
+    <label>
+        Søk
+        <input @bind="_sokTekst" @bind:event="oninput" placeholder="Tittel eller kunde" />
+    </label>
+    <label>
+        Status
+        <select @bind="_filterStatus">
+            <option value="">Alle (utenom lukkede)</option>
+            @foreach (var s in TicketStatusExtensions.Rekkefolge)
+            {
+                <option value="@s">@s.Visningsnavn()</option>
+            }
+        </select>
+    </label>
+    <label>
+        Prioritet
+        <select @bind="_filterPrioritet">
+            <option value="">Alle</option>
+            @foreach (var p in Enum.GetValues<TicketPrioritet>())
+            {
+                <option value="@p">@p.Visningsnavn()</option>
+            }
+        </select>
+    </label>
+    <label>
+        Ansvarlig
+        <select @bind="_filterAnsvarligId">
+            <option value="">Alle</option>
+            @foreach (var b in _brukere)
+            {
+                <option value="@b.Id">@b.Navn</option>
+            }
+        </select>
+    </label>
+    <label class="filter-checkbox">
+        <input type="checkbox" @bind="_visLukkede" />
+        Vis lukkede
+    </label>
+</div>
+
+@if (FiltrerteTickets.Count == 0)
+{
+    <p class="list-empty">Ingen tickets funnet.</p>
+}
+else
+{
+    <ul class="ticket-liste">
+        @foreach (var t in FiltrerteTickets)
+        {
+            <li @key="t.Id">
+                <a class="ticket-rad" href="@($"/ticket/{t.Id}")">
+                    <span class="ticket-nr">#@t.Id</span>
+                    <span class="ticket-tittel">@t.Tittel</span>
+                    <span class="ticket-kunde">@(t.Kunde?.Navn ?? "Ingen kunde satt")</span>
+                    <span class="ticket-status ticket-status-@t.Status">@t.Status.Visningsnavn()</span>
+                    <span class="ticket-prioritet ticket-prioritet-@t.Prioritet">@t.Prioritet.Visningsnavn()</span>
+                    <span class="ticket-ansvarlig">@(t.AnsvarligBruker?.Navn ?? "Ikke tildelt")</span>
+                    <span class="ticket-dato">@t.OpprettetDato.ToString("dd.MM.yyyy")</span>
+                </a>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    private sealed class KundeOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class BrukerOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private List<Ticket> _tickets = [];
+    private List<KundeOption> _kunder = [];
+    private List<BrukerOption> _brukere = [];
+
+    private string _nyTittel = "";
+    private int? _nyKundeId;
+
+    private string _sokTekst = "";
+    private string _filterStatus = "";
+    private string _filterPrioritet = "";
+    private string _filterAnsvarligId = "";
+    private bool _visLukkede;
+
+    private List<Ticket> FiltrerteTickets => _tickets
+        .Where(t => _visLukkede || t.Status != TicketStatus.Lukket)
+        .Where(t => string.IsNullOrEmpty(_filterStatus) || t.Status.ToString() == _filterStatus)
+        .Where(t => string.IsNullOrEmpty(_filterPrioritet) || t.Prioritet.ToString() == _filterPrioritet)
+        .Where(t => string.IsNullOrEmpty(_filterAnsvarligId) || t.AnsvarligBrukerId == int.Parse(_filterAnsvarligId))
+        .Where(t => string.IsNullOrWhiteSpace(_sokTekst)
+            || t.Tittel.Contains(_sokTekst, StringComparison.OrdinalIgnoreCase)
+            || (t.Kunde != null && t.Kunde.Navn.Contains(_sokTekst, StringComparison.OrdinalIgnoreCase)))
+        .OrderByDescending(t => t.OpprettetDato)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        _tickets = await Db.Tickets
+            .Include(t => t.Kunde)
+            .Include(t => t.AnsvarligBruker)
+            .ToListAsync();
+
+        _kunder = await Db.Kunder
+            .OrderBy(k => k.Navn)
+            .Select(k => new KundeOption { Id = k.Id, Navn = k.Navn })
+            .ToListAsync();
+
+        _brukere = await Db.Brukere
+            .OrderBy(b => b.Navn)
+            .Select(b => new BrukerOption { Id = b.Id, Navn = b.Navn })
+            .ToListAsync();
+    }
+
+    private async Task OpprettTicket()
+    {
+        var tittel = _nyTittel.Trim();
+        if (tittel.Length == 0)
+        {
+            return;
+        }
+
+        var ticket = new Ticket { Tittel = tittel, KundeId = _nyKundeId };
+        Db.Tickets.Add(ticket);
+        await Db.SaveChangesAsync();
+
+        Nav.NavigateTo($"/ticket/{ticket.Id}");
+    }
+}

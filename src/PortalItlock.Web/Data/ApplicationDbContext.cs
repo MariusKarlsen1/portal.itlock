@@ -41,6 +41,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Nyhet> Nyheter => Set<Nyhet>();
     public DbSet<ServiceVarselSendt> ServiceVarselSendt => Set<ServiceVarselSendt>();
     public DbSet<Foresporsel> Foresporsler => Set<Foresporsel>();
+    public DbSet<Ticket> Tickets => Set<Ticket>();
+    public DbSet<TicketHendelse> TicketHendelser => Set<TicketHendelse>();
+    public DbSet<TicketMedia> TicketMedia => Set<TicketMedia>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
@@ -530,6 +533,54 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(c => c.Media)
             .HasForeignKey(m => m.CeGodkjenningId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.Kunde)
+            .WithMany()
+            .HasForeignKey(t => t.KundeId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.Prosjekt)
+            .WithMany()
+            .HasForeignKey(t => t.ProsjektId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.Arbeidsordre)
+            .WithMany()
+            .HasForeignKey(t => t.ArbeidsordreId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.AnsvarligBruker)
+            .WithMany()
+            .HasForeignKey(t => t.AnsvarligBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.GodkjentAvBruker)
+            .WithMany()
+            .HasForeignKey(t => t.GodkjentAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.Foresporsel)
+            .WithMany()
+            .HasForeignKey(t => t.ForesporselId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.Servicehenvendelse)
+            .WithMany()
+            .HasForeignKey(t => t.ServicehenvendelseId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<TicketHendelse>()
+            .HasOne(h => h.UtfortAvBruker)
+            .WithMany()
+            .HasForeignKey(h => h.UtfortAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         SeedReferenceData(modelBuilder);
     }

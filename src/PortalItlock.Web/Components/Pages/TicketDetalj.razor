@@ -1,0 +1,459 @@
+@page "/ticket/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>@(_ticket?.Tittel ?? "Ticket")</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke ticketen. Den kan være slettet.</p>
+}
+else if (_ticket is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="/tickets">&larr; Tilbake til tickets</a>
+    <h1>#@_ticket.Id - @_ticket.Tittel</h1>
+
+    <section class="ticket-section">
+        <h2>Informasjon</h2>
+        <div class="field-grid">
+            <label class="span-2">
+                Tittel
+                <input @bind="_ticket.Tittel" @bind:event="oninput" />
+            </label>
+            <label class="span-2">
+                Beskrivelse
+                <textarea rows="3" @bind="_ticket.Beskrivelse"></textarea>
+            </label>
+            <label>
+                Kunde
+                <select @bind="_ticket.KundeId">
+                    <option value="">Ingen kunde satt</option>
+                    @foreach (var k in _kunder)
+                    {
+                        <option value="@k.Id">@k.Navn</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Kontaktperson
+                <input @bind="_ticket.Kontaktperson" @bind:event="oninput" />
+            </label>
+            <label>
+                Lokasjon
+                <input @bind="_ticket.Lokasjon" @bind:event="oninput" placeholder="F.eks. Industriveien 10 - Hovedbygg" />
+            </label>
+            <label>
+                Board
+                <input @bind="_ticket.Board" @bind:event="oninput" placeholder="F.eks. Service, Bestilling, Prosjekt" />
+            </label>
+            <label>
+                Type
+                <input @bind="_ticket.Type" @bind:event="oninput" placeholder="F.eks. Adgangskontroll, Lås, Kamera" />
+            </label>
+            <label>
+                Subtype
+                <input @bind="_ticket.Subtype" @bind:event="oninput" placeholder="F.eks. ARX, iLOQ, Yale" />
+            </label>
+            <label>
+                Produkt/anlegg
+                <input @bind="_ticket.ProduktAnlegg" @bind:event="oninput" />
+            </label>
+            <label>
+                Prioritet
+                <select @bind="_ticket.Prioritet">
+                    @foreach (var p in Enum.GetValues<TicketPrioritet>())
+                    {
+                        <option value="@p">@p.Visningsnavn()</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Ansvarlig
+                <select @bind="_ticket.AnsvarligBrukerId">
+                    <option value="">Ikke tildelt</option>
+                    @foreach (var b in _brukere)
+                    {
+                        <option value="@b.Id">@b.Navn</option>
+                    }
+                </select>
+            </label>
+            <label>
+                SLA
+                <input @bind="_ticket.Sla" @bind:event="oninput" placeholder="F.eks. Svar innen 4 timer" />
+            </label>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="LagreInfo">Lagre</button>
+            <button type="button" class="remove-button" @onclick="SlettTicket">Slett ticket</button>
+            @if (!string.IsNullOrEmpty(_lagretMelding))
+            {
+                <span class="save-success">@_lagretMelding</span>
+            }
+        </div>
+    </section>
+
+    <section class="ticket-section">
+        <h2>Status</h2>
+        <div class="status-rad">
+            <span class="ticket-status ticket-status-@_ticket.Status">@_ticket.Status.Visningsnavn()</span>
+
+            @if (_ticket.Status == TicketStatus.VenterGodkjenning)
+            {
+                <span class="section-hint">Arbeidsordren er ferdigstilt og venter på godkjenning.</span>
+                <button type="button" class="add-button" @onclick="GodkjennOgLukk">Godkjenn og lukk ticket</button>
+            }
+            @if (_ticket.Status == TicketStatus.Lukket)
+            {
+                <span class="section-hint">
+                    Lukket @(_ticket.LukketDato?.ToString("dd.MM.yyyy HH:mm")) av @(_ticket.GodkjentAvBruker?.Navn ?? "ukjent")
+                </span>
+                <button type="button" class="cancel-button" @onclick="Gjenapne">Gjenåpne ticket</button>
+            }
+        </div>
+    </section>
+
+    <section class="ticket-section">
+        <h2>Prosjekt / serviceavtale</h2>
+        @if (_ticket.ProsjektId is null)
+        {
+            <p class="section-hint">Velg om saken skal knyttes til et eksisterende prosjekt eller en serviceavtale, eller opprett en ny.</p>
+            <div class="knytt-rad">
+                <select @bind="_valgtProsjektId">
+                    <option value="">Velg prosjekt/serviceavtale...</option>
+                    @foreach (var p in _prosjekter)
+                    {
+                        <option value="@p.Id">@p.Visningsnavn</option>
+                    }
+                </select>
+                <button type="button" class="add-button" @onclick="KnyttTilProsjekt" disabled="@(_valgtProsjektId is null)">Knytt til prosjekt</button>
+                <a class="cancel-button" href="/prosjekter/ny" target="_blank">+ Nytt prosjekt</a>
+                <a class="cancel-button" href="/tilbud-service" target="_blank">+ Ny tilbud service</a>
+            </div>
+        }
+        else
+        {
+            <p>
+                <a href="@ProsjektLenke">Åpne @(_ticket.Prosjekt?.Status == ProsjektStatus.Serviceavtale ? "serviceavtale" : "prosjekt"): @_ticket.Prosjekt?.Navn</a>
+                <button type="button" class="cancel-button" @onclick="@(() => _ticket.ProsjektId = null)">Endre</button>
+            </p>
+
+            @if (_prosjektTilbud.Count > 0)
+            {
+                <p class="section-hint">Tilbud på dette prosjektet:</p>
+                <ul class="tilbud-liste">
+                    @foreach (var t in _prosjektTilbud)
+                    {
+                        <li><a href="@($"/tilbud/{t.Id}")">@t.Tittel</a></li>
+                    }
+                </ul>
+            }
+
+            <h3>Arbeidsordre</h3>
+            @if (_ticket.ArbeidsordreId is null)
+            {
+                <div class="knytt-rad">
+                    <select @bind="_valgtArbeidsordreId">
+                        <option value="">Velg arbeidsordre...</option>
+                        @foreach (var a in _prosjektArbeidsordre)
+                        {
+                            <option value="@a.Id">@a.Tittel (@a.Status.Visningsnavn())</option>
+                        }
+                    </select>
+                    <button type="button" class="add-button" @onclick="KnyttTilArbeidsordre" disabled="@(_valgtArbeidsordreId is null)">Knytt arbeidsordre</button>
+                </div>
+            }
+            else
+            {
+                <p>
+                    <a href="@($"/arbeidsordre/{_ticket.ArbeidsordreId}")">Åpne arbeidsordre: @_ticket.Arbeidsordre?.Tittel</a>
+                    (@_ticket.Arbeidsordre?.Status.Visningsnavn())
+                    <button type="button" class="cancel-button" @onclick="@(() => _ticket.ArbeidsordreId = null)">Endre</button>
+                </p>
+            }
+        }
+    </section>
+
+    <section class="ticket-section">
+        <h2>Vedlegg</h2>
+        @if (_ticket.Media.Count > 0)
+        {
+            <ul class="vedlegg-liste">
+                @foreach (var m in _ticket.Media)
+                {
+                    <li>
+                        <a href="@($"/ticketmedia/{m.Id}/fil")" target="_blank">@m.Filnavn</a>
+                        <button type="button" class="remove-button" @onclick="@(() => SlettMedia(m))">Fjern</button>
+                    </li>
+                }
+            </ul>
+        }
+        <InputFile OnChange="LastOppFiler" multiple />
+    </section>
+
+    <section class="ticket-section">
+        <h2>Historikk</h2>
+        <div class="kommentar-rad">
+            <textarea rows="2" @bind="_nyKommentar" placeholder="Legg til kommentar..."></textarea>
+            <button type="button" class="add-button" @onclick="LeggTilKommentar" disabled="@string.IsNullOrWhiteSpace(_nyKommentar)">Legg til</button>
+        </div>
+        @if (_ticket.Hendelser.Count == 0)
+        {
+            <p class="list-empty">Ingen hendelser registrert ennå.</p>
+        }
+        else
+        {
+            <ul class="historikk-liste">
+                @foreach (var h in _ticket.Hendelser.OrderByDescending(h => h.Tidspunkt))
+                {
+                    <li class="historikk-rad">
+                        <span class="historikk-tidspunkt">@h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</span>
+                        <span class="historikk-tekst">
+                            @h.Beskrivelse
+                            @if (h.UtfortAvBruker is not null)
+                            {
+                                <text> (@h.UtfortAvBruker.Navn)</text>
+                            }
+                        </span>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private Ticket? _ticket;
+    private bool _notFound;
+    private string? _lagretMelding;
+    private int? _naverendeBrukerId;
+
+    private sealed class KundeOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class BrukerOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class ProsjektOption
+    {
+        public int Id { get; set; }
+        public string Visningsnavn { get; set; } = "";
+    }
+
+    private List<KundeOption> _kunder = [];
+    private List<BrukerOption> _brukere = [];
+    private List<ProsjektOption> _prosjekter = [];
+    private List<Tilbud> _prosjektTilbud = [];
+    private List<Arbeidsordre> _prosjektArbeidsordre = [];
+
+    private int? _valgtProsjektId;
+    private int? _valgtArbeidsordreId;
+    private string _nyKommentar = "";
+
+    private string ProsjektLenke => _ticket?.Prosjekt?.Status == ProsjektStatus.Serviceavtale
+        ? $"/serviceavtaler/{_ticket.ProsjektId}"
+        : $"/prosjekter/{_ticket.ProsjektId}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+        }
+
+        _ticket = await Db.Tickets
+            .Include(t => t.Kunde)
+            .Include(t => t.AnsvarligBruker)
+            .Include(t => t.GodkjentAvBruker)
+            .Include(t => t.Prosjekt)
+            .Include(t => t.Arbeidsordre)
+            .Include(t => t.Hendelser).ThenInclude(h => h.UtfortAvBruker)
+            .Include(t => t.Media)
+            .FirstOrDefaultAsync(t => t.Id == Id);
+
+        if (_ticket is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        _kunder = await Db.Kunder
+            .OrderBy(k => k.Navn)
+            .Select(k => new KundeOption { Id = k.Id, Navn = k.Navn })
+            .ToListAsync();
+
+        _brukere = await Db.Brukere
+            .OrderBy(b => b.Navn)
+            .Select(b => new BrukerOption { Id = b.Id, Navn = b.Navn })
+            .ToListAsync();
+
+        _prosjekter = await Db.Prosjekter
+            .Include(p => p.Kunde)
+            .OrderBy(p => p.Navn)
+            .Select(p => new ProsjektOption
+            {
+                Id = p.Id,
+                Visningsnavn = p.Navn + (p.Status == ProsjektStatus.Serviceavtale ? " (service)" : "") + (p.Kunde != null ? " - " + p.Kunde.Navn : "")
+            })
+            .ToListAsync();
+
+        if (_ticket.ProsjektId.HasValue)
+        {
+            _prosjektTilbud = await Db.Tilbud
+                .Where(t => t.ProsjektId == _ticket.ProsjektId)
+                .ToListAsync();
+
+            _prosjektArbeidsordre = await Db.Arbeidsordre
+                .Where(a => a.ProsjektId == _ticket.ProsjektId)
+                .ToListAsync();
+        }
+
+        // Auto-flipp til "Venter godkjenning" når lenket arbeidsordre er ferdigstilt.
+        if (_ticket.Status == TicketStatus.UnderBehandling
+            && _ticket.Arbeidsordre is not null
+            && (_ticket.Arbeidsordre.Status == ArbeidsordreStatus.Ferdig || _ticket.Arbeidsordre.Status == ArbeidsordreStatus.Fakturert))
+        {
+            _ticket.Status = TicketStatus.VenterGodkjenning;
+            LoggHendelse("Arbeidsordre ferdigstilt - venter godkjenning.");
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    private void LoggHendelse(string beskrivelse)
+    {
+        _ticket!.Hendelser.Add(new TicketHendelse
+        {
+            TicketId = _ticket.Id,
+            Beskrivelse = beskrivelse,
+            UtfortAvBrukerId = _naverendeBrukerId
+        });
+    }
+
+    private async Task LagreInfo()
+    {
+        await Db.SaveChangesAsync();
+        _lagretMelding = "Lagret.";
+    }
+
+    private async Task SlettTicket()
+    {
+        Db.Tickets.Remove(_ticket!);
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo("/tickets");
+    }
+
+    private async Task KnyttTilProsjekt()
+    {
+        if (_valgtProsjektId is null)
+        {
+            return;
+        }
+
+        _ticket!.ProsjektId = _valgtProsjektId;
+        if (_ticket.Status == TicketStatus.Ny)
+        {
+            _ticket.Status = TicketStatus.UnderBehandling;
+        }
+
+        var navn = _prosjekter.FirstOrDefault(p => p.Id == _valgtProsjektId)?.Visningsnavn ?? "";
+        LoggHendelse($"Knyttet til prosjekt/serviceavtale: {navn}");
+        await Db.SaveChangesAsync();
+        await OnParametersSetAsync();
+    }
+
+    private async Task KnyttTilArbeidsordre()
+    {
+        if (_valgtArbeidsordreId is null)
+        {
+            return;
+        }
+
+        _ticket!.ArbeidsordreId = _valgtArbeidsordreId;
+        var ao = _prosjektArbeidsordre.FirstOrDefault(a => a.Id == _valgtArbeidsordreId);
+        LoggHendelse($"Knyttet til arbeidsordre: {ao?.Tittel}");
+        await Db.SaveChangesAsync();
+        await OnParametersSetAsync();
+    }
+
+    private async Task GodkjennOgLukk()
+    {
+        _ticket!.Status = TicketStatus.Lukket;
+        _ticket.LukketDato = DateTime.Now;
+        _ticket.GodkjentAvBrukerId = _naverendeBrukerId;
+        LoggHendelse("Godkjent og lukket.");
+        await Db.SaveChangesAsync();
+        await OnParametersSetAsync();
+    }
+
+    private async Task Gjenapne()
+    {
+        _ticket!.Status = TicketStatus.UnderBehandling;
+        _ticket.LukketDato = null;
+        _ticket.GodkjentAvBrukerId = null;
+        LoggHendelse("Gjenåpnet.");
+        await Db.SaveChangesAsync();
+        await OnParametersSetAsync();
+    }
+
+    private async Task LeggTilKommentar()
+    {
+        var tekst = _nyKommentar.Trim();
+        if (tekst.Length == 0)
+        {
+            return;
+        }
+
+        LoggHendelse(tekst);
+        _nyKommentar = "";
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LastOppFiler(InputFileChangeEventArgs e)
+    {
+        foreach (var fil in e.GetMultipleFiles(10))
+        {
+            using var stream = fil.OpenReadStream(maxAllowedSize: 20_000_000);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            _ticket!.Media.Add(new TicketMedia
+            {
+                TicketId = _ticket.Id,
+                Data = ms.ToArray(),
+                ContentType = fil.ContentType,
+                Filnavn = fil.Name
+            });
+        }
+
+        LoggHendelse("La til vedlegg.");
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SlettMedia(TicketMedia media)
+    {
+        Db.TicketMedia.Remove(media);
+        _ticket!.Media.Remove(media);
+        await Db.SaveChangesAsync();
+    }
+}

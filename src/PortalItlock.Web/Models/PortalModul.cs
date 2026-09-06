@@ -41,6 +41,9 @@ public static class PortalModulRegister
                 new LenkeGruppe("Forespørsler", [
                     new Lenke("Forespørsler", "E-poster sendt til post@itlock.no", "foresporsler"),
                 ]),
+                new LenkeGruppe("Tickets", [
+                    new Lenke("Tickets", "Samlet oversikt over alle henvendelser og saker", "tickets"),
+                ]),
                 new LenkeGruppe("Service modul", [
                     new Lenke("Service modul", "Serviceavtaler, serviceoppdrag og tilbud service samlet på ett sted", "servicemodul"),
                 ]),
