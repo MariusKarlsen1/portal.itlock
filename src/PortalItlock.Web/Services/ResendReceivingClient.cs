@@ -16,68 +16,89 @@ public class ResendReceivingClient(HttpClient http, IConfiguration config, ILogg
             return null;
         }
 
-        foreach (var sti in new[] { $"emails/receiving/{emailId}", $"emails/{emailId}" })
+        JsonElement root;
+        try
         {
-            HttpResponseMessage response;
-            try
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Get, sti);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-                response = await http.SendAsync(request);
-            }
-            catch (HttpRequestException)
-            {
-                continue;
-            }
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"emails/receiving/{emailId}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            using var response = await http.SendAsync(request);
 
             if (!response.IsSuccessStatusCode)
             {
-                continue;
+                logger.LogWarning("Klarte ikke å hente e-post {EmailId} fra Resend: {Status}", emailId, response.StatusCode);
+                return null;
             }
 
-            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            root = doc.RootElement.Clone();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
+        {
+            logger.LogWarning(ex, "Feil under henting av e-post {EmailId} fra Resend.", emailId);
+            return null;
+        }
 
-            try
+        var tekst = HentTekst(root, "text") ?? HentTekst(root, "html");
+        var vedlegg = new List<VedleggData>();
+
+        if (root.TryGetProperty("attachments", out var attArr) && attArr.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var att in attArr.EnumerateArray())
             {
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-
-                var tekst = HentTekst(root, "text") ?? HentTekst(root, "html");
-                var vedlegg = new List<VedleggData>();
-
-                if (root.TryGetProperty("attachments", out var attArr) && attArr.ValueKind == JsonValueKind.Array)
+                var attId = HentTekst(att, "id");
+                if (attId is null)
                 {
-                    foreach (var att in attArr.EnumerateArray())
-                    {
-                        var filnavn = HentTekst(att, "filename") ?? "vedlegg";
-                        var contentType = HentTekst(att, "content_type") ?? "application/octet-stream";
-                        var innholdBase64 = HentTekst(att, "content");
-
-                        if (innholdBase64 is null)
-                        {
-                            continue;
-                        }
-
-                        try
-                        {
-                            vedlegg.Add(new VedleggData(filnavn, contentType, Convert.FromBase64String(innholdBase64)));
-                        }
-                        catch (FormatException)
-                        {
-                        }
-                    }
+                    continue;
                 }
 
-                return new FullInnhold(tekst, vedlegg);
-            }
-            catch (JsonException)
-            {
-                continue;
+                var filnavn = HentTekst(att, "filename") ?? "vedlegg";
+                var contentType = HentTekst(att, "content_type") ?? "application/octet-stream";
+
+                var data = await HentVedleggAsync(emailId, attId, apiKey);
+                if (data is not null)
+                {
+                    vedlegg.Add(new VedleggData(filnavn, contentType, data));
+                }
             }
         }
 
-        logger.LogWarning("Klarte ikke å hente fullt innhold for innkommende e-post {EmailId} fra Resend.", emailId);
-        return null;
+        return new FullInnhold(tekst, vedlegg);
+    }
+
+    private async Task<byte[]?> HentVedleggAsync(string emailId, string attachmentId, string apiKey)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"emails/receiving/{emailId}/attachments/{attachmentId}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            using var response = await http.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var downloadUrl = HentTekst(doc.RootElement, "download_url");
+            if (downloadUrl is null)
+            {
+                return null;
+            }
+
+            using var fileRequest = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+            using var fileResponse = await http.SendAsync(fileRequest);
+            if (!fileResponse.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            return await fileResponse.Content.ReadAsByteArrayAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
+        {
+            logger.LogWarning(ex, "Klarte ikke å laste ned vedlegg {AttachmentId} for e-post {EmailId}.", attachmentId, emailId);
+            return null;
+        }
     }
 
     private static string? HentTekst(JsonElement element, string felt) =>
