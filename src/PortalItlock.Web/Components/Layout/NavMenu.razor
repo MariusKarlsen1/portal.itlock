@@ -19,6 +19,27 @@
 
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
     <nav class="flex-column">
+        <div class="nav-item px-3 innstillinger-wrap" @onclick:stopPropagation="true">
+            <button type="button" class="nav-link varsel-knapp" @onclick="ToggleInnstillinger">
+                <Icon Name="settings" />
+                <span>Hurtigmeny</span>
+            </button>
+
+            @if (_visInnstillinger)
+            {
+                <div class="varsel-panel">
+                    <p class="innstillinger-hint">Velg hvilke moduler som skal vises i menyen under.</p>
+                    @foreach (var lenke in TilgjengeligeLenker)
+                    {
+                        <label class="innstillinger-rad">
+                            <input type="checkbox" checked="@(!_skjulteLenker.Contains(lenke.Href))" @onchange="@(e => ToggleLenke(lenke.Href, (bool)e.Value!))" />
+                            <span>@lenke.Tittel</span>
+                        </label>
+                    }
+                </div>
+            }
+        </div>
+
         <div class="nav-item px-3 varsel-wrap" @onclick:stopPropagation="true">
             <button type="button" class="nav-link varsel-knapp" @onclick="ToggleVarsler">
                 <Icon Name="bell" />
@@ -47,7 +68,7 @@
                         }
                         @if (_serviceavtalerVarsel > 0)
                         {
-                            <a class="varsel-rad" href="/serviceavtaler" @onclick="LukkVarsler">
+                            <a class="varsel-rad" href="/service" @onclick="LukkVarsler">
                                 <span class="varsel-tall">@_serviceavtalerVarsel</span>
                                 <span>Serviceavtaler som nærmer seg forfall</span>
                             </a>
@@ -111,29 +132,17 @@
             </NavLink>
         </div>
 
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="arbeidsordre">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Arbeidsordre
-            </NavLink>
-        </div>
-
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="timeregistrering">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Timeregistrering
-            </NavLink>
-        </div>
-
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="fravar">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Fravær
-            </NavLink>
-        </div>
-
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="serviceoppdrag">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Serviceoppdrag
-            </NavLink>
-        </div>
+        @foreach (var lenke in TilgjengeligeLenker)
+        {
+            @if (!_skjulteLenker.Contains(lenke.Href))
+            {
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="@lenke.Href">
+                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> @lenke.Tittel
+                    </NavLink>
+                </div>
+            }
+        }
 
         @if (_visUtvidetVarsel)
         {
@@ -143,18 +152,6 @@
                 </NavLink>
             </div>
         }
-
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="kalender">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Kalender
-            </NavLink>
-        </div>
-
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="ce-godkjenninger">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> CE Modul
-            </NavLink>
-        </div>
 
         <div class="nav-item px-3">
             <ThemeToggle />
@@ -179,6 +176,31 @@
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
+    private BrukerRolle? _naverendeRolle;
+
+    private List<Lenke> TilgjengeligeLenker
+    {
+        get
+        {
+            var nokler = _naverendeRolle switch
+            {
+                BrukerRolle.Admin => new[] { "montorer", "prosjektledere", "admin" },
+                BrukerRolle.Prosjektleder => new[] { "montorer", "prosjektledere" },
+                BrukerRolle.Montor => new[] { "montorer" },
+                _ => []
+            };
+
+            return PortalModulRegister.Roller
+                .Where(r => nokler.Contains(r.Nokkel))
+                .SelectMany(r => r.Grupper)
+                .SelectMany(g => g.Lenker)
+                .ToList();
+        }
+    }
+
+    private int? _naverendeBrukerId;
+    private HashSet<string> _skjulteLenker = [];
+    private bool _visInnstillinger;
     private bool _visUtvidetVarsel;
     private bool _erAdmin;
     private bool _visVarsler;
@@ -208,6 +230,17 @@
             var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
             _visUtvidetVarsel = rolleClaim is "Admin" or "Prosjektleder";
             _erAdmin = rolleClaim is "Admin";
+            _naverendeRolle = rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle) ? rolle : null;
+
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+                var skjult = await Db.Brukere.Where(b => b.Id == bid).Select(b => b.SkjulteNavLenker).FirstOrDefaultAsync();
+                _skjulteLenker = string.IsNullOrWhiteSpace(skjult)
+                    ? []
+                    : skjult.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+            }
         }
 
         await LastVarslerAsync();
@@ -281,6 +314,33 @@
     private void ToggleVarsler()
     {
         _visVarsler = !_visVarsler;
+    }
+
+    private void ToggleInnstillinger()
+    {
+        _visInnstillinger = !_visInnstillinger;
+    }
+
+    private async Task ToggleLenke(string key, bool vis)
+    {
+        if (vis)
+        {
+            _skjulteLenker.Remove(key);
+        }
+        else
+        {
+            _skjulteLenker.Add(key);
+        }
+
+        if (_naverendeBrukerId.HasValue)
+        {
+            var bruker = await Db.Brukere.FindAsync(_naverendeBrukerId.Value);
+            if (bruker is not null)
+            {
+                bruker.SkjulteNavLenker = _skjulteLenker.Count == 0 ? null : string.Join(",", _skjulteLenker);
+                await Db.SaveChangesAsync();
+            }
+        }
     }
 
     private void LukkVarsler()

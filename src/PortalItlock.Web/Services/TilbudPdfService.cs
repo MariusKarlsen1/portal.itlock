@@ -62,6 +62,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     Component = l.Component,
                     Navn = l.Navn,
                     Innpris = l.Innpris,
+                    PrisVeiledende = l.PrisVeiledende,
                     EkstraRabattInnProsent = l.EkstraRabattInnProsent,
                     Utpris = l.Utpris,
                     Antall = antallPerComponent.GetValueOrDefault(l.ComponentId.Value),

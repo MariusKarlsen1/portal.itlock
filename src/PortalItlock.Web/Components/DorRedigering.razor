@@ -161,6 +161,20 @@
         {
             <p class="search-empty">Ingen treff.</p>
         }
+
+        @if (!_visEgendefinert)
+        {
+            <button type="button" class="egendefinert-toggle" @onclick="@(() => _visEgendefinert = true)">+ Legg til egendefinert vare (ikke i registeret)</button>
+        }
+        else
+        {
+            <div class="egendefinert-rad">
+                <input @bind="_egendefinertNavn" @bind:event="oninput" placeholder="Navn på vare, f.eks. gammel låskasse" />
+                <input @bind="_egendefinertEnhet" @bind:event="oninput" placeholder="Enhet (valgfritt)" class="egendefinert-enhet" />
+                <button type="button" class="add-button" @onclick="LeggTilEgendefinert" disabled="@string.IsNullOrWhiteSpace(_egendefinertNavn)">Legg til</button>
+                <button type="button" class="cancel-button" @onclick="@(() => _visEgendefinert = false)">Avbryt</button>
+            </div>
+        }
     </div>
 
     <div class="pakke-legg-til">
@@ -472,12 +486,59 @@
             .ToListAsync();
     }
 
+    private bool _visEgendefinert;
+    private string _egendefinertNavn = "";
+    private string? _egendefinertEnhet;
+
+    private async Task LeggTilEgendefinert()
+    {
+        var navn = _egendefinertNavn.Trim();
+        if (navn.Length == 0)
+        {
+            return;
+        }
+
+        var component = new Component
+        {
+            Navn = navn,
+            Enhet = string.IsNullOrWhiteSpace(_egendefinertEnhet) ? null : _egendefinertEnhet.Trim(),
+            Varegruppe = "Egendefinert",
+            Aktiv = true
+        };
+        Db.Components.Add(component);
+        await Db.SaveChangesAsync();
+
+        var dk = new DorKomponent { DorId = Dor.Id, ComponentId = component.Id, Component = component, Antall = 1, Enhet = component.Enhet };
+        Dor.Komponenter.Add(dk);
+        Db.DorKomponenter.Add(dk);
+        LoggHendelse($"La til egendefinert vare {component.Navn}");
+
+        OppdaterStatusFraBeslag();
+        await Db.SaveChangesAsync();
+
+        _egendefinertNavn = "";
+        _egendefinertEnhet = null;
+        _visEgendefinert = false;
+        await OnSaved.InvokeAsync();
+    }
+
+    private void LoggHendelse(string beskrivelse)
+    {
+        Db.DorHendelser.Add(new DorHendelse
+        {
+            DorId = Dor.Id,
+            Beskrivelse = beskrivelse,
+            UtfortAvBrukerId = _naverendeBrukerId
+        });
+    }
+
     private async Task AddFromSearch(SearchResult r)
     {
         var existing = Dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == r.Id);
         if (existing is not null)
         {
             existing.Antall += 1;
+            LoggHendelse($"Økte antall på {existing.Component?.Navn ?? r.Navn}");
         }
         else
         {
@@ -485,6 +546,7 @@
             var dk = new DorKomponent { DorId = Dor.Id, ComponentId = r.Id, Component = component, Antall = 1, Enhet = component?.Enhet };
             Dor.Komponenter.Add(dk);
             Db.DorKomponenter.Add(dk);
+            LoggHendelse($"La til {component?.Navn ?? r.Navn}");
         }
 
         OppdaterStatusFraBeslag();
@@ -527,6 +589,7 @@
         }
 
         OppdaterStatusFraBeslag();
+        LoggHendelse($"La til pakke {pakke.Navn}");
         await Db.SaveChangesAsync();
         foreach (var pk in pakke.Komponenter)
         {
@@ -596,6 +659,7 @@
 
     private async Task RemoveKomponent(DorKomponent dk)
     {
+        LoggHendelse($"Fjernet {dk.Component?.Navn}");
         Db.DorKomponenter.Remove(dk);
         Dor.Komponenter.Remove(dk);
         OppdaterStatusFraBeslag();

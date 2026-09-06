@@ -1,0 +1,256 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using SkiaSharp
+@inject ApplicationDbContext Db
+
+<div class="prosjekt-layout">
+    <p class="section-hint">Last opp plantegninger og plasser dører på dem for å følge opp montasje.</p>
+
+    @if (_plantegninger.Count > 0)
+    {
+        @foreach (var gruppe in PlantegningGrupper)
+        {
+            <div @key="gruppe.Navn" class="plantegning-gruppe">
+                <div class="plantegning-gruppe-header">
+                    <button type="button" class="gruppe-toggle" @onclick="@(() => ToggleGruppe(gruppe.Navn))">
+                        <span class="gruppe-chevron">@(ErGruppeLukket(gruppe.Navn) ? "▸" : "▾")</span>
+                        <span class="@CssHidden(_editingGruppe == gruppe.Navn)">@gruppe.Navn <span class="gruppe-count">(@gruppe.Plantegninger.Count)</span></span>
+                    </button>
+                    <span class="gruppe-rename-form @CssHidden(_editingGruppe != gruppe.Navn)">
+                        <input @bind="_gruppeRenameInput" @bind:event="oninput" placeholder="Gruppenavn" />
+                        <button type="button" class="save-button" @onclick="@(() => LagreGruppeNavn(gruppe.Navn))">Lagre</button>
+                        <button type="button" class="cancel-button" @onclick="@(() => _editingGruppe = null)">Avbryt</button>
+                    </span>
+                    <button type="button" class="gruppe-rename-button @CssHidden(_editingGruppe == gruppe.Navn)" @onclick="@(() => StartGruppeRename(gruppe.Navn))">Endre navn</button>
+                </div>
+                <ul class="vedlegg-list @CssHidden(ErGruppeLukket(gruppe.Navn))">
+                    @foreach (var p in gruppe.Plantegninger)
+                    {
+                        <li @key="p.Id" class="vedlegg-item">
+                            <a href="@($"/plantegning/{p.Id}")">@p.Navn</a>
+                            @if (AlleGruppeNavn.Count() > 1)
+                            {
+                                <select class="plantegning-flytt" @onchange="@(e => FlyttPlantegning(p, e.Value?.ToString()))">
+                                    <option value="">Flytt til...</option>
+                                    @foreach (var g in AlleGruppeNavn.Where(g => g != gruppe.Navn))
+                                    {
+                                        <option value="@g">@g</option>
+                                    }
+                                </select>
+                            }
+                            <button type="button" class="remove-button" @onclick="@(() => RemovePlantegning(p))">Fjern</button>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+    }
+    else
+    {
+        <p class="list-empty">Ingen plantegninger lastet opp ennå.</p>
+    }
+
+    <div class="vedlegg-upload">
+        <input @bind="_nyPlantegningNavn" @bind:event="oninput" placeholder="Navn, f.eks. 1. etasje" />
+        <input @bind="_nyPlantegningByggetrinn" @bind:event="oninput" placeholder="Byggetrinn (valgfritt)" />
+        <InputFile @key="_plantegningInputKey" OnChange="OnPlantegningSelected" accept="image/*,.pdf,application/pdf" />
+    </div>
+
+    @if (_uploadingPlantegning)
+    {
+        <p class="list-empty">Laster opp...</p>
+    }
+    @if (!string.IsNullOrEmpty(_plantegningFeil))
+    {
+        <p class="form-error">@_plantegningFeil</p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+
+    private List<Plantegning> _plantegninger = [];
+    private int? _loadedProsjektId;
+
+    private IEnumerable<(string Navn, List<Plantegning> Plantegninger)> PlantegningGrupper =>
+        _plantegninger
+            .GroupBy(p => string.IsNullOrWhiteSpace(p.Byggetrinn) ? "Ugruppert" : p.Byggetrinn!.Trim())
+            .OrderBy(g => g.Key == "Ugruppert" ? 1 : 0)
+            .ThenBy(g => g.Key)
+            .Select(g => (g.Key, g.OrderBy(p => p.Navn).ToList()));
+
+    private IEnumerable<string> AlleGruppeNavn => PlantegningGrupper.Select(g => g.Navn);
+
+    private string _nyPlantegningNavn = "";
+    private string _nyPlantegningByggetrinn = "";
+    private bool _uploadingPlantegning;
+    private string? _plantegningFeil;
+    private int _plantegningInputKey;
+    private (string Navn, long Storrelse, DateTime Tidspunkt)? _sisteOpplasting;
+    private readonly SemaphoreSlim _plantegningUploadLock = new(1, 1);
+    private string? _editingGruppe;
+    private string _gruppeRenameInput = "";
+    private readonly HashSet<string> _lukkedeGrupper = [];
+
+    private bool ErGruppeLukket(string navn) => _lukkedeGrupper.Contains(navn);
+
+    private void ToggleGruppe(string navn)
+    {
+        if (!_lukkedeGrupper.Add(navn))
+        {
+            _lukkedeGrupper.Remove(navn);
+        }
+    }
+
+    private static string CssHidden(bool skjult) => skjult ? "skjult" : "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedProsjektId == ProsjektId)
+        {
+            return;
+        }
+
+        _loadedProsjektId = ProsjektId;
+        await ReloadPlantegninger();
+    }
+
+    private async Task OnPlantegningSelected(InputFileChangeEventArgs e)
+    {
+        // Blazor InputFile kan i sjeldne tilfeller sende change-hendelsen to ganger for samme filvalg.
+        // Semaforen serialiserer kallene slik at duplikat-sjekken under alltid ser forrige opplasting.
+        await _plantegningUploadLock.WaitAsync();
+        try
+        {
+            var file0 = e.File;
+            if (_sisteOpplasting is { } forrige && forrige.Navn == file0.Name && forrige.Storrelse == file0.Size
+                && DateTime.UtcNow - forrige.Tidspunkt < TimeSpan.FromSeconds(3))
+            {
+                return;
+            }
+            _sisteOpplasting = (file0.Name, file0.Size, DateTime.UtcNow);
+
+            _plantegningFeil = null;
+
+            if (string.IsNullOrWhiteSpace(_nyPlantegningNavn))
+            {
+                _plantegningFeil = "Plantegningen må ha et navn.";
+                return;
+            }
+
+            var file = e.File;
+            if (file.Size > 20_000_000)
+            {
+                _plantegningFeil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+                return;
+            }
+
+            _uploadingPlantegning = true;
+            using var buffer = new MemoryStream();
+            await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            var rawBytes = buffer.ToArray();
+            var erPdf = file.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(file.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase);
+
+            byte[] bildeData;
+            string contentType;
+
+            if (erPdf)
+            {
+                try
+                {
+                    using var bitmap = PDFtoImage.Conversion.ToImage(rawBytes, page: 0, options: new PDFtoImage.RenderOptions(Dpi: 200));
+                    using var image = SKImage.FromBitmap(bitmap);
+                    using var encoded = image.Encode(SKEncodedImageFormat.Png, 90);
+                    bildeData = encoded.ToArray();
+                    contentType = "image/png";
+                }
+                catch (Exception)
+                {
+                    _plantegningFeil = $"Klarte ikke å lese PDF-filen \"{file.Name}\". Prøv å laste opp den som bilde i stedet.";
+                    return;
+                }
+            }
+            else
+            {
+                bildeData = rawBytes;
+                contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+            }
+
+            var plantegning = new Plantegning
+            {
+                ProsjektId = ProsjektId,
+                Navn = _nyPlantegningNavn.Trim(),
+                Byggetrinn = string.IsNullOrWhiteSpace(_nyPlantegningByggetrinn) ? null : _nyPlantegningByggetrinn.Trim(),
+                Filnavn = file.Name,
+                ContentType = contentType,
+                Data = bildeData
+            };
+
+            Db.Plantegninger.Add(plantegning);
+            await Db.SaveChangesAsync();
+            await ReloadPlantegninger();
+            _nyPlantegningNavn = "";
+            _nyPlantegningByggetrinn = "";
+        }
+        finally
+        {
+            _uploadingPlantegning = false;
+            _plantegningInputKey++;
+            _plantegningUploadLock.Release();
+        }
+    }
+
+    private void StartGruppeRename(string gruppeNavn)
+    {
+        _editingGruppe = gruppeNavn;
+        _gruppeRenameInput = gruppeNavn == "Ugruppert" ? "" : gruppeNavn;
+    }
+
+    private async Task LagreGruppeNavn(string gammeltNavn)
+    {
+        var nyttNavn = string.IsNullOrWhiteSpace(_gruppeRenameInput) ? null : _gruppeRenameInput.Trim();
+        var berorte = _plantegninger.Where(p =>
+            (string.IsNullOrWhiteSpace(p.Byggetrinn) ? "Ugruppert" : p.Byggetrinn!.Trim()) == gammeltNavn);
+
+        foreach (var p in berorte)
+        {
+            p.Byggetrinn = nyttNavn;
+        }
+
+        await Db.SaveChangesAsync();
+        _editingGruppe = null;
+        await ReloadPlantegninger();
+    }
+
+    private async Task FlyttPlantegning(Plantegning p, string? nyGruppe)
+    {
+        if (string.IsNullOrWhiteSpace(nyGruppe))
+        {
+            return;
+        }
+
+        p.Byggetrinn = nyGruppe == "Ugruppert" ? null : nyGruppe;
+        await Db.SaveChangesAsync();
+        await ReloadPlantegninger();
+    }
+
+    private async Task RemovePlantegning(Plantegning p)
+    {
+        Db.Plantegninger.Remove(p);
+        await Db.SaveChangesAsync();
+        await ReloadPlantegninger();
+    }
+
+    private async Task ReloadPlantegninger()
+    {
+        _plantegninger = await Db.Plantegninger
+            .Where(p => p.ProsjektId == ProsjektId)
+            .ToListAsync();
+    }
+}

@@ -35,6 +35,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Tilbud> Tilbud => Set<Tilbud>();
     public DbSet<TilbudLinje> TilbudLinjer => Set<TilbudLinje>();
     public DbSet<MonteringLinje> MonteringLinjer => Set<MonteringLinje>();
+    public DbSet<ServiceMinuttLinje> ServiceMinuttLinjer => Set<ServiceMinuttLinje>();
+    public DbSet<ServiceKategoriPris> ServiceKategoriPriser => Set<ServiceKategoriPris>();
+    public DbSet<DorHendelse> DorHendelser => Set<DorHendelse>();
+    public DbSet<Nyhet> Nyheter => Set<Nyhet>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();

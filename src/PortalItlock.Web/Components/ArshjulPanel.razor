@@ -1,0 +1,133 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<p class="section-hint">Oversikt over alle serviceavtaler basert på "Neste planlagte service"-datoen som fylles ut når en servicerunde registreres, og estimerte timer fra Service-minutter på hver avtale.</p>
+
+<div class="arshjul-nokkeltall">
+    <div class="arshjul-tall-boks">
+        <span class="arshjul-tall">@_rader.Count(r => r.UtfortIAr)</span>
+        <span class="arshjul-tall-label">Utført i år</span>
+    </div>
+    <div class="arshjul-tall-boks">
+        <span class="arshjul-tall">@_rader.Count(r => r.GjenstarIAr)</span>
+        <span class="arshjul-tall-label">Gjenstår i år</span>
+    </div>
+    <div class="arshjul-tall-boks">
+        <span class="arshjul-tall">@FormatTimer(TimerGjortIAr)</span>
+        <span class="arshjul-tall-label">Timer gjort i år</span>
+    </div>
+    <div class="arshjul-tall-boks">
+        <span class="arshjul-tall">@FormatTimer(TimerGjenstarIAr)</span>
+        <span class="arshjul-tall-label">Timer gjenstående i år</span>
+    </div>
+</div>
+
+@if (_rader.Count == 0)
+{
+    <p class="list-empty">Ingen serviceavtaler registrert ennå.</p>
+}
+else
+{
+    <table class="arshjul-tabell">
+        <thead>
+            <tr>
+                <th>Avtale</th>
+                <th>Status i år</th>
+                <th>Neste planlagte service</th>
+                <th>Estimerte timer pr besøk</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var r in _rader.OrderBy(r => r.NesteServiceDato ?? DateTime.MaxValue))
+            {
+                <tr @key="r.ProsjektId">
+                    <td><a href="@($"/serviceavtaler/{r.ProsjektId}")">@r.Navn</a></td>
+                    <td>
+                        @if (r.UtfortIAr)
+                        {
+                            <span class="arshjul-status arshjul-status-utfort">Utført i år</span>
+                        }
+                        else if (r.GjenstarIAr)
+                        {
+                            <span class="arshjul-status arshjul-status-gjenstar">Gjenstår i år</span>
+                        }
+                        else
+                        {
+                            <span class="arshjul-status arshjul-status-ingen">Ingen dato satt</span>
+                        }
+                    </td>
+                    <td>@(r.NesteServiceDato?.ToString("dd.MM.yyyy") ?? "-")</td>
+                    <td>@FormatTimer(r.EstimerteTimer)</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private sealed class AvtaleRad
+    {
+        public int ProsjektId { get; set; }
+        public string Navn { get; set; } = "";
+        public DateTime? NesteServiceDato { get; set; }
+        public bool UtfortIAr { get; set; }
+        public bool GjenstarIAr { get; set; }
+        public decimal EstimerteTimer { get; set; }
+    }
+
+    private List<AvtaleRad> _rader = [];
+
+    private decimal TimerGjortIAr => _rader.Where(r => r.UtfortIAr).Sum(r => r.EstimerteTimer);
+    private decimal TimerGjenstarIAr => _rader.Where(r => r.GjenstarIAr).Sum(r => r.EstimerteTimer);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var iAr = DateTime.Today.Year;
+
+        var avtaler = await Db.Prosjekter
+            .Where(p => p.Status == ProsjektStatus.Serviceavtale)
+            .ToListAsync();
+
+        var avtaleIder = avtaler.Select(p => p.Id).ToList();
+
+        var runder = await Db.Servicerunder
+            .Where(r => avtaleIder.Contains(r.ProsjektId))
+            .OrderByDescending(r => r.Dato)
+            .ToListAsync();
+
+        var minuttLinjer = await Db.ServiceMinuttLinjer
+            .Where(l => avtaleIder.Contains(l.ProsjektId))
+            .ToListAsync();
+
+        _rader = avtaler.Select(p =>
+        {
+            var proRunder = runder.Where(r => r.ProsjektId == p.Id).ToList();
+            var nesteServiceDato = proRunder.FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato;
+            var utfortIAr = proRunder.Any(r => r.Dato.Year == iAr);
+            var gjenstarIAr = !utfortIAr && nesteServiceDato.HasValue && nesteServiceDato.Value.Year == iAr
+                && !proRunder.Any(r => r.Dato >= nesteServiceDato.Value);
+
+            var minutter = minuttLinjer.Where(l => l.ProsjektId == p.Id).Sum(l => (l.Minutter ?? 0) * l.Antall);
+
+            return new AvtaleRad
+            {
+                ProsjektId = p.Id,
+                Navn = p.Navn,
+                NesteServiceDato = nesteServiceDato,
+                UtfortIAr = utfortIAr,
+                GjenstarIAr = gjenstarIAr,
+                EstimerteTimer = minutter / 60m
+            };
+        }).ToList();
+    }
+
+    private static string FormatTimer(decimal timer)
+    {
+        var totaltMinutt = (int)Math.Round(timer * 60);
+        var t = totaltMinutt / 60;
+        var m = totaltMinutt % 60;
+        return t > 0 ? $"{t}t {m}min" : $"{m}min";
+    }
+}

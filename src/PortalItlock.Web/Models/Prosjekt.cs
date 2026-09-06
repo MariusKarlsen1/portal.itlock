@@ -40,6 +40,9 @@ public class Prosjekt
     public List<ProsjektVedlegg> Vedlegg { get; set; } = [];
     public List<Tilbud> Tilbud { get; set; } = [];
     public List<MonteringLinje> MonteringLinjer { get; set; } = [];
+    public decimal? ServiceTimepris { get; set; }
+    public List<ServiceMinuttLinje> ServiceMinuttLinjer { get; set; } = [];
+    public List<ServiceKategoriPris> ServiceKategoriPriser { get; set; } = [];
     public List<Arbeidsordre> Arbeidsordre { get; set; } = [];
     public List<DorIdMal> DorIdMaler { get; set; } = [];
     public List<Bruker> Medlemmer { get; set; } = [];

@@ -13,6 +13,8 @@ public class Bruker
     public bool Aktiv { get; set; } = true;
 
     public int FerieKvote { get; set; } = 25;
+    public int? SisteNyhetSettId { get; set; }
+    public string? SkjulteNavLenker { get; set; }
 
     public int? KundeId { get; set; }
     public Kunde? Kunde { get; set; }

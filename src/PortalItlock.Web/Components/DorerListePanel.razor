@@ -1,0 +1,250 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+<div class="dorer-layout">
+    <div class="dorer-list-wrap">
+        <button type="button" class="add-button" @onclick="LeggTilDor">Legg til dør</button>
+
+        @if (_dorer.Count == 0)
+        {
+            <p class="list-empty">Ingen dører registrert ennå.</p>
+        }
+        else
+        {
+            <div class="dorer-filter-bar">
+                <input class="dorer-filter-sok" @bind="_dorSok" @bind:event="oninput" placeholder="Søk på dørnummer, etasje, sone, rom..." />
+                <select @bind="_dorEtasjeFilter">
+                    <option value="">Alle etasjer</option>
+                    @foreach (var etasje in DistinkteEtasjer)
+                    {
+                        <option value="@etasje">@etasje</option>
+                    }
+                </select>
+                <select @bind="_dorSoneFilter">
+                    <option value="">Alle soner</option>
+                    @foreach (var sone in DistinkteSoner)
+                    {
+                        <option value="@sone">@sone</option>
+                    }
+                </select>
+                <select @bind="_dorByggetrinnFilter">
+                    <option value="">Alle byggetrinn</option>
+                    @foreach (var bt in DistinkteByggetrinn)
+                    {
+                        <option value="@bt">@bt</option>
+                    }
+                </select>
+                @if (!string.IsNullOrWhiteSpace(_dorSok) || !string.IsNullOrWhiteSpace(_dorEtasjeFilter) || !string.IsNullOrWhiteSpace(_dorSoneFilter) || !string.IsNullOrWhiteSpace(_dorByggetrinnFilter))
+                {
+                    <button type="button" class="cancel-button" @onclick="NullstillDorFilter">Nullstill filter</button>
+                }
+                <span class="dorer-filter-count">@FiltrerteDorer.Count av @_dorer.Count dører</span>
+            </div>
+
+            @if (FiltrerteDorer.Count == 0)
+            {
+                <p class="list-empty">Ingen dører matcher filteret.</p>
+            }
+            else
+            {
+                <table class="dorer-table">
+                    <thead>
+                        <tr>
+                            <th>Dørnummer</th>
+                            <th>Etasje</th>
+                            <th>Sone</th>
+                            <th>Plassering</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var d in FiltrerteDorer)
+                        {
+                            <tr @key="d.Id" class="@(_selectedDoor?.Id == d.Id ? "dorer-row-selected" : "")">
+                                <td>@d.Dornummer</td>
+                                <td>@d.Etasje</td>
+                                <td>@d.Sone</td>
+                                <td>@(d.Plantegning?.Navn ?? "Ikke plassert")</td>
+                                <td>
+                                    <select class="status-select @StatusSelectClass(d.Status)" value="@d.Status" @onchange="@((ChangeEventArgs e) => EndreStatus(d, e))">
+                                        <option value="@MontasjeStatus.IkkeStartet">@MontasjeStatus.IkkeStartet.Visningsnavn()</option>
+                                        <option value="@MontasjeStatus.Montert">@MontasjeStatus.Montert.Visningsnavn()</option>
+                                        <option value="@MontasjeStatus.FerdigMontert">@MontasjeStatus.FerdigMontert.Visningsnavn()</option>
+                                    </select>
+                                </td>
+                                <td><button type="button" class="remove-button" @onclick="@(() => SelectDoor(d))">Rediger</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+    </div>
+
+    @if (_selectedDoor is not null)
+    {
+        <DorRedigering Dor="_selectedDoor"
+                        AlleDorer="_dorer"
+                        OnClose="@(() => _selectedDoor = null)"
+                        OnDeleted="OnDoorDeleted"
+                        OnUnplaced="OnDoorUnplaced"
+                        OnCloned="OnDoorsCloned"
+                        OnSaved="StateHasChanged" />
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+    private Bruker? _naverendeBruker;
+
+    private List<Dor> _dorer = [];
+    private Dor? _selectedDoor;
+    private string _dorSok = "";
+    private string _dorEtasjeFilter = "";
+    private string _dorSoneFilter = "";
+    private string _dorByggetrinnFilter = "";
+    private int? _loadedProsjektId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+                _naverendeBruker = await Db.Brukere.FindAsync(bid);
+            }
+        }
+
+        if (_loadedProsjektId == ProsjektId)
+        {
+            return;
+        }
+
+        _loadedProsjektId = ProsjektId;
+        await LastDorerAsync();
+    }
+
+    private async Task LastDorerAsync()
+    {
+        _dorer = await Db.Dorer
+            .Where(d => d.ProsjektId == ProsjektId)
+            .Include(d => d.Plantegning)
+            .Include(d => d.Komponenter).ThenInclude(dk => dk.Component)
+            .Include(d => d.Komponenter).ThenInclude(dk => dk.MontertAvBruker)
+            .Include(d => d.MontertAvBruker)
+            .Include(d => d.Funksjoner)
+            .OrderBy(d => d.Dornummer)
+            .ToListAsync();
+    }
+
+    private List<string> DistinkteEtasjer =>
+        _dorer.Select(d => d.Etasje).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct().OrderBy(e => e).ToList()!;
+
+    private List<string> DistinkteSoner =>
+        _dorer.Select(d => d.Sone).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().OrderBy(s => s).ToList()!;
+
+    private List<string> DistinkteByggetrinn =>
+        ByggetrinnHelper.Sorter(_dorer.Select(d => d.Plantegning?.Byggetrinn).Where(b => !string.IsNullOrWhiteSpace(b)).Distinct()!).ToList();
+
+    private List<Dor> FiltrerteDorer => _dorer.Where(d =>
+        (string.IsNullOrWhiteSpace(_dorEtasjeFilter) || d.Etasje == _dorEtasjeFilter) &&
+        (string.IsNullOrWhiteSpace(_dorSoneFilter) || d.Sone == _dorSoneFilter) &&
+        (string.IsNullOrWhiteSpace(_dorByggetrinnFilter) || d.Plantegning?.Byggetrinn == _dorByggetrinnFilter) &&
+        MatcherDorSok(d, _dorSok)).ToList();
+
+    private static bool MatcherDorSok(Dor d, string sok)
+    {
+        if (string.IsNullOrWhiteSpace(sok))
+        {
+            return true;
+        }
+
+        var s = sok.Trim();
+        return (d.Dornummer?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (d.Etasje?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (d.Sone?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (d.DorTil?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (d.Romnr?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    private void NullstillDorFilter()
+    {
+        _dorSok = "";
+        _dorEtasjeFilter = "";
+        _dorSoneFilter = "";
+        _dorByggetrinnFilter = "";
+    }
+
+    private async Task LeggTilDor()
+    {
+        var dor = new Dor { ProsjektId = ProsjektId, Dornummer = "Ny dør" };
+        Db.Dorer.Add(dor);
+        await Db.SaveChangesAsync();
+
+        _dorer.Add(dor);
+        SelectDoor(dor);
+    }
+
+    private void SelectDoor(Dor d)
+    {
+        _selectedDoor = d;
+    }
+
+    private async Task EndreStatus(Dor d, ChangeEventArgs e)
+    {
+        if (e.Value is not string s || !Enum.TryParse<MontasjeStatus>(s, out var status))
+        {
+            return;
+        }
+
+        d.Status = status;
+        d.MontertDato = status == MontasjeStatus.FerdigMontert ? DateTime.Now : null;
+        d.MontertAvBrukerId = status == MontasjeStatus.FerdigMontert ? _naverendeBrukerId : null;
+        d.MontertAvBruker = status == MontasjeStatus.FerdigMontert ? _naverendeBruker : null;
+        await Db.SaveChangesAsync();
+    }
+
+    private static string StatusSelectClass(MontasjeStatus status) => status switch
+    {
+        MontasjeStatus.FerdigMontert => "status-select-ferdig",
+        MontasjeStatus.Montert => "status-select-montert",
+        _ => "status-select-ikke-startet"
+    };
+
+    private void OnDoorDeleted()
+    {
+        if (_selectedDoor is null)
+        {
+            return;
+        }
+
+        _dorer.Remove(_selectedDoor);
+        _selectedDoor = null;
+    }
+
+    private void OnDoorUnplaced()
+    {
+        if (_selectedDoor is null)
+        {
+            return;
+        }
+
+        _selectedDoor.Plantegning = null;
+    }
+
+    private void OnDoorsCloned(List<Dor> nyeDorer)
+    {
+        _dorer.AddRange(nyeDorer);
+    }
+}

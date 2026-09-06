@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260906091748_LeggTilDorHendelseOgEgneKategoriPrisLinjer")]
+    partial class LeggTilDorHendelseOgEgneKategoriPrisLinjer
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -571,12 +574,6 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<int>("Rolle")
                         .HasColumnType("INTEGER");
-
-                    b.Property<int?>("SisteNyhetSettId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("SkjulteNavLenker")
-                        .HasColumnType("TEXT");
 
                     b.Property<string>("Stilling")
                         .HasColumnType("TEXT");
@@ -2627,28 +2624,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("Nokkelsystemer");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.Nyhet", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Innhold")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Tittel")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Nyheter");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.Package", b =>
                 {
                     b.Property<int>("Id")
@@ -3981,9 +3956,6 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<int?>("PrisType")
                         .HasColumnType("INTEGER");
-
-                    b.Property<decimal?>("PrisVeiledende")
-                        .HasColumnType("TEXT");
 
                     b.Property<decimal?>("Prosentsats")
                         .HasColumnType("TEXT");

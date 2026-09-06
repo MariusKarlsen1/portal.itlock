@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260906075621_LeggTilServiceMinutterOgKategoriPris")]
+    partial class LeggTilServiceMinutterOgKategoriPris
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -571,12 +574,6 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<int>("Rolle")
                         .HasColumnType("INTEGER");
-
-                    b.Property<int?>("SisteNyhetSettId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("SkjulteNavLenker")
-                        .HasColumnType("TEXT");
 
                     b.Property<string>("Stilling")
                         .HasColumnType("TEXT");
@@ -1640,34 +1637,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("DorFunksjoner");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.DorHendelse", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Beskrivelse")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("DorId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("Tidspunkt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("UtfortAvBrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DorId");
-
-                    b.HasIndex("UtfortAvBrukerId");
-
-                    b.ToTable("DorHendelser");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.DorIdMal", b =>
                 {
                     b.Property<int>("Id")
@@ -2627,28 +2596,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("Nokkelsystemer");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.Nyhet", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Innhold")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Tittel")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Nyheter");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.Package", b =>
                 {
                     b.Property<int>("Id")
@@ -3449,17 +3396,11 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("ErEgendefinert")
-                        .HasColumnType("INTEGER");
-
                     b.Property<string>("Kategori")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("KravServicePrAar")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("ManueltAntall")
                         .HasColumnType("INTEGER");
 
                     b.Property<decimal?>("Pris")
@@ -3982,9 +3923,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("PrisType")
                         .HasColumnType("INTEGER");
 
-                    b.Property<decimal?>("PrisVeiledende")
-                        .HasColumnType("TEXT");
-
                     b.Property<decimal?>("Prosentsats")
                         .HasColumnType("TEXT");
 
@@ -4448,23 +4386,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Plantegning");
 
                     b.Navigation("Prosjekt");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.DorHendelse", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Dor", "Dor")
-                        .WithMany()
-                        .HasForeignKey("DorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "UtfortAvBruker")
-                        .WithMany()
-                        .HasForeignKey("UtfortAvBrukerId");
-
-                    b.Navigation("Dor");
-
-                    b.Navigation("UtfortAvBruker");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.DorIdMal", b =>

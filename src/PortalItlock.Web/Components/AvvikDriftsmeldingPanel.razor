@@ -1,0 +1,184 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<div class="prosjekt-layout">
+    <section class="prising-seksjon">
+        <h2>Avvik</h2>
+        <p class="section-hint">Avvik registrert på avtalens dører. Full oppfølging (pris, PDF, signatur, send til kunde) gjøres inne på den enkelte dør.</p>
+
+        <div class="meld-avvik-rad">
+            <select @bind="_valgtDorId">
+                <option value="">Velg dør...</option>
+                @foreach (var d in _dorer)
+                {
+                    <option value="@d.Id">@d.Dornummer</option>
+                }
+            </select>
+            <input @bind="_nyAvvikBeskrivelse" @bind:event="oninput" placeholder="Beskriv avviket..." />
+            <button type="button" class="add-button" @onclick="MeldAvvik" disabled="@(_valgtDorId is null || string.IsNullOrWhiteSpace(_nyAvvikBeskrivelse))">Meld avvik</button>
+        </div>
+        @if (!string.IsNullOrEmpty(_avvikFeil))
+        {
+            <p class="form-error">@_avvikFeil</p>
+        }
+
+        @if (_avvik.Count == 0)
+        {
+            <p class="list-empty">Ingen avvik registrert ennå.</p>
+        }
+        else
+        {
+            <div class="avvik-liste">
+                @foreach (var a in _avvik)
+                {
+                    <div @key="a.Id" class="avvik-kort">
+                        <div class="avvik-header">
+                            <strong>Dør @a.Dor?.Dornummer</strong>
+                            <span class="avvik-status avvik-status-@a.Status">@a.Status.Visningsnavn()</span>
+                            <span class="avvik-dato">@a.OpprettetDato.ToString("dd.MM.yyyy")</span>
+                            <a class="edit-link" href="@($"/dor/{a.DorId}")" target="_blank">Åpne dør</a>
+                        </div>
+                        <p class="avvik-tekst">@a.Beskrivelse</p>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    <section class="prising-seksjon">
+        <h2>Driftsmeldinger</h2>
+        <p class="section-hint">Meldinger sendt inn av driftslisenser (vaktmestere) på avtalens dører.</p>
+
+        @if (_driftsmeldinger.Count == 0)
+        {
+            <p class="list-empty">Ingen driftsmeldinger registrert ennå.</p>
+        }
+        else
+        {
+            <div class="melding-liste">
+                @foreach (var m in _driftsmeldinger)
+                {
+                    <div @key="m.Id" class="melding-kort">
+                        <div class="melding-header">
+                            <div>
+                                <strong>Dør @m.Dor?.Dornummer</strong>
+                                <p class="melding-dato">@m.OpprettetDato.ToString("dd.MM.yyyy HH:mm") @(m.InnmeldtAvBruker is not null ? $"- {m.InnmeldtAvBruker.Navn}" : "")</p>
+                            </div>
+                            <a class="edit-link" href="@($"/dor/{m.DorId}")" target="_blank">Åpne dør</a>
+                        </div>
+                        <p class="melding-tekst">@m.Tekst</p>
+                        @if (m.Media.Count > 0)
+                        {
+                            <div class="melding-media">
+                                @foreach (var media in m.Media)
+                                {
+                                    @if (media.ContentType.StartsWith("video/"))
+                                    {
+                                        <video controls class="melding-video" src="@($"/driftsmeldingmedia/{media.Id}/fil")"></video>
+                                    }
+                                    else
+                                    {
+                                        <a href="@($"/driftsmeldingmedia/{media.Id}/fil")" target="_blank">
+                                            <img src="@($"/driftsmeldingmedia/{media.Id}/fil")" alt="@media.Filnavn" class="melding-bilde" />
+                                        </a>
+                                    }
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+
+    private int? _loadedProsjektId;
+    private List<Dor> _dorer = [];
+    private List<Avvik> _avvik = [];
+    private List<Driftsmelding> _driftsmeldinger = [];
+    private int? _valgtDorId;
+    private string _nyAvvikBeskrivelse = "";
+    private string? _avvikFeil;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+        }
+
+        if (_loadedProsjektId == ProsjektId)
+        {
+            return;
+        }
+
+        _loadedProsjektId = ProsjektId;
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        _dorer = await Db.Dorer
+            .Where(d => d.ProsjektId == ProsjektId)
+            .OrderBy(d => d.Dornummer)
+            .ToListAsync();
+
+        _avvik = await Db.Avvik
+            .Where(a => a.Dor!.ProsjektId == ProsjektId)
+            .Include(a => a.Dor)
+            .OrderByDescending(a => a.OpprettetDato)
+            .ToListAsync();
+
+        _driftsmeldinger = await Db.Driftsmeldinger
+            .Where(m => m.Dor!.ProsjektId == ProsjektId)
+            .Include(m => m.Dor)
+            .Include(m => m.InnmeldtAvBruker)
+            .Include(m => m.Media)
+            .OrderByDescending(m => m.OpprettetDato)
+            .ToListAsync();
+    }
+
+    private async Task MeldAvvik()
+    {
+        _avvikFeil = null;
+        if (_valgtDorId is null)
+        {
+            _avvikFeil = "Velg hvilken dør avviket gjelder.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_nyAvvikBeskrivelse))
+        {
+            _avvikFeil = "Skriv en beskrivelse av avviket.";
+            return;
+        }
+
+        var avvik = new Avvik
+        {
+            DorId = _valgtDorId.Value,
+            Beskrivelse = _nyAvvikBeskrivelse.Trim(),
+            OpprettetAvBrukerId = _naverendeBrukerId
+        };
+        Db.Avvik.Add(avvik);
+        await Db.SaveChangesAsync();
+
+        avvik.Dor = _dorer.FirstOrDefault(d => d.Id == _valgtDorId.Value);
+        _avvik.Insert(0, avvik);
+        _nyAvvikBeskrivelse = "";
+        _valgtDorId = null;
+    }
+}

@@ -1,6 +1,6 @@
 namespace PortalItlock.Web.Models;
 
-public enum TilbudPrisType { Dekningsgrad, Paslag }
+public enum TilbudPrisType { Dekningsgrad, Paslag, Veiledende, Rabatt }
 
 public static class TilbudPrisTypeExtensions
 {
@@ -8,6 +8,8 @@ public static class TilbudPrisTypeExtensions
     {
         TilbudPrisType.Dekningsgrad => "DG på varer",
         TilbudPrisType.Paslag => "Påslag",
+        TilbudPrisType.Veiledende => "Veiledende",
+        TilbudPrisType.Rabatt => "Rabatt på veiledende",
         _ => type.ToString()
     };
 }

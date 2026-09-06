@@ -1,0 +1,337 @@
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+<div class="prosjekt-layout">
+    <section class="prising-seksjon">
+        <h2>Service-minutter</h2>
+        <p class="section-hint">Henter monteringstid per vare fra alle dørene i avtalen. "Synk" henter alt fra dørene; "Hent minutt fra vare" henter standardtiden fra komponentregisteret, men minuttene kan også skrives inn manuelt.</p>
+
+        <div class="varer-toolbar">
+            <button type="button" class="add-button" @onclick="SynkServiceMinutter">Synk</button>
+        </div>
+        @if (!string.IsNullOrEmpty(_syncMessage))
+        {
+            <p class="save-success">@_syncMessage</p>
+        }
+
+        @if (_serviceMinuttLinjer.Count == 0)
+        {
+            <p class="list-empty">Ingen varer lagt til ennå. Trykk "Synk" for å hente inn alt som er registrert på dørene i avtalen.</p>
+        }
+        else
+        {
+            <table class="dorer-table">
+                <thead>
+                    <tr><th>Navn</th><th>Antall</th><th>Enhet</th><th>Minutter</th><th></th><th></th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var l in _serviceMinuttLinjer)
+                    {
+                        <tr @key="l.Id">
+                            <td>@l.Navn</td>
+                            <td><input class="antall-input" @bind="l.Antall" @bind:after="LagreServiceMinutt" /></td>
+                            <td>@l.Enhet</td>
+                            <td><input class="antall-input" @bind="l.Minutter" @bind:after="LagreServiceMinutt" placeholder="min" /></td>
+                            <td>
+                                @if (l.ComponentId.HasValue)
+                                {
+                                    <button type="button" class="cancel-button" @onclick="@(() => HentMinuttFraVare(l))">Hent minutt fra vare</button>
+                                }
+                            </td>
+                            <td><button type="button" class="remove-button" @onclick="@(() => FjernServiceMinuttLinje(l))">Fjern</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        <div class="prising-sum-rad">
+            <span>Totalt: <strong>@FormatTid(TotaltServiceMinutter)</strong></span>
+            <label class="timepris-felt">
+                Timepris
+                <span class="input-suffix-wrap">
+                    <input class="antall-input" @bind="_prosjekt!.ServiceTimepris" @bind:after="LagreTimepris" />
+                    <span class="input-suffix">kr/t</span>
+                </span>
+            </label>
+            <span>Pris service-minutter: <strong>@FormatKr(ServiceMinutterPris)</strong></span>
+        </div>
+    </section>
+
+    <section class="prising-seksjon">
+        <h2>Kategorisert årspris</h2>
+        <p class="section-hint">Dørene grupperes automatisk etter beslag/funksjon. Fyll inn pris pr dør og krav til service pr år for hver kategori.</p>
+
+        <table class="kategori-tabell">
+            <thead>
+                <tr>
+                    <th>Beskrivelse</th>
+                    <th>Antall dører</th>
+                    <th>Pris pr dør</th>
+                    <th>Krav til service pr år</th>
+                    <th>Sum (eks mva)</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var kategori in ServiceKategori.Rekkefolge)
+                {
+                    var kp = _kategoriPriser.First(k => k.Kategori == kategori);
+                    var antall = AntallDorerIKategori(kategori);
+                    <tr @key="kategori" class="@(antall == 0 ? "kategori-rad-tom" : "")">
+                        <td>
+                            @kategori
+                            @if (ServiceKategori.Undertekst(kategori) is { } undertekst)
+                            {
+                                <span class="kategori-undertekst">@undertekst</span>
+                            }
+                        </td>
+                        <td>@antall</td>
+                        <td>
+                            <span class="input-suffix-wrap">
+                                <input class="antall-input" @bind="kp.Pris" @bind:after="@(() => LagreKategoriPris(kp))" />
+                                <span class="input-suffix">kr</span>
+                            </span>
+                        </td>
+                        <td>
+                            <span class="input-suffix-wrap">
+                                <input class="antall-input" @bind="kp.KravServicePrAar" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" />
+                                <span class="input-suffix">gang(er)</span>
+                            </span>
+                        </td>
+                        <td class="kategori-sum">@FormatKr(SumRad(kp, antall))</td>
+                    </tr>
+                }
+                @foreach (var kp in _kategoriPriser.Where(k => k.ErEgendefinert))
+                {
+                    <tr @key="kp.Id">
+                        <td>
+                            <input class="kategori-egendefinert-navn" @bind="kp.Kategori" @bind:after="@(() => LagreKategoriPris(kp))" />
+                        </td>
+                        <td>
+                            <input class="antall-input" @bind="kp.ManueltAntall" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" />
+                        </td>
+                        <td>
+                            <span class="input-suffix-wrap">
+                                <input class="antall-input" @bind="kp.Pris" @bind:after="@(() => LagreKategoriPris(kp))" />
+                                <span class="input-suffix">kr</span>
+                            </span>
+                        </td>
+                        <td>
+                            <span class="input-suffix-wrap">
+                                <input class="antall-input" @bind="kp.KravServicePrAar" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" />
+                                <span class="input-suffix">gang(er)</span>
+                            </span>
+                        </td>
+                        <td class="kategori-sum">
+                            @FormatKr(SumRad(kp, kp.ManueltAntall ?? 0))
+                            <button type="button" class="remove-button" @onclick="@(() => FjernKategoriLinje(kp))">Fjern</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+            <tfoot>
+                <tr class="kategori-total-rad">
+                    <td colspan="4">Sum kategorier (eks mva)</td>
+                    <td class="kategori-sum">@FormatKr(KategoriTotalSum)</td>
+                </tr>
+                <tr class="kategori-total-rad kategori-samlet-rad">
+                    <td colspan="4">Sum serviceavtale (eks mva)</td>
+                    <td class="kategori-sum">@FormatKr(SamletSum)</td>
+                </tr>
+            </tfoot>
+        </table>
+
+        <div class="egen-linje-rad">
+            <input @bind="_nyEgenLinjeNavn" @bind:event="oninput" placeholder="Navn på egen linje, f.eks. Batteriskifte Salto" />
+            <button type="button" class="cancel-button" @onclick="LeggTilEgenLinje" disabled="@string.IsNullOrWhiteSpace(_nyEgenLinjeNavn)">+ Legg til egen linje</button>
+        </div>
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+
+    private int? _loadedProsjektId;
+    private Prosjekt? _prosjekt;
+    private List<Dor> _dorer = [];
+    private List<ServiceMinuttLinje> _serviceMinuttLinjer = [];
+    private List<ServiceKategoriPris> _kategoriPriser = [];
+    private string? _syncMessage;
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private int TotaltServiceMinutter => _serviceMinuttLinjer.Sum(l => (l.Minutter ?? 0) * l.Antall);
+    private decimal ServiceMinutterTimer => TotaltServiceMinutter / 60m;
+    private decimal ServiceMinutterPris => (_prosjekt?.ServiceTimepris ?? 0) * ServiceMinutterTimer;
+
+    private int AntallDorerIKategori(string kategori) =>
+        _dorer.Count(d => DorServiceKategoriHelper.KategoriserDor(d) == kategori);
+
+    private static decimal SumRad(ServiceKategoriPris kp, int antall) =>
+        (kp.Pris ?? 0) * antall * (kp.KravServicePrAar ?? 0);
+
+    private decimal KategoriTotalSum => _kategoriPriser.Sum(kp => SumRad(kp, kp.ErEgendefinert ? kp.ManueltAntall ?? 0 : AntallDorerIKategori(kp.Kategori)));
+    private decimal SamletSum => KategoriTotalSum + ServiceMinutterPris;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedProsjektId == ProsjektId)
+        {
+            return;
+        }
+
+        _loadedProsjektId = ProsjektId;
+        _syncMessage = null;
+
+        _prosjekt = await Db.Prosjekter.FirstOrDefaultAsync(p => p.Id == ProsjektId);
+
+        _dorer = await Db.Dorer
+            .Where(d => d.ProsjektId == ProsjektId)
+            .Include(d => d.Komponenter).ThenInclude(dk => dk.Component)
+            .Include(d => d.Funksjoner)
+            .ToListAsync();
+
+        _serviceMinuttLinjer = await Db.ServiceMinuttLinjer
+            .Where(l => l.ProsjektId == ProsjektId)
+            .Include(l => l.Component)
+            .OrderBy(l => l.Rekkefolge)
+            .ToListAsync();
+
+        _kategoriPriser = await Db.ServiceKategoriPriser
+            .Where(k => k.ProsjektId == ProsjektId)
+            .ToListAsync();
+
+        var manglerKategorier = ServiceKategori.Rekkefolge.Where(k => _kategoriPriser.All(kp => kp.Kategori != k)).ToList();
+        if (manglerKategorier.Count > 0)
+        {
+            foreach (var kategori in manglerKategorier)
+            {
+                var kp = new ServiceKategoriPris { ProsjektId = ProsjektId, Kategori = kategori };
+                Db.ServiceKategoriPriser.Add(kp);
+                _kategoriPriser.Add(kp);
+            }
+
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    private async Task SynkServiceMinutter()
+    {
+        var gruppert = _dorer.SelectMany(d => d.Komponenter)
+            .Where(dk => dk.Component is not null)
+            .GroupBy(dk => dk.ComponentId)
+            .Select(g => new { ComponentId = g.Key, Component = g.First().Component!, Antall = g.Sum(x => x.Antall) })
+            .ToList();
+
+        foreach (var g in gruppert)
+        {
+            var linje = _serviceMinuttLinjer.FirstOrDefault(l => l.ComponentId == g.ComponentId);
+            if (linje is null)
+            {
+                linje = new ServiceMinuttLinje
+                {
+                    ProsjektId = ProsjektId,
+                    ComponentId = g.ComponentId,
+                    Component = g.Component,
+                    Navn = g.Component.Navn,
+                    Antall = g.Antall,
+                    Enhet = g.Component.Enhet,
+                    Minutter = g.Component.MontasjeMinutterService,
+                    Rekkefolge = _serviceMinuttLinjer.Count
+                };
+                _serviceMinuttLinjer.Add(linje);
+                Db.ServiceMinuttLinjer.Add(linje);
+            }
+            else
+            {
+                linje.Antall = g.Antall;
+                linje.Enhet = g.Component.Enhet;
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _syncMessage = $"{gruppert.Count} varetyper synkronisert fra avtalens dører.";
+    }
+
+    private async Task HentMinuttFraVare(ServiceMinuttLinje linje)
+    {
+        if (linje.Component is null)
+        {
+            return;
+        }
+
+        linje.Minutter = linje.Component.MontasjeMinutterService;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreServiceMinutt()
+    {
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task FjernServiceMinuttLinje(ServiceMinuttLinje linje)
+    {
+        Db.ServiceMinuttLinjer.Remove(linje);
+        await Db.SaveChangesAsync();
+        _serviceMinuttLinjer.Remove(linje);
+    }
+
+    private async Task LagreTimepris()
+    {
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreKategoriPris(ServiceKategoriPris kp)
+    {
+        await Db.SaveChangesAsync();
+    }
+
+    private string _nyEgenLinjeNavn = "";
+
+    private async Task LeggTilEgenLinje()
+    {
+        var navn = _nyEgenLinjeNavn.Trim();
+        if (navn.Length == 0)
+        {
+            return;
+        }
+
+        var kp = new ServiceKategoriPris
+        {
+            ProsjektId = ProsjektId,
+            Kategori = navn,
+            ErEgendefinert = true,
+            ManueltAntall = 1
+        };
+        Db.ServiceKategoriPriser.Add(kp);
+        await Db.SaveChangesAsync();
+
+        _kategoriPriser.Add(kp);
+        _nyEgenLinjeNavn = "";
+    }
+
+    private async Task FjernKategoriLinje(ServiceKategoriPris kp)
+    {
+        Db.ServiceKategoriPriser.Remove(kp);
+        await Db.SaveChangesAsync();
+        _kategoriPriser.Remove(kp);
+    }
+
+    private static string FormatTid(int minutter)
+    {
+        if (minutter <= 0)
+        {
+            return "0 min";
+        }
+
+        var timer = minutter / 60;
+        var rest = minutter % 60;
+        return timer > 0 ? $"{timer}t {rest}min" : $"{rest} min";
+    }
+
+    private string FormatKr(decimal verdi) => $"{verdi.ToString("N2", Kultur)} kr";
+}

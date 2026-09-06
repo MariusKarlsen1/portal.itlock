@@ -1,0 +1,136 @@
+@page "/tilbud-service"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Tilbud service</PageTitle>
+
+<h1>Tilbud service</h1>
+<p>Tilbud for serviceavtaler - samme oppsett som et vanlig tilbud, men montasje-minuttene som fylles inn per vare hentes fra arbeidsordre-minuttene i komponentregisteret, siden det ikke finnes dører å beregne fra.</p>
+
+<div class="ny-avtale">
+    <h2>Ny tilbud service</h2>
+    <div class="field-grid">
+        <label>
+            Navn på avtalen/tilbudet
+            <input @bind="_nyttNavn" @bind:event="oninput" placeholder="F.eks. Storgata 5 - service" />
+        </label>
+        <label>
+            Kunde (valgfritt)
+            <select @bind="_valgtKundeId">
+                <option value="">Ingen kunde satt</option>
+                @foreach (var k in _kunder)
+                {
+                    <option value="@k.Id">@k.Navn</option>
+                }
+            </select>
+        </label>
+        <label>
+            Adresse (valgfritt)
+            <input @bind="_nyAdresse" @bind:event="oninput" placeholder="F.eks. Storgata 5" />
+        </label>
+    </div>
+    <div class="form-actions">
+        <button type="button" class="add-button" @onclick="OpprettTilbudService" disabled="@string.IsNullOrWhiteSpace(_nyttNavn)">Opprett tilbud service</button>
+    </div>
+</div>
+
+@if (_tilbud.Count == 0)
+{
+    <p class="list-empty">Ingen tilbud service opprettet ennå.</p>
+}
+else
+{
+    <ul class="avtale-list">
+        @foreach (var t in _tilbud)
+        {
+            <li>
+                <a class="avtale-row" href="@($"/tilbud/{t.TilbudId}")">
+                    <span class="avtale-navn">@t.Tittel</span>
+                    <span class="avtale-meta">
+                        @(string.IsNullOrWhiteSpace(t.KundeNavn) ? "Ingen kunde satt" : t.KundeNavn)
+                        · Opprettet @t.OpprettetDato.ToString("dd.MM.yyyy")
+                    </span>
+                </a>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    private sealed class KundeOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class TilbudRad
+    {
+        public int TilbudId { get; set; }
+        public string Tittel { get; set; } = "";
+        public string? KundeNavn { get; set; }
+        public DateTime OpprettetDato { get; set; }
+    }
+
+    private List<TilbudRad> _tilbud = [];
+    private List<KundeOption> _kunder = [];
+    private string _nyttNavn = "";
+    private int? _valgtKundeId;
+    private string? _nyAdresse;
+
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _kunder = await Db.Kunder
+            .OrderBy(k => k.Navn)
+            .Select(k => new KundeOption { Id = k.Id, Navn = k.Navn })
+            .ToListAsync();
+
+        _tilbud = await Db.Tilbud
+            .Where(t => t.Prosjekt!.Status == ProsjektStatus.Serviceavtale)
+            .Include(t => t.Prosjekt).ThenInclude(p => p!.Kunde)
+            .OrderByDescending(t => t.OpprettetDato)
+            .Select(t => new TilbudRad
+            {
+                TilbudId = t.Id,
+                Tittel = t.Tittel,
+                KundeNavn = t.Prosjekt!.Kunde != null ? t.Prosjekt.Kunde.Navn : null,
+                OpprettetDato = t.OpprettetDato
+            })
+            .ToListAsync();
+    }
+
+    private async Task OpprettTilbudService()
+    {
+        var navn = _nyttNavn.Trim();
+        if (navn.Length == 0)
+        {
+            return;
+        }
+
+        var prosjekt = new Prosjekt
+        {
+            Navn = navn,
+            KundeId = _valgtKundeId,
+            Adresse = string.IsNullOrWhiteSpace(_nyAdresse) ? null : _nyAdresse.Trim(),
+            Status = ProsjektStatus.Serviceavtale
+        };
+        Db.Prosjekter.Add(prosjekt);
+        await Db.SaveChangesAsync();
+
+        var tilbud = new Tilbud
+        {
+            ProsjektId = prosjekt.Id,
+            Tittel = navn,
+            PrisType = TilbudPrisType.Veiledende
+        };
+        Db.Tilbud.Add(tilbud);
+        await Db.SaveChangesAsync();
+
+        Nav.NavigateTo($"/tilbud/{tilbud.Id}");
+    }
+}
