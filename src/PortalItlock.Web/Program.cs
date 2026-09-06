@@ -693,4 +693,41 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
     return Results.Ok();
 }).AllowAnonymous();
 
+app.MapPost("/api/admin/import-database", async (HttpContext http, IConfiguration config, ILogger<Program> logger) =>
+{
+    var forventetToken = config["DatabaseImportToken"];
+    var mottattToken = http.Request.Headers["X-Import-Token"].ToString();
+
+    if (string.IsNullOrEmpty(forventetToken) || mottattToken != forventetToken)
+    {
+        return Results.Unauthorized();
+    }
+
+    using var ms = new MemoryStream();
+    await http.Request.Body.CopyToAsync(ms);
+    var bytes = ms.ToArray();
+
+    if (bytes.Length < 16 || System.Text.Encoding.ASCII.GetString(bytes, 0, 16) != "SQLite format 3\0")
+    {
+        return Results.BadRequest("Ikke en gyldig SQLite-databasefil.");
+    }
+
+    var connStr = config.GetConnectionString("DefaultConnection") ?? "";
+    var dbPath = connStr.Replace("Data Source=", "", StringComparison.OrdinalIgnoreCase).Trim();
+    var tempPath = dbPath + ".incoming";
+
+    await File.WriteAllBytesAsync(tempPath, bytes);
+    File.Move(tempPath, dbPath, overwrite: true);
+
+    logger.LogWarning("Databasen ble erstattet via import-endepunkt ({Bytes} bytes). Starter appen på nytt.", bytes.Length);
+
+    _ = Task.Run(async () =>
+    {
+        await Task.Delay(500);
+        Environment.Exit(1);
+    });
+
+    return Results.Ok($"Database importert ({bytes.Length} bytes). Appen restarter nå.");
+}).AllowAnonymous();
+
 app.Run();
