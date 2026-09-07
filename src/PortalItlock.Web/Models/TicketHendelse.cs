@@ -9,4 +9,5 @@ public class TicketHendelse
     public required string Beskrivelse { get; set; }
     public int? UtfortAvBrukerId { get; set; }
     public Bruker? UtfortAvBruker { get; set; }
+    public bool ErKundeSynlig { get; set; }
 }

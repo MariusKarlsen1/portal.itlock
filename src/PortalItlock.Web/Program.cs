@@ -63,6 +63,8 @@ builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
 builder.Services.AddScoped<ServiceVarselService>();
 builder.Services.AddHostedService<ServiceVarselBackgroundService>();
+builder.Services.AddScoped<TicketEskaleringService>();
+builder.Services.AddHostedService<TicketEskaleringBackgroundService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddSingleton<PostnummerService>();
 builder.Services.AddHttpClient<EmailService>(client =>

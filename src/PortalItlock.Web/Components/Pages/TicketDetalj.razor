@@ -234,6 +234,10 @@ else
                     <a href="@($"/arbeidsordre/{_ticket.ArbeidsordreId}")">Åpne arbeidsordre: @_ticket.Arbeidsordre?.Tittel</a>
                     (@_ticket.Arbeidsordre?.Status.Visningsnavn())
                     <button type="button" class="cancel-button" @onclick="@(() => _ticket.ArbeidsordreId = null)">Endre</button>
+                    @if (_arbeidsordreTimer.HasValue)
+                    {
+                        <span class="section-hint">- @_arbeidsordreTimer.Value.ToString("N1") t registrert</span>
+                    }
                 </p>
             }
         }
@@ -299,7 +303,13 @@ else
         <h2>Historikk</h2>
         <div class="kommentar-rad">
             <textarea rows="2" @bind="_nyKommentar" placeholder="Legg til kommentar..."></textarea>
-            <button type="button" class="add-button" @onclick="LeggTilKommentar" disabled="@string.IsNullOrWhiteSpace(_nyKommentar)">Legg til</button>
+            <div class="kommentar-actions">
+                <label class="checkbox-row">
+                    <input type="checkbox" @bind="_nyKommentarKundeSynlig" />
+                    Synlig for kunde
+                </label>
+                <button type="button" class="add-button" @onclick="LeggTilKommentar" disabled="@string.IsNullOrWhiteSpace(_nyKommentar)">Legg til</button>
+            </div>
         </div>
         @if (_ticket.Hendelser.Count == 0)
         {
@@ -317,6 +327,10 @@ else
                             @if (h.UtfortAvBruker is not null)
                             {
                                 <text> (@h.UtfortAvBruker.Navn)</text>
+                            }
+                            @if (h.ErKundeSynlig)
+                            {
+                                <span class="kunde-synlig-badge">Synlig for kunde</span>
                             }
                         </span>
                     </li>
@@ -358,12 +372,14 @@ else
     private List<ProsjektOption> _prosjekter = [];
     private List<Tilbud> _prosjektTilbud = [];
     private List<Arbeidsordre> _prosjektArbeidsordre = [];
+    private decimal? _arbeidsordreTimer;
     private List<Foresporsel> _ledigeForesporsler = [];
 
     private int? _valgtProsjektId;
     private int? _valgtArbeidsordreId;
     private int? _valgtForesporselId;
     private string _nyKommentar = "";
+    private bool _nyKommentarKundeSynlig;
 
     private List<string> _boardAlternativer = [];
     private List<string> _typeAlternativer = [];
@@ -405,6 +421,7 @@ else
         }
 
         _ticket.SlaFrist = TicketSlaHelper.BeregnFrist(_ticket.Prioritet, _ticket.OpprettetDato);
+        _ticket.EskaleringsVarselSendt = false;
     }
 
     private string ProsjektLenke => _ticket?.Prosjekt?.Status == ProsjektStatus.Serviceavtale
@@ -487,6 +504,18 @@ else
                 .ToListAsync();
         }
 
+        if (_ticket.ArbeidsordreId.HasValue)
+        {
+            var registreringer = await Db.Timeregistreringer
+                .Where(t => t.ArbeidsordreId == _ticket.ArbeidsordreId.Value)
+                .ToListAsync();
+            _arbeidsordreTimer = registreringer.Sum(t => t.TotalTimer);
+        }
+        else
+        {
+            _arbeidsordreTimer = null;
+        }
+
         if (_ticket.ForesporselId is null)
         {
             var brukteForesporselIder = await Db.Tickets
@@ -511,13 +540,14 @@ else
         }
     }
 
-    private void LoggHendelse(string beskrivelse)
+    private void LoggHendelse(string beskrivelse, bool erKundeSynlig = false)
     {
         _ticket!.Hendelser.Add(new TicketHendelse
         {
             TicketId = _ticket.Id,
             Beskrivelse = beskrivelse,
-            UtfortAvBrukerId = _naverendeBrukerId
+            UtfortAvBrukerId = _naverendeBrukerId,
+            ErKundeSynlig = erKundeSynlig
         });
     }
 
@@ -697,6 +727,7 @@ else
         _ticket.LukketDato = null;
         _ticket.GodkjentAvBrukerId = null;
         _ticket.SlaFrist = TicketSlaHelper.BeregnFrist(_ticket.Prioritet, DateTime.Now);
+        _ticket.EskaleringsVarselSendt = false;
         LoggHendelse("Gjenåpnet.");
         await Db.SaveChangesAsync();
         await OnParametersSetAsync();
@@ -710,8 +741,9 @@ else
             return;
         }
 
-        LoggHendelse(tekst);
+        LoggHendelse(tekst, _nyKommentarKundeSynlig);
         _nyKommentar = "";
+        _nyKommentarKundeSynlig = false;
         await Db.SaveChangesAsync();
     }
 
