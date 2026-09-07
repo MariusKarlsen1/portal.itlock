@@ -101,22 +101,25 @@ using (var seedScope = app.Services.CreateScope())
     var seedDb = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     seedDb.Database.Migrate();
 
-    var commitFilePath = Path.Combine(AppContext.BaseDirectory, "commit.txt");
-    if (File.Exists(commitFilePath))
+    var endringsloggPath = Path.Combine(AppContext.BaseDirectory, "nyheter.json");
+    var kjenteKildeIder = seedDb.Nyheter.Where(n => n.KildeId != null).Select(n => n.KildeId!).ToHashSet();
+    foreach (var innslag in PortalItlock.Web.Services.EndringsloggLeser.LesAlle(endringsloggPath))
     {
-        var commit = PortalItlock.Web.Services.GitEndringsloggLeser.Tolk(File.ReadAllText(commitFilePath));
-        if (commit is not null && !seedDb.Nyheter.Any(n => n.CommitSha == commit.Sha))
+        if (kjenteKildeIder.Contains(innslag.Id))
         {
-            seedDb.Nyheter.Add(new PortalItlock.Web.Models.Nyhet
-            {
-                Tittel = commit.Tittel,
-                Innhold = commit.Innhold,
-                OpprettetDato = commit.Dato,
-                CommitSha = commit.Sha,
-            });
-            seedDb.SaveChanges();
+            continue;
         }
+
+        seedDb.Nyheter.Add(new PortalItlock.Web.Models.Nyhet
+        {
+            Tittel = innslag.Tittel,
+            Innhold = innslag.Innhold,
+            OpprettetDato = innslag.Dato,
+            KildeId = innslag.Id,
+        });
+        kjenteKildeIder.Add(innslag.Id);
     }
+    seedDb.SaveChanges();
 
     if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
     {
