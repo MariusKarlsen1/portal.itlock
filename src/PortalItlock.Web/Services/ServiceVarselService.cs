@@ -8,14 +8,8 @@ public class ServiceVarselService(ApplicationDbContext db, EmailService epost, I
 {
     private const string MottakerEpost = "marius@itlock.no";
 
-    public async Task<(bool Sendt, int Antall)> SjekkOgSendVarselAsync(bool tvingSending = false)
+    public async Task<List<(Prosjekt Prosjekt, DateTime NesteServiceDato)>> FinnNaerForfallAsync()
     {
-        var logg = await db.ServiceVarselSendt.FirstOrDefaultAsync();
-        if (!tvingSending && logg is not null && logg.SistSendtDato.Date >= DateTime.Today)
-        {
-            return (false, 0);
-        }
-
         var serviceProsjekter = await db.Prosjekter
             .Where(p => p.Status == ProsjektStatus.Serviceavtale)
             .ToListAsync();
@@ -41,6 +35,19 @@ public class ServiceVarselService(ApplicationDbContext db, EmailService epost, I
                 }
             }
         }
+
+        return naerForfall;
+    }
+
+    public async Task<(bool Sendt, int Antall)> SjekkOgSendVarselAsync(bool tvingSending = false)
+    {
+        var logg = await db.ServiceVarselSendt.FirstOrDefaultAsync();
+        if (!tvingSending && logg is not null && logg.SistSendtDato.Date >= DateTime.Today)
+        {
+            return (false, 0);
+        }
+
+        var naerForfall = await FinnNaerForfallAsync();
 
         var sendt = false;
         if (naerForfall.Count > 0)

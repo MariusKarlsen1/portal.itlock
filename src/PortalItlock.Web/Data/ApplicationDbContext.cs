@@ -46,6 +46,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<TicketHendelse> TicketHendelser => Set<TicketHendelse>();
     public DbSet<TicketMedia> TicketMedia => Set<TicketMedia>();
     public DbSet<TicketKategori> TicketKategorier => Set<TicketKategori>();
+    public DbSet<DatabaseBackup> DatabaseBackuper => Set<DatabaseBackup>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();

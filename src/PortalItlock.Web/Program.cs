@@ -65,6 +65,11 @@ builder.Services.AddScoped<ServiceVarselService>();
 builder.Services.AddHostedService<ServiceVarselBackgroundService>();
 builder.Services.AddScoped<TicketEskaleringService>();
 builder.Services.AddHostedService<TicketEskaleringBackgroundService>();
+builder.Services.AddHttpClient<DatabaseBackupService>(client =>
+{
+    client.BaseAddress = new Uri("https://api.github.com/");
+});
+builder.Services.AddHostedService<DatabaseBackupBackgroundService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddSingleton<PostnummerService>();
 builder.Services.AddHttpClient<EmailService>(client =>

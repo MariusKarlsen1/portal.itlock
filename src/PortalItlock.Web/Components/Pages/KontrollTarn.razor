@@ -1,0 +1,146 @@
+@page "/kontrolltarn"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject ServiceVarselService VarselService
+@inject DatabaseBackupService BackupService
+
+<PageTitle>Kontrolltårn</PageTitle>
+
+<h1>Kontrolltårn</h1>
+<p class="section-hint">Samlet oversikt på tvers av moduler - alt som trenger oppmerksomhet, ett sted.</p>
+
+<h2>Tickets</h2>
+<div class="dashboard-grid">
+    <a href="/tickets" class="dashboard-card @(_forfalteTickets > 0 ? "dashboard-card-varsel" : "")">
+        <span class="dashboard-tall">@_forfalteTickets</span>
+        <span class="dashboard-label">Forfalt SLA</span>
+    </a>
+    <a href="/tickets" class="dashboard-card">
+        <span class="dashboard-tall">@_nyeTickets</span>
+        <span class="dashboard-label">Nye tickets</span>
+    </a>
+    <a href="/tickets" class="dashboard-card">
+        <span class="dashboard-tall">@_underBehandlingTickets</span>
+        <span class="dashboard-label">Under behandling</span>
+    </a>
+    <a href="/tickets" class="dashboard-card">
+        <span class="dashboard-tall">@_venterGodkjenningTickets</span>
+        <span class="dashboard-label">Venter godkjenning</span>
+    </a>
+</div>
+
+<h2>Ubehandlet inn</h2>
+<div class="dashboard-grid">
+    <a href="/foresporsler" class="dashboard-card @(_uleseForesporsler > 0 ? "dashboard-card-varsel" : "")">
+        <span class="dashboard-tall">@_uleseForesporsler</span>
+        <span class="dashboard-label">Uleste forespørsler</span>
+    </a>
+    <a href="/servicemodul" class="dashboard-card @(_nyeServicehenvendelser > 0 ? "dashboard-card-varsel" : "")">
+        <span class="dashboard-tall">@_nyeServicehenvendelser</span>
+        <span class="dashboard-label">Nye servicehenvendelser</span>
+    </a>
+</div>
+
+<h2>Service og fakturering</h2>
+<div class="dashboard-grid">
+    <a href="/service" class="dashboard-card @(_serviceavtalerNaerForfall > 0 ? "dashboard-card-varsel" : "")">
+        <span class="dashboard-tall">@_serviceavtalerNaerForfall</span>
+        <span class="dashboard-label">Serviceavtaler nær forfall</span>
+    </a>
+    <a href="/arbeidsordre" class="dashboard-card @(_klarTilFakturering > 0 ? "dashboard-card-varsel" : "")">
+        <span class="dashboard-tall">@_klarTilFakturering</span>
+        <span class="dashboard-label">Klar til fakturering</span>
+    </a>
+</div>
+
+<h2>Datasikkerhet</h2>
+<div class="backup-panel">
+    @if (_sisteBackup is null)
+    {
+        <p class="list-empty">Ingen backup kjørt ennå.</p>
+    }
+    else
+    {
+        <p class="@(_sisteBackup.Vellykket ? "backup-ok" : "backup-feil")">
+            Siste forsøk: @_sisteBackup.Tidspunkt.ToString("dd.MM.yyyy HH:mm") -
+            @(_sisteBackup.Vellykket ? "Vellykket" : "Feilet")
+            @if (!string.IsNullOrWhiteSpace(_sisteBackup.Melding))
+            {
+                <text> (@_sisteBackup.Melding)</text>
+            }
+        </p>
+    }
+    <button type="button" class="save-button" @onclick="KjorBackupNaa" disabled="@_kjorerBackup">
+        @(_kjorerBackup ? "Kjører backup..." : "Kjør backup nå")
+    </button>
+
+    @if (_backupHistorikk.Count > 1)
+    {
+        <ul class="backup-historikk">
+            @foreach (var b in _backupHistorikk.Skip(1))
+            {
+                <li>@b.Tidspunkt.ToString("dd.MM.yyyy HH:mm") - @(b.Vellykket ? "OK" : "Feilet")</li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    private int _forfalteTickets;
+    private int _nyeTickets;
+    private int _underBehandlingTickets;
+    private int _venterGodkjenningTickets;
+    private int _uleseForesporsler;
+    private int _nyeServicehenvendelser;
+    private int _serviceavtalerNaerForfall;
+    private int _klarTilFakturering;
+
+    private DatabaseBackup? _sisteBackup;
+    private List<DatabaseBackup> _backupHistorikk = [];
+    private bool _kjorerBackup;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        var naa = DateTime.Now;
+
+        _forfalteTickets = await Db.Tickets.CountAsync(t => t.Status != TicketStatus.Lukket && t.SlaFrist != null && t.SlaFrist < naa);
+        _nyeTickets = await Db.Tickets.CountAsync(t => t.Status == TicketStatus.Ny);
+        _underBehandlingTickets = await Db.Tickets.CountAsync(t => t.Status == TicketStatus.UnderBehandling);
+        _venterGodkjenningTickets = await Db.Tickets.CountAsync(t => t.Status == TicketStatus.VenterGodkjenning);
+
+        _uleseForesporsler = await Db.Foresporsler.CountAsync(f => !f.Lest);
+        _nyeServicehenvendelser = await Db.Servicehenvendelser.CountAsync(s => s.Status == ServicehenvendelseStatus.Ny);
+
+        var naerForfall = await VarselService.FinnNaerForfallAsync();
+        _serviceavtalerNaerForfall = naerForfall.Count;
+
+        _klarTilFakturering = await Db.Arbeidsordre.CountAsync(a => a.Status == ArbeidsordreStatus.Ferdig);
+
+        _backupHistorikk = await Db.DatabaseBackuper.OrderByDescending(b => b.Tidspunkt).Take(10).ToListAsync();
+        _sisteBackup = _backupHistorikk.FirstOrDefault();
+    }
+
+    private async Task KjorBackupNaa()
+    {
+        _kjorerBackup = true;
+        try
+        {
+            await BackupService.KjorBackupAsync();
+            await LastAsync();
+        }
+        finally
+        {
+            _kjorerBackup = false;
+        }
+    }
+}
