@@ -45,6 +45,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Ticket> Tickets => Set<Ticket>();
     public DbSet<TicketHendelse> TicketHendelser => Set<TicketHendelse>();
     public DbSet<TicketMedia> TicketMedia => Set<TicketMedia>();
+    public DbSet<TicketKategori> TicketKategorier => Set<TicketKategori>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
@@ -729,6 +730,15 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             new KoblingsKategori { Id = 1, Navn = "ARX", Rekkefolge = 1 },
             new KoblingsKategori { Id = 2, Navn = "Salto", Rekkefolge = 2 },
             new KoblingsKategori { Id = 3, Navn = "Diverse", Rekkefolge = 3 }
+        );
+
+        modelBuilder.Entity<TicketKategori>().HasData(
+            new TicketKategori { Id = 1, Navn = "Service", Gruppe = TicketKategoriGruppe.Board, Rekkefolge = 1 },
+            new TicketKategori { Id = 2, Navn = "Bestilling", Gruppe = TicketKategoriGruppe.Board, Rekkefolge = 2 },
+            new TicketKategori { Id = 3, Navn = "Prosjekt", Gruppe = TicketKategoriGruppe.Board, Rekkefolge = 3 },
+            new TicketKategori { Id = 4, Navn = "Adgangskontroll", Gruppe = TicketKategoriGruppe.Type, Rekkefolge = 1 },
+            new TicketKategori { Id = 5, Navn = "Lås", Gruppe = TicketKategoriGruppe.Type, Rekkefolge = 2 },
+            new TicketKategori { Id = 6, Navn = "Kamera", Gruppe = TicketKategoriGruppe.Type, Rekkefolge = 3 }
         );
 
         modelBuilder.Entity<HjemmesideTekst>().HasData(

@@ -25,7 +25,8 @@ public class Ticket
 
     public TicketPrioritet Prioritet { get; set; } = TicketPrioritet.Normal;
     public TicketStatus Status { get; set; } = TicketStatus.Ny;
-    public string? Sla { get; set; }
+    public DateTime? SlaFrist { get; set; } = TicketSlaHelper.BeregnFrist(TicketPrioritet.Normal, DateTime.Now);
+    public string? Sluttoppsummering { get; set; }
 
     public int? AnsvarligBrukerId { get; set; }
     public Bruker? AnsvarligBruker { get; set; }

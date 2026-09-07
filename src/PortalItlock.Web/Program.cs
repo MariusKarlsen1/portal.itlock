@@ -45,6 +45,7 @@ builder.Services.AddScoped<TimeoversiktService>();
 builder.Services.AddScoped<FdvPdfService>();
 builder.Services.AddScoped<DorBeslagslistePdfService>();
 builder.Services.AddScoped<PlukklistePdfService>();
+builder.Services.AddScoped<TicketRapportPdfService>();
 builder.Services.AddScoped<ProduktsammendragPdfService>();
 builder.Services.AddScoped<LasplanPdfService>();
 builder.Services.AddScoped<TripletexOrdreCsvService>();

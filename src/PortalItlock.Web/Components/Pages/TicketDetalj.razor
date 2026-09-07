@@ -6,6 +6,8 @@
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject PortalItlock.Web.Services.EmailService Epost
+@inject PortalItlock.Web.Services.TicketRapportPdfService RapportPdf
 
 <PageTitle>@(_ticket?.Tittel ?? "Ticket")</PageTitle>
 
@@ -53,15 +55,33 @@ else
             </label>
             <label>
                 Board
-                <input @bind="_ticket.Board" @bind:event="oninput" placeholder="F.eks. Service, Bestilling, Prosjekt" />
+                <select @bind="_ticket.Board">
+                    <option value="">Ikke satt</option>
+                    @foreach (var b in _boardAlternativer)
+                    {
+                        <option value="@b">@b</option>
+                    }
+                </select>
             </label>
             <label>
                 Type
-                <input @bind="_ticket.Type" @bind:event="oninput" placeholder="F.eks. Adgangskontroll, Lås, Kamera" />
+                <select @bind="_ticket.Type">
+                    <option value="">Ikke satt</option>
+                    @foreach (var t in _typeAlternativer)
+                    {
+                        <option value="@t">@t</option>
+                    }
+                </select>
             </label>
             <label>
                 Subtype
-                <input @bind="_ticket.Subtype" @bind:event="oninput" placeholder="F.eks. ARX, iLOQ, Yale" />
+                <select @bind="_ticket.Subtype">
+                    <option value="">Ikke satt</option>
+                    @foreach (var s in _subtypeAlternativer)
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
             </label>
             <label>
                 Produkt/anlegg
@@ -69,7 +89,7 @@ else
             </label>
             <label>
                 Prioritet
-                <select @bind="_ticket.Prioritet">
+                <select @bind="_ticket.Prioritet" @bind:after="OppdaterSlaFrist">
                     @foreach (var p in Enum.GetValues<TicketPrioritet>())
                     {
                         <option value="@p">@p.Visningsnavn()</option>
@@ -87,8 +107,14 @@ else
                 </select>
             </label>
             <label>
-                SLA
-                <input @bind="_ticket.Sla" @bind:event="oninput" placeholder="F.eks. Svar innen 4 timer" />
+                SLA-frist
+                <span class="sla-visning @(SlaErForfalt ? "sla-forfalt" : "")">
+                    @(_ticket.SlaFrist?.ToString("dd.MM.yyyy HH:mm") ?? "-")
+                    @if (_ticket.SlaFrist.HasValue && _ticket.Status != TicketStatus.Lukket)
+                    {
+                        <span class="sla-status">(@SlaStatusTekst)</span>
+                    }
+                </span>
             </label>
         </div>
         <div class="form-actions">
@@ -109,7 +135,10 @@ else
             @if (_ticket.Status == TicketStatus.VenterGodkjenning)
             {
                 <span class="section-hint">Arbeidsordren er ferdigstilt og venter på godkjenning.</span>
-                <button type="button" class="add-button" @onclick="GodkjennOgLukk">Godkjenn og lukk ticket</button>
+                @if (!_godkjennerModus)
+                {
+                    <button type="button" class="add-button" @onclick="@(() => _godkjennerModus = true)">Godkjenn og lukk ticket</button>
+                }
             }
             @if (_ticket.Status == TicketStatus.Lukket)
             {
@@ -119,6 +148,28 @@ else
                 <button type="button" class="cancel-button" @onclick="Gjenapne">Gjenåpne ticket</button>
             }
         </div>
+
+        @if (_godkjennerModus)
+        {
+            <div class="godkjenn-panel">
+                <label class="span-2">
+                    Oppsummering til kunde
+                    <textarea rows="3" @bind="_sluttoppsummering" @bind:event="oninput" placeholder="Kort oppsummering av hva som er gjort..."></textarea>
+                </label>
+                @if (!string.IsNullOrWhiteSpace(_ticket.Kunde?.Epost))
+                {
+                    <p class="section-hint">Sendes som e-post til @_ticket.Kunde!.Epost når du bekrefter, sammen med en PDF-oppsummering.</p>
+                }
+                else
+                {
+                    <p class="section-hint">Kunden har ingen registrert e-post - det sendes ikke noe varsel automatisk.</p>
+                }
+                <div class="form-actions">
+                    <button type="button" class="save-button" @onclick="GodkjennOgLukk">Bekreft og lukk</button>
+                    <button type="button" class="cancel-button" @onclick="@(() => _godkjennerModus = false)">Avbryt</button>
+                </div>
+            </div>
+        }
     </section>
 
     <section class="ticket-section">
@@ -314,6 +365,48 @@ else
     private int? _valgtForesporselId;
     private string _nyKommentar = "";
 
+    private List<string> _boardAlternativer = [];
+    private List<string> _typeAlternativer = [];
+    private List<string> _subtypeAlternativer = [];
+    private bool _godkjennerModus;
+    private string _sluttoppsummering = "";
+
+    private bool SlaErForfalt => _ticket?.SlaFrist is { } frist && frist < DateTime.Now && _ticket.Status != TicketStatus.Lukket;
+
+    private string SlaStatusTekst
+    {
+        get
+        {
+            if (_ticket?.SlaFrist is not { } frist)
+            {
+                return "";
+            }
+
+            var diff = frist - DateTime.Now;
+            if (diff.TotalMinutes < 0)
+            {
+                var forsinket = DateTime.Now - frist;
+                return forsinket.TotalHours >= 24
+                    ? $"forfalt for {(int)forsinket.TotalDays} dag(er) siden"
+                    : $"forfalt for {(int)forsinket.TotalHours} time(r) siden";
+            }
+
+            return diff.TotalHours >= 24
+                ? $"{(int)diff.TotalDays} dag(er) igjen"
+                : $"{(int)diff.TotalHours} time(r) igjen";
+        }
+    }
+
+    private void OppdaterSlaFrist()
+    {
+        if (_ticket is null || _ticket.Status == TicketStatus.Lukket)
+        {
+            return;
+        }
+
+        _ticket.SlaFrist = TicketSlaHelper.BeregnFrist(_ticket.Prioritet, _ticket.OpprettetDato);
+    }
+
     private string ProsjektLenke => _ticket?.Prosjekt?.Status == ProsjektStatus.Serviceavtale
         ? $"/serviceavtaler/{_ticket.ProsjektId}"
         : $"/prosjekter/{_ticket.ProsjektId}";
@@ -346,6 +439,22 @@ else
             _notFound = true;
             return;
         }
+
+        if (_ticket.SlaFrist is null && _ticket.Status != TicketStatus.Lukket)
+        {
+            _ticket.SlaFrist = TicketSlaHelper.BeregnFrist(_ticket.Prioritet, _ticket.OpprettetDato);
+            await Db.SaveChangesAsync();
+        }
+
+        var kategorier = await Db.TicketKategorier.OrderBy(k => k.Rekkefolge).ThenBy(k => k.Navn).ToListAsync();
+        _boardAlternativer = kategorier.Where(k => k.Gruppe == TicketKategoriGruppe.Board).Select(k => k.Navn).ToList();
+        _typeAlternativer = kategorier.Where(k => k.Gruppe == TicketKategoriGruppe.Type).Select(k => k.Navn).ToList();
+        _subtypeAlternativer = kategorier.Where(k => k.Gruppe == TicketKategoriGruppe.Subtype).Select(k => k.Navn).ToList();
+
+        // Behold en eksisterende verdi selv om den ikke lenger finnes i kategori-listen (f.eks. gammel fritekst).
+        if (!string.IsNullOrWhiteSpace(_ticket.Board) && !_boardAlternativer.Contains(_ticket.Board)) { _boardAlternativer.Insert(0, _ticket.Board); }
+        if (!string.IsNullOrWhiteSpace(_ticket.Type) && !_typeAlternativer.Contains(_ticket.Type)) { _typeAlternativer.Insert(0, _ticket.Type); }
+        if (!string.IsNullOrWhiteSpace(_ticket.Subtype) && !_subtypeAlternativer.Contains(_ticket.Subtype)) { _subtypeAlternativer.Insert(0, _ticket.Subtype); }
 
         _kunder = await Db.Kunder
             .OrderBy(k => k.Navn)
@@ -555,8 +664,30 @@ else
         _ticket!.Status = TicketStatus.Lukket;
         _ticket.LukketDato = DateTime.Now;
         _ticket.GodkjentAvBrukerId = _naverendeBrukerId;
+        _ticket.Sluttoppsummering = string.IsNullOrWhiteSpace(_sluttoppsummering) ? null : _sluttoppsummering.Trim();
         LoggHendelse("Godkjent og lukket.");
         await Db.SaveChangesAsync();
+
+        if (!string.IsNullOrWhiteSpace(_ticket.Kunde?.Epost))
+        {
+            var kundeEpost = _ticket.Kunde.Epost;
+            var pdf = await RapportPdf.GenerateAsync(_ticket.Id);
+            var oppsummeringHtml = string.IsNullOrWhiteSpace(_ticket.Sluttoppsummering)
+                ? ""
+                : $"<p>{System.Net.WebUtility.HtmlEncode(_ticket.Sluttoppsummering).Replace("\n", "<br>")}</p>";
+            var html = $"<p>Hei,</p>" +
+                $"<p>Din sak <strong>#{_ticket.Id} - {System.Net.WebUtility.HtmlEncode(_ticket.Tittel)}</strong> er nå ferdig behandlet.</p>" +
+                oppsummeringHtml +
+                "<p>Ta kontakt hvis du har spørsmål.</p><p>Mvh itlock AS</p>";
+
+            var vedlegg = pdf is not null ? new[] { ($"Sak-{_ticket.Id}-oppsummering.pdf", pdf) } : null;
+            var sendt = await Epost.SendAsync(kundeEpost, $"Din sak #{_ticket.Id} er ferdig behandlet", html, vedlegg);
+            LoggHendelse(sendt ? $"E-post sendt til {kundeEpost}." : $"Klarte ikke å sende e-post til {kundeEpost}.");
+            await Db.SaveChangesAsync();
+        }
+
+        _godkjennerModus = false;
+        _sluttoppsummering = "";
         await OnParametersSetAsync();
     }
 
@@ -565,6 +696,7 @@ else
         _ticket!.Status = TicketStatus.UnderBehandling;
         _ticket.LukketDato = null;
         _ticket.GodkjentAvBrukerId = null;
+        _ticket.SlaFrist = TicketSlaHelper.BeregnFrist(_ticket.Prioritet, DateTime.Now);
         LoggHendelse("Gjenåpnet.");
         await Db.SaveChangesAsync();
         await OnParametersSetAsync();
