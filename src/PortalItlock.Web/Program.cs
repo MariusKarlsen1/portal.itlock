@@ -77,6 +77,11 @@ builder.Services.AddHttpClient<GeocodingService>(client =>
     client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");
     client.Timeout = TimeSpan.FromSeconds(5);
 });
+builder.Services.AddHttpClient<BronnoysundClient>(client =>
+{
+    client.BaseAddress = new Uri("https://data.brreg.no/enhetsregisteret/api/");
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

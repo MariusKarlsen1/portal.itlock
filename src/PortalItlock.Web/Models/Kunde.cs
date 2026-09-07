@@ -4,6 +4,7 @@ public class Kunde
 {
     public int Id { get; set; }
     public required string Navn { get; set; }
+    public string? OrgNr { get; set; }
     public string? Kontaktperson { get; set; }
     public string? Telefon { get; set; }
     public string? Epost { get; set; }
