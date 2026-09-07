@@ -114,7 +114,7 @@ using (var seedScope = app.Services.CreateScope())
         {
             Tittel = innslag.Tittel,
             Innhold = innslag.Innhold,
-            OpprettetDato = innslag.Dato,
+            OpprettetDato = innslag.Dato.DateTime,
             KildeId = innslag.Id,
         });
         kjenteKildeIder.Add(innslag.Id);

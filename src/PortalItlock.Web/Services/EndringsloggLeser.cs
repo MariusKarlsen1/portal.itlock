@@ -7,7 +7,7 @@ public static class EndringsloggLeser
 {
     public record Innslag(
         [property: JsonPropertyName("id")] string Id,
-        [property: JsonPropertyName("dato")] DateTime Dato,
+        [property: JsonPropertyName("dato")] DateTimeOffset Dato,
         [property: JsonPropertyName("tittel")] string Tittel,
         [property: JsonPropertyName("innhold")] string Innhold);
 
