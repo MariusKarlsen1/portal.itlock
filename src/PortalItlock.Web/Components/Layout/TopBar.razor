@@ -1,0 +1,406 @@
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+@inject PortalItlock.Web.Services.VarselTellerService VarselTellerSvc
+
+<div class="topbar">
+    @if (Snarveier.Count > 0)
+    {
+        <div class="topplinje-snarveier">
+            @foreach (var lenke in Snarveier)
+            {
+                <NavLink class="topplinje-snarvei" href="@lenke.Href">@lenke.Tittel</NavLink>
+            }
+        </div>
+    }
+
+    <div class="sok-wrap" @onclick:stopPropagation="true">
+        @if (_visSok)
+        {
+            <input class="top-sok-input" @bind="_sokTekst" @bind:event="oninput"
+                   @onkeydown="@(async e => { if (e.Key == "Enter") { await UtforSok(); } if (e.Key == "Escape") { _visSok = false; } })"
+                   placeholder="Søk kunder, prosjekter, tickets..." />
+        }
+        <button type="button" class="sok-ikon-knapp" title="Søk" @onclick="ToggleSok">🔍</button>
+    </div>
+
+    <div class="notater-wrap" @onclick:stopPropagation="true">
+        <button type="button" class="notater-ikon-knapp" title="Notater" @onclick="ToggleNotater">📝</button>
+
+        @if (_visNotater)
+        {
+            <div class="notater-panel">
+                <p class="notater-hint">Egne notater - kun synlig for deg.</p>
+                <textarea class="notater-tekstfelt" @bind="_nyttNotat" @bind:event="oninput" placeholder="Skriv et notat..."></textarea>
+                <button type="button" class="save-button notater-legg-til" @onclick="LeggTilNotat" disabled="@string.IsNullOrWhiteSpace(_nyttNotat)">Legg til</button>
+
+                @if (_notater.Count > 0)
+                {
+                    <ul class="notater-liste">
+                        @foreach (var n in _notater)
+                        {
+                            <li>
+                                <span class="notat-dato">@n.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
+                                <p class="notat-tekst">@n.Tekst</p>
+                                <button type="button" class="notat-slett" title="Slett notat" @onclick="@(() => SlettNotat(n))">✕</button>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="bruker-meny-wrap" @onclick:stopPropagation="true">
+        <button type="button" class="bruker-avatar" @onclick="ToggleBrukerMeny" title="@_naverendeBruker?.Navn">
+            @(_naverendeBruker?.Initialer ?? "?")
+        </button>
+
+        @if (_visBrukerMeny)
+        {
+            <div class="bruker-meny-panel">
+                <div class="bruker-meny-navn">@(_naverendeBruker?.Navn ?? "Ukjent bruker")</div>
+                @if (!string.IsNullOrWhiteSpace(_naverendeBruker?.Epost))
+                {
+                    <div class="bruker-meny-epost">@_naverendeBruker.Epost</div>
+                }
+
+                <div class="bruker-meny-skille"></div>
+
+                <button type="button" class="bruker-meny-rad bruker-meny-knapp" @onclick="ToggleVarslerMeny">
+                    <Icon Name="bell" /> Varsler
+                    @if (Teller.Totalt > 0)
+                    {
+                        <span class="varsel-badge">@Teller.Totalt</span>
+                    }
+                </button>
+
+                @if (_visVarslerMeny)
+                {
+                    <div class="bruker-meny-innstillinger">
+                        @if (Teller.Totalt == 0)
+                        {
+                            <p class="varsel-tom">Ingen varsler akkurat nå.</p>
+                        }
+                        else
+                        {
+                            @if (Teller.AvvikSomVenter > 0)
+                            {
+                                <span class="varsel-rad"><span class="varsel-tall">@Teller.AvvikSomVenter</span> <span>Avvik som venter på godkjenning</span></span>
+                            }
+                            @if (Teller.ServiceavtalerVarsel > 0)
+                            {
+                                <a class="varsel-rad" href="/service"><span class="varsel-tall">@Teller.ServiceavtalerVarsel</span> <span>Serviceavtaler som nærmer seg forfall</span></a>
+                            }
+                            @if (Teller.KunderTrengerOppfolging > 0)
+                            {
+                                <a class="varsel-rad" href="/kundeoppfolging"><span class="varsel-tall">@Teller.KunderTrengerOppfolging</span> <span>Kunder som trenger oppfølging</span></a>
+                            }
+                            @if (Teller.VarerLavBeholdning > 0)
+                            {
+                                <a class="varsel-rad" href="/lager"><span class="varsel-tall">@Teller.VarerLavBeholdning</span> <span>Varer med lav lagerbeholdning</span></a>
+                            }
+                            @if (Teller.FravarSoknaderVenter > 0)
+                            {
+                                <a class="varsel-rad" href="/fravar"><span class="varsel-tall">@Teller.FravarSoknaderVenter</span> <span>Fraværssøknader som venter på godkjenning</span></a>
+                            }
+                            @if (Teller.TilvalgVarsel > 0)
+                            {
+                                <a class="varsel-rad" href="/tilvalg"><span class="varsel-tall">@Teller.TilvalgVarsel</span> <span>Nye tilvalg fra kunder</span></a>
+                            }
+                            @if (Teller.DriftsmeldingerVarsel > 0)
+                            {
+                                <a class="varsel-rad" href="/driftsmeldinger"><span class="varsel-tall">@Teller.DriftsmeldingerVarsel</span> <span>Nye driftsmeldinger</span></a>
+                            }
+                            @if (Teller.TicketerVarsel > 0)
+                            {
+                                <a class="varsel-rad" href="/tickets"><span class="varsel-tall">@Teller.TicketerVarsel</span> <span>Tickets uten ansvarlig</span></a>
+                            }
+                            @if (Teller.CeGodkjenningerVarsel > 0)
+                            {
+                                <a class="varsel-rad" href="/ce-godkjenninger"><span class="varsel-tall">@Teller.CeGodkjenningerVarsel</span> <span>CE-sertifiseringer som nærmer seg eller har gått ut på dato</span></a>
+                            }
+                        }
+                    </div>
+                }
+
+                @if (_visUtvidetVarsel && _snarveier.Contains("kontrolltarn"))
+                {
+                    <a class="bruker-meny-rad" href="/kontrolltarn">
+                        <Icon Name="shield" /> Kontrolltårn
+                    </a>
+                }
+
+                <div class="bruker-meny-skille"></div>
+
+                <a class="bruker-meny-rad" href="/sett-passord">Bytt passord</a>
+                <button type="button" class="bruker-meny-rad bruker-meny-knapp" @onclick="ToggleInnstillinger">Tilpass meny</button>
+
+                @if (_visInnstillinger)
+                {
+                    <div class="bruker-meny-innstillinger">
+                        <p class="innstillinger-hint">Velg hva som skal vises i menyen til venstre, og hva som skal vises som snarvei øverst ved navnet ditt.</p>
+                        <div class="innstillinger-kolonnetitler">
+                            <span></span>
+                            <span title="Vis i venstremeny">Meny</span>
+                            <span title="Vis som snarvei ved navnet">Topp</span>
+                        </div>
+                        <p class="innstillinger-gruppe-navn">System</p>
+                        <div class="innstillinger-rad-2col">
+                            <span class="innstillinger-lenke-navn">Varsler</span>
+                            <input type="checkbox" title="Vis i venstremeny" checked="@(!_skjulteLenker.Contains("varsler"))" @onchange="@(e => ToggleLenke("varsler", (bool)e.Value!))" />
+                            <input type="checkbox" title="Vis som snarvei ved navnet" checked="@(_snarveier.Contains("varsler"))" @onchange="@(e => ToggleSnarvei("varsler", (bool)e.Value!))" />
+                        </div>
+                        @if (_visUtvidetVarsel)
+                        {
+                            <div class="innstillinger-rad-2col">
+                                <span class="innstillinger-lenke-navn">Kontrolltårn</span>
+                                <input type="checkbox" title="Vis i venstremeny" checked="@(!_skjulteLenker.Contains("kontrolltarn"))" @onchange="@(e => ToggleLenke("kontrolltarn", (bool)e.Value!))" />
+                                <input type="checkbox" title="Vis som snarvei ved navnet" checked="@(_snarveier.Contains("kontrolltarn"))" @onchange="@(e => ToggleSnarvei("kontrolltarn", (bool)e.Value!))" />
+                            </div>
+                        }
+
+                        @foreach (var gruppe in GrupperteLenker)
+                        {
+                            <p class="innstillinger-gruppe-navn">@gruppe.RolleTittel</p>
+                            @foreach (var lenke in gruppe.Lenker)
+                            {
+                                <div class="innstillinger-rad-2col">
+                                    <span class="innstillinger-lenke-navn">@lenke.Tittel</span>
+                                    <input type="checkbox" title="Vis i venstremeny" checked="@(!_skjulteLenker.Contains(lenke.Href))" @onchange="@(e => ToggleLenke(lenke.Href, (bool)e.Value!))" />
+                                    <input type="checkbox" title="Vis som snarvei ved navnet" checked="@(_snarveier.Contains(lenke.Href))" @onchange="@(e => ToggleSnarvei(lenke.Href, (bool)e.Value!))" />
+                                </div>
+                            }
+                        }
+                    </div>
+                }
+
+                <div class="bruker-meny-skille"></div>
+
+                <form method="post" action="/account/logout" class="bruker-meny-logout-form">
+                    <button type="submit" class="bruker-meny-rad bruker-meny-logout">Logg ut</button>
+                </form>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private BrukerRolle? _naverendeRolle;
+    private int? _naverendeBrukerId;
+    private Bruker? _naverendeBruker;
+    private HashSet<string> _skjulteLenker = [];
+    private HashSet<string> _snarveier = [];
+    private bool _visUtvidetVarsel;
+    private bool _erAdmin;
+    private bool _visBrukerMeny;
+    private bool _visVarslerMeny;
+    private bool _visInnstillinger;
+    private bool _visSok;
+    private string _sokTekst = "";
+
+    private bool _visNotater;
+    private string _nyttNotat = "";
+    private List<Notat> _notater = [];
+
+    private PortalItlock.Web.Services.VarselTeller Teller { get; set; } =
+        new(0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+    private List<Lenke> TilgjengeligeLenker
+    {
+        get
+        {
+            var nokler = _naverendeRolle switch
+            {
+                BrukerRolle.Admin => new[] { "montorer", "prosjektledere", "admin" },
+                BrukerRolle.Prosjektleder => new[] { "montorer", "prosjektledere" },
+                BrukerRolle.Montor => new[] { "montorer" },
+                _ => []
+            };
+
+            return PortalModulRegister.Roller
+                .Where(r => nokler.Contains(r.Nokkel))
+                .SelectMany(r => r.Grupper)
+                .SelectMany(g => g.Lenker)
+                .ToList();
+        }
+    }
+
+    private List<(string RolleTittel, List<Lenke> Lenker)> GrupperteLenker
+    {
+        get
+        {
+            var nokler = _naverendeRolle switch
+            {
+                BrukerRolle.Admin => new[] { "montorer", "prosjektledere", "admin" },
+                BrukerRolle.Prosjektleder => new[] { "montorer", "prosjektledere" },
+                BrukerRolle.Montor => new[] { "montorer" },
+                _ => []
+            };
+
+            return PortalModulRegister.Roller
+                .Where(r => nokler.Contains(r.Nokkel))
+                .Select(r => (r.Tittel, r.Grupper.SelectMany(g => g.Lenker).ToList()))
+                .ToList();
+        }
+    }
+
+    private List<Lenke> Snarveier => TilgjengeligeLenker.Where(l => _snarveier.Contains(l.Href)).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+        _visUtvidetVarsel = rolleClaim is "Admin" or "Prosjektleder";
+        _erAdmin = rolleClaim is "Admin";
+        _naverendeRolle = rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle) ? rolle : null;
+
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+        {
+            _naverendeBrukerId = bid;
+            _naverendeBruker = await Db.Brukere.FindAsync(bid);
+
+            var skjult = _naverendeBruker?.SkjulteNavLenker;
+            _skjulteLenker = string.IsNullOrWhiteSpace(skjult)
+                ? []
+                : skjult.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+
+            var snarveier = _naverendeBruker?.TopplinjeSnarveier;
+            _snarveier = string.IsNullOrWhiteSpace(snarveier)
+                ? []
+                : snarveier.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+        }
+
+        Teller = await VarselTellerSvc.HentAsync(_visUtvidetVarsel, _erAdmin);
+
+        if (_naverendeBrukerId.HasValue)
+        {
+            _notater = await Db.Notater
+                .Where(n => n.BrukerId == _naverendeBrukerId.Value)
+                .OrderByDescending(n => n.OpprettetDato)
+                .ToListAsync();
+        }
+    }
+
+    private void ToggleSok()
+    {
+        _visSok = !_visSok;
+    }
+
+    private void ToggleNotater()
+    {
+        _visNotater = !_visNotater;
+    }
+
+    private async Task LeggTilNotat()
+    {
+        var tekst = _nyttNotat.Trim();
+        if (tekst.Length == 0 || !_naverendeBrukerId.HasValue)
+        {
+            return;
+        }
+
+        var notat = new Notat { BrukerId = _naverendeBrukerId.Value, Tekst = tekst };
+        Db.Notater.Add(notat);
+        await Db.SaveChangesAsync();
+
+        _notater.Insert(0, notat);
+        _nyttNotat = "";
+    }
+
+    private async Task SlettNotat(Notat notat)
+    {
+        Db.Notater.Remove(notat);
+        await Db.SaveChangesAsync();
+        _notater.Remove(notat);
+    }
+
+    private void ToggleBrukerMeny()
+    {
+        _visBrukerMeny = !_visBrukerMeny;
+        if (!_visBrukerMeny)
+        {
+            _visInnstillinger = false;
+            _visVarslerMeny = false;
+        }
+    }
+
+    private void ToggleVarslerMeny()
+    {
+        _visVarslerMeny = !_visVarslerMeny;
+    }
+
+    private void ToggleInnstillinger()
+    {
+        _visInnstillinger = !_visInnstillinger;
+    }
+
+    private async Task ToggleLenke(string key, bool vis)
+    {
+        if (vis)
+        {
+            _skjulteLenker.Remove(key);
+        }
+        else
+        {
+            _skjulteLenker.Add(key);
+        }
+
+        if (_naverendeBrukerId.HasValue)
+        {
+            var bruker = await Db.Brukere.FindAsync(_naverendeBrukerId.Value);
+            if (bruker is not null)
+            {
+                bruker.SkjulteNavLenker = _skjulteLenker.Count == 0 ? null : string.Join(",", _skjulteLenker);
+                await Db.SaveChangesAsync();
+            }
+        }
+    }
+
+    private async Task ToggleSnarvei(string key, bool vis)
+    {
+        if (vis)
+        {
+            _snarveier.Add(key);
+        }
+        else
+        {
+            _snarveier.Remove(key);
+        }
+
+        if (_naverendeBrukerId.HasValue)
+        {
+            var bruker = await Db.Brukere.FindAsync(_naverendeBrukerId.Value);
+            if (bruker is not null)
+            {
+                bruker.TopplinjeSnarveier = _snarveier.Count == 0 ? null : string.Join(",", _snarveier);
+                await Db.SaveChangesAsync();
+            }
+        }
+    }
+
+    private Task UtforSok()
+    {
+        var tekst = _sokTekst.Trim();
+        if (tekst.Length == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        _sokTekst = "";
+        Nav.NavigateTo($"/sok?q={Uri.EscapeDataString(tekst)}");
+        return Task.CompletedTask;
+    }
+}

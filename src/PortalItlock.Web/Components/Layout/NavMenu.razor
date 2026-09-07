@@ -6,9 +6,13 @@
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject PortalItlock.Web.Services.VarselTellerService VarselTellerSvc
 
 <div class="top-row ps-3 navbar">
-    <div class="container-fluid">
+    <div class="container-fluid top-row-inner">
+        <button type="button" class="sidebar-toggle" title="Vis/skjul full meny" onclick="sidebarMeny.toggle()">
+            ☰
+        </button>
         <a class="navbar-brand" href="">
             <img src="itlock-full-kontroll-logo-transparent.png" alt="Itlock Full Kontroll" class="brand-logo logo-adaptive" />
         </a>
@@ -19,27 +23,13 @@
 
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
     <nav class="flex-column">
-        <div class="nav-item px-3 innstillinger-wrap" @onclick:stopPropagation="true">
-            <button type="button" class="nav-link varsel-knapp" @onclick="ToggleInnstillinger">
-                <Icon Name="settings" />
-                <span>Hurtigmeny</span>
-            </button>
-
-            @if (_visInnstillinger)
-            {
-                <div class="varsel-panel">
-                    <p class="innstillinger-hint">Velg hvilke moduler som skal vises i menyen under.</p>
-                    @foreach (var lenke in TilgjengeligeLenker)
-                    {
-                        <label class="innstillinger-rad">
-                            <input type="checkbox" checked="@(!_skjulteLenker.Contains(lenke.Href))" @onchange="@(e => ToggleLenke(lenke.Href, (bool)e.Value!))" />
-                            <span>@lenke.Tittel</span>
-                        </label>
-                    }
-                </div>
-            }
+        <div class="sidebar-org">
+            <span class="sidebar-org-label">Organisasjon</span>
+            <span class="sidebar-org-navn">itlock AS</span>
         </div>
 
+        @if (!_skjulteLenker.Contains("varsler"))
+        {
         <div class="nav-item px-3 varsel-wrap" @onclick:stopPropagation="true">
             <button type="button" class="nav-link varsel-knapp" @onclick="ToggleVarsler">
                 <Icon Name="bell" />
@@ -126,6 +116,7 @@
                 </div>
             }
         </div>
+        }
 
         <div class="nav-item px-3">
             <button type="button" class="nav-link nav-link-button" @onclick="GaTilbake">
@@ -139,7 +130,7 @@
             </NavLink>
         </div>
 
-        @if (_visUtvidetVarsel)
+        @if (_visUtvidetVarsel && !_skjulteLenker.Contains("kontrolltarn"))
         {
             <div class="nav-item px-3">
                 <NavLink class="nav-link" href="kontrolltarn">
@@ -148,19 +139,13 @@
             </div>
         }
 
-        <div class="nav-item px-3 sok-wrap">
-            <input class="sok-input" @bind="_sokTekst" @bind:event="oninput"
-                   @onkeydown="@(async e => { if (e.Key == "Enter") { await UtforSok(); } })"
-                   placeholder="Søk kunder, prosjekter, tickets..." />
-        </div>
-
         @foreach (var lenke in TilgjengeligeLenker)
         {
             @if (!_skjulteLenker.Contains(lenke.Href))
             {
                 <div class="nav-item px-3">
                     <NavLink class="nav-link" href="@lenke.Href">
-                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> @lenke.Tittel
+                        <Icon Name="@lenke.IconNavn" /> @lenke.Tittel
                     </NavLink>
                 </div>
             }
@@ -170,7 +155,7 @@
         {
             <div class="nav-item px-3">
                 <NavLink class="nav-link" href="driftsmeldinger">
-                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Driftsmeldinger
+                    <Icon Name="mail" /> Driftsmeldinger
                 </NavLink>
             </div>
         }
@@ -185,10 +170,6 @@
                 <BilerToggle />
             </div>
         }
-
-        <form method="post" action="/account/logout" class="logout-form">
-            <button type="submit" class="logout-button">Logg ut</button>
-        </form>
     </nav>
 </div>
 
@@ -221,8 +202,8 @@
     }
 
     private int? _naverendeBrukerId;
+    private Bruker? _naverendeBruker;
     private HashSet<string> _skjulteLenker = [];
-    private bool _visInnstillinger;
     private bool _visUtvidetVarsel;
     private bool _erAdmin;
     private bool _visVarsler;
@@ -239,7 +220,6 @@
     private readonly List<string> _historikk = [];
     private bool _gikkTilbake;
     private string _naverendeUrl = "";
-    private string _sokTekst = "";
 
     private int TotaltAntallVarsler => _avvikSomVenter + _serviceavtalerVarsel + _kunderTrengerOppfolging + _varerLavBeholdning + _fravarSoknaderVenter + _tilvalgVarsel + _driftsmeldingerVarsel + _ceGodkjenningerVarsel + _ticketerVarsel;
 
@@ -260,7 +240,8 @@
             if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
             {
                 _naverendeBrukerId = bid;
-                var skjult = await Db.Brukere.Where(b => b.Id == bid).Select(b => b.SkjulteNavLenker).FirstOrDefaultAsync();
+                _naverendeBruker = await Db.Brukere.FindAsync(bid);
+                var skjult = _naverendeBruker?.SkjulteNavLenker;
                 _skjulteLenker = string.IsNullOrWhiteSpace(skjult)
                     ? []
                     : skjult.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
@@ -289,63 +270,21 @@
 
     private async Task LastVarslerAsync()
     {
-        _avvikSomVenter = await Db.Avvik.CountAsync(a => a.Status == AvvikStatus.SendtTilKunde);
-
-        if (_visUtvidetVarsel)
-        {
-            var serviceProsjektIder = await Db.Prosjekter
-                .Where(p => p.Status == ProsjektStatus.Serviceavtale)
-                .Select(p => p.Id)
-                .ToListAsync();
-
-            _serviceavtalerVarsel = 0;
-            if (serviceProsjektIder.Count > 0)
-            {
-                var runder = await Db.Servicerunder
-                    .Where(r => serviceProsjektIder.Contains(r.ProsjektId))
-                    .ToListAsync();
-
-                var terskel = DateTime.Today.AddDays(14);
-                _serviceavtalerVarsel = serviceProsjektIder.Count(pid =>
-                {
-                    var neste = runder.Where(r => r.ProsjektId == pid)
-                        .OrderByDescending(r => r.Dato)
-                        .FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato;
-                    return neste.HasValue && neste.Value.Date <= terskel;
-                });
-            }
-
-            _kunderTrengerOppfolging = await Db.Kunder.CountAsync(k =>
-                k.NesteOppfolgingsDato != null && k.NesteOppfolgingsDato.Value.Date <= DateTime.Today);
-
-            _varerLavBeholdning = await Db.Components.CountAsync(c =>
-                c.Aktiv && c.ILagerstyring && c.Minimumsbeholdning != null && c.Lagerantall <= c.Minimumsbeholdning.Value);
-
-            _ticketerVarsel = await Db.Tickets.CountAsync(t =>
-                t.Status != TicketStatus.Lukket && t.AnsvarligBrukerId == null);
-
-            _tilvalgVarsel = await Db.Tilvalg.CountAsync(t => t.Status == TilvalgStatus.Besvart && !t.LestAvAnsatt);
-            _driftsmeldingerVarsel = await Db.Driftsmeldinger.CountAsync(m => !m.LestAvAnsatt);
-
-            var ceTerskel = DateTime.Today.AddDays(30);
-            _ceGodkjenningerVarsel = await Db.CeGodkjenninger.CountAsync(c =>
-                c.Status == CeGodkjenningStatus.Godkjent && c.GyldigTil.Date <= ceTerskel);
-        }
-
-        if (_erAdmin)
-        {
-            _fravarSoknaderVenter = await Db.FravarSoknader.CountAsync(f => f.Status == FravarStatus.Venter);
-        }
+        var teller = await VarselTellerSvc.HentAsync(_visUtvidetVarsel, _erAdmin);
+        _avvikSomVenter = teller.AvvikSomVenter;
+        _serviceavtalerVarsel = teller.ServiceavtalerVarsel;
+        _kunderTrengerOppfolging = teller.KunderTrengerOppfolging;
+        _varerLavBeholdning = teller.VarerLavBeholdning;
+        _fravarSoknaderVenter = teller.FravarSoknaderVenter;
+        _tilvalgVarsel = teller.TilvalgVarsel;
+        _driftsmeldingerVarsel = teller.DriftsmeldingerVarsel;
+        _ticketerVarsel = teller.TicketerVarsel;
+        _ceGodkjenningerVarsel = teller.CeGodkjenningerVarsel;
     }
 
     private void ToggleVarsler()
     {
         _visVarsler = !_visVarsler;
-    }
-
-    private void ToggleInnstillinger()
-    {
-        _visInnstillinger = !_visInnstillinger;
     }
 
     private async Task ToggleLenke(string key, bool vis)
@@ -373,19 +312,6 @@
     private void LukkVarsler()
     {
         _visVarsler = false;
-    }
-
-    private Task UtforSok()
-    {
-        var tekst = _sokTekst.Trim();
-        if (tekst.Length == 0)
-        {
-            return Task.CompletedTask;
-        }
-
-        _sokTekst = "";
-        Nav.NavigateTo($"/sok?q={Uri.EscapeDataString(tekst)}");
-        return Task.CompletedTask;
     }
 
     private void GaTilbake()

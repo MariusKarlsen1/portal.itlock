@@ -64,6 +64,7 @@ builder.Services.AddScoped<CeGodkjenningPdfService>();
 builder.Services.AddScoped<ServiceVarselService>();
 builder.Services.AddHostedService<ServiceVarselBackgroundService>();
 builder.Services.AddScoped<TicketEskaleringService>();
+builder.Services.AddScoped<VarselTellerService>();
 builder.Services.AddHostedService<TicketEskaleringBackgroundService>();
 builder.Services.AddHttpClient<DatabaseBackupService>(client =>
 {

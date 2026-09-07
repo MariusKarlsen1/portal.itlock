@@ -1,6 +1,6 @@
 namespace PortalItlock.Web.Models;
 
-public sealed record Lenke(string Tittel, string Beskrivelse, string Href);
+public sealed record Lenke(string Tittel, string Beskrivelse, string Href, string IconNavn = "folder");
 public sealed record LenkeGruppe(string Navn, List<Lenke> Lenker);
 public sealed record Rolle(string Nokkel, string Tittel, string Beskrivelse, List<LenkeGruppe> Grupper);
 
@@ -14,14 +14,14 @@ public static class PortalModulRegister
             "Guide, befaring og vedlegg til bruk i felt",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Befaring", "Befaringsliste og utskiftning av lås", "befaringsmodul"),
-                    new Lenke("Guider", "Kobling, dørmiljø og oppsett adgangskontroll", "guidermodul"),
-                    new Lenke("Prosjekt", "Prosjekter og arbeidsordre", "prosjektmodul"),
-                    new Lenke("Timer og fravær", "Fravær og timeregistrering", "timerfravarmodul"),
+                    new Lenke("Befaring", "Befaringsliste og utskiftning av lås", "befaringsmodul", "eye"),
+                    new Lenke("Guider", "Kobling, dørmiljø og oppsett adgangskontroll", "guidermodul", "tool"),
+                    new Lenke("Prosjekt", "Prosjekter og arbeidsordre", "prosjektmodul", "folder"),
+                    new Lenke("Timer og fravær", "Fravær og timeregistrering", "timerfravarmodul", "clock"),
                 ]),
                 new LenkeGruppe("Kart og kalender", [
-                    new Lenke("Kart", "Se dagens jobber geografisk", "kart"),
-                    new Lenke("Kalender", "Se planlagte arbeidsordre i månedsvisning", "kalender"),
+                    new Lenke("Kart", "Se dagens jobber geografisk", "kart", "map"),
+                    new Lenke("Kalender", "Se planlagte arbeidsordre i månedsvisning", "kalender", "calendar"),
                 ]),
             ]),
         new Rolle(
@@ -30,22 +30,30 @@ public static class PortalModulRegister
             "Systemer, prosjektering og prosjekter",
             [
                 new LenkeGruppe("Prosjekt modul", [
-                    new Lenke("Prosjekt modul", "Prosjekter, dørpakker, prisoverslag og systemregister samlet på ett sted", "prosjekteringmodul"),
+                    new Lenke("Prosjekt modul", "Prosjekter, dørpakker, prisoverslag og systemregister samlet på ett sted", "prosjekteringmodul", "folder"),
+                    new Lenke("Prosjekter", "Dører, plantegninger og montasjestatus per prosjekt", "prosjekter", "folder"),
+                    new Lenke("Arbeidsordre", "Opprett arbeidsordre med info om jobben og ansvarlig montør", "arbeidsordre", "check-circle"),
+                    new Lenke("Finn dørpakke", "Huk av krav og finn riktig dørpakke til prosjektet", "finn-dorpakke", "box"),
+                    new Lenke("Prisoverslag", "Rask kalkulator med komponenter, timer og påslag", "prisoverslag", "receipt"),
+                    new Lenke("Systemregister", "Søk opp låssystem, kunde, adresse og rekvirenter", "systemregister", "users"),
+                    new Lenke("CE Modul", "Alle CE-sertifiseringer på tvers av prosjekter", "ce-godkjenninger", "shield"),
                 ]),
                 new LenkeGruppe("Kunder", [
-                    new Lenke("Kunder", "Kunderegister, oppfølging, portaltilgang og tilvalg samlet på ett sted", "kundemodul"),
+                    new Lenke("Kunder", "Kunderegister, oppfølging, portaltilgang og tilvalg samlet på ett sted", "kundemodul", "users"),
                 ]),
                 new LenkeGruppe("Drift", [
-                    new Lenke("Drift", "Kart, kalender og fravær samlet på ett sted", "driftmodul"),
+                    new Lenke("Drift", "Kart, kalender og fravær samlet på ett sted", "driftmodul", "map"),
                 ]),
                 new LenkeGruppe("Forespørsler", [
-                    new Lenke("Forespørsler", "E-poster sendt til post@itlock.no", "foresporsler"),
+                    new Lenke("Forespørsler", "E-poster sendt til post@itlock.no", "foresporsler", "mail"),
                 ]),
                 new LenkeGruppe("Tickets", [
-                    new Lenke("Tickets", "Samlet oversikt over alle henvendelser og saker", "tickets"),
+                    new Lenke("Tickets", "Samlet oversikt over alle henvendelser og saker", "tickets", "tag"),
                 ]),
                 new LenkeGruppe("Service modul", [
-                    new Lenke("Service modul", "Serviceavtaler, serviceoppdrag og tilbud service samlet på ett sted", "servicemodul"),
+                    new Lenke("Service modul", "Serviceavtaler, serviceoppdrag og tilbud service samlet på ett sted", "servicemodul", "clock"),
+                    new Lenke("Serviceavtaler", "Serviceavtaler og serviceoppdrag samlet, med servicehistorikk og rapporter", "service", "clock"),
+                    new Lenke("Tilbud service", "Opprett og se tilbud for serviceavtaler", "tilbud-service", "receipt"),
                 ]),
             ]),
         new Rolle(
@@ -54,13 +62,13 @@ public static class PortalModulRegister
             "Opprett og vedlikehold grunnlagsdata",
             [
                 new LenkeGruppe("Oppsett og maler", [
-                    new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul"),
+                    new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings"),
                 ]),
                 new LenkeGruppe("Komponenter og priser", [
-                    new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul"),
+                    new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul", "box"),
                 ]),
                 new LenkeGruppe("Brukere og kunder", [
-                    new Lenke("Brukere og kunder", "Brukere, kunder, kundeoppfølging og fravær samlet på ett sted", "brukerkundemodul"),
+                    new Lenke("Brukere og kunder", "Brukere, kunder, kundeoppfølging og fravær samlet på ett sted", "brukerkundemodul", "users"),
                 ]),
             ]),
     ];

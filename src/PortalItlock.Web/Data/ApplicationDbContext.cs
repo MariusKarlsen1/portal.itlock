@@ -47,6 +47,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<TicketMedia> TicketMedia => Set<TicketMedia>();
     public DbSet<TicketKategori> TicketKategorier => Set<TicketKategori>();
     public DbSet<DatabaseBackup> DatabaseBackuper => Set<DatabaseBackup>();
+    public DbSet<Notat> Notater => Set<Notat>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
@@ -455,6 +456,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(n => n.OpprettetAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Notat>()
+            .HasOne(n => n.Bruker)
+            .WithMany()
+            .HasForeignKey(n => n.BrukerId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<FravarSoknad>()
             .HasOne(f => f.Bruker)

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260907164150_LeggTilTopplinjeSnarveier")]
+    partial class LeggTilTopplinjeSnarveier
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -2720,29 +2723,6 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("Nokkelsystemer");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.Notat", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("BrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("OpprettetDato")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Tekst")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BrukerId");
-
-                    b.ToTable("Notater");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.Nyhet", b =>
                 {
                     b.Property<int>("Id")
@@ -5087,17 +5067,6 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Nokkel");
-                });
-
-            modelBuilder.Entity("PortalItlock.Web.Models.Notat", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "Bruker")
-                        .WithMany()
-                        .HasForeignKey("BrukerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Bruker");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PackageComponent", b =>
