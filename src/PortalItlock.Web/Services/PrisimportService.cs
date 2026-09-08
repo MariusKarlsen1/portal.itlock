@@ -20,7 +20,6 @@ public class PrisimportService(ApplicationDbContext db)
         public string? Produktkode { get; set; }
         public string? Navn { get; set; }
         public string? Navn2 { get; set; }
-        public string? Produsent { get; set; }
         public string? Beskrivelse { get; set; }
         public string? Varegruppe { get; set; }
         public string? Overflate { get; set; }
@@ -51,7 +50,6 @@ public class PrisimportService(ApplicationDbContext db)
         public int? Gtin { get; set; }
         public int? Navn { get; set; }
         public int? Navn2 { get; set; }
-        public int? Produsent { get; set; }
         public int? Beskrivelse { get; set; }
         public int? Varegruppe { get; set; }
         public int? Overflate { get; set; }
@@ -79,7 +77,6 @@ public class PrisimportService(ApplicationDbContext db)
             Gtin = Finn("gtin", "ean", "strekkode", "barcode"),
             Navn = Finn("varenavn 1", "varenavn1", "navn", "produktnavn", "varetekst"),
             Navn2 = Finn("varenavn 2", "varenavn2", "navn 2"),
-            Produsent = Finn("produsent", "manufacturer", "brand", "merke"),
             Beskrivelse = Finn("beskrivelse", "varebeskrivelse", "produktbeskrivelse"),
             Varegruppe = Finn("varegruppe", "kategori"),
             Overflate = Finn("overflate", "finish"),
@@ -202,7 +199,6 @@ public class PrisimportService(ApplicationDbContext db)
                 Produktkode = produktkode,
                 Navn = navn,
                 Navn2 = HentFelt(rad, valgt.Navn2),
-                Produsent = HentFelt(rad, valgt.Produsent),
                 Beskrivelse = HentFelt(rad, valgt.Beskrivelse),
                 Varegruppe = HentFelt(rad, valgt.Varegruppe),
                 Overflate = HentFelt(rad, valgt.Overflate),
@@ -293,10 +289,6 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     comp.Navn2 = rad.Navn2;
                 }
-                if (!string.IsNullOrWhiteSpace(rad.Produsent))
-                {
-                    comp.Produsent = rad.Produsent;
-                }
                 if (!string.IsNullOrWhiteSpace(rad.Beskrivelse))
                 {
                     comp.Beskrivelse = rad.Beskrivelse;
@@ -346,7 +338,6 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     Navn = rad.Navn!,
                     Navn2 = string.IsNullOrWhiteSpace(rad.Navn2) ? null : rad.Navn2,
-                    Produsent = string.IsNullOrWhiteSpace(rad.Produsent) ? null : rad.Produsent,
                     Beskrivelse = string.IsNullOrWhiteSpace(rad.Beskrivelse) ? null : rad.Beskrivelse,
                     Varegruppe = string.IsNullOrWhiteSpace(rad.Varegruppe) ? null : rad.Varegruppe,
                     Overflate = string.IsNullOrWhiteSpace(rad.Overflate) ? null : rad.Overflate,
