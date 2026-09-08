@@ -31,12 +31,6 @@ public static class PortalModulRegister
             [
                 new LenkeGruppe("Prosjekt modul", [
                     new Lenke("Prosjekt modul", "Prosjekter, dørpakker, prisoverslag og systemregister samlet på ett sted", "prosjekteringmodul", "folder"),
-                    new Lenke("Prosjekter", "Dører, plantegninger og montasjestatus per prosjekt", "prosjekter", "folder"),
-                    new Lenke("Arbeidsordre", "Opprett arbeidsordre med info om jobben og ansvarlig montør", "arbeidsordre", "check-circle"),
-                    new Lenke("Finn dørpakke", "Huk av krav og finn riktig dørpakke til prosjektet", "finn-dorpakke", "box"),
-                    new Lenke("Prisoverslag", "Rask kalkulator med komponenter, timer og påslag", "prisoverslag", "receipt"),
-                    new Lenke("Systemregister", "Søk opp låssystem, kunde, adresse og rekvirenter", "systemregister", "users"),
-                    new Lenke("CE Modul", "Alle CE-sertifiseringer på tvers av prosjekter", "ce-godkjenninger", "shield"),
                 ]),
                 new LenkeGruppe("Kunder", [
                     new Lenke("Kunder", "Kunderegister, oppfølging, portaltilgang og tilvalg samlet på ett sted", "kundemodul", "users"),
@@ -52,8 +46,6 @@ public static class PortalModulRegister
                 ]),
                 new LenkeGruppe("Service modul", [
                     new Lenke("Service modul", "Serviceavtaler, serviceoppdrag og tilbud service samlet på ett sted", "servicemodul", "clock"),
-                    new Lenke("Serviceavtaler", "Serviceavtaler og serviceoppdrag samlet, med servicehistorikk og rapporter", "service", "clock"),
-                    new Lenke("Tilbud service", "Opprett og se tilbud for serviceavtaler", "tilbud-service", "receipt"),
                 ]),
             ]),
         new Rolle(

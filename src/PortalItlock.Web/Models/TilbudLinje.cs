@@ -24,4 +24,5 @@ public class TilbudLinje
     public decimal RabattProsent { get; set; }
     public int Rekkefolge { get; set; }
     public bool ErGruppering { get; set; }
+    public string? Beskrivelse { get; set; }
 }

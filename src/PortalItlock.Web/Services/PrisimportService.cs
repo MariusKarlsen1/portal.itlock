@@ -21,20 +21,12 @@ public class PrisimportService(ApplicationDbContext db)
         public string? Navn { get; set; }
         public string? Navn2 { get; set; }
         public string? Produsent { get; set; }
-        public string? ProdusentAdresse { get; set; }
-        public string? ProdusentPostnr { get; set; }
-        public string? ProdusentSted { get; set; }
-        public string? ProdusentLand { get; set; }
-        public string? ProdusentOrgnr { get; set; }
         public string? Beskrivelse { get; set; }
         public string? Varegruppe { get; set; }
         public string? Overflate { get; set; }
         public string? Enhet { get; set; }
         public decimal? PrisNetto { get; set; }
         public decimal? PrisVeiledende { get; set; }
-        public int? MontasjeMinutterProsjekt { get; set; }
-        public int? MontasjeMinutterArbeidsordre { get; set; }
-        public int? MontasjeMinutterService { get; set; }
         public bool? LagervareVerdi { get; set; }
         public bool? AktivVerdi { get; set; }
         public bool ErNyVare { get; set; }
@@ -60,20 +52,12 @@ public class PrisimportService(ApplicationDbContext db)
         public int? Navn { get; set; }
         public int? Navn2 { get; set; }
         public int? Produsent { get; set; }
-        public int? ProdusentAdresse { get; set; }
-        public int? ProdusentPostnr { get; set; }
-        public int? ProdusentSted { get; set; }
-        public int? ProdusentLand { get; set; }
-        public int? ProdusentOrgnr { get; set; }
         public int? Beskrivelse { get; set; }
         public int? Varegruppe { get; set; }
         public int? Overflate { get; set; }
         public int? Enhet { get; set; }
         public int? PrisNetto { get; set; }
         public int? PrisVeiledende { get; set; }
-        public int? MontasjeMinutterProsjekt { get; set; }
-        public int? MontasjeMinutterArbeidsordre { get; set; }
-        public int? MontasjeMinutterService { get; set; }
         public int? Lager { get; set; }
         public int? Inaktiv { get; set; }
         public int? Rabattgruppe { get; set; }
@@ -96,20 +80,12 @@ public class PrisimportService(ApplicationDbContext db)
             Navn = Finn("varenavn 1", "varenavn1", "navn", "produktnavn", "varetekst"),
             Navn2 = Finn("varenavn 2", "varenavn2", "navn 2"),
             Produsent = Finn("produsent", "manufacturer", "brand", "merke"),
-            ProdusentAdresse = Finn("produsentadresse", "produsent adresse"),
-            ProdusentPostnr = Finn("produsentpostnr", "produsent postnr"),
-            ProdusentSted = Finn("produsentsted", "produsent sted"),
-            ProdusentLand = Finn("produsentland", "produsent land"),
-            ProdusentOrgnr = Finn("produsentorgnr", "produsent org"),
             Beskrivelse = Finn("beskrivelse", "varebeskrivelse", "produktbeskrivelse"),
             Varegruppe = Finn("varegruppe", "kategori"),
             Overflate = Finn("overflate", "finish"),
             Enhet = Finn("enhet", "måleenhet", "maaleenhet", "unit"),
             PrisNetto = Finn("nettopris", "netto pris", "innkjøpspris", "innkjøp", "kostpris", "netto"),
             PrisVeiledende = Finn("veiledende", "utpris", "listepris", "bruttopris", "veil.", "veil pris", "salgspris"),
-            MontasjeMinutterProsjekt = Finn("montasjetid prosjekt", "montasje prosjekt"),
-            MontasjeMinutterArbeidsordre = Finn("montasjetid arbeidsordre", "montasje arbeidsordre"),
-            MontasjeMinutterService = Finn("montasjetid service", "montasje service"),
             Lager = Finn("lager", "lagervare"),
             Inaktiv = Finn("inaktiv"),
             Rabattgruppe = Finn("rabattgruppe", "rabatt gruppe", "rabattkode"),
@@ -227,20 +203,12 @@ public class PrisimportService(ApplicationDbContext db)
                 Navn = navn,
                 Navn2 = HentFelt(rad, valgt.Navn2),
                 Produsent = HentFelt(rad, valgt.Produsent),
-                ProdusentAdresse = HentFelt(rad, valgt.ProdusentAdresse),
-                ProdusentPostnr = HentFelt(rad, valgt.ProdusentPostnr),
-                ProdusentSted = HentFelt(rad, valgt.ProdusentSted),
-                ProdusentLand = HentFelt(rad, valgt.ProdusentLand),
-                ProdusentOrgnr = HentFelt(rad, valgt.ProdusentOrgnr),
                 Beskrivelse = HentFelt(rad, valgt.Beskrivelse),
                 Varegruppe = HentFelt(rad, valgt.Varegruppe),
                 Overflate = HentFelt(rad, valgt.Overflate),
                 Enhet = NormaliserEnhet(HentFelt(rad, valgt.Enhet)),
                 PrisNetto = ParsePris(HentFelt(rad, valgt.PrisNetto)),
                 PrisVeiledende = ParsePris(HentFelt(rad, valgt.PrisVeiledende)),
-                MontasjeMinutterProsjekt = ParseHeltall(HentFelt(rad, valgt.MontasjeMinutterProsjekt)),
-                MontasjeMinutterArbeidsordre = ParseHeltall(HentFelt(rad, valgt.MontasjeMinutterArbeidsordre)),
-                MontasjeMinutterService = ParseHeltall(HentFelt(rad, valgt.MontasjeMinutterService)),
                 LagervareVerdi = lagervareVerdi,
                 AktivVerdi = aktivFlagg,
                 KomponenttypeNavn = importertKomponenttype?.Navn,
@@ -309,7 +277,7 @@ public class PrisimportService(ApplicationDbContext db)
         {
             if (rad.EksisterendeComponentId.HasValue)
             {
-                var comp = await db.Components.FindAsync(rad.EksisterendeComponentId.Value);
+                var comp = await db.Components.Include(c => c.Produktgrupper).FirstOrDefaultAsync(c => c.Id == rad.EksisterendeComponentId.Value);
                 if (comp is null)
                 {
                     continue;
@@ -329,26 +297,6 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     comp.Produsent = rad.Produsent;
                 }
-                if (!string.IsNullOrWhiteSpace(rad.ProdusentAdresse))
-                {
-                    comp.ProdusentAdresse = rad.ProdusentAdresse;
-                }
-                if (!string.IsNullOrWhiteSpace(rad.ProdusentPostnr))
-                {
-                    comp.ProdusentPostnr = rad.ProdusentPostnr;
-                }
-                if (!string.IsNullOrWhiteSpace(rad.ProdusentSted))
-                {
-                    comp.ProdusentSted = rad.ProdusentSted;
-                }
-                if (!string.IsNullOrWhiteSpace(rad.ProdusentLand))
-                {
-                    comp.ProdusentLand = rad.ProdusentLand;
-                }
-                if (!string.IsNullOrWhiteSpace(rad.ProdusentOrgnr))
-                {
-                    comp.ProdusentOrgnr = rad.ProdusentOrgnr;
-                }
                 if (!string.IsNullOrWhiteSpace(rad.Beskrivelse))
                 {
                     comp.Beskrivelse = rad.Beskrivelse;
@@ -364,18 +312,6 @@ public class PrisimportService(ApplicationDbContext db)
                 if (!string.IsNullOrWhiteSpace(rad.Enhet))
                 {
                     comp.Enhet = rad.Enhet;
-                }
-                if (rad.MontasjeMinutterProsjekt.HasValue)
-                {
-                    comp.MontasjeMinutterProsjekt = rad.MontasjeMinutterProsjekt;
-                }
-                if (rad.MontasjeMinutterArbeidsordre.HasValue)
-                {
-                    comp.MontasjeMinutterArbeidsordre = rad.MontasjeMinutterArbeidsordre;
-                }
-                if (rad.MontasjeMinutterService.HasValue)
-                {
-                    comp.MontasjeMinutterService = rad.MontasjeMinutterService;
                 }
                 if (rad.LagervareVerdi.HasValue)
                 {
@@ -393,25 +329,24 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     comp.ComponentTypeId = rad.ComponentTypeId;
                 }
-                if (rad.ProduktgruppeId.HasValue)
+                if (rad.ProduktgruppeId.HasValue && comp.Produktgrupper.All(p => p.Id != rad.ProduktgruppeId.Value))
                 {
-                    comp.ProduktgruppeId = rad.ProduktgruppeId;
+                    var gruppe = await db.Produktgrupper.FindAsync(rad.ProduktgruppeId.Value);
+                    if (gruppe is not null)
+                    {
+                        comp.Produktgrupper.Add(gruppe);
+                    }
                 }
 
                 oppdatert++;
             }
             else
             {
-                db.Components.Add(new Component
+                var nyKomponent = new Component
                 {
                     Navn = rad.Navn!,
                     Navn2 = string.IsNullOrWhiteSpace(rad.Navn2) ? null : rad.Navn2,
                     Produsent = string.IsNullOrWhiteSpace(rad.Produsent) ? null : rad.Produsent,
-                    ProdusentAdresse = string.IsNullOrWhiteSpace(rad.ProdusentAdresse) ? null : rad.ProdusentAdresse,
-                    ProdusentPostnr = string.IsNullOrWhiteSpace(rad.ProdusentPostnr) ? null : rad.ProdusentPostnr,
-                    ProdusentSted = string.IsNullOrWhiteSpace(rad.ProdusentSted) ? null : rad.ProdusentSted,
-                    ProdusentLand = string.IsNullOrWhiteSpace(rad.ProdusentLand) ? null : rad.ProdusentLand,
-                    ProdusentOrgnr = string.IsNullOrWhiteSpace(rad.ProdusentOrgnr) ? null : rad.ProdusentOrgnr,
                     Beskrivelse = string.IsNullOrWhiteSpace(rad.Beskrivelse) ? null : rad.Beskrivelse,
                     Varegruppe = string.IsNullOrWhiteSpace(rad.Varegruppe) ? null : rad.Varegruppe,
                     Overflate = string.IsNullOrWhiteSpace(rad.Overflate) ? null : rad.Overflate,
@@ -420,15 +355,22 @@ public class PrisimportService(ApplicationDbContext db)
                     Enhet = string.IsNullOrWhiteSpace(rad.Enhet) ? null : rad.Enhet,
                     PrisNetto = rad.PrisNetto,
                     PrisVeiledende = rad.PrisVeiledende,
-                    MontasjeMinutterProsjekt = rad.MontasjeMinutterProsjekt,
-                    MontasjeMinutterArbeidsordre = rad.MontasjeMinutterArbeidsordre,
-                    MontasjeMinutterService = rad.MontasjeMinutterService,
                     ILagerstyring = rad.LagervareVerdi ?? false,
                     Aktiv = rad.AktivVerdi ?? true,
                     RabattgruppeId = rad.RabattgruppeId,
-                    ComponentTypeId = rad.ComponentTypeId,
-                    ProduktgruppeId = rad.ProduktgruppeId
-                });
+                    ComponentTypeId = rad.ComponentTypeId
+                };
+                db.Components.Add(nyKomponent);
+
+                if (rad.ProduktgruppeId.HasValue)
+                {
+                    var gruppe = await db.Produktgrupper.FindAsync(rad.ProduktgruppeId.Value);
+                    if (gruppe is not null)
+                    {
+                        nyKomponent.Produktgrupper.Add(gruppe);
+                    }
+                }
+
                 nye++;
             }
         }
@@ -447,20 +389,10 @@ public class PrisimportService(ApplicationDbContext db)
         return trimmet switch
         {
             "1" => "Stk",
-            "2" => "Sett",
-            "3" => "m",
+            "2" => "Par",
+            "3" => "M",
             _ => tekst,
         };
-    }
-
-    private static int? ParseHeltall(string? tekst)
-    {
-        if (string.IsNullOrWhiteSpace(tekst))
-        {
-            return null;
-        }
-
-        return int.TryParse(tekst.Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out var verdi) ? verdi : null;
     }
 
     private static decimal? ParsePris(string? tekst)

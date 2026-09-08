@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260908164029_LeggTilBeskrivelsePaTilbudLinje")]
+    partial class LeggTilBeskrivelsePaTilbudLinje
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -30,21 +33,6 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ProsjekterId");
 
                     b.ToTable("ProsjektMedlemmer", (string)null);
-                });
-
-            modelBuilder.Entity("ComponentProduktgruppe", b =>
-                {
-                    b.Property<int>("KomponenterId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ProduktgrupperId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("KomponenterId", "ProduktgrupperId");
-
-                    b.HasIndex("ProduktgrupperId");
-
-                    b.ToTable("ComponentProduktgrupper", (string)null);
                 });
 
             modelBuilder.Entity("DorDorFunksjon", b =>
@@ -1028,6 +1016,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<decimal?>("PrisVeiledende")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ProduktgruppeId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Produktkode")
                         .HasColumnType("TEXT");
 
@@ -1058,6 +1049,8 @@ namespace PortalItlock.Web.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ComponentTypeId");
+
+                    b.HasIndex("ProduktgruppeId");
 
                     b.HasIndex("RabattgruppeId");
 
@@ -4751,21 +4744,6 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("ComponentProduktgruppe", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Component", null)
-                        .WithMany()
-                        .HasForeignKey("KomponenterId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.Produktgruppe", null)
-                        .WithMany()
-                        .HasForeignKey("ProduktgrupperId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("DorDorFunksjon", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Dor", null)
@@ -4956,10 +4934,16 @@ namespace PortalItlock.Web.Migrations
                         .WithMany("Komponenter")
                         .HasForeignKey("ComponentTypeId");
 
+                    b.HasOne("PortalItlock.Web.Models.Produktgruppe", "Produktgruppe")
+                        .WithMany("Komponenter")
+                        .HasForeignKey("ProduktgruppeId");
+
                     b.HasOne("PortalItlock.Web.Models.Rabattgruppe", "Rabattgruppe")
                         .WithMany("Komponenter")
                         .HasForeignKey("RabattgruppeId")
                         .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Produktgruppe");
 
                     b.Navigation("Rabattgruppe");
 
@@ -5954,6 +5938,8 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Produktgruppe", b =>
                 {
+                    b.Navigation("Komponenter");
+
                     b.Navigation("KundeRabatter");
                 });
 

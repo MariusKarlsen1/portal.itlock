@@ -1,0 +1,200 @@
+@page "/produktgrupper/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>@(_produktgruppe?.Navn ?? "Produktgruppe")</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke produktgruppen. Den kan være slettet.</p>
+}
+else if (_produktgruppe is not null)
+{
+    <a class="back-link" href="/produktgrupper">← Tilbake til produktgrupper</a>
+    <h1>@_produktgruppe.Navn</h1>
+
+    <section class="pg-section">
+        <label class="pg-navn-label">
+            Navn
+            <input @bind="_produktgruppe.Navn" @bind:event="oninput" />
+        </label>
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="LagreNavn">Lagre</button>
+            @if (!string.IsNullOrEmpty(_melding))
+            {
+                <span class="save-success">@_melding</span>
+            }
+        </div>
+    </section>
+
+    <section class="pg-section">
+        <h2>Varer i gruppen</h2>
+
+        <div class="component-search">
+            <label>
+                Legg til vare - søk i komponentregisteret
+                <input @bind="_sok" @bind:event="oninput" @bind:after="OnSokEndret" placeholder="Søk på navn, leverandør eller produktkode" />
+            </label>
+            @if (_sokeresultater.Count > 0)
+            {
+                <ul class="search-results">
+                    @foreach (var r in _sokeresultater)
+                    {
+                        <li>
+                            <button type="button" class="search-result" @onclick="@(() => LeggTilVare(r.Id))">
+                                <span class="search-result-name">@r.Navn</span>
+                                <span class="search-result-meta">@r.Leverandor</span>
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+            else if (_sok.Trim().Length >= 2)
+            {
+                <p class="search-empty">Ingen treff.</p>
+            }
+        </div>
+
+        @if (_produktgruppe.Komponenter.Count == 0)
+        {
+            <p class="list-empty">Ingen varer lagt til i denne gruppen ennå.</p>
+        }
+        else
+        {
+            <table class="rabatt-table">
+                <thead>
+                    <tr>
+                        <th>Navn</th>
+                        <th>Leverandør</th>
+                        <th>Produktkode</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in _produktgruppe.Komponenter.OrderBy(c => c.Navn))
+                    {
+                        <tr @key="c.Id">
+                            <td>@c.Navn</td>
+                            <td>@c.Leverandor</td>
+                            <td>@c.Produktkode</td>
+                            <td class="rabatt-actions">
+                                <button type="button" class="remove-button" @onclick="@(() => FjernVare(c))">Fjern</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private sealed class SearchResult
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Leverandor { get; set; }
+    }
+
+    private Produktgruppe? _produktgruppe;
+    private bool _notFound;
+    private string? _melding;
+    private string _sok = "";
+    private List<SearchResult> _sokeresultater = [];
+    private int? _loadedId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+        {
+            return;
+        }
+
+        _loadedId = Id;
+        _melding = null;
+        _sok = "";
+        _sokeresultater = [];
+
+        _produktgruppe = await Db.Produktgrupper
+            .Include(p => p.Komponenter)
+            .FirstOrDefaultAsync(p => p.Id == Id);
+
+        _notFound = _produktgruppe is null;
+    }
+
+    private async Task LagreNavn()
+    {
+        if (_produktgruppe is null || string.IsNullOrWhiteSpace(_produktgruppe.Navn))
+        {
+            return;
+        }
+
+        _produktgruppe.Navn = _produktgruppe.Navn.Trim();
+        await Db.SaveChangesAsync();
+        _melding = "Lagret.";
+    }
+
+    private async Task OnSokEndret()
+    {
+        var term = _sok.Trim();
+        if (term.Length < 2)
+        {
+            _sokeresultater = [];
+            return;
+        }
+
+        var alleredeIGruppen = _produktgruppe!.Komponenter.Select(c => c.Id).ToHashSet();
+
+        _sokeresultater = (await Db.Components
+                .Where(c => c.Aktiv && (
+                    EF.Functions.Like(c.Navn, $"%{term}%") ||
+                    (c.Leverandor != null && EF.Functions.Like(c.Leverandor, $"%{term}%")) ||
+                    (c.Produktkode != null && EF.Functions.Like(c.Produktkode, $"%{term}%"))))
+                .OrderBy(c => c.Navn)
+                .Take(20)
+                .Select(c => new SearchResult { Id = c.Id, Navn = c.Navn, Leverandor = c.Leverandor })
+                .ToListAsync())
+            .Where(r => !alleredeIGruppen.Contains(r.Id))
+            .ToList();
+    }
+
+    private async Task LeggTilVare(int componentId)
+    {
+        if (_produktgruppe is null || _produktgruppe.Komponenter.Any(c => c.Id == componentId))
+        {
+            return;
+        }
+
+        var component = await Db.Components.FindAsync(componentId);
+        if (component is null)
+        {
+            return;
+        }
+
+        _produktgruppe.Komponenter.Add(component);
+        await Db.SaveChangesAsync();
+
+        _sok = "";
+        _sokeresultater = [];
+        _melding = $"\"{component.Navn}\" lagt til i gruppen.";
+    }
+
+    private async Task FjernVare(Component c)
+    {
+        if (_produktgruppe is null)
+        {
+            return;
+        }
+
+        _produktgruppe.Komponenter.Remove(c);
+        await Db.SaveChangesAsync();
+        _melding = $"\"{c.Navn}\" fjernet fra gruppen.";
+    }
+}
