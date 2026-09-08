@@ -20,9 +20,16 @@
     <a class="back-link" href="/arbeidsordre/oversikt">Se faktureringsoversikt &rarr;</a>
 </AuthorizeView>
 
-@if (_rader.Count == 0)
+@if (_naverendeRolle == BrukerRolle.Montor)
 {
-    <p class="list-empty">Ingen arbeidsordre opprettet ennå.</p>
+    <label class="lav-toggle">
+        <input type="checkbox" @bind="_kunMineOppdrag" /> Vis kun mine oppdrag
+    </label>
+}
+
+@if (_radervisning.Count == 0)
+{
+    <p class="list-empty">@(_kunMineOppdrag ? "Ingen arbeidsordre tildelt deg ennå." : "Ingen arbeidsordre opprettet ennå.")</p>
 }
 else
 {
@@ -38,7 +45,7 @@ else
             </tr>
         </thead>
         <tbody>
-            @foreach (var r in _rader)
+            @foreach (var r in _radervisning)
             {
                 <tr @key="r.Id">
                     <td>@r.Tittel</td>
@@ -60,6 +67,7 @@ else
         public string Tittel { get; set; } = "";
         public string? ProsjektNavn { get; set; }
         public string? AnsvarligMontorNavn { get; set; }
+        public int? AnsvarligMontorId { get; set; }
         public ArbeidsordreStatus Status { get; set; }
         public decimal SumTimer { get; set; }
     }
@@ -67,8 +75,35 @@ else
     private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
     private List<ArbeidsordreRad> _rader = [];
 
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+    private BrukerRolle? _naverendeRolle;
+    private bool _kunMineOppdrag;
+
+    private List<ArbeidsordreRad> _radervisning => _kunMineOppdrag
+        ? _rader.Where(r => r.AnsvarligMontorId == _naverendeBrukerId).ToList()
+        : _rader;
+
     protected override async Task OnInitializedAsync()
     {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var idClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (idClaim is not null && int.TryParse(idClaim, out var id))
+            {
+                _naverendeBrukerId = id;
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
+            }
+        }
+
+        _kunMineOppdrag = _naverendeRolle == BrukerRolle.Montor;
+
         var ordre = await Db.Arbeidsordre
             .Where(a => a.Status != ArbeidsordreStatus.Fakturert)
             .Include(a => a.Prosjekt)
@@ -83,6 +118,7 @@ else
             Tittel = a.Tittel,
             ProsjektNavn = a.Prosjekt?.Navn,
             AnsvarligMontorNavn = a.AnsvarligMontor?.Navn,
+            AnsvarligMontorId = a.AnsvarligMontorId,
             Status = a.Status,
             SumTimer = a.Timeregistreringer.Sum(t => t.TotalTimer)
         }).ToList();
