@@ -30,6 +30,143 @@ else if (_ordre is not null)
         <p class="tilbud-link">Opprettet fra tilbud: <a href="@($"/tilbud/{_ordre.TilbudId}")">@_tilbudTittel</a></p>
     }
 
+    @if (_tilbudVarer.Count > 0)
+    {
+        <section class="ordre-section">
+            <h2>Varer å pakke</h2>
+            <ul class="varer-liste">
+                @foreach (var l in _tilbudVarer)
+                {
+                    @if (l.ErGruppering)
+                    {
+                        <li @key="l.Id" class="varer-gruppering">
+                            <strong>@l.Navn</strong>
+                            @if (!string.IsNullOrWhiteSpace(l.Beskrivelse))
+                            {
+                                <span>@l.Beskrivelse</span>
+                            }
+                        </li>
+                    }
+                    else
+                    {
+                        <li @key="l.Id" class="varer-rad">
+                            <span>@l.Navn</span>
+                            <span class="varer-antall">@l.Antall @(l.Enhet ?? "stk")</span>
+                        </li>
+                    }
+                }
+            </ul>
+        </section>
+    }
+
+    @if (!_ordre.TilbudId.HasValue)
+    {
+        <section class="ordre-section">
+            <h2>Varer å pakke</h2>
+            <p class="section-hint">Denne arbeidsordren er ikke koblet til et tilbud - søk opp varene som skal med her.</p>
+            <div class="component-search">
+                <label>
+                    Søk i komponentregisteret
+                    <input @bind="_vareSok" @bind:event="oninput" @bind:after="SokVarer" placeholder="Navn eller artikkelnr..." />
+                </label>
+                @if (_vareSokResultater.Count > 0)
+                {
+                    <ul class="search-results">
+                        @foreach (var c in _vareSokResultater)
+                        {
+                            <li>
+                                <button type="button" class="search-result" @onclick="@(() => LeggTilVare(c))">
+                                    <span class="search-result-name">@c.Navn</span>
+                                    <span class="search-result-meta">@c.Leverandor</span>
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+
+            @if (_ordre.Varer.Count == 0)
+            {
+                <p class="list-empty">Ingen varer lagt til ennå.</p>
+            }
+            else
+            {
+                <table class="varer-table">
+                    <thead>
+                        <tr>
+                            <th>Vare</th>
+                            <th>Antall</th>
+                            @if (ErAdminEllerPl)
+                            {
+                                <th>Utpris</th>
+                                <th>Kostpris</th>
+                            }
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var v in _ordre.Varer)
+                        {
+                            <tr @key="v.Id">
+                                <td>@v.Navn</td>
+                                <td><input type="number" min="1" class="antall-input" @bind="v.Antall" @bind:after="@(() => LagreVare(v))" /></td>
+                                @if (ErAdminEllerPl)
+                                {
+                                    <td><input type="number" step="0.01" class="pris-input" @bind="v.Utpris" @bind:after="@(() => LagreVare(v))" /></td>
+                                    <td><input type="number" step="0.01" class="pris-input" @bind="v.Kostpris" @bind:after="@(() => LagreVare(v))" /></td>
+                                }
+                                <td><button type="button" class="remove-button" @onclick="@(() => FjernVare(v))">Fjern</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        @if (ErAdminEllerPl)
+        {
+            <section class="ordre-section">
+                <h2>Montasjepris (uten tilbud)</h2>
+                <p class="section-hint">Brukes til å beregne totalsum og DG ved fakturering, siden det ikke finnes et tilbud å hente det fra.</p>
+                <div class="field-grid">
+                    <label>
+                        Timepris utfaktureres
+                        <input type="number" step="0.01" @bind="_ordre.Timepris" @bind:after="AutoLagre" />
+                    </label>
+                    <label>
+                        Kostpris pr. time
+                        <input type="number" step="0.01" @bind="_ordre.KostprisTime" @bind:after="AutoLagre" />
+                    </label>
+                </div>
+            </section>
+        }
+    }
+
+    @if (ErAdminEllerPl)
+    {
+        <section class="ordre-section">
+            <h2>Ticket</h2>
+            @if (_knyttetTicket is not null)
+            {
+                <p class="tilbud-link">Knyttet til ticket: <a href="@($"/ticket/{_knyttetTicket.Id}")">#@_knyttetTicket.Id - @_knyttetTicket.Tittel</a> (@_knyttetTicket.Status.Visningsnavn())</p>
+            }
+            else
+            {
+                <div class="ticket-knytt-rad">
+                    <select @bind="_valgtTicketId">
+                        <option value="">Velg ledig ticket...</option>
+                        @foreach (var t in _ledigeTickets)
+                        {
+                            <option value="@t.Id">#@t.Id - @t.Tittel</option>
+                        }
+                    </select>
+                    <button type="button" class="cancel-button" @onclick="KnyttTicket" disabled="@(_valgtTicketId is null)">Knytt ticket</button>
+                    <button type="button" class="add-button" @onclick="OpprettOgKnyttTicket">Opprett ny ticket</button>
+                </div>
+            }
+        </section>
+    }
+
     <section class="ordre-section">
         <div class="field-grid">
             <label class="span-2">
@@ -368,6 +505,16 @@ else if (_ordre is not null)
     private decimal _sumTimer;
     private int? _loadedId;
     private string? _tilbudTittel;
+    private List<TilbudLinje> _tilbudVarer = [];
+
+    private string _vareSok = "";
+    private List<Component> _vareSokResultater = [];
+
+    private Ticket? _knyttetTicket;
+    private List<Ticket> _ledigeTickets = [];
+    private int? _valgtTicketId;
+
+    private bool ErAdminEllerPl => _naverendeBruker?.Rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder;
     private List<SjekklisteMal> _maler = [];
     private List<ArbeidsordreSjekkpunkt> _sjekkpunkter = [];
     private int? _valgtMalId;
@@ -417,6 +564,7 @@ else if (_ordre is not null)
 
         _ordre = await Db.Arbeidsordre
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Include(a => a.Varer)
             .FirstOrDefaultAsync(a => a.Id == Id);
         _notFound = _ordre is null;
 
@@ -432,6 +580,15 @@ else if (_ordre is not null)
         _tilbudTittel = _ordre.TilbudId.HasValue
             ? (await Db.Tilbud.FirstOrDefaultAsync(t => t.Id == _ordre.TilbudId))?.Tittel
             : null;
+
+        _tilbudVarer = _ordre.TilbudId.HasValue
+            ? await Db.TilbudLinjer
+                .Where(l => l.TilbudId == _ordre.TilbudId.Value && (l.ErGruppering || l.LevertAv == LevertAv.F))
+                .OrderBy(l => l.Rekkefolge)
+                .ToListAsync()
+            : [];
+
+        await LastTicketAsync();
 
         _prosjekter = await Db.Prosjekter
             .OrderBy(p => p.Navn)
@@ -526,6 +683,104 @@ else if (_ordre is not null)
     }
 
     private async Task AutoLagre() => await Db.SaveChangesAsync();
+
+    private async Task SokVarer()
+    {
+        var term = _vareSok.Trim();
+        if (term.Length < 2)
+        {
+            _vareSokResultater = [];
+            return;
+        }
+
+        _vareSokResultater = await Db.Components
+            .Where(c => c.Aktiv && (EF.Functions.Like(c.Navn, $"%{term}%") || EF.Functions.Like(c.Produktkode, $"%{term}%")))
+            .OrderBy(c => c.Navn)
+            .Take(15)
+            .ToListAsync();
+    }
+
+    private async Task LeggTilVare(Component c)
+    {
+        _ordre!.Varer.Add(new ArbeidsordreVare
+        {
+            ArbeidsordreId = _ordre.Id,
+            ComponentId = c.Id,
+            Navn = c.Navn,
+            Antall = 1,
+            Kostpris = c.PrisNetto ?? 0,
+            Utpris = c.PrisVeiledende ?? c.PrisNetto ?? 0
+        });
+        _vareSok = "";
+        _vareSokResultater = [];
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreVare(ArbeidsordreVare v) => await Db.SaveChangesAsync();
+
+    private async Task FjernVare(ArbeidsordreVare v)
+    {
+        Db.ArbeidsordreVarer.Remove(v);
+        _ordre!.Varer.Remove(v);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LastTicketAsync()
+    {
+        _knyttetTicket = await Db.Tickets.FirstOrDefaultAsync(t => t.ArbeidsordreId == Id);
+        _ledigeTickets = _knyttetTicket is null
+            ? await Db.Tickets.Where(t => t.ArbeidsordreId == null && t.Status != TicketStatus.Lukket)
+                .OrderByDescending(t => t.OpprettetDato)
+                .ToListAsync()
+            : [];
+    }
+
+    private async Task KnyttTicket()
+    {
+        if (_valgtTicketId is null)
+        {
+            return;
+        }
+
+        var ticket = await Db.Tickets.FirstOrDefaultAsync(t => t.Id == _valgtTicketId.Value);
+        if (ticket is null)
+        {
+            return;
+        }
+
+        ticket.ArbeidsordreId = _ordre!.Id;
+        Db.TicketHendelser.Add(new TicketHendelse
+        {
+            TicketId = ticket.Id,
+            Beskrivelse = $"Knyttet til arbeidsordre: {_ordre.Tittel}",
+            UtfortAvBrukerId = _naverendeBrukerId
+        });
+        await Db.SaveChangesAsync();
+        _valgtTicketId = null;
+        await LastTicketAsync();
+    }
+
+    private async Task OpprettOgKnyttTicket()
+    {
+        var ticket = new Ticket
+        {
+            Tittel = _ordre!.Tittel,
+            KundeId = _ordre.Prosjekt?.KundeId,
+            ProsjektId = _ordre.ProsjektId,
+            ArbeidsordreId = _ordre.Id
+        };
+        Db.Tickets.Add(ticket);
+        await Db.SaveChangesAsync();
+
+        Db.TicketHendelser.Add(new TicketHendelse
+        {
+            TicketId = ticket.Id,
+            Beskrivelse = "Ticket opprettet fra arbeidsordre.",
+            UtfortAvBrukerId = _naverendeBrukerId
+        });
+        await Db.SaveChangesAsync();
+        await LastTicketAsync();
+    }
 
     private async Task Lagre()
     {

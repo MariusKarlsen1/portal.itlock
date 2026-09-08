@@ -85,6 +85,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServicerundeSjekkpunkt> ServicerundeSjekkpunkter => Set<ServicerundeSjekkpunkt>();
     public DbSet<ServicerundeMedia> ServicerundeMedia => Set<ServicerundeMedia>();
     public DbSet<ArbeidsordreMedia> ArbeidsordreMedia => Set<ArbeidsordreMedia>();
+    public DbSet<ArbeidsordreVare> ArbeidsordreVarer => Set<ArbeidsordreVare>();
     public DbSet<SjekklistePdf> SjekklistePdfer => Set<SjekklistePdf>();
     public DbSet<KundeOppfolgingNotat> KundeOppfolgingNotater => Set<KundeOppfolgingNotat>();
     public DbSet<FravarSoknad> FravarSoknader => Set<FravarSoknad>();
@@ -446,6 +447,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(a => a.Media)
             .HasForeignKey(m => m.ArbeidsordreId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ArbeidsordreVare>()
+            .HasOne(v => v.Arbeidsordre)
+            .WithMany(a => a.Varer)
+            .HasForeignKey(v => v.ArbeidsordreId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ArbeidsordreVare>()
+            .HasOne(v => v.Component)
+            .WithMany()
+            .HasForeignKey(v => v.ComponentId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<BefaringPdf>()
             .HasOne(p => p.Befaring)

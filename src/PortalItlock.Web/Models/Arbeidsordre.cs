@@ -33,7 +33,13 @@ public class Arbeidsordre
     public string? KundeInfoForJobb { get; set; }
     public DateTime? DokumentasjonEpostSendtDato { get; set; }
 
+    // Kun i bruk når arbeidsordren ikke er koblet til et tilbud - da har man ingen
+    // Tilbud-linjer å hente montasjepris/DG fra, så det settes manuelt her.
+    public decimal? Timepris { get; set; }
+    public decimal? KostprisTime { get; set; }
+
     public List<Timeregistrering> Timeregistreringer { get; set; } = [];
     public List<ArbeidsordreSjekkpunkt> Sjekkpunkter { get; set; } = [];
     public List<ArbeidsordreMedia> Media { get; set; } = [];
+    public List<ArbeidsordreVare> Varer { get; set; } = [];
 }

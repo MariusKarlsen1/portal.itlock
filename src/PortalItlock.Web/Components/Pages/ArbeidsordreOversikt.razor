@@ -1,0 +1,167 @@
+@page "/arbeidsordre/oversikt"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+<PageTitle>Faktureringsoversikt</PageTitle>
+
+<a class="back-link" href="/arbeidsordre/ferdigmeldte">&larr; Tilbake til ferdigmeldte prosjekter</a>
+<h1>Faktureringsoversikt</h1>
+<p class="section-hint">Fakturert omsetning og dekningsgrad (DG) per måned, basert på arbeidsordre markert som fakturert.</p>
+
+<div class="periode-bryter">
+    @foreach (var p in _perioder)
+    {
+        <button type="button" class="@(_valgtPeriode == p ? "periode-knapp aktiv" : "periode-knapp")" @onclick="@(() => VelgPeriode(p))">@p</button>
+    }
+</div>
+
+@if (_maneder.Count == 0)
+{
+    <p class="list-empty">Ingen fakturerte arbeidsordre i valgt periode.</p>
+}
+else
+{
+    <div class="stats-rad">
+        <div class="stat-kort">
+            <span>Totalt fakturert</span>
+            <strong>@FormatKr(_maneder.Sum(m => m.Sum))</strong>
+        </div>
+        <div class="stat-kort">
+            <span>Total DG</span>
+            <strong>@FormatKr(_maneder.Sum(m => m.Dg))</strong>
+        </div>
+        <div class="stat-kort">
+            <span>Snitt DG%</span>
+            <strong>@SnittDgProsent.ToString("N0", Kultur) %</strong>
+        </div>
+        <div class="stat-kort">
+            <span>Antall ordre</span>
+            <strong>@_maneder.Sum(m => m.AntallOrdre)</strong>
+        </div>
+    </div>
+
+    <div class="graf">
+        @foreach (var m in _maneder)
+        {
+            var hoydeProsent = _maksSum == 0 ? 0 : (double)(m.Sum / _maksSum * 100);
+            <div @key="m.Etikett" class="graf-soyle-wrap">
+                <div class="graf-soyle-tooltip">
+                    <strong>@m.Etikett</strong>
+                    <span>@FormatKr(m.Sum)</span>
+                    <span>DG: @FormatKr(m.Dg) (@m.DgProsent.ToString("N0", Kultur) %)</span>
+                    <span>@m.AntallOrdre ordre</span>
+                </div>
+                <div class="graf-soyle-kolonne">
+                    <div class="graf-soyle" style="height: @(Math.Max(hoydeProsent, 2).ToString("F1", System.Globalization.CultureInfo.InvariantCulture))%"></div>
+                </div>
+                <span class="graf-etikett">@m.Etikett</span>
+            </div>
+        }
+    </div>
+
+    <table class="maned-table">
+        <thead>
+            <tr>
+                <th>Måned</th>
+                <th>Fakturert</th>
+                <th>DG</th>
+                <th>DG%</th>
+                <th>Antall ordre</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var m in _maneder)
+            {
+                <tr @key="m.Etikett">
+                    <td>@m.Etikett</td>
+                    <td class="timer-cell">@FormatKr(m.Sum)</td>
+                    <td class="timer-cell">@FormatKr(m.Dg)</td>
+                    <td class="timer-cell">@m.DgProsent.ToString("N0", Kultur) %</td>
+                    <td class="timer-cell">@m.AntallOrdre</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private sealed class ManedData
+    {
+        public string Etikett { get; set; } = "";
+        public int Ar { get; set; }
+        public int Maned { get; set; }
+        public decimal Sum { get; set; }
+        public decimal Kost { get; set; }
+        public decimal Dg => Sum - Kost;
+        public decimal DgProsent => Sum == 0 ? 0 : Dg / Sum * 100;
+        public int AntallOrdre { get; set; }
+    }
+
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+    private readonly string[] _perioder = ["Siste 6 måneder", "Siste 12 måneder", "I år", "Alle"];
+    private string _valgtPeriode = "Siste 12 måneder";
+    private List<ManedData> _maneder = [];
+    private decimal _maksSum;
+
+    private decimal SnittDgProsent
+    {
+        get
+        {
+            var sum = _maneder.Sum(m => m.Sum);
+            return sum == 0 ? 0 : _maneder.Sum(m => m.Dg) / sum * 100;
+        }
+    }
+
+    private static string FormatKr(decimal verdi) => verdi.ToString("N0", Kultur) + " kr";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LastAsync();
+    }
+
+    private async Task VelgPeriode(string p)
+    {
+        _valgtPeriode = p;
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        var fra = _valgtPeriode switch
+        {
+            "Siste 6 måneder" => DateTime.Now.AddMonths(-5).Date.AddDays(1 - DateTime.Now.AddMonths(-5).Day),
+            "Siste 12 måneder" => DateTime.Now.AddMonths(-11).Date.AddDays(1 - DateTime.Now.AddMonths(-11).Day),
+            "I år" => new DateTime(DateTime.Now.Year, 1, 1),
+            _ => DateTime.MinValue
+        };
+
+        var ordre = await Db.Arbeidsordre
+            .Where(a => a.Status == ArbeidsordreStatus.Fakturert && a.FakturertDato != null && a.FakturertDato >= fra)
+            .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer)
+            .Include(a => a.Varer)
+            .Include(a => a.Timeregistreringer)
+            .ToListAsync();
+
+        var gruppert = ordre
+            .GroupBy(a => new { a.FakturertDato!.Value.Year, a.FakturertDato.Value.Month })
+            .OrderBy(g => g.Key.Year).ThenBy(g => g.Key.Month)
+            .Select(g => new ManedData
+            {
+                Ar = g.Key.Year,
+                Maned = g.Key.Month,
+                Etikett = $"{Kultur.DateTimeFormat.GetAbbreviatedMonthName(g.Key.Month)} {g.Key.Year}",
+                Sum = g.Sum(ArbeidsordreBeregningHelper.BeregnVareSum),
+                Kost = g.Sum(ArbeidsordreBeregningHelper.BeregnVareKost),
+                AntallOrdre = g.Count()
+            })
+            .ToList();
+
+        _maneder = gruppert;
+        _maksSum = _maneder.Count > 0 ? _maneder.Max(m => m.Sum) : 0;
+    }
+}
