@@ -7,6 +7,7 @@
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>Komponentregister</PageTitle>
 
@@ -19,11 +20,30 @@
 <div class="ny-komponenttype-rad">
     <input @bind="_nyTypeNavn" @bind:event="oninput" placeholder="Navn på ny komponenttype" />
     <button type="button" class="add-button" @onclick="CreateComponentType">Opprett ny komponenttype</button>
+    <button type="button" class="cancel-button" @onclick="@(() => _visTyperPanel = !_visTyperPanel)">@(_visTyperPanel ? "Skjul komponenttyper" : "Endre komponenttyper")</button>
     @if (!string.IsNullOrEmpty(_nyTypeMessage))
     {
         <span class="save-success">@_nyTypeMessage</span>
     }
 </div>
+
+@if (_visTyperPanel)
+{
+    <div class="komponenttype-panel">
+        @foreach (var t in _types)
+        {
+            <div class="komponenttype-rad" @key="t.Id">
+                <input @bind="t.Navn" @bind:event="oninput" />
+                <button type="button" class="save-button" @onclick="@(() => RenameComponentType(t))">Lagre</button>
+                <button type="button" class="cancel-button" disabled="@_components.Any(c => c.ComponentTypeId == t.Id)" title="@(_components.Any(c => c.ComponentTypeId == t.Id) ? "Kan ikke slette - i bruk på komponenter" : null)" @onclick="@(() => DeleteComponentType(t))">Slett</button>
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(_typerPanelMessage))
+        {
+            <p class="save-success">@_typerPanelMessage</p>
+        }
+    </div>
+}
 
 <div class="filters">
     <input @bind="_search" @bind:event="oninput" @bind:after="ResetPage" placeholder="Søk på navn, leverandør eller produktkode" class="search-input" />
@@ -60,7 +80,10 @@
     <button type="button" class="page-button" disabled="@(_page + 1 >= TotalPages)" @onclick="@(() => ChangePage(1))">Neste</button>
 </div>
 
-<div class="table-wrap">
+<div id="komponenter-scroll-top" class="table-scroll-top">
+    <div class="table-scroll-top-inner"></div>
+</div>
+<div class="table-wrap" id="komponenter-table-wrap">
     <table class="component-table">
         <thead>
             <tr>
@@ -333,6 +356,8 @@
     private string? _addMessage;
     private string _nyTypeNavn = "";
     private string? _nyTypeMessage;
+    private bool _visTyperPanel;
+    private string? _typerPanelMessage;
     private string? _fdvFeil;
 
     private int TotalPages => (int)Math.Ceiling(_filteredCount / (double)PageSize);
@@ -412,6 +437,17 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadAsync();
+    }
+
+    private bool _scrollSynkKoblet;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_scrollSynkKoblet)
+        {
+            _scrollSynkKoblet = true;
+            await JS.InvokeVoidAsync("tabellscroll.koble", "komponenter-scroll-top", "komponenter-table-wrap");
+        }
     }
 
     private async Task LoadAsync()
@@ -632,6 +668,46 @@
 
         _nyTypeMessage = $"Komponenttypen \"{navn}\" er opprettet.";
         _nyTypeNavn = "";
+        await LoadAsync();
+    }
+
+    private async Task RenameComponentType(ComponentType t)
+    {
+        var navn = t.Navn.Trim();
+        if (navn.Length == 0)
+        {
+            return;
+        }
+
+        var entity = await Db.ComponentTypes.FindAsync(t.Id);
+        if (entity is null)
+        {
+            return;
+        }
+
+        entity.Navn = navn;
+        await Db.SaveChangesAsync();
+        _typerPanelMessage = $"\"{navn}\" er lagret.";
+        await LoadAsync();
+    }
+
+    private async Task DeleteComponentType(ComponentType t)
+    {
+        if (_components.Any(c => c.ComponentTypeId == t.Id))
+        {
+            _typerPanelMessage = $"Kan ikke slette \"{t.Navn}\" - i bruk på {_components.Count(c => c.ComponentTypeId == t.Id)} komponent(er).";
+            return;
+        }
+
+        var entity = await Db.ComponentTypes.FindAsync(t.Id);
+        if (entity is null)
+        {
+            return;
+        }
+
+        Db.ComponentTypes.Remove(entity);
+        await Db.SaveChangesAsync();
+        _typerPanelMessage = $"\"{t.Navn}\" er slettet.";
         await LoadAsync();
     }
 }
