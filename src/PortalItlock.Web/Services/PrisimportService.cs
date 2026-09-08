@@ -31,6 +31,7 @@ public class PrisimportService(ApplicationDbContext db)
         public int? EksisterendeComponentId { get; set; }
         public string? EksisterendeNavn { get; set; }
         public string? RabattgruppeKode { get; set; }
+        public int? RabattgruppeId { get; set; }
         public bool NettoErBeregnet { get; set; }
         public string? Feil { get; set; }
         public bool Inkluder { get; set; } = true;
@@ -51,6 +52,7 @@ public class PrisimportService(ApplicationDbContext db)
         public int? PrisVeiledende { get; set; }
         public int? Lager { get; set; }
         public int? Inaktiv { get; set; }
+        public int? Rabattgruppe { get; set; }
     }
 
     // Finner sannsynlig kolonne per felt ut fra overskriftstekst, slik at brukeren
@@ -74,6 +76,7 @@ public class PrisimportService(ApplicationDbContext db)
             PrisVeiledende = Finn("veiledende", "utpris", "listepris", "bruttopris", "veil.", "veil pris", "salgspris"),
             Lager = Finn("lager", "lagervare"),
             Inaktiv = Finn("inaktiv"),
+            Rabattgruppe = Finn("rabattgruppe", "rabatt gruppe", "rabattkode"),
         };
     }
 
@@ -116,6 +119,12 @@ public class PrisimportService(ApplicationDbContext db)
             .GroupBy(c => c.Produktkode!.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First());
 
+        var rabattgrupperPerKode = (await db.Rabattgrupper
+                .Where(r => r.Leverandor.ToLower() == leverandor.ToLower() && r.Aktiv)
+                .ToListAsync())
+            .GroupBy(r => r.Kode.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First());
+
         var resultat = new List<ImportRad>();
         for (var i = 0; i < rader.Count; i++)
         {
@@ -130,6 +139,12 @@ public class PrisimportService(ApplicationDbContext db)
 
             var lagerVerdi = HentFelt(rad, valgt.Lager)?.Trim();
             var inaktivVerdi = HentFelt(rad, valgt.Inaktiv)?.Trim();
+            var rabattgruppeVerdi = HentFelt(rad, valgt.Rabattgruppe)?.Trim();
+            Rabattgruppe? importertRabattgruppe = null;
+            if (!string.IsNullOrEmpty(rabattgruppeVerdi))
+            {
+                rabattgrupperPerKode.TryGetValue(rabattgruppeVerdi.ToLowerInvariant(), out importertRabattgruppe);
+            }
 
             var importRad = new ImportRad
             {
@@ -146,6 +161,17 @@ public class PrisimportService(ApplicationDbContext db)
                 SettInaktiv = !string.IsNullOrEmpty(inaktivVerdi) && inaktivVerdi.Equals("I", StringComparison.OrdinalIgnoreCase),
             };
 
+            void SettRabattgruppe(Rabattgruppe gruppe)
+            {
+                importRad.RabattgruppeId = gruppe.Id;
+                importRad.RabattgruppeKode = gruppe.Kode;
+                if (importRad.PrisVeiledende.HasValue)
+                {
+                    importRad.PrisNetto = Math.Round(importRad.PrisVeiledende.Value * (1 - gruppe.RabattProsent / 100m), 2);
+                    importRad.NettoErBeregnet = true;
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(produktkode))
             {
                 importRad.Feil = "Mangler produktkode";
@@ -156,7 +182,11 @@ public class PrisimportService(ApplicationDbContext db)
                 importRad.EksisterendeNavn = funnet.Navn;
                 importRad.ErNyVare = false;
 
-                if (funnet.Rabattgruppe is not null && importRad.PrisVeiledende.HasValue)
+                if (importertRabattgruppe is not null)
+                {
+                    SettRabattgruppe(importertRabattgruppe);
+                }
+                else if (funnet.Rabattgruppe is not null && importRad.PrisVeiledende.HasValue)
                 {
                     importRad.RabattgruppeKode = funnet.Rabattgruppe.Kode;
                     importRad.PrisNetto = Math.Round(importRad.PrisVeiledende.Value * (1 - funnet.Rabattgruppe.RabattProsent / 100m), 2);
@@ -166,6 +196,10 @@ public class PrisimportService(ApplicationDbContext db)
             else
             {
                 importRad.ErNyVare = true;
+                if (importertRabattgruppe is not null)
+                {
+                    SettRabattgruppe(importertRabattgruppe);
+                }
                 if (string.IsNullOrWhiteSpace(navn))
                 {
                     importRad.Feil = "Ny vare mangler navn";
@@ -219,6 +253,10 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     comp.Aktiv = false;
                 }
+                if (rad.RabattgruppeId.HasValue)
+                {
+                    comp.RabattgruppeId = rad.RabattgruppeId;
+                }
 
                 oppdatert++;
             }
@@ -236,7 +274,8 @@ public class PrisimportService(ApplicationDbContext db)
                     PrisNetto = rad.PrisNetto,
                     PrisVeiledende = rad.PrisVeiledende,
                     ILagerstyring = rad.SettLagervare,
-                    Aktiv = !rad.SettInaktiv
+                    Aktiv = !rad.SettInaktiv,
+                    RabattgruppeId = rad.RabattgruppeId
                 });
                 nye++;
             }
