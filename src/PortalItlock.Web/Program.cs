@@ -76,6 +76,7 @@ builder.Services.AddHttpClient<DatabaseBackupService>(client =>
 builder.Services.AddHostedService<DatabaseBackupBackgroundService>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddSingleton<PostnummerService>();
+builder.Services.AddSingleton<PresenceService>();
 builder.Services.AddHttpClient<EmailService>(client =>
 {
     client.BaseAddress = new Uri("https://api.resend.com/");
