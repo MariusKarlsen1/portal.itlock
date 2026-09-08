@@ -19,9 +19,14 @@ public class PrisimportService(ApplicationDbContext db)
         public int RadNummer { get; set; }
         public string? Produktkode { get; set; }
         public string? Navn { get; set; }
+        public string? Navn2 { get; set; }
+        public string? Beskrivelse { get; set; }
+        public string? Varegruppe { get; set; }
         public string? Enhet { get; set; }
         public decimal? PrisNetto { get; set; }
         public decimal? PrisVeiledende { get; set; }
+        public bool SettLagervare { get; set; }
+        public bool SettInaktiv { get; set; }
         public bool ErNyVare { get; set; }
         public int? EksisterendeComponentId { get; set; }
         public string? EksisterendeNavn { get; set; }
@@ -31,14 +36,21 @@ public class PrisimportService(ApplicationDbContext db)
         public bool Inkluder { get; set; } = true;
     }
 
+    // Brukes baade som "hva vi automatisk foreslo" og som brukerens gjeldende
+    // kolonnevalg i mappingskjemaet - samme form paa begge, saa dette er den ene klassen.
     public sealed class KolonneForslag
     {
         public int? Produktkode { get; set; }
         public int? Gtin { get; set; }
         public int? Navn { get; set; }
+        public int? Navn2 { get; set; }
+        public int? Beskrivelse { get; set; }
+        public int? Varegruppe { get; set; }
         public int? Enhet { get; set; }
         public int? PrisNetto { get; set; }
         public int? PrisVeiledende { get; set; }
+        public int? Lager { get; set; }
+        public int? Inaktiv { get; set; }
     }
 
     // Finner sannsynlig kolonne per felt ut fra overskriftstekst, slik at brukeren
@@ -53,10 +65,15 @@ public class PrisimportService(ApplicationDbContext db)
         {
             Produktkode = Finn("produktkode", "artikkelnr", "varenr", "art.nr", "art nr", "sku", "vare nr", "produktnr"),
             Gtin = Finn("gtin", "ean", "strekkode", "barcode"),
-            Navn = Finn("navn", "beskrivelse", "betegnelse", "produktnavn", "varetekst"),
+            Navn = Finn("varenavn 1", "varenavn1", "navn", "produktnavn", "varetekst"),
+            Navn2 = Finn("varenavn 2", "varenavn2", "navn 2"),
+            Beskrivelse = Finn("beskrivelse", "varebeskrivelse", "produktbeskrivelse"),
+            Varegruppe = Finn("varegruppe", "produktgruppe", "kategori"),
             Enhet = Finn("enhet", "måleenhet", "maaleenhet", "unit"),
             PrisNetto = Finn("nettopris", "netto pris", "innkjøpspris", "innkjøp", "kostpris", "netto"),
             PrisVeiledende = Finn("veiledende", "utpris", "listepris", "bruttopris", "veil.", "veil pris", "salgspris"),
+            Lager = Finn("lager", "lagervare"),
+            Inaktiv = Finn("inaktiv"),
         };
     }
 
@@ -89,9 +106,7 @@ public class PrisimportService(ApplicationDbContext db)
         return (kolonner, dataRader);
     }
 
-    public async Task<List<ImportRad>> ForhandsvisAsync(
-        List<string[]> rader, string leverandor,
-        int produktkodeKol, int? navnKol, int? enhetKol, int? prisNettoKol, int? prisVeiledendeKol)
+    public async Task<List<ImportRad>> ForhandsvisAsync(List<string[]> rader, string leverandor, KolonneForslag valgt)
     {
         var eksisterende = await db.Components
             .Include(c => c.Rabattgruppe)
@@ -105,22 +120,30 @@ public class PrisimportService(ApplicationDbContext db)
         for (var i = 0; i < rader.Count; i++)
         {
             var rad = rader[i];
-            var produktkode = HentFelt(rad, produktkodeKol);
-            var navn = HentFelt(rad, navnKol);
+            var produktkode = HentFelt(rad, valgt.Produktkode);
+            var navn = HentFelt(rad, valgt.Navn);
 
             if (string.IsNullOrWhiteSpace(produktkode) && string.IsNullOrWhiteSpace(navn))
             {
                 continue;
             }
 
+            var lagerVerdi = HentFelt(rad, valgt.Lager)?.Trim();
+            var inaktivVerdi = HentFelt(rad, valgt.Inaktiv)?.Trim();
+
             var importRad = new ImportRad
             {
                 RadNummer = i + 2,
                 Produktkode = produktkode,
                 Navn = navn,
-                Enhet = HentFelt(rad, enhetKol),
-                PrisNetto = ParsePris(HentFelt(rad, prisNettoKol)),
-                PrisVeiledende = ParsePris(HentFelt(rad, prisVeiledendeKol))
+                Navn2 = HentFelt(rad, valgt.Navn2),
+                Beskrivelse = HentFelt(rad, valgt.Beskrivelse),
+                Varegruppe = HentFelt(rad, valgt.Varegruppe),
+                Enhet = HentFelt(rad, valgt.Enhet),
+                PrisNetto = ParsePris(HentFelt(rad, valgt.PrisNetto)),
+                PrisVeiledende = ParsePris(HentFelt(rad, valgt.PrisVeiledende)),
+                SettLagervare = !string.IsNullOrEmpty(lagerVerdi) && lagerVerdi.Equals("J", StringComparison.OrdinalIgnoreCase),
+                SettInaktiv = !string.IsNullOrEmpty(inaktivVerdi) && inaktivVerdi.Equals("I", StringComparison.OrdinalIgnoreCase),
             };
 
             if (string.IsNullOrWhiteSpace(produktkode))
@@ -176,6 +199,26 @@ public class PrisimportService(ApplicationDbContext db)
 
                 comp.PrisNetto = nyNetto;
                 comp.PrisVeiledende = nyVeil;
+                if (!string.IsNullOrWhiteSpace(rad.Navn2))
+                {
+                    comp.Navn2 = rad.Navn2;
+                }
+                if (!string.IsNullOrWhiteSpace(rad.Beskrivelse))
+                {
+                    comp.Beskrivelse = rad.Beskrivelse;
+                }
+                if (!string.IsNullOrWhiteSpace(rad.Varegruppe))
+                {
+                    comp.Varegruppe = rad.Varegruppe;
+                }
+                if (rad.SettLagervare)
+                {
+                    comp.ILagerstyring = true;
+                }
+                if (rad.SettInaktiv)
+                {
+                    comp.Aktiv = false;
+                }
 
                 oppdatert++;
             }
@@ -184,11 +227,16 @@ public class PrisimportService(ApplicationDbContext db)
                 db.Components.Add(new Component
                 {
                     Navn = rad.Navn!,
+                    Navn2 = string.IsNullOrWhiteSpace(rad.Navn2) ? null : rad.Navn2,
+                    Beskrivelse = string.IsNullOrWhiteSpace(rad.Beskrivelse) ? null : rad.Beskrivelse,
+                    Varegruppe = string.IsNullOrWhiteSpace(rad.Varegruppe) ? null : rad.Varegruppe,
                     Produktkode = rad.Produktkode,
                     Leverandor = leverandor,
                     Enhet = string.IsNullOrWhiteSpace(rad.Enhet) ? null : rad.Enhet,
                     PrisNetto = rad.PrisNetto,
-                    PrisVeiledende = rad.PrisVeiledende
+                    PrisVeiledende = rad.PrisVeiledende,
+                    ILagerstyring = rad.SettLagervare,
+                    Aktiv = !rad.SettInaktiv
                 });
                 nye++;
             }

@@ -7,6 +7,7 @@ public class Component
     public ComponentType? Type { get; set; }
 
     public required string Navn { get; set; }
+    public string? Navn2 { get; set; }
     public string? Produsent { get; set; }
     public string? ProdusentAdresse { get; set; }
     public string? ProdusentPostnr { get; set; }
@@ -39,6 +40,10 @@ public class Component
     public byte[]? FdvData { get; set; }
     public string? FdvFilnavn { get; set; }
     public string? FdvContentType { get; set; }
+
+    public byte[]? MontasjebladData { get; set; }
+    public string? MontasjebladFilnavn { get; set; }
+    public string? MontasjebladContentType { get; set; }
 
     public List<PackageComponent> Pakker { get; set; } = [];
 }

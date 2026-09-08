@@ -68,7 +68,8 @@
                 <th>Aktiv</th>
                 <th>Lager</th>
                 <th>Komponenttype</th>
-                <th>Navn</th>
+                <th>Varenavn 1</th>
+                <th>Varenavn 2</th>
                 <th>Produsent</th>
                 <th>Leverandør</th>
                 <th>Produktkode</th>
@@ -82,6 +83,7 @@
                 <th>Montasjetid service</th>
                 <th>Enhet</th>
                 <th>FDV</th>
+                <th>Montasjeblad</th>
                 <th>Brukt i</th>
             </tr>
         </thead>
@@ -121,6 +123,7 @@
                             </select>
                         </td>
                         <td><input @bind="c.Navn" /></td>
+                        <td><input @bind="c.Navn2" placeholder="Varenavn 2 (valgfritt)" /></td>
                         <td><input @bind="c.Produsent" placeholder="F.eks. Dormakaba" /></td>
                         <td><input @bind="c.Leverandor" /></td>
                         <td><input @bind="c.Produktkode" /></td>
@@ -167,12 +170,24 @@
                                 <InputFile OnChange="@(e => UploadFdv(c, e))" accept=".pdf,application/pdf" />
                             }
                         </td>
+                        <td class="fdv-cell">
+                            @if (c.HarMontasjeblad)
+                            {
+                                <a href="@($"/komponent/{c.Id}/montasjeblad")" target="_blank">@c.MontasjebladFilnavn</a>
+                                <button type="button" class="remove-button" @onclick="@(() => RemoveMontasjeblad(c))">Fjern</button>
+                            }
+                            else
+                            {
+                                <InputFile OnChange="@(e => UploadMontasjeblad(c, e))" accept=".pdf,application/pdf" />
+                            }
+                        </td>
                         <td>@UsageLabel(c.PackageCount)</td>
                     }
                     else
                     {
                         <td>@c.TypeName</td>
                         <td>@c.Navn</td>
+                        <td>@c.Navn2</td>
                         <td>@c.Produsent</td>
                         <td>@c.Leverandor</td>
                         <td>@c.Produktkode</td>
@@ -194,6 +209,17 @@
                             else
                             {
                                 <InputFile OnChange="@(e => UploadFdv(c, e))" accept=".pdf,application/pdf" />
+                            }
+                        </td>
+                        <td class="fdv-cell">
+                            @if (c.HarMontasjeblad)
+                            {
+                                <a href="@($"/komponent/{c.Id}/montasjeblad")" target="_blank">@c.MontasjebladFilnavn</a>
+                                <button type="button" class="remove-button" @onclick="@(() => RemoveMontasjeblad(c))">Fjern</button>
+                            }
+                            else
+                            {
+                                <InputFile OnChange="@(e => UploadMontasjeblad(c, e))" accept=".pdf,application/pdf" />
                             }
                         </td>
                         <td>@UsageLabel(c.PackageCount)</td>
@@ -253,6 +279,7 @@
         public int? ComponentTypeId { get; set; }
         public string TypeName { get; set; } = "";
         public string Navn { get; set; } = "";
+        public string? Navn2 { get; set; }
         public string? Produsent { get; set; }
         public string? ProdusentAdresse { get; set; }
         public string? ProdusentPostnr { get; set; }
@@ -277,6 +304,8 @@
         public int PackageCount { get; set; }
         public bool HarFdv { get; set; }
         public string? FdvFilnavn { get; set; }
+        public bool HarMontasjeblad { get; set; }
+        public string? MontasjebladFilnavn { get; set; }
     }
 
     private sealed class NewComponentDraft
@@ -402,6 +431,7 @@
             ComponentTypeId = c.ComponentTypeId,
             TypeName = c.Type?.Navn ?? "Ikke satt",
             Navn = c.Navn,
+            Navn2 = c.Navn2,
             Produsent = c.Produsent,
             ProdusentAdresse = c.ProdusentAdresse,
             ProdusentPostnr = c.ProdusentPostnr,
@@ -424,7 +454,9 @@
             ILagerstyring = c.ILagerstyring,
             PackageCount = c.Pakker.Count,
             HarFdv = c.FdvData != null,
-            FdvFilnavn = c.FdvFilnavn
+            FdvFilnavn = c.FdvFilnavn,
+            HarMontasjeblad = c.MontasjebladData != null,
+            MontasjebladFilnavn = c.MontasjebladFilnavn
         }).ToList();
 
         _leverandorer = _components
@@ -465,6 +497,7 @@
 
         entity.ComponentTypeId = draft.ComponentTypeId;
         entity.Navn = draft.Navn.Trim();
+        entity.Navn2 = string.IsNullOrWhiteSpace(draft.Navn2) ? null : draft.Navn2.Trim();
         entity.Produsent = string.IsNullOrWhiteSpace(draft.Produsent) ? null : draft.Produsent.Trim();
         entity.ProdusentAdresse = string.IsNullOrWhiteSpace(draft.ProdusentAdresse) ? null : draft.ProdusentAdresse.Trim();
         entity.ProdusentPostnr = string.IsNullOrWhiteSpace(draft.ProdusentPostnr) ? null : draft.ProdusentPostnr.Trim();
@@ -524,6 +557,44 @@
 
         draft.HarFdv = false;
         draft.FdvFilnavn = null;
+    }
+
+    private async Task UploadMontasjeblad(ComponentDraft draft, InputFileChangeEventArgs e)
+    {
+        _fdvFeil = null;
+        var file = e.File;
+        if (file.Size > 20_000_000)
+        {
+            _fdvFeil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        var entity = await Db.Components.FirstAsync(c => c.Id == draft.Id);
+        entity.MontasjebladData = buffer.ToArray();
+        entity.MontasjebladFilnavn = file.Name;
+        entity.MontasjebladContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType;
+        await Db.SaveChangesAsync();
+
+        draft.HarMontasjeblad = true;
+        draft.MontasjebladFilnavn = file.Name;
+    }
+
+    private async Task RemoveMontasjeblad(ComponentDraft draft)
+    {
+        var entity = await Db.Components.FirstAsync(c => c.Id == draft.Id);
+        entity.MontasjebladData = null;
+        entity.MontasjebladFilnavn = null;
+        entity.MontasjebladContentType = null;
+        await Db.SaveChangesAsync();
+
+        draft.HarMontasjeblad = false;
+        draft.MontasjebladFilnavn = null;
     }
 
     private async Task AddComponent()
