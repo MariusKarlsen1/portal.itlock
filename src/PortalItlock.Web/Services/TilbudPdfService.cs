@@ -72,7 +72,9 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     PrisType = l.PrisType,
                     Prosentsats = l.Prosentsats,
                     RabattProsent = l.RabattProsent,
-                    Rekkefolge = l.Rekkefolge
+                    Rekkefolge = l.Rekkefolge,
+                    ErGruppering = l.ErGruppering,
+                    Beskrivelse = l.Beskrivelse
                 })
                 .Where(l => l.ComponentId is null || l.Antall > 0)
                 .ToList();
@@ -240,6 +242,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         var visVarenummer = !tilbud.SkjulVarenummerISammendrag;
         var visLevering = linjer.Any(l => l.LevertAv != LevertAv.F);
         var visOverflate = linjer.Any(l => !string.IsNullOrWhiteSpace(l.Component?.Overflate));
+        var totaltAntallKolonner = (visVarenummer ? 1 : 0) + 1 + 1 + (visOverflate ? 1 : 0) + 1 + (visLevering ? 1 : 0)
+            + (tilbud.VisEnhetspris ? (visRabatt ? 1 : 0) + 2 : 0);
 
         col.Item().Text("Produktsammendrag").FontSize(16).SemiBold();
 
@@ -305,6 +309,24 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
             foreach (var l in linjer)
             {
+                if (l.ErGruppering)
+                {
+                    table.Cell().ColumnSpan((uint)totaltAntallKolonner)
+                        .BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(4).PaddingRight(6)
+                        .Column(inner =>
+                        {
+                            if (!string.IsNullOrWhiteSpace(l.Navn))
+                            {
+                                inner.Item().Text(l.Navn).Bold();
+                            }
+                            if (!string.IsNullOrWhiteSpace(l.Beskrivelse))
+                            {
+                                inner.Item().PaddingTop(2).Text(l.Beskrivelse).FontSize(9);
+                            }
+                        });
+                    continue;
+                }
+
                 IContainer Rad() => table.Cell().BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(3).PaddingRight(6);
 
                 if (visVarenummer)
