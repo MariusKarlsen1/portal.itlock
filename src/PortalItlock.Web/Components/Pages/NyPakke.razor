@@ -43,6 +43,33 @@ else
                                   SelectedValueIdsChanged="OnSelectionChanged" />
         </div>
 
+        <div class="ny-pakke-funksjoner">
+            <h2>Dørfunksjoner</h2>
+            <p class="component-empty-hint">Dørfunksjonene som velges her følger med automatisk når pakken legges til på en dør.</p>
+            <div class="funksjon-legg-til">
+                <select @bind="_valgtFunksjonId">
+                    <option value="">Velg funksjon...</option>
+                    @foreach (var f in _ledigeFunksjoner)
+                    {
+                        <option value="@f.Id">@f.Navn</option>
+                    }
+                </select>
+                <button type="button" class="add-button" @onclick="LeggTilFunksjon" disabled="@(_valgtFunksjonId is null)">Legg til</button>
+            </div>
+            @if (_valgteFunksjoner.Count > 0)
+            {
+                <ul class="funksjon-chip-list">
+                    @foreach (var f in _valgteFunksjoner)
+                    {
+                        <li @key="f.Id" class="funksjon-chip">
+                            @f.Navn
+                            <button type="button" @onclick="@(() => FjernFunksjon(f))">&times;</button>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+
         <div class="ny-pakke-komponenter">
             <h2>Komponenter</h2>
 
@@ -248,6 +275,12 @@ else
     private int? _loadedId;
     private string _componentSearch = "";
     private List<SearchResult> _searchResults = [];
+    private List<DorFunksjon> _alleFunksjoner = [];
+    private List<DorFunksjon> _valgteFunksjoner = [];
+    private int? _valgtFunksjonId;
+
+    private List<DorFunksjon> _ledigeFunksjoner =>
+        _alleFunksjoner.Where(f => _valgteFunksjoner.All(vf => vf.Id != f.Id)).ToList();
 
     protected override async Task OnParametersSetAsync()
     {
@@ -287,6 +320,10 @@ else
         _componentTypes = await Db.ComponentTypes
             .OrderBy(t => t.Navn)
             .ToListAsync();
+
+        _alleFunksjoner = await Db.DorFunksjoner
+            .OrderBy(f => f.Navn)
+            .ToListAsync();
     }
 
     private async Task LoadPackageAsync(int id)
@@ -295,6 +332,7 @@ else
             .Include(p => p.Krav)
             .Include(p => p.Komponenter)
                 .ThenInclude(pc => pc.Component)
+            .Include(p => p.DorFunksjoner)
             .FirstOrDefaultAsync(p => p.Id == id);
 
         if (package is null)
@@ -306,6 +344,7 @@ else
         _form.Navn = package.Navn;
         _form.Beskrivelse = package.Beskrivelse;
         _selectedValueIds = package.Krav.Select(k => k.RequirementValueId).ToHashSet();
+        _valgteFunksjoner = package.DorFunksjoner.OrderBy(f => f.Navn).ToList();
         _components = package.Komponenter.Select(pc => new ComponentDraft
         {
             ExistingComponentId = pc.ComponentId,
@@ -328,6 +367,29 @@ else
         _draft = new ComponentDraft { ComponentTypeId = _componentTypes.FirstOrDefault()?.Id ?? 0 };
         _componentSearch = "";
         _searchResults = [];
+        _valgteFunksjoner = [];
+        _valgtFunksjonId = null;
+    }
+
+    private void LeggTilFunksjon()
+    {
+        if (_valgtFunksjonId is null)
+        {
+            return;
+        }
+
+        var funksjon = _alleFunksjoner.FirstOrDefault(f => f.Id == _valgtFunksjonId);
+        if (funksjon is not null && _valgteFunksjoner.All(f => f.Id != funksjon.Id))
+        {
+            _valgteFunksjoner.Add(funksjon);
+        }
+
+        _valgtFunksjonId = null;
+    }
+
+    private void FjernFunksjon(DorFunksjon funksjon)
+    {
+        _valgteFunksjoner.Remove(funksjon);
     }
 
     private Task OnSelectionChanged(HashSet<int> selected)
@@ -420,12 +482,14 @@ else
             package = await Db.Packages
                 .Include(p => p.Krav)
                 .Include(p => p.Komponenter)
+                .Include(p => p.DorFunksjoner)
                 .FirstAsync(p => p.Id == Id.Value);
 
             Db.PackageRequirements.RemoveRange(package.Krav);
             Db.PackageComponents.RemoveRange(package.Komponenter);
             package.Krav.Clear();
             package.Komponenter.Clear();
+            package.DorFunksjoner.Clear();
         }
         else
         {
@@ -439,6 +503,11 @@ else
         foreach (var valueId in _selectedValueIds)
         {
             package.Krav.Add(new PackageRequirement { RequirementValueId = valueId });
+        }
+
+        foreach (var funksjon in _valgteFunksjoner)
+        {
+            package.DorFunksjoner.Add(await Db.DorFunksjoner.FirstAsync(f => f.Id == funksjon.Id));
         }
 
         foreach (var draft in _components)

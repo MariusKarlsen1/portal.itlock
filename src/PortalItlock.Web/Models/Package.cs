@@ -12,4 +12,5 @@ public class Package
 
     public List<PackageRequirement> Krav { get; set; } = [];
     public List<PackageComponent> Komponenter { get; set; } = [];
+    public List<DorFunksjon> DorFunksjoner { get; set; } = [];
 }

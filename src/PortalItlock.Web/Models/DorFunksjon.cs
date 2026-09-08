@@ -7,4 +7,5 @@ public class DorFunksjon
     public string? Forkortelse { get; set; }
 
     public List<Dor> Dorer { get; set; } = [];
+    public List<Package> Pakker { get; set; } = [];
 }

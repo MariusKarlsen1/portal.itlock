@@ -152,6 +152,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(f => f.Dorer)
             .UsingEntity(j => j.ToTable("DorDorFunksjoner"));
 
+        modelBuilder.Entity<Package>()
+            .HasMany(p => p.DorFunksjoner)
+            .WithMany(f => f.Pakker)
+            .UsingEntity(j => j.ToTable("PackageDorFunksjoner"));
+
         modelBuilder.Entity<RequirementValue>()
             .HasOne(rv => rv.Dimensjon)
             .WithMany(d => d.Verdier)
