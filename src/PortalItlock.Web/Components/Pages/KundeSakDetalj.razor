@@ -1,0 +1,107 @@
+@page "/kunde/sak/{Id:int}"
+@layout PortalItlock.Web.Components.Layout.KundeLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Kunde")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>@(_sak?.Tittel ?? "Sak") - itlock</PageTitle>
+
+<a class="back-link" href="/kunde/saker">&larr; Tilbake til mine saker</a>
+
+@if (_ikkeFunnet)
+{
+    <p class="form-error">Fant ikke saken. Den kan være slettet, eller tilhører ikke deg.</p>
+}
+else if (_sak is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <div class="sak-detalj-header">
+        <h1>@_sak.Tittel</h1>
+        <span class="sak-status sak-status-@_sak.Status">@_sak.Status.Visningsnavn()</span>
+    </div>
+    <p class="sak-dato">Opprettet @_sak.OpprettetDato.ToString("dd.MM.yyyy")</p>
+
+    @if (!string.IsNullOrWhiteSpace(_sak.Beskrivelse))
+    {
+        <p class="sak-beskrivelse">@_sak.Beskrivelse</p>
+    }
+
+    @if (_sak.Status == TicketStatus.Lukket && !string.IsNullOrWhiteSpace(_sak.Sluttoppsummering))
+    {
+        <div class="sak-oppsummering">
+            <h2>Oppsummering</h2>
+            <p>@_sak.Sluttoppsummering</p>
+        </div>
+    }
+
+    <h2>Historikk</h2>
+    @if (_hendelser.Count == 0)
+    {
+        <p class="list-empty">Ingen oppdateringer registrert ennå.</p>
+    }
+    else
+    {
+        <ul class="hendelse-liste">
+            @foreach (var h in _hendelser)
+            {
+                <li @key="h.Id">
+                    <span class="hendelse-dato">@h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</span>
+                    <span>@h.Beskrivelse</span>
+                </li>
+            }
+        </ul>
+    }
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _ikkeFunnet;
+    private Ticket? _sak;
+    private List<TicketHendelse> _hendelser = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        var bruker = await Db.Brukere.FindAsync(brukerId);
+        if (bruker?.KundeId is null)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        var sak = await Db.Tickets.FirstOrDefaultAsync(t => t.Id == Id);
+        if (sak is null || sak.KundeId != bruker.KundeId)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+
+        _sak = sak;
+        _hendelser = await Db.TicketHendelser
+            .Where(h => h.TicketId == Id && h.ErKundeSynlig)
+            .OrderBy(h => h.Tidspunkt)
+            .ToListAsync();
+    }
+}

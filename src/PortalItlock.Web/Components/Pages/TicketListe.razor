@@ -1,6 +1,7 @@
 @page "/tickets"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -87,7 +88,54 @@
     </label>
 </div>
 
-@if (FiltrerteTickets.Count == 0)
+<div class="visning-bryter">
+    <button type="button" class="@(_visning == "liste" ? "visning-knapp aktiv" : "visning-knapp")" @onclick='@(() => _visning = "liste")'>Liste</button>
+    <button type="button" class="@(_visning == "board" ? "visning-knapp aktiv" : "visning-knapp")" @onclick='@(() => _visning = "board")'>Board</button>
+</div>
+
+@if (_visning == "board")
+{
+    @if (!string.IsNullOrEmpty(_boardMelding))
+    {
+        <p class="section-hint board-melding">@_boardMelding</p>
+    }
+    <div class="ticket-board">
+        @foreach (var status in TicketStatusExtensions.Rekkefolge)
+        {
+            var ticketsIKolonne = FiltrerteTickets.Where(t => t.Status == status).ToList();
+            <div @key="status" class="ticket-board-kolonne" @ondragover="@(() => { })" @ondragover:preventDefault="true" @ondrop="@(() => OnDrop(status))">
+                <div class="ticket-board-header ticket-status-@status">
+                    <span>@status.Visningsnavn()</span>
+                    <span class="ticket-board-antall">@ticketsIKolonne.Count</span>
+                </div>
+                @if (ticketsIKolonne.Count == 0)
+                {
+                    <p class="ticket-board-tom">Ingen tickets her.</p>
+                }
+                else
+                {
+                    @foreach (var t in ticketsIKolonne)
+                    {
+                        <a @key="t.Id" class="ticket-board-kort" href="@($"/ticket/{t.Id}")" draggable="true" @ondragstart="@(() => OnDragStart(t.Id))">
+                            <span class="ticket-nr">#@t.Id</span>
+                            <strong>@t.Tittel</strong>
+                            <span class="ticket-kunde">@(t.Kunde?.Navn ?? "Ingen kunde satt")</span>
+                            <div class="ticket-board-kort-footer">
+                                <span class="ticket-prioritet ticket-prioritet-@t.Prioritet">@t.Prioritet.Visningsnavn()</span>
+                                <span class="ticket-ansvarlig">@(t.AnsvarligBruker?.Navn ?? "Ikke tildelt")</span>
+                            </div>
+                            @if (t.SlaFrist.HasValue && t.SlaFrist.Value < DateTime.Now && t.Status != TicketStatus.Lukket)
+                            {
+                                <span class="ticket-forfalt">Forfalt SLA</span>
+                            }
+                        </a>
+                    }
+                }
+            </div>
+        }
+    </div>
+}
+else if (FiltrerteTickets.Count == 0)
 {
     <p class="list-empty">Ingen tickets funnet.</p>
 }
@@ -154,6 +202,13 @@ else
     private bool _eskalererNaa;
     private string? _eskaleringMelding;
 
+    private string _visning = "liste";
+    private int? _draggetTicketId;
+    private string? _boardMelding;
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+
     private async Task SjekkEskaleringNaa()
     {
         _eskalererNaa = true;
@@ -185,7 +240,56 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+        }
+
         await LastAsync();
+    }
+
+    private void OnDragStart(int ticketId)
+    {
+        _draggetTicketId = ticketId;
+        _boardMelding = null;
+    }
+
+    private async Task OnDrop(TicketStatus mal)
+    {
+        var ticketId = _draggetTicketId;
+        _draggetTicketId = null;
+        if (ticketId is null)
+        {
+            return;
+        }
+
+        var ticket = _tickets.FirstOrDefault(t => t.Id == ticketId.Value);
+        if (ticket is null || ticket.Status == mal)
+        {
+            return;
+        }
+
+        if (mal == TicketStatus.Lukket)
+        {
+            _boardMelding = "Tickets kan ikke lukkes ved å dra dem hit - åpne ticketen og bruk \"Godkjenn og lukk\", siden det krever en sluttoppsummering til kunden.";
+            return;
+        }
+
+        var gammelStatus = ticket.Status;
+        ticket.Status = mal;
+        Db.TicketHendelser.Add(new TicketHendelse
+        {
+            TicketId = ticket.Id,
+            Beskrivelse = $"Status endret fra {gammelStatus.Visningsnavn()} til {mal.Visningsnavn()} (board).",
+            UtfortAvBrukerId = _naverendeBrukerId
+        });
+        await Db.SaveChangesAsync();
+        _boardMelding = null;
     }
 
     private async Task LastAsync()
