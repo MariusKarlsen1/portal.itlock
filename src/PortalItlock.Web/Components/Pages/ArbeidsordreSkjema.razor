@@ -189,7 +189,7 @@ else if (_ordre is not null)
             </label>
             <label>
                 Ansvarlig montør
-                <select @bind="_ordre.AnsvarligMontorId">
+                <select @bind="_ordre.AnsvarligMontorId" @bind:after="SjekkDobbeltbooking">
                     <option value="">Ikke satt</option>
                     @foreach (var m in _montorer)
                     {
@@ -208,7 +208,7 @@ else if (_ordre is not null)
             </label>
             <label>
                 Planlagt dato
-                <input type="date" @bind="_planlagtDato" />
+                <input type="date" @bind="_planlagtDato" @bind:after="SjekkDobbeltbooking" />
             </label>
             <label>
                 Fra klokkeslett
@@ -231,6 +231,11 @@ else if (_ordre is not null)
                 <input @bind="_ordre.Sted" @bind:event="oninput" />
             </label>
         </div>
+
+        @if (!string.IsNullOrEmpty(_dobbeltbookingVarsel))
+        {
+            <p class="dobbeltbooking-varsel">@_dobbeltbookingVarsel</p>
+        }
 
         <div class="form-actions">
             <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
@@ -505,6 +510,7 @@ else if (_ordre is not null)
     private decimal _sumTimer;
     private int? _loadedId;
     private string? _tilbudTittel;
+    private string? _dobbeltbookingVarsel;
     private List<TilbudLinje> _tilbudVarer = [];
 
     private string _vareSok = "";
@@ -600,6 +606,8 @@ else if (_ordre is not null)
             .Select(m => new MontorOption { Id = m.Id, Navn = m.Navn })
             .ToListAsync();
 
+        await SjekkDobbeltbooking();
+
         var registreringer = await Db.Timeregistreringer
             .Where(t => t.ArbeidsordreId == Id)
             .Include(t => t.Montor)
@@ -683,6 +691,33 @@ else if (_ordre is not null)
     }
 
     private async Task AutoLagre() => await Db.SaveChangesAsync();
+
+    private async Task SjekkDobbeltbooking()
+    {
+        _dobbeltbookingVarsel = null;
+        if (_ordre is null || !_ordre.AnsvarligMontorId.HasValue || !_planlagtDato.HasValue)
+        {
+            return;
+        }
+
+        var dagStart = _planlagtDato.Value.ToDateTime(TimeOnly.MinValue);
+        var dagSlutt = dagStart.AddDays(1);
+
+        var konflikter = await Db.Arbeidsordre
+            .Where(a => a.Id != _ordre.Id
+                && a.AnsvarligMontorId == _ordre.AnsvarligMontorId
+                && a.PlanlagtDato != null
+                && a.PlanlagtDato >= dagStart && a.PlanlagtDato < dagSlutt
+                && a.Status != ArbeidsordreStatus.Fakturert)
+            .Select(a => a.Tittel)
+            .ToListAsync();
+
+        if (konflikter.Count > 0)
+        {
+            var montorNavn = _montorer.FirstOrDefault(m => m.Id == _ordre.AnsvarligMontorId)?.Navn ?? "Montøren";
+            _dobbeltbookingVarsel = $"OBS: {montorNavn} er allerede satt opp samme dag på: {string.Join(", ", konflikter)}.";
+        }
+    }
 
     private async Task SokVarer()
     {

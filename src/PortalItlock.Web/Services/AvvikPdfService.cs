@@ -11,10 +11,6 @@ public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
 
-    private const string FirmaNavn = "ITLOCK AS";
-    private const string FirmaAdresse = "Gartnerveien 2, 4374 Egersund";
-    private const string FirmaTelefon = "47355441";
-    private const string FirmaEpost = "marius@itlock.no";
 
     public async Task<byte[]?> GenerateAsync(int avvikId)
     {
@@ -101,7 +97,7 @@ public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
                 page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(8).Column(c =>
                 {
-                    c.Item().AlignCenter().Text($"{FirmaNavn} - {FirmaAdresse} - Tlf {FirmaTelefon} - {FirmaEpost}").FontSize(8);
+                    c.Item().AlignCenter().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon} - {FirmaInfo.Epost}").FontSize(8);
                 });
             });
         });

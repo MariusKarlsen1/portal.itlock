@@ -9,12 +9,6 @@ namespace PortalItlock.Web.Services;
 
 public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
-    private const string FirmaNavn = "ITLOCK AS";
-    private const string FirmaAdresse = "Gartnerveien 2";
-    private const string FirmaPostnr = "4374";
-    private const string FirmaSted = "Egersund";
-    private const string FirmaTelefon = "47355441";
-    private const string FirmaEpost = "marius@itlock.no";
 
     private static readonly Color Sand = Color.FromHex("#F2EBE1");
     private static readonly Color SandBorder = Color.FromHex("#E4D9C8");
@@ -186,8 +180,8 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                             c.Item().Text("Montør").FontSize(11).Bold();
                             FeltGrid(c, 1,
                             [
-                                ("Foretaksnavn", FirmaNavn), ("Adresse", FirmaAdresse), ("Postnummer", FirmaPostnr),
-                                ("Sted", FirmaSted), ("Land", "Norge"), ("Telefon / e-post", $"{FirmaTelefon} / {FirmaEpost}")
+                                ("Foretaksnavn", FirmaInfo.Navn), ("Adresse", FirmaInfo.Adresse), ("Postnummer", FirmaInfo.Postnr),
+                                ("Sted", FirmaInfo.Sted), ("Land", "Norge"), ("Telefon / e-post", $"{FirmaInfo.Telefon} / {FirmaInfo.Epost}")
                             ]);
                         });
                     });
@@ -229,7 +223,7 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                         {
                             FeltGrid(c, 1,
                             [
-                                ("Sted", ce.Dor?.Prosjekt?.Sted ?? FirmaSted), ("Dato", ce.UtfortAvDato?.ToString("dd.MM.yyyy")),
+                                ("Sted", ce.Dor?.Prosjekt?.Sted ?? FirmaInfo.Sted), ("Dato", ce.UtfortAvDato?.ToString("dd.MM.yyyy")),
                                 ("Navn", ce.UtfortAvNavn), ("Stilling", "Montør")
                             ]);
                             SignaturBoks(c, "Signatur", ce.UtfortAvSignatur);
@@ -249,7 +243,7 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(6).Row(row =>
                 {
                     row.RelativeItem().Text(ce.Sertifiseringsnummer).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-                    row.RelativeItem().AlignCenter().Text($"{FirmaNavn} - Generert av itlock Full Kontroll {DateTime.Now:dd.MM.yyyy HH:mm}").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
+                    row.RelativeItem().AlignCenter().Text($"{FirmaInfo.Navn} - Generert av itlock Full Kontroll {DateTime.Now:dd.MM.yyyy HH:mm}").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
                     row.RelativeItem().AlignRight().Text(t =>
                     {
                         t.CurrentPageNumber().FontSize(7.5f).FontColor(Colors.Grey.Darken1);

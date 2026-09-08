@@ -9,6 +9,8 @@ using PortalItlock.Web.Data;
 using PortalItlock.Web.Services;
 using Microsoft.Net.Http.Headers;
 using System.Security.Claims;
+using Microsoft.AspNetCore.RateLimiting;
+using PortalItlock.Web.Models;
 
 QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 
@@ -112,6 +114,33 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.AddCascadingAuthenticationState();
 
+builder.Services.AddRateLimiter(options =>
+{
+    // Begrenser innloggings- og passord-tilbakestillingsforsøk per IP, slik at
+    // noen ikke kan brute-force passord eller spamme e-post-utsendelser.
+    options.AddFixedWindowLimiter("login", opt =>
+    {
+        opt.PermitLimit = 8;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+    options.AddFixedWindowLimiter("passord-reset", opt =>
+    {
+        opt.PermitLimit = 3;
+        opt.Window = TimeSpan.FromMinutes(5);
+        opt.QueueLimit = 0;
+    });
+    options.OnRejected = (context, _) =>
+    {
+        var path = context.HttpContext.Request.Path;
+        var malTilbake = path.StartsWithSegments("/account/glemt-passord")
+            ? "/glemt-passord?forMange=1"
+            : "/login?forMange=1";
+        context.HttpContext.Response.Redirect(malTilbake);
+        return ValueTask.CompletedTask;
+    };
+});
+
 var app = builder.Build();
 
 using (var seedScope = app.Services.CreateScope())
@@ -174,6 +203,7 @@ app.UseAntiforgery();
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
@@ -207,6 +237,63 @@ app.MapPost("/account/login", async (HttpContext http, ApplicationDbContext db) 
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
 
     return Results.Redirect(safeReturnUrl);
+}).AllowAnonymous().RequireRateLimiting("login");
+
+app.MapPost("/account/glemt-passord", async (HttpContext http, ApplicationDbContext db, EmailService epost) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var epostAdresse = form["epost"].ToString().Trim();
+
+    var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epostAdresse.ToLower());
+    if (bruker is not null && bruker.Aktiv)
+    {
+        var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        db.BrukerPasswordResetTokener.Add(new BrukerPasswordResetToken
+        {
+            BrukerId = bruker.Id,
+            Token = token,
+            UtlopsDato = DateTime.Now.AddHours(1)
+        });
+        await db.SaveChangesAsync();
+
+        var lenke = $"{http.Request.Scheme}://{http.Request.Host}/tilbakestill-passord?token={token}";
+        var html = "<p>Hei,</p>" +
+            "<p>Du (eller noen andre) har bedt om å tilbakestille passordet for kontoen din hos itlock.</p>" +
+            $"<p><a href=\"{lenke}\">Trykk her for å velge nytt passord</a></p>" +
+            "<p>Lenken er gyldig i 1 time. Har du ikke bedt om dette, kan du se bort fra denne e-posten.</p>";
+        await epost.SendAsync(bruker.Epost, "Tilbakestill passord - itlock", html);
+    }
+
+    // Samme melding uansett om e-posten finnes hos oss eller ikke,
+    // slik at man ikke kan bruke skjemaet til å sjekke hvem som er registrert.
+    return Results.Redirect("/glemt-passord?sendt=1");
+}).AllowAnonymous().RequireRateLimiting("passord-reset");
+
+app.MapPost("/account/tilbakestill-passord", async (HttpContext http, ApplicationDbContext db) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var token = form["token"].ToString();
+    var passord = form["passord"].ToString();
+    var bekreft = form["bekreft"].ToString();
+
+    var resetToken = await db.BrukerPasswordResetTokener
+        .Include(t => t.Bruker)
+        .FirstOrDefaultAsync(t => t.Token == token);
+
+    if (resetToken?.Bruker is null || resetToken.Brukt || resetToken.UtlopsDato < DateTime.Now)
+    {
+        return Results.Redirect("/tilbakestill-passord?feil=ugyldig-token");
+    }
+    if (passord.Length < 8 || passord != bekreft)
+    {
+        return Results.Redirect($"/tilbakestill-passord?token={Uri.EscapeDataString(token)}&feil=ugyldig-passord");
+    }
+
+    resetToken.Bruker.PasswordHash = PasswordHasher.Hash(passord);
+    resetToken.Brukt = true;
+    await db.SaveChangesAsync();
+
+    return Results.Redirect("/login?satt=1");
 }).AllowAnonymous();
 
 app.MapPost("/account/sett-passord", async (HttpContext http, ApplicationDbContext db) =>

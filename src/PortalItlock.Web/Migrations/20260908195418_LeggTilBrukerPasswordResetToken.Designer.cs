@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260908195418_LeggTilBrukerPasswordResetToken")]
+    partial class LeggTilBrukerPasswordResetToken
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -4541,34 +4544,6 @@ namespace PortalItlock.Web.Migrations
                         });
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.TilbudHendelse", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Beskrivelse")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("Tidspunkt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("TilbudId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("UtfortAvBrukerId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TilbudId");
-
-                    b.HasIndex("UtfortAvBrukerId");
-
-                    b.ToTable("TilbudHendelser");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.TilbudLinje", b =>
                 {
                     b.Property<int>("Id")
@@ -5898,24 +5873,6 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Prosjekt");
                 });
 
-            modelBuilder.Entity("PortalItlock.Web.Models.TilbudHendelse", b =>
-                {
-                    b.HasOne("PortalItlock.Web.Models.Tilbud", "Tilbud")
-                        .WithMany("Hendelser")
-                        .HasForeignKey("TilbudId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("PortalItlock.Web.Models.Bruker", "UtfortAvBruker")
-                        .WithMany()
-                        .HasForeignKey("UtfortAvBrukerId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Tilbud");
-
-                    b.Navigation("UtfortAvBruker");
-                });
-
             modelBuilder.Entity("PortalItlock.Web.Models.TilbudLinje", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Component", "Component")
@@ -6173,8 +6130,6 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Tilbud", b =>
                 {
-                    b.Navigation("Hendelser");
-
                     b.Navigation("Linjer");
                 });
 

@@ -12,11 +12,6 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
 
-    private const string FirmaNavn = "ITLOCK AS";
-    private const string FirmaAdresse = "Gartnerveien 2, 4374 Egersund";
-    private const string FirmaTelefon = "47355441";
-    private const string FirmaEpost = "marius@itlock.no";
-    private const string FirmaKontaktperson = "Marius Karlsen";
     private const decimal MvaSats = 0.25m;
 
     public async Task<List<LagretPdfLinje>?> GetSnapshotLinjerAsync(int tilbudId)
@@ -160,7 +155,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                         c.Item().Text(t =>
                         {
                             t.Span("Kontaktperson: ").Bold();
-                            t.Span(FirmaKontaktperson);
+                            t.Span(FirmaInfo.Kontaktperson);
                         });
                         c.Item().Text(t =>
                         {
@@ -172,9 +167,9 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     row.RelativeItem(2).Column(c =>
                     {
                         c.Item().AlignRight().Element(e => pdfLogo.Render(e, 16));
-                        c.Item().AlignRight().Text(FirmaAdresse).FontSize(8);
-                        c.Item().AlignRight().Text($"Telefon {FirmaTelefon}").FontSize(8);
-                        c.Item().AlignRight().Text($"Epost {FirmaEpost}").FontSize(8);
+                        c.Item().AlignRight().Text(FirmaInfo.AdresseFull).FontSize(8);
+                        c.Item().AlignRight().Text($"Telefon {FirmaInfo.Telefon}").FontSize(8);
+                        c.Item().AlignRight().Text($"Epost {FirmaInfo.Epost}").FontSize(8);
                     });
                 });
             });

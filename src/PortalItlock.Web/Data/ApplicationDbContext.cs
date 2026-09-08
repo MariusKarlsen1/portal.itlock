@@ -33,6 +33,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<DorKomponent> DorKomponenter => Set<DorKomponent>();
     public DbSet<DorFunksjon> DorFunksjoner => Set<DorFunksjon>();
     public DbSet<Tilbud> Tilbud => Set<Tilbud>();
+    public DbSet<TilbudHendelse> TilbudHendelser => Set<TilbudHendelse>();
     public DbSet<TilbudLinje> TilbudLinjer => Set<TilbudLinje>();
     public DbSet<MonteringLinje> MonteringLinjer => Set<MonteringLinje>();
     public DbSet<ServiceMinuttLinje> ServiceMinuttLinjer => Set<ServiceMinuttLinje>();
@@ -51,6 +52,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PlanlagtPrisendring> PlanlagtePrisendringer => Set<PlanlagtPrisendring>();
     public DbSet<Importhistorikk> Importhistorikk => Set<Importhistorikk>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
+    public DbSet<BrukerPasswordResetToken> BrukerPasswordResetTokener => Set<BrukerPasswordResetToken>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
     public DbSet<Kunde> Kunder => Set<Kunde>();
@@ -460,6 +462,16 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(v => v.ComponentId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        modelBuilder.Entity<BrukerPasswordResetToken>()
+            .HasOne(t => t.Bruker)
+            .WithMany()
+            .HasForeignKey(t => t.BrukerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<BrukerPasswordResetToken>()
+            .HasIndex(t => t.Token)
+            .IsUnique();
+
         modelBuilder.Entity<BefaringPdf>()
             .HasOne(p => p.Befaring)
             .WithMany()
@@ -626,6 +638,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<TicketHendelse>()
+            .HasOne(h => h.UtfortAvBruker)
+            .WithMany()
+            .HasForeignKey(h => h.UtfortAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<TilbudHendelse>()
+            .HasOne(h => h.Tilbud)
+            .WithMany(t => t.Hendelser)
+            .HasForeignKey(h => h.TilbudId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<TilbudHendelse>()
             .HasOne(h => h.UtfortAvBruker)
             .WithMany()
             .HasForeignKey(h => h.UtfortAvBrukerId)

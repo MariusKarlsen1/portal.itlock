@@ -33,4 +33,5 @@ public class Tilbud
     public DateTime? OppdatertDato { get; set; }
 
     public List<TilbudLinje> Linjer { get; set; } = [];
+    public List<TilbudHendelse> Hendelser { get; set; } = [];
 }

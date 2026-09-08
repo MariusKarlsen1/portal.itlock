@@ -1,6 +1,7 @@
 @page "/tilbud/{Id:int}"
 @rendermode InteractiveServer
 @using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -55,7 +56,7 @@ else if (_tilbud is not null)
             {
                 <label>
                     Status
-                    <select @bind="_tilbud.Status">
+                    <select @bind="_tilbud.Status" @bind:after="StatusEndret">
                         @foreach (var s in Enum.GetValues<EndringsmeldingStatus>())
                         {
                             <option value="@s">@s.Visningsnavn()</option>
@@ -144,6 +145,22 @@ else if (_tilbud is not null)
             <div><Icon Name="trend-up" /><span>Dekningsbidrag totalt</span><strong>@FormatKr(DekningsbidragTotalt) (@DekningsbidragTotaltProsent.ToString("N1", Kultur) %)</strong></div>
         </div>
     </section>
+
+    @if (_hendelser.Count > 0)
+    {
+        <section class="tilbud-section">
+            <h2>Historikk</h2>
+            <ul class="hendelse-liste">
+                @foreach (var h in _hendelser)
+                {
+                    <li @key="h.Id">
+                        <span class="hendelse-dato">@h.Tidspunkt.ToString("dd.MM.yyyy HH:mm") @(h.UtfortAvBruker is not null ? $"- {h.UtfortAvBruker.Navn}" : "")</span>
+                        <span>@h.Beskrivelse</span>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
 
     <section class="tilbud-section">
         <h2>Varer</h2>
@@ -496,6 +513,12 @@ else if (_tilbud is not null)
     private List<SearchResult> _produktVelgerResultater = [];
     private int? _produktVelgerValgtId;
 
+    private List<TilbudHendelse> _hendelser = [];
+    private EndringsmeldingStatus? _sisteLoggetStatus;
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+
     private decimal Varekost => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).Sum(l => l.Innpris * (1 - l.EkstraRabattInnProsent / 100m) * l.Antall) ?? 0;
     private decimal UtprisVarer => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).Sum(l => l.Utpris * l.Antall) ?? 0;
     private int EstimertMinutter => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering)
@@ -530,6 +553,16 @@ else if (_tilbud is not null)
 
     protected override async Task OnParametersSetAsync()
     {
+        if (_naverendeBrukerId is null && AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+        }
+
         if (_loadedId == Id)
         {
             return;
@@ -552,6 +585,13 @@ else if (_tilbud is not null)
 
         if (_tilbud is not null)
         {
+            _sisteLoggetStatus = _tilbud.Status;
+            _hendelser = await Db.TilbudHendelser
+                .Include(h => h.UtfortAvBruker)
+                .Where(h => h.TilbudId == _tilbud.Id)
+                .OrderByDescending(h => h.Tidspunkt)
+                .ToListAsync();
+
             _monteringLinjer = await Db.MonteringLinjer
                 .Where(m => m.ProsjektId == _tilbud.ProsjektId && m.ComponentId != null)
                 .ToListAsync();
@@ -571,6 +611,29 @@ else if (_tilbud is not null)
             : (await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.TilbudId == _tilbud.Id))?.Id;
 
         _lagredePdfer = await LagretPdfService.HentAsync("Tilbud", Id);
+    }
+
+    private async Task StatusEndret()
+    {
+        if (_tilbud is null || _sisteLoggetStatus == _tilbud.Status)
+        {
+            return;
+        }
+
+        Db.TilbudHendelser.Add(new TilbudHendelse
+        {
+            TilbudId = _tilbud.Id,
+            Beskrivelse = $"Status endret fra \"{_sisteLoggetStatus?.Visningsnavn()}\" til \"{_tilbud.Status.Visningsnavn()}\".",
+            UtfortAvBrukerId = _naverendeBrukerId
+        });
+        _sisteLoggetStatus = _tilbud.Status;
+        await Db.SaveChangesAsync();
+
+        _hendelser = await Db.TilbudHendelser
+            .Include(h => h.UtfortAvBruker)
+            .Where(h => h.TilbudId == _tilbud.Id)
+            .OrderByDescending(h => h.Tidspunkt)
+            .ToListAsync();
     }
 
     private async Task OpprettArbeidsordre()
