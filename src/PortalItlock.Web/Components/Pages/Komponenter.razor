@@ -101,6 +101,7 @@
                 <th>Netto</th>
                 <th>Veiledende</th>
                 <th>Rabattgruppe</th>
+                <th>Produktgruppe</th>
                 <th>Montasjetid prosjekt</th>
                 <th>Montasjetid arbeidsordre</th>
                 <th>Montasjetid service</th>
@@ -117,8 +118,20 @@
                     @if (_editingId == c.Id)
                     {
                         <td class="actions">
-                            <button type="button" class="save-button" @onclick="@(() => Save(c))">Lagre</button>
-                            <button type="button" class="cancel-button" @onclick="@(() => _editingId = null)">Avbryt</button>
+                            @if (_slettendeId == c.Id)
+                            {
+                                <span class="delete-confirm">
+                                    <input @bind="_slettBekreftelseTekst" @bind:event="oninput" placeholder="SLETT" class="kode-input" />
+                                    <button type="button" class="delete-confirm-button" disabled="@(_slettBekreftelseTekst != "SLETT")" @onclick="@(() => SlettKomponent(c))">Slett</button>
+                                    <button type="button" class="cancel-button" @onclick="@(() => { _slettendeId = null; _slettBekreftelseTekst = ""; })">Avbryt</button>
+                                </span>
+                            }
+                            else
+                            {
+                                <button type="button" class="save-button" @onclick="@(() => Save(c))">Lagre</button>
+                                <button type="button" class="cancel-button" @onclick="@(() => _editingId = null)">Avbryt</button>
+                                <button type="button" class="delete-button" @onclick="@(() => _slettendeId = c.Id)">Slett</button>
+                            }
                         </td>
                     }
                     else
@@ -171,6 +184,15 @@
                             </select>
                         </td>
                         <td>
+                            <select @bind="c.ProduktgruppeId">
+                                <option value="">Ingen</option>
+                                @foreach (var p in _produktgrupper)
+                                {
+                                    <option value="@p.Id">@p.Navn</option>
+                                }
+                            </select>
+                        </td>
+                        <td>
                             <input @bind="c.MontasjeMinutterProsjekt" class="price-input" placeholder="min" /> min
                         </td>
                         <td>
@@ -219,6 +241,7 @@
                         <td class="price-cell">@FormatPrice(c.PrisNetto)</td>
                         <td class="price-cell">@FormatPrice(c.PrisVeiledende)</td>
                         <td>@(c.RabattgruppeKode ?? "-")</td>
+                        <td>@(c.ProduktgruppeNavn ?? "-")</td>
                         <td class="price-cell">@FormatMinutter(c.MontasjeMinutterProsjekt)</td>
                         <td class="price-cell">@FormatMinutter(c.MontasjeMinutterArbeidsordre)</td>
                         <td class="price-cell">@FormatMinutter(c.MontasjeMinutterService)</td>
@@ -317,6 +340,8 @@
         public decimal? PrisVeiledende { get; set; }
         public int? RabattgruppeId { get; set; }
         public string? RabattgruppeKode { get; set; }
+        public int? ProduktgruppeId { get; set; }
+        public string? ProduktgruppeNavn { get; set; }
         public int? MontasjeMinutterProsjekt { get; set; }
         public int? MontasjeMinutterArbeidsordre { get; set; }
         public int? MontasjeMinutterService { get; set; }
@@ -344,6 +369,7 @@
     private List<ComponentDraft> _components = [];
     private List<ComponentType> _types = [];
     private List<Rabattgruppe> _rabattgrupper = [];
+    private List<Produktgruppe> _produktgrupper = [];
     private List<string> _leverandorer = [];
     private string _search = "";
     private int _selectedTypeId;
@@ -352,6 +378,8 @@
     private int _page;
     private int _filteredCount;
     private int? _editingId;
+    private int? _slettendeId;
+    private string _slettBekreftelseTekst = "";
     private NewComponentDraft _draft = new();
     private string? _addMessage;
     private string _nyTypeNavn = "";
@@ -454,11 +482,13 @@
     {
         _types = await Db.ComponentTypes.OrderBy(t => t.Navn).ToListAsync();
         _rabattgrupper = await Db.Rabattgrupper.Where(r => r.Aktiv).OrderBy(r => r.Leverandor).ThenBy(r => r.Kode).ToListAsync();
+        _produktgrupper = await Db.Produktgrupper.OrderBy(p => p.Navn).ToListAsync();
 
         var components = await Db.Components
             .Include(c => c.Type)
             .Include(c => c.Pakker)
             .Include(c => c.Rabattgruppe)
+            .Include(c => c.Produktgruppe)
             .ToListAsync();
 
         _components = components.Select(c => new ComponentDraft
@@ -482,6 +512,8 @@
             PrisVeiledende = c.PrisVeiledende,
             RabattgruppeId = c.RabattgruppeId,
             RabattgruppeKode = c.Rabattgruppe?.Kode,
+            ProduktgruppeId = c.ProduktgruppeId,
+            ProduktgruppeNavn = c.Produktgruppe?.Navn,
             MontasjeMinutterProsjekt = c.MontasjeMinutterProsjekt,
             MontasjeMinutterArbeidsordre = c.MontasjeMinutterArbeidsordre,
             MontasjeMinutterService = c.MontasjeMinutterService,
@@ -547,12 +579,32 @@
         entity.PrisNetto = nyNetto;
         entity.PrisVeiledende = nyVeil;
         entity.RabattgruppeId = draft.RabattgruppeId;
+        entity.ProduktgruppeId = draft.ProduktgruppeId;
         entity.MontasjeMinutterProsjekt = draft.MontasjeMinutterProsjekt;
         entity.MontasjeMinutterArbeidsordre = draft.MontasjeMinutterArbeidsordre;
         entity.MontasjeMinutterService = draft.MontasjeMinutterService;
         entity.Enhet = string.IsNullOrWhiteSpace(draft.Enhet) ? null : draft.Enhet.Trim();
         await Db.SaveChangesAsync();
 
+        _editingId = null;
+        await LoadAsync();
+    }
+
+    private async Task SlettKomponent(ComponentDraft draft)
+    {
+        if (_slettBekreftelseTekst != "SLETT")
+        {
+            return;
+        }
+
+        await Db.TilbudLinjer.Where(t => t.ComponentId == draft.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.ComponentId, (int?)null));
+        await Db.ServiceMinuttLinjer.Where(t => t.ComponentId == draft.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.ComponentId, (int?)null));
+        await Db.MonteringLinjer.Where(t => t.ComponentId == draft.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.ComponentId, (int?)null));
+
+        await Db.Components.Where(c => c.Id == draft.Id).ExecuteDeleteAsync();
+
+        _slettendeId = null;
+        _slettBekreftelseTekst = "";
         _editingId = null;
         await LoadAsync();
     }

@@ -27,6 +27,8 @@ public class Component
 
     public int? RabattgruppeId { get; set; }
     public Rabattgruppe? Rabattgruppe { get; set; }
+    public int? ProduktgruppeId { get; set; }
+    public Produktgruppe? Produktgruppe { get; set; }
     public int? MontasjeMinutterProsjekt { get; set; }
     public int? MontasjeMinutterArbeidsordre { get; set; }
     public int? MontasjeMinutterService { get; set; }

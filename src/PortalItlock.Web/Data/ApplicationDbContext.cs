@@ -66,6 +66,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServicehenvendelseBilde> ServicehenvendelseBilder => Set<ServicehenvendelseBilde>();
     public DbSet<SjekklisteMal> SjekklisteMaler => Set<SjekklisteMal>();
     public DbSet<Rabattgruppe> Rabattgrupper => Set<Rabattgruppe>();
+    public DbSet<Produktgruppe> Produktgrupper => Set<Produktgruppe>();
+    public DbSet<KundeRabatt> KundeRabatter => Set<KundeRabatt>();
     public DbSet<SjekklistePunkt> SjekklistePunkter => Set<SjekklistePunkt>();
     public DbSet<ArbeidsordreSjekkpunkt> ArbeidsordreSjekkpunkter => Set<ArbeidsordreSjekkpunkt>();
     public DbSet<PrisHistorikk> PrisHistorikk => Set<PrisHistorikk>();
