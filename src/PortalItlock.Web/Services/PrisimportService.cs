@@ -31,6 +31,33 @@ public class PrisimportService(ApplicationDbContext db)
         public bool Inkluder { get; set; } = true;
     }
 
+    public sealed class KolonneForslag
+    {
+        public int? Produktkode { get; set; }
+        public int? Navn { get; set; }
+        public int? Enhet { get; set; }
+        public int? PrisNetto { get; set; }
+        public int? PrisVeiledende { get; set; }
+    }
+
+    // Finner sannsynlig kolonne per felt ut fra overskriftstekst, slik at brukeren
+    // sjelden trenger aa mappe kolonner manuelt - kun rette opp der gjettingen bommer.
+    public static KolonneForslag AutoMatchKolonner(List<ArkKolonne> kolonner)
+    {
+        int? Finn(params string[] nokkelord) => kolonner
+            .FirstOrDefault(k => nokkelord.Any(n => k.Overskrift.Contains(n, StringComparison.OrdinalIgnoreCase)))
+            ?.Indeks;
+
+        return new KolonneForslag
+        {
+            Produktkode = Finn("produktkode", "artikkelnr", "varenr", "art.nr", "art nr", "sku", "vare nr", "produktnr"),
+            Navn = Finn("navn", "beskrivelse", "betegnelse", "produktnavn", "varetekst"),
+            Enhet = Finn("enhet", "måleenhet", "maaleenhet", "unit"),
+            PrisNetto = Finn("nettopris", "netto pris", "innkjøpspris", "innkjøp", "kostpris", "netto"),
+            PrisVeiledende = Finn("veiledende", "utpris", "listepris", "bruttopris", "veil.", "veil pris", "salgspris"),
+        };
+    }
+
     public (List<ArkKolonne> Kolonner, List<string[]> Rader) LesFil(Stream fil)
     {
         using var wb = new XLWorkbook(fil);
