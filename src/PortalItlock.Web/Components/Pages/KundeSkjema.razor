@@ -33,20 +33,24 @@ else if (_kunde is not null)
             </label>
             <label class="span-2 kunde-navn-sok-wrap">
                 Navn
-                <input value="@_kunde.Navn" @oninput="SokEksisterendeKunder"
+                <input value="@_kunde.Navn" @oninput="SokBronnoysund"
                        @onfocus="@(() => _visNavnForslag = _navnForslag.Count > 0)"
-                       @onblur="SkjulNavnForslagForsinket" autocomplete="off" />
+                       @onblur="SkjulNavnForslagForsinket" autocomplete="off" placeholder="Skriv navn for å søke i Brønnøysundregistrene..." />
+                @if (_sokerNavn)
+                {
+                    <span class="kunde-navn-sok-status">Søker...</span>
+                }
                 @if (_visNavnForslag)
                 {
                     <ul class="kunde-navn-forslag">
                         @foreach (var f in _navnForslag)
                         {
                             <li>
-                                <button type="button" @onclick="@(() => VelgEksisterendeKunde(f.Id))">
-                                    <span class="kunde-navn-forslag-navn">@f.Navn</span>
-                                    @if (!string.IsNullOrWhiteSpace(f.Sted))
+                                <button type="button" @onclick="@(() => VelgFraBronnoysund(f))">
+                                    <span class="kunde-navn-forslag-navn">@f.Navn <span class="kunde-navn-forslag-orgnr">(@f.OrgNr)</span></span>
+                                    @if (!string.IsNullOrWhiteSpace(f.Adresse) || !string.IsNullOrWhiteSpace(f.Sted))
                                     {
-                                        <span class="kunde-navn-forslag-sted">@f.Sted</span>
+                                        <span class="kunde-navn-forslag-adresse">@f.Adresse@(!string.IsNullOrWhiteSpace(f.Adresse) && (!string.IsNullOrWhiteSpace(f.Postnr) || !string.IsNullOrWhiteSpace(f.Sted)) ? ", " : "")@f.Postnr @f.Sted</span>
                                     }
                                 </button>
                             </li>
@@ -160,13 +164,6 @@ else if (_kunde is not null)
         public string Navn { get; set; } = "";
     }
 
-    private sealed class KundeForslag
-    {
-        public int Id { get; set; }
-        public string Navn { get; set; } = "";
-        public string? Sted { get; set; }
-    }
-
     private Kunde? _kunde;
     private bool _notFound;
     private bool _confirmingDelete;
@@ -179,8 +176,10 @@ else if (_kunde is not null)
     private DateOnly? _nesteOppfolgingsDato;
     private List<KundeOppfolgingNotat> _notater = [];
     private string _nyttNotat = "";
-    private List<KundeForslag> _navnForslag = [];
+    private List<BronnoysundClient.Sokeresultat> _navnForslag = [];
     private bool _visNavnForslag;
+    private bool _sokerNavn;
+    private int _sokGenerasjon;
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -235,7 +234,7 @@ else if (_kunde is not null)
             .ToListAsync();
     }
 
-    private async Task SokEksisterendeKunder(ChangeEventArgs e)
+    private async Task SokBronnoysund(ChangeEventArgs e)
     {
         _kunde!.Navn = e.Value?.ToString() ?? "";
         var q = _kunde.Navn.Trim();
@@ -244,16 +243,27 @@ else if (_kunde is not null)
         {
             _navnForslag = [];
             _visNavnForslag = false;
+            _sokerNavn = false;
             return;
         }
 
-        _navnForslag = await Db.Kunder
-            .Where(k => k.Id != Id && k.Navn.Contains(q))
-            .OrderBy(k => k.Navn)
-            .Take(8)
-            .Select(k => new KundeForslag { Id = k.Id, Navn = k.Navn, Sted = k.Sted })
-            .ToListAsync();
+        var generasjon = ++_sokGenerasjon;
+        _sokerNavn = true;
+        await Task.Delay(300);
+        if (generasjon != _sokGenerasjon)
+        {
+            return;
+        }
+
+        var treff = await Bronnoysund.SokAsync(q);
+        if (generasjon != _sokGenerasjon)
+        {
+            return;
+        }
+
+        _navnForslag = treff;
         _visNavnForslag = _navnForslag.Count > 0;
+        _sokerNavn = false;
     }
 
     private async Task SkjulNavnForslagForsinket()
@@ -263,27 +273,13 @@ else if (_kunde is not null)
         StateHasChanged();
     }
 
-    private async Task VelgEksisterendeKunde(int id)
+    private void VelgFraBronnoysund(BronnoysundClient.Sokeresultat resultat)
     {
-        var eksisterende = await Db.Kunder.AsNoTracking().FirstOrDefaultAsync(k => k.Id == id);
-        if (eksisterende is null)
-        {
-            return;
-        }
-
-        _kunde!.Navn = eksisterende.Navn;
-        _kunde.OrgNr = eksisterende.OrgNr;
-        _kunde.Kontaktperson = eksisterende.Kontaktperson;
-        _kunde.Telefon = eksisterende.Telefon;
-        _kunde.Epost = eksisterende.Epost;
-        _kunde.Adresse = eksisterende.Adresse;
-        _kunde.Postnr = eksisterende.Postnr;
-        _kunde.Sted = eksisterende.Sted;
-        _kunde.Notater = eksisterende.Notater;
-        _kunde.TripletexKundenummer = eksisterende.TripletexKundenummer;
-        _nesteOppfolgingsDato = eksisterende.NesteOppfolgingsDato.HasValue
-            ? DateOnly.FromDateTime(eksisterende.NesteOppfolgingsDato.Value)
-            : null;
+        _kunde!.Navn = resultat.Navn;
+        _kunde.OrgNr = resultat.OrgNr;
+        if (!string.IsNullOrWhiteSpace(resultat.Adresse)) { _kunde.Adresse = resultat.Adresse; }
+        if (!string.IsNullOrWhiteSpace(resultat.Postnr)) { _kunde.Postnr = resultat.Postnr; }
+        if (!string.IsNullOrWhiteSpace(resultat.Sted)) { _kunde.Sted = resultat.Sted; }
 
         _navnForslag = [];
         _visNavnForslag = false;
