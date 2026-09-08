@@ -14,6 +14,7 @@ public class Kunde
     public string? Notater { get; set; }
     public string? TripletexKundenummer { get; set; }
     public DateTime? NesteOppfolgingsDato { get; set; }
+    public decimal? FastPaslagProsent { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
