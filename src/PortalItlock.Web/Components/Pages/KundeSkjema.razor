@@ -316,6 +316,23 @@ else if (_kunde is not null)
                 <p class="section-hint">Alle produktgrupper er allerede lagt til. Opprett flere under <a href="/produktgrupper">Produktgrupper</a>.</p>
             }
 
+            @if (_kundeRabatter.Count > 0 && _andreKunder.Count > 0)
+            {
+                <div class="ny-rabattgruppe">
+                    <h2>Kopier rabatter til annen kunde</h2>
+                    <div class="ny-rabattgruppe-form">
+                        <select @bind="_kopierTilKundeId">
+                            <option value="">Velg kunde...</option>
+                            @foreach (var k in _andreKunder)
+                            {
+                                <option value="@k.Id">@k.Navn</option>
+                            }
+                        </select>
+                        <button type="button" class="add-button" @onclick="KopierRabatterTilAnnenKunde">Kopier</button>
+                    </div>
+                </div>
+            }
+
             @if (!string.IsNullOrEmpty(_rabattFeil))
             {
                 <p class="form-error">@_rabattFeil</p>
@@ -384,6 +401,8 @@ else if (_kunde is not null)
     private string? _rabattFeil;
     private string? _rabattMelding;
     private string? _paslagMelding;
+    private List<Kunde> _andreKunder = [];
+    private int? _kopierTilKundeId;
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -447,8 +466,8 @@ else if (_kunde is not null)
     private static string TicketPrioritetFarge(TicketPrioritet p) => p switch
     {
         TicketPrioritet.Lav => "status-badge-grey",
-        TicketPrioritet.Normal => "status-badge-blue",
-        TicketPrioritet.Hoy => "status-badge-amber",
+        TicketPrioritet.Normal => "status-badge-teal",
+        TicketPrioritet.Hoy => "status-badge-orange",
         TicketPrioritet.Kritisk => "status-badge-red",
         _ => "status-badge-grey"
     };
@@ -518,6 +537,7 @@ else if (_kunde is not null)
             .ToListAsync();
 
         _produktgrupper = await Db.Produktgrupper.OrderBy(p => p.Navn).ToListAsync();
+        _andreKunder = await Db.Kunder.Where(k => k.Id != Id).OrderBy(k => k.Navn).ToListAsync();
         await LastKundeRabatterAsync();
     }
 
@@ -581,6 +601,46 @@ else if (_kunde is not null)
         await Db.SaveChangesAsync();
         _rabattMelding = "Rabatt fjernet.";
         await LastKundeRabatterAsync();
+    }
+
+    private async Task KopierRabatterTilAnnenKunde()
+    {
+        _rabattFeil = null;
+        _rabattMelding = null;
+
+        if (_kopierTilKundeId is null)
+        {
+            _rabattFeil = "Velg hvilken kunde rabattene skal kopieres til.";
+            return;
+        }
+
+        var malKundeId = _kopierTilKundeId.Value;
+        var eksisterende = await Db.KundeRabatter
+            .Where(r => r.KundeId == malKundeId)
+            .ToListAsync();
+
+        foreach (var kilde in _kundeRabatter)
+        {
+            var treff = eksisterende.FirstOrDefault(r => r.ProduktgruppeId == kilde.ProduktgruppeId);
+            if (treff is not null)
+            {
+                treff.RabattProsent = kilde.RabattProsent;
+            }
+            else
+            {
+                Db.KundeRabatter.Add(new KundeRabatt
+                {
+                    KundeId = malKundeId,
+                    ProduktgruppeId = kilde.ProduktgruppeId,
+                    RabattProsent = kilde.RabattProsent
+                });
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        var malNavn = _andreKunder.FirstOrDefault(k => k.Id == malKundeId)?.Navn ?? "kunden";
+        _rabattMelding = $"Rabatter kopiert til {malNavn}.";
+        _kopierTilKundeId = null;
     }
 
     private async Task LagreFastPaslag()
