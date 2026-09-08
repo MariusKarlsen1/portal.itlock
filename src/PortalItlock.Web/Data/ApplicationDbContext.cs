@@ -48,6 +48,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<TicketKategori> TicketKategorier => Set<TicketKategori>();
     public DbSet<DatabaseBackup> DatabaseBackuper => Set<DatabaseBackup>();
     public DbSet<Notat> Notater => Set<Notat>();
+    public DbSet<PlanlagtPrisendring> PlanlagtePrisendringer => Set<PlanlagtPrisendring>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
@@ -461,6 +462,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasOne(n => n.Bruker)
             .WithMany()
             .HasForeignKey(n => n.BrukerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<PlanlagtPrisendring>()
+            .HasOne(p => p.Component)
+            .WithMany()
+            .HasForeignKey(p => p.ComponentId)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<FravarSoknad>()

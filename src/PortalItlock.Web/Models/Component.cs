@@ -14,6 +14,7 @@ public class Component
     public string? ProdusentLand { get; set; }
     public string? ProdusentOrgnr { get; set; }
     public string? Produktkode { get; set; }
+    public string? Gtin { get; set; }
     public string? Beskrivelse { get; set; }
     public string? Overflate { get; set; }
     public bool ErSylinder { get; set; }

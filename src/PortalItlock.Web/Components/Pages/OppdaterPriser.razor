@@ -1,0 +1,408 @@
+@page "/komponenter/oppdater-priser"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject PrisimportService PrisimportSvc
+@inject PrisoppdateringService PrisoppdateringSvc
+
+<PageTitle>Oppdater priser</PageTitle>
+
+<a class="back-link" href="/komponenter">← Tilbake til komponentregisteret</a>
+<h1>Oppdater priser</h1>
+<p>
+    Lim inn/last opp den årlige prislisten fra en leverandør. Denne siden oppretter aldri nye varer - den matcher kun eksisterende varer på produktkode eller GTIN/EAN,
+    og oppdaterer prisen bare der den faktisk er endret. Du velger selv fra hvilken dato de nye prisene skal gjelde, slik at du kan importere prislisten når den kommer
+    uten at prisene endres før f.eks. nyttår.
+</p>
+
+@if (_planlagte.Count > 0)
+{
+    <section class="import-section">
+        <h2>Planlagte prisendringer som venter</h2>
+        <table class="import-table">
+            <thead>
+                <tr>
+                    <th>Vare</th>
+                    <th>Gammel pris netto</th>
+                    <th>Ny pris netto</th>
+                    <th>Gammel pris veil.</th>
+                    <th>Ny pris veil.</th>
+                    <th>Gjelder fra</th>
+                    <th>Kilde</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in _planlagte)
+                {
+                    <tr @key="p.Id">
+                        <td>@(p.Component?.Navn ?? "(slettet vare)")</td>
+                        <td>@(p.GammelPrisNetto?.ToString("N2", Kultur))</td>
+                        <td>@(p.NyPrisNetto?.ToString("N2", Kultur))</td>
+                        <td>@(p.GammelPrisVeiledende?.ToString("N2", Kultur))</td>
+                        <td>@(p.NyPrisVeiledende?.ToString("N2", Kultur))</td>
+                        <td>@p.GjelderFraDato.ToString("dd.MM.yyyy")</td>
+                        <td>@p.Kilde</td>
+                        <td><button type="button" class="cancel-button" @onclick="@(() => SlettPlanlagt(p))">Avbryt</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+}
+
+@if (_steg == 1)
+{
+    <section class="import-section">
+        <div class="field-grid">
+            <label>
+                Leverandør
+                <input @bind="_leverandor" @bind:event="oninput" placeholder="F.eks. ASSA ABLOY" />
+            </label>
+            <label>
+                Gjelder fra dato
+                <input type="date" @bind="_gjelderFraDato" />
+            </label>
+        </div>
+        <p class="section-hint">
+            Er datoen i dag eller tilbake i tid, oppdateres prisene med en gang. Er datoen frem i tid, planlegges endringen og trer i kraft automatisk den dagen.
+        </p>
+
+        <InputFile OnChange="LastOppFil" accept=".xlsx" disabled="@(string.IsNullOrWhiteSpace(_leverandor))" />
+
+        @if (!string.IsNullOrEmpty(_feil))
+        {
+            <p class="form-error">@_feil</p>
+        }
+    </section>
+}
+else if (_steg == 2)
+{
+    <section class="import-section">
+        <h2>Match kolonner</h2>
+        <p class="section-hint">Vi har forsøkt å matche kolonnene automatisk. Minst én av produktkode/GTIN må velges.</p>
+
+        <table class="mapping-table">
+            <thead>
+                <tr>
+                    <th>Felt i portalen</th>
+                    <th>Kolonne i filen</th>
+                    <th>Eksempel fra første rad</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Produktkode</td>
+                    <td>
+                        <select @bind="_produktkodeKolIndeks">
+                            <option value="">Ikke i bruk</option>
+                            @foreach (var k in _kolonner)
+                            {
+                                <option value="@k.Indeks">@k.Overskrift</option>
+                            }
+                        </select>
+                        @if (_produktkodeKolIndeks is not null && _produktkodeKolIndeks == _autoForslag.Produktkode)
+                        {
+                            <span class="mapping-auto-badge">Auto-matchet</span>
+                        }
+                    </td>
+                    <td class="mapping-eksempel">@Eksempel(_produktkodeKolIndeks)</td>
+                </tr>
+                <tr>
+                    <td>GTIN/EAN</td>
+                    <td>
+                        <select @bind="_gtinKolIndeks">
+                            <option value="">Ikke i bruk</option>
+                            @foreach (var k in _kolonner)
+                            {
+                                <option value="@k.Indeks">@k.Overskrift</option>
+                            }
+                        </select>
+                        @if (_gtinKolIndeks is not null && _gtinKolIndeks == _autoForslag.Gtin)
+                        {
+                            <span class="mapping-auto-badge">Auto-matchet</span>
+                        }
+                    </td>
+                    <td class="mapping-eksempel">@Eksempel(_gtinKolIndeks)</td>
+                </tr>
+                <tr>
+                    <td>Pris netto</td>
+                    <td>
+                        <select @bind="_prisNettoKolIndeks">
+                            <option value="">Ikke i bruk</option>
+                            @foreach (var k in _kolonner)
+                            {
+                                <option value="@k.Indeks">@k.Overskrift</option>
+                            }
+                        </select>
+                        @if (_prisNettoKolIndeks is not null && _prisNettoKolIndeks == _autoForslag.PrisNetto)
+                        {
+                            <span class="mapping-auto-badge">Auto-matchet</span>
+                        }
+                    </td>
+                    <td class="mapping-eksempel">@Eksempel(_prisNettoKolIndeks)</td>
+                </tr>
+                <tr>
+                    <td>Pris veiledende</td>
+                    <td>
+                        <select @bind="_prisVeiledendeKolIndeks">
+                            <option value="">Ikke i bruk</option>
+                            @foreach (var k in _kolonner)
+                            {
+                                <option value="@k.Indeks">@k.Overskrift</option>
+                            }
+                        </select>
+                        @if (_prisVeiledendeKolIndeks is not null && _prisVeiledendeKolIndeks == _autoForslag.PrisVeiledende)
+                        {
+                            <span class="mapping-auto-badge">Auto-matchet</span>
+                        }
+                    </td>
+                    <td class="mapping-eksempel">@Eksempel(_prisVeiledendeKolIndeks)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="VisForhandsvisning" disabled="@(_produktkodeKolIndeks is null && _gtinKolIndeks is null)">Vis forhåndsvisning</button>
+            <button type="button" class="cancel-button" @onclick="NyOppdatering">Avbryt</button>
+            @if (!string.IsNullOrEmpty(_feil))
+            {
+                <span class="form-error">@_feil</span>
+            }
+        </div>
+    </section>
+}
+else if (_steg == 3)
+{
+    <section class="import-section">
+        <h2>Forhåndsvisning</h2>
+        <p class="section-hint">
+            Nye priser gjelder fra @_gjelderFraDato.ToString("dd.MM.yyyy").
+            Rader med uendret pris gjør ingenting, og rader med feil er markert i rødt.
+        </p>
+        <div class="import-oppsummering">
+            <span class="import-oppsummering-tall import-oppsummering-ok">@_forhandsvisning.Count(r => r.Feil is null && r.ErEndret) endret</span>
+            <span class="import-oppsummering-tall import-oppsummering-uendret">@_forhandsvisning.Count(r => r.Feil is null && !r.ErEndret) uendret</span>
+            <span class="import-oppsummering-tall import-oppsummering-feil">@_forhandsvisning.Count(r => r.Feil is not null) ikke funnet</span>
+        </div>
+
+        <table class="import-table">
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>Rad</th>
+                    <th>Vare</th>
+                    <th>Pris netto</th>
+                    <th>Pris veiledende</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _forhandsvisning)
+                {
+                    <tr @key="r.RadNummer" class="@(r.Feil is not null ? "import-rad-feil" : r.ErEndret ? "import-rad-ok" : "")">
+                        <td><input type="checkbox" @bind="r.Inkluder" disabled="@(r.Feil is not null || !r.ErEndret)" /></td>
+                        <td>@r.RadNummer</td>
+                        <td>@(r.ComponentNavn ?? r.Produktkode ?? r.Gtin)</td>
+                        <td>
+                            @if (r.ErEndret && r.GammelPrisNetto != r.NyPrisNetto)
+                            {
+                                <span class="pris-gammel">@(r.GammelPrisNetto?.ToString("N2", Kultur))</span>
+                                <text> → </text>
+                            }
+                            @(r.NyPrisNetto?.ToString("N2", Kultur))
+                        </td>
+                        <td>
+                            @if (r.ErEndret && r.GammelPrisVeiledende != r.NyPrisVeiledende)
+                            {
+                                <span class="pris-gammel">@(r.GammelPrisVeiledende?.ToString("N2", Kultur))</span>
+                                <text> → </text>
+                            }
+                            @(r.NyPrisVeiledende?.ToString("N2", Kultur))
+                        </td>
+                        <td>
+                            @if (r.Feil is not null)
+                            {
+                                <span class="import-status-badge import-status-badge-feil">@r.Feil</span>
+                            }
+                            else if (r.ErEndret)
+                            {
+                                <span class="import-status-badge import-status-badge-ok">Endret</span>
+                            }
+                            else
+                            {
+                                <span class="import-status-badge import-status-badge-uendret">Uendret</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="Oppdater">
+                Oppdater @_forhandsvisning.Count(r => r.Inkluder && r.Feil is null && r.ErEndret) pris(er)
+            </button>
+            <button type="button" class="cancel-button" @onclick="@(() => _steg = 2)">Tilbake</button>
+        </div>
+    </section>
+}
+else if (_steg == 4)
+{
+    <section class="import-section">
+        <h2>Ferdig</h2>
+        <p class="save-success">
+            @_oppdatertNaaAntall pris(er) oppdatert med en gang.
+            @if (_planlagtAntall > 0)
+            {
+                <text>@_planlagtAntall prisendring(er) planlagt til @_gjelderFraDato.ToString("dd.MM.yyyy").</text>
+            }
+        </p>
+        <button type="button" class="save-button" @onclick="NyOppdatering">Ny oppdatering</button>
+    </section>
+}
+
+@code {
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+    private int _steg = 1;
+    private string _leverandor = "";
+    private DateTime _gjelderFraDato = DateTime.Today;
+    private string? _feil;
+
+    private List<PlanlagtPrisendring> _planlagte = [];
+
+    private List<PrisimportService.ArkKolonne> _kolonner = [];
+    private List<string[]> _rader = [];
+    private string[]? _radeksempel;
+    private PrisimportService.KolonneForslag _autoForslag = new();
+
+    private int? _produktkodeKolIndeks;
+    private int? _gtinKolIndeks;
+    private int? _prisNettoKolIndeks;
+    private int? _prisVeiledendeKolIndeks;
+
+    private List<PrisoppdateringService.OppdateringRad> _forhandsvisning = [];
+    private int _oppdatertNaaAntall;
+    private int _planlagtAntall;
+
+    private string? Eksempel(int? kolIndeks) =>
+        kolIndeks is not null && _radeksempel is not null && kolIndeks.Value < _radeksempel.Length
+            ? _radeksempel[kolIndeks.Value]
+            : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LastPlanlagteAsync();
+    }
+
+    private async Task LastPlanlagteAsync()
+    {
+        _planlagte = await Db.PlanlagtePrisendringer
+            .Include(p => p.Component)
+            .Where(p => !p.Utfort)
+            .OrderBy(p => p.GjelderFraDato)
+            .ToListAsync();
+    }
+
+    private async Task SlettPlanlagt(PlanlagtPrisendring p)
+    {
+        Db.PlanlagtePrisendringer.Remove(p);
+        await Db.SaveChangesAsync();
+        _planlagte.Remove(p);
+    }
+
+    private async Task LastOppFil(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        var file = e.File;
+
+        if (file.Size > 20_000_000)
+        {
+            _feil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        buffer.Position = 0;
+
+        try
+        {
+            (_kolonner, _rader) = PrisimportSvc.LesFil(buffer);
+        }
+        catch (Exception ex)
+        {
+            _feil = $"Klarte ikke å lese filen: {ex.Message}";
+            return;
+        }
+
+        if (_kolonner.Count == 0)
+        {
+            _feil = "Fant ingen data i filen.";
+            return;
+        }
+
+        _radeksempel = _rader.Count > 0 ? _rader[0] : null;
+
+        _autoForslag = PrisimportService.AutoMatchKolonner(_kolonner);
+        _produktkodeKolIndeks = _autoForslag.Produktkode;
+        _gtinKolIndeks = _autoForslag.Gtin;
+        _prisNettoKolIndeks = _autoForslag.PrisNetto;
+        _prisVeiledendeKolIndeks = _autoForslag.PrisVeiledende;
+
+        _steg = 2;
+    }
+
+    private async Task VisForhandsvisning()
+    {
+        if (_produktkodeKolIndeks is null && _gtinKolIndeks is null)
+        {
+            return;
+        }
+
+        _forhandsvisning = await PrisoppdateringSvc.ForhandsvisAsync(
+            _rader, _produktkodeKolIndeks, _gtinKolIndeks, _prisNettoKolIndeks, _prisVeiledendeKolIndeks);
+
+        if (_forhandsvisning.Count == 0)
+        {
+            _feil = "Fant ingen gyldige rader.";
+            return;
+        }
+
+        _feil = null;
+        _steg = 3;
+    }
+
+    private async Task Oppdater()
+    {
+        (_oppdatertNaaAntall, _planlagtAntall) = await PrisoppdateringSvc.OppdaterAsync(_forhandsvisning, _gjelderFraDato, _leverandor);
+        await LastPlanlagteAsync();
+        _steg = 4;
+    }
+
+    private void NyOppdatering()
+    {
+        _steg = 1;
+        _leverandor = "";
+        _gjelderFraDato = DateTime.Today;
+        _feil = null;
+        _kolonner = [];
+        _rader = [];
+        _radeksempel = null;
+        _autoForslag = new();
+        _produktkodeKolIndeks = null;
+        _gtinKolIndeks = null;
+        _prisNettoKolIndeks = null;
+        _prisVeiledendeKolIndeks = null;
+        _forhandsvisning = [];
+    }
+}

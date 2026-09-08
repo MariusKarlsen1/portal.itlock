@@ -34,6 +34,7 @@ public class PrisimportService(ApplicationDbContext db)
     public sealed class KolonneForslag
     {
         public int? Produktkode { get; set; }
+        public int? Gtin { get; set; }
         public int? Navn { get; set; }
         public int? Enhet { get; set; }
         public int? PrisNetto { get; set; }
@@ -51,6 +52,7 @@ public class PrisimportService(ApplicationDbContext db)
         return new KolonneForslag
         {
             Produktkode = Finn("produktkode", "artikkelnr", "varenr", "art.nr", "art nr", "sku", "vare nr", "produktnr"),
+            Gtin = Finn("gtin", "ean", "strekkode", "barcode"),
             Navn = Finn("navn", "beskrivelse", "betegnelse", "produktnavn", "varetekst"),
             Enhet = Finn("enhet", "måleenhet", "maaleenhet", "unit"),
             PrisNetto = Finn("nettopris", "netto pris", "innkjøpspris", "innkjøp", "kostpris", "netto"),
