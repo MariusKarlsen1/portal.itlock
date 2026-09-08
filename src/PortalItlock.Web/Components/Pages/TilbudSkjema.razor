@@ -199,6 +199,7 @@ else if (_tilbud is not null)
             <table class="varer-table">
                 <thead>
                     <tr>
+                        <th></th>
                         <th>Varenavn</th>
                         <th>Innpris</th>
                         <th>Ekstra rabatt inn</th>
@@ -222,8 +223,32 @@ else if (_tilbud is not null)
                 <tbody>
                     @foreach (var l in _tilbud.Linjer.OrderBy(l => l.Rekkefolge))
                     {
-                        <tr @key="l.Id">
-                            <td>@l.Navn</td>
+                        if (l.ErGruppering)
+                        {
+                            <tr @key="l.Id" class="gruppering-row" draggable="true"
+                                @ondragstart="@(() => OnDragStart(l))" @ondragover:preventDefault="true" @ondrop="@(() => OnDrop(l))">
+                                <td class="drag-handle-cell"><Icon Name="grip" /></td>
+                                <td colspan="20" class="gruppering-cell">
+                                    <input class="gruppering-input" @bind="l.Navn" @bind:event="oninput" @bind:after="@(() => LagreLinje(l))" placeholder="Skriv info eller gruppering..." />
+                                    <button type="button" class="remove-button" @onclick="@(() => FjernLinje(l))">Fjern</button>
+                                </td>
+                            </tr>
+                            continue;
+                        }
+
+                        <tr @key="l.Id" draggable="true"
+                            @ondragstart="@(() => OnDragStart(l))" @ondragover:preventDefault="true" @ondrop="@(() => OnDrop(l))">
+                            <td class="drag-handle-cell"><Icon Name="grip" /></td>
+                            <td>
+                                @if (l.ComponentId is null && string.IsNullOrWhiteSpace(l.Navn))
+                                {
+                                    <button type="button" class="produkt-velg-button" @onclick="@(() => ApneProduktVelger(l))">+ Produkt</button>
+                                }
+                                else
+                                {
+                                    @l.Navn
+                                }
+                            </td>
                             <td>
                                 <span class="input-suffix-wrap">
                                     <input class="pris-input" @bind="l.Innpris" />
@@ -317,7 +342,48 @@ else if (_tilbud is not null)
                 }
             </p>
         }
+
+        <div class="ny-rad-rad">
+            <button type="button" class="add-button" @onclick="LeggTilTomRad">Ny rad</button>
+            <button type="button" class="add-button" @onclick="LeggTilGruppering">Ny gruppering</button>
+        </div>
     </section>
+
+    @if (_produktVelgerLinje is not null)
+    {
+        <div class="produkt-modal-overlay" @onclick="LukkProduktVelger">
+            <div class="produkt-modal" @onclick:stopPropagation="true">
+                <div class="produkt-modal-header">
+                    <span>Velg produkt</span>
+                    <button type="button" class="produkt-modal-close" @onclick="LukkProduktVelger">✕</button>
+                </div>
+                <input class="produkt-modal-sok" @bind="_produktVelgerSok" @bind:event="oninput" @bind:after="SokProduktVelger"
+                       placeholder="Søk på navn, leverandør eller produktkode" autofocus />
+                @if (_produktVelgerResultater.Count > 0)
+                {
+                    <ul class="produkt-modal-resultater">
+                        @foreach (var r in _produktVelgerResultater)
+                        {
+                            <li>
+                                <button type="button" class="@(r.Id == _produktVelgerValgtId ? "produkt-modal-resultat valgt" : "produkt-modal-resultat")" @onclick="@(() => _produktVelgerValgtId = r.Id)">
+                                    <span class="search-result-name">@r.Navn</span>
+                                    <span class="search-result-meta">@r.Leverandor</span>
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                }
+                else if (_produktVelgerSok.Trim().Length >= 2)
+                {
+                    <p class="search-empty">Ingen treff.</p>
+                }
+                <div class="produkt-modal-actions">
+                    <button type="button" class="save-button" disabled="@(_produktVelgerValgtId is null)" @onclick="BekreftProduktValg">Bekreft</button>
+                    <button type="button" class="cancel-button" @onclick="LukkProduktVelger">Avbryt</button>
+                </div>
+            </div>
+        </div>
+    }
 
     <section class="tilbud-section">
         <button type="button" class="save-button" @onclick="@(() => _visGenerer = !_visGenerer)">Generer tilbud</button>
@@ -417,10 +483,15 @@ else if (_tilbud is not null)
     private int? _valgtForsideMalId;
     private List<LagretPdf> _lagredePdfer = [];
     private string? _pdfSavedMessage;
+    private TilbudLinje? _draggedLinje;
+    private TilbudLinje? _produktVelgerLinje;
+    private string _produktVelgerSok = "";
+    private List<SearchResult> _produktVelgerResultater = [];
+    private int? _produktVelgerValgtId;
 
-    private decimal Varekost => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Innpris * (1 - l.EkstraRabattInnProsent / 100m) * l.Antall) ?? 0;
-    private decimal UtprisVarer => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Utpris * l.Antall) ?? 0;
-    private int EstimertMinutter => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F)
+    private decimal Varekost => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).Sum(l => l.Innpris * (1 - l.EkstraRabattInnProsent / 100m) * l.Antall) ?? 0;
+    private decimal UtprisVarer => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).Sum(l => l.Utpris * l.Antall) ?? 0;
+    private int EstimertMinutter => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering)
         .Sum(l => (FinnMonteringMinutter(l.ComponentId) ?? l.MontasjeMinutter ?? 0) * l.Antall) ?? 0;
 
     private int? FinnMonteringMinutter(int? componentId) =>
@@ -736,6 +807,132 @@ else if (_tilbud is not null)
         Db.TilbudLinjer.Remove(l);
         await Db.SaveChangesAsync();
         _tilbud!.Linjer.Remove(l);
+    }
+
+    private async Task LeggTilTomRad()
+    {
+        var linje = new TilbudLinje
+        {
+            TilbudId = _tilbud!.Id,
+            Navn = "",
+            Innpris = 0,
+            Utpris = 0,
+            Antall = 1,
+            Rekkefolge = _tilbud.Linjer.Count
+        };
+        _tilbud.Linjer.Add(linje);
+        Db.TilbudLinjer.Add(linje);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LeggTilGruppering()
+    {
+        var linje = new TilbudLinje
+        {
+            TilbudId = _tilbud!.Id,
+            Navn = "",
+            ErGruppering = true,
+            Innpris = 0,
+            Utpris = 0,
+            Antall = 1,
+            Rekkefolge = _tilbud.Linjer.Count
+        };
+        _tilbud.Linjer.Add(linje);
+        Db.TilbudLinjer.Add(linje);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreLinje(TilbudLinje l)
+    {
+        await Db.SaveChangesAsync();
+    }
+
+    private void OnDragStart(TilbudLinje l) => _draggedLinje = l;
+
+    private async Task OnDrop(TilbudLinje target)
+    {
+        if (_draggedLinje is null || _draggedLinje.Id == target.Id)
+        {
+            _draggedLinje = null;
+            return;
+        }
+
+        var ordered = _tilbud!.Linjer.OrderBy(l => l.Rekkefolge).ToList();
+        ordered.Remove(_draggedLinje);
+        var targetIndex = ordered.IndexOf(target);
+        ordered.Insert(targetIndex, _draggedLinje);
+
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            ordered[i].Rekkefolge = i;
+        }
+
+        _draggedLinje = null;
+        await Db.SaveChangesAsync();
+    }
+
+    private void ApneProduktVelger(TilbudLinje l)
+    {
+        _produktVelgerLinje = l;
+        _produktVelgerSok = "";
+        _produktVelgerResultater = [];
+        _produktVelgerValgtId = null;
+    }
+
+    private void LukkProduktVelger()
+    {
+        _produktVelgerLinje = null;
+        _produktVelgerSok = "";
+        _produktVelgerResultater = [];
+        _produktVelgerValgtId = null;
+    }
+
+    private async Task SokProduktVelger()
+    {
+        var term = _produktVelgerSok.Trim();
+        if (term.Length < 2)
+        {
+            _produktVelgerResultater = [];
+            return;
+        }
+
+        _produktVelgerResultater = await Db.Components
+            .Where(c => c.Aktiv && (
+                EF.Functions.Like(c.Navn, $"%{term}%") ||
+                (c.Leverandor != null && EF.Functions.Like(c.Leverandor, $"%{term}%")) ||
+                (c.Produktkode != null && EF.Functions.Like(c.Produktkode, $"%{term}%"))))
+            .OrderBy(c => c.Navn)
+            .Take(20)
+            .Select(c => new SearchResult { Id = c.Id, Navn = c.Navn, Leverandor = c.Leverandor })
+            .ToListAsync();
+    }
+
+    private async Task BekreftProduktValg()
+    {
+        if (_produktVelgerLinje is null || _produktVelgerValgtId is null)
+        {
+            return;
+        }
+
+        var component = await Db.Components.FindAsync(_produktVelgerValgtId.Value);
+        if (component is null)
+        {
+            return;
+        }
+
+        var linje = _produktVelgerLinje;
+        linje.ComponentId = component.Id;
+        linje.Component = component;
+        linje.Navn = component.Navn;
+        linje.Innpris = component.PrisNetto ?? 0;
+        linje.PrisVeiledende = component.PrisVeiledende;
+        linje.Enhet = component.Enhet;
+        linje.MontasjeMinutter = EffektivMontasjeMinutter(component);
+        linje.RabattProsent = await HentKundeRabattProsent(component.ProduktgruppeId);
+        OppdaterLinjePris(linje);
+
+        await Db.SaveChangesAsync();
+        LukkProduktVelger();
     }
 
     private void VelgAlleByggetrinn(bool valgt)
