@@ -14,6 +14,7 @@ public class Servicerunde
     public required string StatusBeskrivelse { get; set; }
     public string? Anbefalinger { get; set; }
     public DateTime? NesteServiceDato { get; set; }
+    public bool OppfolgingsTicketOpprettet { get; set; }
     public string? Forside { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;

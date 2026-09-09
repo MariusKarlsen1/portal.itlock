@@ -643,6 +643,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(t => t.DriftsmeldingId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.Dor)
+            .WithMany()
+            .HasForeignKey(t => t.DorId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         modelBuilder.Entity<TicketHendelse>()
             .HasOne(h => h.UtfortAvBruker)
             .WithMany()

@@ -115,6 +115,16 @@ else
                     }
                 </span>
             </label>
+            <label class="span-2 reklamasjon-felt">
+                <span class="checkbox-row">
+                    <input type="checkbox" @bind="_ticket.ErReklamasjon" @bind:after="AutoLagre" />
+                    Dette er en reklamasjon
+                </span>
+                @if (_ticket.ErReklamasjon)
+                {
+                    <span class="@GarantiStatusKlasse">@GarantiStatusTekst</span>
+                }
+            </label>
         </div>
         <div class="form-actions">
             <button type="button" class="save-button" @onclick="LagreInfo">Lagre</button>
@@ -234,6 +244,32 @@ else
                     @if (_arbeidsordreTimer.HasValue)
                     {
                         <span class="section-hint">- @_arbeidsordreTimer.Value.ToString("N1") t registrert</span>
+                    }
+                </p>
+            }
+
+            <h3>Dør</h3>
+            @if (_ticket.DorId is null)
+            {
+                <div class="knytt-rad">
+                    <select @bind="_valgtDorId">
+                        <option value="">Velg dør...</option>
+                        @foreach (var d in _prosjektDorer)
+                        {
+                            <option value="@d.Id">Dør @d.Dornummer</option>
+                        }
+                    </select>
+                    <button type="button" class="add-button" @onclick="KnyttTilDor" disabled="@(_valgtDorId is null)">Knytt dør</button>
+                </div>
+            }
+            else
+            {
+                <p>
+                    <a href="@($"/dor/{_ticket.DorId}")">Åpne dør: @_ticket.Dor?.Dornummer</a>
+                    <button type="button" class="cancel-button" @onclick="@(() => _ticket.DorId = null)">Endre</button>
+                    @if (_ticket.Dor?.GarantiUtlopsdato is not null)
+                    {
+                        <span class="@GarantiStatusKlasse">@GarantiStatusTekst</span>
                     }
                 </p>
             }
@@ -368,10 +404,12 @@ else
     private List<Arbeidsordre> _prosjektArbeidsordre = [];
     private decimal? _arbeidsordreTimer;
     private List<Foresporsel> _ledigeForesporsler = [];
+    private List<Dor> _prosjektDorer = [];
 
     private int? _valgtProsjektId;
     private int? _valgtArbeidsordreId;
     private int? _valgtForesporselId;
+    private int? _valgtDorId;
     private string _nyKommentar = "";
     private bool _nyKommentarKundeSynlig;
 
@@ -382,6 +420,26 @@ else
     private string _sluttoppsummering = "";
 
     private bool SlaErForfalt => _ticket?.SlaFrist is { } frist && frist < DateTime.Now && _ticket.Status != TicketStatus.Lukket;
+
+    private string GarantiStatusTekst
+    {
+        get
+        {
+            var utlop = _ticket?.Dor?.GarantiUtlopsdato;
+            if (utlop is null)
+            {
+                return _ticket?.DorId is null ? "Ingen dør knyttet - kan ikke sjekke garanti." : "Ingen garantidato satt på døren.";
+            }
+
+            return utlop.Value.Date < DateTime.Today
+                ? $"Utenfor garanti (utløp {utlop.Value:dd.MM.yyyy})"
+                : $"Innenfor garanti (til {utlop.Value:dd.MM.yyyy})";
+        }
+    }
+
+    private string GarantiStatusKlasse => _ticket?.Dor?.GarantiUtlopsdato is { } utlop && utlop.Date < DateTime.Today
+        ? "garanti-utlopt"
+        : "garanti-ok";
 
     private string SlaStatusTekst
     {
@@ -440,6 +498,7 @@ else
             .Include(t => t.GodkjentAvBruker)
             .Include(t => t.Prosjekt)
             .Include(t => t.Arbeidsordre)
+            .Include(t => t.Dor)
             .Include(t => t.Foresporsel).ThenInclude(f => f!.Media)
             .Include(t => t.Hendelser).ThenInclude(h => h.UtfortAvBruker)
             .Include(t => t.Media)
@@ -495,6 +554,11 @@ else
 
             _prosjektArbeidsordre = await Db.Arbeidsordre
                 .Where(a => a.ProsjektId == _ticket.ProsjektId)
+                .ToListAsync();
+
+            _prosjektDorer = await Db.Dorer
+                .Where(d => d.ProsjektId == _ticket.ProsjektId)
+                .OrderBy(d => d.Dornummer)
                 .ToListAsync();
         }
 
@@ -667,6 +731,20 @@ else
         _ticket!.ArbeidsordreId = _valgtArbeidsordreId;
         var ao = _prosjektArbeidsordre.FirstOrDefault(a => a.Id == _valgtArbeidsordreId);
         LoggHendelse($"Knyttet til arbeidsordre: {ao?.Tittel}");
+        await Db.SaveChangesAsync();
+        await OnParametersSetAsync();
+    }
+
+    private async Task KnyttTilDor()
+    {
+        if (_valgtDorId is null)
+        {
+            return;
+        }
+
+        _ticket!.DorId = _valgtDorId;
+        var dor = _prosjektDorer.FirstOrDefault(d => d.Id == _valgtDorId);
+        LoggHendelse($"Knyttet til dør: {dor?.Dornummer}");
         await Db.SaveChangesAsync();
         await OnParametersSetAsync();
     }

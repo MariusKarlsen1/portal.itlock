@@ -15,6 +15,7 @@ public class ServiceVarselBackgroundService(IServiceScopeFactory scopeFactory, I
                 using var scope = scopeFactory.CreateScope();
                 var varselService = scope.ServiceProvider.GetRequiredService<ServiceVarselService>();
                 await varselService.SjekkOgSendVarselAsync();
+                await varselService.OpprettOppfolgingsTicketerAsync();
             }
             catch (Exception ex)
             {

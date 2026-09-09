@@ -83,4 +83,57 @@ public class ServiceVarselService(ApplicationDbContext db, EmailService epost, I
 
         return (sendt, naerForfall.Count);
     }
+
+    // Oppretter automatisk en ticket for planlagt service når NesteServiceDato nærmer seg
+    // (samme 14-dagers-terskel som e-postvarselet), slik at oppfølgingen faktisk havner i
+    // arbeidskøen og ikke bare som et varsel noen må huske å følge opp manuelt.
+    public async Task<int> OpprettOppfolgingsTicketerAsync()
+    {
+        var terskel = DateTime.Today.AddDays(14);
+
+        var modneRunder = await db.Servicerunder
+            .Include(r => r.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Where(r => !r.OppfolgingsTicketOpprettet
+                && r.NesteServiceDato != null && r.NesteServiceDato.Value.Date <= terskel
+                && r.Prosjekt!.Status == ProsjektStatus.Serviceavtale)
+            .ToListAsync();
+
+        // Kun den seneste runden per prosjekt er den reelle "neste service" - de andre er
+        // historikk og skal ikke generere egne tickets.
+        var sisteRundePerProsjekt = modneRunder
+            .GroupBy(r => r.ProsjektId)
+            .Select(g => g.OrderByDescending(r => r.Dato).First())
+            .ToList();
+
+        foreach (var runde in sisteRundePerProsjekt)
+        {
+            var prosjekt = runde.Prosjekt!;
+            var ticket = new Ticket
+            {
+                Tittel = $"Planlagt service - {prosjekt.Navn}",
+                Beskrivelse = $"Automatisk opprettet fra serviceavtalens oppfølging. Neste service var satt til {runde.NesteServiceDato:dd.MM.yyyy}."
+                    + (string.IsNullOrWhiteSpace(runde.Anbefalinger) ? "" : $"\n\nAnbefalinger fra forrige runde: {runde.Anbefalinger}"),
+                ProsjektId = prosjekt.Id,
+                KundeId = prosjekt.KundeId,
+                Prioritet = TicketPrioritet.Normal
+            };
+            ticket.Hendelser.Add(new TicketHendelse
+            {
+                Beskrivelse = "Opprettet automatisk fra serviceavtale-oppfølging."
+            });
+            db.Tickets.Add(ticket);
+
+            foreach (var r in modneRunder.Where(r => r.ProsjektId == runde.ProsjektId))
+            {
+                r.OppfolgingsTicketOpprettet = true;
+            }
+        }
+
+        if (sisteRundePerProsjekt.Count > 0)
+        {
+            await db.SaveChangesAsync();
+        }
+
+        return sisteRundePerProsjekt.Count;
+    }
 }

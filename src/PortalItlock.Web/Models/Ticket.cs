@@ -47,6 +47,10 @@ public class Ticket
     public int? DriftsmeldingId { get; set; }
     public Driftsmelding? Driftsmelding { get; set; }
 
+    public int? DorId { get; set; }
+    public Dor? Dor { get; set; }
+    public bool ErReklamasjon { get; set; }
+
     public List<TicketHendelse> Hendelser { get; set; } = [];
     public List<TicketMedia> Media { get; set; } = [];
 }
