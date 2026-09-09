@@ -83,7 +83,6 @@ else
 {
     <div class="ressurs-kalender">
         <div class="kalender-ukedager">
-            <div class="tidsakse-spacer"></div>
             @foreach (var dag in _dager)
             {
                 var helligdag = NorskHelligdag.Navn(dag.Dato);
@@ -103,42 +102,33 @@ else
         </div>
 
         <div class="ressurs-tidsgrid">
-            <div class="tidsakse" style="height: @PxTekst(RutenettHoydePx)">
-                @for (var t = (int)_rutenettStart; t <= (int)_rutenettSlutt; t++)
-                {
-                    var time = t;
-                    <span class="tidsakse-time" style="top: @PxTekst((time - _rutenettStart) * TimeHoydePx)">@time.ToString("00"):00</span>
-                }
-            </div>
-
             <div class="dager-rad">
                 @foreach (var dag in _dager)
                 {
                     var helligdag = NorskHelligdag.Navn(dag.Dato);
                     var erRod = helligdag is not null || NorskHelligdag.ErSondag(dag.Dato);
                     <div class="ressurs-dag-kolonne @(dag.Dato == DateTime.Today ? "ressurs-dag-idag" : "") @(erRod ? "ressurs-dag-rod" : "")"
-                         style="height: @PxTekst(RutenettHoydePx)"
+                         style="height: @PxTekst(RutenettHoydePx); background-image: repeating-linear-gradient(to bottom, var(--itlock-border) 0, var(--itlock-border) 1px, transparent 1px, transparent @PxTekst(BandHoydePx));"
                          @ondblclick="@(() => StartNy(dag.Dato))">
                         @foreach (var boks in dag.Boxer)
                         {
-                            var topPx = (boks.Fra.TotalHours - _rutenettStart) * TimeHoydePx;
-                            var hoydePx = Math.Max((boks.Til - boks.Fra).TotalHours * TimeHoydePx, MinBoksHoydePx);
+                            var baandIndex = AnsattBaandIndex(boks.AnsattId);
+                            var topPx = baandIndex * BandHoydePx + (boks.Fra.TotalHours - _rutenettStart) / (_rutenettSlutt - _rutenettStart) * BandHoydePx;
+                            var hoydePx = Math.Max((boks.Til - boks.Fra).TotalHours / (_rutenettSlutt - _rutenettStart) * BandHoydePx, MinBoksHoydePx);
                             var breddeProsent = 100.0 / boks.BaneAntall;
                             var venstreProsent = breddeProsent * boks.BaneIndex;
                             <button type="button" class="ressurs-boks" style="--montor-farge: @FargeForAnsatt(boks.AnsattId); top: @PxTekst(topPx); height: @PxTekst(hoydePx); left: calc(@ProsentTekst(venstreProsent) + 2px); width: calc(@ProsentTekst(breddeProsent) - 4px);" @onclick="@(() => StartRediger(boks))">
                                 <span class="ressurs-boks-tittel">@boks.Tittel</span>
                                 <span class="ressurs-boks-tid">@boks.Fra.ToString(@"hh\:mm")&ndash;@boks.Til.ToString(@"hh\:mm")</span>
-                                <span class="ressurs-boks-montor">@boks.AnsattNavn</span>
                             </button>
                         }
                     </div>
                 }
 
                 <div class="ressurs-medlemmer-kolonne" style="height: @PxTekst(RutenettHoydePx)">
-                    @{ var bandHoyde = RutenettHoydePx / Math.Max(_ansatte.Count, 1); }
                     @foreach (var a in _ansatte)
                     {
-                        <div class="medlem-band" style="height: @PxTekst(bandHoyde); border-left-color: @FargeForAnsatt(a.Id); background: color-mix(in srgb, @FargeForAnsatt(a.Id) 16%, var(--itlock-surface));">
+                        <div class="medlem-band" style="height: @PxTekst(BandHoydePx); border-left-color: @FargeForAnsatt(a.Id); background: color-mix(in srgb, @FargeForAnsatt(a.Id) 16%, var(--itlock-surface));">
                             @a.Navn
                         </div>
                     }
@@ -159,7 +149,6 @@ else
     {
         public int Id { get; set; }
         public int AnsattId { get; set; }
-        public string AnsattNavn { get; set; } = "";
         public string Tittel { get; set; } = "";
         public string Info { get; set; } = "";
         public TimeSpan Fra { get; set; }
@@ -183,9 +172,10 @@ else
 
     private const double TimeHoydePx = 48;
     private const double MinBoksHoydePx = 26;
-    private double _rutenettStart = 6;
-    private double _rutenettSlutt = 20;
+    private const double _rutenettStart = 7;
+    private const double _rutenettSlutt = 15;
     private double RutenettHoydePx => (_rutenettSlutt - _rutenettStart) * TimeHoydePx;
+    private double BandHoydePx => RutenettHoydePx / Math.Max(_ansatte.Count, 1);
 
     private static string PxTekst(double verdi) => verdi.ToString("0.##", CultureInfo.InvariantCulture) + "px";
     private static string ProsentTekst(double verdi) => verdi.ToString("0.###", CultureInfo.InvariantCulture) + "%";
@@ -216,6 +206,12 @@ else
     }
 
     private string FargeForAnsatt(int ansattId) => _fargekart.GetValueOrDefault(ansattId, "#6b6b63");
+
+    private int AnsattBaandIndex(int ansattId)
+    {
+        var index = _ansatte.FindIndex(a => a.Id == ansattId);
+        return index < 0 ? 0 : index;
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -362,25 +358,23 @@ else
         var sisteIUke = _visningsUke.AddDays(6);
 
         var boxer = await Db.Ressursplaner
-            .Include(r => r.Montor)
             .Where(r => r.Dato >= forsteIUke && r.Dato <= sisteIUke)
             .ToListAsync();
 
         var boxerPerDag = boxer
             .GroupBy(r => r.Dato.Date)
             .ToDictionary(g => g.Key, g => g
-                .Select(r => new BoksRad { Id = r.Id, AnsattId = r.MontorId, AnsattNavn = r.Montor?.Navn ?? "?", Tittel = r.Tittel, Info = r.Info, Fra = r.Fra, Til = r.Til })
+                .Select(r => new BoksRad { Id = r.Id, AnsattId = r.MontorId, Tittel = r.Tittel, Info = r.Info, Fra = r.Fra, Til = r.Til })
                 .OrderBy(b => b.Fra)
                 .ToList());
 
         foreach (var boxerIDag in boxerPerDag.Values)
         {
-            TildelBaner(boxerIDag);
+            foreach (var boxerForAnsatt in boxerIDag.GroupBy(b => b.AnsattId))
+            {
+                TildelBaner(boxerForAnsatt.ToList());
+            }
         }
-
-        var alleTider = boxer.SelectMany(r => new[] { r.Fra.TotalHours, r.Til.TotalHours }).ToList();
-        _rutenettStart = Math.Floor(Math.Min(6, alleTider.Count > 0 ? alleTider.Min() : 6));
-        _rutenettSlutt = Math.Ceiling(Math.Max(20, alleTider.Count > 0 ? alleTider.Max() : 20));
 
         var dager = new List<DagRad>();
         for (var dato = forsteIUke; dato <= sisteIUke; dato = dato.AddDays(1))
