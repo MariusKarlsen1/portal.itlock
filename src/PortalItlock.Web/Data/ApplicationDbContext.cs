@@ -103,6 +103,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<CeGodkjenning> CeGodkjenninger => Set<CeGodkjenning>();
     public DbSet<CeGodkjenningMedia> CeGodkjenningMedia => Set<CeGodkjenningMedia>();
     public DbSet<CeMaleGrenseverdier> CeMaleGrenseverdier => Set<CeMaleGrenseverdier>();
+    public DbSet<Ressursplan> Ressursplaner => Set<Ressursplan>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -228,6 +229,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(m => m.Timeregistreringer)
             .HasForeignKey(t => t.MontorId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Ressursplan>()
+            .HasOne(r => r.Montor)
+            .WithMany()
+            .HasForeignKey(r => r.MontorId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Ressursplan>()
+            .HasOne(r => r.OpprettetAvBruker)
+            .WithMany()
+            .HasForeignKey(r => r.OpprettetAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<Timeregistrering>()
             .HasOne(t => t.BehandletAvBruker)

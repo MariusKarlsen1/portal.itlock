@@ -1,0 +1,345 @@
+@page "/ressursplanlegger"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Ressursplanlegger</PageTitle>
+
+<h1>Ressursplanlegger</h1>
+<p class="section-hint">
+    Sett av montører på dager fremover - uavhengig av om det finnes en arbeidsordre ennå. Dobbeltklikk på en dag for
+    å legge til en etikett med klokkeslett. Etikettene vises også i montørens egen kalender.
+</p>
+
+<div class="kalender-verktoylinje">
+    <div class="kalender-nav">
+        <button type="button" class="cancel-button" @onclick="ForrigeManed">&larr;</button>
+        <span class="kalender-manednavn">@Kultur.TextInfo.ToTitleCase(_visningsManed.ToString("MMMM yyyy", Kultur))</span>
+        <button type="button" class="cancel-button" @onclick="NesteManed">&rarr;</button>
+    </div>
+    <button type="button" class="cancel-button" @onclick="GaTilIDag">I dag</button>
+</div>
+
+@if (_redigeringDato is not null)
+{
+    <div class="boks-panel">
+        <h2>@(_redigeringId is null ? "Ny etikett" : "Rediger etikett") - @_redigeringDato.Value.ToString("dd.MM.yyyy")</h2>
+        <div class="field-grid">
+            <label>
+                Montør
+                <select @bind="_formMontorId">
+                    <option value="">Velg montør...</option>
+                    @foreach (var m in _montorer)
+                    {
+                        <option value="@m.Id">@m.Navn</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Fra
+                <input type="time" @bind="_formFra" />
+            </label>
+            <label>
+                Til
+                <input type="time" @bind="_formTil" />
+            </label>
+            <label class="span-2">
+                Etikett / info
+                <textarea rows="2" @bind="_formInfo" placeholder="F.eks. Egersund skole - befaring, eller reservert kunde X"></textarea>
+            </label>
+        </div>
+        @if (!string.IsNullOrEmpty(_feilmelding))
+        {
+            <p class="form-error">@_feilmelding</p>
+        }
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
+            @if (_redigeringId is not null)
+            {
+                <button type="button" class="remove-button" @onclick="Slett">Slett</button>
+            }
+            <button type="button" class="cancel-button" @onclick="AvbrytRedigering">Avbryt</button>
+        </div>
+    </div>
+}
+
+@if (_laster)
+{
+    <p class="list-empty">Laster...</p>
+}
+else
+{
+    <div class="ressurs-layout">
+        <div class="ressurs-kalender">
+            <div class="kalender-ukedager">
+                @foreach (var dagnavn in Ukedagnavn)
+                {
+                    <div class="kalender-ukedag">@dagnavn</div>
+                }
+            </div>
+
+            <div class="kalender-grid">
+                @foreach (var dag in _dager)
+                {
+                    <div class="kalender-dag @(dag.Dato.Month != _visningsManed.Month ? "kalender-dag-annen-maned" : "") @(dag.Dato == DateTime.Today ? "kalender-dag-idag" : "")"
+                         @ondblclick="@(() => StartNy(dag.Dato))">
+                        <span class="kalender-dagnummer">@dag.Dato.Day</span>
+                        @foreach (var boks in dag.Boxer.OrderBy(b => b.Fra))
+                        {
+                            <button type="button" class="ressurs-boks" style="--montor-farge: @FargeForMontor(boks.MontorId)" @onclick="@(() => StartRediger(boks))">
+                                <span class="ressurs-boks-tid">@boks.Fra.ToString(@"hh\:mm")&ndash;@boks.Til.ToString(@"hh\:mm")</span>
+                                <span class="ressurs-boks-montor">@boks.MontorNavn</span>
+                                <span class="ressurs-boks-info">@boks.Info</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="ressurs-medlemmer">
+            <h2>Medlemmer</h2>
+            <ul class="medlem-liste">
+                @foreach (var m in _montorer)
+                {
+                    <li>
+                        <span class="medlem-farge" style="background: @FargeForMontor(m.Id)"></span>
+                        @m.Navn
+                    </li>
+                }
+            </ul>
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly string[] Palett = ["#2f6fb3", "#6a4fae", "#2b7a4b", "#b5502d", "#1f8a8a", "#a3527a"];
+
+    private sealed class MontorOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class BoksRad
+    {
+        public int Id { get; set; }
+        public int MontorId { get; set; }
+        public string MontorNavn { get; set; } = "";
+        public string Info { get; set; } = "";
+        public TimeSpan Fra { get; set; }
+        public TimeSpan Til { get; set; }
+    }
+
+    private sealed class DagRad
+    {
+        public required DateTime Dato { get; set; }
+        public List<BoksRad> Boxer { get; set; } = [];
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly string[] Ukedagnavn = ["Man", "Tir", "Ons", "Tor", "Fre", "Lør", "Søn"];
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+
+    private DateTime _visningsManed = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private List<MontorOption> _montorer = [];
+    private List<DagRad> _dager = [];
+    private bool _laster = true;
+
+    private DateTime? _redigeringDato;
+    private int? _redigeringId;
+    private int? _formMontorId;
+    private TimeOnly? _formFra = new(7, 0);
+    private TimeOnly? _formTil = new(15, 0);
+    private string _formInfo = "";
+    private string? _feilmelding;
+
+    private string FargeForMontor(int montorId)
+    {
+        var index = _montorer.FindIndex(m => m.Id == montorId);
+        return Palett[(index < 0 ? 0 : index) % Palett.Length];
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var idClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (idClaim is not null && int.TryParse(idClaim, out var id))
+            {
+                _naverendeBrukerId = id;
+            }
+        }
+
+        _montorer = await Db.Brukere
+            .Where(b => b.Rolle == BrukerRolle.Montor && b.Aktiv)
+            .OrderBy(m => m.Navn)
+            .Select(m => new MontorOption { Id = m.Id, Navn = m.Navn })
+            .ToListAsync();
+
+        await LastAsync();
+    }
+
+    private async Task ForrigeManed()
+    {
+        _visningsManed = _visningsManed.AddMonths(-1);
+        await LastAsync();
+    }
+
+    private async Task NesteManed()
+    {
+        _visningsManed = _visningsManed.AddMonths(1);
+        await LastAsync();
+    }
+
+    private async Task GaTilIDag()
+    {
+        _visningsManed = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        await LastAsync();
+    }
+
+    private void StartNy(DateTime dato)
+    {
+        _redigeringDato = dato;
+        _redigeringId = null;
+        _formMontorId = null;
+        _formFra = new TimeOnly(7, 0);
+        _formTil = new TimeOnly(15, 0);
+        _formInfo = "";
+        _feilmelding = null;
+    }
+
+    private void StartRediger(BoksRad boks)
+    {
+        _redigeringDato = _dager.First(d => d.Boxer.Contains(boks)).Dato;
+        _redigeringId = boks.Id;
+        _formMontorId = boks.MontorId;
+        _formFra = TimeOnly.FromTimeSpan(boks.Fra);
+        _formTil = TimeOnly.FromTimeSpan(boks.Til);
+        _formInfo = boks.Info;
+        _feilmelding = null;
+    }
+
+    private void AvbrytRedigering()
+    {
+        _redigeringDato = null;
+        _redigeringId = null;
+        _formMontorId = null;
+        _formInfo = "";
+        _feilmelding = null;
+    }
+
+    private async Task Lagre()
+    {
+        if (_redigeringDato is null || _formMontorId is null || _formFra is null || _formTil is null || string.IsNullOrWhiteSpace(_formInfo))
+        {
+            _feilmelding = "Fyll ut montør, fra/til-klokkeslett og etikett.";
+            return;
+        }
+
+        if (_formTil.Value <= _formFra.Value)
+        {
+            _feilmelding = "Til-klokkeslett må være etter fra-klokkeslett.";
+            return;
+        }
+
+        if (_redigeringId is null)
+        {
+            Db.Ressursplaner.Add(new Ressursplan
+            {
+                Dato = _redigeringDato.Value,
+                MontorId = _formMontorId.Value,
+                Info = _formInfo.Trim(),
+                Fra = _formFra.Value.ToTimeSpan(),
+                Til = _formTil.Value.ToTimeSpan(),
+                OpprettetAvBrukerId = _naverendeBrukerId
+            });
+        }
+        else
+        {
+            var eksisterende = await Db.Ressursplaner.FindAsync(_redigeringId.Value);
+            if (eksisterende is not null)
+            {
+                eksisterende.MontorId = _formMontorId.Value;
+                eksisterende.Info = _formInfo.Trim();
+                eksisterende.Fra = _formFra.Value.ToTimeSpan();
+                eksisterende.Til = _formTil.Value.ToTimeSpan();
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        AvbrytRedigering();
+        await LastAsync();
+    }
+
+    private async Task Slett()
+    {
+        if (_redigeringId is null)
+        {
+            return;
+        }
+
+        var eksisterende = await Db.Ressursplaner.FindAsync(_redigeringId.Value);
+        if (eksisterende is not null)
+        {
+            Db.Ressursplaner.Remove(eksisterende);
+            await Db.SaveChangesAsync();
+        }
+
+        AvbrytRedigering();
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        _laster = true;
+
+        var forsteIGrid = FinnForrigeMandag(_visningsManed);
+        var sisteIManed = _visningsManed.AddMonths(1).AddDays(-1);
+        var sisteIGrid = FinnNesteSondag(sisteIManed);
+
+        var boxer = await Db.Ressursplaner
+            .Include(r => r.Montor)
+            .Where(r => r.Dato >= forsteIGrid && r.Dato <= sisteIGrid)
+            .ToListAsync();
+
+        var boxerPerDag = boxer
+            .GroupBy(r => r.Dato.Date)
+            .ToDictionary(g => g.Key, g => g
+                .Select(r => new BoksRad { Id = r.Id, MontorId = r.MontorId, MontorNavn = r.Montor?.Navn ?? "?", Info = r.Info, Fra = r.Fra, Til = r.Til })
+                .ToList());
+
+        var dager = new List<DagRad>();
+        for (var dato = forsteIGrid; dato <= sisteIGrid; dato = dato.AddDays(1))
+        {
+            dager.Add(new DagRad
+            {
+                Dato = dato,
+                Boxer = boxerPerDag.GetValueOrDefault(dato, [])
+            });
+        }
+
+        _dager = dager;
+        _laster = false;
+    }
+
+    private static DateTime FinnForrigeMandag(DateTime dato)
+    {
+        var diff = ((int)dato.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        return dato.AddDays(-diff);
+    }
+
+    private static DateTime FinnNesteSondag(DateTime dato)
+    {
+        var diff = ((int)DayOfWeek.Sunday - (int)dato.DayOfWeek + 7) % 7;
+        return dato.AddDays(diff);
+    }
+}

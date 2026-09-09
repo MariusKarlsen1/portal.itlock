@@ -12,6 +12,11 @@
 
 <h1>Kalender</h1>
 <p>Arbeidsordre med "Planlagt dato" satt vises her. Sett datoen på arbeidsordren for at den skal dukke opp i kalenderen.</p>
+<a class="min-dag-lenke" href="/min-dag">&larr; Se min dag (adresse og varer å pakke)</a>
+@if (_naverendeRolle != BrukerRolle.Montor)
+{
+    <a class="min-dag-lenke" href="/ressursplanlegger">Ressursplanlegger &rarr;</a>
+}
 
 <div class="kalender-verktoylinje">
     <div class="kalender-nav">
@@ -71,6 +76,14 @@ else
                         <span class="kalender-ordre-tittel">@o.Tittel</span>
                     </a>
                 }
+                @foreach (var r in dag.Ressurser)
+                {
+                    <span class="kalender-ressurs" title="@r.Info @(r.MontorNavn is not null ? $"- {r.MontorNavn}" : "")">
+                        <span class="kalender-ressurs-tid">@r.Fra.ToString(@"hh\:mm")&ndash;@r.Til.ToString(@"hh\:mm")</span>
+                        <span class="kalender-ressurs-montor">@r.MontorNavn</span>
+                        <span class="kalender-ressurs-info">@r.Info</span>
+                    </span>
+                }
             </div>
         }
     </div>
@@ -99,10 +112,19 @@ else
                 : $"{Start.Value:HH:mm}–{Slutt.Value:HH:mm}";
     }
 
+    private sealed class RessursRad
+    {
+        public string? MontorNavn { get; set; }
+        public string Info { get; set; } = "";
+        public TimeSpan Fra { get; set; }
+        public TimeSpan Til { get; set; }
+    }
+
     private sealed class DagRad
     {
         public required DateTime Dato { get; set; }
         public List<OrdreRad> Ordre { get; set; } = [];
+        public List<RessursRad> Ressurser { get; set; } = [];
     }
 
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
@@ -201,13 +223,35 @@ else
                     Slutt = a.PlanlagtSlutt
                 }).ToList());
 
+        IQueryable<Ressursplan> ressursQuery = Db.Ressursplaner
+            .Include(r => r.Montor)
+            .Where(r => r.Dato >= forsteIGrid && r.Dato <= sisteIGrid);
+
+        if (_naverendeRolle == BrukerRolle.Montor)
+        {
+            ressursQuery = ressursQuery.Where(r => r.MontorId == _naverendeBrukerId);
+        }
+        else if (_valgtMontorId is not null)
+        {
+            ressursQuery = ressursQuery.Where(r => r.MontorId == _valgtMontorId);
+        }
+
+        var ressurser = await ressursQuery.ToListAsync();
+        var ressurserPerDag = ressurser
+            .GroupBy(r => r.Dato.Date)
+            .ToDictionary(g => g.Key, g => g
+                .OrderBy(r => r.Fra)
+                .Select(r => new RessursRad { MontorNavn = r.Montor?.Navn, Info = r.Info, Fra = r.Fra, Til = r.Til })
+                .ToList());
+
         var dager = new List<DagRad>();
         for (var dato = forsteIGrid; dato <= sisteIGrid; dato = dato.AddDays(1))
         {
             dager.Add(new DagRad
             {
                 Dato = dato,
-                Ordre = ordrePerDag.GetValueOrDefault(dato, [])
+                Ordre = ordrePerDag.GetValueOrDefault(dato, []),
+                Ressurser = ressurserPerDag.GetValueOrDefault(dato, [])
             });
         }
 
