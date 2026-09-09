@@ -18,6 +18,7 @@ public static class PortalModulRegister
                     new Lenke("Guider", "Kobling, dørmiljø og oppsett adgangskontroll", "guidermodul", "tool"),
                     new Lenke("Prosjekt", "Prosjekter og arbeidsordre", "prosjektmodul", "folder"),
                     new Lenke("Timer og fravær", "Fravær og timeregistrering", "timerfravarmodul", "clock"),
+                    new Lenke("Utskiftning av låskasse", "Søk opp gammel lås, se hva du trenger", "lasekasse-utskiftning", "tool"),
                 ]),
                 new LenkeGruppe("Kart og kalender", [
                     new Lenke("Kart", "Se dagens jobber geografisk", "kart", "map"),
