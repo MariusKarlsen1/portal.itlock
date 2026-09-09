@@ -7,7 +7,9 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject EmailService Epost
 
 <PageTitle>@(_dor?.Dornummer ?? "Dør") - itlock</PageTitle>
 
@@ -137,7 +139,7 @@ else
 
         _brukerId = brukerId;
 
-        var dor = await Db.Dorer.FirstOrDefaultAsync(d => d.Id == Id);
+        var dor = await Db.Dorer.Include(d => d.Prosjekt).FirstOrDefaultAsync(d => d.Id == Id);
         if (dor is null)
         {
             _ikkeTilgang = true;
@@ -224,6 +226,8 @@ else
         Db.Driftsmeldinger.Add(melding);
         await Db.SaveChangesAsync();
 
+        await VarsleAnsatte(melding);
+
         _nyTekst = "";
         _valgteFiler.Clear();
         _sender = false;
@@ -235,5 +239,25 @@ else
             .Where(m => m.DorId == Id)
             .OrderByDescending(m => m.OpprettetDato)
             .ToListAsync();
+    }
+
+    private async Task VarsleAnsatte(Driftsmelding melding)
+    {
+        var mottakerEposter = await Db.Brukere
+            .Where(b => (b.Rolle == BrukerRolle.Admin || b.Rolle == BrukerRolle.Prosjektleder) && b.Aktiv)
+            .Select(b => b.Epost)
+            .ToListAsync();
+
+        var innmelder = _brukerId.HasValue ? await Db.Brukere.FindAsync(_brukerId.Value) : null;
+
+        var html = $"<p>Ny driftsmelding på <strong>Dør {_dor?.Dornummer}</strong> - {_dor?.Prosjekt?.Navn}:</p>"
+            + $"<p>{System.Net.WebUtility.HtmlEncode(melding.Tekst).Replace("\n", "<br>")}</p>"
+            + $"<p>Meldt inn av {innmelder?.Navn ?? "ukjent"}.</p>"
+            + "<p>Se den i portalen under Driftsmeldinger.</p>";
+
+        foreach (var mottakerEpost in mottakerEposter)
+        {
+            await Epost.SendAsync(mottakerEpost, $"Ny driftsmelding - Dør {_dor?.Dornummer}", html);
+        }
     }
 }
