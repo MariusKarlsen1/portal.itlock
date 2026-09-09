@@ -6,6 +6,7 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 
 <PageTitle>Kalender</PageTitle>
@@ -48,6 +49,7 @@
 else
 {
     <div class="kalender-ukedager">
+        <div class="kalender-ukenr-header"></div>
         @foreach (var dagnavn in Ukedagnavn)
         {
             <div class="kalender-ukedag">@dagnavn</div>
@@ -55,36 +57,45 @@ else
     </div>
 
     <div class="kalender-grid">
-        @foreach (var dag in _dager)
+        @foreach (var uke in _dager.Chunk(7))
         {
-            <div class="kalender-dag @(dag.Dato.Month != _visningsManed.Month ? "kalender-dag-annen-maned" : "") @(dag.Dato == DateTime.Today ? "kalender-dag-idag" : "") @(_dragOverDato == dag.Dato ? "kalender-dag-dragover" : "")"
-                 @ondragover="@(() => { })" @ondragover:preventDefault="true"
-                 @ondragenter="@(() => _dragOverDato = dag.Dato)"
-                 @ondragleave="@(() => _dragOverDato = null)"
-                 @ondrop="@(() => OnDropAsync(dag.Dato))">
-                <span class="kalender-dagnummer">@dag.Dato.Day</span>
-                @foreach (var o in dag.Ordre)
-                {
-                    <a class="kalender-ordre @StatusKlasse(o.Status)" href="@($"/arbeidsordre/{o.Id}")"
-                       title="@o.Tittel @(o.MontorNavn is not null ? $"- {o.MontorNavn}" : "")"
-                       draggable="true"
-                       @ondragstart="@(() => _draggingOrdreId = o.Id)">
-                        @if (o.TidTekst is not null)
-                        {
-                            <span class="kalender-ordre-tid">@o.TidTekst</span>
-                        }
-                        <span class="kalender-ordre-tittel">@o.Tittel</span>
-                    </a>
-                }
-                @foreach (var r in dag.Ressurser)
-                {
-                    <span class="kalender-ressurs" title="@r.Info @(r.MontorNavn is not null ? $"- {r.MontorNavn}" : "")">
-                        <span class="kalender-ressurs-tid">@r.Fra.ToString(@"hh\:mm")&ndash;@r.Til.ToString(@"hh\:mm")</span>
-                        <span class="kalender-ressurs-montor">@r.MontorNavn</span>
-                        <span class="kalender-ressurs-info">@r.Info</span>
-                    </span>
-                }
-            </div>
+            <div class="kalender-ukenr">@ISOWeek.GetWeekOfYear(uke[0].Dato)</div>
+            @foreach (var dag in uke)
+            {
+                var helligdag = NorskHelligdag.Navn(dag.Dato);
+                <div class="kalender-dag @(dag.Dato.Month != _visningsManed.Month ? "kalender-dag-annen-maned" : "") @(dag.Dato == DateTime.Today ? "kalender-dag-idag" : "") @(_dragOverDato == dag.Dato ? "kalender-dag-dragover" : "") @(helligdag is not null || NorskHelligdag.ErSondag(dag.Dato) ? "kalender-dag-rod" : "")"
+                     @ondragover="@(() => { })" @ondragover:preventDefault="true"
+                     @ondragenter="@(() => _dragOverDato = dag.Dato)"
+                     @ondragleave="@(() => _dragOverDato = null)"
+                     @ondrop="@(() => OnDropAsync(dag.Dato))">
+                    <span class="kalender-dagnummer">@dag.Dato.Day</span>
+                    @if (helligdag is not null)
+                    {
+                        <span class="kalender-helligdag">@helligdag</span>
+                    }
+                    @foreach (var o in dag.Ordre)
+                    {
+                        <a class="kalender-ordre @StatusKlasse(o.Status)" href="@($"/arbeidsordre/{o.Id}")"
+                           title="@o.Tittel @(o.MontorNavn is not null ? $"- {o.MontorNavn}" : "")"
+                           draggable="true"
+                           @ondragstart="@(() => _draggingOrdreId = o.Id)">
+                            @if (o.TidTekst is not null)
+                            {
+                                <span class="kalender-ordre-tid">@o.TidTekst</span>
+                            }
+                            <span class="kalender-ordre-tittel">@o.Tittel</span>
+                        </a>
+                    }
+                    @foreach (var r in dag.Ressurser)
+                    {
+                        <span class="kalender-ressurs" style="--montor-farge: @FargeForMontor(r.MontorId)" title="@r.Info @(r.MontorNavn is not null ? $"- {r.MontorNavn}" : "")">
+                            <span class="kalender-ressurs-tittel">@r.Tittel</span>
+                            <span class="kalender-ressurs-tid">@r.Fra.ToString(@"hh\:mm")&ndash;@r.Til.ToString(@"hh\:mm")</span>
+                            <span class="kalender-ressurs-montor">@r.MontorNavn</span>
+                        </span>
+                    }
+                </div>
+            }
         }
     </div>
 }
@@ -114,7 +125,9 @@ else
 
     private sealed class RessursRad
     {
+        public int MontorId { get; set; }
         public string? MontorNavn { get; set; }
+        public string Tittel { get; set; } = "";
         public string Info { get; set; } = "";
         public TimeSpan Fra { get; set; }
         public TimeSpan Til { get; set; }
@@ -137,6 +150,7 @@ else
     private DateTime _visningsManed = new(DateTime.Today.Year, DateTime.Today.Month, 1);
     private int? _valgtMontorId;
     private List<MontorOption> _montorer = [];
+    private Dictionary<int, string> _fargekart = [];
     private List<DagRad> _dager = [];
     private bool _laster = true;
     private int? _draggingOrdreId;
@@ -165,6 +179,9 @@ else
             .OrderBy(m => m.Navn)
             .Select(m => new MontorOption { Id = m.Id, Navn = m.Navn })
             .ToListAsync();
+
+        var aktiveIder = await Db.Brukere.Where(b => b.Aktiv).Select(b => b.Id).ToListAsync();
+        _fargekart = AnsattFarge.Bygg(aktiveIder);
 
         await LastAsync();
     }
@@ -241,7 +258,7 @@ else
             .GroupBy(r => r.Dato.Date)
             .ToDictionary(g => g.Key, g => g
                 .OrderBy(r => r.Fra)
-                .Select(r => new RessursRad { MontorNavn = r.Montor?.Navn, Info = r.Info, Fra = r.Fra, Til = r.Til })
+                .Select(r => new RessursRad { MontorId = r.MontorId, MontorNavn = r.Montor?.Navn, Tittel = r.Tittel, Info = r.Info, Fra = r.Fra, Til = r.Til })
                 .ToList());
 
         var dager = new List<DagRad>();
@@ -305,6 +322,8 @@ else
         _draggingOrdreId = null;
         await LastAsync();
     }
+
+    private string FargeForMontor(int montorId) => _fargekart.GetValueOrDefault(montorId, "#6b6b63");
 
     private static string StatusKlasse(ArbeidsordreStatus status) => status switch
     {

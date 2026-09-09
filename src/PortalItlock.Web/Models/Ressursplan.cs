@@ -13,6 +13,7 @@ public class Ressursplan
     public int MontorId { get; set; }
     public Bruker? Montor { get; set; }
 
+    public required string Tittel { get; set; }
     public required string Info { get; set; }
 
     public int? OpprettetAvBrukerId { get; set; }
