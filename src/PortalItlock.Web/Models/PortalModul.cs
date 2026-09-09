@@ -21,6 +21,7 @@ public static class PortalModulRegister
                     new Lenke("Utskiftning av låskasse", "Søk opp gammel lås, se hva du trenger", "lasekasse-utskiftning", "tool"),
                 ]),
                 new LenkeGruppe("Kart og kalender", [
+                    new Lenke("Min dag", "Dagens jobber, adresse og varer å pakke, samlet", "min-dag", "calendar"),
                     new Lenke("Kart", "Se dagens jobber geografisk", "kart", "map"),
                     new Lenke("Kalender", "Se planlagte arbeidsordre i månedsvisning", "kalender", "calendar"),
                 ]),

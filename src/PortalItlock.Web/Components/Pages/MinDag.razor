@@ -1,0 +1,263 @@
+@page "/min-dag"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Min dag</PageTitle>
+
+<h1>Min dag</h1>
+<p class="section-hint">Dagens jobber samlet - adresse, kontaktperson og varer å pakke, uten å måtte inn på hver arbeidsordre.</p>
+
+<div class="dag-verktoylinje">
+    <button type="button" class="cancel-button" @onclick="ForrigeDag">&larr;</button>
+    <span class="dag-dato">@Kultur.TextInfo.ToTitleCase(_valgtDato.ToString("dddd dd. MMMM", Kultur))</span>
+    <button type="button" class="cancel-button" @onclick="NesteDag">&rarr;</button>
+    <button type="button" class="cancel-button" @onclick="GaTilIDag">I dag</button>
+
+    @if (_naverendeRolle != BrukerRolle.Montor)
+    {
+        <label class="dag-montor-velger">
+            Montør
+            <select @bind="_valgtMontorId" @bind:after="LastAsync">
+                <option value="">Velg montør...</option>
+                @foreach (var m in _montorer)
+                {
+                    <option value="@m.Id">@m.Navn</option>
+                }
+            </select>
+        </label>
+    }
+</div>
+
+@if (_laster)
+{
+    <p class="list-empty">Laster...</p>
+}
+else if (_valgtMontorId is null)
+{
+    <p class="list-empty">Velg en montør for å se dagen.</p>
+}
+else if (_jobber.Count == 0)
+{
+    <p class="list-empty">Ingen jobber planlagt denne dagen.</p>
+}
+else
+{
+    <div class="jobb-liste">
+        @foreach (var jobb in _jobber)
+        {
+            <div class="jobb-kort">
+                <div class="jobb-header">
+                    <span class="jobb-tid">@(jobb.TidTekst ?? "Ikke satt")</span>
+                    <span class="status-badge @StatusKlasse(jobb.Status)">@jobb.Status.Visningsnavn()</span>
+                </div>
+                <h2><a href="@($"/arbeidsordre/{jobb.Id}")">@jobb.Tittel</a></h2>
+                @if (jobb.ProsjektNavn is not null)
+                {
+                    <p class="jobb-prosjekt">@jobb.ProsjektNavn</p>
+                }
+
+                <div class="jobb-info-rad">
+                    @if (jobb.Adresse is not null)
+                    {
+                        <a class="jobb-lenke" href="@($"https://www.google.com/maps/search/?api=1&query={Uri.EscapeDataString(jobb.Adresse)}")" target="_blank">
+                            📍 @jobb.Adresse
+                        </a>
+                    }
+                    @if (jobb.Kontaktperson is not null)
+                    {
+                        <span class="jobb-kontakt">👤 @jobb.Kontaktperson</span>
+                    }
+                    @if (jobb.Telefon is not null)
+                    {
+                        <a class="jobb-lenke" href="@($"tel:{jobb.Telefon}")">📞 @jobb.Telefon</a>
+                    }
+                </div>
+
+                @if (jobb.Varer.Count > 0)
+                {
+                    <div class="jobb-varer">
+                        <span class="jobb-varer-tittel">Varer å pakke</span>
+                        <ul class="varer-liste">
+                            @foreach (var v in jobb.Varer)
+                            {
+                                <li>
+                                    <span>@v.Navn</span>
+                                    <span class="varer-antall">@v.Antall @v.Enhet</span>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private sealed class MontorOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class VareRad
+    {
+        public required string Navn { get; set; }
+        public decimal Antall { get; set; }
+        public string Enhet { get; set; } = "stk";
+    }
+
+    private sealed class JobbRad
+    {
+        public int Id { get; set; }
+        public string Tittel { get; set; } = "";
+        public string? ProsjektNavn { get; set; }
+        public string? Adresse { get; set; }
+        public string? Kontaktperson { get; set; }
+        public string? Telefon { get; set; }
+        public ArbeidsordreStatus Status { get; set; }
+        public DateTime? Start { get; set; }
+        public DateTime? Slutt { get; set; }
+        public List<VareRad> Varer { get; set; } = [];
+
+        public string? TidTekst => Start is null
+            ? null
+            : Slutt is null
+                ? Start.Value.ToString("HH:mm")
+                : $"{Start.Value:HH:mm}–{Slutt.Value:HH:mm}";
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private BrukerRolle? _naverendeRolle;
+    private int? _naverendeBrukerId;
+
+    private DateOnly _valgtDato = DateOnly.FromDateTime(DateTime.Today);
+    private int? _valgtMontorId;
+    private List<MontorOption> _montorer = [];
+    private List<JobbRad> _jobber = [];
+    private bool _laster = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var idClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (idClaim is not null && int.TryParse(idClaim, out var id))
+            {
+                _naverendeBrukerId = id;
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
+            }
+        }
+
+        _montorer = await Db.Brukere
+            .Where(b => b.Rolle == BrukerRolle.Montor && b.Aktiv)
+            .OrderBy(m => m.Navn)
+            .Select(m => new MontorOption { Id = m.Id, Navn = m.Navn })
+            .ToListAsync();
+
+        _valgtMontorId = _naverendeRolle == BrukerRolle.Montor ? _naverendeBrukerId : _montorer.FirstOrDefault()?.Id;
+
+        await LastAsync();
+    }
+
+    private void ForrigeDag()
+    {
+        _valgtDato = _valgtDato.AddDays(-1);
+        _ = LastAsync();
+    }
+
+    private void NesteDag()
+    {
+        _valgtDato = _valgtDato.AddDays(1);
+        _ = LastAsync();
+    }
+
+    private void GaTilIDag()
+    {
+        _valgtDato = DateOnly.FromDateTime(DateTime.Today);
+        _ = LastAsync();
+    }
+
+    private static string StatusKlasse(ArbeidsordreStatus status) => status switch
+    {
+        ArbeidsordreStatus.Fakturert => "status-badge-fakturert",
+        ArbeidsordreStatus.Ferdig => "status-badge-ferdig",
+        ArbeidsordreStatus.Pagaende => "status-badge-pagaende",
+        ArbeidsordreStatus.Klar => "status-badge-klar",
+        _ => "status-badge-ny"
+    };
+
+    private async Task LastAsync()
+    {
+        _laster = true;
+
+        if (_valgtMontorId is null)
+        {
+            _jobber = [];
+            _laster = false;
+            return;
+        }
+
+        var dagStart = _valgtDato.ToDateTime(TimeOnly.MinValue);
+        var dagSlutt = dagStart.AddDays(1);
+
+        var ordre = await Db.Arbeidsordre
+            .Include(a => a.Prosjekt)
+            .Include(a => a.Varer)
+            .Where(a => a.AnsvarligMontorId == _valgtMontorId
+                && a.PlanlagtDato != null && a.PlanlagtDato >= dagStart && a.PlanlagtDato < dagSlutt)
+            .OrderBy(a => a.PlanlagtDato)
+            .ToListAsync();
+
+        var tilbudIder = ordre.Where(a => a.TilbudId.HasValue).Select(a => a.TilbudId!.Value).Distinct().ToList();
+        var tilbudLinjer = tilbudIder.Count == 0
+            ? []
+            : await Db.TilbudLinjer
+                .Where(l => tilbudIder.Contains(l.TilbudId) && !l.ErGruppering && l.LevertAv == LevertAv.F)
+                .OrderBy(l => l.Rekkefolge)
+                .ToListAsync();
+
+        _jobber = ordre.Select(a =>
+        {
+            var adresseDeler = new[] { a.Adresse ?? a.Prosjekt?.Adresse, a.Postnr ?? a.Prosjekt?.Postnr, a.Sted ?? a.Prosjekt?.Sted }
+                .Where(s => !string.IsNullOrWhiteSpace(s));
+            var adresse = string.Join(" ", adresseDeler);
+
+            var varer = a.TilbudId.HasValue
+                ? tilbudLinjer.Where(l => l.TilbudId == a.TilbudId.Value)
+                    .Select(l => new VareRad { Navn = l.Navn, Antall = l.Antall, Enhet = l.Enhet ?? "stk" })
+                    .ToList()
+                : a.Varer.Select(v => new VareRad { Navn = v.Navn, Antall = v.Antall, Enhet = "stk" }).ToList();
+
+            return new JobbRad
+            {
+                Id = a.Id,
+                Tittel = a.Tittel,
+                ProsjektNavn = a.Prosjekt?.Navn,
+                Adresse = string.IsNullOrWhiteSpace(adresse) ? null : adresse,
+                Kontaktperson = string.IsNullOrWhiteSpace(a.Prosjekt?.Kontaktperson) ? null : a.Prosjekt!.Kontaktperson,
+                Telefon = string.IsNullOrWhiteSpace(a.Prosjekt?.Telefon) ? null : a.Prosjekt!.Telefon,
+                Status = a.Status,
+                Start = a.PlanlagtDato,
+                Slutt = a.PlanlagtSlutt,
+                Varer = varer
+            };
+        }).ToList();
+
+        _laster = false;
+    }
+}
