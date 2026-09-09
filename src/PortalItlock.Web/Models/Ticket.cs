@@ -44,6 +44,9 @@ public class Ticket
     public int? ServicehenvendelseId { get; set; }
     public Servicehenvendelse? Servicehenvendelse { get; set; }
 
+    public int? DriftsmeldingId { get; set; }
+    public Driftsmelding? Driftsmelding { get; set; }
+
     public List<TicketHendelse> Hendelser { get; set; } = [];
     public List<TicketMedia> Media { get; set; } = [];
 }

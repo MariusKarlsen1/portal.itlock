@@ -1,0 +1,131 @@
+@page "/driftsmelding/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>Driftsmelding - Dør @(_m?.Dor?.Dornummer)</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke driftsmeldingen. Den kan være slettet.</p>
+}
+else if (_m is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="/driftsmeldinger">&larr; Tilbake til driftsmeldinger</a>
+    <h1>Driftsmelding - Dør @_m.Dor?.Dornummer</h1>
+
+    <section class="melding-section">
+        <h2>Informasjon</h2>
+        <div class="info-rad">
+            <span>Prosjekt: <a href="@($"/prosjekter/{_m.Dor?.ProsjektId}")">@_m.Dor?.Prosjekt?.Navn</a></span>
+            <span><a href="@($"/dor/{_m.DorId}")">Åpne dør</a></span>
+            <span>Meldt inn: @(_m.InnmeldtAvBruker?.Navn ?? "Ukjent") - @_m.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
+        </div>
+    </section>
+
+    <section class="melding-section">
+        <h2>Melding</h2>
+        <p class="melding-tekst-visning">@_m.Tekst</p>
+    </section>
+
+    @if (_m.Media.Count > 0)
+    {
+        <section class="melding-section">
+            <h2>Vedlegg</h2>
+            <div class="melding-media">
+                @foreach (var media in _m.Media)
+                {
+                    @if (media.ContentType.StartsWith("video/"))
+                    {
+                        <video controls class="melding-video" src="@($"/driftsmeldingmedia/{media.Id}/fil")"></video>
+                    }
+                    else
+                    {
+                        <a href="@($"/driftsmeldingmedia/{media.Id}/fil")" target="_blank">
+                            <img src="@($"/driftsmeldingmedia/{media.Id}/fil")" alt="@media.Filnavn" class="melding-bilde" />
+                        </a>
+                    }
+                }
+            </div>
+        </section>
+    }
+
+    <section class="melding-section">
+        <h2>Ticket</h2>
+        @if (_knyttetTicketId is int tid)
+        {
+            <p><a href="@($"/ticket/{tid}")">Åpne ticket #@tid</a></p>
+        }
+        else
+        {
+            <p class="section-hint">Ingen ticket opprettet fra denne driftsmeldingen ennå.</p>
+            <button type="button" class="add-button" @onclick="OpprettTicket">Opprett ticket</button>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private Driftsmelding? _m;
+    private bool _notFound;
+    private int? _knyttetTicketId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _m = await Db.Driftsmeldinger
+            .Include(m => m.Dor).ThenInclude(d => d!.Prosjekt)
+            .Include(m => m.InnmeldtAvBruker)
+            .Include(m => m.Media)
+            .FirstOrDefaultAsync(m => m.Id == Id);
+
+        if (_m is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        if (!_m.LestAvAnsatt)
+        {
+            _m.LestAvAnsatt = true;
+            await Db.SaveChangesAsync();
+        }
+
+        _knyttetTicketId = await Db.Tickets
+            .Where(t => t.DriftsmeldingId == Id)
+            .Select(t => (int?)t.Id)
+            .FirstOrDefaultAsync();
+    }
+
+    private async Task OpprettTicket()
+    {
+        if (_knyttetTicketId is int eksisterende)
+        {
+            Nav.NavigateTo($"/ticket/{eksisterende}");
+            return;
+        }
+
+        var prosjekt = _m!.Dor?.Prosjekt;
+
+        var ticket = new Ticket
+        {
+            Tittel = $"Driftsmelding - Dør {_m.Dor?.Dornummer}",
+            Beskrivelse = _m.Tekst,
+            DriftsmeldingId = _m.Id,
+            KundeId = prosjekt?.KundeId,
+            Lokasjon = prosjekt?.Navn
+        };
+        Db.Tickets.Add(ticket);
+        await Db.SaveChangesAsync();
+
+        Nav.NavigateTo($"/ticket/{ticket.Id}");
+    }
+}

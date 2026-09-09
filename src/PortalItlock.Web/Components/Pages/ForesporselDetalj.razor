@@ -1,0 +1,156 @@
+@page "/foresporsel/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>@(_f?.Emne ?? "Forespørsel")</PageTitle>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke forespørselen. Den kan være slettet.</p>
+}
+else if (_f is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    <a class="back-link" href="/foresporsler">&larr; Tilbake til forespørsler</a>
+    <h1>@_f.Emne</h1>
+
+    <section class="foresporsel-section">
+        <h2>Informasjon</h2>
+        <div class="info-rad">
+            <span>Fra: <strong>@(string.IsNullOrWhiteSpace(_f.FraNavn) ? _f.FraEpost : $"{_f.FraNavn} <{_f.FraEpost}>")</strong></span>
+            <span>Mottatt: @_f.MottattDato.ToString("dd.MM.yyyy HH:mm")</span>
+            <span>@(_f.Lest ? "Lest" : "Ulest")</span>
+        </div>
+    </section>
+
+    <section class="foresporsel-section">
+        <h2>Innhold</h2>
+        @if (string.IsNullOrWhiteSpace(_f.Innhold))
+        {
+            <p class="list-empty">Ingen tekst i e-posten.</p>
+        }
+        else
+        {
+            <p class="foresporsel-tekst-visning">@_f.Innhold</p>
+        }
+    </section>
+
+    @if (_f.Media.Count > 0)
+    {
+        <section class="foresporsel-section">
+            <h2>Vedlegg</h2>
+            <ul class="vedlegg-liste">
+                @foreach (var m in _f.Media)
+                {
+                    <li><a href="@($"/foresporselmedia/{m.Id}/fil")" target="_blank">@m.Filnavn</a></li>
+                }
+            </ul>
+        </section>
+    }
+
+    <section class="foresporsel-section">
+        <h2>Ticket</h2>
+        @if (_knyttetTicketId is int tid)
+        {
+            <p><a href="@($"/ticket/{tid}")">Åpne ticket #@tid</a></p>
+        }
+        else
+        {
+            <p class="section-hint">Ingen ticket opprettet fra denne forespørselen ennå.</p>
+            <button type="button" class="add-button" @onclick="OpprettTicket">Opprett ticket</button>
+        }
+    </section>
+
+    <section class="foresporsel-section">
+        <h2>Rådata</h2>
+        <button type="button" class="cancel-button" @onclick="@(() => _visRaadata = !_visRaadata)">
+            @(_visRaadata ? "Skjul rådata" : "Vis rådata")
+        </button>
+        @if (_visRaadata)
+        {
+            <pre class="foresporsel-raadata">@_f.RawJson</pre>
+        }
+    </section>
+
+    <div class="form-actions">
+        <a class="cancel-button" href="@($"mailto:{_f.FraEpost}?subject={Uri.EscapeDataString("Re: " + _f.Emne)}")">Svar i e-post</a>
+        <button type="button" class="cancel-button" @onclick="ToggleLest">@(_f.Lest ? "Merk som ulest" : "Merk som lest")</button>
+        <button type="button" class="remove-button" @onclick="SlettForesporsel">Slett</button>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private Foresporsel? _f;
+    private bool _notFound;
+    private bool _visRaadata;
+    private int? _knyttetTicketId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _f = await Db.Foresporsler
+            .Include(f => f.Media)
+            .FirstOrDefaultAsync(f => f.Id == Id);
+
+        if (_f is null)
+        {
+            _notFound = true;
+            return;
+        }
+
+        if (!_f.Lest)
+        {
+            _f.Lest = true;
+            await Db.SaveChangesAsync();
+        }
+
+        _knyttetTicketId = await Db.Tickets
+            .Where(t => t.ForesporselId == Id)
+            .Select(t => (int?)t.Id)
+            .FirstOrDefaultAsync();
+    }
+
+    private async Task ToggleLest()
+    {
+        _f!.Lest = !_f.Lest;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task OpprettTicket()
+    {
+        if (_knyttetTicketId is int eksisterende)
+        {
+            Nav.NavigateTo($"/ticket/{eksisterende}");
+            return;
+        }
+
+        var kunde = await Db.Kunder.FirstOrDefaultAsync(k => k.Epost == _f!.FraEpost);
+
+        var ticket = new Ticket
+        {
+            Tittel = _f!.Emne,
+            KundeId = kunde?.Id,
+            ForesporselId = _f.Id
+        };
+        Db.Tickets.Add(ticket);
+        await Db.SaveChangesAsync();
+
+        Nav.NavigateTo($"/ticket/{ticket.Id}");
+    }
+
+    private async Task SlettForesporsel()
+    {
+        Db.Foresporsler.Remove(_f!);
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo("/foresporsler");
+    }
+}

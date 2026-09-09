@@ -546,6 +546,14 @@ app.MapGet("/ticketmedia/{id:int}/fil", async (int id, ApplicationDbContext db) 
         : Results.File(media.Data, media.ContentType, enableRangeProcessing: true);
 }).RequireAuthorization();
 
+app.MapGet("/foresporselmedia/{id:int}/fil", async (int id, ApplicationDbContext db) =>
+{
+    var media = await db.ForesporselMedia.FindAsync(id);
+    return media is null
+        ? Results.NotFound()
+        : Results.File(media.Data, media.ContentType, enableRangeProcessing: true);
+}).RequireAuthorization();
+
 app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
 {
     var komponent = await db.Components.FindAsync(id);
