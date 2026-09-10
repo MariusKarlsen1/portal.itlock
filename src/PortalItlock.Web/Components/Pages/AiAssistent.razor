@@ -8,19 +8,14 @@
 <PageTitle>AI-assistent</PageTitle>
 
 <h1><Icon Name="sparkle" /> AI-assistent</h1>
-<p class="ai-sub">Spør om prosjekter, dører eller tickets - assistenten slår opp i portalens data og svarer. Den kan ikke gjøre endringer.</p>
 
 <div class="ai-chat-wrap">
     <div class="ai-meldinger" id="ai-meldinger">
         @if (_historikk.Count == 0)
         {
-            <div class="ai-tom-tilstand">
-                <p>Noen eksempler du kan spørre om:</p>
-                <ul>
-                    <li>"Hvor mange dører gjenstår på prosjekt Storefjell?"</li>
-                    <li>"Vis meg åpne tickets med høy prioritet"</li>
-                    <li>"Hvordan går det overordnet akkurat nå?"</li>
-                </ul>
+            <div class="ai-boble ai-boble-assistant">
+                <span class="ai-boble-avsender">AI</span>
+                <div class="ai-boble-tekst">Hei! 👋 Velkommen til portal.itlock. Jeg er her for å hjelpe deg med spørsmål knyttet til portalen</div>
             </div>
         }
         @foreach (var m in _historikk)
@@ -39,12 +34,23 @@
                 </div>
             </div>
         }
+        @if (_pendingHandling is not null)
+        {
+            <div class="ai-handling-kort">
+                <span class="ai-handling-tittel">Foreslått endring</span>
+                <p class="ai-handling-beskrivelse">@_pendingHandling.Beskrivelse</p>
+                <div class="ai-handling-knapper">
+                    <button type="button" class="ai-bekreft-button" @onclick="BekreftHandling" disabled="@_utforerHandling">Bekreft</button>
+                    <button type="button" class="ai-avbryt-button" @onclick="AvbrytHandling" disabled="@_utforerHandling">Avbryt</button>
+                </div>
+            </div>
+        }
     </div>
 
     <div class="ai-input-rad">
         <textarea class="ai-input" rows="2" placeholder="Skriv et spørsmål..." @bind="_inputTekst" @bind:event="oninput"
-                  @onkeydown="OnKeyDown" disabled="@_venter"></textarea>
-        <button type="button" class="ai-send-button" @onclick="SendMelding" disabled="@(_venter || string.IsNullOrWhiteSpace(_inputTekst))">Send</button>
+                  @onkeydown="OnKeyDown" disabled="@(_venter || _pendingHandling is not null)"></textarea>
+        <button type="button" class="ai-send-button" @onclick="SendMelding" disabled="@(_venter || _pendingHandling is not null || string.IsNullOrWhiteSpace(_inputTekst))">Send</button>
     </div>
 </div>
 
@@ -52,6 +58,8 @@
     private readonly List<AiMelding> _historikk = [];
     private string _inputTekst = "";
     private bool _venter;
+    private AiForeslattHandling? _pendingHandling;
+    private bool _utforerHandling;
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
@@ -64,7 +72,7 @@
     private async Task SendMelding()
     {
         var tekst = _inputTekst.Trim();
-        if (string.IsNullOrWhiteSpace(tekst) || _venter)
+        if (string.IsNullOrWhiteSpace(tekst) || _venter || _pendingHandling is not null)
         {
             return;
         }
@@ -78,8 +86,44 @@
 
         var svar = await AiSvc.SvarAsync(forrigeHistorikk, tekst);
 
-        _historikk.Add(new AiMelding("assistant", svar));
+        if (!string.IsNullOrWhiteSpace(svar.Tekst))
+        {
+            _historikk.Add(new AiMelding("assistant", svar.Tekst));
+        }
+        _pendingHandling = svar.ForeslattHandling;
         _venter = false;
+        StateHasChanged();
+        await ScrollTilBunn();
+    }
+
+    private async Task BekreftHandling()
+    {
+        if (_pendingHandling is null || _utforerHandling)
+        {
+            return;
+        }
+
+        _utforerHandling = true;
+        StateHasChanged();
+
+        var resultat = await AiSvc.UtforHandlingAsync(_pendingHandling.VerktoyNavn, _pendingHandling.Input);
+        _historikk.Add(new AiMelding("assistant", resultat));
+
+        _pendingHandling = null;
+        _utforerHandling = false;
+        StateHasChanged();
+        await ScrollTilBunn();
+    }
+
+    private async Task AvbrytHandling()
+    {
+        if (_pendingHandling is null)
+        {
+            return;
+        }
+
+        _historikk.Add(new AiMelding("assistant", "❌ Avbrutt - ingenting ble endret."));
+        _pendingHandling = null;
         StateHasChanged();
         await ScrollTilBunn();
     }

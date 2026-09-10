@@ -9,26 +9,37 @@ namespace PortalItlock.Web.Services;
 
 public record AiMelding(string Rolle, string Tekst);
 
-// Read-only Q&A-assistent mot portalens data (prosjekter, dører, tickets). Kaller Anthropics
-// Messages API med et lite sett søk/oppslag-verktøy - gjør aldri endringer i databasen selv,
-// kun SELECT-spørringer, siden dette er tiltenkt som et hjelpemiddel for å svare på spørsmål,
-// ikke en agent som utfører handlinger.
+// En foreslått skrivehandling AI-assistenten vil utføre, men som ikke er kjørt enda -
+// brukeren må trykke "Bekreft" i chatten (se AiAssistent.razor) før UtforHandlingAsync kalles.
+public record AiForeslattHandling(string VerktoyNavn, JsonNode? Input, string Beskrivelse);
+
+public record AiSvar(string? Tekst, AiForeslattHandling? ForeslattHandling);
+
+// Assistent mot portalens data (prosjekter, dører, tickets, komponentregister). Kaller Anthropics
+// Messages API med søk/oppslag-verktøy (kjøres automatisk) og et lite sett skrivehandlinger
+// (opprette prosjekt/ticket, endre komponenter) - skrivehandlinger kjøres ALDRI automatisk, de
+// returneres som et forslag brukeren må bekrefte eksplisitt før UtforHandlingAsync faktisk lagrer noe.
 public class AiAssistentService(HttpClient http, IConfiguration config, ApplicationDbContext db)
 {
+    private static readonly HashSet<string> SkrivehandlingNavn = ["opprett_prosjekt", "opprett_ticket", "oppdater_komponent"];
+
     private const string SystemPrompt =
         "Du er AI-assistenten i portal.itlock, et internt driftssystem for itlock AS (dør/lås-montering). " +
-        "Du hjelper ansatte med å finne svar i portalens data - prosjekter, dører, tickets. " +
-        "Bruk verktøyene til å slå opp faktisk data før du svarer, ikke gjett. " +
-        "Svar kort og konkret på norsk. Du kan ikke gjøre endringer i systemet, kun slå opp informasjon.";
+        "Du hjelper ansatte med å finne svar i portalens data - prosjekter, dører, tickets - og kan foreslå " +
+        "noen konkrete endringer: opprette prosjekt, opprette ticket, og endre komponenter i vareregisteret " +
+        "(aktivere/deaktivere, endre priser, garantitid, navn m.m.). Bruk søkeverktøyene til å slå opp faktisk " +
+        "data før du svarer eller foreslår en endring, ikke gjett - f.eks. slå opp riktig komponentId før du " +
+        "kaller oppdater_komponent. Svar kort og konkret på norsk. Du kan ikke gjøre endringer direkte - når du " +
+        "kaller en skrivehandling blir det vist som et forslag brukeren selv må bekrefte.";
 
     private const int MaksRunder = 6;
 
-    public async Task<string> SvarAsync(IReadOnlyList<AiMelding> historikk, string nyttSporsmal, CancellationToken ct = default)
+    public async Task<AiSvar> SvarAsync(IReadOnlyList<AiMelding> historikk, string nyttSporsmal, CancellationToken ct = default)
     {
         var apiKey = config["Anthropic:ApiKey"];
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            return "AI-assistenten er ikke satt opp enda - mangler API-nøkkel. Legg inn \"Anthropic:ApiKey\" i konfigurasjonen (miljøvariabel ANTHROPIC__APIKEY).";
+            return new AiSvar("AI-assistenten er ikke satt opp enda - mangler API-nøkkel. Legg inn \"Anthropic:ApiKey\" i konfigurasjonen (miljøvariabel ANTHROPIC__APIKEY).", null);
         }
 
         var model = config["Anthropic:Model"] ?? "claude-haiku-4-5-20251001";
@@ -61,7 +72,7 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
 
             if (!response.IsSuccessStatusCode)
             {
-                return $"AI-kallet feilet ({(int)response.StatusCode}). Sjekk at API-nøkkelen er gyldig. Detaljer: {responseBody}";
+                return new AiSvar($"AI-kallet feilet ({(int)response.StatusCode}). Sjekk at API-nøkkelen er gyldig. Detaljer: {responseBody}", null);
             }
 
             var svarJson = JsonNode.Parse(responseBody);
@@ -70,12 +81,26 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
 
             meldinger.Add(new JsonObject { ["role"] = "assistant", ["content"] = JsonNode.Parse(contentBlokker.ToJsonString()) });
 
+            var tekstSoLangt = string.Concat(contentBlokker
+                .Where(b => b?["type"]?.GetValue<string>() == "text")
+                .Select(b => b!["text"]!.GetValue<string>()));
+
             if (stopReason != "tool_use")
             {
-                var tekst = string.Concat(contentBlokker
-                    .Where(b => b?["type"]?.GetValue<string>() == "text")
-                    .Select(b => b!["text"]!.GetValue<string>()));
-                return string.IsNullOrWhiteSpace(tekst) ? "(Fikk ikke noe svar fra AI-assistenten.)" : tekst;
+                return new AiSvar(string.IsNullOrWhiteSpace(tekstSoLangt) ? "(Fikk ikke noe svar fra AI-assistenten.)" : tekstSoLangt, null);
+            }
+
+            var skrivehandlingBlokk = contentBlokker.FirstOrDefault(b =>
+                b?["type"]?.GetValue<string>() == "tool_use" && SkrivehandlingNavn.Contains(b["name"]!.GetValue<string>()));
+
+            if (skrivehandlingBlokk is not null)
+            {
+                var verktoyNavn = skrivehandlingBlokk["name"]!.GetValue<string>();
+                var input = skrivehandlingBlokk["input"];
+                var beskrivelse = await BeskrivHandling(verktoyNavn, input, ct);
+                return new AiSvar(
+                    string.IsNullOrWhiteSpace(tekstSoLangt) ? null : tekstSoLangt,
+                    new AiForeslattHandling(verktoyNavn, JsonNode.Parse((input ?? new JsonObject()).ToJsonString()), beskrivelse));
             }
 
             var resultater = new JsonArray();
@@ -94,7 +119,7 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
             meldinger.Add(new JsonObject { ["role"] = "user", ["content"] = resultater });
         }
 
-        return "Klarte ikke å komme frem til et svar innen antall forsøk. Prøv å omformulere spørsmålet.";
+        return new AiSvar("Klarte ikke å komme frem til et svar innen antall forsøk. Prøv å omformulere spørsmålet.", null);
     }
 
     private async Task<string> KjorVerktoy(string navn, JsonNode? input, CancellationToken ct)
@@ -109,6 +134,7 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
                 "sok_tickets" => await SokTickets(input?["status"]?.GetValue<string>(), input?["sok"]?.GetValue<string>(), ct),
                 "hent_ticket_detaljer" => await HentTicketDetaljer(input?["ticketId"]?.GetValue<int>() ?? 0, ct),
                 "hent_portal_statistikk" => await HentStatistikk(ct),
+                "sok_komponenter" => await SokKomponenter(input?["sok"]?.GetValue<string>() ?? "", ct),
                 _ => JsonSerializer.Serialize(new { feil = $"Ukjent verktøy: {navn}" })
             };
         }
@@ -271,6 +297,178 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
         });
     }
 
+    private async Task<string> SokKomponenter(string sok, CancellationToken ct)
+    {
+        var q = db.Components.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(sok))
+        {
+            q = q.Where(c => c.Navn.Contains(sok)
+                || (c.Produsent != null && c.Produsent.Contains(sok))
+                || (c.Produktkode != null && c.Produktkode.Contains(sok)));
+        }
+
+        var treff = await q.OrderBy(c => c.Navn).Take(15).Select(c => new
+        {
+            c.Id,
+            c.Navn,
+            c.Produsent,
+            c.Leverandor,
+            c.Produktkode,
+            c.PrisNetto,
+            c.PrisVeiledende,
+            c.GarantitidManeder,
+            c.Aktiv
+        }).ToListAsync(ct);
+
+        return JsonSerializer.Serialize(treff);
+    }
+
+    // Lager en lesbar norsk beskrivelse av en foreslått skrivehandling, til bekreft-kortet i chatten.
+    // Slår opp eksisterende verdier der det er relevant (f.eks. "fra 249 kr til 199 kr").
+    private async Task<string> BeskrivHandling(string verktoyNavn, JsonNode? input, CancellationToken ct)
+    {
+        switch (verktoyNavn)
+        {
+            case "opprett_prosjekt":
+            {
+                var navn = input?["navn"]?.GetValue<string>() ?? "(uten navn)";
+                var adresse = input?["adresse"]?.GetValue<string>();
+                return string.IsNullOrWhiteSpace(adresse)
+                    ? $"Opprette nytt prosjekt «{navn}»."
+                    : $"Opprette nytt prosjekt «{navn}» ({adresse}).";
+            }
+            case "opprett_ticket":
+            {
+                var tittel = input?["tittel"]?.GetValue<string>() ?? "(uten tittel)";
+                var prioritet = input?["prioritet"]?.GetValue<string>();
+                return string.IsNullOrWhiteSpace(prioritet)
+                    ? $"Opprette ny ticket «{tittel}»."
+                    : $"Opprette ny ticket «{tittel}» med prioritet {prioritet}.";
+            }
+            case "oppdater_komponent":
+            {
+                var komponentId = input?["komponentId"]?.GetValue<int>() ?? 0;
+                var entity = await db.Components.AsNoTracking().FirstOrDefaultAsync(c => c.Id == komponentId, ct);
+                if (entity is null)
+                {
+                    return $"Fant ikke komponent med Id {komponentId} - forslaget kan ikke gjennomføres.";
+                }
+
+                var endringer = new List<string>();
+                if (input?["navn"] is { } navnNode) endringer.Add($"navn til «{navnNode.GetValue<string>()}»");
+                if (input?["produsent"] is { } produsentNode) endringer.Add($"produsent til «{produsentNode.GetValue<string>()}»");
+                if (input?["leverandor"] is { } leverandorNode) endringer.Add($"leverandør til «{leverandorNode.GetValue<string>()}»");
+                if (input?["produktkode"] is { } produktkodeNode) endringer.Add($"produktkode til «{produktkodeNode.GetValue<string>()}»");
+                if (input?["prisNetto"] is { } prisNettoNode) endringer.Add($"nettopris fra {entity.PrisNetto:N0} kr til {prisNettoNode.GetValue<decimal>():N0} kr");
+                if (input?["prisVeiledende"] is { } prisVeilNode) endringer.Add($"veiledende pris fra {entity.PrisVeiledende:N0} kr til {prisVeilNode.GetValue<decimal>():N0} kr");
+                if (input?["garantitidManeder"] is { } garantiNode) endringer.Add($"garantitid til {garantiNode.GetValue<int>()} mnd");
+                if (input?["aktiv"] is { } aktivNode) endringer.Add(aktivNode.GetValue<bool>() ? "aktivere varen" : "deaktivere varen");
+
+                var endringTekst = endringer.Count == 0 ? "ingen faktiske endringer" : string.Join(", ", endringer);
+                return $"Endre «{entity.Navn}»: {endringTekst}.";
+            }
+            default:
+                return $"Utføre {verktoyNavn}.";
+        }
+    }
+
+    // Selve utførelsen av en skrivehandling - kalles KUN fra AiAssistent.razor sin "Bekreft"-knapp,
+    // aldri automatisk fra AI-loopen i SvarAsync.
+    public async Task<string> UtforHandlingAsync(string verktoyNavn, JsonNode? input, CancellationToken ct = default)
+    {
+        try
+        {
+            return verktoyNavn switch
+            {
+                "opprett_prosjekt" => await OpprettProsjekt(input, ct),
+                "opprett_ticket" => await OpprettTicket(input, ct),
+                "oppdater_komponent" => await OppdaterKomponent(input, ct),
+                _ => $"Ukjent handling: {verktoyNavn}"
+            };
+        }
+        catch (Exception ex)
+        {
+            return $"Feil under utføring: {ex.Message}";
+        }
+    }
+
+    private async Task<string> OpprettProsjekt(JsonNode? input, CancellationToken ct)
+    {
+        var navn = input?["navn"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(navn))
+        {
+            return "Mangler prosjektnavn - fikk ikke opprettet.";
+        }
+
+        var prosjekt = new Prosjekt
+        {
+            Navn = navn.Trim(),
+            Adresse = input?["adresse"]?.GetValue<string>()
+        };
+        db.Prosjekter.Add(prosjekt);
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Opprettet prosjekt «{prosjekt.Navn}» (Id {prosjekt.Id}).";
+    }
+
+    private async Task<string> OpprettTicket(JsonNode? input, CancellationToken ct)
+    {
+        var tittel = input?["tittel"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(tittel))
+        {
+            return "Mangler tittel - fikk ikke opprettet ticket.";
+        }
+
+        var prioritet = TicketPrioritet.Normal;
+        var prioritetTekst = input?["prioritet"]?.GetValue<string>();
+        if (!string.IsNullOrWhiteSpace(prioritetTekst))
+        {
+            Enum.TryParse(prioritetTekst, true, out prioritet);
+        }
+
+        var ticket = new Ticket
+        {
+            Tittel = tittel.Trim(),
+            Beskrivelse = input?["beskrivelse"]?.GetValue<string>(),
+            Prioritet = prioritet,
+            SlaFrist = TicketSlaHelper.BeregnFrist(prioritet, DateTime.Now)
+        };
+        db.Tickets.Add(ticket);
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Opprettet ticket «{ticket.Tittel}» (#{ticket.Id}).";
+    }
+
+    private async Task<string> OppdaterKomponent(JsonNode? input, CancellationToken ct)
+    {
+        var komponentId = input?["komponentId"]?.GetValue<int>() ?? 0;
+        var entity = await db.Components.FirstOrDefaultAsync(c => c.Id == komponentId, ct);
+        if (entity is null)
+        {
+            return $"Fant ikke komponent med Id {komponentId}.";
+        }
+
+        var nyNetto = input?["prisNetto"] is { } pn ? pn.GetValue<decimal>() : entity.PrisNetto;
+        var nyVeil = input?["prisVeiledende"] is { } pv ? pv.GetValue<decimal>() : entity.PrisVeiledende;
+        if (nyNetto != entity.PrisNetto || nyVeil != entity.PrisVeiledende)
+        {
+            PrisHistorikkLogger.Logg(db, entity, nyNetto, nyVeil, "AI-assistent");
+        }
+
+        if (input?["navn"] is { } navnNode) entity.Navn = navnNode.GetValue<string>();
+        if (input?["produsent"] is { } produsentNode) entity.Produsent = produsentNode.GetValue<string>();
+        if (input?["leverandor"] is { } leverandorNode) entity.Leverandor = leverandorNode.GetValue<string>();
+        if (input?["produktkode"] is { } produktkodeNode) entity.Produktkode = produktkodeNode.GetValue<string>();
+        if (input?["garantitidManeder"] is { } garantiNode) entity.GarantitidManeder = garantiNode.GetValue<int>();
+        if (input?["aktiv"] is { } aktivNode) entity.Aktiv = aktivNode.GetValue<bool>();
+        entity.PrisNetto = nyNetto;
+        entity.PrisVeiledende = nyVeil;
+
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Oppdaterte «{entity.Navn}».";
+    }
+
     private static JsonArray Verktoy() =>
     [
         ToolDef("sok_prosjekter", "Søk etter prosjekter på navn, kundenavn eller adresse. Gir en kort liste med treff.",
@@ -286,7 +484,26 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
         ToolDef("hent_ticket_detaljer", "Hent alle detaljer om én ticket.",
             Objekt(("ticketId", "integer", "Ticketens Id", true))),
         ToolDef("hent_portal_statistikk", "Hent overordnede nøkkeltall: aktive prosjekter, åpne tickets, dører som gjenstår.",
-            new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() })
+            new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() }),
+        ToolDef("sok_komponenter", "Søk etter komponenter/varer i vareregisteret på navn, produsent eller produktkode.",
+            Objekt(("sok", "string", "Søketekst", true))),
+        ToolDef("opprett_prosjekt", "Foreslå å opprette et nytt prosjekt. Krever bekreftelse fra brukeren før det faktisk opprettes.",
+            Objekt(("navn", "string", "Prosjektnavn", true),
+                   ("adresse", "string", "Valgfritt: adresse", false))),
+        ToolDef("opprett_ticket", "Foreslå å opprette en ny ticket/sak. Krever bekreftelse fra brukeren før den faktisk opprettes.",
+            Objekt(("tittel", "string", "Tittel på ticketen", true),
+                   ("beskrivelse", "string", "Valgfritt: beskrivelse", false),
+                   ("prioritet", "string", "Valgfritt: en av Lav, Normal, Hoy, Kritisk", false))),
+        ToolDef("oppdater_komponent", "Foreslå å endre en komponent/vare i vareregisteret - aktiver/deaktiver, endre pris, garantitid, navn, produsent, leverandør eller produktkode. Slå opp komponentId med sok_komponenter først. Krever bekreftelse fra brukeren før det faktisk lagres.",
+            Objekt(("komponentId", "integer", "Komponentens Id (finn med sok_komponenter)", true),
+                   ("navn", "string", "Valgfritt: nytt varenavn", false),
+                   ("produsent", "string", "Valgfritt: ny produsent", false),
+                   ("leverandor", "string", "Valgfritt: ny leverandør", false),
+                   ("produktkode", "string", "Valgfritt: ny produktkode", false),
+                   ("prisNetto", "number", "Valgfritt: ny nettopris", false),
+                   ("prisVeiledende", "number", "Valgfritt: ny veiledende pris", false),
+                   ("garantitidManeder", "integer", "Valgfritt: ny garantitid i måneder", false),
+                   ("aktiv", "boolean", "Valgfritt: sett komponenten aktiv/inaktiv", false)))
     ];
 
     private static JsonObject ToolDef(string navn, string beskrivelse, JsonObject schema) => new()
