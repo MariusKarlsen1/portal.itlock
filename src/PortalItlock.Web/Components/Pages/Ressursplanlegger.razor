@@ -112,10 +112,9 @@ else
                          @ondblclick="@(() => StartNy(dag.Dato))">
                         @foreach (var boks in dag.Boxer)
                         {
-                            var (topPx, hoydePx) = BoksPosisjon(boks);
                             var breddeProsent = 100.0 / boks.BaneAntall;
                             var venstreProsent = breddeProsent * boks.BaneIndex;
-                            <button type="button" class="ressurs-boks" style="--montor-farge: @FargeForAnsatt(boks.AnsattId); top: @PxTekst(topPx); height: @PxTekst(hoydePx); left: calc(@ProsentTekst(venstreProsent) + 2px); width: calc(@ProsentTekst(breddeProsent) - 4px);" @onclick="@(() => StartRediger(boks))">
+                            <button type="button" class="ressurs-boks" style="--montor-farge: @FargeForAnsatt(boks.AnsattId); top: @PxTekst(boks.TopPx); height: @PxTekst(boks.HoydePx); left: calc(@ProsentTekst(venstreProsent) + 2px); width: calc(@ProsentTekst(breddeProsent) - 4px);" @onclick="@(() => StartRediger(boks))">
                                 <span class="ressurs-boks-tittel">@boks.Tittel</span>
                                 <span class="ressurs-boks-tid">@boks.Fra.ToString(@"hh\:mm")&ndash;@boks.Til.ToString(@"hh\:mm")</span>
                             </button>
@@ -157,6 +156,10 @@ else
         // for oppå hverandre.
         public int BaneIndex { get; set; }
         public int BaneAntall { get; set; } = 1;
+
+        // Beregnet posisjon innenfor dagkolonnen (settes av PlasserKlynger i LastAsync).
+        public double TopPx { get; set; }
+        public double HoydePx { get; set; }
     }
 
     private sealed class DagRad
@@ -173,8 +176,14 @@ else
     private const double BoksPaddingPx = 2;
     private const double _rutenettStart = 7;
     private const double _rutenettSlutt = 15;
-    private double RutenettHoydePx => (_rutenettSlutt - _rutenettStart) * TimeHoydePx;
-    private double BandHoydePx => RutenettHoydePx / Math.Max(_ansatte.Count, 1);
+    private static double RutenettHoydePxStandard => (_rutenettSlutt - _rutenettStart) * TimeHoydePx;
+
+    // Høyden på hver ansatts rad. Er normalt RutenettHoydePxStandard delt på antall ansatte, men
+    // utvides automatisk (i LastAsync) hvis noen har så mange etiketter på én dag at de ellers
+    // ikke ville fått plass med lesbar tittel og klokkeslett.
+    private double _bandHoydePx;
+    private double BandHoydePx => _bandHoydePx;
+    private double RutenettHoydePx => _bandHoydePx * Math.Max(_ansatte.Count, 1);
 
     private static string PxTekst(double verdi) => verdi.ToString("0.##", CultureInfo.InvariantCulture) + "px";
     private static string ProsentTekst(double verdi) => verdi.ToString("0.###", CultureInfo.InvariantCulture) + "%";
@@ -212,35 +221,119 @@ else
         return index < 0 ? 0 : index;
     }
 
-    // Regner ut piksel-posisjon/høyde for en etikett innenfor sin ansatts rad. Klipper alltid
-    // til radens grenser (aldri inn i naboradens område), og strekker etiketten oppover i stedet
-    // for nedover når den trenger minstehøyde nær slutten av raden (f.eks. 14:00-15:00).
-    private (double Top, double Hoyde) BoksPosisjon(BoksRad boks)
+    // Naturlig (proporsjonal) høyde i piksler for et tidsrom, gitt en tilgjengelig høyde å
+    // fordele 07:00-15:00 over.
+    private static double NaturligHoyde(double timer, double tilgjengeligHoydePx) =>
+        timer / (_rutenettSlutt - _rutenettStart) * tilgjengeligHoydePx;
+
+    // Sjekker om klyngene (tidsrommene til hver "gruppe" av etiketter) får plass til minstehøyde
+    // innenfor en rad på gitt bandHoydePx, ved å låne plass fra ledig tid mellom klyngene.
+    private static bool KlyngerPasserInnenfor(List<(double Fra, double Til)> spenn, double bandHoydePx)
     {
-        var bandTopPx = AnsattBaandIndex(boks.AnsattId) * BandHoydePx;
-        var minTop = bandTopPx + BoksPaddingPx;
-        var maksBunn = bandTopPx + BandHoydePx - BoksPaddingPx;
-
-        var naturligTop = bandTopPx + (boks.Fra.TotalHours - _rutenettStart) / (_rutenettSlutt - _rutenettStart) * BandHoydePx;
-        var naturligBunn = bandTopPx + (boks.Til.TotalHours - _rutenettStart) / (_rutenettSlutt - _rutenettStart) * BandHoydePx;
-
-        var topPx = Math.Clamp(naturligTop, minTop, maksBunn);
-        var bunnPx = Math.Clamp(naturligBunn, minTop, maksBunn);
-
-        var mangler = MinBoksHoydePx - (bunnPx - topPx);
-        if (mangler > 0)
+        var tilgjengelig = bandHoydePx - 2 * BoksPaddingPx;
+        if (tilgjengelig <= 0)
         {
-            var nyBunn = Math.Min(bunnPx + mangler, maksBunn);
-            mangler -= nyBunn - bunnPx;
-            bunnPx = nyBunn;
-
-            if (mangler > 0)
-            {
-                topPx = Math.Max(topPx - mangler, minTop);
-            }
+            return false;
         }
 
-        return (topPx, bunnPx - topPx);
+        double sumNaturlig = 0, sumMangler = 0;
+        foreach (var (fra, til) in spenn)
+        {
+            var naturlig = NaturligHoyde(til - fra, tilgjengelig);
+            sumNaturlig += naturlig;
+            sumMangler += Math.Max(0, MinBoksHoydePx - naturlig);
+        }
+
+        var ledigTid = tilgjengelig - sumNaturlig;
+        return sumMangler <= ledigTid + 0.01;
+    }
+
+    // Finner minste radhøyde (>= standardhøyden) der alle klynger i uken får plass til
+    // minstehøyde. Vokser med binærsøk siden "får plass"-sjekken er monoton i radhøyde.
+    private static double FinnBandHoyde(double standardHoyde, List<List<(double Fra, double Til)>> alleSpenn)
+    {
+        bool AllePasser(double bandHoydePx) => alleSpenn.All(spenn => KlyngerPasserInnenfor(spenn, bandHoydePx));
+
+        if (AllePasser(standardHoyde))
+        {
+            return standardHoyde;
+        }
+
+        var lo = standardHoyde;
+        var hi = standardHoyde;
+        for (var i = 0; i < 50 && !AllePasser(hi); i++)
+        {
+            hi *= 2;
+        }
+
+        for (var i = 0; i < 40; i++)
+        {
+            var mid = (lo + hi) / 2;
+            if (AllePasser(mid)) hi = mid; else lo = mid;
+        }
+
+        return hi;
+    }
+
+    // Plasserer klyngene til én ansatt på én dag sekvensielt innenfor radens høyde: hver klynge
+    // får minst MinBoksHoydePx, og eventuell ledig tid mellom klyngene krympes proporsjonalt for
+    // å gi plass. Etiketter i samme klynge (tidsoverlapp) deler klyngens plass proporsjonalt.
+    private static void PlasserKlynger(List<List<BoksRad>> klynger, int baandIndex, double bandHoydePx)
+    {
+        if (klynger.Count == 0)
+        {
+            return;
+        }
+
+        var bandTopPx = baandIndex * bandHoydePx;
+        var tilgjengelig = bandHoydePx - 2 * BoksPaddingPx;
+
+        var spenn = klynger.Select(k => (Fra: k.Min(b => b.Fra.TotalHours), Til: k.Max(b => b.Til.TotalHours))).ToList();
+        var naturligHoyder = spenn.Select(s => NaturligHoyde(s.Til - s.Fra, tilgjengelig)).ToList();
+        var krevdHoyder = naturligHoyder.Select(n => Math.Max(n, MinBoksHoydePx)).ToList();
+
+        var mellomromTimer = new List<double> { spenn[0].Fra - _rutenettStart };
+        for (var i = 0; i < spenn.Count - 1; i++)
+        {
+            mellomromTimer.Add(spenn[i + 1].Fra - spenn[i].Til);
+        }
+        mellomromTimer.Add(_rutenettSlutt - spenn[^1].Til);
+
+        var mellomromPx = mellomromTimer.Select(t => NaturligHoyde(Math.Max(t, 0), tilgjengelig)).ToList();
+        var sumMellomromPx = mellomromPx.Sum();
+        var sumEkstraBehov = naturligHoyder.Zip(krevdHoyder, (n, k) => k - n).Sum();
+        var krympefaktor = sumMellomromPx > 0.01 ? Math.Clamp((sumMellomromPx - sumEkstraBehov) / sumMellomromPx, 0, 1) : 0;
+
+        var pos = bandTopPx + BoksPaddingPx + mellomromPx[0] * krympefaktor;
+        for (var i = 0; i < klynger.Count; i++)
+        {
+            var top = pos;
+            var hoyde = krevdHoyder[i];
+            var (kFra, kTil) = spenn[i];
+            var kVarighet = kTil - kFra;
+
+            foreach (var boks in klynger[i])
+            {
+                if (kVarighet <= 0.001)
+                {
+                    boks.TopPx = top;
+                    boks.HoydePx = hoyde;
+                }
+                else
+                {
+                    var fraProsent = (boks.Fra.TotalHours - kFra) / kVarighet;
+                    var tilProsent = (boks.Til.TotalHours - kFra) / kVarighet;
+                    boks.TopPx = top + fraProsent * hoyde;
+                    boks.HoydePx = Math.Max((tilProsent - fraProsent) * hoyde, 4);
+                }
+            }
+
+            pos += hoyde;
+            if (i < klynger.Count - 1)
+            {
+                pos += mellomromPx[i + 1] * krympefaktor;
+            }
+        }
     }
 
     protected override async Task OnInitializedAsync()
@@ -398,11 +491,26 @@ else
                 .OrderBy(b => b.Fra)
                 .ToList());
 
-        foreach (var boxerIDag in boxerPerDag.Values)
+        // Klynger (tidsoverlappende etiketter) per (dag, ansatt) - brukes både til sidestilling
+        // ved tidsoverlapp (TildelBaner) og til å regne ut nødvendig radhøyde og plassering.
+        var klyngerPerDagOgAnsatt = boxerPerDag.ToDictionary(
+            dagPar => dagPar.Key,
+            dagPar => dagPar.Value
+                .GroupBy(b => b.AnsattId)
+                .ToDictionary(g => g.Key, g => TildelBaner(g.ToList())));
+
+        var alleSpenn = klyngerPerDagOgAnsatt.Values
+            .SelectMany(perAnsatt => perAnsatt.Values)
+            .Select(klynger => klynger.Select(k => (Fra: k.Min(b => b.Fra.TotalHours), Til: k.Max(b => b.Til.TotalHours))).ToList())
+            .ToList();
+
+        _bandHoydePx = FinnBandHoyde(RutenettHoydePxStandard / Math.Max(_ansatte.Count, 1), alleSpenn);
+
+        foreach (var perAnsatt in klyngerPerDagOgAnsatt.Values)
         {
-            foreach (var boxerForAnsatt in boxerIDag.GroupBy(b => b.AnsattId))
+            foreach (var (ansattId, klynger) in perAnsatt)
             {
-                TildelBaner(boxerForAnsatt.ToList());
+                PlasserKlynger(klynger, AnsattBaandIndex(ansattId), _bandHoydePx);
             }
         }
 
@@ -422,8 +530,9 @@ else
 
     // Grupperer etiketter som overlapper i tid til klynger, og gir hver etikett en bane
     // (BaneIndex/BaneAntall) slik at overlappende etiketter (f.eks. to montører samtidig)
-    // vises ved siden av hverandre i stedet for oppå hverandre.
-    private static void TildelBaner(List<BoksRad> boxerSortertEtterFra)
+    // vises ved siden av hverandre i stedet for oppå hverandre. Returnerer klyngene slik at
+    // de også kan brukes til å regne ut nødvendig radhøyde og plassering.
+    private static List<List<BoksRad>> TildelBaner(List<BoksRad> boxerSortertEtterFra)
     {
         var klynger = new List<List<BoksRad>>();
         List<BoksRad>? gjeldendeKlynge = null;
@@ -469,6 +578,8 @@ else
                 boks.BaneAntall = baneSluttider.Count;
             }
         }
+
+        return klynger;
     }
 
     private static DateTime FinnMandag(DateTime dato)
