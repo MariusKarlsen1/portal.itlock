@@ -28,7 +28,7 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
     ];
 
     private const string SystemPrompt =
-        "Du er AI-assistenten i portal.itlock, et internt driftssystem for itlock AS (dør/lås-montering). " +
+        "Du er AI-assistenten i Full Kontroll, et internt driftssystem for itlock AS (dør/lås-montering). " +
         "Du hjelper ansatte med å finne svar i portalens data - prosjekter, dører, tickets, komponenter - og kan " +
         "foreslå konkrete endringer: opprette prosjekt, opprette/endre komponent i vareregisteret " +
         "(aktivere/deaktivere, endre priser, garantitid, navn m.m.), opprette ticket, endre ticket-status, knytte " +
