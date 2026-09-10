@@ -24,7 +24,8 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
     private static readonly HashSet<string> SkrivehandlingNavn =
     [
         "opprett_prosjekt", "opprett_ticket", "oppdater_komponent", "opprett_komponent",
-        "endre_dorstatus", "endre_ticketstatus", "knytt_ticket_til_prosjekt", "endre_prosjektstatus"
+        "endre_dorstatus", "endre_ticketstatus", "knytt_ticket_til_prosjekt", "endre_prosjektstatus",
+        "oppdater_ticket", "oppdater_dor", "legg_til_beslag_pa_dor"
     ];
 
     private const string SystemPrompt =
@@ -32,7 +33,9 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
         "Du hjelper ansatte med å finne svar i portalens data - prosjekter, dører, tickets, komponenter - og kan " +
         "foreslå konkrete endringer: opprette prosjekt, opprette/endre komponent i vareregisteret " +
         "(aktivere/deaktivere, endre priser, garantitid, navn m.m.), opprette ticket, endre ticket-status, knytte " +
-        "en ticket til et prosjekt, endre dørstatus (montasjestatus) og endre prosjektstatus. Bruk søkeverktøyene " +
+        "en ticket til et prosjekt eller dør, tildele ansvarlig/prioritet på en ticket, endre dørstatus " +
+        "(montasjestatus) og andre dørfelt (dørtype, mål, brann/lyd, slagretning, notater), legge til beslag på " +
+        "en dør, og endre prosjektstatus. Bruk søkeverktøyene " +
         "til å slå opp faktisk data før du svarer eller foreslår en endring, ikke gjett - f.eks. slå opp riktig " +
         "id (komponentId/dorId/ticketId/prosjektId) med søkeverktøyene før du kaller en skrivehandling som " +
         "trenger den. " +
@@ -157,6 +160,7 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
                 "hent_ticket_detaljer" => await HentTicketDetaljer(input?["ticketId"]?.GetValue<int>() ?? 0, ct),
                 "hent_portal_statistikk" => await HentStatistikk(ct),
                 "sok_komponenter" => await SokKomponenter(input?["sok"]?.GetValue<string>() ?? "", ct),
+                "sok_brukere" => await SokBrukere(input?["sok"]?.GetValue<string>() ?? "", ct),
                 _ => JsonSerializer.Serialize(new { feil = $"Ukjent verktøy: {navn}" })
             };
         }
@@ -345,6 +349,21 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
         return JsonSerializer.Serialize(treff);
     }
 
+    private async Task<string> SokBrukere(string sok, CancellationToken ct)
+    {
+        var q = db.Brukere.AsNoTracking().Where(b => b.Aktiv).AsQueryable();
+        if (!string.IsNullOrWhiteSpace(sok))
+        {
+            q = q.Where(b => b.Navn.Contains(sok));
+        }
+
+        var treff = await q.OrderBy(b => b.Navn).Take(15)
+            .Select(b => new { b.Id, b.Navn, Rolle = b.Rolle.ToString(), b.Stilling })
+            .ToListAsync(ct);
+
+        return JsonSerializer.Serialize(treff);
+    }
+
     // Lager en lesbar norsk beskrivelse av en foreslått skrivehandling, til bekreft-kortet i chatten.
     // Slår opp eksisterende verdier der det er relevant (f.eks. "fra 249 kr til 199 kr").
     private async Task<string> BeskrivHandling(string verktoyNavn, JsonNode? input, CancellationToken ct)
@@ -435,6 +454,63 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
                     ? $"Fant ikke prosjekt med Id {prosjektId} - forslaget kan ikke gjennomføres."
                     : $"Endre status på prosjekt «{prosjekt.Navn}» fra {forrigeStatus} til {visning}.";
             }
+            case "oppdater_ticket":
+            {
+                var ticketId = input?["ticketId"]?.GetValue<int>() ?? 0;
+                var ticket = await db.Tickets.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ticketId, ct);
+                if (ticket is null)
+                {
+                    return $"Fant ikke ticket med Id {ticketId} - forslaget kan ikke gjennomføres.";
+                }
+
+                var endringer = new List<string>();
+                if (input?["ansvarligBrukerId"] is { } brukerNode)
+                {
+                    var bruker = await db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == brukerNode.GetValue<int>(), ct);
+                    endringer.Add($"ansvarlig til {bruker?.Navn ?? "(ukjent bruker)"}");
+                }
+                if (input?["prioritet"] is { } prioritetNode) endringer.Add($"prioritet til {prioritetNode.GetValue<string>()}");
+                if (input?["dorId"] is { } dorIdNode)
+                {
+                    var dor = await db.Dorer.AsNoTracking().FirstOrDefaultAsync(d => d.Id == dorIdNode.GetValue<int>(), ct);
+                    endringer.Add($"knytte til dør {dor?.Dornummer ?? "(ukjent dør)"}");
+                }
+
+                var endringTekst = endringer.Count == 0 ? "ingen faktiske endringer" : string.Join(", ", endringer);
+                return $"Endre ticket «{ticket.Tittel}»: {endringTekst}.";
+            }
+            case "oppdater_dor":
+            {
+                var dorId = input?["dorId"]?.GetValue<int>() ?? 0;
+                var dor = await db.Dorer.AsNoTracking().FirstOrDefaultAsync(d => d.Id == dorId, ct);
+                if (dor is null)
+                {
+                    return $"Fant ikke dør med Id {dorId} - forslaget kan ikke gjennomføres.";
+                }
+
+                var endringer = new List<string>();
+                if (input?["dortype"] is { } dortypeNode) endringer.Add($"dørtype til «{dortypeNode.GetValue<string>()}»");
+                if (input?["bredde"] is { } breddeNode) endringer.Add($"bredde til {breddeNode.GetValue<int>()} mm");
+                if (input?["hoyde"] is { } hoydeNode) endringer.Add($"høyde til {hoydeNode.GetValue<int>()} mm");
+                if (input?["brann"] is { } brannNode) endringer.Add($"brannklasse til «{brannNode.GetValue<string>()}»");
+                if (input?["lyd"] is { } lydNode) endringer.Add($"lydklasse til «{lydNode.GetValue<string>()}»");
+                if (input?["slagretning"] is { } slagNode) endringer.Add($"slagretning til «{slagNode.GetValue<string>()}»");
+                if (input?["notater"] is { } notatNode) endringer.Add("nye notater");
+
+                var endringTekst = endringer.Count == 0 ? "ingen faktiske endringer" : string.Join(", ", endringer);
+                return $"Endre dør «{dor.Dornummer}»: {endringTekst}.";
+            }
+            case "legg_til_beslag_pa_dor":
+            {
+                var dorId = input?["dorId"]?.GetValue<int>() ?? 0;
+                var komponentId = input?["komponentId"]?.GetValue<int>() ?? 0;
+                var antall = input?["antall"]?.GetValue<int>() ?? 1;
+                var dor = await db.Dorer.AsNoTracking().FirstOrDefaultAsync(d => d.Id == dorId, ct);
+                var komponent = await db.Components.AsNoTracking().FirstOrDefaultAsync(c => c.Id == komponentId, ct);
+                return dor is null || komponent is null
+                    ? "Fant ikke døren og/eller komponenten - forslaget kan ikke gjennomføres."
+                    : $"Legge til {antall}x «{komponent.Navn}» som beslag på dør «{dor.Dornummer}».";
+            }
             default:
                 return $"Utføre {verktoyNavn}.";
         }
@@ -456,6 +532,9 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
                 "endre_ticketstatus" => await EndreTicketstatus(input, ct),
                 "knytt_ticket_til_prosjekt" => await KnyttTicketTilProsjekt(input, ct),
                 "endre_prosjektstatus" => await EndreProsjektstatus(input, ct),
+                "oppdater_ticket" => await OppdaterTicket(input, ct),
+                "oppdater_dor" => await OppdaterDor(input, ct),
+                "legg_til_beslag_pa_dor" => await LeggTilBeslagPaDor(input, ct),
                 _ => $"Ukjent handling: {verktoyNavn}"
             };
         }
@@ -654,6 +733,78 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
         return $"✅ Satt status på prosjekt «{prosjekt.Navn}» til {status.Visningsnavn()}.";
     }
 
+    private async Task<string> OppdaterTicket(JsonNode? input, CancellationToken ct)
+    {
+        var ticketId = input?["ticketId"]?.GetValue<int>() ?? 0;
+        var ticket = await db.Tickets.FirstOrDefaultAsync(t => t.Id == ticketId, ct);
+        if (ticket is null)
+        {
+            return $"Fant ikke ticket med Id {ticketId}.";
+        }
+
+        if (input?["ansvarligBrukerId"] is { } brukerNode) ticket.AnsvarligBrukerId = brukerNode.GetValue<int>();
+        if (input?["prioritet"] is { } prioritetNode && Enum.TryParse<TicketPrioritet>(prioritetNode.GetValue<string>(), true, out var prioritet))
+        {
+            ticket.Prioritet = prioritet;
+            ticket.SlaFrist = TicketSlaHelper.BeregnFrist(prioritet, ticket.OpprettetDato);
+        }
+        if (input?["dorId"] is { } dorIdNode) ticket.DorId = dorIdNode.GetValue<int>();
+
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Oppdaterte ticket «{ticket.Tittel}».";
+    }
+
+    private async Task<string> OppdaterDor(JsonNode? input, CancellationToken ct)
+    {
+        var dorId = input?["dorId"]?.GetValue<int>() ?? 0;
+        var dor = await db.Dorer.FirstOrDefaultAsync(d => d.Id == dorId, ct);
+        if (dor is null)
+        {
+            return $"Fant ikke dør med Id {dorId}.";
+        }
+
+        if (input?["dortype"] is { } dortypeNode) dor.Dortype = dortypeNode.GetValue<string>();
+        if (input?["bredde"] is { } breddeNode) dor.Bredde = breddeNode.GetValue<int>();
+        if (input?["hoyde"] is { } hoydeNode) dor.Hoyde = hoydeNode.GetValue<int>();
+        if (input?["brann"] is { } brannNode) dor.Brann = brannNode.GetValue<string>();
+        if (input?["lyd"] is { } lydNode) dor.Lyd = lydNode.GetValue<string>();
+        if (input?["slagretning"] is { } slagNode) dor.Slagretning = slagNode.GetValue<string>();
+        if (input?["notater"] is { } notatNode) dor.Notater = notatNode.GetValue<string>();
+
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Oppdaterte dør «{dor.Dornummer}».";
+    }
+
+    private async Task<string> LeggTilBeslagPaDor(JsonNode? input, CancellationToken ct)
+    {
+        var dorId = input?["dorId"]?.GetValue<int>() ?? 0;
+        var komponentId = input?["komponentId"]?.GetValue<int>() ?? 0;
+        var antall = input?["antall"]?.GetValue<int>() ?? 1;
+
+        var dor = await db.Dorer.FirstOrDefaultAsync(d => d.Id == dorId, ct);
+        var komponent = await db.Components.FirstOrDefaultAsync(c => c.Id == komponentId, ct);
+        if (dor is null || komponent is null)
+        {
+            return "Fant ikke døren og/eller komponenten.";
+        }
+
+        var eksisterende = await db.DorKomponenter.FirstOrDefaultAsync(dk => dk.DorId == dorId && dk.ComponentId == komponentId, ct);
+        if (eksisterende is not null)
+        {
+            eksisterende.Antall += antall;
+        }
+        else
+        {
+            db.DorKomponenter.Add(new DorKomponent { DorId = dorId, ComponentId = komponentId, Antall = antall });
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ La til {antall}x «{komponent.Navn}» som beslag på dør «{dor.Dornummer}».";
+    }
+
     private static JsonArray Verktoy() =>
     [
         ToolDef("sok_prosjekter", "Søk etter prosjekter på navn, kundenavn eller adresse. Gir en kort liste med treff.",
@@ -708,7 +859,27 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
                    ("prosjektId", "integer", "Prosjektets Id", true))),
         ToolDef("endre_prosjektstatus", "Foreslå å endre status på et prosjekt. Settes status til Overlevert, settes overleveringsdato automatisk til i dag hvis den ikke er satt fra før. Slå opp prosjektId med sok_prosjekter først. Krever bekreftelse fra brukeren før det faktisk lagres.",
             Objekt(("prosjektId", "integer", "Prosjektets Id (finn med sok_prosjekter)", true),
-                   ("status", "string", "En av Aktiv, Tilbud, TilbudAvslatt, Registrert, Avsluttet, Serviceavtale, Overlevert", true)))
+                   ("status", "string", "En av Aktiv, Tilbud, TilbudAvslatt, Registrert, Avsluttet, Serviceavtale, Overlevert", true))),
+        ToolDef("sok_brukere", "Søk etter ansatte/brukere på navn. Brukes for å finne ansvarligBrukerId før oppdater_ticket.",
+            Objekt(("sok", "string", "Søketekst, f.eks. fornavn", true))),
+        ToolDef("oppdater_ticket", "Foreslå å endre en ticket - tildele ansvarlig, endre prioritet, eller knytte den til en dør. Slå opp ticketId med sok_tickets, ansvarligBrukerId med sok_brukere, og dorId med sok_dorer først. Krever bekreftelse fra brukeren før det faktisk lagres.",
+            Objekt(("ticketId", "integer", "Ticketens Id (finn med sok_tickets)", true),
+                   ("ansvarligBrukerId", "integer", "Valgfritt: ny ansvarlig bruker (finn med sok_brukere)", false),
+                   ("prioritet", "string", "Valgfritt: en av Lav, Normal, Hoy, Kritisk", false),
+                   ("dorId", "integer", "Valgfritt: knytt til denne døren (finn med sok_dorer)", false))),
+        ToolDef("oppdater_dor", "Foreslå å endre felt på en dør - dørtype, mål, brann/lyd-klasse, slagretning eller notater. Slå opp dorId med sok_dorer først. Krever bekreftelse fra brukeren før det faktisk lagres.",
+            Objekt(("dorId", "integer", "Dørens Id (finn med sok_dorer)", true),
+                   ("dortype", "string", "Valgfritt: ny dørtype", false),
+                   ("bredde", "integer", "Valgfritt: ny bredde i mm", false),
+                   ("hoyde", "integer", "Valgfritt: ny høyde i mm", false),
+                   ("brann", "string", "Valgfritt: ny brannklasse, f.eks. EI30", false),
+                   ("lyd", "string", "Valgfritt: ny lydklasse", false),
+                   ("slagretning", "string", "Valgfritt: ny slagretning", false),
+                   ("notater", "string", "Valgfritt: nye notater (erstatter eksisterende)", false))),
+        ToolDef("legg_til_beslag_pa_dor", "Foreslå å legge til en komponent/beslag på en dør. Slå opp dorId med sok_dorer og komponentId med sok_komponenter først. Krever bekreftelse fra brukeren før det faktisk lagres.",
+            Objekt(("dorId", "integer", "Dørens Id (finn med sok_dorer)", true),
+                   ("komponentId", "integer", "Komponentens Id (finn med sok_komponenter)", true),
+                   ("antall", "integer", "Valgfritt: antall, standard 1", false)))
     ];
 
     private static JsonObject ToolDef(string navn, string beskrivelse, JsonObject schema) => new()
