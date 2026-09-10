@@ -97,6 +97,11 @@ builder.Services.AddHttpClient<BronnoysundClient>(client =>
     client.BaseAddress = new Uri("https://data.brreg.no/enhetsregisteret/api/");
     client.Timeout = TimeSpan.FromSeconds(5);
 });
+builder.Services.AddHttpClient<AiAssistentService>(client =>
+{
+    client.BaseAddress = new Uri("https://api.anthropic.com/");
+    client.Timeout = TimeSpan.FromSeconds(60);
+});
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
