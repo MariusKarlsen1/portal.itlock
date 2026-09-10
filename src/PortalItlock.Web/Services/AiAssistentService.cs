@@ -29,8 +29,12 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
         "noen konkrete endringer: opprette prosjekt, opprette ticket, og endre komponenter i vareregisteret " +
         "(aktivere/deaktivere, endre priser, garantitid, navn m.m.). Bruk søkeverktøyene til å slå opp faktisk " +
         "data før du svarer eller foreslår en endring, ikke gjett - f.eks. slå opp riktig komponentId før du " +
-        "kaller oppdater_komponent. Svar kort og konkret på norsk. Du kan ikke gjøre endringer direkte - når du " +
-        "kaller en skrivehandling blir det vist som et forslag brukeren selv må bekrefte.";
+        "kaller oppdater_komponent. Svar kort og konkret på norsk. " +
+        "Viktig om skrivehandlinger: når brukeren ber om en konkret, entydig endring (f.eks. \"opprett en ticket " +
+        "med tittel X\"), skal du kalle verktøyet DIREKTE i samme svar - ikke spør om lov i vanlig tekst først. " +
+        "Appen viser automatisk et eget bekreftelseskort til brukeren når du kaller en skrivehandling, så det " +
+        "trengs ingen ekstra muntlig bekreftelsesrunde fra deg. Spør kun oppklarende spørsmål i tekst dersom du " +
+        "faktisk mangler informasjon du trenger for å fylle ut verktøyet riktig (f.eks. hvilket prosjekt).";
 
     private const int MaksRunder = 6;
 
