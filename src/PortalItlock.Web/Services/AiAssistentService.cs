@@ -21,15 +21,33 @@ public record AiSvar(string? Tekst, AiForeslattHandling? ForeslattHandling);
 // returneres som et forslag brukeren må bekrefte eksplisitt før UtforHandlingAsync faktisk lagrer noe.
 public class AiAssistentService(HttpClient http, IConfiguration config, ApplicationDbContext db)
 {
-    private static readonly HashSet<string> SkrivehandlingNavn = ["opprett_prosjekt", "opprett_ticket", "oppdater_komponent"];
+    private static readonly HashSet<string> SkrivehandlingNavn =
+    [
+        "opprett_prosjekt", "opprett_ticket", "oppdater_komponent", "opprett_komponent",
+        "endre_dorstatus", "endre_ticketstatus", "knytt_ticket_til_prosjekt", "endre_prosjektstatus"
+    ];
 
     private const string SystemPrompt =
         "Du er AI-assistenten i portal.itlock, et internt driftssystem for itlock AS (dør/lås-montering). " +
-        "Du hjelper ansatte med å finne svar i portalens data - prosjekter, dører, tickets - og kan foreslå " +
-        "noen konkrete endringer: opprette prosjekt, opprette ticket, og endre komponenter i vareregisteret " +
-        "(aktivere/deaktivere, endre priser, garantitid, navn m.m.). Bruk søkeverktøyene til å slå opp faktisk " +
-        "data før du svarer eller foreslår en endring, ikke gjett - f.eks. slå opp riktig komponentId før du " +
-        "kaller oppdater_komponent. Svar kort og konkret på norsk. " +
+        "Du hjelper ansatte med å finne svar i portalens data - prosjekter, dører, tickets, komponenter - og kan " +
+        "foreslå konkrete endringer: opprette prosjekt, opprette/endre komponent i vareregisteret " +
+        "(aktivere/deaktivere, endre priser, garantitid, navn m.m.), opprette ticket, endre ticket-status, knytte " +
+        "en ticket til et prosjekt, endre dørstatus (montasjestatus) og endre prosjektstatus. Bruk søkeverktøyene " +
+        "til å slå opp faktisk data før du svarer eller foreslår en endring, ikke gjett - f.eks. slå opp riktig " +
+        "id (komponentId/dorId/ticketId/prosjektId) med søkeverktøyene før du kaller en skrivehandling som " +
+        "trenger den. " +
+        "Du kan også forklare hvordan portalen fungerer, hva som er mulig å gjøre, og hvor ting finnes. Portalens " +
+        "moduler: Prosjekt (prosjekter, dører, plantegninger med posisjonerte dørmarkører, byggetrinn, CE-" +
+        "godkjenning, garanti/reklamasjon knyttet til komponenter). Komponenter og priser (vareregister med " +
+        "priser, rabattgrupper, prisimport, lagerstyring, montasjetider, garantitid per produkt). Tilbud " +
+        "(prisoverslag med varelinjer, DG/påslag-beregning, PDF-eksport). Ressursplanlegger (ukeplan som viser " +
+        "hvilken montør som er satt på hvilken jobb hvilken dag). Tickets (saksbehandling for henvendelser, " +
+        "reklamasjoner og driftsmeldinger, med SLA-frister). Service modul (serviceavtaler, serviceoppdrag, " +
+        "planlagte servicerunder). Drift (kart over dagens jobber, kalender, fraværsregistrering). Arbeidsordre " +
+        "(monteringsoppdrag knyttet til prosjekter). Kunder (kunderegister og oppfølging). Kontrolltårn " +
+        "(driftsdashboard for admin/prosjektleder). Når brukeren spør hvordan de gjør noe eller hva som er mulig, " +
+        "svar konkret ut fra denne oversikten - du trenger ikke bruke noe verktøy for slike forklarende spørsmål. " +
+        "Svar kort og konkret på norsk. " +
         "Viktig om skrivehandlinger: når brukeren ber om en konkret, entydig endring (f.eks. \"opprett en ticket " +
         "med tittel X\"), skal du kalle verktøyet DIREKTE i samme svar - ikke spør om lov i vanlig tekst først. " +
         "Appen viser automatisk et eget bekreftelseskort til brukeren når du kaller en skrivehandling, så det " +
@@ -371,6 +389,52 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
                 var endringTekst = endringer.Count == 0 ? "ingen faktiske endringer" : string.Join(", ", endringer);
                 return $"Endre «{entity.Navn}»: {endringTekst}.";
             }
+            case "opprett_komponent":
+            {
+                var navn = input?["navn"]?.GetValue<string>() ?? "(uten navn)";
+                return $"Opprette ny komponent «{navn}» i vareregisteret.";
+            }
+            case "endre_dorstatus":
+            {
+                var dorId = input?["dorId"]?.GetValue<int>() ?? 0;
+                var status = input?["status"]?.GetValue<string>() ?? "";
+                var dor = await db.Dorer.AsNoTracking().FirstOrDefaultAsync(d => d.Id == dorId, ct);
+                var visning = Enum.TryParse<MontasjeStatus>(status, true, out var s) ? s.Visningsnavn() : status;
+                return dor is null
+                    ? $"Fant ikke dør med Id {dorId} - forslaget kan ikke gjennomføres."
+                    : $"Endre status på dør «{dor.Dornummer}» fra {dor.Status.Visningsnavn()} til {visning}.";
+            }
+            case "endre_ticketstatus":
+            {
+                var ticketId = input?["ticketId"]?.GetValue<int>() ?? 0;
+                var status = input?["status"]?.GetValue<string>() ?? "";
+                var ticket = await db.Tickets.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ticketId, ct);
+                var visning = Enum.TryParse<TicketStatus>(status, true, out var s) ? s.Visningsnavn() : status;
+                return ticket is null
+                    ? $"Fant ikke ticket med Id {ticketId} - forslaget kan ikke gjennomføres."
+                    : $"Endre status på ticket «{ticket.Tittel}» fra {ticket.Status.Visningsnavn()} til {visning}.";
+            }
+            case "knytt_ticket_til_prosjekt":
+            {
+                var ticketId = input?["ticketId"]?.GetValue<int>() ?? 0;
+                var prosjektId = input?["prosjektId"]?.GetValue<int>() ?? 0;
+                var ticket = await db.Tickets.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ticketId, ct);
+                var prosjekt = await db.Prosjekter.AsNoTracking().FirstOrDefaultAsync(p => p.Id == prosjektId, ct);
+                return ticket is null || prosjekt is null
+                    ? "Fant ikke ticketen og/eller prosjektet - forslaget kan ikke gjennomføres."
+                    : $"Knytte ticket «{ticket.Tittel}» til prosjekt «{prosjekt.Navn}».";
+            }
+            case "endre_prosjektstatus":
+            {
+                var prosjektId = input?["prosjektId"]?.GetValue<int>() ?? 0;
+                var status = input?["status"]?.GetValue<string>() ?? "";
+                var prosjekt = await db.Prosjekter.AsNoTracking().FirstOrDefaultAsync(p => p.Id == prosjektId, ct);
+                var visning = Enum.TryParse<ProsjektStatus>(status, true, out var s) ? s.Visningsnavn() : status;
+                var forrigeStatus = prosjekt?.Status?.Visningsnavn() ?? "ikke satt";
+                return prosjekt is null
+                    ? $"Fant ikke prosjekt med Id {prosjektId} - forslaget kan ikke gjennomføres."
+                    : $"Endre status på prosjekt «{prosjekt.Navn}» fra {forrigeStatus} til {visning}.";
+            }
             default:
                 return $"Utføre {verktoyNavn}.";
         }
@@ -387,6 +451,11 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
                 "opprett_prosjekt" => await OpprettProsjekt(input, ct),
                 "opprett_ticket" => await OpprettTicket(input, ct),
                 "oppdater_komponent" => await OppdaterKomponent(input, ct),
+                "opprett_komponent" => await OpprettKomponent(input, ct),
+                "endre_dorstatus" => await EndreDorstatus(input, ct),
+                "endre_ticketstatus" => await EndreTicketstatus(input, ct),
+                "knytt_ticket_til_prosjekt" => await KnyttTicketTilProsjekt(input, ct),
+                "endre_prosjektstatus" => await EndreProsjektstatus(input, ct),
                 _ => $"Ukjent handling: {verktoyNavn}"
             };
         }
@@ -473,6 +542,118 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
         return $"✅ Oppdaterte «{entity.Navn}».";
     }
 
+    private async Task<string> OpprettKomponent(JsonNode? input, CancellationToken ct)
+    {
+        var navn = input?["navn"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(navn))
+        {
+            return "Mangler varenavn - fikk ikke opprettet.";
+        }
+
+        var komponent = new Component
+        {
+            Navn = navn.Trim(),
+            Produsent = input?["produsent"]?.GetValue<string>(),
+            Leverandor = input?["leverandor"]?.GetValue<string>(),
+            Produktkode = input?["produktkode"]?.GetValue<string>(),
+            PrisNetto = input?["prisNetto"] is { } pn ? pn.GetValue<decimal>() : null,
+            PrisVeiledende = input?["prisVeiledende"] is { } pv ? pv.GetValue<decimal>() : null,
+            GarantitidManeder = input?["garantitidManeder"] is { } g ? g.GetValue<int>() : null
+        };
+        db.Components.Add(komponent);
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Opprettet komponent «{komponent.Navn}» (Id {komponent.Id}).";
+    }
+
+    private async Task<string> EndreDorstatus(JsonNode? input, CancellationToken ct)
+    {
+        var dorId = input?["dorId"]?.GetValue<int>() ?? 0;
+        var statusTekst = input?["status"]?.GetValue<string>();
+        if (!Enum.TryParse<MontasjeStatus>(statusTekst, true, out var status))
+        {
+            return $"Ugyldig status: {statusTekst}.";
+        }
+
+        var dor = await db.Dorer.FirstOrDefaultAsync(d => d.Id == dorId, ct);
+        if (dor is null)
+        {
+            return $"Fant ikke dør med Id {dorId}.";
+        }
+
+        dor.Status = status;
+        dor.MontertDato = status == MontasjeStatus.FerdigMontert ? DateTime.Now : null;
+        dor.MontertAvBrukerId = status == MontasjeStatus.FerdigMontert ? dor.MontertAvBrukerId : null;
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Satt status på dør «{dor.Dornummer}» til {status.Visningsnavn()}.";
+    }
+
+    private async Task<string> EndreTicketstatus(JsonNode? input, CancellationToken ct)
+    {
+        var ticketId = input?["ticketId"]?.GetValue<int>() ?? 0;
+        var statusTekst = input?["status"]?.GetValue<string>();
+        if (!Enum.TryParse<TicketStatus>(statusTekst, true, out var status))
+        {
+            return $"Ugyldig status: {statusTekst}.";
+        }
+
+        var ticket = await db.Tickets.FirstOrDefaultAsync(t => t.Id == ticketId, ct);
+        if (ticket is null)
+        {
+            return $"Fant ikke ticket med Id {ticketId}.";
+        }
+
+        ticket.Status = status;
+        ticket.LukketDato = status == TicketStatus.Lukket ? DateTime.Now : null;
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Satt status på ticket «{ticket.Tittel}» til {status.Visningsnavn()}.";
+    }
+
+    private async Task<string> KnyttTicketTilProsjekt(JsonNode? input, CancellationToken ct)
+    {
+        var ticketId = input?["ticketId"]?.GetValue<int>() ?? 0;
+        var prosjektId = input?["prosjektId"]?.GetValue<int>() ?? 0;
+
+        var ticket = await db.Tickets.FirstOrDefaultAsync(t => t.Id == ticketId, ct);
+        var prosjekt = await db.Prosjekter.AsNoTracking().FirstOrDefaultAsync(p => p.Id == prosjektId, ct);
+        if (ticket is null || prosjekt is null)
+        {
+            return "Fant ikke ticketen og/eller prosjektet.";
+        }
+
+        ticket.ProsjektId = prosjektId;
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Knyttet ticket «{ticket.Tittel}» til prosjekt «{prosjekt.Navn}».";
+    }
+
+    private async Task<string> EndreProsjektstatus(JsonNode? input, CancellationToken ct)
+    {
+        var prosjektId = input?["prosjektId"]?.GetValue<int>() ?? 0;
+        var statusTekst = input?["status"]?.GetValue<string>();
+        if (!Enum.TryParse<ProsjektStatus>(statusTekst, true, out var status))
+        {
+            return $"Ugyldig status: {statusTekst}.";
+        }
+
+        var prosjekt = await db.Prosjekter.FirstOrDefaultAsync(p => p.Id == prosjektId, ct);
+        if (prosjekt is null)
+        {
+            return $"Fant ikke prosjekt med Id {prosjektId}.";
+        }
+
+        prosjekt.Status = status;
+        if (status == ProsjektStatus.Overlevert && prosjekt.OverlevertDato is null)
+        {
+            prosjekt.OverlevertDato = DateTime.Today;
+        }
+        await db.SaveChangesAsync(ct);
+
+        return $"✅ Satt status på prosjekt «{prosjekt.Navn}» til {status.Visningsnavn()}.";
+    }
+
     private static JsonArray Verktoy() =>
     [
         ToolDef("sok_prosjekter", "Søk etter prosjekter på navn, kundenavn eller adresse. Gir en kort liste med treff.",
@@ -507,7 +688,27 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
                    ("prisNetto", "number", "Valgfritt: ny nettopris", false),
                    ("prisVeiledende", "number", "Valgfritt: ny veiledende pris", false),
                    ("garantitidManeder", "integer", "Valgfritt: ny garantitid i måneder", false),
-                   ("aktiv", "boolean", "Valgfritt: sett komponenten aktiv/inaktiv", false)))
+                   ("aktiv", "boolean", "Valgfritt: sett komponenten aktiv/inaktiv", false))),
+        ToolDef("opprett_komponent", "Foreslå å opprette en helt ny komponent/vare i vareregisteret. Krever bekreftelse fra brukeren før den faktisk opprettes.",
+            Objekt(("navn", "string", "Varenavn", true),
+                   ("produsent", "string", "Valgfritt: produsent", false),
+                   ("leverandor", "string", "Valgfritt: leverandør", false),
+                   ("produktkode", "string", "Valgfritt: produktkode", false),
+                   ("prisNetto", "number", "Valgfritt: nettopris", false),
+                   ("prisVeiledende", "number", "Valgfritt: veiledende pris", false),
+                   ("garantitidManeder", "integer", "Valgfritt: garantitid i måneder", false))),
+        ToolDef("endre_dorstatus", "Foreslå å endre montasjestatus på en dør. Slå opp dorId med sok_dorer først. Krever bekreftelse fra brukeren før det faktisk lagres.",
+            Objekt(("dorId", "integer", "Dørens Id (finn med sok_dorer)", true),
+                   ("status", "string", "En av IkkeStartet, Montert, FerdigMontert", true))),
+        ToolDef("endre_ticketstatus", "Foreslå å endre status på en ticket. Slå opp ticketId med sok_tickets først. Krever bekreftelse fra brukeren før det faktisk lagres.",
+            Objekt(("ticketId", "integer", "Ticketens Id (finn med sok_tickets)", true),
+                   ("status", "string", "En av Ny, UnderBehandling, VenterGodkjenning, Lukket", true))),
+        ToolDef("knytt_ticket_til_prosjekt", "Foreslå å knytte en ticket til et prosjekt. Slå opp begge id-ene med sok_tickets/sok_prosjekter først. Krever bekreftelse fra brukeren før det faktisk lagres.",
+            Objekt(("ticketId", "integer", "Ticketens Id", true),
+                   ("prosjektId", "integer", "Prosjektets Id", true))),
+        ToolDef("endre_prosjektstatus", "Foreslå å endre status på et prosjekt. Settes status til Overlevert, settes overleveringsdato automatisk til i dag hvis den ikke er satt fra før. Slå opp prosjektId med sok_prosjekter først. Krever bekreftelse fra brukeren før det faktisk lagres.",
+            Objekt(("prosjektId", "integer", "Prosjektets Id (finn med sok_prosjekter)", true),
+                   ("status", "string", "En av Aktiv, Tilbud, TilbudAvslatt, Registrert, Avsluttet, Serviceavtale, Overlevert", true)))
     ];
 
     private static JsonObject ToolDef(string navn, string beskrivelse, JsonObject schema) => new()
