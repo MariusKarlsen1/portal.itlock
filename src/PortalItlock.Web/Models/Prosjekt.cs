@@ -18,6 +18,7 @@ public class Prosjekt
     public string? Risikoklasse { get; set; }
     public int CeGyldighetMåneder { get; set; } = 12;
     public ProsjektStatus? Status { get; set; }
+    public DateTime? OverlevertDato { get; set; }
     public string? Notater { get; set; }
     public string? Info { get; set; }
     public string? FdvForside { get; set; }

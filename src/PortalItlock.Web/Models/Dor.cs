@@ -37,7 +37,6 @@ public class Dor
 
     public MontasjeStatus Status { get; set; } = MontasjeStatus.IkkeStartet;
     public DateTime? MontertDato { get; set; }
-    public DateTime? GarantiUtlopsdato { get; set; }
 
     public int? MontertAvBrukerId { get; set; }
     public Bruker? MontertAvBruker { get; set; }

@@ -4,6 +4,7 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 @inject PortalItlock.Web.Services.EmailService Epost
@@ -267,10 +268,7 @@ else
                 <p>
                     <a href="@($"/dor/{_ticket.DorId}")">Åpne dør: @_ticket.Dor?.Dornummer</a>
                     <button type="button" class="cancel-button" @onclick="@(() => _ticket.DorId = null)">Endre</button>
-                    @if (_ticket.Dor?.GarantiUtlopsdato is not null)
-                    {
-                        <span class="@GarantiStatusKlasse">@GarantiStatusTekst</span>
-                    }
+                    <span class="@GarantiStatusKlasse">@GarantiStatusTekst</span>
                 </p>
             }
         }
@@ -425,10 +423,20 @@ else
     {
         get
         {
-            var utlop = _ticket?.Dor?.GarantiUtlopsdato;
+            if (_ticket?.DorId is null || _ticket.Dor is null)
+            {
+                return "Ingen dør knyttet - kan ikke sjekke garanti.";
+            }
+
+            if (_ticket.Prosjekt?.OverlevertDato is null)
+            {
+                return "Prosjektet er ikke overlevert enda - garantien har ikke startet.";
+            }
+
+            var utlop = GarantiBeregning.TidligsteUtlop(_ticket.Dor, _ticket.Prosjekt.OverlevertDato);
             if (utlop is null)
             {
-                return _ticket?.DorId is null ? "Ingen dør knyttet - kan ikke sjekke garanti." : "Ingen garantidato satt på døren.";
+                return "Ingen beslag med registrert garantitid på døren.";
             }
 
             return utlop.Value.Date < DateTime.Today
@@ -437,9 +445,12 @@ else
         }
     }
 
-    private string GarantiStatusKlasse => _ticket?.Dor?.GarantiUtlopsdato is { } utlop && utlop.Date < DateTime.Today
-        ? "garanti-utlopt"
-        : "garanti-ok";
+    private string GarantiStatusKlasse =>
+        _ticket?.DorId is not null && _ticket.Dor is not null
+        && GarantiBeregning.TidligsteUtlop(_ticket.Dor, _ticket.Prosjekt?.OverlevertDato) is { } utlop
+        && utlop.Date < DateTime.Today
+            ? "garanti-utlopt"
+            : "garanti-ok";
 
     private string SlaStatusTekst
     {
@@ -498,7 +509,7 @@ else
             .Include(t => t.GodkjentAvBruker)
             .Include(t => t.Prosjekt)
             .Include(t => t.Arbeidsordre)
-            .Include(t => t.Dor)
+            .Include(t => t.Dor).ThenInclude(d => d!.Komponenter).ThenInclude(dk => dk.Component)
             .Include(t => t.Foresporsel).ThenInclude(f => f!.Media)
             .Include(t => t.Hendelser).ThenInclude(h => h.UtfortAvBruker)
             .Include(t => t.Media)

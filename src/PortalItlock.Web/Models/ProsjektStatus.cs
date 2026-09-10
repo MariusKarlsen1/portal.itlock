@@ -7,7 +7,8 @@ public enum ProsjektStatus
     TilbudAvslatt,
     Registrert,
     Avsluttet,
-    Serviceavtale
+    Serviceavtale,
+    Overlevert
 }
 
 public static class ProsjektStatusExtensions
@@ -20,6 +21,7 @@ public static class ProsjektStatusExtensions
         ProsjektStatus.Registrert => "Registrert",
         ProsjektStatus.Avsluttet => "Avsluttet",
         ProsjektStatus.Serviceavtale => "Serviceavtale",
+        ProsjektStatus.Overlevert => "Overlevert",
         _ => status.ToString()
     };
 }
