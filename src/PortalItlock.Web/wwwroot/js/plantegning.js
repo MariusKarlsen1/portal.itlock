@@ -1,5 +1,23 @@
 let currentSaveRef = null;
 
+const dorVisningsmodusKey = 'itlock-dor-visningsmodus';
+
+export function getDorVisningsmodus() {
+    try {
+        return localStorage.getItem(dorVisningsmodusKey);
+    } catch {
+        return null;
+    }
+}
+
+export function setDorVisningsmodus(modus) {
+    try {
+        localStorage.setItem(dorVisningsmodusKey, modus);
+    } catch {
+        // Ignorer - f.eks. privat nettlesing der localStorage kan være blokkert.
+    }
+}
+
 export function initSaveShortcut(dotNetRef) {
     currentSaveRef = dotNetRef;
 

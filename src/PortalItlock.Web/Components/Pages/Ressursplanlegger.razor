@@ -574,7 +574,14 @@ else
         klokkeTimer = Math.Round(klokkeTimer * 4, MidpointRounding.AwayFromZero) / 4;
 
         var varighetTimer = (eksisterende.Til - eksisterende.Fra).TotalHours;
-        var nyFraTimer = Math.Clamp(klokkeTimer, _rutenettStart, _rutenettSlutt - varighetTimer);
+
+        var opptattHosAnsatt = await Db.Ressursplaner
+            .Where(r => r.Dato == dato.Date && r.MontorId == ansattId.Value && r.Id != boksId)
+            .Select(r => new { r.Fra, r.Til })
+            .ToListAsync();
+        var opptatt = opptattHosAnsatt.Select(r => (Fra: r.Fra.TotalHours, Til: r.Til.TotalHours)).ToList();
+
+        var nyFraTimer = FinnLedigStart(opptatt, klokkeTimer, varighetTimer);
 
         eksisterende.Dato = dato;
         eksisterende.MontorId = ansattId.Value;
@@ -583,6 +590,56 @@ else
 
         await Db.SaveChangesAsync();
         await LastAsync();
+    }
+
+    // Finner starttidspunktet nærmest ønsket tid som IKKE overlapper noen av de andre etikettene
+    // til samme ansatt samme dag. Slipper man en etikett midt oppi en annen, skal den altså
+    // legge seg rett over eller under den andre (i tid) - aldri ved siden av den (delt bredde).
+    private double FinnLedigStart(List<(double Fra, double Til)> opptatt, double onsketFra, double varighet)
+    {
+        var sortert = opptatt.OrderBy(o => o.Fra).ToList();
+        var hull = new List<(double Fra, double Til)>();
+        var pos = _rutenettStart;
+        foreach (var o in sortert)
+        {
+            if (o.Fra > pos)
+            {
+                hull.Add((pos, o.Fra));
+            }
+
+            pos = Math.Max(pos, o.Til);
+        }
+
+        if (pos < _rutenettSlutt)
+        {
+            hull.Add((pos, _rutenettSlutt));
+        }
+
+        var brukbare = hull.Where(h => h.Til - h.Fra >= varighet - 0.001).ToList();
+        if (brukbare.Count == 0)
+        {
+            // Ingen ledig plass til hele varigheten uten overlapp - siste utvei, ikke krasj.
+            return Math.Clamp(onsketFra, _rutenettStart, _rutenettSlutt - varighet);
+        }
+
+        var beste = brukbare[0];
+        var besteAvstand = double.MaxValue;
+        foreach (var h in brukbare)
+        {
+            var avstand = onsketFra < h.Fra
+                ? h.Fra - onsketFra
+                : onsketFra > h.Til - varighet
+                    ? onsketFra - (h.Til - varighet)
+                    : 0;
+
+            if (avstand < besteAvstand)
+            {
+                besteAvstand = avstand;
+                beste = h;
+            }
+        }
+
+        return Math.Clamp(onsketFra, beste.Fra, beste.Til - varighet);
     }
 
     private int? FinnAnsattForY(double y)
