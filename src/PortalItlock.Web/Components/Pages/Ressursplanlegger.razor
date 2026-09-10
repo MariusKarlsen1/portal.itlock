@@ -8,13 +8,15 @@
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>Ressursplanlegger</PageTitle>
 
 <h1>Ressursplanlegger</h1>
 <p class="section-hint">
     Sett av ansatte på dager fremover - uavhengig av om det finnes en arbeidsordre ennå. Dobbeltklikk på en dag for
-    å legge til en etikett med klokkeslett. Etikettene vises også i den ansattes egen kalender.
+    å legge til en etikett med klokkeslett, eller dra en etikett til en annen dag/ansatt/klokkeslett for å flytte
+    den. Etikettene vises også i den ansattes egen kalender.
 </p>
 
 <div class="kalender-verktoylinje">
@@ -107,14 +109,16 @@ else
                 {
                     var helligdag = NorskHelligdag.Navn(dag.Dato);
                     var erRod = helligdag is not null || NorskHelligdag.ErSondag(dag.Dato);
-                    <div class="ressurs-dag-kolonne @(dag.Dato == DateTime.Today ? "ressurs-dag-idag" : "") @(erRod ? "ressurs-dag-rod" : "")"
-                         style="height: @PxTekst(RutenettHoydePx); background-image: repeating-linear-gradient(to bottom, var(--itlock-border) 0, var(--itlock-border) 1px, transparent 1px, transparent @PxTekst(BandHoydePx));"
-                         @ondblclick="@(() => StartNy(dag.Dato))">
+                    <div id="@DagKolonneId(dag.Dato)" class="ressurs-dag-kolonne @(dag.Dato == DateTime.Today ? "ressurs-dag-idag" : "") @(erRod ? "ressurs-dag-rod" : "")"
+                         style="height: @PxTekst(RutenettHoydePx); background-image: @BandDelelinjerBakgrunn();"
+                         @ondblclick="@(() => StartNy(dag.Dato))"
+                         @ondragover="@(() => { })" @ondragover:preventDefault="true"
+                         @ondrop="@(e => SlippBoks(dag.Dato, e))">
                         @foreach (var boks in dag.Boxer)
                         {
                             var breddeProsent = 100.0 / boks.BaneAntall;
                             var venstreProsent = breddeProsent * boks.BaneIndex;
-                            <button type="button" class="ressurs-boks" style="--montor-farge: @FargeForAnsatt(boks.AnsattId); top: @PxTekst(boks.TopPx); height: @PxTekst(boks.HoydePx); left: calc(@ProsentTekst(venstreProsent) + 2px); width: calc(@ProsentTekst(breddeProsent) - 4px);" @onclick="@(() => StartRediger(boks))">
+                            <button type="button" class="ressurs-boks" draggable="true" style="--montor-farge: @FargeForAnsatt(boks.AnsattId); top: @PxTekst(boks.TopPx); height: @PxTekst(boks.HoydePx); left: calc(@ProsentTekst(venstreProsent) + 2px); width: calc(@ProsentTekst(breddeProsent) - 4px);" @onclick="@(() => StartRediger(boks))" @ondragstart="@(() => _draggingBoksId = boks.Id)">
                                 <span class="ressurs-boks-tittel">@boks.Tittel</span>
                                 <span class="ressurs-boks-tid">@boks.Fra.ToString(@"hh\:mm")&ndash;@boks.Til.ToString(@"hh\:mm")</span>
                             </button>
@@ -125,7 +129,7 @@ else
                 <div class="ressurs-medlemmer-kolonne" style="height: @PxTekst(RutenettHoydePx)">
                     @foreach (var a in _ansatte)
                     {
-                        <div class="medlem-band" style="height: @PxTekst(BandHoydePx); border-left-color: @FargeForAnsatt(a.Id); background: color-mix(in srgb, @FargeForAnsatt(a.Id) 16%, var(--itlock-surface));">
+                        <div class="medlem-band" style="height: @PxTekst(AnsattBandHoydePx(a.Id)); border-left-color: @FargeForAnsatt(a.Id); background: color-mix(in srgb, @FargeForAnsatt(a.Id) 16%, var(--itlock-surface));">
                             @a.Navn
                         </div>
                     }
@@ -179,12 +183,12 @@ else
     private const double _rutenettSlutt = 15;
     private static double RutenettHoydePxStandard => (_rutenettSlutt - _rutenettStart) * TimeHoydePx;
 
-    // Høyden på hver ansatts rad. Er normalt RutenettHoydePxStandard delt på antall ansatte, men
-    // utvides automatisk (i LastAsync) hvis noen har så mange etiketter på én dag at de ellers
-    // ikke ville fått plass med lesbar tittel og klokkeslett.
-    private double _bandHoydePx;
-    private double BandHoydePx => _bandHoydePx;
-    private double RutenettHoydePx => _bandHoydePx * Math.Max(_ansatte.Count, 1);
+    // Høyden på hver enkelt ansatts rad (i samme rekkefølge som _ansatte). Er normalt
+    // RutenettHoydePxStandard delt på antall ansatte, men utvides automatisk (i LastAsync) - per
+    // ansatt, uavhengig av de andre - hvis vedkommende har så mange etiketter på én dag at de
+    // ellers ikke ville fått plass med lesbar tittel og klokkeslett.
+    private List<double> _bandHoyder = [];
+    private double RutenettHoydePx => _bandHoyder.Sum();
 
     private static string PxTekst(double verdi) => verdi.ToString("0.##", CultureInfo.InvariantCulture) + "px";
     private static string ProsentTekst(double verdi) => verdi.ToString("0.###", CultureInfo.InvariantCulture) + "%";
@@ -206,6 +210,7 @@ else
     private TimeOnly? _formTil = new(15, 0);
     private string _formInfo = "";
     private string? _feilmelding;
+    private int? _draggingBoksId;
 
     private string UkeTekst()
     {
@@ -220,6 +225,49 @@ else
     {
         var index = _ansatte.FindIndex(a => a.Id == ansattId);
         return index < 0 ? 0 : index;
+    }
+
+    private double AnsattBandHoydePx(int ansattId)
+    {
+        var index = AnsattBaandIndex(ansattId);
+        return index < _bandHoyder.Count ? _bandHoyder[index] : RutenettHoydePxStandard / Math.Max(_ansatte.Count, 1);
+    }
+
+    private double AnsattBandTopPx(int ansattId)
+    {
+        var index = AnsattBaandIndex(ansattId);
+        var sum = 0.0;
+        for (var i = 0; i < index && i < _bandHoyder.Count; i++)
+        {
+            sum += _bandHoyder[i];
+        }
+
+        return sum;
+    }
+
+    private static string DagKolonneId(DateTime dato) => $"ressurs-dagkolonne-{dato:yyyyMMdd}";
+
+    // Bygger en CSS-gradient med skillelinjer ved grensene mellom hver ansatts rad (radene kan ha
+    // ulik høyde), slik at det ser ut som horisontale streker som går hele veien over dagkolonnen.
+    private string BandDelelinjerBakgrunn()
+    {
+        if (_bandHoyder.Count <= 1)
+        {
+            return "none";
+        }
+
+        var deler = new List<string>();
+        var cum = 0.0;
+        for (var i = 0; i < _bandHoyder.Count - 1; i++)
+        {
+            cum += _bandHoyder[i];
+            deler.Add($"transparent {PxTekst(cum)}");
+            deler.Add($"var(--itlock-border) {PxTekst(cum)}");
+            deler.Add($"var(--itlock-border) {PxTekst(cum + 1)}");
+            deler.Add($"transparent {PxTekst(cum + 1)}");
+        }
+
+        return $"linear-gradient(to bottom, transparent, {string.Join(", ", deler)})";
     }
 
     // Naturlig (proporsjonal) høyde i piksler for et tidsrom, gitt en tilgjengelig høyde å
@@ -281,14 +329,13 @@ else
     // Plasserer klyngene til én ansatt på én dag sekvensielt innenfor radens høyde: hver klynge
     // får minst MinBoksHoydePx, og eventuell ledig tid mellom klyngene krympes proporsjonalt for
     // å gi plass. Etiketter i samme klynge (tidsoverlapp) deler klyngens plass proporsjonalt.
-    private static void PlasserKlynger(List<List<BoksRad>> klynger, int baandIndex, double bandHoydePx)
+    private static void PlasserKlynger(List<List<BoksRad>> klynger, double bandTopPx, double bandHoydePx)
     {
         if (klynger.Count == 0)
         {
             return;
         }
 
-        var bandTopPx = baandIndex * bandHoydePx;
         var tilgjengelig = bandHoydePx - 2 * BoksPaddingPx - (klynger.Count - 1) * BoksMellomromPx;
 
         var spenn = klynger.Select(k => (Fra: k.Min(b => b.Fra.TotalHours), Til: k.Max(b => b.Til.TotalHours))).ToList();
@@ -476,6 +523,66 @@ else
         await LastAsync();
     }
 
+    // Flytter den dragede etiketten til dagen/ansatten/klokkeslettet den slippes på. Klokkeslettet
+    // regnes ut fra museposisjonen (via JS for nøyaktig Y relativt til dagkolonnen), avrundet til
+    // nærmeste kvarter, og varigheten på etiketten beholdes.
+    private async Task SlippBoks(DateTime dato, DragEventArgs e)
+    {
+        if (_draggingBoksId is null)
+        {
+            return;
+        }
+
+        var boksId = _draggingBoksId.Value;
+        _draggingBoksId = null;
+
+        var eksisterende = await Db.Ressursplaner.FindAsync(boksId);
+        if (eksisterende is null)
+        {
+            return;
+        }
+
+        var relativY = await JS.InvokeAsync<double>("ressursplanlegger.relativY", DagKolonneId(dato), e.ClientY);
+        var ansattId = FinnAnsattForY(relativY);
+        if (ansattId is null)
+        {
+            return;
+        }
+
+        var bandTopPx = AnsattBandTopPx(ansattId.Value);
+        var bandHoydePx = AnsattBandHoydePx(ansattId.Value);
+        var tilgjengelig = bandHoydePx - 2 * BoksPaddingPx;
+        var brokAvBand = tilgjengelig > 0 ? Math.Clamp((relativY - bandTopPx - BoksPaddingPx) / tilgjengelig, 0, 1) : 0;
+        var klokkeTimer = _rutenettStart + brokAvBand * (_rutenettSlutt - _rutenettStart);
+        klokkeTimer = Math.Round(klokkeTimer * 4, MidpointRounding.AwayFromZero) / 4;
+
+        var varighetTimer = (eksisterende.Til - eksisterende.Fra).TotalHours;
+        var nyFraTimer = Math.Clamp(klokkeTimer, _rutenettStart, _rutenettSlutt - varighetTimer);
+
+        eksisterende.Dato = dato;
+        eksisterende.MontorId = ansattId.Value;
+        eksisterende.Fra = TimeSpan.FromHours(nyFraTimer);
+        eksisterende.Til = TimeSpan.FromHours(nyFraTimer + varighetTimer);
+
+        await Db.SaveChangesAsync();
+        await LastAsync();
+    }
+
+    private int? FinnAnsattForY(double y)
+    {
+        var cum = 0.0;
+        for (var i = 0; i < _ansatte.Count && i < _bandHoyder.Count; i++)
+        {
+            cum += _bandHoyder[i];
+            if (y <= cum)
+            {
+                return _ansatte[i].Id;
+            }
+        }
+
+        return _ansatte.Count > 0 ? _ansatte[^1].Id : null;
+    }
+
     private async Task LastAsync()
     {
         _laster = true;
@@ -502,18 +609,24 @@ else
                 .GroupBy(b => b.AnsattId)
                 .ToDictionary(g => g.Key, g => TildelBaner(g.ToList())));
 
-        var alleSpenn = klyngerPerDagOgAnsatt.Values
-            .SelectMany(perAnsatt => perAnsatt.Values)
-            .Select(klynger => klynger.Select(k => (Fra: k.Min(b => b.Fra.TotalHours), Til: k.Max(b => b.Til.TotalHours))).ToList())
+        var standardBandHoyde = RutenettHoydePxStandard / Math.Max(_ansatte.Count, 1);
+        _bandHoyder = _ansatte
+            .Select(a =>
+            {
+                var spennForAnsatt = klyngerPerDagOgAnsatt.Values
+                    .Select(perAnsatt => perAnsatt.GetValueOrDefault(a.Id))
+                    .Where(klynger => klynger is { Count: > 0 })
+                    .Select(klynger => klynger!.Select(k => (Fra: k.Min(b => b.Fra.TotalHours), Til: k.Max(b => b.Til.TotalHours))).ToList())
+                    .ToList();
+                return FinnBandHoyde(standardBandHoyde, spennForAnsatt);
+            })
             .ToList();
-
-        _bandHoydePx = FinnBandHoyde(RutenettHoydePxStandard / Math.Max(_ansatte.Count, 1), alleSpenn);
 
         foreach (var perAnsatt in klyngerPerDagOgAnsatt.Values)
         {
             foreach (var (ansattId, klynger) in perAnsatt)
             {
-                PlasserKlynger(klynger, AnsattBaandIndex(ansattId), _bandHoydePx);
+                PlasserKlynger(klynger, AnsattBandTopPx(ansattId), AnsattBandHoydePx(ansattId));
             }
         }
 
