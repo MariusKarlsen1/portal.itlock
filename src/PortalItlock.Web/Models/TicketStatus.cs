@@ -26,4 +26,22 @@ public static class TicketStatusExtensions
         TicketStatus.Lukket => "Lukket",
         _ => status.ToString()
     };
+
+    public static string PillIkon(this TicketStatus status) => status switch
+    {
+        TicketStatus.Ny => "bell",
+        TicketStatus.UnderBehandling => "tool",
+        TicketStatus.VenterGodkjenning => "clock",
+        TicketStatus.Lukket => "check-circle",
+        _ => "bell"
+    };
+
+    public static string PillFarge(this TicketStatus status) => status switch
+    {
+        TicketStatus.Ny => "blaa",
+        TicketStatus.UnderBehandling => "gul",
+        TicketStatus.VenterGodkjenning => "lilla",
+        TicketStatus.Lukket => "gronn",
+        _ => "noytral"
+    };
 }
