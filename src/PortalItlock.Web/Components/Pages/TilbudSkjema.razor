@@ -1,6 +1,7 @@
 @page "/tilbud/{Id:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@implements IAsyncDisposable
 @using System.Globalization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
@@ -244,10 +245,7 @@ else if (_tilbud is not null)
                     {
                         if (l.ErGruppering)
                         {
-                            <tr @key="l.Id" class="gruppering-row" draggable="true"
-                                @ondragstart="@(() => OnDragStart(l))"
-                                @ondragover="@(() => { })" @ondragover:preventDefault="true"
-                                @ondrop="@(() => OnDrop(l))">
+                            <tr @key="l.Id" class="gruppering-row" data-linje-id="@l.Id">
                                 <td class="drag-handle-cell"><Icon Name="grip" /></td>
                                 <td colspan="20" class="gruppering-cell">
                                     <div class="gruppering-innhold">
@@ -260,10 +258,7 @@ else if (_tilbud is not null)
                             continue;
                         }
 
-                        <tr @key="l.Id" draggable="true"
-                            @ondragstart="@(() => OnDragStart(l))"
-                            @ondragover="@(() => { })" @ondragover:preventDefault="true"
-                            @ondrop="@(() => OnDrop(l))">
+                        <tr @key="l.Id" data-linje-id="@l.Id">
                             <td class="drag-handle-cell"><Icon Name="grip" /></td>
                             <td>
                                 @if (l.ComponentId is null && string.IsNullOrWhiteSpace(l.Navn))
@@ -509,8 +504,8 @@ else if (_tilbud is not null)
     private int? _valgtForsideMalId;
     private List<LagretPdf> _lagredePdfer = [];
     private string? _pdfSavedMessage;
-    private TilbudLinje? _draggedLinje;
-    private bool _dragGhostKoblet;
+    private bool _dragKoblet;
+    private DotNetObjectReference<TilbudSkjema>? _dotNetRef;
     private TilbudLinje? _produktVelgerLinje;
     private string _produktVelgerSok = "";
     private List<SearchResult> _produktVelgerResultater = [];
@@ -556,10 +551,11 @@ else if (_tilbud is not null)
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!_dragGhostKoblet && _tilbud is not null && _tilbud.Linjer.Count > 0)
+        if (!_dragKoblet && _tilbud is not null && _tilbud.Linjer.Count > 0)
         {
-            _dragGhostKoblet = true;
-            await JS.InvokeVoidAsync("tilbudlinjer.kobleDragGhost", "tilbud-varer-tabell");
+            _dragKoblet = true;
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("tilbudlinjer.kobleManuellDrag", "tilbud-varer-tabell", _dotNetRef);
         }
     }
 
@@ -952,28 +948,33 @@ else if (_tilbud is not null)
         await Db.SaveChangesAsync();
     }
 
-    private void OnDragStart(TilbudLinje l) => _draggedLinje = l;
-
-    private async Task OnDrop(TilbudLinje target)
+    [JSInvokable]
+    public async Task FullforDrag(int draggetLinjeId, int? maalLinjeId)
     {
-        if (_draggedLinje is null || _draggedLinje.Id == target.Id)
+        if (_tilbud is null || maalLinjeId is null || draggetLinjeId == maalLinjeId)
         {
-            _draggedLinje = null;
             return;
         }
 
-        var ordered = _tilbud!.Linjer.OrderBy(l => l.Rekkefolge).ToList();
-        ordered.Remove(_draggedLinje);
-        var targetIndex = ordered.IndexOf(target);
-        ordered.Insert(targetIndex, _draggedLinje);
+        var dragget = _tilbud.Linjer.FirstOrDefault(l => l.Id == draggetLinjeId);
+        var maal = _tilbud.Linjer.FirstOrDefault(l => l.Id == maalLinjeId);
+        if (dragget is null || maal is null)
+        {
+            return;
+        }
+
+        var ordered = _tilbud.Linjer.OrderBy(l => l.Rekkefolge).ToList();
+        ordered.Remove(dragget);
+        var maalIndex = ordered.IndexOf(maal);
+        ordered.Insert(maalIndex, dragget);
 
         for (var i = 0; i < ordered.Count; i++)
         {
             ordered[i].Rekkefolge = i;
         }
 
-        _draggedLinje = null;
         await Db.SaveChangesAsync();
+        StateHasChanged();
     }
 
     private void ApneProduktVelger(TilbudLinje l)
@@ -1145,5 +1146,11 @@ else if (_tilbud is not null)
             : JsonSerializer.Deserialize<List<LagretPdfNokkeltall>>(forrige.NokkeltallJson) ?? [];
 
         return gamleNokkeltall.OrderBy(n => n.Navn).SequenceEqual(nyeNokkeltall.OrderBy(n => n.Navn));
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _dotNetRef?.Dispose();
+        return ValueTask.CompletedTask;
     }
 }
