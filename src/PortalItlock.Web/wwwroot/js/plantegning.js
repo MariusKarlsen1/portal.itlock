@@ -50,31 +50,38 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
 
     const minZoom = 0.4;
     const maxZoom = 3;
+    // Pinch-zoom med fingre skal bare kunne zoome INN, ikke ut forbi normal
+    // visning - man skal ikke kunne klype tegningen mindre enn 100%.
+    const minPinchZoom = 1;
     const step = 0.12;
     let zoom = 1;
 
     canvasEl.style.width = '100%';
     canvasEl.style.setProperty('--plan-zoom', zoom);
 
-    wrapEl.addEventListener('wheel', (e) => {
-        e.preventDefault();
+    function applyZoom(nextZoom, anchorClientX, anchorClientY) {
         const prevZoom = zoom;
-        const next = zoom + (e.deltaY < 0 ? step : -step);
-        zoom = Math.min(maxZoom, Math.max(minZoom, next));
+        zoom = nextZoom;
         if (zoom === prevZoom) {
             return;
         }
 
         const rect = wrapEl.getBoundingClientRect();
-        const cursorX = e.clientX - rect.left;
-        const cursorY = e.clientY - rect.top;
+        const anchorX = anchorClientX - rect.left;
+        const anchorY = anchorClientY - rect.top;
         const ratio = zoom / prevZoom;
 
         canvasEl.style.width = (zoom * 100) + '%';
         canvasEl.style.setProperty('--plan-zoom', zoom);
 
-        wrapEl.scrollLeft = (wrapEl.scrollLeft + cursorX) * ratio - cursorX;
-        wrapEl.scrollTop = (wrapEl.scrollTop + cursorY) * ratio - cursorY;
+        wrapEl.scrollLeft = (wrapEl.scrollLeft + anchorX) * ratio - anchorX;
+        wrapEl.scrollTop = (wrapEl.scrollTop + anchorY) * ratio - anchorY;
+    }
+
+    wrapEl.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const next = Math.min(maxZoom, Math.max(minZoom, zoom + (e.deltaY < 0 ? step : -step)));
+        applyZoom(next, e.clientX, e.clientY);
     }, { passive: false });
 
     // Right-click (no need to hold) opens the door picker at that spot.
@@ -84,7 +91,9 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
         dotNetRef.invokeMethodAsync('OnCanvasRightClicked', p.x, p.y);
     });
 
-    // Left-button hold + drag on empty canvas pans the drawing. Markers
+    // Left-button hold + drag on empty canvas pans the drawing (mouse or
+    // single-finger touch). A second finger touching down switches to
+    // pinch-zoom instead - see the activePointers tracking below. Markers
     // handle their own left-button drag (to reposition) and stop the
     // event from reaching here, so this only fires for background drags.
     // Threshold is generous because a real click (e.g. placing new utstyr/dør)
@@ -98,6 +107,24 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     let startScrollLeft = 0;
     let startScrollTop = 0;
     let suppressClick = false;
+
+    // Multi-touch tracking for pinch-zoom. Keyed by pointerId -> {x, y}.
+    const activePointers = new Map();
+    let pinching = false;
+    let pinchStartDist = 0;
+    let pinchStartZoom = 1;
+
+    function pinchDistance() {
+        const pts = [...activePointers.values()];
+        const dx = pts[0].x - pts[1].x;
+        const dy = pts[0].y - pts[1].y;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function pinchMidpoint() {
+        const pts = [...activePointers.values()];
+        return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    }
 
     wrapEl.addEventListener('click', (e) => {
         // While placing something new (utstyr), never eat the click - the user's
@@ -113,24 +140,51 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     }, true);
 
     wrapEl.addEventListener('pointerdown', (e) => {
-        if (e.button !== 0) {
-            return;
-        }
-        // Don't engage pan-detection at all while placing - there is nothing to
-        // pan-vs-click disambiguate here, and doing so only risks losing the click.
+        // Don't engage pan/pinch-detection at all while placing - there is
+        // nothing to pan-vs-click disambiguate here, and doing so only
+        // risks losing the click.
         if (canvasEl.dataset.placing === '1') {
             return;
         }
-        panning = true;
-        moved = false;
-        startX = e.clientX;
-        startY = e.clientY;
-        startScrollLeft = wrapEl.scrollLeft;
-        startScrollTop = wrapEl.scrollTop;
+
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         wrapEl.setPointerCapture(e.pointerId);
+
+        if (activePointers.size === 2) {
+            // A second finger just landed - switch from panning to pinching.
+            panning = false;
+            pinching = true;
+            pinchStartDist = pinchDistance();
+            pinchStartZoom = zoom;
+            return;
+        }
+
+        if (activePointers.size === 1 && e.button === 0) {
+            panning = true;
+            moved = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            startScrollLeft = wrapEl.scrollLeft;
+            startScrollTop = wrapEl.scrollTop;
+        }
     });
 
     wrapEl.addEventListener('pointermove', (e) => {
+        if (!activePointers.has(e.pointerId)) {
+            return;
+        }
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+        if (pinching && activePointers.size >= 2) {
+            const dist = pinchDistance();
+            if (pinchStartDist > 0) {
+                const next = Math.min(maxZoom, Math.max(minPinchZoom, pinchStartZoom * (dist / pinchStartDist)));
+                const mid = pinchMidpoint();
+                applyZoom(next, mid.x, mid.y);
+            }
+            return;
+        }
+
         if (!panning) {
             return;
         }
@@ -147,18 +201,33 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
         wrapEl.scrollTop = startScrollTop - dy;
     });
 
-    wrapEl.addEventListener('pointerup', (e) => {
-        if (!panning) {
-            return;
+    function endPointer(e) {
+        activePointers.delete(e.pointerId);
+        try {
+            wrapEl.releasePointerCapture(e.pointerId);
+        } catch {
+            // Already released - ignore.
         }
-        panning = false;
-        wrapEl.releasePointerCapture(e.pointerId);
-        wrapEl.style.cursor = '';
 
-        if (moved) {
-            suppressClick = true;
+        if (pinching && activePointers.size < 2) {
+            pinching = false;
+            // Require a fresh press to resume panning rather than jumping
+            // from stale start coordinates.
+            panning = false;
+            moved = false;
         }
-    });
+
+        if (!pinching && panning && activePointers.size === 0) {
+            panning = false;
+            wrapEl.style.cursor = '';
+            if (moved) {
+                suppressClick = true;
+            }
+        }
+    }
+
+    wrapEl.addEventListener('pointerup', endPointer);
+    wrapEl.addEventListener('pointercancel', endPointer);
 }
 
 export function attachMarkers(containerEl, dotNetRef, locked) {
