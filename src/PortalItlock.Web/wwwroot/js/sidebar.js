@@ -18,11 +18,13 @@ window.sidebarMeny = (function () {
         return next === 'collapsed';
     }
 
-    // På mobil finnes ikke den smale/brede sidemeny-varianten - der skal ☰ i stedet
-    // åpne/lukke navigasjonsskuffen (samme mekanisme NavMenu selv bruker internt).
+    // På mobil finnes ikke den smale/brede sidemeny-varianten, og hele
+    // navigasjonsskuffen (Hjem, Tilbake, varsler, alle modul-lenker) skal ikke
+    // være tilgjengelig der - mobilvisning er begrenset til bunn-fanen. Derfor
+    // åpner ☰ i stedet den samme begrensede brukermenyen som MK-avataren.
     function toggleMeny() {
         if (window.matchMedia('(max-width: 640.98px)').matches) {
-            document.querySelector('.navbar-toggler')?.click();
+            document.querySelector('.bruker-avatar')?.click();
         } else {
             toggle();
         }
