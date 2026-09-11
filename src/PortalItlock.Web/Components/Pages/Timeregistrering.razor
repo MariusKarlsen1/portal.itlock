@@ -9,8 +9,94 @@
 
 <PageTitle>Timeregistrering</PageTitle>
 
-<h1>Timeregistrering</h1>
-<p>Registrer timer på en arbeidsordre. Timene summeres per uke og per arbeidsordre.</p>
+<div class="mobil-tidsreg-wrap">
+    <div class="mobil-ukestripe">
+        @foreach (var dag in MobilUkeDager)
+        {
+            <button type="button" class="mobil-ukedag @(dag == _mobilValgtDato ? "aktiv" : "")" @onclick="@(() => VelgMobilDag(dag))">
+                <span class="mobil-ukedag-navn">@Kultur.TextInfo.ToTitleCase(dag.ToString("ddd", Kultur)).TrimEnd('.')</span>
+                <span class="mobil-ukedag-tall">@dag.Day.ToString("00")</span>
+            </button>
+        }
+    </div>
+
+    <div class="mobil-reg-form">
+        @if (KanGodkjenne)
+        {
+            <label>
+                Montør
+                <select @bind="_draft.MontorId">
+                    <option value="">Velg montør...</option>
+                    @foreach (var m in _montorer)
+                    {
+                        <option value="@m.Id">@m.Navn</option>
+                    }
+                </select>
+            </label>
+        }
+        <label>
+            Arbeidsordre
+            <select @bind="_draft.ArbeidsordreId">
+                <option value="">Velg arbeidsordre...</option>
+                @foreach (var a in _ordre)
+                {
+                    <option value="@a.Id">@a.Tittel</option>
+                }
+            </select>
+        </label>
+        <div class="mobil-reg-rad">
+            <label>
+                Type
+                <select @bind="_draft.Type">
+                    @foreach (var t in Enum.GetValues<TimeregistreringType>())
+                    {
+                        <option value="@t">@t.Visningsnavn()</option>
+                    }
+                </select>
+            </label>
+            <label>
+                Start
+                <input type="time" @bind="_draft.Start" />
+            </label>
+            <label>
+                Slutt
+                <input type="time" @bind="_draft.Slutt" />
+            </label>
+        </div>
+        <button type="button" class="save-button mobil-reg-knapp" @onclick="RegistrerMobil">Registrer timer</button>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <span class="form-error">@_error</span>
+        }
+        @if (!string.IsNullOrEmpty(_savedMessage))
+        {
+            <span class="save-success">@_savedMessage</span>
+        }
+    </div>
+
+    <div class="mobil-reg-liste">
+        @if (MobilDagensRader.Count == 0)
+        {
+            <p class="list-empty">Ingen timer registrert denne dagen.</p>
+        }
+        else
+        {
+            @foreach (var r in MobilDagensRader)
+            {
+                <div @key="@($"mobil-{r.Id}")" class="mobil-ordre-kort mobil-kant-@(r.Status == TimeregistreringStatus.Godkjent ? "gronn" : r.Status == TimeregistreringStatus.Avslatt ? "rod" : "gul")">
+                    <div class="mobil-ordre-topp">
+                        <span class="mobil-ordre-tittel">@r.ArbeidsordreTittel</span>
+                        <span class="status-badge @StatusCss(r.Status)">@r.Status.Visningsnavn()</span>
+                    </div>
+                    <div class="mobil-ordre-meta">@r.Type.Visningsnavn() &middot; @r.Timer.ToString("N1", Kultur) t</div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<h1 class="side-tittel">Timeregistrering</h1>
+<p class="reg-intro">Registrer timer på en arbeidsordre. Timene summeres per uke og per arbeidsordre.</p>
 
 <section class="reg-section">
     <div class="field-grid">
@@ -217,6 +303,31 @@
     private decimal _kmSats = 5;
     private string? _error;
     private string? _savedMessage;
+    private DateOnly _mobilValgtDato = DateOnly.FromDateTime(DateTime.Today);
+
+    private List<DateOnly> MobilUkeDager
+    {
+        get
+        {
+            var diff = ((int)_mobilValgtDato.DayOfWeek + 6) % 7;
+            var mandag = _mobilValgtDato.AddDays(-diff);
+            return Enumerable.Range(0, 7).Select(i => mandag.AddDays(i)).ToList();
+        }
+    }
+
+    private List<RegistreringRad> MobilDagensRader =>
+        _uker.SelectMany(u => u.Rader).Where(r => DateOnly.FromDateTime(r.Dato) == _mobilValgtDato).ToList();
+
+    private void VelgMobilDag(DateOnly dag)
+    {
+        _mobilValgtDato = dag;
+    }
+
+    private async Task RegistrerMobil()
+    {
+        _draft.Dato = _mobilValgtDato.ToDateTime(TimeOnly.MinValue);
+        await Registrer();
+    }
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -241,6 +352,11 @@
 
             var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
             KanGodkjenne = rolleClaim is "Admin" or "Prosjektleder";
+        }
+
+        if (!KanGodkjenne)
+        {
+            _draft.MontorId = _naverendeBrukerId;
         }
 
         await LoadAsync();
