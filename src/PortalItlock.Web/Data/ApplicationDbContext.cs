@@ -481,6 +481,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(v => v.ComponentId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        modelBuilder.Entity<ArbeidsordreVare>()
+            .HasOne(v => v.LagtTilAvBruker)
+            .WithMany()
+            .HasForeignKey(v => v.LagtTilAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         modelBuilder.Entity<BrukerPasswordResetToken>()
             .HasOne(t => t.Bruker)
             .WithMany()

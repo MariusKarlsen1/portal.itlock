@@ -13,4 +13,8 @@ public class ArbeidsordreVare
     public int Antall { get; set; } = 1;
     public decimal Kostpris { get; set; }
     public decimal Utpris { get; set; }
+
+    public int? LagtTilAvBrukerId { get; set; }
+    public Bruker? LagtTilAvBruker { get; set; }
+    public DateTime? LagtTilDato { get; set; }
 }
