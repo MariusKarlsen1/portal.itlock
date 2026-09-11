@@ -32,6 +32,14 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 var dataProtectionKeysPath = Environment.GetEnvironmentVariable("DATA_PROTECTION_KEYS_PATH");
+if (string.IsNullOrEmpty(dataProtectionKeysPath) && builder.Environment.IsDevelopment())
+{
+    // Uten dette genereres en ny nøkkel for hver "dotnet run" i lokal dev, som
+    // gjør alle innloggingscookies ugyldige med en gang serveren restartes -
+    // upraktisk når man tester etter hver kodeendring. Påvirker ikke prod,
+    // som alltid har DATA_PROTECTION_KEYS_PATH satt via miljøvariabel.
+    dataProtectionKeysPath = Path.Combine(builder.Environment.ContentRootPath, ".dataprotection-keys");
+}
 if (!string.IsNullOrEmpty(dataProtectionKeysPath))
 {
     builder.Services.AddDataProtection()
