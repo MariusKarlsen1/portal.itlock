@@ -159,7 +159,10 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
             return;
         }
 
-        if (activePointers.size === 1 && e.button === 0) {
+        // Single-finger touch is left alone entirely so the browser's native
+        // scrolling takes over (and chains to the page once the drawing can't
+        // scroll further) - only mouse drag uses the custom pan logic below.
+        if (activePointers.size === 1 && e.button === 0 && e.pointerType === 'mouse') {
             panning = true;
             moved = false;
             startX = e.clientX;
