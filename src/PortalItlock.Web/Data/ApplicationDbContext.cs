@@ -195,6 +195,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(a => a.TilbudId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        modelBuilder.Entity<Arbeidsordre>()
+            .HasOne(a => a.FullfortAvBruker)
+            .WithMany()
+            .HasForeignKey(a => a.FullfortAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         modelBuilder.Entity<Prosjekt>()
             .HasOne(p => p.Kunde)
             .WithMany(k => k.Prosjekter)

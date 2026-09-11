@@ -16,6 +16,9 @@ public class Arbeidsordre
     public Tilbud? Tilbud { get; set; }
 
     public ArbeidsordreStatus Status { get; set; } = ArbeidsordreStatus.Ny;
+    public ArbeidsordreType? Type { get; set; }
+    public decimal? EstimerteTimer { get; set; }
+    public string? Hentehylle { get; set; }
     public DateTime? PlanlagtDato { get; set; }
     public DateTime? PlanlagtSlutt { get; set; }
 
@@ -32,6 +35,10 @@ public class Arbeidsordre
     public DateTime? FakturertDato { get; set; }
     public string? KundeInfoForJobb { get; set; }
     public DateTime? DokumentasjonEpostSendtDato { get; set; }
+
+    public int? FullfortAvBrukerId { get; set; }
+    public Bruker? FullfortAvBruker { get; set; }
+    public DateTime? FullfortDato { get; set; }
 
     // Kun i bruk når arbeidsordren ikke er koblet til et tilbud - da har man ingen
     // Tilbud-linjer å hente montasjepris/DG fra, så det settes manuelt her.
