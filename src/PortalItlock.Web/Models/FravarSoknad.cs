@@ -11,6 +11,12 @@ public class FravarSoknad
     public DateTime TilDato { get; set; }
     public string? Kommentar { get; set; }
 
+    public int? TilOppfolgingHosBrukerId { get; set; }
+    public Bruker? TilOppfolgingHosBruker { get; set; }
+    public bool HeleDagen { get; set; } = true;
+    public TimeOnly? StartTid { get; set; }
+    public TimeOnly? SluttTid { get; set; }
+
     public FravarStatus Status { get; set; } = FravarStatus.Venter;
     public DateTime OpprettetDato { get; set; } = DateTime.Now;
 

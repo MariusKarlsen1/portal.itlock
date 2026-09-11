@@ -539,6 +539,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(f => f.BehandletAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        modelBuilder.Entity<FravarSoknad>()
+            .HasOne(f => f.TilOppfolgingHosBruker)
+            .WithMany()
+            .HasForeignKey(f => f.TilOppfolgingHosBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         modelBuilder.Entity<Tilbud>()
             .HasOne(t => t.OpprinneligTilbud)
             .WithMany()

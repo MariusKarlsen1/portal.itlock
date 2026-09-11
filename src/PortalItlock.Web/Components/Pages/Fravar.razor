@@ -118,7 +118,11 @@
                         <button type="button" class="cancel-button" @onclick="@(() => _visMobilSoknadForm = false)">Lukk</button>
                     </div>
                     <div class="soknad-form">
-                        <label>
+                        <label class="span-full">
+                            Beskrivelse
+                            <textarea rows="2" @bind="_nyKommentar" placeholder="Beskriv årsak eller annen info"></textarea>
+                        </label>
+                        <label class="span-full">
                             Type
                             <select @bind="_nyType">
                                 @foreach (var t in Enum.GetValues<FravarType>())
@@ -127,20 +131,67 @@
                                 }
                             </select>
                         </label>
-                        <label>
-                            Fra dato
-                            <input type="date" @bind="_nyFraDato" />
-                        </label>
-                        <label>
-                            Til dato
-                            <input type="date" @bind="_nyTilDato" />
-                        </label>
                         <label class="span-full">
-                            Kommentar (valgfritt)
-                            <textarea rows="2" @bind="_nyKommentar" placeholder="F.eks. grunn eller annen info"></textarea>
+                            Til oppfølging hos
+                            <select @bind="_nyTilOppfolgingHosId">
+                                <option value="">Ingen valgt</option>
+                                @foreach (var a in _personer.Where(p => p.Rolle == BrukerRolle.Admin))
+                                {
+                                    <option value="@a.Id">@a.Navn</option>
+                                }
+                            </select>
                         </label>
+
+                        <div class="span-full varighet-rad">
+                            <span class="varighet-label">Varighet</span>
+                            <button type="button" class="varighet-bryter-knapp @(_nyHeleDagen ? "aktiv" : "")"
+                                    aria-pressed="@_nyHeleDagen" @onclick="@(() => _nyHeleDagen = !_nyHeleDagen)">
+                                <span class="varighet-bryter-hode"></span>
+                            </button>
+                            <span class="varighet-bryter-tekst">Hele dagen</span>
+                        </div>
+
+                        <label>
+                            Start
+                            <input type="time" @bind="_nyStartTid" disabled="@_nyHeleDagen" />
+                        </label>
+                        <label>
+                            Slutt
+                            <input type="time" @bind="_nySluttTid" disabled="@_nyHeleDagen" />
+                        </label>
+
+                        <label class="span-full">
+                            Dager
+                            <input type="text" readonly value="@DagerTekst()" placeholder="Velg datoer i kalenderen under" />
+                        </label>
+
+                        <div class="span-full ny-soknad-kalender">
+                            <div class="ny-soknad-kalender-header">
+                                <button type="button" @onclick="@(() => _nySoknadKalenderManed = _nySoknadKalenderManed.AddMonths(-1))">&lsaquo;</button>
+                                <span>@Kultur.TextInfo.ToTitleCase(_nySoknadKalenderManed.ToString("MMMM yyyy", Kultur))</span>
+                                <button type="button" @onclick="@(() => _nySoknadKalenderManed = _nySoknadKalenderManed.AddMonths(1))">&rsaquo;</button>
+                            </div>
+                            <div class="ny-soknad-kalender-ukedager">
+                                @foreach (var d in Ukedagnavn)
+                                {
+                                    <span>@d</span>
+                                }
+                            </div>
+                            <div class="ny-soknad-kalender-grid">
+                                @foreach (var dag in KalenderCeller(_nySoknadKalenderManed))
+                                {
+                                    var iRange = _nyFraDato.HasValue && _nyTilDato.HasValue && dag >= _nyFraDato.Value && dag <= _nyTilDato.Value;
+                                    var erValgt = dag == _nyFraDato || dag == _nyTilDato;
+                                    <button type="button" @key="dag"
+                                            class="ny-soknad-kalender-dag @(dag.Month != _nySoknadKalenderManed.Month ? "utenfor-maned" : "") @(iRange ? "i-range" : "") @(erValgt ? "valgt" : "")"
+                                            @onclick="@(() => VelgKalenderDato(dag))">
+                                        @dag.Day
+                                    </button>
+                                }
+                            </div>
+                        </div>
                     </div>
-                    <button type="button" class="save-button" @onclick="SendSoknadMobil">Send inn søknad</button>
+                    <button type="button" class="save-button" @onclick="SendSoknadMobil">Opprett</button>
                     @if (!string.IsNullOrEmpty(_soknadFeil))
                     {
                         <p class="form-error">@_soknadFeil</p>
@@ -422,6 +473,7 @@
         public int Id { get; set; }
         public string Navn { get; set; } = "";
         public int FerieKvote { get; set; }
+        public BrukerRolle Rolle { get; set; }
     }
 
     private sealed class FravarStats
@@ -453,6 +505,11 @@
     private DateOnly? _nyFraDato = DateOnly.FromDateTime(DateTime.Today);
     private DateOnly? _nyTilDato = DateOnly.FromDateTime(DateTime.Today);
     private string _nyKommentar = "";
+    private int? _nyTilOppfolgingHosId;
+    private bool _nyHeleDagen = true;
+    private TimeOnly? _nyStartTid = new(8, 0);
+    private TimeOnly? _nySluttTid = new(16, 0);
+    private DateOnly _nySoknadKalenderManed = new(DateTime.Today.Year, DateTime.Today.Month, 1);
     private string? _soknadFeil;
     private string? _soknadMelding;
 
@@ -498,7 +555,8 @@
             {
                 Id = b.Id,
                 Navn = b.Navn,
-                FerieKvote = b.FerieKvote
+                FerieKvote = b.FerieKvote,
+                Rolle = b.Rolle
             })
             .ToListAsync();
 
@@ -620,25 +678,77 @@
             return;
         }
 
+        if (!_nyHeleDagen && (!_nyStartTid.HasValue || !_nySluttTid.HasValue || _nySluttTid.Value <= _nyStartTid.Value))
+        {
+            _soknadFeil = "Fyll ut gyldig start- og sluttidspunkt, eller velg hele dagen.";
+            return;
+        }
+
         var soknad = new FravarSoknad
         {
             BrukerId = _naverendeBrukerId.Value,
             Type = _nyType,
             FraDato = _nyFraDato.Value.ToDateTime(TimeOnly.MinValue),
             TilDato = _nyTilDato.Value.ToDateTime(TimeOnly.MinValue),
-            Kommentar = string.IsNullOrWhiteSpace(_nyKommentar) ? null : _nyKommentar.Trim()
+            Kommentar = string.IsNullOrWhiteSpace(_nyKommentar) ? null : _nyKommentar.Trim(),
+            TilOppfolgingHosBrukerId = _nyTilOppfolgingHosId,
+            HeleDagen = _nyHeleDagen,
+            StartTid = _nyHeleDagen ? null : _nyStartTid,
+            SluttTid = _nyHeleDagen ? null : _nySluttTid
         };
         Db.FravarSoknader.Add(soknad);
         await Db.SaveChangesAsync();
 
         _mineSoknader.Insert(0, soknad);
         _nyKommentar = "";
+        _nyTilOppfolgingHosId = null;
+        _nyHeleDagen = true;
         _soknadMelding = "Søknad sendt inn.";
 
         if (soknad.BrukerId == _valgtPersonId)
         {
             await LastKalenderAsync();
         }
+    }
+
+    private void VelgKalenderDato(DateOnly dato)
+    {
+        if (_nyFraDato is null || _nyTilDato is not null)
+        {
+            _nyFraDato = dato;
+            _nyTilDato = null;
+        }
+        else if (dato < _nyFraDato.Value)
+        {
+            _nyTilDato = _nyFraDato;
+            _nyFraDato = dato;
+        }
+        else
+        {
+            _nyTilDato = dato;
+        }
+    }
+
+    private static List<DateOnly> KalenderCeller(DateOnly manedStart)
+    {
+        var forsteUkedag = ((int)manedStart.DayOfWeek + 6) % 7;
+        var start = manedStart.AddDays(-forsteUkedag);
+        return Enumerable.Range(0, 42).Select(i => start.AddDays(i)).ToList();
+    }
+
+    private string DagerTekst()
+    {
+        if (_nyFraDato is null)
+        {
+            return "";
+        }
+
+        if (_nyTilDato is null || _nyTilDato == _nyFraDato)
+        {
+            return _nyFraDato.Value.ToString("dd.MM.yyyy");
+        }
+
+        return $"{_nyFraDato.Value:dd.MM.yyyy} - {_nyTilDato.Value:dd.MM.yyyy}";
     }
 
     private async Task SendSoknadMobil()
