@@ -19,6 +19,7 @@
             <button type="button" class="mobil-dor-fane @(_mobilFane == "beslag" ? "aktiv" : "")" @onclick="@(() => _mobilFane = "beslag")">Beslag</button>
             <button type="button" class="mobil-dor-fane @(_mobilFane == "avvik" ? "aktiv" : "")" @onclick="@(() => _mobilFane = "avvik")">Avvik</button>
             <button type="button" class="mobil-dor-fane @(_mobilFane == "lassystem" ? "aktiv" : "")" @onclick="@(() => _mobilFane = "lassystem")">Låssystem</button>
+            <button type="button" class="mobil-dor-fane @(_mobilFane == "ce" ? "aktiv" : "")" @onclick="@(() => _mobilFane = "ce")">CE</button>
         </div>
 
         @if (_mobilFane == "detaljer")
@@ -195,7 +196,7 @@
                 <button type="button" class="mobil-avvik-fab" title="Meld avvik" @onclick="@(() => _visMobilAvvikForm = true)"><Icon Name="plus" /></button>
             }
         }
-        else
+        else if (_mobilFane == "lassystem")
         {
             <div class="mobil-dor-innhold">
                 @if (_mobilSylinderRader.Count == 0)
@@ -224,6 +225,54 @@
                     </div>
                 }
             </div>
+        }
+        else
+        {
+            <div class="mobil-dor-innhold">
+                @if (_ceGodkjenninger.Count == 0)
+                {
+                    <div class="mobil-avvik-tom">
+                        <svg class="mobil-tom-figur" viewBox="0 0 110 100" width="110" height="100" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M55 8 L92 24 L92 52 C92 74 76 90 55 96 C34 90 18 74 18 52 L18 24 Z" fill="#fff" stroke="#835e41" stroke-width="4" stroke-linejoin="round" />
+                            <path d="M40 52 L50 62 L72 38" stroke="#835e41" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <p><strong>Ingen CE-godkjenning startet</strong></p>
+                        @if (!_harAutomatikk)
+                        {
+                            <p class="mobil-ce-hint">Krever at det er lagt til en dørautomatikk på døren.</p>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="mobil-ce-liste">
+                        @foreach (var ce in _ceGodkjenninger)
+                        {
+                            <button type="button" @key="ce.Id" class="mobil-ce-kort" @onclick="@(() => { _apenCeId = ce.Id; _apenCeRedigerbar = false; })">
+                                <span class="mobil-ce-kort-topp">
+                                    <span class="mobil-ce-kort-nummer">@ce.Sertifiseringsnummer</span>
+                                    <span class="mobil-ce-status @(ce.Status == CeGodkjenningStatus.Godkjent ? "mobil-ce-status-godkjent" : "")">@ce.Status.Visningsnavn()</span>
+                                </span>
+                                <span class="mobil-ce-kort-meta">Gyldig til @ce.GyldigTil.ToString("dd.MM.yyyy")</span>
+                            </button>
+                        }
+                    </div>
+                }
+
+                @* TODO: sett tilbake disabled="@(!_harAutomatikk)" når testing er ferdig - midlertidig alltid aktiv på brukerens eksplisitte forespørsel. *@
+                <button type="button" class="save-button mobil-ce-start-knapp" @onclick="StartCeGodkjenning">
+                    Start CE-godkjenning
+                </button>
+            </div>
+
+            @if (_apenCeId is not null)
+            {
+                <div class="mobil-ce-modal-overlay">
+                    <div class="mobil-ce-modal">
+                        <CeGodkjenningPanel Id="_apenCeId.Value" OnClose="LukkCePanel" StartRedigerbar="_apenCeRedigerbar" />
+                    </div>
+                </div>
+            }
         }
     </div>
 }
@@ -659,6 +708,11 @@ else
     private int? _avvikLastetForDorId;
     private bool _visMobilAvvikForm;
 
+    private List<CeGodkjenning> _ceGodkjenninger = [];
+    private bool _harAutomatikk;
+    private int? _apenCeId;
+    private bool _apenCeRedigerbar;
+
     private List<Dor> AndreDorer => AlleDorer.Where(d => d.Id != Dor.Id).OrderBy(d => d.Dornummer).ToList();
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
@@ -749,6 +803,7 @@ else
         _avvikFeil = null;
         _mobilFane = "beslag";
         _mobilValgtBeslag = null;
+        _apenCeId = null;
         _avvikListe = await Db.Avvik
             .Where(a => a.DorId == Dor.Id)
             .OrderByDescending(a => a.OpprettetDato)
@@ -756,6 +811,15 @@ else
 
         if (ErMobilvisning)
         {
+            _harAutomatikk = await Db.DorKomponenter
+                .Where(k => k.DorId == Dor.Id)
+                .AnyAsync(k => k.Component!.Type!.CeKategori == CeTilbehorKategori.DorAutomatikk);
+
+            _ceGodkjenninger = await Db.CeGodkjenninger
+                .Where(c => c.DorId == Dor.Id)
+                .OrderByDescending(c => c.OpprettetDato)
+                .ToListAsync();
+
             var sylinderComponentIder = Dor.Komponenter
                 .Where(k => k.Component?.ErSylinder == true)
                 .Select(k => k.ComponentId)
@@ -811,6 +875,82 @@ else
         {
             _visMobilAvvikForm = false;
         }
+    }
+
+    // Egen, fersk spørring med alt CE-godkjenningen trenger prefylt fra
+    // (Prosjekt/Kunde/DørIdMal/Komponenter) - Dor-parameteren denne
+    // komponenten mottar fra kallerne (ProsjektSkjema/PlantegningVisning) har
+    // ikke alltid disse navigasjonene lastet, så vi henter friskt her i
+    // stedet for å stole på hva kalleren tilfeldigvis har inkludert. Speiler
+    // DorDetalj.razor sin StartCeGodkjenning() slik at prosessen blir lik.
+    private async Task StartCeGodkjenning()
+    {
+        var dorMedData = await Db.Dorer
+            .Include(d => d.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Include(d => d.DorIdMal)
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
+            .FirstOrDefaultAsync(d => d.Id == Dor.Id);
+
+        if (dorMedData is null)
+        {
+            return;
+        }
+
+        var antall = await Db.CeGodkjenninger.CountAsync();
+        var nummer = $"CE-ITL-DOR-{DateTime.Now:yyMM}-{antall + 1:0000}";
+
+        var automatikk = dorMedData.Komponenter.FirstOrDefault(k => k.Component?.Type?.CeKategori == CeTilbehorKategori.DorAutomatikk);
+        var gyldighetMåneder = dorMedData.Prosjekt?.CeGyldighetMåneder is > 0 ? dorMedData.Prosjekt!.CeGyldighetMåneder : 12;
+        var gyldigFra = DateTime.Now;
+
+        var ce = new CeGodkjenning
+        {
+            DorId = dorMedData.Id,
+            Sertifiseringsnummer = nummer,
+            OpprettetAvBrukerId = _naverendeBrukerId,
+            KundeNavn = dorMedData.Prosjekt?.Kunde?.Navn,
+            Kontaktperson = dorMedData.Prosjekt?.Kontaktperson,
+            ProsjektNavn = dorMedData.Prosjekt?.Navn,
+            Adresse = dorMedData.Prosjekt?.Adresse,
+            Etasje = dorMedData.Etasje,
+            DorTil = dorMedData.DorTil,
+            Dornummer = dorMedData.Dornummer,
+            DorIdKode = dorMedData.DorIdMal?.Kode,
+            Byggkategori = dorMedData.Prosjekt?.Byggkategori,
+            Risikoklasse = dorMedData.Prosjekt?.Risikoklasse,
+            GyldighetMåneder = gyldighetMåneder,
+            GyldigFra = gyldigFra,
+            GyldigTil = gyldigFra.AddMonths(gyldighetMåneder),
+            Produsent = automatikk?.Component?.Produsent,
+            ProdusentAdresse = automatikk?.Component?.ProdusentAdresse,
+            ProdusentPostnr = automatikk?.Component?.ProdusentPostnr,
+            ProdusentSted = automatikk?.Component?.ProdusentSted,
+            ProdusentLand = automatikk?.Component?.ProdusentLand,
+            ProdusentOrgnr = automatikk?.Component?.ProdusentOrgnr,
+            ItemNavn = automatikk?.Component?.Navn,
+            Antall = automatikk?.Antall,
+            BreddeMm = dorMedData.Bredde,
+            HoydeMm = dorMedData.Hoyde,
+            Brannklasse = dorMedData.Brann,
+            FriBredde086 = dorMedData.FriBredde086,
+            Dorkonstruksjon = dorMedData.DorIdMal?.Dorkonstruksjon,
+            Karmkonstruksjon = dorMedData.DorIdMal?.Karmkonstruksjon,
+            GlassIDor = dorMedData.DorIdMal?.GlassIDor switch { true => "Med glass", false => "Uten glass", null => null }
+        };
+
+        Db.CeGodkjenninger.Add(ce);
+        await Db.SaveChangesAsync();
+
+        _apenCeId = ce.Id;
+    }
+
+    private async Task LukkCePanel()
+    {
+        _apenCeId = null;
+        _ceGodkjenninger = await Db.CeGodkjenninger
+            .Where(c => c.DorId == Dor.Id)
+            .OrderByDescending(c => c.OpprettetDato)
+            .ToListAsync();
     }
 
     private static string FriBreddeValue(bool? verdi) => verdi switch
