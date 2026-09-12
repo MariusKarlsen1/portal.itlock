@@ -203,6 +203,29 @@ forwardedHeadersOptions.KnownNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
+// Mobil skal alltid starte på Oppgaver ("/min-dag"), ikke skrivebordets
+// prosjektoversikt på "/". Dette var tidligere en klientside-omdirigering
+// (window.location.replace i App.razor), men det ga et kaldstart-tilfelle
+// med TO fulle sidelastinger etter hverandre (først "/", så "/min-dag") som
+// viste seg å utløse en iOS-kvirk i hjemskjerm-app-modus: den faste
+// bunn-fanen (position: fixed) ble stående på feil posisjon til man byttet
+// fane. Gjøres nå i stedet som en ren server-omdirigering FØR noe HTML i det
+// hele tatt sendes, slik at nettleseren bare gjør ÉN navigasjon på kaldstart.
+// Ligger aller først i pipelinen (før auth) for å garantert kjøre før
+// Blazors egen AuthorizeRouteView-omdirigering til /login rekker å skje.
+app.Use(async (context, next) =>
+{
+    if (HttpMethods.IsGet(context.Request.Method)
+        && context.Request.Path == "/"
+        && MobilDeteksjon.GjettFraUserAgent(context.Request.Headers.UserAgent.ToString()))
+    {
+        context.Response.Redirect("/min-dag");
+        return;
+    }
+
+    await next();
+});
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
@@ -218,27 +241,6 @@ app.UseAntiforgery();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
-
-// Mobil skal alltid starte på Oppgaver ("/min-dag"), ikke skrivebordets
-// prosjektoversikt på "/". Dette var tidligere en klientside-omdirigering
-// (window.location.replace i App.razor), men det ga et kaldstart-tilfelle
-// med TO fulle sidelastinger etter hverandre (først "/", så "/min-dag") som
-// viste seg å utløse en iOS-kvirk i hjemskjerm-app-modus: den faste
-// bunn-fanen (position: fixed) ble stående på feil posisjon til man byttet
-// fane. Gjøres nå i stedet som en ren server-omdirigering FØR noe HTML i det
-// hele tatt sendes, slik at nettleseren bare gjør ÉN navigasjon på kaldstart.
-app.Use(async (context, next) =>
-{
-    if (HttpMethods.IsGet(context.Request.Method)
-        && context.Request.Path == "/"
-        && MobilDeteksjon.GjettFraUserAgent(context.Request.Headers.UserAgent.ToString()))
-    {
-        context.Response.Redirect("/min-dag");
-        return;
-    }
-
-    await next();
-});
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
