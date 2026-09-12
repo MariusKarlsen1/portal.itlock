@@ -291,6 +291,20 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
         let startX = 0;
         let startY = 0;
 
+        // Låst/mobil-visning: åpne døren kun ved et ekte trykk direkte på
+        // selve sirkelen (ikke hele markøren med etikett+funksjoner rundt) -
+        // en native "click" respekterer automatisk nettleserens egne regler
+        // for om dette faktisk var et trykk eller en finger som beveget seg
+        // (f.eks. som del av en klype-zoom som tilfeldigvis startet der).
+        const dot = markerEl.querySelector('.dor-marker-dot') || markerEl;
+        dot.addEventListener('click', (e) => {
+            if (containerEl.dataset.locked !== '1') {
+                return;
+            }
+            e.stopPropagation();
+            dotNetRef.invokeMethodAsync('OnDoorClicked', dorId);
+        });
+
         markerEl.addEventListener('click', (e) => {
             e.stopPropagation();
         });
@@ -304,6 +318,16 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
             if (e.button !== 0) {
                 return;
             }
+            if (containerEl.dataset.locked === '1') {
+                // Ikke fang pekeren her i låst/mobil-visning - la den boble
+                // videre til klype/dra-håndteringen på selve
+                // tegningselementet. Ellers mister en klype-zoom det ene
+                // fingertrykket (og brytes) hvis det lander på en
+                // dørmarkør, og enda verre: siden dørene er låst her og
+                // dermed ikke kan telle som "flyttet", ble ethvert slikt
+                // trykk feilaktig tolket som et klikk som åpnet døren.
+                return;
+            }
             e.preventDefault();
             e.stopPropagation();
             dragging = true;
@@ -314,7 +338,7 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
         });
 
         markerEl.addEventListener('pointermove', (e) => {
-            if (!dragging || containerEl.dataset.locked === '1') {
+            if (!dragging) {
                 return;
             }
             if (!moved) {
