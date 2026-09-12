@@ -15,6 +15,24 @@ public class MobilVerktoylinjeService
     public bool HarFilter => _filterToggle is not null;
     public bool FilterErAktivt => _filterErAktivt?.Invoke() ?? false;
 
+    // Avgjøres ÉN gang av MainLayout (som lever gjennom hele kretsens levetid,
+    // i motsetning til sidene som gjenskapes per navigasjon) og deles herfra,
+    // slik at f.eks. Prosjekter/Arbeidsordre slipper å gjøre sin egen
+    // JS-interop-deteksjon på nytt ved hver navigasjon - noe som tidligere ga
+    // et synlig blaff av den gamle "Filtrer"-knappen mens deteksjonen pågikk.
+    public bool ErMobilvisning { get; private set; }
+
+    public void SettMobilvisning(bool verdi)
+    {
+        if (ErMobilvisning == verdi)
+        {
+            return;
+        }
+
+        ErMobilvisning = verdi;
+        Endret?.Invoke();
+    }
+
     public void RegistrerFilter(Action toggle, Func<bool> erAktivt)
     {
         _filterToggle = toggle;
