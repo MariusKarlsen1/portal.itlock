@@ -4,7 +4,6 @@
 @implements IAsyncDisposable
 @using System.Globalization
 @using Microsoft.AspNetCore.Components.Web
-@using Microsoft.AspNetCore.Http
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -13,6 +12,7 @@
 @inject IJSRuntime JS
 @inject PlantegningDorPdfService PdfService
 @inject LagretPdfService LagretPdfService
+@inject MobilVerktoylinjeService Verktoylinje
 
 <PageTitle>@(_plantegning?.Navn ?? "Plantegning")</PageTitle>
 
@@ -235,19 +235,19 @@ else if (_plantegning is not null)
     private string? _pdfSavedMessage;
     private List<LagretPdf> _lagredePdfer = [];
 
-    [CascadingParameter] private HttpContext? HttpContext { get; set; }
-    private bool _erMobilvisning;
+    // Mobilvisning avgjøres sentralt (én gang per krets, av MainLayout via
+    // MobilFilterKnapp) og leses herfra via delt tjeneste - egen JS-interop-
+    // deteksjon per side viste seg upålitelig ved navigasjon internt i appen
+    // (f.eks. fra en plantegningskort i Prosjekter-fanen hit), siden
+    // HttpContext er null da og førsteinntrykket ble stående feil helt til -
+    // om noensinne - JS-interop-kallet slo til.
+    private bool _erMobilvisning => Verktoylinje.ErMobilvisning;
+
+    private void OnVerktoylinjeEndret() => InvokeAsync(StateHasChanged);
 
     protected override void OnInitialized()
     {
-        // Se tilsvarende kommentar i MobilDeteksjon.cs - kun et førsteinntrykk
-        // for prerenderingen, for å unngå at det fulle skrivebordsverktøyet
-        // blafrer synlig et øyeblikk på mobil før JS-interop (OnAfterRenderAsync
-        // under) bekrefter faktisk vindusbredde.
-        if (HttpContext is not null)
-        {
-            _erMobilvisning = MobilDeteksjon.GjettFraUserAgent(HttpContext.Request.Headers.UserAgent.ToString());
-        }
+        Verktoylinje.Endret += OnVerktoylinjeEndret;
     }
 
     private bool _visDorVelger;
@@ -364,8 +364,6 @@ else if (_plantegning is not null)
     {
         if (firstRender)
         {
-            _erMobilvisning = await JS.InvokeAsync<bool>("erMobilvisning");
-
             _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/plantegning.js?v=10");
             _dotNetRef = DotNetObjectReference.Create(this);
 
@@ -709,6 +707,7 @@ else if (_plantegning is not null)
 
     public async ValueTask DisposeAsync()
     {
+        Verktoylinje.Endret -= OnVerktoylinjeEndret;
         _dotNetRef?.Dispose();
 
         if (_module is not null)

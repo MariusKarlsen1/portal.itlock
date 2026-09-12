@@ -2,6 +2,7 @@
 @page "/prosjekter/{Id:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@implements IDisposable
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -14,7 +15,7 @@
 @inject LagretPdfService LagretPdfService
 @inject TilbudSyncService TilbudSync
 @inject PostnummerService Postnummer
-@inject IJSRuntime JS
+@inject MobilVerktoylinjeService Verktoylinje
 
 <PageTitle>@(Id.HasValue ? _form.Navn : "Nytt prosjekt")</PageTitle>
 
@@ -251,11 +252,14 @@ else
     {
         <div class="dorer-layout">
             <div class="dorer-list-wrap">
-                <button type="button" class="add-button mobil-verktoy-skjul" @onclick="LeggTilDor">Legg til dør</button>
-
-                @if (_dorer.Count > 0)
+                @if (!_erMobilvisning)
                 {
-                    <div class="bytt-komponent-panel mobil-verktoy-skjul">
+                    <button type="button" class="add-button" @onclick="LeggTilDor">Legg til dør</button>
+                }
+
+                @if (_dorer.Count > 0 && !_erMobilvisning)
+                {
+                    <div class="bytt-komponent-panel">
                         <h3>Bytt komponent på alle dører</h3>
                         <p class="section-hint">
                             Velg en komponent som er i bruk i prosjektet og en erstatning. Alle dører med den gamle
@@ -450,7 +454,10 @@ else
     else if (_activeTab == "plantegninger")
     {
         <div class="prosjekt-layout">
-            <p class="section-hint mobil-verktoy-skjul">Last opp plantegninger og plasser dører på dem for å følge opp montasje.</p>
+            @if (!_erMobilvisning)
+            {
+                <p class="section-hint">Last opp plantegninger og plasser dører på dem for å følge opp montasje.</p>
+            }
 
             @if (_plantegninger.Count > 0)
             {
@@ -536,11 +543,14 @@ else
                 <p class="list-empty">Ingen plantegninger lastet opp ennå.</p>
             }
 
-            <div class="vedlegg-upload mobil-verktoy-skjul">
-                <input @bind="_nyPlantegningNavn" @bind:event="oninput" placeholder="Navn, f.eks. 1. etasje" />
-                <input @bind="_nyPlantegningByggetrinn" @bind:event="oninput" placeholder="Byggetrinn (valgfritt)" />
-                <InputFile @key="_plantegningInputKey" OnChange="OnPlantegningSelected" accept="image/*,.pdf,application/pdf" />
-            </div>
+            @if (!_erMobilvisning)
+            {
+                <div class="vedlegg-upload">
+                    <input @bind="_nyPlantegningNavn" @bind:event="oninput" placeholder="Navn, f.eks. 1. etasje" />
+                    <input @bind="_nyPlantegningByggetrinn" @bind:event="oninput" placeholder="Byggetrinn (valgfritt)" />
+                    <InputFile @key="_plantegningInputKey" OnChange="OnPlantegningSelected" accept="image/*,.pdf,application/pdf" />
+                </div>
+            }
 
             @if (_uploadingPlantegning)
             {
@@ -1398,18 +1408,24 @@ else
         return timer > 0 ? $"{timer}t {rest}min" : $"{rest} min";
     }
 
-    // Ekte HTML disabled-attributt (ikke bare CSS) for Oversikt-feltene på
-    // mobil - avgjort via JS-interop (window.erMobilvisning(), en enkel
-    // matchMedia-sjekk) slik at det er pålitelig uansett CSS-cache-tilstand.
-    private bool _erMobilvisning;
+    // Mobilvisning avgjøres sentralt (én gang per krets, av MainLayout via
+    // MobilFilterKnapp - se kommentar der) og leses herfra via delt tjeneste,
+    // i stedet for at hver side gjør sin egen JS-interop-deteksjon på nytt -
+    // sistnevnte viste seg upålitelig ved sidenavigasjon internt i appen
+    // (HttpContext er null da, så førsteinntrykket ble stående feil på
+    // "skrivebord" helt til - om noensinne - JS-interop-kallet slo til).
+    private bool _erMobilvisning => Verktoylinje.ErMobilvisning;
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    private void OnVerktoylinjeEndret() => InvokeAsync(StateHasChanged);
+
+    protected override void OnInitialized()
     {
-        if (firstRender)
-        {
-            _erMobilvisning = await JS.InvokeAsync<bool>("erMobilvisning");
-            StateHasChanged();
-        }
+        Verktoylinje.Endret += OnVerktoylinjeEndret;
+    }
+
+    public void Dispose()
+    {
+        Verktoylinje.Endret -= OnVerktoylinjeEndret;
     }
 
     protected override async Task OnParametersSetAsync()
