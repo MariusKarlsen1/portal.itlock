@@ -1,3 +1,11 @@
+// Gjenbrukbar sjekk for om vi er i mobilvisning (samme brytepunkt som CSS-
+// mediaqueryene). Brukes fra C# via JS-interop der en ekte HTML disabled-
+// attributt (ikke bare CSS-styling) trengs for at en låsing skal være
+// pålitelig uansett hvilken stylesheet-versjon nettleseren har cachet.
+window.erMobilvisning = function () {
+    return window.matchMedia('(max-width: 640.98px)').matches;
+};
+
 window.sidebarMeny = (function () {
     const storageKey = 'itlock-sidebar';
 
