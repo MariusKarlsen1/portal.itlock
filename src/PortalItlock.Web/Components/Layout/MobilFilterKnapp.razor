@@ -1,8 +1,10 @@
 @rendermode InteractiveServer
 @implements IDisposable
+@using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Http
 @using PortalItlock.Web.Services
 @inject PortalItlock.Web.Services.MobilVerktoylinjeService Verktoylinje
+@inject PersistentComponentState PersistentState
 @inject IJSRuntime JS
 
 @if (Verktoylinje.ErMobilvisning && Verktoylinje.HarFilter)
@@ -20,16 +22,40 @@
     // den øya for filterknappen og mobilvisning-deteksjonen den styres av.
     [CascadingParameter] private HttpContext? HttpContext { get; set; }
 
+    private const string PersistNokkel = "erMobilvisning";
+    private PersistingComponentStateSubscription _persistAbonnement;
+
     protected override void OnInitialized()
     {
-        // Se tilsvarende kommentar i MobilDeteksjon.cs - kun et førsteinntrykk
-        // for prerenderingen, for å unngå at gammel skrivebordsmarkup blafrer
-        // synlig på ekte telefoner før JS-interop (OnAfterRenderAsync under)
-        // bekrefter faktisk vindusbredde.
-        if (HttpContext is not null)
+        // Prerendering og den interaktive kretsen er to HELT SEPARATE
+        // komponent-instanser (ulik DI-scope) - et førsteinntrykk satt her
+        // under prerendering (via HttpContext/UA) påvirker BARE den statiske
+        // HTML-en som males aller først. Når den interaktive kretsen så
+        // kobler til og bygger SIN EGEN, ferske instans, startet den
+        // tidligere alltid på nytt fra "skrivebord" (false) igjen inntil
+        // JS-interop-kallet under rakk å bekrefte ekte vindusbredde - selve
+        // omkoblingen fra prerendret HTML til denne ferske, midlertidig
+        // feilaktige tilstanden var det synlige blaffet som kom "av og til"
+        // (varigheten varierte med hvor raskt JS-interop-rundturen gikk).
+        //
+        // PersistentComponentState løser dette ordentlig: verdien fra
+        // prerenderingen lagres i en skjult del av HTML-responsen og hentes
+        // rett ut igjen når den interaktive instansen starter, uten noen ny
+        // nettverksrunde og uten noe mellomliggende feil-blaff.
+        if (PersistentState.TryTakeFromJson<bool>(PersistNokkel, out var gjenopprettet))
+        {
+            Verktoylinje.SettMobilvisning(gjenopprettet);
+        }
+        else if (HttpContext is not null)
         {
             Verktoylinje.SettMobilvisning(MobilDeteksjon.GjettFraUserAgent(HttpContext.Request.Headers.UserAgent.ToString()));
         }
+
+        _persistAbonnement = PersistentState.RegisterOnPersisting(() =>
+        {
+            PersistentState.PersistAsJson(PersistNokkel, Verktoylinje.ErMobilvisning);
+            return Task.CompletedTask;
+        });
 
         Verktoylinje.Endret += OnVerktoylinjeEndret;
     }
@@ -46,6 +72,7 @@
 
     public void Dispose()
     {
+        _persistAbonnement.Dispose();
         Verktoylinje.Endret -= OnVerktoylinjeEndret;
     }
 }
