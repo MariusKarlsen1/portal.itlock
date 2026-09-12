@@ -70,3 +70,31 @@ window.sidebarMeny = (function () {
     }
     oppdaterMobilTittel();
 })();
+
+// Kjent iOS-kvirk i hjemskjerm-app-modus (standalone): den faste bunn-fanen
+// (.mobil-tabbar, position:fixed;bottom:0) kan bli stående "fastlåst" på en
+// midlertidig feil posisjon fra aller første maling - før Safari sin egen
+// visual viewport (adressefelt-animasjon m.m.) har rukket å sette seg ved
+// kaldstart av appen. Den retter seg selv først når NOE tvinger frem en ny
+// repaint, som f.eks. en sidenavigasjon - derfor virket det som man måtte
+// "bytte fane først". Tvinger i stedet frem én reflow rett etter innlasting
+// på mobil, slik at bunn-fanen havner riktig med det samme.
+(function () {
+    function tvingReflowAvBunnfane() {
+        if (!window.matchMedia('(max-width: 640.98px)').matches) {
+            return;
+        }
+        var el = document.querySelector('.mobil-tabbar');
+        if (!el) {
+            return;
+        }
+        el.style.display = 'none';
+        void el.offsetHeight;
+        el.style.display = '';
+    }
+
+    window.addEventListener('load', function () {
+        requestAnimationFrame(tvingReflowAvBunnfane);
+        setTimeout(tvingReflowAvBunnfane, 300);
+    });
+})();
