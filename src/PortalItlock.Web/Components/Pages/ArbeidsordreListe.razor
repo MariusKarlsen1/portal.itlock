@@ -1,12 +1,15 @@
 @page "/arbeidsordre"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@implements IDisposable
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject PortalItlock.Web.Services.MobilVerktoylinjeService Verktoylinje
+@inject IJSRuntime JS
 
 <PageTitle>Arbeidsordre</PageTitle>
 
@@ -22,9 +25,65 @@
     </div>
 </AuthorizeView>
 
+@if (!_erMobilvisning)
+{
+    <button type="button" class="@(AntallAktiveFiltre > 0 ? "edit-button-active" : "filter-button")" @onclick="@(() => _visFilter = !_visFilter)">
+        Filtrer@(AntallAktiveFiltre > 0 ? $" ({AntallAktiveFiltre})" : "")
+    </button>
+}
+
+@if (_visFilter)
+{
+    <div class="dor-velger-panel">
+        <div class="dor-velger-header">
+            <strong>Filtrer på status</strong>
+            <button type="button" class="cancel-button" @onclick="@(() => _visFilter = false)">Lukk</button>
+        </div>
+        <ul class="funksjon-chip-list">
+            @foreach (var s in Enum.GetValues<ArbeidsordreStatus>().Where(s => s != ArbeidsordreStatus.Fakturert))
+            {
+                <li>
+                    <label class="filter-option">
+                        <input type="checkbox" checked="@_valgteStatusFilter.Contains(s)" @onchange="@(() => ToggleStatusFilter(s))" />
+                        @s.Visningsnavn()
+                    </label>
+                </li>
+            }
+        </ul>
+        <label class="filter-option montor-filter">
+            Ansvarlig montør
+            <select value="@(_montorFilter?.ToString() ?? "")" @onchange="@(e => { _montorFilter = string.IsNullOrEmpty(e.Value as string) ? null : int.Parse((string)e.Value!); Verktoylinje.VarsleEndring(); })">
+                <option value="">Alle</option>
+                @foreach (var b in _alleBrukere)
+                {
+                    <option value="@b.Id">@b.Navn</option>
+                }
+            </select>
+        </label>
+        @if (AntallAktiveFiltre > 0)
+        {
+            <button type="button" class="cancel-button" @onclick="@(() => { _valgteStatusFilter.Clear(); _montorFilter = null; Verktoylinje.VarsleEndring(); })">Nullstill filter</button>
+        }
+    </div>
+}
+
+<input class="search-input"
+       @bind="_search"
+       @bind:event="oninput"
+       placeholder="Søk på tittel eller prosjekt" />
+
+@if (_rader.Count > 0)
+{
+    <p class="result-count">@_filtrert.Count av @_rader.Count arbeidsordre</p>
+}
+
 @if (_rader.Count == 0)
 {
     <p class="list-empty">@(_naverendeRolle == BrukerRolle.Montor ? "Ingen arbeidsordre tildelt deg ennå." : "Ingen arbeidsordre opprettet ennå.")</p>
+}
+else if (_filtrert.Count == 0)
+{
+    <p class="list-empty">Ingen arbeidsordre funnet.</p>
 }
 else
 {
@@ -40,7 +99,7 @@ else
             </tr>
         </thead>
         <tbody>
-            @foreach (var r in _rader)
+            @foreach (var r in _filtrert)
             {
                 <tr @key="r.Id">
                     <td>@r.Tittel</td>
@@ -55,7 +114,7 @@ else
     </table>
 
     <ul class="mobil-ordre-liste">
-        @foreach (var r in _rader)
+        @foreach (var r in _filtrert)
         {
             <li @key="r.Id" class="mobil-ordre-kort mobil-kant-@r.Status.PillFarge()">
                 <a href="@($"/arbeidsordre/{r.Id}")">
@@ -90,10 +149,35 @@ else
 
     private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
     private List<ArbeidsordreRad> _rader = [];
+    private List<Bruker> _alleBrukere = [];
+    private string _search = "";
+    private HashSet<ArbeidsordreStatus> _valgteStatusFilter = [];
+    private int? _montorFilter;
+    private bool _visFilter;
+    private bool _erMobilvisning;
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
     private BrukerRolle? _naverendeRolle;
+
+    private int AntallAktiveFiltre => _valgteStatusFilter.Count + (_montorFilter.HasValue ? 1 : 0);
+
+    private List<ArbeidsordreRad> _filtrert => _rader
+        .Where(r => string.IsNullOrWhiteSpace(_search) ||
+                r.Tittel.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                (r.ProsjektNavn?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false))
+        .Where(r => _valgteStatusFilter.Count == 0 || _valgteStatusFilter.Contains(r.Status))
+        .Where(r => _montorFilter is null || r.AnsvarligMontorId == _montorFilter)
+        .ToList();
+
+    private void ToggleStatusFilter(ArbeidsordreStatus status)
+    {
+        if (!_valgteStatusFilter.Add(status))
+        {
+            _valgteStatusFilter.Remove(status);
+        }
+        Verktoylinje.VarsleEndring();
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -136,6 +220,26 @@ else
             Status = a.Status,
             SumTimer = a.Timeregistreringer.Sum(t => t.TotalTimer)
         }).ToList();
+
+        _alleBrukere = await Db.Brukere.OrderBy(b => b.Navn).ToListAsync();
+
+        Verktoylinje.RegistrerFilter(
+            () => { _visFilter = !_visFilter; StateHasChanged(); },
+            () => AntallAktiveFiltre > 0);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _erMobilvisning = await JS.InvokeAsync<bool>("erMobilvisning");
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        Verktoylinje.AvregistrerFilter();
     }
 
     private async Task NyArbeidsordre()
