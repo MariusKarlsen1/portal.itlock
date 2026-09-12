@@ -43,6 +43,12 @@ window.sidebarMeny = (function () {
 
 // Speiler <title> i en synlig tekst i mobil-toppfeltet, siden Blazors <PageTitle>
 // bare setter document.title og ikke er lett tilgjengelig fra et layout-komponent.
+// Blazors "enhanced navigation" bytter ut hele <head>/<title>-elementet ved
+// sidenavigasjon i stedet for å bare mutere teksten i det - en observer bundet
+// direkte til det opprinnelige <title>-elementet slutter da å fange endringer,
+// slik at tittelen ble stående igjen på forrige side til man fysisk refreshet.
+// Observerer derfor <head> bredt (subtree), og lytter i tillegg på Blazors eget
+// enhanced-navigation-event som en ekstra sikkerhet.
 (function () {
     function oppdaterMobilTittel() {
         const el = document.getElementById('mobil-topptittel');
@@ -51,10 +57,16 @@ window.sidebarMeny = (function () {
         }
     }
 
-    const titleEl = document.querySelector('title');
-    if (titleEl) {
-        new MutationObserver(oppdaterMobilTittel).observe(titleEl, { childList: true });
-    }
+    new MutationObserver(oppdaterMobilTittel).observe(document.head, {
+        childList: true,
+        subtree: true,
+        characterData: true
+    });
     document.addEventListener('DOMContentLoaded', oppdaterMobilTittel);
+    if (window.Blazor && typeof window.Blazor.addEventListener === 'function') {
+        window.Blazor.addEventListener('enhancedload', oppdaterMobilTittel);
+    } else {
+        document.addEventListener('enhancedload', oppdaterMobilTittel);
+    }
     oppdaterMobilTittel();
 })();

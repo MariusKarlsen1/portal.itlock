@@ -1,10 +1,13 @@
 @page "/prosjekter"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@implements IDisposable
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject PortalItlock.Web.Services.MobilVerktoylinjeService Verktoylinje
+@inject IJSRuntime JS
 
 <PageTitle>Prosjekter</PageTitle>
 
@@ -15,10 +18,13 @@
 {
     <a class="new-button prosjekt-admin-knapp" href="prosjekter/ny">Nytt prosjekt</a>
 }
-@{ var antallAktiveFiltre = _valgteStatusFilter.Count + (_prosjektlederFilter.HasValue ? 1 : 0) + (_montorFilter.HasValue ? 1 : 0); }
-<button type="button" class="@(antallAktiveFiltre > 0 ? "edit-button-active" : "filter-button")" @onclick="@(() => _visFilter = !_visFilter)">
-    Filtrer@(antallAktiveFiltre > 0 ? $" ({antallAktiveFiltre})" : "")
-</button>
+@{ var antallAktiveFiltre = AntallAktiveFiltre; }
+@if (!_erMobilvisning)
+{
+    <button type="button" class="@(antallAktiveFiltre > 0 ? "edit-button-active" : "filter-button")" @onclick="@(() => _visFilter = !_visFilter)">
+        Filtrer@(antallAktiveFiltre > 0 ? $" ({antallAktiveFiltre})" : "")
+    </button>
+}
 @if (_naverendeRolle != BrukerRolle.Montor)
 {
     <button type="button" class="@(_redigerModus ? "edit-button-active" : "filter-button") prosjekt-admin-knapp" @onclick="ToggleRedigerModus">
@@ -46,7 +52,7 @@
         </ul>
         <label class="filter-option prosjektleder-filter">
             Prosjektleder
-            <select value="@(_prosjektlederFilter?.ToString() ?? "")" @onchange="@(e => _prosjektlederFilter = string.IsNullOrEmpty(e.Value as string) ? null : int.Parse((string)e.Value!))">
+            <select value="@(_prosjektlederFilter?.ToString() ?? "")" @onchange="@(e => { _prosjektlederFilter = string.IsNullOrEmpty(e.Value as string) ? null : int.Parse((string)e.Value!); Verktoylinje.VarsleEndring(); })">
                 <option value="">Alle</option>
                 @foreach (var b in _alleBrukere)
                 {
@@ -56,7 +62,7 @@
         </label>
         <label class="filter-option montor-filter">
             Ansvarlig montør
-            <select value="@(_montorFilter?.ToString() ?? "")" @onchange="@(e => _montorFilter = string.IsNullOrEmpty(e.Value as string) ? null : int.Parse((string)e.Value!))">
+            <select value="@(_montorFilter?.ToString() ?? "")" @onchange="@(e => { _montorFilter = string.IsNullOrEmpty(e.Value as string) ? null : int.Parse((string)e.Value!); Verktoylinje.VarsleEndring(); })">
                 <option value="">Alle</option>
                 @foreach (var b in _alleBrukere)
                 {
@@ -66,7 +72,7 @@
         </label>
         @if (antallAktiveFiltre > 0)
         {
-            <button type="button" class="cancel-button" @onclick="@(() => { _valgteStatusFilter.Clear(); _prosjektlederFilter = null; _montorFilter = null; })">Nullstill filter</button>
+            <button type="button" class="cancel-button" @onclick="@(() => { _valgteStatusFilter.Clear(); _prosjektlederFilter = null; _montorFilter = null; Verktoylinje.VarsleEndring(); })">Nullstill filter</button>
         }
     </div>
 }
@@ -152,6 +158,10 @@ else
     private bool _visFilter;
     private int? _slettId;
     private bool _redigerModus;
+    private bool _erMobilvisning;
+
+    private int AntallAktiveFiltre =>
+        _valgteStatusFilter.Count + (_prosjektlederFilter.HasValue ? 1 : 0) + (_montorFilter.HasValue ? 1 : 0);
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -173,6 +183,7 @@ else
         {
             _valgteStatusFilter.Remove(status);
         }
+        Verktoylinje.VarsleEndring();
     }
 
     private void ToggleRedigerModus()
@@ -237,5 +248,23 @@ else
             .ToListAsync();
 
         _alleBrukere = await Db.Brukere.OrderBy(b => b.Navn).ToListAsync();
+
+        Verktoylinje.RegistrerFilter(
+            () => { _visFilter = !_visFilter; StateHasChanged(); },
+            () => AntallAktiveFiltre > 0);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _erMobilvisning = await JS.InvokeAsync<bool>("erMobilvisning");
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        Verktoylinje.AvregistrerFilter();
     }
 }
