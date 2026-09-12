@@ -3,16 +3,30 @@
 // Blazor Server trenger en levende tilkobling for selve interaktiviteten - denne SW-en
 // kan derfor ikke gjøre appen fullstendig offline-funksjonell, men sikrer at montører i
 // felt fortsatt ser adresser, telefonnumre og varelister fra siste gang de hadde dekning.
-const STATIC_CACHE = 'itlock-static-v1';
-const PAGE_CACHE = 'itlock-sider-v1';
+// NB: bump disse versjonsnumrene (og ingenting annet trenger å endres) hver
+// gang gamle bufrede sider/filer skal tvinges bort - se activate-lytteren
+// under, som rydder bort alt som ikke matcher disse navnene nøyaktig. Dette
+// var roten til at rettelser (som fjerning av AI-snarveien) ikke slo gjennom
+// på telefoner som allerede hadde appen installert: /min-dag ble bufret med
+// datidens CSS/JS-versjoner, og siden selve service-worker.js-filen ikke var
+// endret, oppdaget ikke nettleseren at noe hadde endret seg.
+const STATIC_CACHE = 'itlock-static-v2';
+const PAGE_CACHE = 'itlock-sider-v2';
 const OFFLINE_SIDER = ['/min-dag', '/kart'];
+const GJELDENDE_CACHER = [STATIC_CACHE, PAGE_CACHE];
 
 self.addEventListener('install', () => {
     self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
-    event.waitUntil(self.clients.claim());
+    event.waitUntil(
+        caches.keys()
+            .then(navn => Promise.all(
+                navn.filter(n => !GJELDENDE_CACHER.includes(n)).map(n => caches.delete(n))
+            ))
+            .then(() => self.clients.claim())
+    );
 });
 
 self.addEventListener('fetch', event => {
