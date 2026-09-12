@@ -49,11 +49,16 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     wrapEl.dataset.zoomPanBound = '1';
 
     const minZoom = 0.4;
-    const maxZoom = 3;
+    // Ingen reell øvre grense i praksis - montører må kunne zoome helt inn på
+    // små tekstetiketter/hotspots på tegningen.
+    const maxZoom = 12;
     // Pinch-zoom med fingre skal bare kunne zoome INN, ikke ut forbi normal
     // visning - man skal ikke kunne klype tegningen mindre enn 100%.
     const minPinchZoom = 1;
     const step = 0.12;
+    // Litt større steg per trykk på +/- -knappene enn per hakk på musehjulet,
+    // slik at et enkelt trykk faktisk oppleves som en synlig endring.
+    const buttonStep = 0.4;
     let zoom = 1;
 
     canvasEl.style.width = '100%';
@@ -231,6 +236,41 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
 
     wrapEl.addEventListener('pointerup', endPointer);
     wrapEl.addEventListener('pointercancel', endPointer);
+
+    // API for de flytende +/- og tilbakestill-knappene på mobil (se
+    // planZoomIn/planZoomOut/planResetZoom under) - knappene har ingen
+    // musepeker-posisjon å zoome mot, så de anker mot midten av det synlige
+    // utsnittet i stedet.
+    function zoomByButton(direction) {
+        const rect = wrapEl.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const next = Math.min(maxZoom, Math.max(minZoom, zoom + direction * buttonStep));
+        applyZoom(next, cx, cy);
+    }
+
+    wrapEl.__planZoomApi = {
+        zoomIn: () => zoomByButton(1),
+        zoomOut: () => zoomByButton(-1),
+        reset: () => {
+            const rect = wrapEl.getBoundingClientRect();
+            applyZoom(1, rect.left, rect.top);
+            wrapEl.scrollLeft = 0;
+            wrapEl.scrollTop = 0;
+        }
+    };
+}
+
+export function planZoomIn(wrapEl) {
+    wrapEl.__planZoomApi?.zoomIn();
+}
+
+export function planZoomOut(wrapEl) {
+    wrapEl.__planZoomApi?.zoomOut();
+}
+
+export function planResetZoom(wrapEl) {
+    wrapEl.__planZoomApi?.reset();
 }
 
 export function attachMarkers(containerEl, dotNetRef, locked) {
