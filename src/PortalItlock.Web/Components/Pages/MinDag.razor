@@ -1,12 +1,14 @@
 @page "/min-dag"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@implements IDisposable
 @using System.Globalization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject NavigationManager Nav
 
 <PageTitle>Min dag</PageTitle>
 
@@ -160,6 +162,47 @@ else
     </div>
 }
 
+@if (_naverendeBrukerId.HasValue)
+{
+    <div class="mobil-tidsur-wrap">
+        @if (_aktivOkt is null)
+        {
+            <p class="mobil-tidsur-label">Start å registrere arbeidstimene dine:</p>
+            <div class="mobil-tidsur-rad">
+                <button type="button" class="mobil-tidsur-hovedknapp start" @onclick="StartOkt">
+                    Start / 00:00:00
+                </button>
+            </div>
+        }
+        else
+        {
+            <p class="mobil-tidsur-label">Fullfør registreringen av arbeidstimene dine:</p>
+            <div class="mobil-tidsur-rad">
+                <button type="button" class="mobil-tidsur-hovedknapp ferdig" @onclick="@(() => _visFerdigBekreftelse = true)">
+                    FERDIG / @ElapsedTid.ToString(@"hh\:mm\:ss")
+                </button>
+                <button type="button" class="mobil-tidsur-pauseknapp @(OktPagaendePause ? "aktiv" : "")" @onclick="TogglePause" title="@(OktPagaendePause ? "Fortsett" : "Ta pause")">
+                    <Icon Name="@(OktPagaendePause ? "play" : "pause")" />
+                </button>
+            </div>
+        }
+    </div>
+
+    @if (_visFerdigBekreftelse)
+    {
+        <div class="mobil-tidsur-modal-overlay" @onclick="@(() => _visFerdigBekreftelse = false)">
+            <div class="mobil-tidsur-modal" @onclick:stopPropagation="true">
+                <p class="mobil-tidsur-modal-tittel">Er du sikker på at du vil markere slutten av arbeidsdagen?</p>
+                <p class="mobil-tidsur-modal-stats">Arbeidsdagen varte @((int)ElapsedTid.TotalHours)t @(ElapsedTid.Minutes)min.</p>
+                <div class="mobil-tidsur-modal-knapper">
+                    <button type="button" class="cancel-button" @onclick="@(() => _visFerdigBekreftelse = false)">Tilbake</button>
+                    <button type="button" class="save-button" @onclick="BekreftFullfor">Bekreft</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
 @code {
     private sealed class MontorOption
     {
@@ -232,6 +275,12 @@ else
             .ToListAsync();
 
         _valgtMontorId = _naverendeRolle == BrukerRolle.Montor ? _naverendeBrukerId : _montorer.FirstOrDefault()?.Id;
+
+        if (_naverendeBrukerId.HasValue)
+        {
+            _aktivOkt = await Db.AktiveTimeOkter.FirstOrDefaultAsync(o => o.BrukerId == _naverendeBrukerId.Value);
+            OppdaterTikking();
+        }
 
         await LastAsync();
     }
@@ -337,5 +386,110 @@ else
         }).ToList();
 
         _laster = false;
+    }
+
+    // Tidsur ("Start"-knappen nederst på mobil) - se AktivTimeOkt.cs for
+    // hvorfor dette er lagret i databasen og ikke bare et felt her.
+    private AktivTimeOkt? _aktivOkt;
+    private bool _visFerdigBekreftelse;
+    private System.Threading.Timer? _tikkTimer;
+
+    private bool OktPagaendePause => _aktivOkt?.PauseStartTidspunkt is not null;
+
+    private TimeSpan ElapsedTid
+    {
+        get
+        {
+            if (_aktivOkt is null)
+            {
+                return TimeSpan.Zero;
+            }
+
+            // Mens økten er på pause skal den viste tiden fryse - bruk
+            // pause-tidspunktet som referanse i stedet for "nå" så den ikke
+            // fortsetter å tikke.
+            var referanse = _aktivOkt.PauseStartTidspunkt ?? DateTime.Now;
+            var netto = (referanse - _aktivOkt.StartTidspunkt) - TimeSpan.FromMinutes(_aktivOkt.AkkumulertPauseMinutter);
+            return netto > TimeSpan.Zero ? netto : TimeSpan.Zero;
+        }
+    }
+
+    private async Task StartOkt()
+    {
+        if (!_naverendeBrukerId.HasValue || _aktivOkt is not null)
+        {
+            return;
+        }
+
+        var okt = new AktivTimeOkt { BrukerId = _naverendeBrukerId.Value, StartTidspunkt = DateTime.Now };
+        Db.AktiveTimeOkter.Add(okt);
+        await Db.SaveChangesAsync();
+
+        _aktivOkt = okt;
+        OppdaterTikking();
+    }
+
+    private async Task TogglePause()
+    {
+        if (_aktivOkt is null)
+        {
+            return;
+        }
+
+        if (OktPagaendePause)
+        {
+            var pauseVarighet = DateTime.Now - _aktivOkt.PauseStartTidspunkt!.Value;
+            _aktivOkt.AkkumulertPauseMinutter += Math.Max(0, (int)Math.Round(pauseVarighet.TotalMinutes));
+            _aktivOkt.PauseStartTidspunkt = null;
+        }
+        else
+        {
+            _aktivOkt.PauseStartTidspunkt = DateTime.Now;
+        }
+
+        await Db.SaveChangesAsync();
+        OppdaterTikking();
+    }
+
+    private void BekreftFullfor()
+    {
+        if (_aktivOkt is null)
+        {
+            return;
+        }
+
+        _visFerdigBekreftelse = false;
+
+        var start = _aktivOkt.StartTidspunkt;
+        var slutt = DateTime.Now;
+        var pauseMinutter = _aktivOkt.AkkumulertPauseMinutter;
+
+        var query = $"?starttid={start:HH:mm}&sluttid={slutt:HH:mm}&pause={pauseMinutter}&oktid={_aktivOkt.Id}";
+        Nav.NavigateTo($"/timeregistrering{query}");
+    }
+
+    // Kjører et serverside-tikk hvert sekund mens økten går og ikke er på
+    // pause, slik at den viste tiden oppdateres uten at brukeren må
+    // refreshe. Stoppes/startes på nytt ved hver tilstandsendring for å
+    // unngå å tikke i det uendelige når det ikke trengs.
+    private void OppdaterTikking()
+    {
+        _tikkTimer?.Dispose();
+        _tikkTimer = null;
+
+        if (_aktivOkt is null || OktPagaendePause)
+        {
+            return;
+        }
+
+        _tikkTimer = new System.Threading.Timer(_ =>
+        {
+            InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    public void Dispose()
+    {
+        _tikkTimer?.Dispose();
     }
 }

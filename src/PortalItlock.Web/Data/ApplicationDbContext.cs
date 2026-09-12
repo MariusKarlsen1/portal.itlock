@@ -55,6 +55,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<BrukerPasswordResetToken> BrukerPasswordResetTokener => Set<BrukerPasswordResetToken>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
+    public DbSet<AktivTimeOkt> AktiveTimeOkter => Set<AktivTimeOkt>();
     public DbSet<Kunde> Kunder => Set<Kunde>();
     public DbSet<DorIdMal> DorIdMaler => Set<DorIdMal>();
     public DbSet<TilbudForside> TilbudForsider => Set<TilbudForside>();
