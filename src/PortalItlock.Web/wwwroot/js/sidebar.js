@@ -6,20 +6,6 @@ window.erMobilvisning = function () {
     return window.matchMedia('(max-width: 640.98px)').matches;
 };
 
-// "Gå til fullversjon" på mobil: viser skrivebordsinnholdet (alle felt/
-// sider/handlinger som på PC) mens man fortsatt er på ekte mobilbredde -
-// ikke et nedskalert vindu. Selve innholdet styres av Verktoylinje.
-// ErMobilvisning på C#-siden (se TopBar.razor); venstre sidemeny trenger
-// ingen egen skjuling her, den er allerede usynlig på smale skjermer via
-// sin egen CSS (NavMenu.razor.css), helt uavhengig av dette. Denne
-// hjelperen brukes kun til "tilbake"-knappen som da trengs siden man ikke
-// lenger har sidemenyen å navigere med.
-window.appNavigasjon = {
-    tilbake: function () {
-        window.history.back();
-    }
-};
-
 window.sidebarMeny = (function () {
     const storageKey = 'itlock-sidebar';
 
