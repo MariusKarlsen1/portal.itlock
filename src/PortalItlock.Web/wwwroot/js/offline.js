@@ -18,15 +18,35 @@
             window.location.reload();
         });
 
-        window.addEventListener('load', function () {
-            navigator.serviceWorker.register('/service-worker.js').then(function (reg) {
-                // Tving en sjekk mot nettverket for en ny service-worker-fil hver
-                // gang appen åpnes, i stedet for å stole på nettleserens egen
-                // (ofte forsinkede) periodiske sjekk - slik slår rettelser i
-                // service-worker.js (f.eks. nye bufferversjoner) raskere
-                // gjennom på telefoner som allerede har appen installert.
-                reg.update();
+        // Tving en sjekk mot nettverket for en ny service-worker-fil hver gang
+        // appen åpnes, i stedet for å stole på nettleserens egen (ofte
+        // forsinkede) periodiske sjekk - slik slår rettelser i
+        // service-worker.js (f.eks. nye bufferversjoner) raskere gjennom på
+        // telefoner som allerede har appen installert.
+        //
+        // 'load' fyres derimot IKKE når iOS gjenoppretter PWA-en fra Safari
+        // sin bfcache ved gjenåpning fra hjemskjermikonet (vanligste måten
+        // appen faktisk åpnes på) - da kjørte denne sjekken aldri, og en
+        // gammel, bufret service-worker (med gamle bufrede JS/CSS-filer) ble
+        // stående i praksis for alltid, uansett hvor mange ganger appen ble
+        // lukket og åpnet igjen. Sjekker derfor på nytt også ved pageshow og
+        // visibilitychange, ikke bare ved selve 'load'.
+        function sjekkEtterNyServiceWorker() {
+            navigator.serviceWorker.getRegistration('/service-worker.js').then(function (reg) {
+                if (reg) {
+                    reg.update();
+                } else {
+                    navigator.serviceWorker.register('/service-worker.js');
+                }
             }).catch(function () { });
+        }
+
+        window.addEventListener('load', sjekkEtterNyServiceWorker);
+        window.addEventListener('pageshow', sjekkEtterNyServiceWorker);
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') {
+                sjekkEtterNyServiceWorker();
+            }
         });
     }
 
