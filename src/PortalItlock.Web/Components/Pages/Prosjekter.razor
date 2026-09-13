@@ -7,6 +7,7 @@
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 @inject PortalItlock.Web.Services.MobilVerktoylinjeService Verktoylinje
+@inject NavigationManager Nav
 
 <PageTitle>Prosjekter</PageTitle>
 
@@ -110,6 +111,48 @@
                 </li>
             }
         </ul>
+    }
+
+    @if (Verktoylinje.ErMobilvisning)
+    {
+        <button type="button" class="mobil-serviceavtale-fab" title="Ny serviceavtale" @onclick="@(() => _visNyServiceavtaleForm = !_visNyServiceavtaleForm)">+</button>
+
+        @if (_visNyServiceavtaleForm)
+        {
+            <div class="mobil-serviceavtale-modal">
+                <div class="mobil-serviceavtale-modal-innhold">
+                    <div class="mobil-serviceavtale-modal-header">
+                        <strong>Ny serviceavtale</strong>
+                        <button type="button" class="cancel-button" @onclick="@(() => _visNyServiceavtaleForm = false)">Lukk</button>
+                    </div>
+                    <div class="field-grid">
+                        <label>
+                            Navn på avtalen/bygget
+                            <input @bind="_nyServiceavtaleNavn" @bind:event="oninput" placeholder="F.eks. Storgata 5 - service" />
+                        </label>
+                        <label>
+                            Kunde (valgfritt)
+                            <select @bind="_nyServiceavtaleKundeId">
+                                <option value="">Ingen kunde satt</option>
+                                @foreach (var k in _kunder)
+                                {
+                                    <option value="@k.Id">@k.Navn</option>
+                                }
+                            </select>
+                        </label>
+                        <label>
+                            Adresse (valgfritt)
+                            <input @bind="_nyServiceavtaleAdresse" @bind:event="oninput" placeholder="F.eks. Storgata 5" />
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="save-button" @onclick="OpprettServiceavtaleMobil" disabled="@string.IsNullOrWhiteSpace(_nyServiceavtaleNavn)">
+                            Opprett serviceavtale
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
     }
 }
 @if (_prosjektFane != "serviceavtaler")
@@ -283,9 +326,16 @@ else
         public string Farge => ErForfalt ? "rod" : ErSnartForfalt ? "oransje" : ErKommende ? "blaa" : ErUtfort ? "gronn" : "noytral";
     }
 
+    private sealed class KundeOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
     private List<ProsjektRad> _alle = [];
     private List<ServiceavtaleRad> _serviceavtaler = [];
     private List<Bruker> _alleBrukere = [];
+    private List<KundeOption> _kunder = [];
     private string _search = "";
     private HashSet<ProsjektStatus> _valgteStatusFilter = [];
     private int? _prosjektlederFilter;
@@ -295,6 +345,10 @@ else
     private int? _slettId;
     private bool _redigerModus;
     private string _prosjektFane = "prosjekter";
+    private bool _visNyServiceavtaleForm;
+    private string _nyServiceavtaleNavn = "";
+    private int? _nyServiceavtaleKundeId;
+    private string? _nyServiceavtaleAdresse;
 
     private int AntallAktiveFiltre =>
         _valgteStatusFilter.Count + (_prosjektlederFilter.HasValue ? 1 : 0) + (_montorFilter.HasValue ? 1 : 0);
@@ -314,6 +368,32 @@ else
             _serviceFilterValgt.Remove(verdi);
         }
         Verktoylinje.VarsleEndring();
+    }
+
+    // Speiler Serviceavtaler.razor sin OpprettServiceavtale() - en
+    // serviceavtale ER et prosjekt med status Serviceavtale (se
+    // Serviceavtaler.razor). Nyttig for montører ute i felt som må
+    // registrere en ny avtale (og dørene på den) uten å gå via PC.
+    private async Task OpprettServiceavtaleMobil()
+    {
+        var navn = _nyServiceavtaleNavn.Trim();
+        if (navn.Length == 0)
+        {
+            return;
+        }
+
+        var prosjekt = new Prosjekt
+        {
+            Navn = navn,
+            KundeId = _nyServiceavtaleKundeId,
+            Adresse = string.IsNullOrWhiteSpace(_nyServiceavtaleAdresse) ? null : _nyServiceavtaleAdresse.Trim(),
+            Status = ProsjektStatus.Serviceavtale
+        };
+
+        Db.Prosjekter.Add(prosjekt);
+        await Db.SaveChangesAsync();
+
+        Nav.NavigateTo($"/serviceavtaler/{prosjekt.Id}");
     }
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
@@ -358,12 +438,19 @@ else
         _slettId = null;
     }
 
+    [SupplyParameterFromQuery(Name = "fane")] public string? FaneQuery { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         // Mobilvisning avgjøres sentralt av MainLayout (se kommentar der) og
         // leses herfra via Verktoylinje.ErMobilvisning - unngår at hver side
         // må gjøre sin egen (langsommere) deteksjon ved hver navigasjon.
         Verktoylinje.Endret += OnVerktoylinjeEndret;
+
+        if (FaneQuery == "serviceavtaler")
+        {
+            _prosjektFane = "serviceavtaler";
+        }
 
         if (AuthStateTask is not null)
         {
@@ -406,6 +493,11 @@ else
             .ToListAsync();
 
         _alleBrukere = await Db.Brukere.OrderBy(b => b.Navn).ToListAsync();
+
+        _kunder = await Db.Kunder
+            .OrderBy(k => k.Navn)
+            .Select(k => new KundeOption { Id = k.Id, Navn = k.Navn })
+            .ToListAsync();
 
         // Serviceavtaler er prosjekter med status Serviceavtale (se
         // Serviceavtaler.razor) - på mobil vises de i en egen fane her i
