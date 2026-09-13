@@ -34,24 +34,23 @@ export function initZoomPan(wrapEl, canvasEl) {
 
     canvasEl.style.width = '100%';
 
-    wrapEl.addEventListener('wheel', (e) => {
-        e.preventDefault();
+    function applyZoom(nextZoom, cursorX, cursorY) {
         const prevZoom = zoom;
-        const next = zoom + (e.deltaY < 0 ? step : -step);
-        zoom = Math.min(maxZoom, Math.max(minZoom, next));
+        zoom = Math.min(maxZoom, Math.max(minZoom, nextZoom));
         if (zoom === prevZoom) {
             return;
         }
 
-        const rect = wrapEl.getBoundingClientRect();
-        const cursorX = e.clientX - rect.left;
-        const cursorY = e.clientY - rect.top;
         const ratio = zoom / prevZoom;
-
         canvasEl.style.width = (zoom * 100) + '%';
-
         wrapEl.scrollLeft = (wrapEl.scrollLeft + cursorX) * ratio - cursorX;
         wrapEl.scrollTop = (wrapEl.scrollTop + cursorY) * ratio - cursorY;
+    }
+
+    wrapEl.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = wrapEl.getBoundingClientRect();
+        applyZoom(zoom + (e.deltaY < 0 ? step : -step), e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
 
     const dragThreshold = 4;
@@ -63,6 +62,30 @@ export function initZoomPan(wrapEl, canvasEl) {
     let startScrollTop = 0;
     let suppressClick = false;
 
+    // Aktive pekere holdes rede på for å skille mellom vanlig panorering med
+    // én finger/mus og knip-for-å-zoome med to fingre på touch-skjermer -
+    // .kobling-canvas har touch-action:none (nødvendig for å kunne dra
+    // symboler uten at siden scroller samtidig), så nettleserens innebygde
+    // knip-zoom er skrudd av og må derfor gjenskapes her selv.
+    const activePointers = new Map();
+    let pinching = false;
+    let pinchStartDist = 0;
+    let pinchStartZoom = 1;
+
+    function pinchDistance() {
+        const pts = [...activePointers.values()];
+        return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    }
+
+    function pinchMidpoint() {
+        const pts = [...activePointers.values()];
+        const rect = wrapEl.getBoundingClientRect();
+        return {
+            x: (pts[0].x + pts[1].x) / 2 - rect.left,
+            y: (pts[0].y + pts[1].y) / 2 - rect.top
+        };
+    }
+
     wrapEl.addEventListener('click', (e) => {
         if (suppressClick) {
             suppressClick = false;
@@ -72,7 +95,28 @@ export function initZoomPan(wrapEl, canvasEl) {
     }, true);
 
     wrapEl.addEventListener('pointerdown', (e) => {
-        if (e.button !== 0 || canvasEl.dataset.locked === '0') {
+        if (canvasEl.dataset.locked === '0') {
+            return;
+        }
+
+        if (e.pointerType === 'touch') {
+            activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            safeCapture(wrapEl, e.pointerId);
+
+            if (activePointers.size === 2) {
+                panning = false;
+                pinching = true;
+                pinchStartDist = pinchDistance();
+                pinchStartZoom = zoom;
+                return;
+            }
+
+            if (activePointers.size > 2) {
+                return;
+            }
+        }
+
+        if (e.button !== 0 || pinching) {
             return;
         }
         panning = true;
@@ -85,6 +129,19 @@ export function initZoomPan(wrapEl, canvasEl) {
     });
 
     wrapEl.addEventListener('pointermove', (e) => {
+        if (e.pointerType === 'touch' && activePointers.has(e.pointerId)) {
+            activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        }
+
+        if (pinching && activePointers.size === 2) {
+            const dist = pinchDistance();
+            if (dist > 0 && pinchStartDist > 0) {
+                const mid = pinchMidpoint();
+                applyZoom(pinchStartZoom * (dist / pinchStartDist), mid.x, mid.y);
+            }
+            return;
+        }
+
         if (!panning) {
             return;
         }
@@ -101,7 +158,18 @@ export function initZoomPan(wrapEl, canvasEl) {
         wrapEl.scrollTop = startScrollTop - dy;
     });
 
-    wrapEl.addEventListener('pointerup', (e) => {
+    function endPointer(e) {
+        if (e.pointerType === 'touch') {
+            activePointers.delete(e.pointerId);
+            safeRelease(wrapEl, e.pointerId);
+            if (activePointers.size < 2) {
+                pinching = false;
+            }
+            if (activePointers.size > 0) {
+                return;
+            }
+        }
+
         if (!panning) {
             return;
         }
@@ -112,7 +180,10 @@ export function initZoomPan(wrapEl, canvasEl) {
         if (moved) {
             suppressClick = true;
         }
-    });
+    }
+
+    wrapEl.addEventListener('pointerup', endPointer);
+    wrapEl.addEventListener('pointercancel', endPointer);
 }
 
 let currentStrekTegning = null;
