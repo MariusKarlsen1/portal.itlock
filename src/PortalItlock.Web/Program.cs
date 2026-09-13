@@ -215,8 +215,12 @@ app.UseForwardedHeaders(forwardedHeadersOptions);
 // Blazors egen AuthorizeRouteView-omdirigering til /login rekker å skje.
 app.Use(async (context, next) =>
 {
+    // Unntak: "Gå til fullversjon" (TopBar.razor) navigerer bevisst til "/"
+    // for å vise modul-oversikten - ?fullversjon=1 markerer at dette IKKE
+    // skal fanges opp av mobil-omdirigeringen under.
     if (HttpMethods.IsGet(context.Request.Method)
         && context.Request.Path == "/"
+        && !context.Request.Query.ContainsKey("fullversjon")
         && MobilDeteksjon.GjettFraUserAgent(context.Request.Headers.UserAgent.ToString()))
     {
         context.Response.Redirect("/min-dag");
