@@ -8,6 +8,7 @@
 @inject NavigationManager Nav
 @inject PortalItlock.Web.Services.VarselTellerService VarselTellerSvc
 @inject PortalItlock.Web.Services.PresenceService Presence
+@inject PortalItlock.Web.Services.MobilVerktoylinjeService Verktoylinje
 @inject IJSRuntime JS
 
 <div class="topbar">
@@ -273,8 +274,20 @@
     {
         if (firstRender)
         {
-            _erMobilvisning = await JS.InvokeAsync<bool>("erMobilvisning");
             _fullversjonAktiv = await JS.InvokeAsync<string?>("localStorage.getItem", FullversjonLagringsNokkel) == "1";
+
+            // Ved en helt ny sideinnlasting (hardt refresh/gjenåpning) er
+            // viewport-metaet tilbake til standard - hvis brukeren tidligere
+            // hadde slått på fullversjon, må den utvidede viewporten settes
+            // på plass igjen med det samme, før selve mobil-deteksjonen kjøres.
+            if (_fullversjonAktiv)
+            {
+                await JS.InvokeVoidAsync("fullversjon.aktiver");
+            }
+
+            var mobil = await JS.InvokeAsync<bool>("erMobilvisning");
+            _erMobilvisning = mobil;
+            Verktoylinje.SettMobilvisning(mobil);
             StateHasChanged();
         }
     }
@@ -432,14 +445,27 @@
     private const string FullversjonLagringsNokkel = "itlock-fullversjon";
     private bool _fullversjonAktiv;
 
-    // TODO: selve overgangen til fullversjon (vise skrivebordslayout på mobil)
-    // kommer - bruker skal spesifisere nøyaktig hva den skal gjøre. Foreløpig
-    // veksler den kun av/på og huskes til neste besøk, slik at knappen kan
-    // vise riktig aktiv-tilstand (blå) med det samme.
+    // Skrivebordslayouten styres av CSS-mediaqueryer basert på den EKTE
+    // vindusbredden - en boolean alene kan ikke overstyre dem. Løsningen
+    // (window.fullversjon i sidebar.js) setter et fast, bredt viewport-mål
+    // (width=1024, samme prinsipp som "Vis skrivebordsversjon" i vanlige
+    // mobilnettlesere) med user-scalable=no slik at man ikke kan klype-zoome
+    // eller panorere unna - vanlig vertikal sideskrolling er upåvirket og
+    // virker som normalt. Kjører deretter SAMME mobil-deteksjon som ved
+    // vanlig sideinnlasting på nytt (window.erMobilvisning), som nå riktig
+    // svarer "nei" mot den utvidede viewporten - og varsler Verktoylinje slik
+    // at alle sider/komponenter som abonnerer på den bytter til
+    // skrivebordsvisning med det samme.
     private async Task GaTilFullversjon()
     {
         _fullversjonAktiv = !_fullversjonAktiv;
         await JS.InvokeVoidAsync("localStorage.setItem", FullversjonLagringsNokkel, _fullversjonAktiv ? "1" : "0");
+
+        await JS.InvokeVoidAsync(_fullversjonAktiv ? "fullversjon.aktiver" : "fullversjon.deaktiver");
+
+        var mobil = await JS.InvokeAsync<bool>("erMobilvisning");
+        _erMobilvisning = mobil;
+        Verktoylinje.SettMobilvisning(mobil);
     }
 
     private async Task ToggleLenke(string key, bool vis)

@@ -6,6 +6,38 @@ window.erMobilvisning = function () {
     return window.matchMedia('(max-width: 640.98px)').matches;
 };
 
+// "Gå til fullversjon" på mobil: appens skrivebordslayout styres av CSS-
+// mediaqueryer basert på den EKTE vindusbredden (window.matchMedia), som en
+// ren JS/C#-boolean alene ikke kan overstyre. Løsningen (samme prinsipp som
+// "Vis skrivebordsversjon" i ekte mobilnettlesere) er å sette et bredt,
+// fast viewport-mål (width=1024) og selv regne ut riktig initial-scale slik
+// at hele den brede layouten skaleres ned til å fylle skjermen - med
+// user-scalable=no slik at man ikke kan klype-zoome/panorere unna det,
+// samtidig som vanlig vertikal sideskrolling fortsatt virker helt normalt
+// (det er en egen mekanisme, uavhengig av zoom/pan-låsen).
+window.fullversjon = (function () {
+    const VIRTUELL_BREDDE = 1024;
+
+    function aktiver() {
+        const meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) {
+            return;
+        }
+        const skala = window.innerWidth / VIRTUELL_BREDDE;
+        meta.setAttribute('content', 'width=' + VIRTUELL_BREDDE + ', initial-scale=' + skala + ', maximum-scale=' + skala + ', minimum-scale=' + skala + ', user-scalable=no');
+    }
+
+    function deaktiver() {
+        const meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) {
+            return;
+        }
+        meta.setAttribute('content', 'width=device-width, initial-scale=1.0, viewport-fit=cover');
+    }
+
+    return { aktiver, deaktiver };
+})();
+
 window.sidebarMeny = (function () {
     const storageKey = 'itlock-sidebar';
 
