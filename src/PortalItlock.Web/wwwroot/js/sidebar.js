@@ -87,73 +87,75 @@ window.sidebarMeny = (function () {
 })();
 
 // Kjent iOS-kvirk i hjemskjerm-app-modus (standalone): den faste bunn-fanen
-// (.mobil-tabbar, position:fixed;bottom:0) kan bli stående "fastlåst" på en
-// midlertidig feil posisjon fra aller første maling - før Safari sin egen
-// visual viewport (adressefelt-animasjon m.m.) har rukket å sette seg ved
-// kaldstart av appen, eller ved en forceLoad-navigasjon (f.eks. "Gå til
-// fullversjon" og tilbake, som i praksis ER en ny sideinnlasting). Den
-// retter seg selv først når NOE tvinger frem en ny repaint - derfor virket
-// det som man måtte "bytte fane først". Én enkelt forsinkelse etter 'load'
-// var upålitelig (Safari sin egen animasjon varierer i lengde med enhet/
-// nettverk), så nå kombineres flere uavhengige triggere: gjentatte forsøk
-// med økende forsinkelse, selve visualViewport-resize-eventet (fanger opp
-// NÅR Safari faktisk er ferdig, i stedet for å gjette et tidspunkt), og et
-// kall rett fra MobilTabBar.razor sin egen OnAfterRenderAsync - som er det
-// mest pålitelige tidspunktet av alle, siden det garantert kjører først
-// etter at Blazor faktisk har malt bunn-fanen i DOM-en (dekker "bytte
-// tilbake fra fullversjon", som alltid er en fersk krets/render).
-window.tvingReflowAvBunnfane = function () {
+// (.mobil-tabbar, position:fixed;bottom:0) kan flyte for høyt med et tomt
+// gap under seg ved kaldstart - Safari sin INTERNE sporing av "hvor er
+// bunnen av viewporten" for position:fixed-elementer henger da etter det
+// visuelle, ekte viewportet, og retter seg først når NOE (som en touch)
+// tvinger Safari til å regne den om. Tidligere forsøk prøvde å FÅ Safari
+// til å gjøre denne omregningen selv (reflow-triksing med display:none) -
+// men en ren JS-stilendring på ETT element trigger ikke nødvendigvis
+// Safaris interne viewport-omregning i det hele tatt, bare selve
+// elementets egen boks. Regner derfor i stedet posisjonen helt selv, rett
+// fra window.visualViewport (som ER pålitelig, i motsetning til CSS sin
+// position:fixed-sporing), og setter den som en eksplisitt piksel-verdi -
+// det gjetter ingenting og er ikke avhengig av at Safari "retter seg selv".
+window.forankreBunnfane = function () {
     if (!window.matchMedia('(max-width: 640.98px)').matches) {
         return;
     }
     var el = document.querySelector('.mobil-tabbar');
-    if (!el) {
+    if (!el || !window.visualViewport) {
         return;
     }
-    el.style.display = 'none';
-    void el.offsetHeight;
-    el.style.display = '';
+    var vv = window.visualViewport;
+    var avstandFraBunn = window.innerHeight - (vv.height + vv.offsetTop);
+    el.style.bottom = Math.max(0, Math.round(avstandFraBunn)) + 'px';
 };
 
 (function () {
-    function bindReflowForsok() {
-        requestAnimationFrame(window.tvingReflowAvBunnfane);
-        [100, 300, 600, 1000, 1800, 2500].forEach(function (ms) {
-            setTimeout(window.tvingReflowAvBunnfane, ms);
+    function bindForsok() {
+        requestAnimationFrame(window.forankreBunnfane);
+        [50, 100, 200, 300, 500, 800, 1200, 1800, 2500, 3500].forEach(function (ms) {
+            setTimeout(window.forankreBunnfane, ms);
         });
     }
 
-    window.addEventListener('load', bindReflowForsok);
+    window.addEventListener('load', bindForsok);
 
     // KRITISK for "hjemskjerm-ikon lukket og åpnet igjen": iOS gjenoppretter
     // ofte PWA-en fra Safari sin bfcache (back-forward cache) i stedet for å
     // gjøre en helt fersk sideinnlasting ved gjenåpning - i så fall fyres
-    // 'load' ALDRI, og ingenting over kjørte i det hele tatt. 'pageshow' med
-    // event.persisted===true er nettopp signalet for akkurat denne
-    // gjenopprettingen, og er den som faktisk manglet.
+    // 'load' ALDRI. 'pageshow' med event.persisted===true er signalet for
+    // akkurat denne gjenopprettingen.
     window.addEventListener('pageshow', function (event) {
         if (event.persisted) {
-            bindReflowForsok();
+            bindForsok();
         }
     });
 
     // Samme idé for tilfellet der siden IKKE ble bfcache-gjenopprettet, men
-    // fanen/appen likevel var skjult en stund (bakgrunn -> forgrunn) - Safari
-    // sin egen viewport-animasjon kan da også trenge å bli tvunget til å
-    // sette seg på nytt.
+    // fanen/appen likevel var skjult en stund (bakgrunn -> forgrunn).
     document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'visible') {
-            bindReflowForsok();
+            bindForsok();
         }
     });
 
     if (window.Blazor && typeof window.Blazor.addEventListener === 'function') {
-        window.Blazor.addEventListener('enhancedload', window.tvingReflowAvBunnfane);
+        window.Blazor.addEventListener('enhancedload', window.forankreBunnfane);
     } else {
-        document.addEventListener('enhancedload', window.tvingReflowAvBunnfane);
+        document.addEventListener('enhancedload', window.forankreBunnfane);
     }
 
     if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', window.tvingReflowAvBunnfane);
+        window.visualViewport.addEventListener('resize', window.forankreBunnfane);
+        window.visualViewport.addEventListener('scroll', window.forankreBunnfane);
     }
+
+    window.addEventListener('resize', window.forankreBunnfane);
+
+    // Behold navnet fra forrige forsøk som alias, i tilfelle noe fortsatt
+    // kaller det direkte (f.eks. en bufret, ikke helt oppdatert kopi av
+    // MobilTabBar sin egen render-hook).
+    window.tvingReflowAvBunnfane = window.forankreBunnfane;
 })();
