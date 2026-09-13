@@ -9,14 +9,18 @@ window.erMobilvisning = function () {
 // "Gå til fullversjon" på mobil: appens skrivebordslayout styres av CSS-
 // mediaqueryer basert på den EKTE vindusbredden (window.matchMedia), som en
 // ren JS/C#-boolean alene ikke kan overstyre. Løsningen (samme prinsipp som
-// "Vis skrivebordsversjon" i ekte mobilnettlesere) er å sette et bredt,
-// fast viewport-mål (width=1024) og selv regne ut riktig initial-scale slik
-// at hele den brede layouten skaleres ned til å fylle skjermen - med
-// user-scalable=no slik at man ikke kan klype-zoome/panorere unna det,
-// samtidig som vanlig vertikal sideskrolling fortsatt virker helt normalt
-// (det er en egen mekanisme, uavhengig av zoom/pan-låsen).
+// "Vis skrivebordsversjon" i ekte mobilnettlesere) er å sette et fast
+// viewport-mål og selv regne ut riktig initial-scale slik at hele den brede
+// layouten skaleres ned til å fylle skjermen - med user-scalable=no slik at
+// man ikke kan klype-zoome/panorere unna det, samtidig som vanlig vertikal
+// sideskrolling fortsatt virker helt normalt (det er en egen mekanisme,
+// uavhengig av zoom/pan-låsen).
+// Bredden holdes bevisst så nær skrivebord-brytepunktet (min-width: 641px i
+// CSS-en) som mulig - stor nok til at skrivebordslayouten trigges, men ikke
+// bredere enn nødvendig, siden alt blir tilsvarende MINDRE på skjermen jo
+// bredere det virtuelle målet er (var altfor lite ved 1024).
 window.fullversjon = (function () {
-    const VIRTUELL_BREDDE = 1024;
+    const VIRTUELL_BREDDE = 700;
 
     function aktiver() {
         const meta = document.querySelector('meta[name="viewport"]');
