@@ -88,39 +88,56 @@ window.sidebarMeny = (function () {
 
 // Kjent iOS-kvirk i hjemskjerm-app-modus (standalone): den faste bunn-fanen
 // (.mobil-tabbar, position:fixed;bottom:0) kan flyte for høyt med et tomt
-// gap under seg ved kaldstart - Safari sin INTERNE sporing av "hvor er
-// bunnen av viewporten" for position:fixed-elementer henger da etter det
-// visuelle, ekte viewportet, og retter seg først når NOE (som en touch)
-// tvinger Safari til å regne den om. Tidligere forsøk prøvde å FÅ Safari
-// til å gjøre denne omregningen selv (reflow-triksing med display:none) -
-// men en ren JS-stilendring på ETT element trigger ikke nødvendigvis
-// Safaris interne viewport-omregning i det hele tatt, bare selve
-// elementets egen boks. Regner derfor i stedet posisjonen helt selv, rett
-// fra window.visualViewport (som ER pålitelig, i motsetning til CSS sin
-// position:fixed-sporing), og setter den som en eksplisitt piksel-verdi -
-// det gjetter ingenting og er ikke avhengig av at Safari "retter seg selv".
-window.forankreBunnfane = function () {
-    if (!window.matchMedia('(max-width: 640.98px)').matches) {
-        return;
-    }
-    var el = document.querySelector('.mobil-tabbar');
-    if (!el || !window.visualViewport) {
-        return;
-    }
-    var vv = window.visualViewport;
-    var avstandFraBunn = window.innerHeight - (vv.height + vv.offsetTop);
-    el.style.bottom = Math.max(0, Math.round(avstandFraBunn)) + 'px';
-};
-
+// gap under seg ved kaldstart. Flere runder med CSS-triksing (translateZ,
+// backface-visibility) og JS-triksing (tvunget reflow, egenutregnet
+// posisjon fra visualViewport) løste det IKKE - og et par av forsøkene satte
+// i tillegg en egen inline "bottom"-verdi som kunne stå og forstyrre
+// permanent, uten skikkelig måte å verifisere resultatet på et ekte device.
+// Går derfor bevisst tilbake til ren CSS (ingen JS-satt inline "bottom" i
+// det hele tatt), og legger i stedet inn nøyaktig det som opprinnelig ble
+// foreslått: sjekk om fanen faktisk ligger feil (dens nedre kant skal være
+// helt nede ved skjermens bunn), og reload siden ÉN gang for et
+// garantert korrekt resultat i stedet for å gjette videre. sessionStorage
+// hindrer en reload-løkke.
 (function () {
-    function bindForsok() {
-        requestAnimationFrame(window.forankreBunnfane);
-        [50, 100, 200, 300, 500, 800, 1200, 1800, 2500, 3500].forEach(function (ms) {
-            setTimeout(window.forankreBunnfane, ms);
-        });
+    var RELOAD_NOKKEL = 'itlock-bunnfane-reload-forsokt';
+
+    function sjekkOgReloadVedFeilPosisjon() {
+        if (!window.matchMedia('(max-width: 640.98px)').matches) {
+            return;
+        }
+        var el = document.querySelector('.mobil-tabbar');
+        if (!el) {
+            return;
+        }
+
+        var rect = el.getBoundingClientRect();
+        var avvikFraBunn = Math.abs(rect.bottom - window.innerHeight);
+        if (avvikFraBunn <= 8) {
+            // Riktig plassert - nullstill vokteren slik at en EKTE feil
+            // senere (f.eks. neste kaldstart) fortsatt fanges opp.
+            try { sessionStorage.removeItem(RELOAD_NOKKEL); } catch (e) { }
+            return;
+        }
+
+        var alleredeForsokt = false;
+        try { alleredeForsokt = sessionStorage.getItem(RELOAD_NOKKEL) === '1'; } catch (e) { }
+        if (alleredeForsokt) {
+            return;
+        }
+
+        try { sessionStorage.setItem(RELOAD_NOKKEL, '1'); } catch (e) { }
+        window.location.reload();
     }
 
-    window.addEventListener('load', bindForsok);
+    function planleggSjekk() {
+        // Vent til Safari sin egen viewport-animasjon rimelig sikkert har
+        // fått tid til å sette seg naturlig, før vi i det hele tatt sjekker.
+        setTimeout(sjekkOgReloadVedFeilPosisjon, 1200);
+        setTimeout(sjekkOgReloadVedFeilPosisjon, 2500);
+    }
+
+    window.addEventListener('load', planleggSjekk);
 
     // KRITISK for "hjemskjerm-ikon lukket og åpnet igjen": iOS gjenoppretter
     // ofte PWA-en fra Safari sin bfcache (back-forward cache) i stedet for å
@@ -129,33 +146,13 @@ window.forankreBunnfane = function () {
     // akkurat denne gjenopprettingen.
     window.addEventListener('pageshow', function (event) {
         if (event.persisted) {
-            bindForsok();
+            planleggSjekk();
         }
     });
 
-    // Samme idé for tilfellet der siden IKKE ble bfcache-gjenopprettet, men
-    // fanen/appen likevel var skjult en stund (bakgrunn -> forgrunn).
     document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'visible') {
-            bindForsok();
+            planleggSjekk();
         }
     });
-
-    if (window.Blazor && typeof window.Blazor.addEventListener === 'function') {
-        window.Blazor.addEventListener('enhancedload', window.forankreBunnfane);
-    } else {
-        document.addEventListener('enhancedload', window.forankreBunnfane);
-    }
-
-    if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', window.forankreBunnfane);
-        window.visualViewport.addEventListener('scroll', window.forankreBunnfane);
-    }
-
-    window.addEventListener('resize', window.forankreBunnfane);
-
-    // Behold navnet fra forrige forsøk som alias, i tilfelle noe fortsatt
-    // kaller det direkte (f.eks. en bufret, ikke helt oppdatert kopi av
-    // MobilTabBar sin egen render-hook).
-    window.tvingReflowAvBunnfane = window.forankreBunnfane;
 })();
