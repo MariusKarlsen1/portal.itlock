@@ -6,6 +6,21 @@ window.erMobilvisning = function () {
     return window.matchMedia('(max-width: 640.98px)').matches;
 };
 
+// MainLayout er statisk og kan derfor bare avgjøre "content-fullversjon"
+// riktig for selve siden som først ble lastet (der ?fullversjon står i
+// URL-en) - vanlig SPA-navigasjon videre derfra (f.eks. å trykke seg inn på
+// Arbeidsordre fra fullversjon-forsiden) bytter bare ut @Body uten at
+// MainLayout rendres på nytt, så klassen ble stående feil på alle andre
+// sider. MobilFilterKnapp (som uansett already følger med Verktoylinje sin
+// tilstand pålitelig på tvers av navigasjon) kaller denne etter hver
+// rendering for å holde klassen synkron via ren DOM-manipulasjon i stedet.
+window.settInnholdFullversjon = function (aktiv) {
+    var el = document.getElementById('side-innhold');
+    if (el) {
+        el.classList.toggle('content-fullversjon', !!aktiv);
+    }
+};
+
 window.sidebarMeny = (function () {
     const storageKey = 'itlock-sidebar';
 
