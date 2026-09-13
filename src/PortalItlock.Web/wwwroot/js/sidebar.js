@@ -90,26 +90,48 @@ window.sidebarMeny = (function () {
 // (.mobil-tabbar, position:fixed;bottom:0) kan bli stående "fastlåst" på en
 // midlertidig feil posisjon fra aller første maling - før Safari sin egen
 // visual viewport (adressefelt-animasjon m.m.) har rukket å sette seg ved
-// kaldstart av appen. Den retter seg selv først når NOE tvinger frem en ny
-// repaint, som f.eks. en sidenavigasjon - derfor virket det som man måtte
-// "bytte fane først". Tvinger i stedet frem én reflow rett etter innlasting
-// på mobil, slik at bunn-fanen havner riktig med det samme.
+// kaldstart av appen, eller ved en forceLoad-navigasjon (f.eks. "Gå til
+// fullversjon" og tilbake, som i praksis ER en ny sideinnlasting). Den
+// retter seg selv først når NOE tvinger frem en ny repaint - derfor virket
+// det som man måtte "bytte fane først". Én enkelt forsinkelse etter 'load'
+// var upålitelig (Safari sin egen animasjon varierer i lengde med enhet/
+// nettverk), så nå kombineres flere uavhengige triggere: gjentatte forsøk
+// med økende forsinkelse, selve visualViewport-resize-eventet (fanger opp
+// NÅR Safari faktisk er ferdig, i stedet for å gjette et tidspunkt), og et
+// kall rett fra MobilTabBar.razor sin egen OnAfterRenderAsync - som er det
+// mest pålitelige tidspunktet av alle, siden det garantert kjører først
+// etter at Blazor faktisk har malt bunn-fanen i DOM-en (dekker "bytte
+// tilbake fra fullversjon", som alltid er en fersk krets/render).
+window.tvingReflowAvBunnfane = function () {
+    if (!window.matchMedia('(max-width: 640.98px)').matches) {
+        return;
+    }
+    var el = document.querySelector('.mobil-tabbar');
+    if (!el) {
+        return;
+    }
+    el.style.display = 'none';
+    void el.offsetHeight;
+    el.style.display = '';
+};
+
 (function () {
-    function tvingReflowAvBunnfane() {
-        if (!window.matchMedia('(max-width: 640.98px)').matches) {
-            return;
-        }
-        var el = document.querySelector('.mobil-tabbar');
-        if (!el) {
-            return;
-        }
-        el.style.display = 'none';
-        void el.offsetHeight;
-        el.style.display = '';
+    function bindReflowForsok() {
+        requestAnimationFrame(window.tvingReflowAvBunnfane);
+        [100, 300, 600, 1000, 1800].forEach(function (ms) {
+            setTimeout(window.tvingReflowAvBunnfane, ms);
+        });
     }
 
-    window.addEventListener('load', function () {
-        requestAnimationFrame(tvingReflowAvBunnfane);
-        setTimeout(tvingReflowAvBunnfane, 300);
-    });
+    window.addEventListener('load', bindReflowForsok);
+
+    if (window.Blazor && typeof window.Blazor.addEventListener === 'function') {
+        window.Blazor.addEventListener('enhancedload', window.tvingReflowAvBunnfane);
+    } else {
+        document.addEventListener('enhancedload', window.tvingReflowAvBunnfane);
+    }
+
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', window.tvingReflowAvBunnfane);
+    }
 })();
