@@ -1,6 +1,6 @@
 @page "/serviceavtaler/{ProsjektId:int}"
 @rendermode InteractiveServer
-@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using System.Globalization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
@@ -30,24 +30,30 @@ else if (_prosjekt is not null)
         }
     </p>
 
-    <label class="avtale-ansvarlig-felt">
-        Ansvarlig person
-        <select value="@(_prosjekt.AnsvarligMontorId?.ToString() ?? "")" @onchange="EndreAnsvarligMontor">
-            <option value="">Ikke satt</option>
-            @foreach (var m in _montorer)
-            {
-                <option value="@m.Id">@m.Navn</option>
-            }
-        </select>
-        <span class="section-hint">Personen ser denne serviceavtalen under "Serviceavtaler" på mobil.</span>
-    </label>
+    @if (_naverendeRolle != BrukerRolle.Montor)
+    {
+        <label class="avtale-ansvarlig-felt">
+            Ansvarlig person
+            <select value="@(_prosjekt.AnsvarligMontorId?.ToString() ?? "")" @onchange="EndreAnsvarligMontor">
+                <option value="">Ikke satt</option>
+                @foreach (var m in _montorer)
+                {
+                    <option value="@m.Id">@m.Navn</option>
+                }
+            </select>
+            <span class="section-hint">Personen ser denne serviceavtalen under "Serviceavtaler" på mobil.</span>
+        </label>
+    }
 
     <nav class="avtale-tabs">
         <button type="button" class="@TabClass("service")" @onclick="@(() => _activeTab = "service")">Service</button>
         <button type="button" class="@TabClass("dorer")" @onclick="@(() => _activeTab = "dorer")">Dører</button>
         <button type="button" class="@TabClass("plantegninger")" @onclick="@(() => _activeTab = "plantegninger")">Plantegninger</button>
         <button type="button" class="@TabClass("fdv")" @onclick="@(() => _activeTab = "fdv")">FDV</button>
-        <button type="button" class="@TabClass("prising")" @onclick="@(() => _activeTab = "prising")">Prising</button>
+        @if (_naverendeRolle != BrukerRolle.Montor)
+        {
+            <button type="button" class="@TabClass("prising")" @onclick="@(() => _activeTab = "prising")">Prising</button>
+        }
         <button type="button" class="@TabClass("avvik")" @onclick="@(() => _activeTab = "avvik")">Avvik &amp; driftsmeldinger</button>
     </nav>
 
@@ -59,7 +65,7 @@ else if (_prosjekt is not null)
     {
         <FdvPanel ProsjektId="ProsjektId" />
     }
-    else if (_activeTab == "prising")
+    else if (_activeTab == "prising" && _naverendeRolle != BrukerRolle.Montor)
     {
         <ServicePrisingPanel ProsjektId="ProsjektId" />
     }
@@ -73,6 +79,34 @@ else if (_prosjekt is not null)
     }
     else
     {
+    <section class="avtale-section">
+        <h2>Planlagt servicerunde</h2>
+        <div class="field-grid">
+            <label>
+                Planlagt dato
+                <input type="date" @bind="_planlagtDato" />
+            </label>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="PlanleggServicerunde" disabled="@(_planlagtDato is null)">
+                Planlegg servicerunde
+            </button>
+        </div>
+
+        @if (_planlagteRunder.Count > 0)
+        {
+            <ul class="planlagt-liste">
+                @foreach (var p in _planlagteRunder)
+                {
+                    <li @key="p.Id" class="planlagt-rad mobil-kant-@(p.Dato.Date < DateTime.Today ? "rod" : p.Dato.Date <= DateTime.Today.AddDays(14) ? "oransje" : "blaa")">
+                        <span class="planlagt-dato">@p.Dato.ToString("dd.MM.yyyy")</span>
+                        <button type="button" class="remove-button" @onclick="@(() => SlettPlanlagtRunde(p.Id))">Fjern</button>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+
     <section class="avtale-section">
         <h2>Registrer ny servicerunde</h2>
         <div class="field-grid">
@@ -306,6 +340,7 @@ else if (_prosjekt is not null)
         public string StatusBeskrivelse { get; set; } = "";
         public string? Anbefalinger { get; set; }
         public DateTime? NesteServiceDato { get; set; }
+        public bool ErPlanlagt { get; set; }
         public List<DelRad> Deler { get; set; } = [];
         public List<SjekkRad> Sjekkpunkter { get; set; } = [];
         public List<int> BildeIder { get; set; } = [];
@@ -335,11 +370,14 @@ else if (_prosjekt is not null)
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
+    private BrukerRolle? _naverendeRolle;
 
     private Prosjekt? _prosjekt;
     private bool _notFound;
     private int? _loadedId;
     private List<RundeRad> _runder = [];
+    private List<RundeRad> _planlagteRunder = [];
+    private DateOnly? _planlagtDato = DateOnly.FromDateTime(DateTime.Today);
     private string? _savedMessage;
     private string? _pdfPreviewUrl;
     private string? _pdfSavedMessage;
@@ -369,6 +407,12 @@ else if (_prosjekt is not null)
             if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
             {
                 _naverendeBrukerId = bid;
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
             }
         }
 
@@ -445,7 +489,7 @@ else if (_prosjekt is not null)
 
     private async Task LastRunderAsync()
     {
-        _runder = await Db.Servicerunder
+        var alle = await Db.Servicerunder
             .Where(r => r.ProsjektId == ProsjektId)
             .Include(r => r.UtfortAvBruker)
             .OrderByDescending(r => r.Dato)
@@ -457,6 +501,7 @@ else if (_prosjekt is not null)
                 StatusBeskrivelse = r.StatusBeskrivelse,
                 Anbefalinger = r.Anbefalinger,
                 NesteServiceDato = r.NesteServiceDato,
+                ErPlanlagt = r.ErPlanlagt,
                 Deler = r.Deler.OrderBy(d => d.Dato).Select(d => new DelRad
                 {
                     Id = d.Id,
@@ -478,11 +523,48 @@ else if (_prosjekt is not null)
             })
             .ToListAsync();
 
+        _runder = alle.Where(r => !r.ErPlanlagt).ToList();
+        _planlagteRunder = alle.Where(r => r.ErPlanlagt).OrderBy(r => r.Dato).ToList();
+
         _lagredePdfer = [];
         foreach (var r in _runder)
         {
             _lagredePdfer[r.Id] = await LagretPdfService.HentAsync("Servicerunde", r.Id);
         }
+    }
+
+    private async Task PlanleggServicerunde()
+    {
+        if (_planlagtDato is null)
+        {
+            return;
+        }
+
+        var runde = new Servicerunde
+        {
+            ProsjektId = ProsjektId,
+            Dato = _planlagtDato.Value.ToDateTime(TimeOnly.MinValue),
+            StatusBeskrivelse = "",
+            ErPlanlagt = true
+        };
+
+        Db.Servicerunder.Add(runde);
+        await Db.SaveChangesAsync();
+
+        _planlagtDato = DateOnly.FromDateTime(DateTime.Today);
+        await LastRunderAsync();
+    }
+
+    private async Task SlettPlanlagtRunde(int rundeId)
+    {
+        var entitet = await Db.Servicerunder.FirstOrDefaultAsync(r => r.Id == rundeId && r.ErPlanlagt);
+        if (entitet is not null)
+        {
+            Db.Servicerunder.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        await LastRunderAsync();
     }
 
     private void VisRapportForhandsvisning(int rundeId)

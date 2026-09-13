@@ -23,16 +23,60 @@
 
 @if (_prosjektFane == "serviceavtaler")
 {
+    @if (_visFilter)
+    {
+        <div class="dor-velger-panel">
+            <div class="dor-velger-header">
+                <strong>Filtrer serviceavtaler</strong>
+                <button type="button" class="cancel-button" @onclick="@(() => _visFilter = false)">Lukk</button>
+            </div>
+            <ul class="funksjon-chip-list">
+                <li>
+                    <label class="filter-option">
+                        <input type="checkbox" checked="@_serviceFilterValgt.Contains("forfalt")" @onchange="@(() => ToggleServiceFilter("forfalt"))" />
+                        Forfalt
+                    </label>
+                </li>
+                <li>
+                    <label class="filter-option">
+                        <input type="checkbox" checked="@_serviceFilterValgt.Contains("naermer")" @onchange="@(() => ToggleServiceFilter("naermer"))" />
+                        Nærmer seg
+                    </label>
+                </li>
+                <li>
+                    <label class="filter-option">
+                        <input type="checkbox" checked="@_serviceFilterValgt.Contains("kommende")" @onchange="@(() => ToggleServiceFilter("kommende"))" />
+                        Planlagt/kommende
+                    </label>
+                </li>
+                <li>
+                    <label class="filter-option">
+                        <input type="checkbox" checked="@_serviceFilterValgt.Contains("utfort")" @onchange="@(() => ToggleServiceFilter("utfort"))" />
+                        Utført
+                    </label>
+                </li>
+            </ul>
+            @if (_serviceFilterValgt.Count > 0)
+            {
+                <button type="button" class="cancel-button" @onclick="@(() => { _serviceFilterValgt.Clear(); Verktoylinje.VarsleEndring(); })">Nullstill filter</button>
+            }
+        </div>
+    }
+
     @if (_serviceavtaler.Count == 0)
     {
         <p class="list-empty">Ingen serviceavtaler funnet.</p>
     }
+    else if (FiltrerteServiceavtaler.Count == 0)
+    {
+        <p class="list-empty">Ingen serviceavtaler passer filteret.</p>
+    }
     else
     {
         <ul class="prosjekt-list">
-            @foreach (var a in _serviceavtaler)
+            @foreach (var a in FiltrerteServiceavtaler)
             {
-                <li class="prosjekt-item @(a.ErForfalt ? "mobil-kant-rod" : "mobil-kant-noytral")">
+                <li class="prosjekt-item mobil-kant-@a.Farge">
                     <a class="prosjekt-row" href="@($"serviceavtaler/{a.Id}")">
                         <span class="prosjekt-navn">@a.Navn</span>
                         @if (a.ErForfalt)
@@ -43,15 +87,19 @@
                         {
                             <span class="avtale-badge avtale-badge-snart">Nærmer seg forfall</span>
                         }
-                        else if (a.NesteServiceDato.HasValue)
+                        else if (a.NesteDato.HasValue)
                         {
-                            <span class="avtale-badge">Neste service @a.NesteServiceDato.Value.ToString("dd.MM.yyyy")</span>
+                            <span class="avtale-badge avtale-badge-kommende">Neste service @a.NesteDato.Value.ToString("dd.MM.yyyy")</span>
+                        }
+                        else if (a.ErUtfort)
+                        {
+                            <span class="avtale-badge avtale-badge-utfort">Utført</span>
                         }
                         <span class="prosjekt-meta">
                             @(string.IsNullOrWhiteSpace(a.KundeNavn) ? "Ingen kunde satt" : a.KundeNavn)
-                            @if (a.SisteServiceDato.HasValue)
+                            @if (a.SisteUtfortDato.HasValue)
                             {
-                                <text> · Sist service: @a.SisteServiceDato.Value.ToString("dd.MM.yyyy")</text>
+                                <text> · Sist service: @a.SisteUtfortDato.Value.ToString("dd.MM.yyyy")</text>
                             }
                             else
                             {
@@ -216,15 +264,23 @@ else
         public string? AnsvarligMontorNavn { get; set; }
     }
 
+    // Fargespråk (samme som .mobil-kant-* / avtale-badge-*): rød=forfalt,
+    // oransje=nærmer seg forfall, blå=planlagt/kommende (fra "Planlagt
+    // servicerunde" eller neste-service-dato satt på en utført runde),
+    // grønn=utført (siste runde er ferdig og ingenting venter), nøytral=
+    // ingenting registrert ennå.
     private sealed class ServiceavtaleRad
     {
         public int Id { get; set; }
         public string Navn { get; set; } = "";
         public string? KundeNavn { get; set; }
-        public DateTime? SisteServiceDato { get; set; }
-        public DateTime? NesteServiceDato { get; set; }
-        public bool ErForfalt => NesteServiceDato.HasValue && NesteServiceDato.Value.Date < DateTime.Today;
-        public bool ErSnartForfalt => NesteServiceDato.HasValue && !ErForfalt && NesteServiceDato.Value.Date <= DateTime.Today.AddDays(14);
+        public DateTime? SisteUtfortDato { get; set; }
+        public DateTime? NesteDato { get; set; }
+        public bool ErForfalt => NesteDato.HasValue && NesteDato.Value.Date < DateTime.Today;
+        public bool ErSnartForfalt => NesteDato.HasValue && !ErForfalt && NesteDato.Value.Date <= DateTime.Today.AddDays(14);
+        public bool ErKommende => NesteDato.HasValue && !ErForfalt && !ErSnartForfalt;
+        public bool ErUtfort => !NesteDato.HasValue && SisteUtfortDato.HasValue;
+        public string Farge => ErForfalt ? "rod" : ErSnartForfalt ? "oransje" : ErKommende ? "blaa" : ErUtfort ? "gronn" : "noytral";
     }
 
     private List<ProsjektRad> _alle = [];
@@ -234,6 +290,7 @@ else
     private HashSet<ProsjektStatus> _valgteStatusFilter = [];
     private int? _prosjektlederFilter;
     private int? _montorFilter;
+    private HashSet<string> _serviceFilterValgt = [];
     private bool _visFilter;
     private int? _slettId;
     private bool _redigerModus;
@@ -241,6 +298,23 @@ else
 
     private int AntallAktiveFiltre =>
         _valgteStatusFilter.Count + (_prosjektlederFilter.HasValue ? 1 : 0) + (_montorFilter.HasValue ? 1 : 0);
+
+    private List<ServiceavtaleRad> FiltrerteServiceavtaler => _serviceavtaler
+        .Where(a => _serviceFilterValgt.Count == 0
+            || (_serviceFilterValgt.Contains("forfalt") && a.ErForfalt)
+            || (_serviceFilterValgt.Contains("naermer") && a.ErSnartForfalt)
+            || (_serviceFilterValgt.Contains("kommende") && a.ErKommende)
+            || (_serviceFilterValgt.Contains("utfort") && a.ErUtfort))
+        .ToList();
+
+    private void ToggleServiceFilter(string verdi)
+    {
+        if (!_serviceFilterValgt.Add(verdi))
+        {
+            _serviceFilterValgt.Remove(verdi);
+        }
+        Verktoylinje.VarsleEndring();
+    }
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -358,20 +432,31 @@ else
 
         _serviceavtaler = serviceProsjekter.Select(p =>
         {
-            var proRunder = runder.Where(r => r.ProsjektId == p.Id).OrderByDescending(r => r.Dato).ToList();
+            var proRunder = runder.Where(r => r.ProsjektId == p.Id).ToList();
+            var utfortRunder = proRunder.Where(r => !r.ErPlanlagt).OrderByDescending(r => r.Dato).ToList();
+            var nestePlanlagtDato = proRunder
+                .Where(r => r.ErPlanlagt && r.Dato.Date >= DateTime.Today)
+                .OrderBy(r => r.Dato)
+                .FirstOrDefault()?.Dato;
+            var nesteFraUtfortDato = utfortRunder.FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato;
+
+            DateTime? nesteDato = nestePlanlagtDato.HasValue && nesteFraUtfortDato.HasValue
+                ? (nestePlanlagtDato.Value < nesteFraUtfortDato.Value ? nestePlanlagtDato : nesteFraUtfortDato)
+                : nestePlanlagtDato ?? nesteFraUtfortDato;
+
             return new ServiceavtaleRad
             {
                 Id = p.Id,
                 Navn = p.Navn,
                 KundeNavn = p.Kunde?.Navn,
-                SisteServiceDato = proRunder.FirstOrDefault()?.Dato,
-                NesteServiceDato = proRunder.FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato
+                SisteUtfortDato = utfortRunder.FirstOrDefault()?.Dato,
+                NesteDato = nesteDato
             };
         }).ToList();
 
         Verktoylinje.RegistrerFilter(
             () => { _visFilter = !_visFilter; StateHasChanged(); },
-            () => AntallAktiveFiltre > 0);
+            () => (_prosjektFane == "serviceavtaler" ? _serviceFilterValgt.Count : AntallAktiveFiltre) > 0);
     }
 
     private void OnVerktoylinjeEndret() => InvokeAsync(StateHasChanged);

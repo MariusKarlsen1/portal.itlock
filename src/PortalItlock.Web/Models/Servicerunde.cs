@@ -17,6 +17,11 @@ public class Servicerunde
     public bool OppfolgingsTicketOpprettet { get; set; }
     public string? Forside { get; set; }
 
+    // Skiller en planlagt (ikke utført ennå, kun dato satt) fra en vanlig
+    // registrert/utført servicerunde. Se "Planlagt servicerunde"-skjemaet i
+    // ServiceavtaleDetalj.razor.
+    public bool ErPlanlagt { get; set; }
+
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     public List<ServicerundeDel> Deler { get; set; } = [];
