@@ -118,12 +118,34 @@ window.tvingReflowAvBunnfane = function () {
 (function () {
     function bindReflowForsok() {
         requestAnimationFrame(window.tvingReflowAvBunnfane);
-        [100, 300, 600, 1000, 1800].forEach(function (ms) {
+        [100, 300, 600, 1000, 1800, 2500].forEach(function (ms) {
             setTimeout(window.tvingReflowAvBunnfane, ms);
         });
     }
 
     window.addEventListener('load', bindReflowForsok);
+
+    // KRITISK for "hjemskjerm-ikon lukket og åpnet igjen": iOS gjenoppretter
+    // ofte PWA-en fra Safari sin bfcache (back-forward cache) i stedet for å
+    // gjøre en helt fersk sideinnlasting ved gjenåpning - i så fall fyres
+    // 'load' ALDRI, og ingenting over kjørte i det hele tatt. 'pageshow' med
+    // event.persisted===true er nettopp signalet for akkurat denne
+    // gjenopprettingen, og er den som faktisk manglet.
+    window.addEventListener('pageshow', function (event) {
+        if (event.persisted) {
+            bindReflowForsok();
+        }
+    });
+
+    // Samme idé for tilfellet der siden IKKE ble bfcache-gjenopprettet, men
+    // fanen/appen likevel var skjult en stund (bakgrunn -> forgrunn) - Safari
+    // sin egen viewport-animasjon kan da også trenge å bli tvunget til å
+    // sette seg på nytt.
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') {
+            bindReflowForsok();
+        }
+    });
 
     if (window.Blazor && typeof window.Blazor.addEventListener === 'function') {
         window.Blazor.addEventListener('enhancedload', window.tvingReflowAvBunnfane);
