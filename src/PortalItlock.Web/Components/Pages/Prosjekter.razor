@@ -13,15 +13,67 @@
 <h1 class="side-tittel">Prosjekter</h1>
 <p class="prosjekt-intro">Oversikt over prosjekter: dører, plantegninger og montasjestatus. Søk på navn, kunde eller adresse.</p>
 
+@if (Verktoylinje.ErMobilvisning)
+{
+    <div class="mobil-prosjekt-faner">
+        <button type="button" class="mobil-prosjekt-fane @(_prosjektFane == "prosjekter" ? "aktiv" : "")" @onclick="@(() => _prosjektFane = "prosjekter")">Prosjekter</button>
+        <button type="button" class="mobil-prosjekt-fane @(_prosjektFane == "serviceavtaler" ? "aktiv" : "")" @onclick="@(() => _prosjektFane = "serviceavtaler")">Serviceavtaler</button>
+    </div>
+}
+
+@if (_prosjektFane == "serviceavtaler")
+{
+    @if (_serviceavtaler.Count == 0)
+    {
+        <p class="list-empty">Ingen serviceavtaler funnet.</p>
+    }
+    else
+    {
+        <ul class="prosjekt-list">
+            @foreach (var a in _serviceavtaler)
+            {
+                <li class="prosjekt-item @(a.ErForfalt ? "mobil-kant-rod" : "mobil-kant-noytral")">
+                    <a class="prosjekt-row" href="@($"serviceavtaler/{a.Id}")">
+                        <span class="prosjekt-navn">@a.Navn</span>
+                        @if (a.ErForfalt)
+                        {
+                            <span class="avtale-badge avtale-badge-forfalt">Service forfalt</span>
+                        }
+                        else if (a.ErSnartForfalt)
+                        {
+                            <span class="avtale-badge avtale-badge-snart">Nærmer seg forfall</span>
+                        }
+                        else if (a.NesteServiceDato.HasValue)
+                        {
+                            <span class="avtale-badge">Neste service @a.NesteServiceDato.Value.ToString("dd.MM.yyyy")</span>
+                        }
+                        <span class="prosjekt-meta">
+                            @(string.IsNullOrWhiteSpace(a.KundeNavn) ? "Ingen kunde satt" : a.KundeNavn)
+                            @if (a.SisteServiceDato.HasValue)
+                            {
+                                <text> · Sist service: @a.SisteServiceDato.Value.ToString("dd.MM.yyyy")</text>
+                            }
+                            else
+                            {
+                                <text> · Ingen servicerunder registrert ennå</text>
+                            }
+                        </span>
+                    </a>
+                </li>
+            }
+        </ul>
+    }
+}
+@if (_prosjektFane != "serviceavtaler")
+{
 @if (_naverendeRolle != BrukerRolle.Montor)
 {
     <a class="new-button prosjekt-admin-knapp" href="prosjekter/ny">Nytt prosjekt</a>
 }
-@{ var antallAktiveFiltre = AntallAktiveFiltre; }
 @if (!Verktoylinje.ErMobilvisning)
 {
-    <button type="button" class="@(antallAktiveFiltre > 0 ? "edit-button-active" : "filter-button")" @onclick="@(() => _visFilter = !_visFilter)">
-        Filtrer@(antallAktiveFiltre > 0 ? $" ({antallAktiveFiltre})" : "")
+    <button type="button" class="@(AntallAktiveFiltre > 0 ? "edit-button-active" : "filter-button")" @onclick="@(() => _visFilter = !_visFilter)">
+        Filtrer@(AntallAktiveFiltre > 0 ? $" ({AntallAktiveFiltre})" : "")
     </button>
 }
 @if (_naverendeRolle != BrukerRolle.Montor)
@@ -69,7 +121,7 @@
                 }
             </select>
         </label>
-        @if (antallAktiveFiltre > 0)
+        @if (AntallAktiveFiltre > 0)
         {
             <button type="button" class="cancel-button" @onclick="@(() => { _valgteStatusFilter.Clear(); _prosjektlederFilter = null; _montorFilter = null; Verktoylinje.VarsleEndring(); })">Nullstill filter</button>
         }
@@ -146,6 +198,7 @@ else
         }
     </ul>
 }
+}
 
 @code {
     private sealed class ProsjektRad
@@ -163,7 +216,19 @@ else
         public string? AnsvarligMontorNavn { get; set; }
     }
 
+    private sealed class ServiceavtaleRad
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? KundeNavn { get; set; }
+        public DateTime? SisteServiceDato { get; set; }
+        public DateTime? NesteServiceDato { get; set; }
+        public bool ErForfalt => NesteServiceDato.HasValue && NesteServiceDato.Value.Date < DateTime.Today;
+        public bool ErSnartForfalt => NesteServiceDato.HasValue && !ErForfalt && NesteServiceDato.Value.Date <= DateTime.Today.AddDays(14);
+    }
+
     private List<ProsjektRad> _alle = [];
+    private List<ServiceavtaleRad> _serviceavtaler = [];
     private List<Bruker> _alleBrukere = [];
     private string _search = "";
     private HashSet<ProsjektStatus> _valgteStatusFilter = [];
@@ -172,6 +237,7 @@ else
     private bool _visFilter;
     private int? _slettId;
     private bool _redigerModus;
+    private string _prosjektFane = "prosjekter";
 
     private int AntallAktiveFiltre =>
         _valgteStatusFilter.Count + (_prosjektlederFilter.HasValue ? 1 : 0) + (_montorFilter.HasValue ? 1 : 0);
@@ -266,6 +332,42 @@ else
             .ToListAsync();
 
         _alleBrukere = await Db.Brukere.OrderBy(b => b.Navn).ToListAsync();
+
+        // Serviceavtaler er prosjekter med status Serviceavtale (se
+        // Serviceavtaler.razor) - på mobil vises de i en egen fane her i
+        // stedet for den skrivebord-only /serviceavtaler-siden. En montør
+        // ser kun sine egne (satt som "Ansvarlig person" på selve
+        // serviceavtalen), admin/prosjektleder ser alle.
+        IQueryable<Prosjekt> serviceQuery = Db.Prosjekter.Where(p => p.Status == ProsjektStatus.Serviceavtale);
+        if (_naverendeRolle == BrukerRolle.Montor)
+        {
+            serviceQuery = serviceQuery.Where(p => p.AnsvarligMontorId == _naverendeBrukerId);
+        }
+
+        var serviceProsjekter = await serviceQuery
+            .Include(p => p.Kunde)
+            .OrderBy(p => p.Navn)
+            .ToListAsync();
+
+        var serviceProsjektIder = serviceProsjekter.Select(p => p.Id).ToList();
+        var runder = serviceProsjektIder.Count == 0
+            ? []
+            : await Db.Servicerunder
+                .Where(r => serviceProsjektIder.Contains(r.ProsjektId))
+                .ToListAsync();
+
+        _serviceavtaler = serviceProsjekter.Select(p =>
+        {
+            var proRunder = runder.Where(r => r.ProsjektId == p.Id).OrderByDescending(r => r.Dato).ToList();
+            return new ServiceavtaleRad
+            {
+                Id = p.Id,
+                Navn = p.Navn,
+                KundeNavn = p.Kunde?.Navn,
+                SisteServiceDato = proRunder.FirstOrDefault()?.Dato,
+                NesteServiceDato = proRunder.FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato
+            };
+        }).ToList();
 
         Verktoylinje.RegistrerFilter(
             () => { _visFilter = !_visFilter; StateHasChanged(); },
