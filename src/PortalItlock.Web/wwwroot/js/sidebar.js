@@ -6,23 +6,6 @@ window.erMobilvisning = function () {
     return window.matchMedia('(max-width: 640.98px)').matches;
 };
 
-// "Gå til fullversjon" (TopBar.razor) må huskes et sted SERVEREN kan lese -
-// localStorage er kun tilgjengelig etter at JS har rukket å kjøre, men PWA-
-// ikonet (manifest.json sin start_url) åpner alltid rett på /min-dag ved
-// kaldstart, FØR noe JS-interop rekker å korrigere noe som helst. En cookie
-// sendes derimot med selve HTTP-forespørselen, slik at server-omdirigeringen
-// i Program.cs kan sende kaldstarten rett til modul-oversikten i stedet -
-// uten det satt man fast på en Min dag-side uten bunn-fane og uten
-// fullversjonens eget innhold.
-window.fullversjonCookie = {
-    sett: function () {
-        document.cookie = 'itlock-fullversjon=1; path=/; max-age=31536000; SameSite=Lax';
-    },
-    fjern: function () {
-        document.cookie = 'itlock-fullversjon=; path=/; max-age=0';
-    }
-};
-
 window.sidebarMeny = (function () {
     const storageKey = 'itlock-sidebar';
 

@@ -229,21 +229,6 @@ app.Use(async (context, next) =>
         return;
     }
 
-    // Speilbildet av regelen over: PWA-ikonet (manifest.json sin start_url)
-    // åpner alltid rett på "/min-dag" ved kaldstart, FØR noe JS-interop
-    // rekker å lese localStorage/Verktoylinje. Var "Gå til fullversjon" aktiv
-    // sist (cookie satt av klienten, se fullversjonCookie i sidebar.js), send
-    // den kaldstarten videre til modul-oversikten med det samme i stedet -
-    // ellers satt man fast på en Min dag-side uten bunn-fane og uten noe av
-    // fullversjonens eget innhold.
-    if (erGet
-        && context.Request.Path == "/min-dag"
-        && context.Request.Cookies["itlock-fullversjon"] == "1")
-    {
-        context.Response.Redirect("/?fullversjon=1");
-        return;
-    }
-
     await next();
 });
 
