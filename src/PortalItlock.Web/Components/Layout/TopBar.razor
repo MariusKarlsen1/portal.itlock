@@ -277,20 +277,20 @@
     {
         if (firstRender)
         {
-            _fullversjonAktiv = await JS.InvokeAsync<string?>("localStorage.getItem", FullversjonLagringsNokkel) == "1";
+            // _erMobilvisning styrer kun toppfeltets EGNE elementer (søk,
+            // varsler, AI/Kontrolltårn-snarveier, Tilpass meny) - disse skal
+            // holde seg enkle/mobile uansett fullversjon, siden brukeren
+            // eksplisitt ba om å beholde den vanlige mobile topplinjen (☰ +
+            // tittel + avatar) i stedet for skrivebordets fulle topprad.
+            _erMobilvisning = await JS.InvokeAsync<bool>("erMobilvisning");
 
-            // Ved en helt ny sideinnlasting (hardt refresh/gjenåpning) er
-            // viewport-metaet tilbake til standard - hvis brukeren tidligere
-            // hadde slått på fullversjon, må den utvidede viewporten settes
-            // på plass igjen med det samme, før selve mobil-deteksjonen kjøres.
-            if (_fullversjonAktiv)
-            {
-                await JS.InvokeVoidAsync("fullversjon.aktiver");
-            }
-
-            var mobil = await JS.InvokeAsync<bool>("erMobilvisning");
-            _erMobilvisning = mobil;
-            Verktoylinje.SettMobilvisning(mobil);
+            // Selve gjenopprettingen av "fullversjon" fra forrige besøk gjøres
+            // sentralt i MobilFilterKnapp (unngår at to øy-komponenter kappes
+            // om å sette Verktoylinje sin tilstand hver for seg). Leses her
+            // rett fra Verktoylinje - dersom MobilFilterKnapp ikke har rukket
+            // å sette den ennå, fanges det opp like etterpå via
+            // Endret-abonnementet (se OnVerktoylinjeEndret).
+            _fullversjonAktiv = Verktoylinje.FullversjonAktiv;
             StateHasChanged();
         }
     }
@@ -350,6 +350,12 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // Fanger opp FullversjonAktiv når MobilFilterKnapp (som gjenoppretter
+        // fullversjon-tilstanden ved sideinnlasting, se der) setter den EFTER
+        // at denne komponentens egen OnAfterRenderAsync allerede har lest den
+        // - rekkefølgen de to øy-komponentene rendres i er ikke garantert.
+        Verktoylinje.Endret += OnVerktoylinjeEndret;
+
         if (AuthStateTask is null)
         {
             return;
@@ -391,7 +397,17 @@
         }
     }
 
-    public void Dispose() => Presence.Fjern(_oktId);
+    private void OnVerktoylinjeEndret()
+    {
+        _fullversjonAktiv = Verktoylinje.FullversjonAktiv;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Presence.Fjern(_oktId);
+        Verktoylinje.Endret -= OnVerktoylinjeEndret;
+    }
 
     private void ToggleSok()
     {
@@ -448,27 +464,24 @@
     private const string FullversjonLagringsNokkel = "itlock-fullversjon";
     private bool _fullversjonAktiv;
 
-    // Skrivebordslayouten styres av CSS-mediaqueryer basert på den EKTE
-    // vindusbredden - en boolean alene kan ikke overstyre dem. Løsningen
-    // (window.fullversjon i sidebar.js) setter et fast, bredt viewport-mål
-    // (width=1024, samme prinsipp som "Vis skrivebordsversjon" i vanlige
-    // mobilnettlesere) med user-scalable=no slik at man ikke kan klype-zoome
-    // eller panorere unna - vanlig vertikal sideskrolling er upåvirket og
-    // virker som normalt. Kjører deretter SAMME mobil-deteksjon som ved
-    // vanlig sideinnlasting på nytt (window.erMobilvisning), som nå riktig
-    // svarer "nei" mot den utvidede viewporten - og varsler Verktoylinje slik
-    // at alle sider/komponenter som abonnerer på den bytter til
-    // skrivebordsvisning med det samme.
+    // Viser skrivebordsinnholdet (alle felt/sider/handlinger som på PC) mens
+    // man fortsatt er på ekte mobilbredde - IKKE et nedskalert vindu (det ga
+    // for lite tekst, og viste skrivebordets venstre sidemeny, som brukeren
+    // eksplisitt ikke ønsket). Selve sidemenyen trenger ingen egen skjuling
+    // her - den er allerede usynlig på smale skjermer via sin egen CSS
+    // (NavMenu.razor.css), helt uavhengig av dette. Setter kun
+    // Verktoylinje.ErMobilvisning=false, som alle sider/komponenter som
+    // abonnerer på den (ProsjektSkjema, Prosjekter, DorRedigering, MinDag
+    // m.fl.) reagerer på med det samme og bytter til sitt fulle
+    // skrivebordsinnhold. Toppfeltet (☰ + tittel + avatar) og bunn-fanen
+    // forblir uendret siden de styres av den ekte, fysiske vindusbredden.
     private async Task GaTilFullversjon()
     {
         _fullversjonAktiv = !_fullversjonAktiv;
         await JS.InvokeVoidAsync("localStorage.setItem", FullversjonLagringsNokkel, _fullversjonAktiv ? "1" : "0");
 
-        await JS.InvokeVoidAsync(_fullversjonAktiv ? "fullversjon.aktiver" : "fullversjon.deaktiver");
-
-        var mobil = await JS.InvokeAsync<bool>("erMobilvisning");
-        _erMobilvisning = mobil;
-        Verktoylinje.SettMobilvisning(mobil);
+        Verktoylinje.SettMobilvisning(!_fullversjonAktiv);
+        Verktoylinje.SettFullversjon(_fullversjonAktiv);
     }
 
     private async Task ToggleLenke(string key, bool vis)

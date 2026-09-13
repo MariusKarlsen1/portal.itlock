@@ -33,6 +33,25 @@ public class MobilVerktoylinjeService
         Endret?.Invoke();
     }
 
+    // Skiller "ekte skrivebord" (ErMobilvisning=false fordi vinduet faktisk
+    // er bredt) fra "mobil, men viser skrivebordsinnhold via Gå til
+    // fullversjon" - begge gir ErMobilvisning=false for sidene sitt
+    // innhold, men kun det siste skal vise ting som er spesifikke for denne
+    // mobil-i-fullversjon-tilstanden (f.eks. tilbake-knappen i toppfeltet,
+    // se MobilTilbakeKnapp.razor).
+    public bool FullversjonAktiv { get; private set; }
+
+    public void SettFullversjon(bool verdi)
+    {
+        if (FullversjonAktiv == verdi)
+        {
+            return;
+        }
+
+        FullversjonAktiv = verdi;
+        Endret?.Invoke();
+    }
+
     public void RegistrerFilter(Action toggle, Func<bool> erAktivt)
     {
         _filterToggle = toggle;
