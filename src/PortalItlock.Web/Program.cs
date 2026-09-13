@@ -215,15 +215,32 @@ app.UseForwardedHeaders(forwardedHeadersOptions);
 // Blazors egen AuthorizeRouteView-omdirigering til /login rekker å skje.
 app.Use(async (context, next) =>
 {
+    var erGet = HttpMethods.IsGet(context.Request.Method);
+
     // Unntak: "Gå til fullversjon" (TopBar.razor) navigerer bevisst til "/"
     // for å vise modul-oversikten - ?fullversjon=1 markerer at dette IKKE
     // skal fanges opp av mobil-omdirigeringen under.
-    if (HttpMethods.IsGet(context.Request.Method)
+    if (erGet
         && context.Request.Path == "/"
         && !context.Request.Query.ContainsKey("fullversjon")
         && MobilDeteksjon.GjettFraUserAgent(context.Request.Headers.UserAgent.ToString()))
     {
         context.Response.Redirect("/min-dag");
+        return;
+    }
+
+    // Speilbildet av regelen over: PWA-ikonet (manifest.json sin start_url)
+    // åpner alltid rett på "/min-dag" ved kaldstart, FØR noe JS-interop
+    // rekker å lese localStorage/Verktoylinje. Var "Gå til fullversjon" aktiv
+    // sist (cookie satt av klienten, se fullversjonCookie i sidebar.js), send
+    // den kaldstarten videre til modul-oversikten med det samme i stedet -
+    // ellers satt man fast på en Min dag-side uten bunn-fane og uten noe av
+    // fullversjonens eget innhold.
+    if (erGet
+        && context.Request.Path == "/min-dag"
+        && context.Request.Cookies["itlock-fullversjon"] == "1")
+    {
+        context.Response.Redirect("/?fullversjon=1");
         return;
     }
 
