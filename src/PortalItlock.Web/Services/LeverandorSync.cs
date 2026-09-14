@@ -53,7 +53,8 @@ public static class LeverandorSync
         }
 
         component.Produktkode = standard.Varenummer;
-        component.PrisNetto = standard.Pris;
+        component.PrisNetto = standard.PrisNetto;
+        component.PrisVeiledende = standard.PrisVeiledende;
         component.Leverandor = standard.Leverandor?.Navn;
     }
 }

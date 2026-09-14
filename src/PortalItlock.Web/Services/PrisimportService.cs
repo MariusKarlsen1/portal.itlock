@@ -307,7 +307,8 @@ public class PrisimportService(ApplicationDbContext db)
                     db.ComponentLeverandorer.Add(lenke);
                 }
                 lenke.Varenummer = rad.Produktkode;
-                lenke.Pris = nyNetto;
+                lenke.PrisNetto = nyNetto;
+                lenke.PrisVeiledende = nyVeil;
                 if (!string.IsNullOrWhiteSpace(rad.Navn2))
                 {
                     comp.Navn2 = rad.Navn2;
@@ -380,7 +381,8 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     LeverandorId = leverandorEntitet.Id,
                     Varenummer = rad.Produktkode,
-                    Pris = rad.PrisNetto,
+                    PrisNetto = rad.PrisNetto,
+                    PrisVeiledende = rad.PrisVeiledende,
                     ErStandard = true
                 });
                 db.Components.Add(nyKomponent);
