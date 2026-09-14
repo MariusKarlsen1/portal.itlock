@@ -106,6 +106,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<CeMaleGrenseverdier> CeMaleGrenseverdier => Set<CeMaleGrenseverdier>();
     public DbSet<Ressursplan> Ressursplaner => Set<Ressursplan>();
     public DbSet<TripletexSyncTilstand> TripletexSyncTilstand => Set<TripletexSyncTilstand>();
+    public DbSet<Inntektskonto> Inntektskontoer => Set<Inntektskonto>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

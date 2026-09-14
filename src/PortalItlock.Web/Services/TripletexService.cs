@@ -277,11 +277,11 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
         };
     }
 
-    // TripletexProduktId er valgfri: satt betyr linjen kobles til et konkret
-    // Tripletex-produkt (se TripletexSyncService.SynkroniserProduktAsync),
-    // slik at salget bokføres på riktig inntektskonto ved fakturering - uten
-    // den blir linjen ren fritekst, akkurat som ved den gamle CSV-importen.
-    public sealed record OrdreLinjeInput(string Beskrivelse, decimal Antall, decimal EnhetsprisEksMva, int? TripletexProduktId = null);
+    // Ren fritekstlinje (beskrivelse + antall + pris) - portalen kobler
+    // bevisst IKKE varer mot Tripletex-produkter; inntektskonto/rapportering
+    // er portalens eget ansvar (se ArbeidsordreOkonomiBeregner), ordren i
+    // Tripletex er kun "klar til fakturering"-grunnlaget.
+    public sealed record OrdreLinjeInput(string Beskrivelse, decimal Antall, decimal EnhetsprisEksMva);
 
     // Oppretter en ordre i Tripletex "klar til fakturering" - IKKE det samme som
     // å fakturere den (det er et eget, separat :invoice-kall som denne
@@ -328,7 +328,6 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
             var linjerBody = linjer.Select(l => new
             {
                 order = new { id = opprettetOrdre.Id },
-                product = l.TripletexProduktId is { } pid ? new { id = pid } : null,
                 description = $"{tittel}: {l.Beskrivelse}",
                 count = l.Antall,
                 unitPriceExcludingVatCurrency = l.EnhetsprisEksMva,
@@ -356,135 +355,6 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
         catch (Exception ex)
         {
             return (null, null, ex.Message);
-        }
-    }
-
-    public sealed record TripletexKonto(int Id, int Nummer, string Navn);
-
-    // GET /ledger/account har ingen egen filtreringsparameter for kontotype -
-    // henter derfor alle (opptil 1000, som dekker en vanlig norsk kontoplan
-    // greit) og filtrerer på type=OPERATING_REVENUES ("Driftsinntekter" -
-    // altså inntektskontoer, typisk 3000-tallet) på C#-siden.
-    public async Task<(List<TripletexKonto> Kontoer, string? Feilmelding)> SokInntektskontoerAsync(string? sokeTekst, CancellationToken ct = default)
-    {
-        try
-        {
-            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get,
-                "ledger/account?count=1000&isInactive=false&fields=id,number,name,type", ct);
-            using var resp = await http.SendAsync(req, ct);
-            var raw = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode)
-            {
-                return ([], $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
-            }
-
-            var parsed = JsonSerializer.Deserialize<ListResponse<AccountSvar>>(raw, JsonOpts);
-            var kontoer = (parsed?.Values ?? [])
-                .Where(a => a.Type == "OPERATING_REVENUES")
-                .Where(a => string.IsNullOrWhiteSpace(sokeTekst)
-                    || (a.Name?.Contains(sokeTekst, StringComparison.OrdinalIgnoreCase) ?? false)
-                    || a.Number.ToString().Contains(sokeTekst))
-                .OrderBy(a => a.Number)
-                .Select(a => new TripletexKonto(a.Id, a.Number, a.Name ?? ""))
-                .ToList();
-            return (kontoer, null);
-        }
-        catch (Exception ex)
-        {
-            return ([], ex.Message);
-        }
-    }
-
-    public sealed record TripletexPosting(DateTime Dato, decimal Belop, int? KundeId, string? KundeNavn, int? ProduktId, string? ProduktNavn, int KontoNummer, string? KontoNavn);
-
-    // Henter bokførte posteringer - selve grunnlaget for inntekts-/salgs-
-    // rapportene (se RapportKunde/RapportProdukt/RapportResultat.razor).
-    // MERK: posteringer oppstår først når en ordre faktisk er FAKTURERT i
-    // Tripletex, ikke når den bare er opprettet som "klar til fakturering" -
-    // rapportene viser derfor kun det som faktisk er fakturert der.
-    public async Task<(List<TripletexPosting> Posteringer, string? Feilmelding)> HentPostingerAsync(
-        DateTime dateFrom, DateTime dateTo, int? kundeId = null, int? kontoNummerFra = null, int? kontoNummerTil = null, CancellationToken ct = default)
-    {
-        try
-        {
-            var sti = $"ledger/posting?count=1000&dateFrom={dateFrom:yyyy-MM-dd}&dateTo={dateTo:yyyy-MM-dd}"
-                + "&fields=id,date,amount,account(number,name),customer(id,name),product(id,name)";
-            if (kundeId is not null)
-            {
-                sti += $"&customerId={kundeId}";
-            }
-            if (kontoNummerFra is not null)
-            {
-                sti += $"&accountNumberFrom={kontoNummerFra}";
-            }
-            if (kontoNummerTil is not null)
-            {
-                sti += $"&accountNumberTo={kontoNummerTil}";
-            }
-
-            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, sti, ct);
-            using var resp = await http.SendAsync(req, ct);
-            var raw = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode)
-            {
-                return ([], $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
-            }
-
-            var parsed = JsonSerializer.Deserialize<ListResponse<PostingSvar>>(raw, JsonOpts);
-            var posteringer = (parsed?.Values ?? [])
-                .Where(p => p.Account is not null)
-                .Select(p => new TripletexPosting(
-                    p.Date ?? default, p.Amount ?? 0,
-                    p.Customer?.Id, p.Customer?.Name,
-                    p.Product?.Id, p.Product?.Name,
-                    p.Account!.Number, p.Account.Name))
-                .ToList();
-            return (posteringer, null);
-        }
-        catch (Exception ex)
-        {
-            return ([], ex.Message);
-        }
-    }
-
-    public sealed record ProduktOppdatering(string Navn, string? Produktkode, decimal? PrisEksMva, int TripletexKontoId);
-
-    // Oppretter/oppdaterer et Tripletex-produkt for en portal-vare (Component)
-    // - selve koblingen som gjør at inntektskontoen satt på varen faktisk
-    // brukes når varen selges (se PushArbeidsordreTilTripletexAsync).
-    public async Task<(int? Id, string? Feilmelding)> OpprettEllerOppdaterProduktAsync(int? eksisterendeProduktId, ProduktOppdatering produkt, CancellationToken ct = default)
-    {
-        try
-        {
-            var body = new
-            {
-                name = produkt.Navn,
-                number = produkt.Produktkode,
-                priceExcludingVatCurrency = produkt.PrisEksMva,
-                account = new { id = produkt.TripletexKontoId },
-                isInactive = false
-            };
-
-            var (metode, sti) = eksisterendeProduktId is { } id
-                ? (HttpMethod.Put, $"product/{id}")
-                : (HttpMethod.Post, "product");
-
-            using var req = await LagAutorisertForespurselAsync(metode, sti, ct);
-            req.Content = JsonContent.Create(body, options: JsonOpts);
-            using var resp = await http.SendAsync(req, ct);
-            var raw = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode)
-            {
-                return (null, $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
-            }
-
-            var parsed = JsonSerializer.Deserialize<ResponseWrapper<ProductSvar>>(raw, JsonOpts);
-            var lagret = parsed?.Value ?? throw new InvalidOperationException("Tomt svar fra Tripletex ved oppretting/oppdatering av produkt.");
-            return (lagret.Id, null);
-        }
-        catch (Exception ex)
-        {
-            return (null, ex.Message);
         }
     }
 
@@ -520,40 +390,6 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
     private sealed class CompanySvar
     {
         public string? Name { get; set; }
-    }
-
-    private sealed class AccountSvar
-    {
-        public int Id { get; set; }
-        public int Number { get; set; }
-        public string? Name { get; set; }
-        public string? Type { get; set; }
-    }
-
-    private sealed class PostingSvar
-    {
-        public DateTime? Date { get; set; }
-        public decimal? Amount { get; set; }
-        public AccountSvar? Account { get; set; }
-        public CustomerRefSvar? Customer { get; set; }
-        public ProductRefSvar? Product { get; set; }
-    }
-
-    private sealed class CustomerRefSvar
-    {
-        public int Id { get; set; }
-        public string? Name { get; set; }
-    }
-
-    private sealed class ProductRefSvar
-    {
-        public int Id { get; set; }
-        public string? Name { get; set; }
-    }
-
-    private sealed class ProductSvar
-    {
-        public int Id { get; set; }
     }
 
     private sealed class CustomerSvar

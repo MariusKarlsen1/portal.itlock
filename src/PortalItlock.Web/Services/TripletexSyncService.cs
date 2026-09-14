@@ -124,33 +124,6 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
     private static TripletexService.KundeOppdatering TilKundeOppdatering(Kunde k) => new(
         k.Navn, k.OrgNr, k.Epost, k.Telefon, k.Adresse, k.Postnr, k.Sted);
 
-    // Oppretter/oppdaterer Tripletex-produktet for en vare (Component) som har
-    // fått satt en inntektskonto (Component.TripletexKontoId) - selve
-    // mekanismen som gjør at salg av varen faktisk bokføres på riktig konto
-    // når ordren senere faktureres i Tripletex. Kalles lat, kun når varen
-    // faktisk selges (fra PushArbeidsordreTilTripletexAsync), ikke proaktivt
-    // for alle varer - de fleste varer får aldri satt en inntektskonto.
-    public async Task<string?> SynkroniserProduktAsync(Component c, CancellationToken ct = default)
-    {
-        if (c.TripletexKontoId is null)
-        {
-            return null;
-        }
-
-        var oppdatering = new TripletexService.ProduktOppdatering(
-            c.Navn, c.Produktkode, c.PrisVeiledende ?? c.PrisNetto, c.TripletexKontoId.Value);
-
-        var (id, feil) = await tripletex.OpprettEllerOppdaterProduktAsync(c.TripletexProduktId, oppdatering, ct);
-        if (feil is not null)
-        {
-            return feil;
-        }
-
-        c.TripletexProduktId = id;
-        await db.SaveChangesAsync(ct);
-        return null;
-    }
-
     // Kalles fra Ferdigmeld() på arbeidsordre-siden. Bygger ordrelinjer fra
     // BÅDE det opprinnelige tilbudet (hvis arbeidsordren stammer fra ett) OG
     // varer lagt til/byttet i felt (Arbeidsordre.Varer) - i motsetning til den
@@ -219,56 +192,14 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
             tripletexKundeId = match.Id;
         }
 
-        // Cacher produkt-synk pr. Component-ID innenfor dette pushet, slik at
-        // samme vare brukt på flere linjer bare synkroniseres én gang.
-        var produktCache = new Dictionary<int, int?>();
-        async Task<int?> ProduktIdForAsync(Component? c)
-        {
-            if (c is null || c.TripletexKontoId is null)
-            {
-                return null;
-            }
-            if (produktCache.TryGetValue(c.Id, out var cachet))
-            {
-                return cachet;
-            }
-            await SynkroniserProduktAsync(c, ct);
-            produktCache[c.Id] = c.TripletexProduktId;
-            return c.TripletexProduktId;
-        }
-
-        var linjer = new List<TripletexService.OrdreLinjeInput>();
-
-        if (ordre.Tilbud is not null)
-        {
-            var tilbudLinjer = ordre.Tilbud.Linjer
-                .Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering)
-                .OrderBy(l => l.Rekkefolge);
-            foreach (var l in tilbudLinjer)
-            {
-                var produktId = await ProduktIdForAsync(l.Component);
-                linjer.Add(new TripletexService.OrdreLinjeInput(l.Navn, l.Antall, l.Utpris, produktId));
-            }
-
-            var minutter = ordre.Tilbud.Linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => (l.MontasjeMinutter ?? 0) * l.Antall);
-            var arbeidstidTimer = ordre.Tilbud.EstimertTimerOverride ?? (minutter / 60m);
-            var kalkulertMontasjekost = Math.Round(ordre.Tilbud.Timepris * arbeidstidTimer, 2);
-            var montasjekost = ordre.Tilbud.Montasjekost ?? kalkulertMontasjekost;
-            if (montasjekost > 0)
-            {
-                linjer.Add(new TripletexService.OrdreLinjeInput("Montasje", 1, montasjekost));
-            }
-        }
-        else if (ordre.Timepris is not null && ordre.EstimerteTimer is not null)
-        {
-            linjer.Add(new TripletexService.OrdreLinjeInput("Montasje/arbeid", 1, ordre.Timepris.Value * ordre.EstimerteTimer.Value));
-        }
-
-        foreach (var v in ordre.Varer)
-        {
-            var produktId = await ProduktIdForAsync(v.Component);
-            linjer.Add(new TripletexService.OrdreLinjeInput(v.Navn, v.Antall, v.Utpris, produktId));
-        }
+        // Samme linjeberegning som portalens egne rapporter bruker (se
+        // ArbeidsordreOkonomiBeregner) - ordren i Tripletex er kun "klar til
+        // fakturering"-grunnlaget, ren fritekst pr. linje, uten kobling mot
+        // Tripletex-produkter/-kontoer (det styres i portalen, se Inntektskonto).
+        var linjer = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre)
+            .Select(l => new TripletexService.OrdreLinjeInput(
+                l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall))
+            .ToList();
 
         var (ordreId, ordreNummer, ordreFeil) = await tripletex.OpprettOrdreAsync(
             tripletexKundeId, ordre.Tittel, $"Arbeidsordre #{ordre.Id}", linjer, ct);

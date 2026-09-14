@@ -1,16 +1,19 @@
 @page "/rapporter/kunde"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
 @using PortalItlock.Web.Services
-@inject TripletexService Tripletex
+@inject ApplicationDbContext Db
 
 <PageTitle>Kunderapport - itlock</PageTitle>
 
 <a class="back-link" href="/rapportermodul">&larr; Tilbake til rapporter</a>
 <h1>Topp 20 kunder</h1>
 <p class="section-hint">
-    Omsetning pr. kunde (inntektskontoer 3000-3999) for valgt periode, hentet
-    direkte fra det som faktisk er fakturert i Tripletex.
+    Omsetning pr. kunde for valgt periode, beregnet fra ferdigmeldte
+    arbeidsordre i portalen (samme oppsett som Tripletex sin kunderapport,
+    men uavhengig av om ordren er fakturert i Tripletex ennå).
 </p>
 
 <div class="rapport-filter">
@@ -27,16 +30,11 @@
     </button>
 </div>
 
-@if (_feil is not null)
-{
-    <p class="form-error">@_feil</p>
-}
-
 @if (_harHentet)
 {
     @if (_rader.Count == 0)
     {
-        <p class="list-empty">Ingen fakturert omsetning i denne perioden.</p>
+        <p class="list-empty">Ingen ferdigmeldte arbeidsordre med omsetning i denne perioden.</p>
     }
     else
     {
@@ -71,7 +69,6 @@
     private DateTime _tilDato = DateTime.Today;
     private bool _lasterNa;
     private bool _harHentet;
-    private string? _feil;
 
     private sealed record KundeRad(string Navn, decimal Sum);
     private List<KundeRad> _rader = [];
@@ -81,25 +78,23 @@
     private async Task HentRapport()
     {
         _lasterNa = true;
-        _feil = null;
         try
         {
-            var (posteringer, feil) = await Tripletex.HentPostingerAsync(_fraDato, _tilDato, kontoNummerFra: 3000, kontoNummerTil: 3999);
-            if (feil is not null)
-            {
-                _feil = feil;
-                _rader = [];
-            }
-            else
-            {
-                _rader = posteringer
-                    .Where(p => p.KundeNavn is not null)
-                    .GroupBy(p => p.KundeNavn!)
-                    .Select(g => new KundeRad(g.Key, g.Sum(p => Math.Abs(p.Belop))))
-                    .OrderByDescending(r => r.Sum)
-                    .Take(20)
-                    .ToList();
-            }
+            var tilEksklusiv = _tilDato.Date.AddDays(1);
+            var ordrer = await Db.Arbeidsordre
+                .Where(a => a.FullfortDato != null && a.FullfortDato >= _fraDato.Date && a.FullfortDato < tilEksklusiv)
+                .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
+                .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer).ThenInclude(l => l.Component)
+                .Include(a => a.Varer).ThenInclude(v => v.Component)
+                .ToListAsync();
+
+            _rader = ordrer
+                .Where(a => a.Prosjekt?.Kunde is not null)
+                .GroupBy(a => a.Prosjekt!.Kunde!.Navn)
+                .Select(g => new KundeRad(g.Key, g.Sum(a => ArbeidsordreOkonomiBeregner.BeregnLinjer(a).Sum(l => l.Belop))))
+                .OrderByDescending(r => r.Sum)
+                .Take(20)
+                .ToList();
             _harHentet = true;
         }
         finally
