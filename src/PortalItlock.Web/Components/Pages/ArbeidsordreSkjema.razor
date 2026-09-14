@@ -339,6 +339,23 @@ else if (_ordre is not null)
                     }
                 </select>
             </label>
+            <label class="mobil-las-felt">
+                Kunde
+                @if (_ordre.TilbudId.HasValue)
+                {
+                    <input value="@(_ordre.Kunde?.Navn ?? "Ikke satt")" disabled title="Hentes automatisk fra tilbudet" />
+                }
+                else
+                {
+                    <select @bind="_ordre.KundeId" disabled="@_erMobilvisning">
+                        <option value="">Ikke satt</option>
+                        @foreach (var k in _kunder)
+                        {
+                            <option value="@k.Id">@k.Navn</option>
+                        }
+                    </select>
+                }
+            </label>
             <label>
                 Referanse
                 <input value="@(_ordre.Prosjekt?.Prosjektleder?.Navn ?? "Ikke satt")" disabled />
@@ -707,7 +724,10 @@ else if (_ordre is not null)
         }
         else if (!string.IsNullOrWhiteSpace(_ordre.TripletexOrdreFeil))
         {
-            <p class="form-error">Ikke sendt til Tripletex: @_ordre.TripletexOrdreFeil</p>
+            <p class="form-error">
+                Ikke sendt til Tripletex: @_ordre.TripletexOrdreFeil
+                <button type="button" class="cancel-button" @onclick="VisTripletexRetry">Prøv på nytt</button>
+            </p>
         }
     </section>
 
@@ -751,6 +771,12 @@ else if (_ordre is not null)
         public string Navn { get; set; } = "";
     }
 
+    private sealed class KundeOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
     private sealed class RegistreringRad
     {
         public int Id { get; set; }
@@ -775,6 +801,7 @@ else if (_ordre is not null)
     private string? _savedMessage;
     private List<ProsjektOption> _prosjekter = [];
     private List<MontorOption> _montorer = [];
+    private List<KundeOption> _kunder = [];
     private List<RegistreringRad> _registreringer = [];
     private decimal _sumTimer;
     private int? _loadedId;
@@ -805,6 +832,7 @@ else if (_ordre is not null)
     private List<LagretPdf> _lagredeRapportPdfer = [];
     private string? _ferdigmeldtMelding;
     private bool _visFerdigmeldModal;
+    private bool _erRetryModus;
     private TripletexOverforingsType _valgtOverforingsType = TripletexOverforingsType.AlleLinjer;
     private decimal? _akontoBelop;
     private string _akontoKommentar = "";
@@ -848,6 +876,7 @@ else if (_ordre is not null)
         _kartFeil = null;
 
         _ordre = await Db.Arbeidsordre
+            .Include(a => a.Kunde)
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Prosjektleder)
             .Include(a => a.Varer).ThenInclude(v => v.LagtTilAvBruker)
@@ -876,11 +905,34 @@ else if (_ordre is not null)
                 .ToListAsync()
             : [];
 
+        // Kunde skal alltid følge tilbudet når arbeidsordren stammer fra ett -
+        // henter/oppdaterer den her (i stedet for kun ved opprettelse) slik at
+        // eldre arbeidsordre uten dette feltet selvheles idet de åpnes, og at
+        // den følger med om tilbudets prosjekt/kunde skulle endre seg.
+        if (_ordre.TilbudId.HasValue)
+        {
+            var tilbudKunde = await Db.Tilbud
+                .Where(t => t.Id == _ordre.TilbudId.Value)
+                .Select(t => t.Prosjekt.KundeId)
+                .FirstOrDefaultAsync();
+            if (tilbudKunde is not null && _ordre.KundeId != tilbudKunde)
+            {
+                _ordre.KundeId = tilbudKunde;
+                _ordre.Kunde = await Db.Kunder.FindAsync(tilbudKunde.Value);
+                await Db.SaveChangesAsync();
+            }
+        }
+
         await LastTicketAsync();
 
         _prosjekter = await Db.Prosjekter
             .OrderBy(p => p.Navn)
             .Select(p => new ProsjektOption { Id = p.Id, Navn = p.Navn })
+            .ToListAsync();
+
+        _kunder = await Db.Kunder
+            .OrderBy(k => k.Navn)
+            .Select(k => new KundeOption { Id = k.Id, Navn = k.Navn })
             .ToListAsync();
 
         _montorer = await Db.Brukere
@@ -1086,7 +1138,7 @@ else if (_ordre is not null)
         var ticket = new Ticket
         {
             Tittel = _ordre!.Tittel,
-            KundeId = _ordre.Prosjekt?.KundeId,
+            KundeId = _ordre.KundeId ?? _ordre.Prosjekt?.KundeId,
             ProsjektId = _ordre.ProsjektId,
             ArbeidsordreId = _ordre.Id
         };
@@ -1171,6 +1223,19 @@ else if (_ordre is not null)
 
     private void VisFerdigmeldValg()
     {
+        _erRetryModus = false;
+        _valgtOverforingsType = TripletexOverforingsType.AlleLinjer;
+        _akontoBelop = null;
+        _akontoKommentar = "";
+        _visFerdigmeldModal = true;
+    }
+
+    // Vises når en tidligere overføring feilet (TripletexOrdreFeil er satt) -
+    // ordren er allerede ferdigmeldt, så her prøves KUN selve Tripletex-
+    // overføringen på nytt, uten å røre ferdigmeld-status/e-post igjen.
+    private void VisTripletexRetry()
+    {
+        _erRetryModus = true;
         _valgtOverforingsType = TripletexOverforingsType.AlleLinjer;
         _akontoBelop = null;
         _akontoKommentar = "";
@@ -1180,6 +1245,24 @@ else if (_ordre is not null)
     private async Task BekreftFerdigmeld()
     {
         _visFerdigmeldModal = false;
+
+        if (_erRetryModus)
+        {
+            try
+            {
+                var (retryOk, retryFeil) = await TripletexSync.PushArbeidsordreTilTripletexAsync(
+                    _ordre!.Id, _valgtOverforingsType, _akontoBelop, _akontoKommentar);
+                _ferdigmeldtMelding = retryOk
+                    ? "Sendt til Tripletex."
+                    : $"Kunne ikke sende til Tripletex: {retryFeil}";
+            }
+            catch (Exception ex)
+            {
+                _ferdigmeldtMelding = $"Kunne ikke sende til Tripletex: {ex.Message}";
+            }
+
+            return;
+        }
 
         _ordre!.Status = ArbeidsordreStatus.Ferdig;
         _ordre.FullfortAvBrukerId = _naverendeBrukerId;
@@ -1206,12 +1289,13 @@ else if (_ordre is not null)
             _ferdigmeldtMelding += $" (Kunne ikke sende til Tripletex: {ex.Message})";
         }
 
-        var kundeEpost = _ordre.Prosjekt?.Kunde?.Epost;
+        var kunde = _ordre.Kunde ?? _ordre.Prosjekt?.Kunde;
+        var kundeEpost = kunde?.Epost;
         if (!string.IsNullOrWhiteSpace(kundeEpost))
         {
             var utfortHtml = string.IsNullOrWhiteSpace(_ordre.UtfortArbeid) ? "" : "<p><strong>Utført arbeid:</strong> " + System.Net.WebUtility.HtmlEncode(_ordre.UtfortArbeid).Replace("\n", "<br>") + "</p>";
             var anbefalingerHtml = string.IsNullOrWhiteSpace(_ordre.Anbefalinger) ? "" : "<p><strong>Anbefalinger:</strong> " + System.Net.WebUtility.HtmlEncode(_ordre.Anbefalinger).Replace("\n", "<br>") + "</p>";
-            var html = "<p>Hei " + (_ordre.Prosjekt?.Kunde?.Navn ?? "") + ",</p>"
+            var html = "<p>Hei " + (kunde?.Navn ?? "") + ",</p>"
                 + "<p>Her er dokumentasjon fra jobben \"" + System.Net.WebUtility.HtmlEncode(_ordre.Tittel) + "\":</p>"
                 + utfortHtml + anbefalingerHtml
                 + "<p>Mvh itlock AS</p>";

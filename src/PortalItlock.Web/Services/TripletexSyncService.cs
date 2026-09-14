@@ -148,6 +148,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         CancellationToken ct = default)
     {
         var ordre = await db.Arbeidsordre
+            .Include(a => a.Kunde)
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer).ThenInclude(l => l.Component)
             .Include(a => a.Varer).ThenInclude(v => v.Component)
@@ -165,10 +166,13 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
             return (true, null);
         }
 
-        var kunde = ordre.Prosjekt?.Kunde;
+        // Arbeidsordre.Kunde (satt fra tilbudet, eller valgt manuelt) er den
+        // primære kilden - Prosjekt.Kunde er fallback for eldre arbeidsordre
+        // fra før dette feltet fantes.
+        var kunde = ordre.Kunde ?? ordre.Prosjekt?.Kunde;
         if (kunde is null)
         {
-            ordre.TripletexOrdreFeil = "Arbeidsordren er ikke koblet til et prosjekt med kunde.";
+            ordre.TripletexOrdreFeil = "Arbeidsordren har ingen kunde satt (verken direkte eller via prosjekt).";
             await db.SaveChangesAsync(ct);
             return (false, ordre.TripletexOrdreFeil);
         }
@@ -190,22 +194,26 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
             await db.SaveChangesAsync(ct);
         }
 
-        if (!int.TryParse(kunde.TripletexKundenummer, out var tripletexKundeId))
+        // TripletexKundenummer lagres som Tripletex sitt "customerNumber"
+        // (visningsnummeret, f.eks. "10009") - IKKE den interne Tripletex-IDen
+        // som kreves i order.customer.id. De to er helt forskjellige tall i
+        // Tripletex sin datamodell (bekreftet i praksis: en tidligere versjon
+        // her antok feilaktig at et tallformat TripletexKundenummer VAR IDen,
+        // noe som sendte feil kunde-ID til Tripletex og ga 422 "Kunden finnes
+        // ikke"). Slår derfor alltid opp den ekte IDen via søk, og matcher på
+        // enten CustomerNumber (vanlig) eller Id (dekker det sjeldne
+        // unntakstilfellet der OpprettKundeAsync måtte falle tilbake til å
+        // lagre selve IDen fordi Tripletex ikke returnerte et kundenummer).
+        var (treff, sokFeil) = await tripletex.SokKunderAsync(kunde.Navn, ct);
+        var match = treff.FirstOrDefault(t =>
+            t.CustomerNumber == kunde.TripletexKundenummer || t.Id.ToString() == kunde.TripletexKundenummer);
+        if (match is null)
         {
-            // TripletexKundenummer kan i praksis være selve Tripletex-IDen
-            // (satt av OpprettKundeAsync over hvis Tripletex ikke returnerte et
-            // eget kundenummer) eller et rent visningsnummer - slår opp den
-            // ekte IDen via søk hvis feltet ikke er tallformat.
-            var (treff, sokFeil) = await tripletex.SokKunderAsync(kunde.Navn, ct);
-            var match = treff.FirstOrDefault(t => t.CustomerNumber == kunde.TripletexKundenummer);
-            if (match is null)
-            {
-                ordre.TripletexOrdreFeil = sokFeil ?? $"Fant ikke kunden \"{kunde.Navn}\" igjen i Tripletex (kundenummer {kunde.TripletexKundenummer}).";
-                await db.SaveChangesAsync(ct);
-                return (false, ordre.TripletexOrdreFeil);
-            }
-            tripletexKundeId = match.Id;
+            ordre.TripletexOrdreFeil = sokFeil ?? $"Fant ikke kunden \"{kunde.Navn}\" igjen i Tripletex (kundenummer {kunde.TripletexKundenummer}).";
+            await db.SaveChangesAsync(ct);
+            return (false, ordre.TripletexOrdreFeil);
         }
+        var tripletexKundeId = match.Id;
 
         // Samme linjeberegning som portalens egne rapporter bruker (se
         // ArbeidsordreOkonomiBeregner) - ordren i Tripletex er kun "klar til

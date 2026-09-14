@@ -9,6 +9,14 @@ public class Arbeidsordre
     public int? ProsjektId { get; set; }
     public Prosjekt? Prosjekt { get; set; }
 
+    // Kunden arbeidsordren faktureres til - hentes automatisk fra tilbudet
+    // (via Tilbud.Prosjekt.Kunde) når arbeidsordren er opprettet fra et
+    // tilbud, ellers velges den manuelt. Brukes av
+    // TripletexSyncService.PushArbeidsordreTilTripletexAsync, med
+    // Prosjekt.Kunde som fallback for eldre arbeidsordre uten denne satt.
+    public int? KundeId { get; set; }
+    public Kunde? Kunde { get; set; }
+
     public int? AnsvarligMontorId { get; set; }
     public Bruker? AnsvarligMontor { get; set; }
 
