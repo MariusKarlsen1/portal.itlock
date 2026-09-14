@@ -18,6 +18,7 @@ public class PrisimportService(ApplicationDbContext db)
     {
         public int RadNummer { get; set; }
         public string? Produktkode { get; set; }
+        public string? Gtin { get; set; }
         public string? Navn { get; set; }
         public string? Navn2 { get; set; }
         public string? Beskrivelse { get; set; }
@@ -197,6 +198,7 @@ public class PrisimportService(ApplicationDbContext db)
             {
                 RadNummer = i + 2,
                 Produktkode = produktkode,
+                Gtin = HentFelt(rad, valgt.Gtin),
                 Navn = navn,
                 Navn2 = HentFelt(rad, valgt.Navn2),
                 Beskrivelse = HentFelt(rad, valgt.Beskrivelse),
@@ -209,7 +211,10 @@ public class PrisimportService(ApplicationDbContext db)
                 AktivVerdi = aktivFlagg,
                 KomponenttypeNavn = importertKomponenttype?.Navn,
                 ComponentTypeId = importertKomponenttype?.Id,
-                ProduktgruppeNavn = importertProduktgruppe?.Navn,
+                // Produktgruppe opprettes automatisk i ImporterAsync hvis den
+                // ikke finnes fra før (samme mønster som leverandør) - viser
+                // derfor navnet her selv når det ikke matchet noen eksisterende.
+                ProduktgruppeNavn = importertProduktgruppe?.Navn ?? produktgruppeVerdi,
                 ProduktgruppeId = importertProduktgruppe?.Id,
             };
 
@@ -273,8 +278,29 @@ public class PrisimportService(ApplicationDbContext db)
         // kobler hver vare i denne prislisten mot den (se LeverandorSync).
         var leverandorEntitet = await LeverandorSync.FinnEllerOpprettAsync(db, leverandor);
 
+        // Cacher opprettede produktgrupper pr. navn innenfor dette
+        // importkjøret, slik at samme nye gruppenavn ikke opprettes flere
+        // ganger (og slipper å lagre til DB for hver rad bare for å få en ID).
+        var nyeProduktgrupperPerNavn = new Dictionary<string, Produktgruppe>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var rad in rader.Where(r => r.Inkluder && r.Feil is null))
         {
+            // Produktgruppen kan ha blitt matchet mot en eksisterende gruppe i
+            // ForhandsvisAsync (ProduktgruppeId satt), eller kun mot et navn
+            // som ikke fantes fra før - oppretter den i så fall her, samme
+            // mønster som leverandøren over.
+            if (!rad.ProduktgruppeId.HasValue && !string.IsNullOrWhiteSpace(rad.ProduktgruppeNavn))
+            {
+                if (!nyeProduktgrupperPerNavn.TryGetValue(rad.ProduktgruppeNavn, out var produktgruppe))
+                {
+                    produktgruppe = new Produktgruppe { Navn = rad.ProduktgruppeNavn.Trim() };
+                    db.Produktgrupper.Add(produktgruppe);
+                    await db.SaveChangesAsync();
+                    nyeProduktgrupperPerNavn[rad.ProduktgruppeNavn] = produktgruppe;
+                }
+                rad.ProduktgruppeId = produktgruppe.Id;
+            }
+
             if (rad.EksisterendeComponentId.HasValue)
             {
                 var comp = await db.Components.Include(c => c.Produktgrupper).FirstOrDefaultAsync(c => c.Id == rad.EksisterendeComponentId.Value);
@@ -325,6 +351,10 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     comp.Overflate = rad.Overflate;
                 }
+                if (!string.IsNullOrWhiteSpace(rad.Gtin))
+                {
+                    comp.Gtin = rad.Gtin.Trim();
+                }
                 if (!string.IsNullOrWhiteSpace(rad.Enhet))
                 {
                     comp.Enhet = rad.Enhet;
@@ -366,6 +396,7 @@ public class PrisimportService(ApplicationDbContext db)
                     Varegruppe = string.IsNullOrWhiteSpace(rad.Varegruppe) ? null : rad.Varegruppe,
                     Overflate = string.IsNullOrWhiteSpace(rad.Overflate) ? null : rad.Overflate,
                     Produktkode = rad.Produktkode,
+                    Gtin = string.IsNullOrWhiteSpace(rad.Gtin) ? null : rad.Gtin.Trim(),
                     Leverandor = leverandor,
                     Enhet = string.IsNullOrWhiteSpace(rad.Enhet) ? null : rad.Enhet,
                     PrisNetto = rad.PrisNetto,
