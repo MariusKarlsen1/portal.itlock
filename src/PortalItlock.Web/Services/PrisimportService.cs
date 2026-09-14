@@ -335,6 +335,10 @@ public class PrisimportService(ApplicationDbContext db)
                 lenke.Varenummer = rad.Produktkode;
                 lenke.PrisNetto = nyNetto;
                 lenke.PrisVeiledende = nyVeil;
+                if (string.IsNullOrWhiteSpace(lenke.Navn))
+                {
+                    lenke.Navn = comp.Navn;
+                }
                 if (!string.IsNullOrWhiteSpace(rad.Navn2))
                 {
                     comp.Navn2 = rad.Navn2;
@@ -412,6 +416,7 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     LeverandorId = leverandorEntitet.Id,
                     Varenummer = rad.Produktkode,
+                    Navn = nyKomponent.Navn,
                     PrisNetto = rad.PrisNetto,
                     PrisVeiledende = rad.PrisVeiledende,
                     ErStandard = true
