@@ -205,8 +205,45 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
     {
         public int Id { get; set; }
         public string? Name { get; set; }
+
+        // Tripletex sin OpenAPI-spesifikasjon sier "string", men i praksis kan
+        // f.eks. et autogenerert kundenummer komme tilbake som et rått
+        // JSON-tall - System.Text.Json er strengt og kaster ellers en
+        // JsonException midt i søket (bekreftet i praksis: "The JSON value
+        // could not be converted to System.String" på nettopp dette feltet).
+        [JsonConverter(typeof(SlakkStrengKonverterer))]
         public string? CustomerNumber { get; set; }
+
+        [JsonConverter(typeof(SlakkStrengKonverterer))]
         public string? OrganizationNumber { get; set; }
         public string? Email { get; set; }
+    }
+
+    // Godtar både JSON-streng og JSON-tall for et felt som .NET-siden
+    // forventer som string - se kommentar på CustomerSvar over.
+    private sealed class SlakkStrengKonverterer : JsonConverter<string?>
+    {
+        public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            reader.TokenType switch
+            {
+                JsonTokenType.String => reader.GetString(),
+                JsonTokenType.Number => reader.TryGetInt64(out var heltall)
+                    ? heltall.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : reader.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                JsonTokenType.Null => null,
+                _ => throw new JsonException($"Uventet JSON-type for strengfelt: {reader.TokenType}")
+            };
+
+        public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
+        {
+            if (value is null)
+            {
+                writer.WriteNullValue();
+            }
+            else
+            {
+                writer.WriteStringValue(value);
+            }
+        }
     }
 }
