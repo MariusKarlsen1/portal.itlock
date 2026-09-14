@@ -621,6 +621,14 @@ app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
         : Results.File(komponent.FdvData, komponent.FdvContentType ?? "application/pdf", komponent.FdvFilnavn);
 }).RequireAuthorization();
 
+app.MapGet("/komponent/fdvdokument/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var dokument = await db.ComponentFdvDokumenter.FindAsync(id);
+    return dokument is null
+        ? Results.NotFound()
+        : Results.File(dokument.Data, dokument.ContentType, dokument.Filnavn);
+}).RequireAuthorization();
+
 app.MapGet("/komponent/{id:int}/montasjeblad", async (int id, ApplicationDbContext db) =>
 {
     var komponent = await db.Components.FindAsync(id);

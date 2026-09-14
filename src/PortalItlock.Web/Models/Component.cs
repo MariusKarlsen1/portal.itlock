@@ -48,6 +48,10 @@ public class Component
     public string? FdvFilnavn { get; set; }
     public string? FdvContentType { get; set; }
 
+    // Flere FDV-dokumenter utover hoveddokumentet over - se
+    // Models/ComponentFdvDokument.cs.
+    public List<ComponentFdvDokument> FdvDokumenter { get; set; } = [];
+
     public byte[]? MontasjebladData { get; set; }
     public string? MontasjebladFilnavn { get; set; }
     public string? MontasjebladContentType { get; set; }

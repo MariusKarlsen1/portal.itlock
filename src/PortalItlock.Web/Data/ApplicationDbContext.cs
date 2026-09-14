@@ -109,6 +109,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Inntektskonto> Inntektskontoer => Set<Inntektskonto>();
     public DbSet<Leverandor> Leverandorer => Set<Leverandor>();
     public DbSet<ComponentLeverandor> ComponentLeverandorer => Set<ComponentLeverandor>();
+    public DbSet<ComponentFdvDokument> ComponentFdvDokumenter => Set<ComponentFdvDokument>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -391,6 +392,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasOne(p => p.Component)
             .WithMany()
             .HasForeignKey(p => p.ComponentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ComponentFdvDokument>()
+            .HasOne(d => d.Component)
+            .WithMany(c => c.FdvDokumenter)
+            .HasForeignKey(d => d.ComponentId)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Avvik>()

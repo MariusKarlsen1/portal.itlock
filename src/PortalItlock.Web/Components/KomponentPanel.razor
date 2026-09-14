@@ -131,24 +131,71 @@
                 </div>
 
                 <div class="fil-rad">
-                    <div>
+                    <div class="fil-blokk">
                         <span class="fil-label">FDV</span>
-                        @if (_entity.FdvData is not null)
+                        <p class="section-hint">En vare kan ha flere FDV-dokumenter.</p>
+                        @if (_entity.FdvData is not null || _entity.FdvDokumenter.Count > 0)
                         {
-                            <a href="@($"/komponent/{_entity.Id}/fdv")" target="_blank">@_entity.FdvFilnavn</a>
-                            <button type="button" class="remove-button" @onclick="FjernFdv">Fjern</button>
+                            <ul class="fil-liste">
+                                @if (_entity.FdvData is not null)
+                                {
+                                    <li>
+                                        <a href="@($"/komponent/{_entity.Id}/fdv")" target="_blank">@_entity.FdvFilnavn</a>
+                                        @if (_bekrefterFjernFdv)
+                                        {
+                                            <span class="fjern-bekreft">
+                                                Er du sikker?
+                                                <button type="button" class="remove-button" @onclick="FjernFdv">Ja</button>
+                                                <button type="button" class="cancel-button" @onclick="@(() => _bekrefterFjernFdv = false)">Avbryt</button>
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="remove-button" @onclick="@(() => _bekrefterFjernFdv = true)">Fjern</button>
+                                        }
+                                    </li>
+                                }
+                                @foreach (var d in _entity.FdvDokumenter)
+                                {
+                                    <li @key="d.Id">
+                                        <a href="@($"/komponent/fdvdokument/{d.Id}")" target="_blank">@d.Filnavn</a>
+                                        @if (_fjernerFdvDokumentId == d.Id)
+                                        {
+                                            <span class="fjern-bekreft">
+                                                Er du sikker?
+                                                <button type="button" class="remove-button" @onclick="@(() => FjernFdvDokument(d))">Ja</button>
+                                                <button type="button" class="cancel-button" @onclick="@(() => _fjernerFdvDokumentId = null)">Avbryt</button>
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="remove-button" @onclick="@(() => _fjernerFdvDokumentId = d.Id)">Fjern</button>
+                                        }
+                                    </li>
+                                }
+                            </ul>
                         }
-                        else
-                        {
-                            <InputFile OnChange="LastOppFdv" accept=".pdf,application/pdf" />
-                        }
+                        <InputFile OnChange="LastOppFdv" accept=".pdf,application/pdf" />
                     </div>
-                    <div>
+                    <div class="fil-blokk">
                         <span class="fil-label">Montasjeblad</span>
                         @if (_entity.MontasjebladData is not null)
                         {
-                            <a href="@($"/komponent/{_entity.Id}/montasjeblad")" target="_blank">@_entity.MontasjebladFilnavn</a>
-                            <button type="button" class="remove-button" @onclick="FjernMontasjeblad">Fjern</button>
+                            <div class="fil-linje">
+                                <a href="@($"/komponent/{_entity.Id}/montasjeblad")" target="_blank">@_entity.MontasjebladFilnavn</a>
+                                @if (_bekrefterFjernMontasjeblad)
+                                {
+                                    <span class="fjern-bekreft">
+                                        Er du sikker?
+                                        <button type="button" class="remove-button" @onclick="FjernMontasjeblad">Ja</button>
+                                        <button type="button" class="cancel-button" @onclick="@(() => _bekrefterFjernMontasjeblad = false)">Avbryt</button>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <button type="button" class="remove-button" @onclick="@(() => _bekrefterFjernMontasjeblad = true)">Fjern</button>
+                                }
+                            </div>
                         }
                         else
                         {
@@ -337,6 +384,9 @@
 
     private int? _lastetForId;
     private int? _fjernerLeverandorId;
+    private bool _bekrefterFjernFdv;
+    private bool _bekrefterFjernMontasjeblad;
+    private int? _fjernerFdvDokumentId;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -361,7 +411,10 @@
         _leggTilFeil = null;
         _visProduktgruppeVelger = false;
         _fjernerLeverandorId = null;
-        _entity = await Db.Components.Include(c => c.Produktgrupper).FirstOrDefaultAsync(c => c.Id == id);
+        _bekrefterFjernFdv = false;
+        _bekrefterFjernMontasjeblad = false;
+        _fjernerFdvDokumentId = null;
+        _entity = await Db.Components.Include(c => c.Produktgrupper).Include(c => c.FdvDokumenter).FirstOrDefaultAsync(c => c.Id == id);
         if (_entity is null)
         {
             return;
@@ -441,9 +494,28 @@
             await stream.CopyToAsync(buffer);
         }
 
-        _entity.FdvData = buffer.ToArray();
-        _entity.FdvFilnavn = file.Name;
-        _entity.FdvContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType;
+        var innhold = buffer.ToArray();
+        var contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType;
+
+        // Hoveddokumentet (FdvData) fylles først - alt deretter blir egne,
+        // ekstra dokumenter, siden en vare kan ha flere.
+        if (_entity.FdvData is null)
+        {
+            _entity.FdvData = innhold;
+            _entity.FdvFilnavn = file.Name;
+            _entity.FdvContentType = contentType;
+        }
+        else
+        {
+            Db.ComponentFdvDokumenter.Add(new ComponentFdvDokument
+            {
+                ComponentId = _entity.Id,
+                Filnavn = file.Name,
+                ContentType = contentType,
+                Data = innhold
+            });
+        }
+
         await Db.SaveChangesAsync();
         await OnSaved.InvokeAsync();
     }
@@ -458,7 +530,26 @@
         _entity.FdvData = null;
         _entity.FdvFilnavn = null;
         _entity.FdvContentType = null;
+        _bekrefterFjernFdv = false;
         await Db.SaveChangesAsync();
+        await OnSaved.InvokeAsync();
+    }
+
+    private async Task FjernFdvDokument(ComponentFdvDokument dokument)
+    {
+        if (_entity is null)
+        {
+            return;
+        }
+
+        var entitet = await Db.ComponentFdvDokumenter.FirstOrDefaultAsync(d => d.Id == dokument.Id);
+        if (entitet is not null)
+        {
+            Db.ComponentFdvDokumenter.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        _fjernerFdvDokumentId = null;
         await OnSaved.InvokeAsync();
     }
 
@@ -500,6 +591,7 @@
         _entity.MontasjebladData = null;
         _entity.MontasjebladFilnavn = null;
         _entity.MontasjebladContentType = null;
+        _bekrefterFjernMontasjeblad = false;
         await Db.SaveChangesAsync();
         await OnSaved.InvokeAsync();
     }

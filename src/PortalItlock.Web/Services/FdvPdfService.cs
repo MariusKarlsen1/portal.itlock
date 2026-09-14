@@ -14,11 +14,16 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     {
         var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
 
-        return await db.DorKomponenter
+        var komponentIder = await db.DorKomponenter
             .Where(dk => dk.Dor!.ProsjektId == prosjektId && dk.Component!.FdvData != null
                 && (valgteByggetrinn == null || (dk.Dor!.Plantegning != null && valgteByggetrinn.Contains(dk.Dor!.Plantegning!.Byggetrinn))))
-            .Select(dk => dk.Component!)
+            .Select(dk => dk.ComponentId)
             .Distinct()
+            .ToListAsync();
+
+        return await db.Components
+            .Where(c => komponentIder.Contains(c.Id))
+            .Include(c => c.FdvDokumenter)
             .OrderBy(c => c.Navn)
             .ToListAsync();
     }
@@ -109,6 +114,15 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                         t.Span($" ({komponent.Produktkode})").FontColor(Colors.Grey.Darken1);
                     }
                 });
+
+                foreach (var ekstraDokument in komponent.FdvDokumenter)
+                {
+                    LeggTilPdfSider(ekstraDokument.Data, t =>
+                    {
+                        t.Span("FDV – ").SemiBold();
+                        t.Span($"{komponent.Navn} - {ekstraDokument.Filnavn}");
+                    });
+                }
             }
 
             foreach (var vedlegg in ekstraVedlegg)
