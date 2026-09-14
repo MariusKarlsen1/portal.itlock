@@ -1,0 +1,324 @@
+@page "/komponenter/leverandorer/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+<PageTitle>@(_leverandor?.Navn ?? "Leverandør") - itlock</PageTitle>
+
+<a class="back-link" href="/komponenter/leverandorer">&larr; Tilbake til leverandører</a>
+
+@if (_notFound)
+{
+    <p class="form-error">Fant ikke leverandøren.</p>
+}
+else if (_leverandor is not null)
+{
+    <h1>@_leverandor.Navn</h1>
+
+    <section class="leverandor-seksjon">
+        <h2>Kontaktinfo</h2>
+        <div class="field-grid">
+            <label>
+                Navn
+                <input @bind="_leverandor.Navn" />
+            </label>
+            <label>
+                Kontaktperson
+                <input @bind="_leverandor.Kontaktperson" />
+            </label>
+            <label>
+                Telefon
+                <input @bind="_leverandor.Telefon" />
+            </label>
+            <label>
+                E-post
+                <input @bind="_leverandor.Epost" />
+            </label>
+            <label>
+                Adresse
+                <input @bind="_leverandor.Adresse" />
+            </label>
+            <label>
+                Postnr
+                <input @bind="_leverandor.Postnr" />
+            </label>
+            <label>
+                Sted
+                <input @bind="_leverandor.Sted" />
+            </label>
+            <label class="span-2">
+                Notater
+                <textarea rows="2" @bind="_leverandor.Notater"></textarea>
+            </label>
+        </div>
+        <button type="button" class="save-button" @onclick="LagreLeverandor">Lagre</button>
+        @if (!string.IsNullOrEmpty(_melding))
+        {
+            <span class="save-success">@_melding</span>
+        }
+    </section>
+
+    <section class="leverandor-seksjon">
+        <h2>Legg til vare</h2>
+        <p class="section-hint">Søk opp en vare i komponentregisteret for å koble den til denne leverandøren, med leverandørens eget varenummer og pris.</p>
+        <div class="component-search">
+            <label>
+                Søk vare (navn eller produktkode)
+                <input @bind="_vareSok" @bind:event="oninput" @bind:after="SokVarer" placeholder="Søk..." />
+            </label>
+            @if (_vareSokResultater.Count > 0)
+            {
+                <ul class="search-results">
+                    @foreach (var c in _vareSokResultater)
+                    {
+                        <li>
+                            <button type="button" class="search-result" @onclick="@(() => VelgVare(c))">
+                                <span class="search-result-name">@c.Navn</span>
+                                <span class="search-result-meta">@(c.Produktkode ?? "Uten produktkode")</span>
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+
+        @if (_valgtVare is not null)
+        {
+            <div class="ny-lenke-form">
+                <p><strong>@_valgtVare.Navn</strong></p>
+                <label>
+                    Leverandørens varenummer
+                    <input @bind="_nyttVarenummer" />
+                </label>
+                <label>
+                    Pris
+                    <input type="number" step="0.01" @bind="_nyPris" />
+                </label>
+                <label class="checkbox-felt">
+                    <input type="checkbox" @bind="_nySomStandard" />
+                    Sett som standard for denne varen
+                </label>
+                <div class="ny-lenke-actions">
+                    <button type="button" class="cancel-button" @onclick="AvbrytVelgVare">Avbryt</button>
+                    <button type="button" class="save-button" @onclick="LeggTilVare">Legg til</button>
+                </div>
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(_leggTilFeil))
+        {
+            <p class="form-error">@_leggTilFeil</p>
+        }
+    </section>
+
+    <section class="leverandor-seksjon">
+        <h2>Varer fra @_leverandor.Navn (@_lenker.Count)</h2>
+        @if (_lenker.Count == 0)
+        {
+            <p class="list-empty">Ingen varer koblet til denne leverandøren ennå.</p>
+        }
+        else
+        {
+            <table class="lenke-table">
+                <thead>
+                    <tr>
+                        <th>Vare</th>
+                        <th>Varenummer</th>
+                        <th>Pris</th>
+                        <th>Standard</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var l in _lenker)
+                    {
+                        <tr @key="l.ComponentId">
+                            <td>@l.ComponentNavn</td>
+                            <td><input @bind="l.Varenummer" @bind:after="@(() => LagreLenke(l))" /></td>
+                            <td><input type="number" step="0.01" class="pris-input" @bind="l.Pris" @bind:after="@(() => LagreLenke(l))" /></td>
+                            <td>
+                                @if (l.ErStandard)
+                                {
+                                    <span class="standard-merke">Standard</span>
+                                }
+                                else
+                                {
+                                    <button type="button" class="cancel-button" @onclick="@(() => SettStandard(l))">Sett som standard</button>
+                                }
+                            </td>
+                            <td><button type="button" class="remove-button" @onclick="@(() => FjernLenke(l))">Fjern</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private sealed class LenkeRad
+    {
+        public int ComponentId { get; set; }
+        public string ComponentNavn { get; set; } = "";
+        public string? Varenummer { get; set; }
+        public decimal? Pris { get; set; }
+        public bool ErStandard { get; set; }
+    }
+
+    private sealed record VareTreff(int Id, string Navn, string? Produktkode);
+
+    private Leverandor? _leverandor;
+    private bool _notFound;
+    private string? _melding;
+    private List<LenkeRad> _lenker = [];
+
+    private string _vareSok = "";
+    private List<VareTreff> _vareSokResultater = [];
+    private VareTreff? _valgtVare;
+    private string _nyttVarenummer = "";
+    private decimal? _nyPris;
+    private bool _nySomStandard;
+    private string? _leggTilFeil;
+
+    protected override async Task OnParametersSetAsync() => await LastAsync();
+
+    private async Task LastAsync()
+    {
+        _leverandor = await Db.Leverandorer.FirstOrDefaultAsync(l => l.Id == Id);
+        _notFound = _leverandor is null;
+        if (_leverandor is null)
+        {
+            return;
+        }
+
+        _lenker = await Db.ComponentLeverandorer
+            .Where(cl => cl.LeverandorId == Id)
+            .Include(cl => cl.Component)
+            .OrderBy(cl => cl.Component!.Navn)
+            .Select(cl => new LenkeRad
+            {
+                ComponentId = cl.ComponentId,
+                ComponentNavn = cl.Component!.Navn,
+                Varenummer = cl.Varenummer,
+                Pris = cl.Pris,
+                ErStandard = cl.ErStandard
+            })
+            .ToListAsync();
+    }
+
+    private async Task LagreLeverandor()
+    {
+        await Db.SaveChangesAsync();
+        _melding = "Lagret.";
+    }
+
+    private async Task SokVarer()
+    {
+        if (string.IsNullOrWhiteSpace(_vareSok) || _vareSok.Length < 2)
+        {
+            _vareSokResultater = [];
+            return;
+        }
+
+        _vareSokResultater = await Db.Components
+            .Where(c => !c.Leverandorer.Any(cl => cl.LeverandorId == Id))
+            .Where(c => c.Navn.Contains(_vareSok) || (c.Produktkode != null && c.Produktkode.Contains(_vareSok)))
+            .OrderBy(c => c.Navn)
+            .Take(20)
+            .Select(c => new VareTreff(c.Id, c.Navn, c.Produktkode))
+            .ToListAsync();
+    }
+
+    private void VelgVare(VareTreff c)
+    {
+        _valgtVare = c;
+        _nyttVarenummer = c.Produktkode ?? "";
+        _nyPris = null;
+        _nySomStandard = false;
+        _leggTilFeil = null;
+        _vareSokResultater = [];
+        _vareSok = "";
+    }
+
+    private void AvbrytVelgVare()
+    {
+        _valgtVare = null;
+        _leggTilFeil = null;
+    }
+
+    private async Task LeggTilVare()
+    {
+        if (_valgtVare is null)
+        {
+            return;
+        }
+
+        Db.ComponentLeverandorer.Add(new ComponentLeverandor
+        {
+            ComponentId = _valgtVare.Id,
+            LeverandorId = Id,
+            Varenummer = string.IsNullOrWhiteSpace(_nyttVarenummer) ? null : _nyttVarenummer.Trim(),
+            Pris = _nyPris,
+            ErStandard = false
+        });
+        await Db.SaveChangesAsync();
+
+        if (_nySomStandard)
+        {
+            await LeverandorSync.SettStandardAsync(Db, _valgtVare.Id, Id);
+            await Db.SaveChangesAsync();
+        }
+
+        _valgtVare = null;
+        await LastAsync();
+    }
+
+    private async Task LagreLenke(LenkeRad rad)
+    {
+        var entitet = await Db.ComponentLeverandorer
+            .FirstOrDefaultAsync(cl => cl.ComponentId == rad.ComponentId && cl.LeverandorId == Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Varenummer = string.IsNullOrWhiteSpace(rad.Varenummer) ? null : rad.Varenummer.Trim();
+        entitet.Pris = rad.Pris;
+        await Db.SaveChangesAsync();
+
+        if (rad.ErStandard)
+        {
+            // Denne leverandøren er standard for varen - hold Component sine
+            // egne felt (Produktkode/PrisNetto/Leverandor) i synk med de
+            // ferske verdiene.
+            await LeverandorSync.SettStandardAsync(Db, rad.ComponentId, Id);
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    private async Task SettStandard(LenkeRad rad)
+    {
+        await LeverandorSync.SettStandardAsync(Db, rad.ComponentId, Id);
+        await Db.SaveChangesAsync();
+        await LastAsync();
+    }
+
+    private async Task FjernLenke(LenkeRad rad)
+    {
+        var entitet = await Db.ComponentLeverandorer
+            .FirstOrDefaultAsync(cl => cl.ComponentId == rad.ComponentId && cl.LeverandorId == Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        Db.ComponentLeverandorer.Remove(entitet);
+        await Db.SaveChangesAsync();
+        await LastAsync();
+    }
+}

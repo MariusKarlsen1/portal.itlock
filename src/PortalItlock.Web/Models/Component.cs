@@ -54,4 +54,10 @@ public class Component
     public Inntektskonto? Inntektskonto { get; set; }
 
     public List<PackageComponent> Pakker { get; set; } = [];
+
+    // Leverandørene som selger denne varen, hver med sitt eget varenummer og
+    // pris - se Models/ComponentLeverandor.cs og Services/LeverandorSync.cs.
+    // Leverandor/Produktkode/PrisNetto over speiler alltid den som har
+    // ErStandard=true her.
+    public List<ComponentLeverandor> Leverandorer { get; set; } = [];
 }

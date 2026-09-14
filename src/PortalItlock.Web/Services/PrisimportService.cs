@@ -269,6 +269,10 @@ public class PrisimportService(ApplicationDbContext db)
         var oppdatert = 0;
         var nye = 0;
 
+        // Én leverandør-rad pr. import - slår opp/oppretter den én gang, og
+        // kobler hver vare i denne prislisten mot den (se LeverandorSync).
+        var leverandorEntitet = await LeverandorSync.FinnEllerOpprettAsync(db, leverandor);
+
         foreach (var rad in rader.Where(r => r.Inkluder && r.Feil is null))
         {
             if (rad.EksisterendeComponentId.HasValue)
@@ -285,6 +289,25 @@ public class PrisimportService(ApplicationDbContext db)
 
                 comp.PrisNetto = nyNetto;
                 comp.PrisVeiledende = nyVeil;
+
+                // Oppdaterer (eller oppretter, om koblingen mangler) denne
+                // leverandørens egen varenummer/pris-kobling for varen -
+                // uavhengig av om denne leverandøren er satt som standard.
+                var lenke = await db.ComponentLeverandorer
+                    .FirstOrDefaultAsync(cl => cl.ComponentId == comp.Id && cl.LeverandorId == leverandorEntitet.Id);
+                if (lenke is null)
+                {
+                    var harAndreLenker = await db.ComponentLeverandorer.AnyAsync(cl => cl.ComponentId == comp.Id);
+                    lenke = new ComponentLeverandor
+                    {
+                        ComponentId = comp.Id,
+                        LeverandorId = leverandorEntitet.Id,
+                        ErStandard = !harAndreLenker
+                    };
+                    db.ComponentLeverandorer.Add(lenke);
+                }
+                lenke.Varenummer = rad.Produktkode;
+                lenke.Pris = nyNetto;
                 if (!string.IsNullOrWhiteSpace(rad.Navn2))
                 {
                     comp.Navn2 = rad.Navn2;
@@ -351,6 +374,15 @@ public class PrisimportService(ApplicationDbContext db)
                     RabattgruppeId = rad.RabattgruppeId,
                     ComponentTypeId = rad.ComponentTypeId
                 };
+                // Nye varer er alltid knyttet til seg selv (leverandøren de
+                // ble importert fra) som standard - se LeverandorSync.
+                nyKomponent.Leverandorer.Add(new ComponentLeverandor
+                {
+                    LeverandorId = leverandorEntitet.Id,
+                    Varenummer = rad.Produktkode,
+                    Pris = rad.PrisNetto,
+                    ErStandard = true
+                });
                 db.Components.Add(nyKomponent);
 
                 if (rad.ProduktgruppeId.HasValue)

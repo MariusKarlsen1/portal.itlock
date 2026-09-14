@@ -107,6 +107,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Ressursplan> Ressursplaner => Set<Ressursplan>();
     public DbSet<TripletexSyncTilstand> TripletexSyncTilstand => Set<TripletexSyncTilstand>();
     public DbSet<Inntektskonto> Inntektskontoer => Set<Inntektskonto>();
+    public DbSet<Leverandor> Leverandorer => Set<Leverandor>();
+    public DbSet<ComponentLeverandor> ComponentLeverandorer => Set<ComponentLeverandor>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -134,6 +136,21 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasOne(pc => pc.Component)
                 .WithMany(c => c.Pakker)
                 .HasForeignKey(pc => pc.ComponentId);
+        });
+
+        modelBuilder.Entity<ComponentLeverandor>(entity =>
+        {
+            entity.HasKey(cl => new { cl.ComponentId, cl.LeverandorId });
+
+            entity.HasOne(cl => cl.Component)
+                .WithMany(c => c.Leverandorer)
+                .HasForeignKey(cl => cl.ComponentId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(cl => cl.Leverandor)
+                .WithMany(l => l.Komponenter)
+                .HasForeignKey(cl => cl.LeverandorId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<DorKomponent>(entity =>
