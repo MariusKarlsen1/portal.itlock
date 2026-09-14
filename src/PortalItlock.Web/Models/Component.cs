@@ -28,6 +28,11 @@ public class Component
 
     public int? RabattgruppeId { get; set; }
     public Rabattgruppe? Rabattgruppe { get; set; }
+
+    // Sperrer kunderabatt (KundeRabatt) på denne varen i tilbud - både
+    // auto-utfylling og manuell inntasting av TilbudLinje.RabattProsent.
+    // Se TilbudSkjema.razor: HentKundeRabattProsent/OppdaterLinjePris.
+    public bool IngenRabattTilgjengelig { get; set; }
     public List<Produktgruppe> Produktgrupper { get; set; } = [];
     public int? MontasjeMinutterProsjekt { get; set; }
     public int? MontasjeMinutterArbeidsordre { get; set; }
