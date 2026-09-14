@@ -572,6 +572,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(i => i.OpprettetAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        modelBuilder.Entity<Importhistorikk>()
+            .HasOne(i => i.OpprinneligImport)
+            .WithMany()
+            .HasForeignKey(i => i.OpprinneligImportId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         modelBuilder.Entity<FravarSoknad>()
             .HasOne(f => f.Bruker)
             .WithMany()

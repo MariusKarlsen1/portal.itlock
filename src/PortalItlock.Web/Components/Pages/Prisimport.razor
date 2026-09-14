@@ -54,7 +54,7 @@
         </div>
     </div>
 
-    @if (_historikk.Count > 0)
+    @if (_historikkRader.Count > 0)
     {
         <div class="import-card import-historikk-card">
             <h2>Tidligere importer</h2>
@@ -71,14 +71,15 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var h in _historikk)
+                    @foreach (var rad in _historikkRader)
                     {
-                        <tr @key="h.Id">
-                            <td>@h.Filnavn</td>
+                        var h = rad.Item;
+                        <tr @key="h.Id" class="@(rad.ErOppdatering ? "historikk-rad-oppdatering" : "")">
+                            <td>@(rad.ErOppdatering ? "↳ " : "")@h.Filnavn</td>
                             <td>@h.Leverandor</td>
                             <td>@h.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</td>
                             <td>@(h.OpprettetAvBruker?.Navn ?? "-")</td>
-                            <td><span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : "import-status-badge-pagar")">@h.Status</span></td>
+                            <td><span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : "import-status-badge-pagar")">@(rad.ErOppdatering && h.Status == "Fullført" ? "Oppdatering" : h.Status)</span></td>
                             <td>@(h.AntallNye is not null ? $"{h.AntallNye} nye, {h.AntallOppdatert} oppdatert" : "-")</td>
                             <td class="historikk-actions">
                                 @if (!string.IsNullOrWhiteSpace(h.Leverandor))
@@ -93,12 +94,13 @@
             </table>
 
             <ul class="mobil-historikk-liste">
-                @foreach (var h in _historikk)
+                @foreach (var rad in _historikkRader)
                 {
-                    <li @key="h.Id" class="mobil-historikk-kort">
+                    var h = rad.Item;
+                    <li @key="h.Id" class="mobil-historikk-kort @(rad.ErOppdatering ? "mobil-historikk-kort-oppdatering" : "")">
                         <div class="mobil-historikk-topp">
-                            <span class="mobil-historikk-fil">@h.Filnavn</span>
-                            <span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : "import-status-badge-pagar")">@h.Status</span>
+                            <span class="mobil-historikk-fil">@(rad.ErOppdatering ? "↳ " : "")@h.Filnavn</span>
+                            <span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : "import-status-badge-pagar")">@(rad.ErOppdatering && h.Status == "Fullført" ? "Oppdatering" : h.Status)</span>
                         </div>
                         <div class="mobil-historikk-meta">
                             @h.Leverandor &middot; @h.OpprettetDato.ToString("dd.MM.yyyy HH:mm") &middot; @(h.OpprettetAvBruker?.Navn ?? "-")
@@ -405,7 +407,9 @@ else if (_steg == 4)
     private int _oppdatertAntall;
     private int _nyeAntall;
 
-    private List<Importhistorikk> _historikk = [];
+    private sealed record HistorikkRad(Importhistorikk Item, bool ErOppdatering);
+
+    private List<HistorikkRad> _historikkRader = [];
     private Importhistorikk? _gjeldendeHistorikk;
 
     protected override async Task OnInitializedAsync()
@@ -425,19 +429,42 @@ else if (_steg == 4)
 
     private async Task LastHistorikkAsync()
     {
-        _historikk = await Db.Importhistorikk
+        // Grupperer i minnet: alle rader med samme "rot" (satt i LastOppFil
+        // når filnavnet matcher en tidligere import) havner i samme gruppe,
+        // vist som rot-raden pluss dens "Oppdatering"-rader under. Grupperes
+        // etter siste aktivitet i gruppen, ikke bare rotens egen dato, slik
+        // at en fersk oppdatering av en gammel fil fortsatt dukker øverst.
+        var alle = await Db.Importhistorikk
             .Include(h => h.OpprettetAvBruker)
             .Where(h => h.Kilde == "Prisimport")
             .OrderByDescending(h => h.OpprettetDato)
-            .Take(15)
+            .Take(100)
             .ToListAsync();
+
+        var grupper = alle
+            .GroupBy(h => h.OpprinneligImportId ?? h.Id)
+            .Select(g =>
+            {
+                var sortert = g.OrderByDescending(h => h.OpprettetDato).ToList();
+                var rot = sortert.FirstOrDefault(h => h.Id == g.Key) ?? sortert[^1];
+                var oppdateringer = sortert.Where(h => h.Id != rot.Id).ToList();
+                return (Rot: rot, Oppdateringer: oppdateringer, SisteAktivitet: sortert[0].OpprettetDato);
+            })
+            .OrderByDescending(gr => gr.SisteAktivitet)
+            .Take(15)
+            .ToList();
+
+        _historikkRader = grupper
+            .SelectMany(gr => new[] { new HistorikkRad(gr.Rot, false) }
+                .Concat(gr.Oppdateringer.Select(o => new HistorikkRad(o, true))))
+            .ToList();
     }
 
     private async Task SlettHistorikk(Importhistorikk h)
     {
         Db.Importhistorikk.Remove(h);
         await Db.SaveChangesAsync();
-        _historikk.Remove(h);
+        await LastHistorikkAsync();
     }
 
     private async Task<PrisimportService.KolonneForslag?> HentTidligereMappingAsync(string leverandor)
@@ -519,13 +546,23 @@ else if (_steg == 4)
         var tidligereMapping = string.IsNullOrWhiteSpace(_leverandor) ? null : await HentTidligereMappingAsync(_leverandor);
         _valgt = tidligereMapping ?? PrisimportService.AutoMatchKolonner(_kolonner);
 
+        // Er filnavnet helt likt en tidligere import, kobles denne kjøringen
+        // automatisk som en "Oppdatering" under den opprinnelige i
+        // historikken (se LastHistorikkAsync), i stedet for som en ny,
+        // løsrevet rad.
+        var tidligereMedSammeFil = await Db.Importhistorikk
+            .Where(h => h.Kilde == "Prisimport" && h.Filnavn == _filnavn)
+            .OrderByDescending(h => h.OpprettetDato)
+            .FirstOrDefaultAsync();
+
         _gjeldendeHistorikk = new Importhistorikk
         {
             Kilde = "Prisimport",
             Filnavn = _filnavn,
             Leverandor = _leverandor,
             OpprettetAvBrukerId = _naverendeBrukerId,
-            Status = "Pågår"
+            Status = "Pågår",
+            OpprinneligImportId = tidligereMedSammeFil is null ? null : (tidligereMedSammeFil.OpprinneligImportId ?? tidligereMedSammeFil.Id)
         };
         Db.Importhistorikk.Add(_gjeldendeHistorikk);
         await Db.SaveChangesAsync();
