@@ -1,0 +1,119 @@
+@page "/rapporter/salg-per-kunde"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using PortalItlock.Web.Services
+@inject TripletexService Tripletex
+
+<PageTitle>Salg per kunde - itlock</PageTitle>
+
+<a class="back-link" href="/rapportermodul">&larr; Tilbake til rapporter</a>
+<h1>Salg per kunde</h1>
+<p class="section-hint">
+    Faktisk fakturert salg pr. kunde for valgt periode, hentet direkte fra
+    Tripletex sine fakturaer (kreditnotaer trekkes fra). Dette er tallene som
+    faktisk er sendt til kunden - se Rapporter &rarr; Kunde for portalens
+    egen prognose basert på ferdigmeldte arbeidsordre.
+</p>
+
+<div class="rapport-filter">
+    <label>
+        Fra
+        <input type="date" @bind="_fraDato" />
+    </label>
+    <label>
+        Til
+        <input type="date" @bind="_tilDato" />
+    </label>
+    <button type="button" class="save-button" @onclick="HentRapport" disabled="@_lasterNa">
+        @(_lasterNa ? "Henter..." : "Vis rapport")
+    </button>
+</div>
+
+@if (_feil is not null)
+{
+    <p class="form-error">@_feil</p>
+}
+
+@if (_harHentet)
+{
+    @if (_rader.Count == 0)
+    {
+        <p class="list-empty">Ingen fakturert salg i denne perioden.</p>
+    }
+    else
+    {
+        <table class="rapport-table">
+            <thead>
+                <tr>
+                    <th>Kunde</th>
+                    <th>Antall fakturaer</th>
+                    <th>Omsetning</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _rader)
+                {
+                    <tr>
+                        <td>@r.Navn</td>
+                        <td class="tall-cell">@r.Antall</td>
+                        <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
+                    </tr>
+                }
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td><strong>Totalt</strong></td>
+                    <td></td>
+                    <td class="tall-cell"><strong>@_rader.Sum(r => r.Sum).ToString("N0", Kultur) kr</strong></td>
+                </tr>
+            </tfoot>
+        </table>
+    }
+}
+
+@code {
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+    private DateTime _fraDato = new(DateTime.Today.Year, 1, 1);
+    private DateTime _tilDato = DateTime.Today;
+    private bool _lasterNa;
+    private bool _harHentet;
+    private string? _feil;
+
+    private sealed record KundeRad(string Navn, int Antall, decimal Sum);
+    private List<KundeRad> _rader = [];
+
+    protected override async Task OnInitializedAsync() => await HentRapport();
+
+    private async Task HentRapport()
+    {
+        _lasterNa = true;
+        _feil = null;
+        try
+        {
+            var (fakturaer, feil) = await Tripletex.HentFakturaerAsync(_fraDato, _tilDato);
+            if (feil is not null)
+            {
+                _feil = feil;
+                _rader = [];
+            }
+            else
+            {
+                _rader = fakturaer
+                    .Where(f => f.KundeNavn is not null)
+                    .GroupBy(f => f.KundeNavn!)
+                    .Select(g => new KundeRad(
+                        g.Key,
+                        g.Count(),
+                        g.Sum(f => f.ErKreditnota ? -f.Belop : f.Belop)))
+                    .OrderByDescending(r => r.Sum)
+                    .ToList();
+            }
+            _harHentet = true;
+        }
+        finally
+        {
+            _lasterNa = false;
+        }
+    }
+}

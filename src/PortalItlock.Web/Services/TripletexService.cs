@@ -358,6 +358,51 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
         }
     }
 
+    public sealed record TripletexFaktura(
+        int Id, int? Nummer, DateTime? Dato, DateTime? Forfallsdato,
+        int? KundeId, string? KundeNavn, decimal Belop, decimal Utestaende,
+        bool ErKreditnota, string? OrdreNummer);
+
+    // Henter fakturaer som faktisk er sendt/opprettet i Tripletex - i
+    // motsetning til rapportene i /rapporter (som beregnes fra portalens
+    // egne ferdigmeldte arbeidsordre), finnes denne dataen KUN i Tripletex
+    // (selve faktureringen skjer fortsatt manuelt der), så her må vi hente
+    // live. Brukes av Fakturaoversikt.razor og SalgPerKunde.razor.
+    public async Task<(List<TripletexFaktura> Fakturaer, string? Feilmelding)> HentFakturaerAsync(
+        DateTime dateFrom, DateTime dateTo, int? kundeId = null, CancellationToken ct = default)
+    {
+        try
+        {
+            var sti = $"invoice?count=1000&invoiceDateFrom={dateFrom:yyyy-MM-dd}&invoiceDateTo={dateTo:yyyy-MM-dd}"
+                + "&fields=id,invoiceNumber,invoiceDate,invoiceDueDate,customer(id,name),amount,amountOutstanding,isCreditNote,orders(number)";
+            if (kundeId is not null)
+            {
+                sti += $"&customerId={kundeId}";
+            }
+
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, sti, ct);
+            using var resp = await http.SendAsync(req, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return ([], $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
+            }
+
+            var parsed = JsonSerializer.Deserialize<ListResponse<InvoiceSvar>>(raw, JsonOpts);
+            var fakturaer = (parsed?.Values ?? [])
+                .Select(v => new TripletexFaktura(
+                    v.Id, v.InvoiceNumber, v.InvoiceDate, v.InvoiceDueDate,
+                    v.Customer?.Id, v.Customer?.Name, v.Amount ?? 0, v.AmountOutstanding ?? 0,
+                    v.IsCreditNote ?? false, v.Orders?.FirstOrDefault()?.Number))
+                .ToList();
+            return (fakturaer, null);
+        }
+        catch (Exception ex)
+        {
+            return ([], ex.Message);
+        }
+    }
+
     // --- Interne DTO-er for deserialisering (kun feltene vi faktisk bruker) ---
 
     private sealed class ResponseWrapper<T>
@@ -421,6 +466,33 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
     }
 
     private sealed class OrderSvar
+    {
+        public int Id { get; set; }
+
+        [JsonConverter(typeof(SlakkStrengKonverterer))]
+        public string? Number { get; set; }
+    }
+
+    private sealed class InvoiceSvar
+    {
+        public int Id { get; set; }
+        public int? InvoiceNumber { get; set; }
+        public DateTime? InvoiceDate { get; set; }
+        public DateTime? InvoiceDueDate { get; set; }
+        public InvoiceCustomerRefSvar? Customer { get; set; }
+        public decimal? Amount { get; set; }
+        public decimal? AmountOutstanding { get; set; }
+        public bool? IsCreditNote { get; set; }
+        public List<InvoiceOrderRefSvar>? Orders { get; set; }
+    }
+
+    private sealed class InvoiceCustomerRefSvar
+    {
+        public int Id { get; set; }
+        public string? Name { get; set; }
+    }
+
+    private sealed class InvoiceOrderRefSvar
     {
         public int Id { get; set; }
 

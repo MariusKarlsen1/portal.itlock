@@ -11,6 +11,16 @@ namespace PortalItlock.Web.Services;
 // Tripletex ennå, og en Tripletex-kunde uten en portal-kunde med matchende
 // nummer er ikke hentet inn ennå - dette hindrer uendelige synk-løkker
 // (A oppretter i B, B synker tilbake og oppretter en duplikat i A, osv.).
+// Måten en arbeidsordre overføres til Tripletex på ved ferdigmelding - valgt
+// av brukeren i en dialog som vises idet Ferdigmeld trykkes (se
+// ArbeidsordreSkjema.razor).
+public enum TripletexOverforingsType
+{
+    AlleLinjer,
+    KunSum,
+    Akonto
+}
+
 public sealed class TripletexSyncService(ApplicationDbContext db, TripletexService tripletex)
 {
     public sealed record KundeSyncResultat(int PushetTilTripletex, int HentetFraTripletex, int Oppdatert, List<string> Feil);
@@ -130,7 +140,12 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
     // gamle CSV-eksporten (TripletexOrdreCsvService), som kun tok med
     // tilbudet og dermed ikke fanget opp endringer gjort etter at jobben var
     // i gang.
-    public async Task<(bool Ok, string? Feilmelding)> PushArbeidsordreTilTripletexAsync(int arbeidsordreId, CancellationToken ct = default)
+    public async Task<(bool Ok, string? Feilmelding)> PushArbeidsordreTilTripletexAsync(
+        int arbeidsordreId,
+        TripletexOverforingsType type = TripletexOverforingsType.AlleLinjer,
+        decimal? akontoBelop = null,
+        string? akontoKommentar = null,
+        CancellationToken ct = default)
     {
         var ordre = await db.Arbeidsordre
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
@@ -196,10 +211,35 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         // ArbeidsordreOkonomiBeregner) - ordren i Tripletex er kun "klar til
         // fakturering"-grunnlaget, ren fritekst pr. linje, uten kobling mot
         // Tripletex-produkter/-kontoer (det styres i portalen, se Inntektskonto).
-        var linjer = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre)
-            .Select(l => new TripletexService.OrdreLinjeInput(
-                l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall))
-            .ToList();
+        // Brukeren velger selv, i dialogen ved ferdigmelding, om alle linjene
+        // skal med, om kun totalsummen skal overføres som én linje, eller om
+        // dette er en akontofakturering med et manuelt beløp/kommentar.
+        List<TripletexService.OrdreLinjeInput> linjer;
+        if (type == TripletexOverforingsType.Akonto)
+        {
+            if (akontoBelop is null or <= 0)
+            {
+                ordre.TripletexOrdreFeil = "Akonto krever et beløp større enn 0.";
+                await db.SaveChangesAsync(ct);
+                return (false, ordre.TripletexOrdreFeil);
+            }
+
+            var navn = string.IsNullOrWhiteSpace(akontoKommentar) ? "Akonto" : $"Akonto - {akontoKommentar}";
+            linjer = [new TripletexService.OrdreLinjeInput(navn, 1, akontoBelop.Value)];
+        }
+        else if (type == TripletexOverforingsType.KunSum)
+        {
+            var sum = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre).Sum(l => l.Belop);
+            var navn = ordre.Prosjekt?.Navn ?? ordre.Tittel;
+            linjer = [new TripletexService.OrdreLinjeInput(navn, 1, sum)];
+        }
+        else
+        {
+            linjer = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre)
+                .Select(l => new TripletexService.OrdreLinjeInput(
+                    l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall))
+                .ToList();
+        }
 
         var (ordreId, ordreNummer, ordreFeil) = await tripletex.OpprettOrdreAsync(
             tripletexKundeId, ordre.Tittel, $"Arbeidsordre #{ordre.Id}", linjer, ct);

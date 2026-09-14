@@ -639,13 +639,58 @@ else if (_ordre is not null)
             }
             else
             {
-                <button type="button" class="ferdigmeld-button" @onclick="Ferdigmeld">Ferdigmeld</button>
+                <button type="button" class="ferdigmeld-button" @onclick="VisFerdigmeldValg">Ferdigmeld</button>
             }
             @if (!string.IsNullOrEmpty(_ferdigmeldtMelding))
             {
                 <span class="save-success">@_ferdigmeldtMelding</span>
             }
         </div>
+
+        @if (_visFerdigmeldModal)
+        {
+            <div class="ferdigmeld-modal-overlay" @onclick="@(() => _visFerdigmeldModal = false)">
+                <div class="ferdigmeld-modal" @onclick:stopPropagation="true">
+                    <h3>Overføring til Tripletex</h3>
+                    <p class="section-hint">Velg hvordan arbeidsordren skal overføres til Tripletex som ordre klar for fakturering.</p>
+
+                    <label class="ferdigmeld-valg">
+                        <input type="radio" name="overforingstype" checked="@(_valgtOverforingsType == TripletexOverforingsType.AlleLinjer)"
+                               @onchange="@(() => _valgtOverforingsType = TripletexOverforingsType.AlleLinjer)" />
+                        <span>Overfør alle ordrelinjer<br /><small>Alle varer, montasje og timer som egne linjer.</small></span>
+                    </label>
+                    <label class="ferdigmeld-valg">
+                        <input type="radio" name="overforingstype" checked="@(_valgtOverforingsType == TripletexOverforingsType.KunSum)"
+                               @onchange="@(() => _valgtOverforingsType = TripletexOverforingsType.KunSum)" />
+                        <span>Overfør bare sum<br /><small>Én linje med prosjektnavn og totalsum.</small></span>
+                    </label>
+                    <label class="ferdigmeld-valg">
+                        <input type="radio" name="overforingstype" checked="@(_valgtOverforingsType == TripletexOverforingsType.Akonto)"
+                               @onchange="@(() => _valgtOverforingsType = TripletexOverforingsType.Akonto)" />
+                        <span>Akonto<br /><small>Manuelt beløp og kommentar.</small></span>
+                    </label>
+
+                    @if (_valgtOverforingsType == TripletexOverforingsType.Akonto)
+                    {
+                        <div class="ferdigmeld-akonto-felt">
+                            <label>
+                                Beløp (eks. mva)
+                                <input type="number" step="0.01" @bind="_akontoBelop" />
+                            </label>
+                            <label>
+                                Kommentar
+                                <input @bind="_akontoKommentar" placeholder="F.eks. Akonto nr. 1" />
+                            </label>
+                        </div>
+                    }
+
+                    <div class="ferdigmeld-modal-actions">
+                        <button type="button" class="cancel-button" @onclick="@(() => _visFerdigmeldModal = false)">Avbryt</button>
+                        <button type="button" class="save-button" @onclick="BekreftFerdigmeld">Bekreft og ferdigmeld</button>
+                    </div>
+                </div>
+            </div>
+        }
 
         @if (_ordre.FullfortAvBruker is not null)
         {
@@ -759,6 +804,10 @@ else if (_ordre is not null)
     private string? _rapportPdfSavedMessage;
     private List<LagretPdf> _lagredeRapportPdfer = [];
     private string? _ferdigmeldtMelding;
+    private bool _visFerdigmeldModal;
+    private TripletexOverforingsType _valgtOverforingsType = TripletexOverforingsType.AlleLinjer;
+    private decimal? _akontoBelop;
+    private string _akontoKommentar = "";
     private string? _sjekklistePdfPreviewUrl;
     private string? _sjekklistePdfSavedMessage;
     private List<SjekklistePdf> _lagredeSjekklistePdfer = [];
@@ -1120,8 +1169,18 @@ else if (_ordre is not null)
         _rapportPdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
-    private async Task Ferdigmeld()
+    private void VisFerdigmeldValg()
     {
+        _valgtOverforingsType = TripletexOverforingsType.AlleLinjer;
+        _akontoBelop = null;
+        _akontoKommentar = "";
+        _visFerdigmeldModal = true;
+    }
+
+    private async Task BekreftFerdigmeld()
+    {
+        _visFerdigmeldModal = false;
+
         _ordre!.Status = ArbeidsordreStatus.Ferdig;
         _ordre.FullfortAvBrukerId = _naverendeBrukerId;
         _ordre.FullfortAvBruker = _naverendeBruker;
@@ -1130,12 +1189,14 @@ else if (_ordre is not null)
         _ferdigmeldtMelding = "Ordren er ferdigmeldt og klar for fakturering.";
 
         // Sender ordren videre til Tripletex som en ordre klar til fakturering
-        // der (se TripletexSyncService.PushArbeidsordreTilTripletexAsync).
+        // der (se TripletexSyncService.PushArbeidsordreTilTripletexAsync), med
+        // overføringsmåten brukeren valgte i dialogen over.
         // Fanger uventede feil her uten å la dem forstyrre selve
         // ferdigmeldingen over, som er den viktigste handlingen.
         try
         {
-            var (ok, feil) = await TripletexSync.PushArbeidsordreTilTripletexAsync(_ordre.Id);
+            var (ok, feil) = await TripletexSync.PushArbeidsordreTilTripletexAsync(
+                _ordre.Id, _valgtOverforingsType, _akontoBelop, _akontoKommentar);
             _ferdigmeldtMelding = ok
                 ? _ferdigmeldtMelding + " Sendt til Tripletex."
                 : _ferdigmeldtMelding + $" (Kunne ikke sende til Tripletex: {feil})";
