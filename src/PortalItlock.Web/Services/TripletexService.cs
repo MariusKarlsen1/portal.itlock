@@ -71,7 +71,14 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
                 expirationDate = utlopsdato
             };
 
-            using var resp = await http.PostAsJsonAsync("/token/session/:create", body, JsonOpts, ct);
+            // MERK: ingen ledende skråstrek - HttpClient sin BaseAddress har
+            // en sti (".../v2/"), og en relativ URI som starter med "/" blir
+            // tolket som absolutt fra host-roten, som DROPPER "/v2"-delen av
+            // BaseAddress helt (klassisk HttpClient-fallgruve). Uten dette
+            // traff kallet https://api-test.tripletex.tech/token/... (uten
+            // /v2), som ikke finnes - Tripletex sin vanlige nettside svarte
+            // da med en full HTML-404-side i stedet for en JSON-API-feil.
+            using var resp = await http.PostAsJsonAsync("token/session/:create", body, JsonOpts, ct);
             var raw = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
@@ -114,7 +121,7 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
             // som standard - uten "fields" kommer de bare tilbake som {id, url},
             // og navnet ville alltid blitt tomt.
             using var req = await LagAutorisertForespurselAsync(HttpMethod.Get,
-                "/token/session/>whoAmI?fields=employee(firstName,lastName),company(name)", ct);
+                "token/session/>whoAmI?fields=employee(firstName,lastName),company(name)", ct);
             using var resp = await http.SendAsync(req, ct);
             var raw = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
@@ -140,7 +147,7 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
         try
         {
             var query = string.IsNullOrWhiteSpace(navn) ? "" : $"?customerName={Uri.EscapeDataString(navn)}&count=25";
-            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, $"/customer{query}", ct);
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, $"customer{query}", ct);
             using var resp = await http.SendAsync(req, ct);
             var raw = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
