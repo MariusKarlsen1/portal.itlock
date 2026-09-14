@@ -124,6 +124,33 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
     private static TripletexService.KundeOppdatering TilKundeOppdatering(Kunde k) => new(
         k.Navn, k.OrgNr, k.Epost, k.Telefon, k.Adresse, k.Postnr, k.Sted);
 
+    // Oppretter/oppdaterer Tripletex-produktet for en vare (Component) som har
+    // fått satt en inntektskonto (Component.TripletexKontoId) - selve
+    // mekanismen som gjør at salg av varen faktisk bokføres på riktig konto
+    // når ordren senere faktureres i Tripletex. Kalles lat, kun når varen
+    // faktisk selges (fra PushArbeidsordreTilTripletexAsync), ikke proaktivt
+    // for alle varer - de fleste varer får aldri satt en inntektskonto.
+    public async Task<string?> SynkroniserProduktAsync(Component c, CancellationToken ct = default)
+    {
+        if (c.TripletexKontoId is null)
+        {
+            return null;
+        }
+
+        var oppdatering = new TripletexService.ProduktOppdatering(
+            c.Navn, c.Produktkode, c.PrisVeiledende ?? c.PrisNetto, c.TripletexKontoId.Value);
+
+        var (id, feil) = await tripletex.OpprettEllerOppdaterProduktAsync(c.TripletexProduktId, oppdatering, ct);
+        if (feil is not null)
+        {
+            return feil;
+        }
+
+        c.TripletexProduktId = id;
+        await db.SaveChangesAsync(ct);
+        return null;
+    }
+
     // Kalles fra Ferdigmeld() på arbeidsordre-siden. Bygger ordrelinjer fra
     // BÅDE det opprinnelige tilbudet (hvis arbeidsordren stammer fra ett) OG
     // varer lagt til/byttet i felt (Arbeidsordre.Varer) - i motsetning til den
@@ -134,8 +161,8 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
     {
         var ordre = await db.Arbeidsordre
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
-            .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer)
-            .Include(a => a.Varer)
+            .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer).ThenInclude(l => l.Component)
+            .Include(a => a.Varer).ThenInclude(v => v.Component)
             .FirstOrDefaultAsync(a => a.Id == arbeidsordreId, ct);
 
         if (ordre is null)
@@ -192,6 +219,24 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
             tripletexKundeId = match.Id;
         }
 
+        // Cacher produkt-synk pr. Component-ID innenfor dette pushet, slik at
+        // samme vare brukt på flere linjer bare synkroniseres én gang.
+        var produktCache = new Dictionary<int, int?>();
+        async Task<int?> ProduktIdForAsync(Component? c)
+        {
+            if (c is null || c.TripletexKontoId is null)
+            {
+                return null;
+            }
+            if (produktCache.TryGetValue(c.Id, out var cachet))
+            {
+                return cachet;
+            }
+            await SynkroniserProduktAsync(c, ct);
+            produktCache[c.Id] = c.TripletexProduktId;
+            return c.TripletexProduktId;
+        }
+
         var linjer = new List<TripletexService.OrdreLinjeInput>();
 
         if (ordre.Tilbud is not null)
@@ -201,7 +246,8 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
                 .OrderBy(l => l.Rekkefolge);
             foreach (var l in tilbudLinjer)
             {
-                linjer.Add(new TripletexService.OrdreLinjeInput(l.Navn, l.Antall, l.Utpris));
+                var produktId = await ProduktIdForAsync(l.Component);
+                linjer.Add(new TripletexService.OrdreLinjeInput(l.Navn, l.Antall, l.Utpris, produktId));
             }
 
             var minutter = ordre.Tilbud.Linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => (l.MontasjeMinutter ?? 0) * l.Antall);
@@ -220,7 +266,8 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
 
         foreach (var v in ordre.Varer)
         {
-            linjer.Add(new TripletexService.OrdreLinjeInput(v.Navn, v.Antall, v.Utpris));
+            var produktId = await ProduktIdForAsync(v.Component);
+            linjer.Add(new TripletexService.OrdreLinjeInput(v.Navn, v.Antall, v.Utpris, produktId));
         }
 
         var (ordreId, ordreNummer, ordreFeil) = await tripletex.OpprettOrdreAsync(

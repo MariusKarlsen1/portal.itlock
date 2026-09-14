@@ -68,6 +68,9 @@ public static class PortalModulRegister
                 new LenkeGruppe("Integrasjoner", [
                     new Lenke("Tripletex", "Test tilkobling og kundeoppslag mot Tripletex-API-et (testmiljø)", "integrasjoner/tripletex", "box"),
                 ]),
+                new LenkeGruppe("Rapporter", [
+                    new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport hentet fra Tripletex", "rapportermodul", "receipt"),
+                ]),
             ]),
     ];
 }

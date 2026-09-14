@@ -47,5 +47,15 @@ public class Component
     public string? MontasjebladFilnavn { get; set; }
     public string? MontasjebladContentType { get; set; }
 
+    // Tripletex-inntektskonto varen skal bokføres på ved salg - se
+    // TripletexSyncService.SynkroniserProduktAsync, som oppretter/oppdaterer et
+    // Tripletex-produkt for varen med denne kontoen satt, og
+    // PushArbeidsordreTilTripletexAsync, som kobler ordrelinjer mot dette
+    // produktet i stedet for kun fritekst når varen har fått satt en konto.
+    public int? TripletexKontoId { get; set; }
+    public int? TripletexKontoNummer { get; set; }
+    public string? TripletexKontoNavn { get; set; }
+    public int? TripletexProduktId { get; set; }
+
     public List<PackageComponent> Pakker { get; set; } = [];
 }

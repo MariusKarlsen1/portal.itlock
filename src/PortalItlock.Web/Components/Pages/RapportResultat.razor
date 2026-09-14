@@ -1,0 +1,114 @@
+@page "/rapporter/resultat"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using PortalItlock.Web.Services
+@inject TripletexService Tripletex
+
+<PageTitle>Resultatrapport - itlock</PageTitle>
+
+<a class="back-link" href="/rapportermodul">&larr; Tilbake til rapporter</a>
+<h1>Resultatrapport</h1>
+<p class="section-hint">
+    Omsetning pr. inntektskonto (3000-3999) for valgt periode, hentet direkte
+    fra det som faktisk er fakturert i Tripletex - de inntektskontoene som er
+    satt på varer i komponentregisteret dukker opp her, slik at du kan se hvor
+    mye som er solgt av hver.
+</p>
+
+<div class="rapport-filter">
+    <label>
+        Fra
+        <input type="date" @bind="_fraDato" />
+    </label>
+    <label>
+        Til
+        <input type="date" @bind="_tilDato" />
+    </label>
+    <button type="button" class="save-button" @onclick="HentRapport" disabled="@_lasterNa">
+        @(_lasterNa ? "Henter..." : "Vis rapport")
+    </button>
+</div>
+
+@if (_feil is not null)
+{
+    <p class="form-error">@_feil</p>
+}
+
+@if (_harHentet)
+{
+    @if (_rader.Count == 0)
+    {
+        <p class="list-empty">Ingen fakturert omsetning i denne perioden.</p>
+    }
+    else
+    {
+        <table class="rapport-table">
+            <thead>
+                <tr>
+                    <th>Konto</th>
+                    <th>Navn</th>
+                    <th>Omsetning</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _rader)
+                {
+                    <tr>
+                        <td>@r.Nummer</td>
+                        <td>@r.Navn</td>
+                        <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
+                    </tr>
+                }
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="2"><strong>Totalt</strong></td>
+                    <td class="tall-cell"><strong>@_rader.Sum(r => r.Sum).ToString("N0", Kultur) kr</strong></td>
+                </tr>
+            </tfoot>
+        </table>
+    }
+}
+
+@code {
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+    private DateTime _fraDato = new(DateTime.Today.Year, 1, 1);
+    private DateTime _tilDato = DateTime.Today;
+    private bool _lasterNa;
+    private bool _harHentet;
+    private string? _feil;
+
+    private sealed record KontoRad(int Nummer, string Navn, decimal Sum);
+    private List<KontoRad> _rader = [];
+
+    protected override async Task OnInitializedAsync() => await HentRapport();
+
+    private async Task HentRapport()
+    {
+        _lasterNa = true;
+        _feil = null;
+        try
+        {
+            var (posteringer, feil) = await Tripletex.HentPostingerAsync(_fraDato, _tilDato, kontoNummerFra: 3000, kontoNummerTil: 3999);
+            if (feil is not null)
+            {
+                _feil = feil;
+                _rader = [];
+            }
+            else
+            {
+                _rader = posteringer
+                    .GroupBy(p => (p.KontoNummer, p.KontoNavn))
+                    .Select(g => new KontoRad(g.Key.KontoNummer, g.Key.KontoNavn ?? "", g.Sum(p => Math.Abs(p.Belop))))
+                    .OrderBy(r => r.Nummer)
+                    .ToList();
+            }
+            _harHentet = true;
+        }
+        finally
+        {
+            _lasterNa = false;
+        }
+    }
+}

@@ -1,0 +1,135 @@
+@page "/rapporter/produkt"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using PortalItlock.Web.Services
+@inject TripletexService Tripletex
+
+<PageTitle>Produktrapport - itlock</PageTitle>
+
+<a class="back-link" href="/rapportermodul">&larr; Tilbake til rapporter</a>
+<h1>Produktrapport</h1>
+<p class="section-hint">
+    Salg pr. vare (inntektskontoer 3000-3999) for valgt periode, hentet direkte
+    fra det som faktisk er fakturert i Tripletex. Viser kun varer som har fått
+    satt en inntektskonto i komponentregisteret og dermed er koblet mot et
+    Tripletex-produkt.
+</p>
+
+<div class="rapport-filter">
+    <label>
+        Fra
+        <input type="date" @bind="_fraDato" />
+    </label>
+    <label>
+        Til
+        <input type="date" @bind="_tilDato" />
+    </label>
+    <label>
+        Kunde (valgfritt)
+        <input @bind="_kundeSok" @bind:event="oninput" placeholder="Kundenavn - la stå tomt for alle" />
+    </label>
+    <button type="button" class="save-button" @onclick="HentRapport" disabled="@_lasterNa">
+        @(_lasterNa ? "Henter..." : "Vis rapport")
+    </button>
+</div>
+
+@if (_feil is not null)
+{
+    <p class="form-error">@_feil</p>
+}
+
+@if (_harHentet)
+{
+    @if (_rader.Count == 0)
+    {
+        <p class="list-empty">Ingen fakturert salg i denne perioden (evt. med dette kundefilteret).</p>
+    }
+    else
+    {
+        <table class="rapport-table">
+            <thead>
+                <tr>
+                    <th>Vare</th>
+                    <th>Antall posteringer</th>
+                    <th>Omsetning</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _rader)
+                {
+                    <tr>
+                        <td>@r.Navn</td>
+                        <td class="tall-cell">@r.Antall</td>
+                        <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+    private DateTime _fraDato = new(DateTime.Today.Year, 1, 1);
+    private DateTime _tilDato = DateTime.Today;
+    private string _kundeSok = "";
+    private bool _lasterNa;
+    private bool _harHentet;
+    private string? _feil;
+
+    private sealed record ProduktRad(string Navn, int Antall, decimal Sum);
+    private List<ProduktRad> _rader = [];
+
+    protected override async Task OnInitializedAsync() => await HentRapport();
+
+    private async Task HentRapport()
+    {
+        _lasterNa = true;
+        _feil = null;
+        try
+        {
+            int? kundeId = null;
+            if (!string.IsNullOrWhiteSpace(_kundeSok))
+            {
+                var (treff, sokFeil) = await Tripletex.SokKunderAsync(_kundeSok);
+                if (sokFeil is not null)
+                {
+                    _feil = sokFeil;
+                    _rader = [];
+                    _harHentet = true;
+                    return;
+                }
+                if (treff.Count == 0)
+                {
+                    _feil = $"Fant ingen kunde som matcher \"{_kundeSok}\" i Tripletex.";
+                    _rader = [];
+                    _harHentet = true;
+                    return;
+                }
+                kundeId = treff[0].Id;
+            }
+
+            var (posteringer, feil) = await Tripletex.HentPostingerAsync(_fraDato, _tilDato, kundeId, kontoNummerFra: 3000, kontoNummerTil: 3999);
+            if (feil is not null)
+            {
+                _feil = feil;
+                _rader = [];
+            }
+            else
+            {
+                _rader = posteringer
+                    .Where(p => p.ProduktNavn is not null)
+                    .GroupBy(p => p.ProduktNavn!)
+                    .Select(g => new ProduktRad(g.Key, g.Count(), g.Sum(p => Math.Abs(p.Belop))))
+                    .OrderByDescending(r => r.Sum)
+                    .ToList();
+            }
+            _harHentet = true;
+        }
+        finally
+        {
+            _lasterNa = false;
+        }
+    }
+}

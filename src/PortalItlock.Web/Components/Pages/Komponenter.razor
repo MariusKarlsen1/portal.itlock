@@ -8,6 +8,7 @@
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject IJSRuntime JS
+@inject TripletexService Tripletex
 
 <PageTitle>Komponentregister</PageTitle>
 
@@ -109,6 +110,7 @@
                 <th>Enhet</th>
                 <th>FDV</th>
                 <th>Montasjeblad</th>
+                <th>Inntektskonto</th>
                 <th>Brukt i</th>
             </tr>
         </thead>
@@ -222,6 +224,15 @@
                                 <InputFile OnChange="@(e => UploadMontasjeblad(c, e))" accept=".pdf,application/pdf" />
                             }
                         </td>
+                        <td>
+                            <select @bind="c.TripletexKontoId" title="Bestemmer hvilken Tripletex-inntektskonto salg av varen bokføres på">
+                                <option value="">Ikke satt</option>
+                                @foreach (var k in _inntektskontoer)
+                                {
+                                    <option value="@k.Id">@k.Nummer - @k.Navn</option>
+                                }
+                            </select>
+                        </td>
                         <td>@UsageLabel(c.PackageCount)</td>
                     }
                     else
@@ -265,6 +276,7 @@
                                 <InputFile OnChange="@(e => UploadMontasjeblad(c, e))" accept=".pdf,application/pdf" />
                             }
                         </td>
+                        <td>@(c.TripletexKontoNummer is not null ? $"{c.TripletexKontoNummer} - {c.TripletexKontoNavn}" : "-")</td>
                         <td>@UsageLabel(c.PackageCount)</td>
                     }
                 </tr>
@@ -351,6 +363,9 @@
         public string? FdvFilnavn { get; set; }
         public bool HarMontasjeblad { get; set; }
         public string? MontasjebladFilnavn { get; set; }
+        public int? TripletexKontoId { get; set; }
+        public int? TripletexKontoNummer { get; set; }
+        public string? TripletexKontoNavn { get; set; }
     }
 
     private sealed class NewComponentDraft
@@ -458,9 +473,17 @@
         _editingId = c.Id;
     }
 
+    private List<TripletexService.TripletexKonto> _inntektskontoer = [];
+
     protected override async Task OnInitializedAsync()
     {
         await LoadAsync();
+
+        if (Tripletex.ErKonfigurert)
+        {
+            var (kontoer, _) = await Tripletex.SokInntektskontoerAsync(null);
+            _inntektskontoer = kontoer;
+        }
     }
 
     private bool _scrollSynkKoblet;
@@ -519,7 +542,10 @@
             HarFdv = c.FdvData != null,
             FdvFilnavn = c.FdvFilnavn,
             HarMontasjeblad = c.MontasjebladData != null,
-            MontasjebladFilnavn = c.MontasjebladFilnavn
+            MontasjebladFilnavn = c.MontasjebladFilnavn,
+            TripletexKontoId = c.TripletexKontoId,
+            TripletexKontoNummer = c.TripletexKontoNummer,
+            TripletexKontoNavn = c.TripletexKontoNavn
         }).ToList();
 
         _leverandorer = _components
@@ -579,6 +605,19 @@
         entity.MontasjeMinutterService = draft.MontasjeMinutterService;
         entity.GarantitidManeder = draft.GarantitidManeder;
         entity.Enhet = string.IsNullOrWhiteSpace(draft.Enhet) ? null : draft.Enhet.Trim();
+
+        if (entity.TripletexKontoId != draft.TripletexKontoId)
+        {
+            entity.TripletexKontoId = draft.TripletexKontoId;
+            var valgt = _inntektskontoer.FirstOrDefault(k => k.Id == draft.TripletexKontoId);
+            entity.TripletexKontoNummer = valgt?.Nummer;
+            entity.TripletexKontoNavn = valgt?.Navn;
+            // Kontoen er byttet - produktet i Tripletex (hvis det finnes) må
+            // synkroniseres på nytt neste gang varen faktisk selges, ikke bli
+            // stående med feil/gammel konto.
+            entity.TripletexProduktId = null;
+        }
+
         await Db.SaveChangesAsync();
 
         _editingId = null;
