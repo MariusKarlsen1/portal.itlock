@@ -207,13 +207,30 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         var (treff, sokFeil) = await tripletex.SokKunderAsync(kunde.Navn, ct);
         var match = treff.FirstOrDefault(t =>
             t.CustomerNumber == kunde.TripletexKundenummer || t.Id.ToString() == kunde.TripletexKundenummer);
-        if (match is null)
+
+        int tripletexKundeId;
+        if (match is not null)
         {
-            ordre.TripletexOrdreFeil = sokFeil ?? $"Fant ikke kunden \"{kunde.Navn}\" igjen i Tripletex (kundenummer {kunde.TripletexKundenummer}).";
-            await db.SaveChangesAsync(ct);
-            return (false, ordre.TripletexOrdreFeil);
+            tripletexKundeId = match.Id;
         }
-        var tripletexKundeId = match.Id;
+        else
+        {
+            // Kundenummeret stemmer ikke lenger med noen ekte kunde i
+            // Tripletex (f.eks. slettet der, eller feltet ble aldri korrekt
+            // satt) - oppretter kunden på nytt der i stedet for å feile, og
+            // reparerer koblingen for neste gang.
+            var (nyId, nyttKundenummer, opprettFeil) = await tripletex.OpprettKundeAsync(TilKundeOppdatering(kunde), ct);
+            if (opprettFeil is not null || nyId is null)
+            {
+                ordre.TripletexOrdreFeil = $"Fant ikke kunden \"{kunde.Navn}\" igjen i Tripletex (kundenummer {kunde.TripletexKundenummer}), og fikk heller ikke opprettet den på nytt: {opprettFeil ?? sokFeil}";
+                await db.SaveChangesAsync(ct);
+                return (false, ordre.TripletexOrdreFeil);
+            }
+
+            kunde.TripletexKundenummer = nyttKundenummer ?? nyId.Value.ToString();
+            await db.SaveChangesAsync(ct);
+            tripletexKundeId = nyId.Value;
+        }
 
         // Samme linjeberegning som portalens egne rapporter bruker (se
         // ArbeidsordreOkonomiBeregner) - ordren i Tripletex er kun "klar til
