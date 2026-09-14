@@ -125,6 +125,8 @@ builder.Services.AddSingleton<TripletexService>(sp =>
     new TripletexService(
         sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(TripletexService)),
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TripletexOptions>>()));
+builder.Services.AddScoped<TripletexSyncService>();
+builder.Services.AddHostedService<TripletexSyncBackgroundService>();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

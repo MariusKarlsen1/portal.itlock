@@ -14,6 +14,7 @@
 @inject SjekklistePdfService SjekklistePdfService
 @inject ArbeidsordrePdfService ArbeidsordrePdfService
 @inject LagretPdfService LagretPdfService
+@inject TripletexSyncService TripletexSync
 
 <PageTitle>@(_ordre?.Tittel ?? "Arbeidsordre")</PageTitle>
 
@@ -652,6 +653,17 @@ else if (_ordre is not null)
                 Fullført av @_ordre.FullfortAvBruker.Navn@(_ordre.FullfortDato.HasValue ? $" - {_ordre.FullfortDato.Value:dd.MM.yyyy HH:mm}" : "")
             </p>
         }
+
+        @if (_ordre.TripletexOrdreId is not null)
+        {
+            <p class="fullfort-av-tekst">
+                Sendt til Tripletex som ordre #@_ordre.TripletexOrdreNummer@(_ordre.TripletexOrdreSendtDato.HasValue ? $" - {_ordre.TripletexOrdreSendtDato.Value:dd.MM.yyyy HH:mm}" : "")
+            </p>
+        }
+        else if (!string.IsNullOrWhiteSpace(_ordre.TripletexOrdreFeil))
+        {
+            <p class="form-error">Ikke sendt til Tripletex: @_ordre.TripletexOrdreFeil</p>
+        }
     </section>
 
     <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av arbeidsordrerapport" SaveMessage="@_rapportPdfSavedMessage"
@@ -1116,6 +1128,22 @@ else if (_ordre is not null)
         _ordre.FullfortDato = DateTime.Now;
         await Db.SaveChangesAsync();
         _ferdigmeldtMelding = "Ordren er ferdigmeldt og klar for fakturering.";
+
+        // Sender ordren videre til Tripletex som en ordre klar til fakturering
+        // der (se TripletexSyncService.PushArbeidsordreTilTripletexAsync).
+        // Fanger uventede feil her uten å la dem forstyrre selve
+        // ferdigmeldingen over, som er den viktigste handlingen.
+        try
+        {
+            var (ok, feil) = await TripletexSync.PushArbeidsordreTilTripletexAsync(_ordre.Id);
+            _ferdigmeldtMelding = ok
+                ? _ferdigmeldtMelding + " Sendt til Tripletex."
+                : _ferdigmeldtMelding + $" (Kunne ikke sende til Tripletex: {feil})";
+        }
+        catch (Exception ex)
+        {
+            _ferdigmeldtMelding += $" (Kunne ikke sende til Tripletex: {ex.Message})";
+        }
 
         var kundeEpost = _ordre.Prosjekt?.Kunde?.Epost;
         if (!string.IsNullOrWhiteSpace(kundeEpost))

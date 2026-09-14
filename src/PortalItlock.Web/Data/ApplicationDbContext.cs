@@ -105,6 +105,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<CeGodkjenningMedia> CeGodkjenningMedia => Set<CeGodkjenningMedia>();
     public DbSet<CeMaleGrenseverdier> CeMaleGrenseverdier => Set<CeMaleGrenseverdier>();
     public DbSet<Ressursplan> Ressursplaner => Set<Ressursplan>();
+    public DbSet<TripletexSyncTilstand> TripletexSyncTilstand => Set<TripletexSyncTilstand>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

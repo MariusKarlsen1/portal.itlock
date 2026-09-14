@@ -40,6 +40,15 @@ public class Arbeidsordre
     public Bruker? FullfortAvBruker { get; set; }
     public DateTime? FullfortDato { get; set; }
 
+    // Satt når ordren er sendt til Tripletex som en ordre klar til fakturering
+    // (se TripletexSyncService.PushArbeidsordreTilTripletexAsync, kalt fra
+    // Ferdigmeld() i ArbeidsordreSkjema.razor) - hindrer at samme arbeidsordre
+    // sendes dit flere ganger.
+    public int? TripletexOrdreId { get; set; }
+    public string? TripletexOrdreNummer { get; set; }
+    public DateTime? TripletexOrdreSendtDato { get; set; }
+    public string? TripletexOrdreFeil { get; set; }
+
     // Kun i bruk når arbeidsordren ikke er koblet til et tilbud - da har man ingen
     // Tilbud-linjer å hente montasjepris/DG fra, så det settes manuelt her.
     public decimal? Timepris { get; set; }
