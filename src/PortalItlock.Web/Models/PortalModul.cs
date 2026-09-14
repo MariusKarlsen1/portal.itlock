@@ -65,6 +65,9 @@ public static class PortalModulRegister
                 new LenkeGruppe("Brukere og kunder", [
                     new Lenke("Brukere og kunder", "Brukere, kunder, kundeoppfølging og fravær samlet på ett sted", "brukerkundemodul", "users"),
                 ]),
+                new LenkeGruppe("Integrasjoner", [
+                    new Lenke("Tripletex", "Test tilkobling og kundeoppslag mot Tripletex-API-et (testmiljø)", "integrasjoner/tripletex", "box"),
+                ]),
             ]),
     ];
 }

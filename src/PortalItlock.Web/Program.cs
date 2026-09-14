@@ -111,6 +111,20 @@ builder.Services.AddHttpClient<AiAssistentService>(client =>
     client.BaseAddress = new Uri("https://api.anthropic.com/");
     client.Timeout = TimeSpan.FromSeconds(60);
 });
+builder.Services.Configure<TripletexOptions>(builder.Configuration.GetSection("Tripletex"));
+// Navngitt (ikke typet) HttpClient - TripletexService må være singleton for at
+// det cachede session-tokenet (se HentSessionTokenAsync) faktisk skal deles på
+// tvers av forespørsler, i stedet for å lages på nytt for hver injeksjon.
+builder.Services.AddHttpClient(nameof(TripletexService), (sp, client) =>
+{
+    var baseUrl = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TripletexOptions>>().Value.BaseUrl;
+    client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(20);
+});
+builder.Services.AddSingleton<TripletexService>(sp =>
+    new TripletexService(
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(TripletexService)),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TripletexOptions>>()));
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
