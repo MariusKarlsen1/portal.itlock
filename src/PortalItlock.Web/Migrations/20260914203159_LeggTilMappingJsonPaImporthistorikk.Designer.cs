@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260914203159_LeggTilMappingJsonPaImporthistorikk")]
+    partial class LeggTilMappingJsonPaImporthistorikk
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -1263,9 +1266,6 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("Sortering")
-                        .HasColumnType("INTEGER");
-
                     b.HasKey("Id");
 
                     b.ToTable("ComponentTypes");
@@ -1275,456 +1275,391 @@ namespace PortalItlock.Web.Migrations
                         {
                             Id = 1,
                             CeKategori = 0,
-                            Navn = "Låskasse 1",
-                            Sortering = 0
+                            Navn = "Låskasse 1"
                         },
                         new
                         {
                             Id = 2,
                             CeKategori = 0,
-                            Navn = "Sluttstykke 1",
-                            Sortering = 0
+                            Navn = "Sluttstykke 1"
                         },
                         new
                         {
                             Id = 3,
                             CeKategori = 0,
-                            Navn = "Stolpe 1",
-                            Sortering = 0
+                            Navn = "Stolpe 1"
                         },
                         new
                         {
                             Id = 4,
                             CeKategori = 0,
-                            Navn = "Sylinder 1 utv",
-                            Sortering = 0
+                            Navn = "Sylinder 1 utv"
                         },
                         new
                         {
                             Id = 5,
                             CeKategori = 0,
-                            Navn = "Sylinder 1 innv.",
-                            Sortering = 0
+                            Navn = "Sylinder 1 innv."
                         },
                         new
                         {
                             Id = 6,
                             CeKategori = 0,
-                            Navn = "Sylinder utstyr",
-                            Sortering = 0
+                            Navn = "Sylinder utstyr"
                         },
                         new
                         {
                             Id = 7,
                             CeKategori = 0,
-                            Navn = "Sylinder utstyr 2",
-                            Sortering = 0
+                            Navn = "Sylinder utstyr 2"
                         },
                         new
                         {
                             Id = 8,
                             CeKategori = 0,
-                            Navn = "Sylinder utstyr 3",
-                            Sortering = 0
+                            Navn = "Sylinder utstyr 3"
                         },
                         new
                         {
                             Id = 9,
                             CeKategori = 0,
-                            Navn = "Håndtak",
-                            Sortering = 0
+                            Navn = "Håndtak"
                         },
                         new
                         {
                             Id = 10,
                             CeKategori = 0,
-                            Navn = "Dørvrider",
-                            Sortering = 0
+                            Navn = "Dørvrider"
                         },
                         new
                         {
                             Id = 11,
                             CeKategori = 0,
-                            Navn = "Skilt 1",
-                            Sortering = 0
+                            Navn = "Skilt 1"
                         },
                         new
                         {
                             Id = 12,
                             CeKategori = 0,
-                            Navn = "Låskasse 2",
-                            Sortering = 0
+                            Navn = "Låskasse 2"
                         },
                         new
                         {
                             Id = 13,
                             CeKategori = 0,
-                            Navn = "Sluttstykke 2",
-                            Sortering = 0
+                            Navn = "Sluttstykke 2"
                         },
                         new
                         {
                             Id = 14,
                             CeKategori = 0,
-                            Navn = "Sluttstykke 2 utstyr",
-                            Sortering = 0
+                            Navn = "Sluttstykke 2 utstyr"
                         },
                         new
                         {
                             Id = 15,
                             CeKategori = 0,
-                            Navn = "Sylinder 2 utv",
-                            Sortering = 0
+                            Navn = "Sylinder 2 utv"
                         },
                         new
                         {
                             Id = 16,
                             CeKategori = 0,
-                            Navn = "Sylinder 2 innv",
-                            Sortering = 0
+                            Navn = "Sylinder 2 innv"
                         },
                         new
                         {
                             Id = 17,
                             CeKategori = 0,
-                            Navn = "Sylinder 2 utstyr",
-                            Sortering = 0
+                            Navn = "Sylinder 2 utstyr"
                         },
                         new
                         {
                             Id = 18,
                             CeKategori = 0,
-                            Navn = "Sylinder 2 utstyr 2",
-                            Sortering = 0
+                            Navn = "Sylinder 2 utstyr 2"
                         },
                         new
                         {
                             Id = 19,
                             CeKategori = 0,
-                            Navn = "Skilt 2",
-                            Sortering = 0
+                            Navn = "Skilt 2"
                         },
                         new
                         {
                             Id = 20,
                             CeKategori = 0,
-                            Navn = "Sylinderskruer",
-                            Sortering = 0
+                            Navn = "Sylinderskruer"
                         },
                         new
                         {
                             Id = 21,
                             CeKategori = 0,
-                            Navn = "Dørautomatikk",
-                            Sortering = 0
+                            Navn = "Dørautomatikk"
                         },
                         new
                         {
                             Id = 22,
                             CeKategori = 0,
-                            Navn = "Dørautomatikk arm/skinne",
-                            Sortering = 0
+                            Navn = "Dørautomatikk arm/skinne"
                         },
                         new
                         {
                             Id = 23,
                             CeKategori = 0,
-                            Navn = "Klemsikring bakkant",
-                            Sortering = 0
+                            Navn = "Klemsikring bakkant"
                         },
                         new
                         {
                             Id = 24,
                             CeKategori = 0,
-                            Navn = "Klemsikring forkant",
-                            Sortering = 0
+                            Navn = "Klemsikring forkant"
                         },
                         new
                         {
                             Id = 25,
                             CeKategori = 0,
-                            Navn = "Kelmsikring karmoverføring",
-                            Sortering = 0
+                            Navn = "Kelmsikring karmoverføring"
                         },
                         new
                         {
                             Id = 26,
                             CeKategori = 0,
-                            Navn = "Dørautomatikk utstyr",
-                            Sortering = 0
+                            Navn = "Dørautomatikk utstyr"
                         },
                         new
                         {
                             Id = 27,
                             CeKategori = 0,
-                            Navn = "Dørautomatikk utstyr 2",
-                            Sortering = 0
+                            Navn = "Dørautomatikk utstyr 2"
                         },
                         new
                         {
                             Id = 28,
                             CeKategori = 0,
-                            Navn = "Dørautomatikk blindplugg",
-                            Sortering = 0
+                            Navn = "Dørautomatikk blindplugg"
                         },
                         new
                         {
                             Id = 29,
                             CeKategori = 0,
-                            Navn = "Dørautomatikk utstyr 4",
-                            Sortering = 0
+                            Navn = "Dørautomatikk utstyr 4"
                         },
                         new
                         {
                             Id = 30,
                             CeKategori = 0,
-                            Navn = "Dørautomatikk utstyr 5",
-                            Sortering = 0
+                            Navn = "Dørautomatikk utstyr 5"
                         },
                         new
                         {
                             Id = 31,
                             CeKategori = 0,
-                            Navn = "Kortleser inn",
-                            Sortering = 0
+                            Navn = "Kortleser inn"
                         },
                         new
                         {
                             Id = 32,
                             CeKategori = 0,
-                            Navn = "Kortleser ut",
-                            Sortering = 0
+                            Navn = "Kortleser ut"
                         },
                         new
                         {
                             Id = 33,
                             CeKategori = 0,
-                            Navn = "Kortleser styreenhet",
-                            Sortering = 0
+                            Navn = "Kortleser styreenhet"
                         },
                         new
                         {
                             Id = 34,
                             CeKategori = 0,
-                            Navn = "Impulsbryter innv",
-                            Sortering = 0
+                            Navn = "Impulsbryter innv"
                         },
                         new
                         {
                             Id = 35,
                             CeKategori = 0,
-                            Navn = "Impulsbryter utv.",
-                            Sortering = 0
+                            Navn = "Impulsbryter utv."
                         },
                         new
                         {
                             Id = 36,
                             CeKategori = 0,
-                            Navn = "Impulsbryter utstyr",
-                            Sortering = 0
+                            Navn = "Impulsbryter utstyr"
                         },
                         new
                         {
                             Id = 37,
                             CeKategori = 0,
-                            Navn = "Nøkkelbryter",
-                            Sortering = 0
+                            Navn = "Nøkkelbryter"
                         },
                         new
                         {
                             Id = 38,
                             CeKategori = 0,
-                            Navn = "Nkl.bryter sylinder",
-                            Sortering = 0
+                            Navn = "Nkl.bryter sylinder"
                         },
                         new
                         {
                             Id = 39,
                             CeKategori = 0,
-                            Navn = "Dørlukker aktiv fløy",
-                            Sortering = 0
+                            Navn = "Dørlukker aktiv fløy"
                         },
                         new
                         {
                             Id = 40,
                             CeKategori = 0,
-                            Navn = "Dørlukker arm/skinne",
-                            Sortering = 0
+                            Navn = "Dørlukker arm/skinne"
                         },
                         new
                         {
                             Id = 41,
                             CeKategori = 0,
-                            Navn = "Dørlukker passiv fløy",
-                            Sortering = 0
+                            Navn = "Dørlukker passiv fløy"
                         },
                         new
                         {
                             Id = 42,
                             CeKategori = 0,
-                            Navn = "Dørlukker utstyr",
-                            Sortering = 0
+                            Navn = "Dørlukker utstyr"
                         },
                         new
                         {
                             Id = 43,
                             CeKategori = 0,
-                            Navn = "Dørlukker utstyr 2",
-                            Sortering = 0
+                            Navn = "Dørlukker utstyr 2"
                         },
                         new
                         {
                             Id = 44,
                             CeKategori = 0,
-                            Navn = "Panikkbeslag/Skåte",
-                            Sortering = 0
+                            Navn = "Panikkbeslag/Skåte"
                         },
                         new
                         {
                             Id = 45,
                             CeKategori = 0,
-                            Navn = "Panikkbeslag utstyr",
-                            Sortering = 0
+                            Navn = "Panikkbeslag utstyr"
                         },
                         new
                         {
                             Id = 46,
                             CeKategori = 0,
-                            Navn = "Panikkbeslag utstyr 2",
-                            Sortering = 0
+                            Navn = "Panikkbeslag utstyr 2"
                         },
                         new
                         {
                             Id = 47,
                             CeKategori = 0,
-                            Navn = "Panikkbeslag utstyr 3",
-                            Sortering = 0
+                            Navn = "Panikkbeslag utstyr 3"
                         },
                         new
                         {
                             Id = 48,
                             CeKategori = 0,
-                            Navn = "Panikkbeslag utstyr 4",
-                            Sortering = 0
+                            Navn = "Panikkbeslag utstyr 4"
                         },
                         new
                         {
                             Id = 49,
                             CeKategori = 0,
-                            Navn = "Panikkbeslag utstyr 5",
-                            Sortering = 0
+                            Navn = "Panikkbeslag utstyr 5"
                         },
                         new
                         {
                             Id = 50,
                             CeKategori = 0,
-                            Navn = "Magnetlås passiv fløy",
-                            Sortering = 0
+                            Navn = "Magnetlås passiv fløy"
                         },
                         new
                         {
                             Id = 51,
                             CeKategori = 0,
-                            Navn = "Magnetlås utstyr",
-                            Sortering = 0
+                            Navn = "Magnetlås utstyr"
                         },
                         new
                         {
                             Id = 52,
                             CeKategori = 0,
-                            Navn = "Magnetlås utstyr 2",
-                            Sortering = 0
+                            Navn = "Magnetlås utstyr 2"
                         },
                         new
                         {
                             Id = 53,
                             CeKategori = 0,
-                            Navn = "Nødutstyr mekanisk",
-                            Sortering = 0
+                            Navn = "Nødutstyr mekanisk"
                         },
                         new
                         {
                             Id = 54,
                             CeKategori = 0,
-                            Navn = "Nødutstyr elektrisk",
-                            Sortering = 0
+                            Navn = "Nødutstyr elektrisk"
                         },
                         new
                         {
                             Id = 55,
                             CeKategori = 0,
-                            Navn = "Karmoverføring aktiv fløy",
-                            Sortering = 0
+                            Navn = "Karmoverføring aktiv fløy"
                         },
                         new
                         {
                             Id = 56,
                             CeKategori = 0,
-                            Navn = "Karmoverføring passiv fløy",
-                            Sortering = 0
+                            Navn = "Karmoverføring passiv fløy"
                         },
                         new
                         {
                             Id = 57,
                             CeKategori = 0,
-                            Navn = "Kabel",
-                            Sortering = 0
+                            Navn = "Kabel"
                         },
                         new
                         {
                             Id = 58,
                             CeKategori = 0,
-                            Navn = "Dørstopper",
-                            Sortering = 0
+                            Navn = "Dørstopper"
                         },
                         new
                         {
                             Id = 59,
                             CeKategori = 0,
-                            Navn = "Magnetkontakt",
-                            Sortering = 0
+                            Navn = "Magnetkontakt"
                         },
                         new
                         {
                             Id = 60,
                             CeKategori = 0,
-                            Navn = "Grensesnittboks",
-                            Sortering = 0
+                            Navn = "Grensesnittboks"
                         },
                         new
                         {
                             Id = 61,
                             CeKategori = 0,
-                            Navn = "Grensesnittboks utstyr 1",
-                            Sortering = 0
+                            Navn = "Grensesnittboks utstyr 1"
                         },
                         new
                         {
                             Id = 62,
                             CeKategori = 0,
-                            Navn = "Grensesnittboks utstyr 2",
-                            Sortering = 0
+                            Navn = "Grensesnittboks utstyr 2"
                         },
                         new
                         {
                             Id = 63,
                             CeKategori = 0,
-                            Navn = "Diverse 1",
-                            Sortering = 0
+                            Navn = "Diverse 1"
                         },
                         new
                         {
                             Id = 64,
                             CeKategori = 0,
-                            Navn = "Diverse 2",
-                            Sortering = 0
+                            Navn = "Diverse 2"
                         },
                         new
                         {
                             Id = 65,
                             CeKategori = 0,
-                            Navn = "Diverse 3",
-                            Sortering = 0
+                            Navn = "Diverse 3"
                         });
                 });
 

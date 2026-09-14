@@ -15,4 +15,10 @@ public class Importhistorikk
     public int? AntallRader { get; set; }
     public int? AntallNye { get; set; }
     public int? AntallOppdatert { get; set; }
+
+    // Kolonnevalgene (PrisimportService.KolonneForslag) som JSON, lagret når
+    // importen fullføres - lar en senere import for samme leverandør
+    // gjenbruke nøyaktig de samme feltvalgene i stedet for å måtte mappes på
+    // nytt fra bunnen av (se Prisimport.razor).
+    public string? MappingJson { get; set; }
 }

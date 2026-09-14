@@ -80,7 +80,13 @@
                             <td>@(h.OpprettetAvBruker?.Navn ?? "-")</td>
                             <td><span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : "import-status-badge-pagar")">@h.Status</span></td>
                             <td>@(h.AntallNye is not null ? $"{h.AntallNye} nye, {h.AntallOppdatert} oppdatert" : "-")</td>
-                            <td><button type="button" class="cancel-button" @onclick="@(() => SlettHistorikk(h))">Slett</button></td>
+                            <td class="historikk-actions">
+                                @if (!string.IsNullOrWhiteSpace(h.Leverandor))
+                                {
+                                    <button type="button" class="cancel-button" title="Fyller inn leverandør og gjenbruker kolonnevalgene fra denne importen når du velger fil på nytt" @onclick="@(() => ApneTidligereImport(h))">Åpne</button>
+                                }
+                                <button type="button" class="cancel-button" @onclick="@(() => SlettHistorikk(h))">Slett</button>
+                            </td>
                         </tr>
                     }
                 </tbody>
@@ -101,7 +107,13 @@
                         {
                             <div class="mobil-historikk-meta">@h.AntallNye nye, @h.AntallOppdatert oppdatert</div>
                         }
-                        <button type="button" class="cancel-button" @onclick="@(() => SlettHistorikk(h))">Slett</button>
+                        <div class="mobil-historikk-knapper">
+                            @if (!string.IsNullOrWhiteSpace(h.Leverandor))
+                            {
+                                <button type="button" class="cancel-button" @onclick="@(() => ApneTidligereImport(h))">Åpne</button>
+                            }
+                            <button type="button" class="cancel-button" @onclick="@(() => SlettHistorikk(h))">Slett</button>
+                        </div>
                     </li>
                 }
             </ul>
@@ -428,6 +440,37 @@ else if (_steg == 4)
         _historikk.Remove(h);
     }
 
+    private async Task<PrisimportService.KolonneForslag?> HentTidligereMappingAsync(string leverandor)
+    {
+        var trimmet = leverandor.Trim();
+        var forrige = await Db.Importhistorikk
+            .Where(h => h.Kilde == "Prisimport" && h.Status == "Fullført"
+                && h.Leverandor != null && h.Leverandor.ToLower() == trimmet.ToLower()
+                && h.MappingJson != null)
+            .OrderByDescending(h => h.OpprettetDato)
+            .FirstOrDefaultAsync();
+
+        if (forrige?.MappingJson is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<PrisimportService.KolonneForslag>(forrige.MappingJson);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    private void ApneTidligereImport(Importhistorikk h)
+    {
+        _leverandor = h.Leverandor ?? "";
+        _feil = null;
+    }
+
     private async Task LastOppFil(InputFileChangeEventArgs e)
     {
         _feil = null;
@@ -467,7 +510,14 @@ else if (_steg == 4)
         _radeksempel = _rader.Count > 0 ? _rader[0] : null;
 
         _autoForslag = PrisimportService.AutoMatchKolonner(_kolonner);
-        _valgt = PrisimportService.AutoMatchKolonner(_kolonner);
+
+        // Gjenbruker feltvalgene fra forrige fullførte import for SAMME
+        // leverandør, hvis det finnes en - i stedet for kun å gjette ut fra
+        // kolonneoverskriftene hver gang. Felt som sto som "Ikke i bruk" sist
+        // (verdi null) forblir null her også, så ingenting blir rørt som ikke
+        // uttrykkelig var valgt.
+        var tidligereMapping = string.IsNullOrWhiteSpace(_leverandor) ? null : await HentTidligereMappingAsync(_leverandor);
+        _valgt = tidligereMapping ?? PrisimportService.AutoMatchKolonner(_kolonner);
 
         _gjeldendeHistorikk = new Importhistorikk
         {
@@ -525,6 +575,10 @@ else if (_steg == 4)
             _gjeldendeHistorikk.AntallRader = _forhandsvisning.Count;
             _gjeldendeHistorikk.AntallNye = _nyeAntall;
             _gjeldendeHistorikk.AntallOppdatert = _oppdatertAntall;
+            // Lagrer nøyaktig de feltvalgene som ble brukt - lar en senere
+            // import for samme leverandør starte fra disse i stedet for kun
+            // gjetting ut fra kolonneoverskrifter (se LastOppFil).
+            _gjeldendeHistorikk.MappingJson = System.Text.Json.JsonSerializer.Serialize(_valgt);
             await Db.SaveChangesAsync();
             await LastHistorikkAsync();
         }
