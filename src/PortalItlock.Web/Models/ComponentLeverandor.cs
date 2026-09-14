@@ -13,6 +13,10 @@ public class ComponentLeverandor
     public Leverandor? Leverandor { get; set; }
 
     public string? Varenummer { get; set; }
+
+    // Leverandørens eget navn på varen - kan avvike fra Component.Navn (som
+    // er portalens eget navn på varen).
+    public string? Navn { get; set; }
     public decimal? PrisNetto { get; set; }
     public decimal? PrisVeiledende { get; set; }
     public bool ErStandard { get; set; }
