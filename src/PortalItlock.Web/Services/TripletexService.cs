@@ -295,7 +295,7 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
     // tillegg påkrevd i praksis (422 "Kan ikke være null" uten den), selv om
     // Tripletex sin egen OpenAPI-spesifikasjon ikke lister den som påkrevd.
     public async Task<(int? Id, string? OrdreNummer, string? Feilmelding)> OpprettOrdreAsync(
-        int tripletexKundeId, string tittel, string? referanse, List<OrdreLinjeInput> linjer, CancellationToken ct = default)
+        int tripletexKundeId, string? referanse, List<OrdreLinjeInput> linjer, CancellationToken ct = default)
     {
         try
         {
@@ -328,7 +328,7 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
             var linjerBody = linjer.Select(l => new
             {
                 order = new { id = opprettetOrdre.Id },
-                description = $"{tittel}: {l.Beskrivelse}",
+                description = l.Beskrivelse,
                 count = l.Antall,
                 unitPriceExcludingVatCurrency = l.EnhetsprisEksMva,
                 // itlock bruker 25% mva på alt (samme kode som den eksisterende

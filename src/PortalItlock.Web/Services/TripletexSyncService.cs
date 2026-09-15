@@ -267,7 +267,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         }
 
         var (ordreId, ordreNummer, ordreFeil) = await tripletex.OpprettOrdreAsync(
-            tripletexKundeId, ordre.Tittel, $"Arbeidsordre #{ordre.Id}", linjer, ct);
+            tripletexKundeId, $"Arbeidsordre #{ordre.Id} - {ordre.Tittel}", linjer, ct);
 
         if (ordreFeil is not null)
         {
