@@ -376,18 +376,38 @@ public class PrisimportService(ApplicationDbContext db)
                 // Oppdaterer (eller oppretter, om koblingen mangler) denne
                 // leverandørens egen varenummer/pris-kobling for varen -
                 // uavhengig av om denne leverandøren er satt som standard.
-                if (!lenkerPerKomponentOgLeverandor.TryGetValue((comp.Id, leverandorEntitet.Id), out var lenke))
+                //
+                // Sjekker comp.Leverandorer (navigasjonen) FØRST - dekker
+                // tilfellet der "comp" er en helt ny, ennå ulagret vare fra
+                // en TIDLIGERE rad i SAMME fil med samme produktkode
+                // (duplikatrad) - den fikk allerede sin lenke opprettet i
+                // "ny vare"-grenen under, med comp.Id fortsatt 0 (ikke lagret
+                // ennå). lenkerPerKomponentOgLeverandor er kun til nytte for
+                // FAKTISK eksisterende varer i databasen (comp.Id > 0).
+                var lenke = comp.Leverandorer.FirstOrDefault(l => l.LeverandorId == leverandorEntitet.Id);
+                if (lenke is null && comp.Id > 0)
+                {
+                    lenkerPerKomponentOgLeverandor.TryGetValue((comp.Id, leverandorEntitet.Id), out lenke);
+                }
+
+                if (lenke is null)
                 {
                     var harAndreLenker = komponenterMedMinstEnLenke.Contains(comp.Id);
                     lenke = new ComponentLeverandor
                     {
-                        ComponentId = comp.Id,
                         LeverandorId = leverandorEntitet.Id,
                         ErStandard = !harAndreLenker
                     };
-                    db.ComponentLeverandorer.Add(lenke);
-                    lenkerPerKomponentOgLeverandor[(comp.Id, leverandorEntitet.Id)] = lenke;
-                    komponenterMedMinstEnLenke.Add(comp.Id);
+                    // Lagt til via navigasjonen (ikke db.ComponentLeverandorer.Add
+                    // med ComponentId satt manuelt) - det siste feiler med
+                    // "ComponentId is unknown" fra EF Core når comp ennå ikke er
+                    // lagret (comp.Id er fortsatt en midlertidig nøkkel).
+                    comp.Leverandorer.Add(lenke);
+                    if (comp.Id > 0)
+                    {
+                        lenkerPerKomponentOgLeverandor[(comp.Id, leverandorEntitet.Id)] = lenke;
+                        komponenterMedMinstEnLenke.Add(comp.Id);
+                    }
                 }
                 lenke.Varenummer = rad.Produktkode;
                 lenke.PrisNetto = nyNetto;
