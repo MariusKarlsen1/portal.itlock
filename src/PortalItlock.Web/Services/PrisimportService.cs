@@ -218,48 +218,45 @@ public class PrisimportService(ApplicationDbContext db)
                 ProduktgruppeId = importertProduktgruppe?.Id,
             };
 
-            void SettRabattgruppe(Rabattgruppe gruppe)
-            {
-                importRad.RabattgruppeId = gruppe.Id;
-                importRad.RabattgruppeKode = gruppe.Kode;
-                if (importRad.PrisVeiledende.HasValue)
-                {
-                    importRad.PrisNetto = Math.Round(importRad.PrisVeiledende.Value * (1 - gruppe.RabattProsent / 100m), 2);
-                    importRad.NettoErBeregnet = true;
-                }
-            }
-
+            Component? funnet = null;
             if (string.IsNullOrWhiteSpace(produktkode))
             {
                 importRad.Feil = "Mangler produktkode";
             }
-            else if (eksisterendePerKode.TryGetValue(produktkode.Trim().ToLowerInvariant(), out var funnet))
+            else if (eksisterendePerKode.TryGetValue(produktkode.Trim().ToLowerInvariant(), out funnet))
             {
                 importRad.EksisterendeComponentId = funnet.Id;
                 importRad.EksisterendeNavn = funnet.Navn;
                 importRad.ErNyVare = false;
-
-                if (importertRabattgruppe is not null)
-                {
-                    SettRabattgruppe(importertRabattgruppe);
-                }
-                else if (funnet.Rabattgruppe is not null && importRad.PrisVeiledende.HasValue)
-                {
-                    importRad.RabattgruppeKode = funnet.Rabattgruppe.Kode;
-                    importRad.PrisNetto = Math.Round(importRad.PrisVeiledende.Value * (1 - funnet.Rabattgruppe.RabattProsent / 100m), 2);
-                    importRad.NettoErBeregnet = true;
-                }
             }
             else
             {
                 importRad.ErNyVare = true;
-                if (importertRabattgruppe is not null)
-                {
-                    SettRabattgruppe(importertRabattgruppe);
-                }
                 if (string.IsNullOrWhiteSpace(navn))
                 {
                     importRad.Feil = "Ny vare mangler navn";
+                }
+            }
+
+            // Nettoprisen skal ALLTID beregnes som veiledende pris minus
+            // rabattgruppens prosent når begge er kjent - uansett om filen
+            // selv har en egen Pris netto-kolonne mappet eller ikke, og
+            // uansett om rabattgruppen/veiledende kommer fra filen eller fra
+            // varens eksisterende verdier (brukes som fallback når filen ikke
+            // har kolonnen mappet, eller feltet står tomt på denne raden).
+            // Filens egen Pris netto-kolonne brukes kun når ingen
+            // rabattgruppe i det hele tatt er kjent for varen.
+            var effektivRabattgruppe = importertRabattgruppe ?? funnet?.Rabattgruppe;
+            if (effektivRabattgruppe is not null)
+            {
+                importRad.RabattgruppeId = effektivRabattgruppe.Id;
+                importRad.RabattgruppeKode = effektivRabattgruppe.Kode;
+
+                var effektivVeiledende = importRad.PrisVeiledende ?? funnet?.PrisVeiledende;
+                if (effektivVeiledende.HasValue)
+                {
+                    importRad.PrisNetto = Math.Round(effektivVeiledende.Value * (1 - effektivRabattgruppe.RabattProsent / 100m), 2);
+                    importRad.NettoErBeregnet = true;
                 }
             }
 
