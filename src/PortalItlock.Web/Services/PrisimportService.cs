@@ -357,6 +357,10 @@ public class PrisimportService(ApplicationDbContext db)
 
                 comp.PrisNetto = nyNetto;
                 comp.PrisVeiledende = nyVeil;
+                if (!string.IsNullOrWhiteSpace(rad.Navn))
+                {
+                    comp.Navn = rad.Navn.Trim();
+                }
 
                 // Oppdaterer (eller oppretter, om koblingen mangler) denne
                 // leverandørens egen varenummer/pris-kobling for varen -
