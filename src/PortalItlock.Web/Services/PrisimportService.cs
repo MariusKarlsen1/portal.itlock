@@ -24,6 +24,7 @@ public class PrisimportService(ApplicationDbContext db)
         public string? Beskrivelse { get; set; }
         public string? Varegruppe { get; set; }
         public string? Overflate { get; set; }
+        public string? Konsept { get; set; }
         public string? Enhet { get; set; }
         public decimal? PrisNetto { get; set; }
         public decimal? PrisVeiledende { get; set; }
@@ -54,6 +55,7 @@ public class PrisimportService(ApplicationDbContext db)
         public int? Beskrivelse { get; set; }
         public int? Varegruppe { get; set; }
         public int? Overflate { get; set; }
+        public int? Konsept { get; set; }
         public int? Enhet { get; set; }
         public int? PrisNetto { get; set; }
         public int? PrisVeiledende { get; set; }
@@ -81,6 +83,7 @@ public class PrisimportService(ApplicationDbContext db)
             Beskrivelse = Finn("beskrivelse", "varebeskrivelse", "produktbeskrivelse"),
             Varegruppe = Finn("varegruppe", "kategori"),
             Overflate = Finn("overflate", "finish"),
+            Konsept = Finn("konsept", "concept", "serie"),
             Enhet = Finn("enhet", "måleenhet", "maaleenhet", "unit"),
             PrisNetto = Finn("nettopris", "netto pris", "innkjøpspris", "innkjøp", "kostpris", "netto"),
             PrisVeiledende = Finn("veiledende", "utpris", "listepris", "bruttopris", "veil.", "veil pris", "salgspris"),
@@ -204,6 +207,7 @@ public class PrisimportService(ApplicationDbContext db)
                 Beskrivelse = HentFelt(rad, valgt.Beskrivelse),
                 Varegruppe = HentFelt(rad, valgt.Varegruppe),
                 Overflate = HentFelt(rad, valgt.Overflate),
+                Konsept = HentFelt(rad, valgt.Konsept),
                 Enhet = NormaliserEnhet(HentFelt(rad, valgt.Enhet)),
                 PrisNetto = ParsePris(HentFelt(rad, valgt.PrisNetto)),
                 PrisVeiledende = ParsePris(HentFelt(rad, valgt.PrisVeiledende)),
@@ -398,6 +402,10 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     comp.Overflate = rad.Overflate;
                 }
+                if (!string.IsNullOrWhiteSpace(rad.Konsept))
+                {
+                    comp.Konsept = rad.Konsept.Trim();
+                }
                 if (!string.IsNullOrWhiteSpace(rad.Gtin))
                 {
                     comp.Gtin = rad.Gtin.Trim();
@@ -439,6 +447,7 @@ public class PrisimportService(ApplicationDbContext db)
                     Beskrivelse = string.IsNullOrWhiteSpace(rad.Beskrivelse) ? null : rad.Beskrivelse,
                     Varegruppe = string.IsNullOrWhiteSpace(rad.Varegruppe) ? null : rad.Varegruppe,
                     Overflate = string.IsNullOrWhiteSpace(rad.Overflate) ? null : rad.Overflate,
+                    Konsept = string.IsNullOrWhiteSpace(rad.Konsept) ? null : rad.Konsept.Trim(),
                     Produktkode = rad.Produktkode,
                     Gtin = string.IsNullOrWhiteSpace(rad.Gtin) ? null : rad.Gtin.Trim(),
                     Leverandor = leverandor,
