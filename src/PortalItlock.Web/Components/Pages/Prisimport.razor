@@ -229,7 +229,7 @@ else if (_steg == 2)
         </ul>
 
         <div class="form-actions">
-            <button type="button" class="save-button" @onclick="VisForhandsvisning">Neste</button>
+            <button type="button" class="save-button" @onclick="VisForhandsvisning" disabled="@_forhandsviser">@(_forhandsviser ? "Lager forhåndsvisning, vennligst vent..." : "Neste")</button>
             <button type="button" class="cancel-button" @onclick="AvbrytImport">Avbryt</button>
             @if (!string.IsNullOrEmpty(_feil))
             {
@@ -436,6 +436,7 @@ else if (_steg == 4)
     private int _oppdatertAntall;
     private int _nyeAntall;
     private bool _importerer;
+    private bool _forhandsviser;
 
     private sealed record HistorikkRad(Importhistorikk Item, bool ErOppdatering);
 
@@ -617,22 +618,44 @@ else if (_steg == 4)
             return;
         }
 
-        if (_gjeldendeHistorikk is not null)
+        _forhandsviser = true;
+        try
         {
-            _gjeldendeHistorikk.Leverandor = _leverandor;
-            await Db.SaveChangesAsync();
+            if (_gjeldendeHistorikk is not null)
+            {
+                _gjeldendeHistorikk.Leverandor = _leverandor;
+                await Db.SaveChangesAsync();
+            }
+
+            _forhandsvisning = await PrisimportSvc.ForhandsvisAsync(_rader, _leverandor, _valgt);
+
+            if (_forhandsvisning.Count == 0)
+            {
+                _feil = "Fant ingen gyldige rader å importere.";
+                return;
+            }
+
+            _feil = null;
+            _steg = 3;
         }
-
-        _forhandsvisning = await PrisimportSvc.ForhandsvisAsync(_rader, _leverandor, _valgt);
-
-        if (_forhandsvisning.Count == 0)
+        catch (Exception ex)
         {
-            _feil = "Fant ingen gyldige rader å importere.";
-            return;
+            // Fanges her av samme grunn som i Importer() - en ufanget
+            // exception her drepte tidligere hele Blazor-kretsen med ingen
+            // forklaring, og historikkraden ble stående som "Pågår" for alltid
+            // siden Importer() aldri ble nådd.
+            _feil = $"Klarte ikke å lage forhåndsvisning: {ex.Message}. Prøv gjerne på nytt.";
+            if (_gjeldendeHistorikk is not null)
+            {
+                _gjeldendeHistorikk.Status = "Feilet";
+                await Db.SaveChangesAsync();
+                await LastHistorikkAsync();
+            }
         }
-
-        _feil = null;
-        _steg = 3;
+        finally
+        {
+            _forhandsviser = false;
+        }
     }
 
     private async Task Importer()
