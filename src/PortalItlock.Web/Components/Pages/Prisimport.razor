@@ -79,7 +79,7 @@
                             <td>@h.Leverandor</td>
                             <td>@h.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</td>
                             <td>@(h.OpprettetAvBruker?.Navn ?? "-")</td>
-                            <td><span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : "import-status-badge-pagar")">@(rad.ErOppdatering && h.Status == "Fullført" ? "Oppdatering" : h.Status)</span></td>
+                            <td><span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : h.Status == "Feilet" ? "import-status-badge-feil" : "import-status-badge-pagar")">@(rad.ErOppdatering && h.Status == "Fullført" ? "Oppdatering" : h.Status)</span></td>
                             <td>@(h.AntallNye is not null ? $"{h.AntallNye} nye, {h.AntallOppdatert} oppdatert" : "-")</td>
                             <td class="historikk-actions">
                                 @if (!string.IsNullOrWhiteSpace(h.Leverandor))
@@ -100,7 +100,7 @@
                     <li @key="h.Id" class="mobil-historikk-kort @(rad.ErOppdatering ? "mobil-historikk-kort-oppdatering" : "")">
                         <div class="mobil-historikk-topp">
                             <span class="mobil-historikk-fil">@(rad.ErOppdatering ? "↳ " : "")@h.Filnavn</span>
-                            <span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : "import-status-badge-pagar")">@(rad.ErOppdatering && h.Status == "Fullført" ? "Oppdatering" : h.Status)</span>
+                            <span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : h.Status == "Feilet" ? "import-status-badge-feil" : "import-status-badge-pagar")">@(rad.ErOppdatering && h.Status == "Fullført" ? "Oppdatering" : h.Status)</span>
                         </div>
                         <div class="mobil-historikk-meta">
                             @h.Leverandor &middot; @h.OpprettetDato.ToString("dd.MM.yyyy HH:mm") &middot; @(h.OpprettetAvBruker?.Navn ?? "-")
@@ -332,8 +332,14 @@ else if (_steg == 3)
         </ul>
 
         <div class="form-actions">
-            <button type="button" class="save-button" @onclick="Importer">Start import (@_forhandsvisning.Count(r => r.Inkluder && r.Feil is null) vare(r))</button>
-            <button type="button" class="cancel-button" @onclick="@(() => _steg = 2)">Tilbake</button>
+            <button type="button" class="save-button" @onclick="Importer" disabled="@_importerer">
+                @(_importerer ? "Importerer, vennligst vent..." : $"Start import ({_forhandsvisning.Count(r => r.Inkluder && r.Feil is null)} vare(r))")
+            </button>
+            <button type="button" class="cancel-button" @onclick="@(() => _steg = 2)" disabled="@_importerer">Tilbake</button>
+            @if (!string.IsNullOrEmpty(_feil))
+            {
+                <span class="form-error">@_feil</span>
+            }
         </div>
     </div>
 }
@@ -406,6 +412,7 @@ else if (_steg == 4)
     private List<PrisimportService.ImportRad> _forhandsvisning = [];
     private int _oppdatertAntall;
     private int _nyeAntall;
+    private bool _importerer;
 
     private sealed record HistorikkRad(Importhistorikk Item, bool ErOppdatering);
 
@@ -605,23 +612,49 @@ else if (_steg == 4)
 
     private async Task Importer()
     {
-        (_oppdatertAntall, _nyeAntall) = await PrisimportSvc.ImporterAsync(_forhandsvisning, _leverandor);
-
-        if (_gjeldendeHistorikk is not null)
+        _feil = null;
+        _importerer = true;
+        try
         {
-            _gjeldendeHistorikk.Status = "Fullført";
-            _gjeldendeHistorikk.AntallRader = _forhandsvisning.Count;
-            _gjeldendeHistorikk.AntallNye = _nyeAntall;
-            _gjeldendeHistorikk.AntallOppdatert = _oppdatertAntall;
-            // Lagrer nøyaktig de feltvalgene som ble brukt - lar en senere
-            // import for samme leverandør starte fra disse i stedet for kun
-            // gjetting ut fra kolonneoverskrifter (se LastOppFil).
-            _gjeldendeHistorikk.MappingJson = System.Text.Json.JsonSerializer.Serialize(_valgt);
-            await Db.SaveChangesAsync();
-            await LastHistorikkAsync();
-        }
+            (_oppdatertAntall, _nyeAntall) = await PrisimportSvc.ImporterAsync(_forhandsvisning, _leverandor);
 
-        _steg = 4;
+            if (_gjeldendeHistorikk is not null)
+            {
+                _gjeldendeHistorikk.Status = "Fullført";
+                _gjeldendeHistorikk.AntallRader = _forhandsvisning.Count;
+                _gjeldendeHistorikk.AntallNye = _nyeAntall;
+                _gjeldendeHistorikk.AntallOppdatert = _oppdatertAntall;
+                // Lagrer nøyaktig de feltvalgene som ble brukt - lar en senere
+                // import for samme leverandør starte fra disse i stedet for kun
+                // gjetting ut fra kolonneoverskrifter (se LastOppFil).
+                _gjeldendeHistorikk.MappingJson = System.Text.Json.JsonSerializer.Serialize(_valgt);
+                await Db.SaveChangesAsync();
+                await LastHistorikkAsync();
+            }
+
+            _steg = 4;
+        }
+        catch (Exception ex)
+        {
+            // Fanges her i stedet for å la den sprette videre opp til Blazor
+            // sin globale feilhåndtering - en ufanget exception i en
+            // event-handler dreper hele kretsen (den kjente "An unhandled
+            // error has occurred"-boksen), og da svarer ALLE knapper på siden
+            // med ingenting til siden reloades. Import kan trygt kjøres på
+            // nytt (se oppdaterings-logikken i ImporterAsync), så bruker
+            // beholdes på steg 3 og kan bare prøve igjen.
+            _feil = $"Importen feilet: {ex.Message}. Du kan trygt trykke Start import på nytt - varer som allerede ble lagret før feilen oppstod blir ikke duplisert.";
+            if (_gjeldendeHistorikk is not null)
+            {
+                _gjeldendeHistorikk.Status = "Feilet";
+                await Db.SaveChangesAsync();
+                await LastHistorikkAsync();
+            }
+        }
+        finally
+        {
+            _importerer = false;
+        }
     }
 
     private async Task AvbrytImport()

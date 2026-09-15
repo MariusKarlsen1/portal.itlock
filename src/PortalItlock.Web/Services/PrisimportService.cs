@@ -283,7 +283,51 @@ public class PrisimportService(ApplicationDbContext db)
         // ganger (og slipper å lagre til DB for hver rad bare for å få en ID).
         var nyeProduktgrupperPerNavn = new Dictionary<string, Produktgruppe>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var rad in rader.Where(r => r.Inkluder && r.Feil is null))
+        var radeneSomSkalKjores = rader.Where(r => r.Inkluder && r.Feil is null).ToList();
+
+        // Henter ALT vi trenger for eksisterende varer i noen få samlekall
+        // FØR selve løkken, i stedet for separate databasekall pr. rad -
+        // en fil på flere tusen rader (som denne) gjorde ellers titusenvis
+        // av sekvensielle kall, trege nok til at Blazor-kretsen mot Railway
+        // ble avbrutt midt i importen ("An unhandled error has occurred").
+        var eksisterendeIder = radeneSomSkalKjores
+            .Where(r => r.EksisterendeComponentId.HasValue)
+            .Select(r => r.EksisterendeComponentId!.Value)
+            .Distinct()
+            .ToList();
+
+        // Henter i bolker på 500 ID-er av gangen - en fil på flere tusen
+        // rader kan ellers lage en IN-klausul med flere tusen parametere i
+        // ett kall, som risikerer å treffe SQLite sin grense for antall
+        // parametere pr. spørring.
+        var komponenterPerId = new Dictionary<int, Component>();
+        var eksisterendeLenker = new List<ComponentLeverandor>();
+        foreach (var idBolk in eksisterendeIder.Chunk(500))
+        {
+            var komponenter = await db.Components
+                .Include(c => c.Produktgrupper)
+                .Where(c => idBolk.Contains(c.Id))
+                .ToListAsync();
+            foreach (var k in komponenter)
+            {
+                komponenterPerId[k.Id] = k;
+            }
+
+            eksisterendeLenker.AddRange(await db.ComponentLeverandorer
+                .Where(cl => idBolk.Contains(cl.ComponentId))
+                .ToListAsync());
+        }
+
+        var lenkerPerKomponentOgLeverandor = eksisterendeLenker
+            .ToDictionary(cl => (cl.ComponentId, cl.LeverandorId));
+        var komponenterMedMinstEnLenke = eksisterendeLenker
+            .Select(cl => cl.ComponentId)
+            .ToHashSet();
+
+        var alleProduktgrupperPerId = await db.Produktgrupper.ToDictionaryAsync(p => p.Id);
+
+        var behandlet = 0;
+        foreach (var rad in radeneSomSkalKjores)
         {
             // Produktgruppen kan ha blitt matchet mot en eksisterende gruppe i
             // ForhandsvisAsync (ProduktgruppeId satt), eller kun mot et navn
@@ -297,14 +341,14 @@ public class PrisimportService(ApplicationDbContext db)
                     db.Produktgrupper.Add(produktgruppe);
                     await db.SaveChangesAsync();
                     nyeProduktgrupperPerNavn[rad.ProduktgruppeNavn] = produktgruppe;
+                    alleProduktgrupperPerId[produktgruppe.Id] = produktgruppe;
                 }
                 rad.ProduktgruppeId = produktgruppe.Id;
             }
 
             if (rad.EksisterendeComponentId.HasValue)
             {
-                var comp = await db.Components.Include(c => c.Produktgrupper).FirstOrDefaultAsync(c => c.Id == rad.EksisterendeComponentId.Value);
-                if (comp is null)
+                if (!komponenterPerId.TryGetValue(rad.EksisterendeComponentId.Value, out var comp))
                 {
                     continue;
                 }
@@ -319,11 +363,9 @@ public class PrisimportService(ApplicationDbContext db)
                 // Oppdaterer (eller oppretter, om koblingen mangler) denne
                 // leverandørens egen varenummer/pris-kobling for varen -
                 // uavhengig av om denne leverandøren er satt som standard.
-                var lenke = await db.ComponentLeverandorer
-                    .FirstOrDefaultAsync(cl => cl.ComponentId == comp.Id && cl.LeverandorId == leverandorEntitet.Id);
-                if (lenke is null)
+                if (!lenkerPerKomponentOgLeverandor.TryGetValue((comp.Id, leverandorEntitet.Id), out var lenke))
                 {
-                    var harAndreLenker = await db.ComponentLeverandorer.AnyAsync(cl => cl.ComponentId == comp.Id);
+                    var harAndreLenker = komponenterMedMinstEnLenke.Contains(comp.Id);
                     lenke = new ComponentLeverandor
                     {
                         ComponentId = comp.Id,
@@ -331,6 +373,8 @@ public class PrisimportService(ApplicationDbContext db)
                         ErStandard = !harAndreLenker
                     };
                     db.ComponentLeverandorer.Add(lenke);
+                    lenkerPerKomponentOgLeverandor[(comp.Id, leverandorEntitet.Id)] = lenke;
+                    komponenterMedMinstEnLenke.Add(comp.Id);
                 }
                 lenke.Varenummer = rad.Produktkode;
                 lenke.PrisNetto = nyNetto;
@@ -379,13 +423,10 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     comp.ComponentTypeId = rad.ComponentTypeId;
                 }
-                if (rad.ProduktgruppeId.HasValue && comp.Produktgrupper.All(p => p.Id != rad.ProduktgruppeId.Value))
+                if (rad.ProduktgruppeId.HasValue && comp.Produktgrupper.All(p => p.Id != rad.ProduktgruppeId.Value)
+                    && alleProduktgrupperPerId.TryGetValue(rad.ProduktgruppeId.Value, out var eksisterendeGruppe))
                 {
-                    var gruppe = await db.Produktgrupper.FindAsync(rad.ProduktgruppeId.Value);
-                    if (gruppe is not null)
-                    {
-                        comp.Produktgrupper.Add(gruppe);
-                    }
+                    comp.Produktgrupper.Add(eksisterendeGruppe);
                 }
 
                 oppdatert++;
@@ -423,16 +464,23 @@ public class PrisimportService(ApplicationDbContext db)
                 });
                 db.Components.Add(nyKomponent);
 
-                if (rad.ProduktgruppeId.HasValue)
+                if (rad.ProduktgruppeId.HasValue && alleProduktgrupperPerId.TryGetValue(rad.ProduktgruppeId.Value, out var nyGruppe))
                 {
-                    var gruppe = await db.Produktgrupper.FindAsync(rad.ProduktgruppeId.Value);
-                    if (gruppe is not null)
-                    {
-                        nyKomponent.Produktgrupper.Add(gruppe);
-                    }
+                    nyKomponent.Produktgrupper.Add(nyGruppe);
                 }
 
                 nye++;
+            }
+
+            // Lagrer i bolker i stedet for å holde HELE importen som én
+            // kjempetransaksjon - en fil på flere tusen rader ga ellers én
+            // enkelt SaveChangesAsync med tusenvis av endrede entiteter helt
+            // til slutt, noe som tok så lang tid at Railway-forbindelsen ble
+            // brutt midt i (se kommentaren ved preloading over).
+            behandlet++;
+            if (behandlet % 250 == 0)
+            {
+                await db.SaveChangesAsync();
             }
         }
 
