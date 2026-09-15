@@ -279,6 +279,18 @@ public class PrisimportService(ApplicationDbContext db)
         // kobler hver vare i denne prislisten mot den (se LeverandorSync).
         var leverandorEntitet = await LeverandorSync.FinnEllerOpprettAsync(db, leverandor);
 
+        // Er dette en HELT NY leverandør (ikke lagret ennå, Id fortsatt 0),
+        // må den lagres FØR løkken - hver rad kopierer leverandorEntitet.Id
+        // inn i ComponentLeverandor.LeverandorId som en ren skalarverdi
+        // (ikke via navigasjon), og den kopien blir IKKE automatisk rettet
+        // opp av EF Core sin fixup-mekanisme senere når leverandøren
+        // faktisk lagres - det gir "FOREIGN KEY constraint failed" siden
+        // radene da forsøkes satt inn med LeverandorId=0.
+        if (leverandorEntitet.Id == 0)
+        {
+            await db.SaveChangesAsync();
+        }
+
         // Cacher opprettede produktgrupper pr. navn innenfor dette
         // importkjøret, slik at samme nye gruppenavn ikke opprettes flere
         // ganger (og slipper å lagre til DB for hver rad bare for å få en ID).
