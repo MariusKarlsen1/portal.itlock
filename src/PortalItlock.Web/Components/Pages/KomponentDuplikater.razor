@@ -1,0 +1,197 @@
+@page "/komponenter/duplikater"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Duplikate varer</PageTitle>
+
+<a class="back-link" href="/komponenter">&larr; Tilbake til komponentregisteret</a>
+<h1>Duplikate varer</h1>
+<p class="section-hint">
+    Finner varer med samme produktkode og leverandør (typisk fra en prisimport som ble kjørt flere ganger på samme forhåndsvisning).
+    Kun varer som ikke er brukt noe sted (dør, tilbud, arbeidsordre, plukkliste, pakke, montering, nøkkelsylinder, lasplan, planlagt prisendring eller prishistorikk) fjernes automatisk - resten flagges for manuell sjekk.
+</p>
+
+<button type="button" class="save-button" @onclick="AnalyserAsync" disabled="@_analyserer">@(_analyserer ? "Analyserer..." : "Analyser")</button>
+
+@if (_grupper is not null)
+{
+    <p class="section-hint">
+        Fant @_grupper.Count gruppe(r) med duplikater, totalt @_grupper.Sum(g => g.KandidaterTilSletting.Count) ekstra rad(er).
+        @(_trygtAntall) er trygge å fjerne automatisk, @(_utrygtAntall) må sjekkes manuelt (brukt et annet sted).
+    </p>
+
+    @if (_grupper.Count == 0)
+    {
+        <p class="list-empty">Ingen duplikater funnet.</p>
+    }
+    else
+    {
+        <table class="lenke-table">
+            <thead>
+                <tr>
+                    <th>Produktkode</th>
+                    <th>Leverandør</th>
+                    <th>Antall</th>
+                    <th>Beholdes (Id)</th>
+                    <th>Trygt å fjerne</th>
+                    <th>Må sjekkes manuelt</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var g in _grupper)
+                {
+                    <tr>
+                        <td>@g.Produktkode</td>
+                        <td>@g.Leverandor</td>
+                        <td>@g.AlleIder.Count</td>
+                        <td>@g.BeholdesId</td>
+                        <td>@(g.TrygtÅSlette.Count == 0 ? "-" : string.Join(", ", g.TrygtÅSlette))</td>
+                        <td>
+                            @if (g.MåSjekkesManuelt.Count > 0)
+                            {
+                                <span class="form-error">@string.Join(", ", g.MåSjekkesManuelt)</span>
+                            }
+                            else
+                            {
+                                <text>-</text>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @if (_trygtAntall > 0)
+        {
+            @if (!_bekrefterSletting)
+            {
+                <button type="button" class="remove-button" @onclick="@(() => _bekrefterSletting = true)">Fjern @_trygtAntall trygge duplikater</button>
+            }
+            else
+            {
+                <p class="form-error">Er du sikker? Dette sletter @_trygtAntall varerader (og deres leverandørkoblinger/FDV-dokumenter) permanent.</p>
+                <button type="button" class="remove-button" @onclick="FjernAsync" disabled="@_sletter">@(_sletter ? "Fjerner..." : "Ja, fjern")</button>
+                <button type="button" class="cancel-button" @onclick="@(() => _bekrefterSletting = false)">Avbryt</button>
+            }
+        }
+
+        @if (!string.IsNullOrEmpty(_resultat))
+        {
+            <p class="save-success">@_resultat</p>
+        }
+    }
+}
+
+@code {
+    private sealed class DuplikatGruppe
+    {
+        public required string Produktkode { get; init; }
+        public required string Leverandor { get; init; }
+        public required List<int> AlleIder { get; init; }
+        public int BeholdesId => AlleIder[0];
+        public List<int> KandidaterTilSletting => AlleIder.Skip(1).ToList();
+        public List<int> TrygtÅSlette { get; set; } = [];
+        public List<int> MåSjekkesManuelt { get; set; } = [];
+    }
+
+    private bool _analyserer;
+    private bool _sletter;
+    private bool _bekrefterSletting;
+    private List<DuplikatGruppe>? _grupper;
+    private string? _resultat;
+
+    private int _trygtAntall => _grupper?.Sum(g => g.TrygtÅSlette.Count) ?? 0;
+    private int _utrygtAntall => _grupper?.Sum(g => g.MåSjekkesManuelt.Count) ?? 0;
+
+    private async Task AnalyserAsync()
+    {
+        _analyserer = true;
+        _resultat = null;
+        _bekrefterSletting = false;
+
+        var komponenter = await Db.Components
+            .Where(c => c.Produktkode != null && c.Leverandor != null)
+            .Select(c => new { c.Id, Produktkode = c.Produktkode!, Leverandor = c.Leverandor! })
+            .ToListAsync();
+
+        var grupper = komponenter
+            .GroupBy(c => (Produktkode: c.Produktkode.Trim().ToLowerInvariant(), Leverandor: c.Leverandor.Trim().ToLowerInvariant()))
+            .Where(g => g.Count() > 1)
+            .Select(g => new DuplikatGruppe
+            {
+                Produktkode = g.First().Produktkode,
+                Leverandor = g.First().Leverandor,
+                AlleIder = g.Select(x => x.Id).OrderBy(id => id).ToList()
+            })
+            .OrderByDescending(g => g.AlleIder.Count)
+            .ToList();
+
+        var alleKandidater = grupper.SelectMany(g => g.KandidaterTilSletting).ToList();
+        var brukteIder = await FinnBrukteIderAsync(alleKandidater);
+
+        foreach (var g in grupper)
+        {
+            g.TrygtÅSlette = g.KandidaterTilSletting.Where(id => !brukteIder.Contains(id)).ToList();
+            g.MåSjekkesManuelt = g.KandidaterTilSletting.Where(id => brukteIder.Contains(id)).ToList();
+        }
+
+        _grupper = grupper;
+        _analyserer = false;
+    }
+
+    // Sjekker ALLE steder en Component kan være i bruk, før den regnes som
+    // trygg å slette automatisk - ComponentLeverandor/ComponentFdvDokument/
+    // Produktgrupper er alltid cascade-slettet og trenger ikke sjekkes.
+    private async Task<HashSet<int>> FinnBrukteIderAsync(List<int> ider)
+    {
+        var brukt = new HashSet<int>();
+        if (ider.Count == 0)
+        {
+            return brukt;
+        }
+
+        foreach (var bolk in ider.Chunk(500))
+        {
+            brukt.UnionWith(await Db.DorKomponenter.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.TilbudLinjer.Where(x => x.ComponentId.HasValue && bolk.Contains(x.ComponentId.Value)).Select(x => x.ComponentId!.Value).ToListAsync());
+            brukt.UnionWith(await Db.ArbeidsordreVarer.Where(x => x.ComponentId.HasValue && bolk.Contains(x.ComponentId.Value)).Select(x => x.ComponentId!.Value).ToListAsync());
+            brukt.UnionWith(await Db.MonteringLinjer.Where(x => x.ComponentId.HasValue && bolk.Contains(x.ComponentId.Value)).Select(x => x.ComponentId!.Value).ToListAsync());
+            brukt.UnionWith(await Db.ServiceMinuttLinjer.Where(x => x.ComponentId.HasValue && bolk.Contains(x.ComponentId.Value)).Select(x => x.ComponentId!.Value).ToListAsync());
+            brukt.UnionWith(await Db.PlanlagtePrisendringer.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.PlukklisteLinjer.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.NokkelSylindere.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.LasplanReserver.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.PrisHistorikk.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.PackageComponents.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+        }
+
+        return brukt;
+    }
+
+    private async Task FjernAsync()
+    {
+        if (_grupper is null)
+        {
+            return;
+        }
+
+        _sletter = true;
+        var alleTrygge = _grupper.SelectMany(g => g.TrygtÅSlette).ToList();
+
+        foreach (var bolk in alleTrygge.Chunk(200))
+        {
+            var komponenter = await Db.Components.Where(c => bolk.Contains(c.Id)).ToListAsync();
+            Db.Components.RemoveRange(komponenter);
+            await Db.SaveChangesAsync();
+        }
+
+        _resultat = $"Fjernet {alleTrygge.Count} duplikat(er).";
+        _bekrefterSletting = false;
+        _sletter = false;
+        await AnalyserAsync();
+    }
+}

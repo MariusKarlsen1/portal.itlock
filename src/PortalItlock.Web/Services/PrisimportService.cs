@@ -290,29 +290,31 @@ public class PrisimportService(ApplicationDbContext db)
         // en fil på flere tusen rader (som denne) gjorde ellers titusenvis
         // av sekvensielle kall, trege nok til at Blazor-kretsen mot Railway
         // ble avbrutt midt i importen ("An unhandled error has occurred").
-        var eksisterendeIder = radeneSomSkalKjores
-            .Where(r => r.EksisterendeComponentId.HasValue)
-            .Select(r => r.EksisterendeComponentId!.Value)
-            .Distinct()
-            .ToList();
+        //
+        // Matcher FERSKT mot produktkode her (samme mønster som
+        // ForhandsvisAsync), i stedet for å stole blindt på
+        // rad.EksisterendeComponentId/ErNyVare fra forhåndsvisningen -
+        // dén ble beregnet FØR denne kjøringen, og hvis brukeren prøver
+        // igjen etter en delvis mislykket import (feks. et avbrutt forsøk
+        // som rakk å lagre noen bolker), vet forhåndsvisningen ikke om
+        // varer som allerede ble satt inn da. Uten fersk matching ville de
+        // blitt satt inn PÅ NYTT som duplikater ved hvert nytt forsøk.
+        var eksisterendePerKode = (await db.Components
+                .Include(c => c.Produktgrupper)
+                .Where(c => c.Leverandor != null && c.Leverandor.ToLower() == leverandor.ToLower() && c.Produktkode != null)
+                .ToListAsync())
+            .GroupBy(c => c.Produktkode!.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var eksisterendeIder = eksisterendePerKode.Values.Select(c => c.Id).ToList();
 
         // Henter i bolker på 500 ID-er av gangen - en fil på flere tusen
         // rader kan ellers lage en IN-klausul med flere tusen parametere i
         // ett kall, som risikerer å treffe SQLite sin grense for antall
         // parametere pr. spørring.
-        var komponenterPerId = new Dictionary<int, Component>();
         var eksisterendeLenker = new List<ComponentLeverandor>();
         foreach (var idBolk in eksisterendeIder.Chunk(500))
         {
-            var komponenter = await db.Components
-                .Include(c => c.Produktgrupper)
-                .Where(c => idBolk.Contains(c.Id))
-                .ToListAsync();
-            foreach (var k in komponenter)
-            {
-                komponenterPerId[k.Id] = k;
-            }
-
             eksisterendeLenker.AddRange(await db.ComponentLeverandorer
                 .Where(cl => idBolk.Contains(cl.ComponentId))
                 .ToListAsync());
@@ -346,13 +348,9 @@ public class PrisimportService(ApplicationDbContext db)
                 rad.ProduktgruppeId = produktgruppe.Id;
             }
 
-            if (rad.EksisterendeComponentId.HasValue)
+            var kode = rad.Produktkode!.Trim().ToLowerInvariant();
+            if (eksisterendePerKode.TryGetValue(kode, out var comp))
             {
-                if (!komponenterPerId.TryGetValue(rad.EksisterendeComponentId.Value, out var comp))
-                {
-                    continue;
-                }
-
                 var nyNetto = rad.PrisNetto ?? comp.PrisNetto;
                 var nyVeil = rad.PrisVeiledende ?? comp.PrisVeiledende;
                 PrisHistorikkLogger.Logg(db, comp, nyNetto, nyVeil, $"Prisimport ({leverandor})");
@@ -468,6 +466,12 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     nyKomponent.Produktgrupper.Add(nyGruppe);
                 }
+
+                // Registreres med en gang, slik at en senere rad i SAMME fil
+                // med samme produktkode (eller et nytt forsøk etter en
+                // avbrutt import) oppdaterer denne i stedet for å opprette
+                // enda et duplikat.
+                eksisterendePerKode[kode] = nyKomponent;
 
                 nye++;
             }
