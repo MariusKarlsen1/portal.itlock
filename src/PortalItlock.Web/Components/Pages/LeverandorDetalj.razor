@@ -70,6 +70,25 @@ else if (_leverandor is not null)
     <section class="leverandor-seksjon">
         <h2>Varer fra @_leverandor.Navn (@_lenkerFiltrert.Count av @_lenker.Count)</h2>
         <p class="section-hint">Nye varer kobles til denne leverandøren fra varens egen side i Komponentregister (klikk på varenavnet), ikke herfra.</p>
+
+        @if (_lenker.Count > 0)
+        {
+            @if (!_bekrefterSlettAlle)
+            {
+                <button type="button" class="remove-button" title="Sletter varene helt (ikke bare koblingen til leverandøren) - kun mulig for varer som ikke er brukt noe annet sted" @onclick="@(() => _bekrefterSlettAlle = true)">Slett alle @_lenker.Count varer fra @_leverandor.Navn</button>
+            }
+            else
+            {
+                <p class="form-error">Er du sikker? Dette sletter varene fra @_leverandor.Navn permanent (varer i bruk et annet sted blir ikke slettet, se melding etterpå).</p>
+                <button type="button" class="remove-button" @onclick="SlettAlleVarerAsync" disabled="@_sletterAlle">@(_sletterAlle ? "Sletter..." : "Ja, slett alle")</button>
+                <button type="button" class="cancel-button" @onclick="@(() => _bekrefterSlettAlle = false)">Avbryt</button>
+            }
+            @if (!string.IsNullOrEmpty(_slettAlleResultat))
+            {
+                <p class="save-success">@_slettAlleResultat</p>
+            }
+        }
+
         <input class="sok-input" @bind="_lenkeFilter" @bind:event="oninput" placeholder="Søk i varer fra denne leverandøren..." />
         @if (_lenker.Count == 0)
         {
@@ -129,6 +148,9 @@ else if (_leverandor is not null)
     private string? _melding;
     private List<LenkeRad> _lenker = [];
     private string _lenkeFilter = "";
+    private bool _bekrefterSlettAlle;
+    private bool _sletterAlle;
+    private string? _slettAlleResultat;
 
     private List<LenkeRad> _lenkerFiltrert => string.IsNullOrWhiteSpace(_lenkeFilter)
         ? _lenker
@@ -137,7 +159,12 @@ else if (_leverandor is not null)
             || (l.Varenummer?.Contains(_lenkeFilter, StringComparison.OrdinalIgnoreCase) ?? false))
           .ToList();
 
-    protected override async Task OnParametersSetAsync() => await LastAsync();
+    protected override async Task OnParametersSetAsync()
+    {
+        _bekrefterSlettAlle = false;
+        _slettAlleResultat = null;
+        await LastAsync();
+    }
 
     private async Task LastAsync()
     {
@@ -219,6 +246,48 @@ else if (_leverandor is not null)
 
         Db.ComponentLeverandorer.Remove(entitet);
         await Db.SaveChangesAsync();
+        await LastAsync();
+    }
+
+    // Sletter varene fra denne leverandøren helt (ikke bare koblingen) - for
+    // å rydde opp etter en feilslått/gjentatt import, se Prisimport.razor.
+    // Sjekker ALLE steder en Component kan være i bruk (samme mønster som
+    // KomponentDuplikater.razor) før den regnes som trygg å slette - varer i
+    // bruk et annet sted skippes og rapporteres, aldri slettet blindt.
+    private async Task SlettAlleVarerAsync()
+    {
+        _sletterAlle = true;
+        var alleIder = _lenker.Select(l => l.ComponentId).ToList();
+        var brukt = new HashSet<int>();
+
+        foreach (var bolk in alleIder.Chunk(500))
+        {
+            brukt.UnionWith(await Db.DorKomponenter.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.TilbudLinjer.Where(x => x.ComponentId.HasValue && bolk.Contains(x.ComponentId.Value)).Select(x => x.ComponentId!.Value).ToListAsync());
+            brukt.UnionWith(await Db.ArbeidsordreVarer.Where(x => x.ComponentId.HasValue && bolk.Contains(x.ComponentId.Value)).Select(x => x.ComponentId!.Value).ToListAsync());
+            brukt.UnionWith(await Db.MonteringLinjer.Where(x => x.ComponentId.HasValue && bolk.Contains(x.ComponentId.Value)).Select(x => x.ComponentId!.Value).ToListAsync());
+            brukt.UnionWith(await Db.ServiceMinuttLinjer.Where(x => x.ComponentId.HasValue && bolk.Contains(x.ComponentId.Value)).Select(x => x.ComponentId!.Value).ToListAsync());
+            brukt.UnionWith(await Db.PlanlagtePrisendringer.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.PlukklisteLinjer.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.NokkelSylindere.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.LasplanReserver.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.PrisHistorikk.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+            brukt.UnionWith(await Db.PackageComponents.Where(x => bolk.Contains(x.ComponentId)).Select(x => x.ComponentId).ToListAsync());
+        }
+
+        var trygge = alleIder.Where(id => !brukt.Contains(id)).ToList();
+        foreach (var bolk in trygge.Chunk(200))
+        {
+            var komponenter = await Db.Components.Where(c => bolk.Contains(c.Id)).ToListAsync();
+            Db.Components.RemoveRange(komponenter);
+            await Db.SaveChangesAsync();
+        }
+
+        _slettAlleResultat = brukt.Count == 0
+            ? $"Slettet {trygge.Count} vare(r)."
+            : $"Slettet {trygge.Count} vare(r). {brukt.Count} vare(r) ble IKKE slettet fordi de er i bruk (dør, tilbud, arbeidsordre e.l.) - fjern koblingen manuelt om de likevel skal bort.";
+        _bekrefterSlettAlle = false;
+        _sletterAlle = false;
         await LastAsync();
     }
 }
