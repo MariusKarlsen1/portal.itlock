@@ -52,9 +52,12 @@ public static class LeverandorSync
             return;
         }
 
+        // Kun varenummer og innkjøpspris (netto) er forskjellig mellom
+        // leverandører - veiledende (utpris til kunde) er varens egen,
+        // faste salgspris og skal IKKE endres bare fordi man bytter hvilken
+        // leverandør som er satt som standard.
         component.Produktkode = standard.Varenummer;
         component.PrisNetto = standard.PrisNetto;
-        component.PrisVeiledende = standard.PrisVeiledende;
         component.Leverandor = standard.Leverandor?.Navn;
     }
 }
