@@ -529,6 +529,7 @@ public class PrisimportService(ApplicationDbContext db)
             "1" => "Stk",
             "2" => "Par",
             "3" => "M",
+            "4" => "Sett",
             _ => tekst,
         };
     }
