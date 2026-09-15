@@ -362,6 +362,16 @@ public class PrisimportService(ApplicationDbContext db)
                 {
                     comp.Navn = rad.Navn.Trim();
                 }
+                // Leverandøren varen importeres fra ER produsenten for de
+                // aller fleste av katalogene vi importerer (Dormakaba, Assa
+                // Abloy osv. selger sin egen produksjon direkte) - fyller
+                // derfor inn Produsent fra leverandørnavnet når feltet står
+                // tomt, uten å overskrive en produsent som alt er satt
+                // manuelt (f.eks. når leverandøren er en ren forhandler).
+                if (string.IsNullOrWhiteSpace(comp.Produsent))
+                {
+                    comp.Produsent = leverandor;
+                }
 
                 // Oppdaterer (eller oppretter, om koblingen mangler) denne
                 // leverandørens egen varenummer/pris-kobling for varen -
@@ -450,6 +460,11 @@ public class PrisimportService(ApplicationDbContext db)
                     Konsept = string.IsNullOrWhiteSpace(rad.Konsept) ? null : rad.Konsept.Trim(),
                     Produktkode = rad.Produktkode,
                     Gtin = string.IsNullOrWhiteSpace(rad.Gtin) ? null : rad.Gtin.Trim(),
+                    // Leverandøren er produsenten for de aller fleste
+                    // katalogene som importeres (se kommentar i
+                    // oppdaterings-grenen over) - nye varer har ingen
+                    // eksisterende Produsent å ta hensyn til, så settes alltid.
+                    Produsent = leverandor,
                     Leverandor = leverandor,
                     Enhet = string.IsNullOrWhiteSpace(rad.Enhet) ? null : rad.Enhet,
                     PrisNetto = rad.PrisNetto,
