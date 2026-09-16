@@ -38,6 +38,12 @@ public class Component
     public int? MontasjeMinutterProsjekt { get; set; }
     public int? MontasjeMinutterArbeidsordre { get; set; }
     public int? MontasjeMinutterService { get; set; }
+
+    // Kun relevant for varer med programmerbar elektronikk (låser,
+    // adgangskontroll o.l.) - vises derfor skjult bak en "+"-knapp på
+    // varekortet i stedet for å ligge synlig på alle varer, se
+    // KomponentPanel.razor.
+    public int? ProgrammeringstidMinutter { get; set; }
     public string? Enhet { get; set; }
     public bool Aktiv { get; set; } = true;
 
