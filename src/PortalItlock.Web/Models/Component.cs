@@ -57,6 +57,10 @@ public class Component
     public string? MontasjebladFilnavn { get; set; }
     public string? MontasjebladContentType { get; set; }
 
+    // Flere montasjeblad utover hoveddokumentet over - se
+    // Models/ComponentMontasjebladDokument.cs.
+    public List<ComponentMontasjebladDokument> MontasjebladDokumenter { get; set; } = [];
+
     // Vist på vare-panelet og som hover-forhåndsvisning i tilbud, se
     // /komponent/{id}/bilde. BildeStorrelse er brukerens ønskede
     // visningsstørrelse i piksler (høyeste/breddeste kant) - null gir

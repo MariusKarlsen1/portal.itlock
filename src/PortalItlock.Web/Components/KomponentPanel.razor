@@ -182,28 +182,48 @@
                     </div>
                     <div class="fil-blokk">
                         <span class="fil-label">Montasjeblad</span>
-                        @if (_entity.MontasjebladData is not null)
+                        @if (_entity.MontasjebladData is not null || _entity.MontasjebladDokumenter.Count > 0)
                         {
-                            <div class="fil-linje">
-                                <a href="@($"/komponent/{_entity.Id}/montasjeblad")" target="_blank">@_entity.MontasjebladFilnavn</a>
-                                @if (_bekrefterFjernMontasjeblad)
+                            <ul class="fil-liste">
+                                @if (_entity.MontasjebladData is not null)
                                 {
-                                    <span class="fjern-bekreft">
-                                        Er du sikker?
-                                        <button type="button" class="remove-button" @onclick="FjernMontasjeblad">Ja</button>
-                                        <button type="button" class="cancel-button" @onclick="@(() => _bekrefterFjernMontasjeblad = false)">Avbryt</button>
-                                    </span>
+                                    <li>
+                                        <a href="@($"/komponent/{_entity.Id}/montasjeblad")" target="_blank">@_entity.MontasjebladFilnavn</a>
+                                        @if (_bekrefterFjernMontasjeblad)
+                                        {
+                                            <span class="fjern-bekreft">
+                                                Er du sikker?
+                                                <button type="button" class="remove-button" @onclick="FjernMontasjeblad">Ja</button>
+                                                <button type="button" class="cancel-button" @onclick="@(() => _bekrefterFjernMontasjeblad = false)">Avbryt</button>
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="remove-button" @onclick="@(() => _bekrefterFjernMontasjeblad = true)">Fjern</button>
+                                        }
+                                    </li>
                                 }
-                                else
+                                @foreach (var d in _entity.MontasjebladDokumenter)
                                 {
-                                    <button type="button" class="remove-button" @onclick="@(() => _bekrefterFjernMontasjeblad = true)">Fjern</button>
+                                    <li @key="d.Id">
+                                        <a href="@($"/komponent/montasjebladdokument/{d.Id}")" target="_blank">@d.Filnavn</a>
+                                        @if (_fjernerMontasjebladDokumentId == d.Id)
+                                        {
+                                            <span class="fjern-bekreft">
+                                                Er du sikker?
+                                                <button type="button" class="remove-button" @onclick="@(() => FjernMontasjebladDokument(d))">Ja</button>
+                                                <button type="button" class="cancel-button" @onclick="@(() => _fjernerMontasjebladDokumentId = null)">Avbryt</button>
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="remove-button" @onclick="@(() => _fjernerMontasjebladDokumentId = d.Id)">Fjern</button>
+                                        }
+                                    </li>
                                 }
-                            </div>
+                            </ul>
                         }
-                        else
-                        {
-                            <InputFile OnChange="LastOppMontasjeblad" accept=".pdf,application/pdf" />
-                        }
+                        <InputFile OnChange="LastOppMontasjeblad" accept=".pdf,application/pdf" />
                     </div>
                     <div class="fil-blokk">
                         <span class="fil-label">Bilde</span>
@@ -442,6 +462,7 @@
     private bool _bekrefterFjernBilde;
     private bool _visFjernBildeKnapp;
     private int? _fjernerFdvDokumentId;
+    private int? _fjernerMontasjebladDokumentId;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -473,7 +494,8 @@
         _bekrefterFjernBilde = false;
         _visFjernBildeKnapp = false;
         _fjernerFdvDokumentId = null;
-        _entity = await Db.Components.Include(c => c.Produktgrupper).Include(c => c.FdvDokumenter).FirstOrDefaultAsync(c => c.Id == id);
+        _fjernerMontasjebladDokumentId = null;
+        _entity = await Db.Components.Include(c => c.Produktgrupper).Include(c => c.FdvDokumenter).Include(c => c.MontasjebladDokumenter).FirstOrDefaultAsync(c => c.Id == id);
         if (_entity is null)
         {
             return;
@@ -658,9 +680,28 @@
             await stream.CopyToAsync(buffer);
         }
 
-        _entity.MontasjebladData = buffer.ToArray();
-        _entity.MontasjebladFilnavn = file.Name;
-        _entity.MontasjebladContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType;
+        var innhold = buffer.ToArray();
+        var contentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType;
+
+        // Hoveddokumentet (MontasjebladData) fylles først - alt deretter blir
+        // egne, ekstra dokumenter, siden en vare kan ha flere montasjeblad.
+        if (_entity.MontasjebladData is null)
+        {
+            _entity.MontasjebladData = innhold;
+            _entity.MontasjebladFilnavn = file.Name;
+            _entity.MontasjebladContentType = contentType;
+        }
+        else
+        {
+            Db.ComponentMontasjebladDokumenter.Add(new ComponentMontasjebladDokument
+            {
+                ComponentId = _entity.Id,
+                Filnavn = file.Name,
+                ContentType = contentType,
+                Data = innhold
+            });
+        }
+
         await Db.SaveChangesAsync();
         await OnSaved.InvokeAsync();
     }
@@ -677,6 +718,24 @@
         _entity.MontasjebladContentType = null;
         _bekrefterFjernMontasjeblad = false;
         await Db.SaveChangesAsync();
+        await OnSaved.InvokeAsync();
+    }
+
+    private async Task FjernMontasjebladDokument(ComponentMontasjebladDokument dokument)
+    {
+        if (_entity is null)
+        {
+            return;
+        }
+
+        var entitet = await Db.ComponentMontasjebladDokumenter.FirstOrDefaultAsync(d => d.Id == dokument.Id);
+        if (entitet is not null)
+        {
+            Db.ComponentMontasjebladDokumenter.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        _fjernerMontasjebladDokumentId = null;
         await OnSaved.InvokeAsync();
     }
 
