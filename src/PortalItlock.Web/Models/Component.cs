@@ -72,6 +72,12 @@ public class Component
     public int? InntektskontoId { get; set; }
     public Inntektskonto? Inntektskonto { get; set; }
 
+    // Manuelt satt via "Komplett"/"Dobbelsjekk"-knappene på varekortet - gir
+    // grønn/oransj sirkel foran Rediger-knappen på vareregisteret, se
+    // Komponenter.razor. Rent visuelt hjelpemiddel, brukes ikke i logikk.
+    public bool ErKomplett { get; set; }
+    public bool TrengerDobbelsjekk { get; set; }
+
     public List<PackageComponent> Pakker { get; set; } = [];
 
     // Leverandørene som selger denne varen, hver med sitt eget varenummer og
