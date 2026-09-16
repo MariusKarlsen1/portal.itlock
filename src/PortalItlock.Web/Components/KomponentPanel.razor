@@ -1,9 +1,11 @@
 @rendermode InteractiveServer
+@implements IAsyncDisposable
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 @if (ComponentId.HasValue)
 {
@@ -225,7 +227,7 @@
                         }
                         <InputFile OnChange="LastOppMontasjeblad" accept=".pdf,application/pdf" />
                     </div>
-                    <div class="fil-blokk">
+                    <div class="fil-blokk" id="bilde-omrade" tabindex="0" title="Klikk her og lim inn et bilde med Ctrl+V">
                         <span class="fil-label">Bilde</span>
                         @if (_entity.BildeData is not null)
                         {
@@ -463,6 +465,8 @@
     private bool _visFjernBildeKnapp;
     private int? _fjernerFdvDokumentId;
     private int? _fjernerMontasjebladDokumentId;
+    private bool _limKoblet;
+    private DotNetObjectReference<KomponentPanel>? _dotNetRef;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -476,8 +480,54 @@
             else
             {
                 _entity = null;
+                _limKoblet = false;
             }
         }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_limKoblet && _entity is not null)
+        {
+            _limKoblet = true;
+            _dotNetRef ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("vareBilde.kobleLim", "bilde-omrade", _dotNetRef);
+        }
+    }
+
+    // Kalles fra vareBilde.js når brukeren limer inn et bilde (Ctrl+V) rett
+    // fra utklippstavlen mens Bilde-feltet har fokus - raskere enn å måtte
+    // bla frem en fil på disk hver gang.
+    [JSInvokable]
+    public async Task MottaLimtInnBilde(string base64Data, string contentType)
+    {
+        if (_entity is null)
+        {
+            return;
+        }
+
+        _filFeil = null;
+        var innhold = Convert.FromBase64String(base64Data);
+        if (innhold.Length > 20_000_000)
+        {
+            _filFeil = "Bildet er for stort (maks 20 MB).";
+            StateHasChanged();
+            return;
+        }
+
+        var extension = contentType.Split('/').Last();
+        _entity.BildeData = innhold;
+        _entity.BildeFilnavn = $"limt-inn-bilde.{extension}";
+        _entity.BildeContentType = contentType;
+        await Db.SaveChangesAsync();
+        await OnSaved.InvokeAsync();
+        StateHasChanged();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _dotNetRef?.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     private async Task LastAsync(int id)
