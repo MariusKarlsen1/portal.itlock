@@ -54,11 +54,38 @@ window.vareBilde = (function () {
             }
             e.preventDefault();
             const dt = new DataTransfer();
-            dt.items.add(files[0]);
+            [...files].forEach(f => dt.items.add(f));
             input.files = dt.files;
             input.dispatchEvent(new Event('change', { bubbles: true }));
         });
     }
 
-    return { kobleLim, kobleDrop };
+    // Å dra en lenke (for å flytte et dokument mellom FDV/Monteringsanvisning/
+    // Datablad, se @ondragstart i KomponentPanel.razor) kan noen ganger bli
+    // tolket av nettleseren som et klikk i tillegg til draget, slik at filen
+    // åpnes uventet midt i draget. Sperrer klikk rett etter et reelt drag.
+    function kobleDragKlikkFiks(omradeId) {
+        const omrade = document.getElementById(omradeId);
+        if (!omrade || omrade.dataset.dragKlikkFiksKoblet) {
+            return;
+        }
+        omrade.dataset.dragKlikkFiksKoblet = "1";
+
+        let nyligDratt = false;
+
+        omrade.addEventListener('dragstart', () => {
+            nyligDratt = true;
+        });
+        omrade.addEventListener('dragend', () => {
+            setTimeout(() => { nyligDratt = false; }, 300);
+        });
+        omrade.addEventListener('click', e => {
+            if (nyligDratt) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }, true);
+    }
+
+    return { kobleLim, kobleDrop, kobleDragKlikkFiks };
 })();
