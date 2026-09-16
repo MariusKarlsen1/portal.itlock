@@ -6,11 +6,12 @@ namespace PortalItlock.Web.Services;
 
 // En vare kan ha flere leverandørkoblinger (ComponentLeverandor), men bare én
 // av dem er "standard" om gangen - denne klassen holder den regelen og
-// speiler standard-koblingens Varenummer/Pris/Leverandornavn over på selve
-// Component (Produktkode/PrisNetto/Leverandor), slik at alle de eksisterende
-// stedene i appen som fortsatt leser disse feltene direkte (søk, filtre,
-// visning) automatisk viser riktig verdi uten å måtte kjenne til den nye
-// leverandørmodellen.
+// speiler standard-koblingens innkjøpspris og leverandørnavn over på selve
+// Component (PrisNetto/Leverandor - se "Kjøpes inn av" i UI), slik at alle de
+// eksisterende stedene i appen som fortsatt leser disse feltene direkte
+// (søk, filtre, visning) automatisk viser riktig verdi uten å måtte kjenne
+// til den nye leverandørmodellen. Produktkode og Varenavn 1 er IKKE en del
+// av synkroniseringen - de er varens egen, faste identitet.
 public static class LeverandorSync
 {
     public static async Task<Leverandor> FinnEllerOpprettAsync(ApplicationDbContext db, string navn, CancellationToken ct = default)
@@ -52,11 +53,13 @@ public static class LeverandorSync
             return;
         }
 
-        // Kun varenummer og innkjøpspris (netto) er forskjellig mellom
-        // leverandører - veiledende (utpris til kunde) er varens egen,
-        // faste salgspris og skal IKKE endres bare fordi man bytter hvilken
-        // leverandør som er satt som standard.
-        component.Produktkode = standard.Varenummer;
+        // Kun innkjøpsprisen (netto) og hvem varen kjøpes inn av skal følge
+        // hvilken leverandør som er satt som standard. Produktkode og
+        // Varenavn 1 er varens EGEN, faste identitet - forblir uendret
+        // uansett hvilken leverandør man bytter til (varenummeret til de
+        // andre leverandørene ligger fortsatt i Leverandører-tabellen under,
+        // ingen info går tapt). Veiledende og Leverandør (produsent) er
+        // heller ikke leverandørspesifikke, se kommentar i klassen over.
         component.PrisNetto = standard.PrisNetto;
         component.Leverandor = standard.Leverandor?.Navn;
     }
