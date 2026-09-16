@@ -57,6 +57,11 @@ public class Component
     public string? MontasjebladFilnavn { get; set; }
     public string? MontasjebladContentType { get; set; }
 
+    // Vist som miniatyrbilde i komponentregisteret, se /komponent/{id}/bilde.
+    public byte[]? BildeData { get; set; }
+    public string? BildeFilnavn { get; set; }
+    public string? BildeContentType { get; set; }
+
     // Inntektskontoen varen skal bokføres på ved salg - portalens eget
     // kontoregister (Models/Inntektskonto.cs), ikke hentet fra Tripletex.
     // Brukes av ArbeidsordreOkonomiBeregner til å gruppere Resultatrapporten.
