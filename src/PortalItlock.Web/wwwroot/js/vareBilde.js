@@ -32,5 +32,33 @@ window.vareBilde = (function () {
         });
     }
 
-    return { kobleLim };
+    // Lar brukeren dra en fil fra egen PC og slippe den rett på
+    // FDV/Monteringsanvisning/Datablad-feltet, som et raskere alternativ til
+    // å trykke "Velg fil" og bla frem filen i en dialog. Gjenbruker Blazor
+    // sin egen InputFile-opplasting ved å legge den sluppede filen inn i det
+    // skjulte <input type="file"> og trigge et vanlig change-event - da går
+    // filen gjennom nøyaktig samme strømmede serveropplasting som ved klikk,
+    // uten noen størrelsesbegrensning fra SignalR.
+    function kobleDrop(containerId, inputId) {
+        const container = document.getElementById(containerId);
+        const input = document.getElementById(inputId);
+        if (!container || !input || container.dataset.dropKoblet) {
+            return;
+        }
+        container.dataset.dropKoblet = "1";
+
+        container.addEventListener('drop', e => {
+            const files = e.dataTransfer && e.dataTransfer.files;
+            if (!files || files.length === 0) {
+                return;
+            }
+            e.preventDefault();
+            const dt = new DataTransfer();
+            dt.items.add(files[0]);
+            input.files = dt.files;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+    }
+
+    return { kobleLim, kobleDrop };
 })();

@@ -502,7 +502,16 @@ public class PrisimportService(ApplicationDbContext db)
                     PrisNetto = rad.PrisNetto,
                     PrisVeiledende = rad.PrisVeiledende,
                     ILagerstyring = rad.LagervareVerdi ?? false,
-                    Aktiv = rad.AktivVerdi ?? true,
+                    // Nye varer fra import skal IKKE bli aktive automatisk -
+                    // en hel leverandørkatalog importeres ofte, men bare et
+                    // fåtall av varene brukes faktisk. Blir de aktive med det
+                    // samme dukker de opp i søk ved siden av (og forvirrer med)
+                    // den "ekte" varen de kobles til via leverandør-lenker på
+                    // en annen vare (se LeverandorSync/SettStandardAsync og
+                    // SokEksisterendeLenke). Brukeren aktiverer selv varene hen
+                    // faktisk vil bruke. Importfilen kan fortsatt overstyre
+                    // dette eksplisitt via en Aktiv-kolonne.
+                    Aktiv = rad.AktivVerdi ?? false,
                     RabattgruppeId = rad.RabattgruppeId,
                     ComponentTypeId = rad.ComponentTypeId
                 };
