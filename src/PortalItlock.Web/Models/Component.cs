@@ -57,10 +57,14 @@ public class Component
     public string? MontasjebladFilnavn { get; set; }
     public string? MontasjebladContentType { get; set; }
 
-    // Vist som miniatyrbilde i komponentregisteret, se /komponent/{id}/bilde.
+    // Vist på vare-panelet og som hover-forhåndsvisning i tilbud, se
+    // /komponent/{id}/bilde. BildeStorrelse er brukerens ønskede
+    // visningsstørrelse i piksler (høyeste/breddeste kant) - null gir
+    // standardstørrelsen definert i CSS.
     public byte[]? BildeData { get; set; }
     public string? BildeFilnavn { get; set; }
     public string? BildeContentType { get; set; }
+    public int? BildeStorrelse { get; set; }
 
     // Inntektskontoen varen skal bokføres på ved salg - portalens eget
     // kontoregister (Models/Inntektskonto.cs), ikke hentet fra Tripletex.
