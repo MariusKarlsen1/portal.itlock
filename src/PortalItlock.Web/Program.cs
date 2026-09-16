@@ -31,6 +31,16 @@ builder.WebHost.ConfigureKestrel(options =>
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+// SignalR sin standardgrense for én enkelt JS<->.NET-melding er 32 KB - et
+// base64-innlimt bilde fra utklippstavlen (se vareBilde.js) sprenger den
+// grensen med det samme, og kretsen kobler da bare fra/til igjen uten noen
+// synlig feilmelding. Økes derfor til 10 MB, likt grensen for filopplasting
+// via InputFile andre steder i appen.
+builder.Services.Configure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
+{
+    options.MaximumReceiveMessageSize = 10_000_000;
+});
+
 var dataProtectionKeysPath = Environment.GetEnvironmentVariable("DATA_PROTECTION_KEYS_PATH");
 if (string.IsNullOrEmpty(dataProtectionKeysPath) && builder.Environment.IsDevelopment())
 {
