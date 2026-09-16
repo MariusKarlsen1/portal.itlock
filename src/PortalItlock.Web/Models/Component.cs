@@ -61,6 +61,14 @@ public class Component
     // Models/ComponentMontasjebladDokument.cs.
     public List<ComponentMontasjebladDokument> MontasjebladDokumenter { get; set; } = [];
 
+    public byte[]? DatabladData { get; set; }
+    public string? DatabladFilnavn { get; set; }
+    public string? DatabladContentType { get; set; }
+
+    // Flere datablad utover hoveddokumentet over - se
+    // Models/ComponentDatabladDokument.cs.
+    public List<ComponentDatabladDokument> DatabladDokumenter { get; set; } = [];
+
     // Vist på vare-panelet og som hover-forhåndsvisning i tilbud, se
     // /komponent/{id}/bilde. BildeStorrelse er brukerens ønskede
     // visningsstørrelse i piksler (høyeste/breddeste kant) - null gir

@@ -111,6 +111,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ComponentLeverandor> ComponentLeverandorer => Set<ComponentLeverandor>();
     public DbSet<ComponentFdvDokument> ComponentFdvDokumenter => Set<ComponentFdvDokument>();
     public DbSet<ComponentMontasjebladDokument> ComponentMontasjebladDokumenter => Set<ComponentMontasjebladDokument>();
+    public DbSet<ComponentDatabladDokument> ComponentDatabladDokumenter => Set<ComponentDatabladDokument>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -404,6 +405,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         modelBuilder.Entity<ComponentMontasjebladDokument>()
             .HasOne(d => d.Component)
             .WithMany(c => c.MontasjebladDokumenter)
+            .HasForeignKey(d => d.ComponentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ComponentDatabladDokument>()
+            .HasOne(d => d.Component)
+            .WithMany(c => c.DatabladDokumenter)
             .HasForeignKey(d => d.ComponentId)
             .OnDelete(DeleteBehavior.Cascade);
 

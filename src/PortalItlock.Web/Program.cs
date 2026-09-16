@@ -655,6 +655,22 @@ app.MapGet("/komponent/montasjebladdokument/{id:int}", async (int id, Applicatio
         : Results.File(dokument.Data, dokument.ContentType, dokument.Filnavn);
 }).RequireAuthorization();
 
+app.MapGet("/komponent/{id:int}/datablad", async (int id, ApplicationDbContext db) =>
+{
+    var komponent = await db.Components.FindAsync(id);
+    return komponent?.DatabladData is null
+        ? Results.NotFound()
+        : Results.File(komponent.DatabladData, komponent.DatabladContentType ?? "application/pdf", komponent.DatabladFilnavn);
+}).RequireAuthorization();
+
+app.MapGet("/komponent/databladdokument/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var dokument = await db.ComponentDatabladDokumenter.FindAsync(id);
+    return dokument is null
+        ? Results.NotFound()
+        : Results.File(dokument.Data, dokument.ContentType, dokument.Filnavn);
+}).RequireAuthorization();
+
 app.MapGet("/komponent/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
 {
     var komponent = await db.Components.FindAsync(id);
