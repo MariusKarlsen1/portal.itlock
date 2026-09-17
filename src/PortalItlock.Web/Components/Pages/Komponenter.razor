@@ -592,7 +592,6 @@
         ProdusentLand = c.ProdusentLand,
         ProdusentOrgnr = c.ProdusentOrgnr,
         Leverandor = c.Leverandor,
-        LeverandorNavn = c.Leverandorer.Where(l => l.Leverandor != null).Select(l => l.Leverandor!.Navn).Distinct().ToList(),
         Produktkode = c.Produktkode,
         Gtin = c.Gtin,
         Overflate = c.Overflate,
@@ -601,7 +600,6 @@
         RabattgruppeId = c.RabattgruppeId,
         RabattgruppeKode = c.Rabattgruppe != null ? c.Rabattgruppe.Kode : null,
         IngenRabattTilgjengelig = c.IngenRabattTilgjengelig,
-        ProduktgruppeNavnListe = c.Produktgrupper.OrderBy(p => p.Navn).Select(p => p.Navn).ToList(),
         MontasjeMinutterProsjekt = c.MontasjeMinutterProsjekt,
         MontasjeMinutterArbeidsordre = c.MontasjeMinutterArbeidsordre,
         MontasjeMinutterService = c.MontasjeMinutterService,
@@ -661,20 +659,59 @@
         TrengerDobbelsjekk = r.TrengerDobbelsjekk
     };
 
+    // Leverandørnavn og produktgruppenavn hentes som egne, flate spørringer
+    // (ikke korrelerte underspørringer inne i ComponentRowsQuery) fordi
+    // SQLite-driveren til EF Core ikke støtter SQL APPLY - noe en korrelert
+    // collection-projeksjon per rad (f.eks. c.Leverandorer.Select(...).ToList()
+    // inne i en større Select) krever. Kobles sammen i minnet etterpå.
+    private async Task<Dictionary<int, List<string>>> LoadLeverandorNavnLookupAsync(IReadOnlyCollection<int>? ids)
+    {
+        var query = Db.ComponentLeverandorer.Where(l => l.Leverandor != null);
+        if (ids is not null)
+        {
+            query = query.Where(l => ids.Contains(l.ComponentId));
+        }
+
+        var par = await query
+            .Select(l => new { l.ComponentId, Navn = l.Leverandor!.Navn })
+            .Distinct()
+            .ToListAsync();
+
+        return par
+            .GroupBy(x => x.ComponentId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Navn).OrderBy(n => n).ToList());
+    }
+
+    private async Task<Dictionary<int, List<string>>> LoadProduktgruppeNavnLookupAsync(IReadOnlyCollection<int>? ids)
+    {
+        var query = Db.Components.AsQueryable();
+        if (ids is not null)
+        {
+            query = query.Where(c => ids.Contains(c.Id));
+        }
+
+        var par = await query
+            .SelectMany(c => c.Produktgrupper, (c, p) => new { ComponentId = c.Id, p.Navn })
+            .ToListAsync();
+
+        return par
+            .GroupBy(x => x.ComponentId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Navn).OrderBy(n => n).ToList());
+    }
+
     private async Task LoadAsync()
     {
         _types = await Db.ComponentTypes.OrderBy(t => t.Sortering).ThenBy(t => t.Navn).ToListAsync();
         _rabattgrupper = await Db.Rabattgrupper.Where(r => r.Aktiv).OrderBy(r => r.Leverandor).ThenBy(r => r.Kode).ToListAsync();
 
-        List<ComponentRow> rows;
-        try
+        var rows = await ComponentRowsQuery().ToListAsync();
+
+        var leverandorLookup = await LoadLeverandorNavnLookupAsync(null);
+        var produktgruppeLookup = await LoadProduktgruppeNavnLookupAsync(null);
+        foreach (var r in rows)
         {
-            rows = await ComponentRowsQuery().ToListAsync();
-        }
-        catch (Exception ex)
-        {
-            _fdvFeil = ex.ToString();
-            return;
+            r.LeverandorNavn = leverandorLookup.GetValueOrDefault(r.Id) ?? [];
+            r.ProduktgruppeNavnListe = produktgruppeLookup.GetValueOrDefault(r.Id) ?? [];
         }
 
         _components = rows.Select(MapToDraft).ToList();
@@ -699,6 +736,11 @@
         {
             return;
         }
+
+        var leverandorLookup = await LoadLeverandorNavnLookupAsync([id]);
+        var produktgruppeLookup = await LoadProduktgruppeNavnLookupAsync([id]);
+        r.LeverandorNavn = leverandorLookup.GetValueOrDefault(r.Id) ?? [];
+        r.ProduktgruppeNavnListe = produktgruppeLookup.GetValueOrDefault(r.Id) ?? [];
 
         var index = _components.FindIndex(d => d.Id == r.Id);
         if (index >= 0)
