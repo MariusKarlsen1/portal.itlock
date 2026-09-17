@@ -524,11 +524,64 @@
         }
     }
 
-    private static ComponentDraft MapToDraft(Component c) => new()
+    // Component har flere store byte[]-kolonner (FdvData, MontasjebladData,
+    // BildeData, DatabladData - hele PDF-er/bilder lagret direkte i
+    // databasen). Å laste inn fulle Component-entiteter for hele registeret
+    // (slik denne siden gjorde før) henter ALLE disse kolonnene for alle
+    // ~25000 radene på hver eneste last, selv om tabellen bare trenger et
+    // par bool-flagg - potensielt mange MB per last, og mer for hver PDF/
+    // bilde som legges til. Dette var hovedårsaken til at siden ble treg og
+    // ustabil (minnepress/lange spørringer). Projiserer derfor rett til en
+    // lett rad-type i selve SQL-spørringen i stedet for å laste inn hele
+    // Component-objektet - EF Core oversetter da f.eks. "FdvData != null"
+    // til et billig IS NOT NULL-sjekk uten å hente selve dataene.
+    private sealed class ComponentRow
+    {
+        public int Id { get; set; }
+        public int? ComponentTypeId { get; set; }
+        public string TypeName { get; set; } = "";
+        public string Navn { get; set; } = "";
+        public string? Navn2 { get; set; }
+        public string? Produsent { get; set; }
+        public string? Konsept { get; set; }
+        public string? ProdusentAdresse { get; set; }
+        public string? ProdusentPostnr { get; set; }
+        public string? ProdusentSted { get; set; }
+        public string? ProdusentLand { get; set; }
+        public string? ProdusentOrgnr { get; set; }
+        public string? Leverandor { get; set; }
+        public List<string> LeverandorNavn { get; set; } = [];
+        public string? Produktkode { get; set; }
+        public string? Gtin { get; set; }
+        public string? Overflate { get; set; }
+        public decimal? PrisNetto { get; set; }
+        public decimal? PrisVeiledende { get; set; }
+        public int? RabattgruppeId { get; set; }
+        public string? RabattgruppeKode { get; set; }
+        public bool IngenRabattTilgjengelig { get; set; }
+        public List<string> ProduktgruppeNavnListe { get; set; } = [];
+        public int? MontasjeMinutterProsjekt { get; set; }
+        public int? MontasjeMinutterArbeidsordre { get; set; }
+        public int? MontasjeMinutterService { get; set; }
+        public int? GarantitidManeder { get; set; }
+        public string? Enhet { get; set; }
+        public bool Aktiv { get; set; }
+        public bool ILagerstyring { get; set; }
+        public int PackageCount { get; set; }
+        public bool HarFdv { get; set; }
+        public string? FdvFilnavn { get; set; }
+        public bool HarMontasjeblad { get; set; }
+        public string? MontasjebladFilnavn { get; set; }
+        public int? InntektskontoId { get; set; }
+        public bool ErKomplett { get; set; }
+        public bool TrengerDobbelsjekk { get; set; }
+    }
+
+    private IQueryable<ComponentRow> ComponentRowsQuery() => Db.Components.Select(c => new ComponentRow
     {
         Id = c.Id,
         ComponentTypeId = c.ComponentTypeId,
-        TypeName = c.Type?.Navn ?? "Ikke satt",
+        TypeName = c.Type != null ? c.Type.Navn : "Ikke satt",
         Navn = c.Navn,
         Navn2 = c.Navn2,
         Produsent = c.Produsent,
@@ -546,9 +599,9 @@
         PrisNetto = c.PrisNetto,
         PrisVeiledende = c.PrisVeiledende,
         RabattgruppeId = c.RabattgruppeId,
-        RabattgruppeKode = c.Rabattgruppe?.Kode,
+        RabattgruppeKode = c.Rabattgruppe != null ? c.Rabattgruppe.Kode : null,
         IngenRabattTilgjengelig = c.IngenRabattTilgjengelig,
-        ProduktgruppeNavn = c.Produktgrupper.Count == 0 ? null : string.Join(", ", c.Produktgrupper.OrderBy(p => p.Navn).Select(p => p.Navn)),
+        ProduktgruppeNavnListe = c.Produktgrupper.OrderBy(p => p.Navn).Select(p => p.Navn).ToList(),
         MontasjeMinutterProsjekt = c.MontasjeMinutterProsjekt,
         MontasjeMinutterArbeidsordre = c.MontasjeMinutterArbeidsordre,
         MontasjeMinutterService = c.MontasjeMinutterService,
@@ -564,30 +617,58 @@
         InntektskontoId = c.InntektskontoId,
         ErKomplett = c.ErKomplett,
         TrengerDobbelsjekk = c.TrengerDobbelsjekk
-    };
+    });
 
-    // AsSplitQuery: flere Include()-koblinger til samlinger (Pakker,
-    // Produktgrupper, Leverandorer) i én og samme spørring gir en
-    // kryssprodukt-eksplosjon i SQL-resultatet (antall rader multipliseres
-    // for hver samling) - EF Core må da bygge om et enormt resultatsett til
-    // objektgrafen for alle ~25000 komponentene. Delt opp i separate
-    // spørringer i stedet er markant raskere for nettopp dette mønsteret.
-    private IQueryable<Component> ComponentsMedInkluderinger() => Db.Components
-        .AsSplitQuery()
-        .Include(c => c.Type)
-        .Include(c => c.Pakker)
-        .Include(c => c.Rabattgruppe)
-        .Include(c => c.Produktgrupper)
-        .Include(c => c.Leverandorer).ThenInclude(l => l.Leverandor);
+    private static ComponentDraft MapToDraft(ComponentRow r) => new()
+    {
+        Id = r.Id,
+        ComponentTypeId = r.ComponentTypeId,
+        TypeName = r.TypeName,
+        Navn = r.Navn,
+        Navn2 = r.Navn2,
+        Produsent = r.Produsent,
+        Konsept = r.Konsept,
+        ProdusentAdresse = r.ProdusentAdresse,
+        ProdusentPostnr = r.ProdusentPostnr,
+        ProdusentSted = r.ProdusentSted,
+        ProdusentLand = r.ProdusentLand,
+        ProdusentOrgnr = r.ProdusentOrgnr,
+        Leverandor = r.Leverandor,
+        LeverandorNavn = r.LeverandorNavn,
+        Produktkode = r.Produktkode,
+        Gtin = r.Gtin,
+        Overflate = r.Overflate,
+        PrisNetto = r.PrisNetto,
+        PrisVeiledende = r.PrisVeiledende,
+        RabattgruppeId = r.RabattgruppeId,
+        RabattgruppeKode = r.RabattgruppeKode,
+        IngenRabattTilgjengelig = r.IngenRabattTilgjengelig,
+        ProduktgruppeNavn = r.ProduktgruppeNavnListe.Count == 0 ? null : string.Join(", ", r.ProduktgruppeNavnListe),
+        MontasjeMinutterProsjekt = r.MontasjeMinutterProsjekt,
+        MontasjeMinutterArbeidsordre = r.MontasjeMinutterArbeidsordre,
+        MontasjeMinutterService = r.MontasjeMinutterService,
+        GarantitidManeder = r.GarantitidManeder,
+        Enhet = r.Enhet,
+        Aktiv = r.Aktiv,
+        ILagerstyring = r.ILagerstyring,
+        PackageCount = r.PackageCount,
+        HarFdv = r.HarFdv,
+        FdvFilnavn = r.FdvFilnavn,
+        HarMontasjeblad = r.HarMontasjeblad,
+        MontasjebladFilnavn = r.MontasjebladFilnavn,
+        InntektskontoId = r.InntektskontoId,
+        ErKomplett = r.ErKomplett,
+        TrengerDobbelsjekk = r.TrengerDobbelsjekk
+    };
 
     private async Task LoadAsync()
     {
         _types = await Db.ComponentTypes.OrderBy(t => t.Sortering).ThenBy(t => t.Navn).ToListAsync();
         _rabattgrupper = await Db.Rabattgrupper.Where(r => r.Aktiv).OrderBy(r => r.Leverandor).ThenBy(r => r.Kode).ToListAsync();
 
-        var components = await ComponentsMedInkluderinger().ToListAsync();
+        var rows = await ComponentRowsQuery().ToListAsync();
 
-        _components = components.Select(MapToDraft).ToList();
+        _components = rows.Select(MapToDraft).ToList();
 
         _leverandorer = _components
             .SelectMany(c => c.LeverandorNavn)
@@ -599,23 +680,21 @@
         RefreshFiltered();
     }
 
-    // Oppdaterer kun raden for ÉN vare i stedet for å kjøre hele LoadAsync
-    // (alle ~25000 komponenter med flere Include-koblinger) - det siste
-    // gjorde siden merkbart treg siden varekortet nå lagrer/oppdaterer seg
-    // selv veldig ofte (Komplett/Dobbelsjekk, lim inn bilde,
-    // dra-og-slipp-filer o.l.).
+    // Oppdaterer kun raden for ÉN vare i stedet for å kjøre hele LoadAsync -
+    // varekortet lagrer/oppdaterer seg selv veldig ofte nå (Komplett/
+    // Dobbelsjekk, lim inn bilde, dra-og-slipp-filer o.l.).
     private async Task RefreshDraft(int id)
     {
-        var c = await ComponentsMedInkluderinger().FirstOrDefaultAsync(c => c.Id == id);
-        if (c is null)
+        var r = await ComponentRowsQuery().FirstOrDefaultAsync(x => x.Id == id);
+        if (r is null)
         {
             return;
         }
 
-        var index = _components.FindIndex(d => d.Id == c.Id);
+        var index = _components.FindIndex(d => d.Id == r.Id);
         if (index >= 0)
         {
-            _components[index] = MapToDraft(c);
+            _components[index] = MapToDraft(r);
         }
 
         _leverandorer = _components
