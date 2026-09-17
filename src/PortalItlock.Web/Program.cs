@@ -41,6 +41,12 @@ builder.Services.Configure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
     options.MaximumReceiveMessageSize = 10_000_000;
 });
 
+// MIDLERTIDIG for å bekrefte om disk-full-problemet er løst etter Railway-oppgradering.
+builder.Services.Configure<Microsoft.AspNetCore.Components.Server.CircuitOptions>(options =>
+{
+    options.DetailedErrors = true;
+});
+
 var dataProtectionKeysPath = Environment.GetEnvironmentVariable("DATA_PROTECTION_KEYS_PATH");
 if (string.IsNullOrEmpty(dataProtectionKeysPath) && builder.Environment.IsDevelopment())
 {
