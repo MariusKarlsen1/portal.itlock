@@ -87,6 +87,8 @@ builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
 builder.Services.AddScoped<ServiceVarselService>();
 builder.Services.AddHostedService<ServiceVarselBackgroundService>();
+builder.Services.AddScoped<LisensVarselService>();
+builder.Services.AddHostedService<LisensVarselBackgroundService>();
 builder.Services.AddScoped<TicketEskaleringService>();
 builder.Services.AddScoped<VarselTellerService>();
 builder.Services.AddHostedService<TicketEskaleringBackgroundService>();

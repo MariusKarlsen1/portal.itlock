@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260920092805_LeggTilKundeTypeOgLisenser")]
+    partial class LeggTilKundeTypeOgLisenser
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -99,7 +102,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("BrukerId");
 
-                    b.ToTable("AktiveTimeOkter", (string)null);
+                    b.ToTable("AktiveTimeOkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Arbeidsordre", b =>
@@ -214,7 +217,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("TilbudId");
 
-                    b.ToTable("Arbeidsordre", (string)null);
+                    b.ToTable("Arbeidsordre");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreMedia", b =>
@@ -248,7 +251,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ArbeidsordreId");
 
-                    b.ToTable("ArbeidsordreMedia", (string)null);
+                    b.ToTable("ArbeidsordreMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreSjekkpunkt", b =>
@@ -282,7 +285,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("FullfortAvBrukerId");
 
-                    b.ToTable("ArbeidsordreSjekkpunkter", (string)null);
+                    b.ToTable("ArbeidsordreSjekkpunkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreVare", b =>
@@ -324,7 +327,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("LagtTilAvBrukerId");
 
-                    b.ToTable("ArbeidsordreVarer", (string)null);
+                    b.ToTable("ArbeidsordreVarer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Avvik", b =>
@@ -373,7 +376,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("OpprettetAvBrukerId");
 
-                    b.ToTable("Avvik", (string)null);
+                    b.ToTable("Avvik");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Befaring", b =>
@@ -430,7 +433,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Befaringer", (string)null);
+                    b.ToTable("Befaringer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.BefaringDorfelt", b =>
@@ -548,7 +551,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("BefaringId");
 
-                    b.ToTable("BefaringDorfelt", (string)null);
+                    b.ToTable("BefaringDorfelt");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.BefaringDorfeltBilde", b =>
@@ -579,7 +582,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("BefaringDorfeltId");
 
-                    b.ToTable("BefaringDorfeltBilder", (string)null);
+                    b.ToTable("BefaringDorfeltBilder");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.BefaringLassystem", b =>
@@ -650,7 +653,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("BefaringDorfeltId");
 
-                    b.ToTable("BefaringLassystemer", (string)null);
+                    b.ToTable("BefaringLassystemer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.BefaringPdf", b =>
@@ -677,7 +680,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("BefaringId");
 
-                    b.ToTable("BefaringPdfer", (string)null);
+                    b.ToTable("BefaringPdfer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Bruker", b =>
@@ -725,7 +728,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("KundeId");
 
-                    b.ToTable("Brukere", (string)null);
+                    b.ToTable("Brukere");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.BrukerPasswordResetToken", b =>
@@ -757,7 +760,7 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("Token")
                         .IsUnique();
 
-                    b.ToTable("BrukerPasswordResetTokener", (string)null);
+                    b.ToTable("BrukerPasswordResetTokener");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.CeGodkjenning", b =>
@@ -1028,7 +1031,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("OpprettetAvBrukerId");
 
-                    b.ToTable("CeGodkjenninger", (string)null);
+                    b.ToTable("CeGodkjenninger");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.CeGodkjenningMedia", b =>
@@ -1062,7 +1065,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("CeGodkjenningId");
 
-                    b.ToTable("CeGodkjenningMedia", (string)null);
+                    b.ToTable("CeGodkjenningMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.CeMaleGrenseverdier", b =>
@@ -1085,7 +1088,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("CeMaleGrenseverdier", (string)null);
+                    b.ToTable("CeMaleGrenseverdier");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Component", b =>
@@ -1253,7 +1256,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("RabattgruppeId");
 
-                    b.ToTable("Components", (string)null);
+                    b.ToTable("Components");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ComponentDatabladDokument", b =>
@@ -1284,7 +1287,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ComponentId");
 
-                    b.ToTable("ComponentDatabladDokumenter", (string)null);
+                    b.ToTable("ComponentDatabladDokumenter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ComponentFdvDokument", b =>
@@ -1315,7 +1318,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ComponentId");
 
-                    b.ToTable("ComponentFdvDokumenter", (string)null);
+                    b.ToTable("ComponentFdvDokumenter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ComponentLeverandor", b =>
@@ -1345,7 +1348,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("LeverandorId");
 
-                    b.ToTable("ComponentLeverandorer", (string)null);
+                    b.ToTable("ComponentLeverandorer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ComponentMontasjebladDokument", b =>
@@ -1376,7 +1379,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ComponentId");
 
-                    b.ToTable("ComponentMontasjebladDokumenter", (string)null);
+                    b.ToTable("ComponentMontasjebladDokumenter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ComponentType", b =>
@@ -1406,7 +1409,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("ComponentTypes", (string)null);
+                    b.ToTable("ComponentTypes");
 
                     b.HasData(
                         new
@@ -1886,7 +1889,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("DatabaseBackuper", (string)null);
+                    b.ToTable("DatabaseBackuper");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.DoorEnvironmentDocument", b =>
@@ -1908,7 +1911,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("DoorEnvironmentDocuments", (string)null);
+                    b.ToTable("DoorEnvironmentDocuments");
 
                     b.HasData(
                         new
@@ -2073,7 +2076,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("Dorer", (string)null);
+                    b.ToTable("Dorer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.DorFunksjon", b =>
@@ -2091,7 +2094,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("DorFunksjoner", (string)null);
+                    b.ToTable("DorFunksjoner");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.DorHendelse", b =>
@@ -2119,7 +2122,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("UtfortAvBrukerId");
 
-                    b.ToTable("DorHendelser", (string)null);
+                    b.ToTable("DorHendelser");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.DorIdMal", b =>
@@ -2196,7 +2199,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("DorIdMaler", (string)null);
+                    b.ToTable("DorIdMaler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.DorKomponent", b =>
@@ -2234,7 +2237,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("MontertAvBrukerId");
 
-                    b.ToTable("DorKomponenter", (string)null);
+                    b.ToTable("DorKomponenter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.DorMedia", b =>
@@ -2268,7 +2271,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("DorId");
 
-                    b.ToTable("DorMedia", (string)null);
+                    b.ToTable("DorMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Driftsmelding", b =>
@@ -2299,7 +2302,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("InnmeldtAvBrukerId");
 
-                    b.ToTable("Driftsmeldinger", (string)null);
+                    b.ToTable("Driftsmeldinger");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.DriftsmeldingMedia", b =>
@@ -2327,7 +2330,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("DriftsmeldingId");
 
-                    b.ToTable("DriftsmeldingMedia", (string)null);
+                    b.ToTable("DriftsmeldingMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.FdvVedlegg", b =>
@@ -2362,7 +2365,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("FdvVedlegg", (string)null);
+                    b.ToTable("FdvVedlegg");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Foresporsel", b =>
@@ -2398,7 +2401,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Foresporsler", (string)null);
+                    b.ToTable("Foresporsler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ForesporselMedia", b =>
@@ -2426,7 +2429,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ForesporselId");
 
-                    b.ToTable("ForesporselMedia", (string)null);
+                    b.ToTable("ForesporselMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.FravarSoknad", b =>
@@ -2485,7 +2488,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("TilOppfolgingHosBrukerId");
 
-                    b.ToTable("FravarSoknader", (string)null);
+                    b.ToTable("FravarSoknader");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.GuideSide", b =>
@@ -2510,7 +2513,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("GuideSider", (string)null);
+                    b.ToTable("GuideSider");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.HjemmesideTekst", b =>
@@ -2553,7 +2556,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("HjemmesideTekster", (string)null);
+                    b.ToTable("HjemmesideTekster");
 
                     b.HasData(
                         new
@@ -2617,7 +2620,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("OpprinneligImportId");
 
-                    b.ToTable("Importhistorikk", (string)null);
+                    b.ToTable("Importhistorikk");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Inntektskonto", b =>
@@ -2635,7 +2638,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Inntektskontoer", (string)null);
+                    b.ToTable("Inntektskontoer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsKategori", b =>
@@ -2653,7 +2656,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("KoblingsKategorier", (string)null);
+                    b.ToTable("KoblingsKategorier");
 
                     b.HasData(
                         new
@@ -2704,7 +2707,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("KoblingsSkjemaer", (string)null);
+                    b.ToTable("KoblingsSkjemaer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsStrek", b =>
@@ -2734,7 +2737,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("KoblingsSkjemaId");
 
-                    b.ToTable("KoblingsStreker", (string)null);
+                    b.ToTable("KoblingsStreker");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSymbol", b =>
@@ -2795,7 +2798,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("SymbolBibliotekId");
 
-                    b.ToTable("KoblingsSymboler", (string)null);
+                    b.ToTable("KoblingsSymboler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSymbolBibliotek", b =>
@@ -2820,7 +2823,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("KoblingsSymbolBibliotek", (string)null);
+                    b.ToTable("KoblingsSymbolBibliotek");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Kunde", b =>
@@ -2874,7 +2877,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Kunder", (string)null);
+                    b.ToTable("Kunder");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KundeLisens", b =>
@@ -2903,7 +2906,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("KundeId");
 
-                    b.ToTable("KundeLisenser", (string)null);
+                    b.ToTable("KundeLisenser");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KundeOppfolgingNotat", b =>
@@ -2931,7 +2934,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("OpprettetAvBrukerId");
 
-                    b.ToTable("KundeOppfolgingNotater", (string)null);
+                    b.ToTable("KundeOppfolgingNotater");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KundeRabatt", b =>
@@ -2955,7 +2958,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProduktgruppeId");
 
-                    b.ToTable("KundeRabatter", (string)null);
+                    b.ToTable("KundeRabatter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LagretPdf", b =>
@@ -2992,7 +2995,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("EntityType", "EntityId");
 
-                    b.ToTable("LagredePdfer", (string)null);
+                    b.ToTable("LagredePdfer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LasUtskifting", b =>
@@ -3064,7 +3067,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("LasUtskiftinger", (string)null);
+                    b.ToTable("LasUtskiftinger");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LasplanReserve", b =>
@@ -3097,7 +3100,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("LasplanReserver", (string)null);
+                    b.ToTable("LasplanReserver");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Leverandor", b =>
@@ -3133,7 +3136,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Leverandorer", (string)null);
+                    b.ToTable("Leverandorer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LisensVarselSendt", b =>
@@ -3147,7 +3150,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("LisensVarselSendt", (string)null);
+                    b.ToTable("LisensVarselSendt");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.MonteringLinje", b =>
@@ -3184,7 +3187,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("MonteringLinjer", (string)null);
+                    b.ToTable("MonteringLinjer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Nokkel", b =>
@@ -3216,7 +3219,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("Nokler", (string)null);
+                    b.ToTable("Nokler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.NokkelKvittering", b =>
@@ -3260,7 +3263,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("NokkelsystemId");
 
-                    b.ToTable("NokkelKvitteringer", (string)null);
+                    b.ToTable("NokkelKvitteringer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.NokkelLasplanReserve", b =>
@@ -3275,7 +3278,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("LasplanReserveId");
 
-                    b.ToTable("NokkelLasplanReserver", (string)null);
+                    b.ToTable("NokkelLasplanReserver");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.NokkelSylinder", b =>
@@ -3291,7 +3294,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("NokkelId", "DorId", "ComponentId");
 
-                    b.ToTable("NokkelSylindere", (string)null);
+                    b.ToTable("NokkelSylindere");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Nokkelsystem", b =>
@@ -3336,7 +3339,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Nokkelsystemer", (string)null);
+                    b.ToTable("Nokkelsystemer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Notat", b =>
@@ -3359,7 +3362,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("BrukerId");
 
-                    b.ToTable("Notater", (string)null);
+                    b.ToTable("Notater");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Nyhet", b =>
@@ -3384,7 +3387,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Nyheter", (string)null);
+                    b.ToTable("Nyheter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Package", b =>
@@ -3411,7 +3414,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Packages", (string)null);
+                    b.ToTable("Packages");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PackageComponent", b =>
@@ -3432,7 +3435,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ComponentId");
 
-                    b.ToTable("PackageComponents", (string)null);
+                    b.ToTable("PackageComponents");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PackageRequirement", b =>
@@ -3447,7 +3450,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("RequirementValueId");
 
-                    b.ToTable("PackageRequirements", (string)null);
+                    b.ToTable("PackageRequirements");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PlanForbindelse", b =>
@@ -3474,7 +3477,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("TilUtstyrId");
 
-                    b.ToTable("PlanForbindelser", (string)null);
+                    b.ToTable("PlanForbindelser");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PlanUtstyr", b =>
@@ -3502,7 +3505,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("PlantegningId");
 
-                    b.ToTable("PlanUtstyr", (string)null);
+                    b.ToTable("PlanUtstyr");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PlanlagtPrisendring", b =>
@@ -3542,7 +3545,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ComponentId");
 
-                    b.ToTable("PlanlagtePrisendringer", (string)null);
+                    b.ToTable("PlanlagtePrisendringer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Plantegning", b =>
@@ -3580,7 +3583,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("Plantegninger", (string)null);
+                    b.ToTable("Plantegninger");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PlukklisteLinje", b =>
@@ -3608,7 +3611,7 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ProsjektId", "ComponentId")
                         .IsUnique();
 
-                    b.ToTable("PlukklisteLinjer", (string)null);
+                    b.ToTable("PlukklisteLinjer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PrisHistorikk", b =>
@@ -3643,7 +3646,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ComponentId");
 
-                    b.ToTable("PrisHistorikk", (string)null);
+                    b.ToTable("PrisHistorikk");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Prisoverslag", b =>
@@ -3676,7 +3679,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Prisoverslag", (string)null);
+                    b.ToTable("Prisoverslag");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PrisoverslagLinje", b =>
@@ -3705,7 +3708,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("PrisoverslagId");
 
-                    b.ToTable("PrisoverslagLinjer", (string)null);
+                    b.ToTable("PrisoverslagLinjer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Produktgruppe", b =>
@@ -3720,7 +3723,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Produktgrupper", (string)null);
+                    b.ToTable("Produktgrupper");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Prosjekt", b =>
@@ -3819,7 +3822,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektlederId");
 
-                    b.ToTable("Prosjekter", (string)null);
+                    b.ToTable("Prosjekter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ProsjektVedlegg", b =>
@@ -3853,7 +3856,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("ProsjektVedlegg", (string)null);
+                    b.ToTable("ProsjektVedlegg");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Rabattgruppe", b =>
@@ -3885,7 +3888,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Rabattgrupper", (string)null);
+                    b.ToTable("Rabattgrupper");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Rekvirent", b =>
@@ -3917,7 +3920,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("NokkelsystemId");
 
-                    b.ToTable("Rekvirenter", (string)null);
+                    b.ToTable("Rekvirenter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.RequirementDimension", b =>
@@ -3935,7 +3938,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("RequirementDimensions", (string)null);
+                    b.ToTable("RequirementDimensions");
 
                     b.HasData(
                         new
@@ -4017,7 +4020,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("RequirementDimensionId");
 
-                    b.ToTable("RequirementValues", (string)null);
+                    b.ToTable("RequirementValues");
 
                     b.HasData(
                         new
@@ -4277,7 +4280,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("OpprettetAvBrukerId");
 
-                    b.ToTable("Ressursplaner", (string)null);
+                    b.ToTable("Ressursplaner");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServiceKategoriPris", b =>
@@ -4309,7 +4312,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("ServiceKategoriPriser", (string)null);
+                    b.ToTable("ServiceKategoriPriser");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServiceMinuttLinje", b =>
@@ -4346,7 +4349,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("ServiceMinuttLinjer", (string)null);
+                    b.ToTable("ServiceMinuttLinjer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServiceVarselSendt", b =>
@@ -4360,7 +4363,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("ServiceVarselSendt", (string)null);
+                    b.ToTable("ServiceVarselSendt");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Servicehenvendelse", b =>
@@ -4407,7 +4410,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("KundeId");
 
-                    b.ToTable("Servicehenvendelser", (string)null);
+                    b.ToTable("Servicehenvendelser");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServicehenvendelseBilde", b =>
@@ -4438,7 +4441,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ServicehenvendelseId");
 
-                    b.ToTable("ServicehenvendelseBilder", (string)null);
+                    b.ToTable("ServicehenvendelseBilder");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Servicerunde", b =>
@@ -4484,7 +4487,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("UtfortAvBrukerId");
 
-                    b.ToTable("Servicerunder", (string)null);
+                    b.ToTable("Servicerunder");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeDel", b =>
@@ -4515,7 +4518,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ServicerundeId");
 
-                    b.ToTable("ServicerundeDeler", (string)null);
+                    b.ToTable("ServicerundeDeler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeMedia", b =>
@@ -4546,7 +4549,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ServicerundeId");
 
-                    b.ToTable("ServicerundeMedia", (string)null);
+                    b.ToTable("ServicerundeMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeSjekklistepunkt", b =>
@@ -4564,7 +4567,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("ServicerundeSjekklistepunkter", (string)null);
+                    b.ToTable("ServicerundeSjekklistepunkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeSjekkpunkt", b =>
@@ -4598,7 +4601,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ServicerundeId");
 
-                    b.ToTable("ServicerundeSjekkpunkter", (string)null);
+                    b.ToTable("ServicerundeSjekkpunkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklisteMal", b =>
@@ -4613,7 +4616,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("SjekklisteMaler", (string)null);
+                    b.ToTable("SjekklisteMaler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePdf", b =>
@@ -4640,7 +4643,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ArbeidsordreId");
 
-                    b.ToTable("SjekklistePdfer", (string)null);
+                    b.ToTable("SjekklistePdfer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklistePunkt", b =>
@@ -4663,7 +4666,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("SjekklisteMalId");
 
-                    b.ToTable("SjekklistePunkter", (string)null);
+                    b.ToTable("SjekklistePunkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.SystemVedlegg", b =>
@@ -4697,7 +4700,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("NokkelsystemId");
 
-                    b.ToTable("SystemVedlegg", (string)null);
+                    b.ToTable("SystemVedlegg");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Ticket", b =>
@@ -4802,7 +4805,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ServicehenvendelseId");
 
-                    b.ToTable("Tickets", (string)null);
+                    b.ToTable("Tickets");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TicketHendelse", b =>
@@ -4833,7 +4836,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("UtfortAvBrukerId");
 
-                    b.ToTable("TicketHendelser", (string)null);
+                    b.ToTable("TicketHendelser");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TicketKategori", b =>
@@ -4854,7 +4857,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("TicketKategorier", (string)null);
+                    b.ToTable("TicketKategorier");
 
                     b.HasData(
                         new
@@ -4926,7 +4929,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("TicketId");
 
-                    b.ToTable("TicketMedia", (string)null);
+                    b.ToTable("TicketMedia");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Tilbud", b =>
@@ -5008,7 +5011,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("Tilbud", (string)null);
+                    b.ToTable("Tilbud");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TilbudForside", b =>
@@ -5026,7 +5029,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("TilbudForsider", (string)null);
+                    b.ToTable("TilbudForsider");
 
                     b.HasData(
                         new
@@ -5062,7 +5065,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("UtfortAvBrukerId");
 
-                    b.ToTable("TilbudHendelser", (string)null);
+                    b.ToTable("TilbudHendelser");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TilbudLinje", b =>
@@ -5129,7 +5132,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("TilbudId");
 
-                    b.ToTable("TilbudLinjer", (string)null);
+                    b.ToTable("TilbudLinjer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Tilvalg", b =>
@@ -5185,7 +5188,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("Tilvalg", (string)null);
+                    b.ToTable("Tilvalg");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TilvalgAlternativ", b =>
@@ -5223,7 +5226,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("TilvalgId");
 
-                    b.ToTable("TilvalgAlternativer", (string)null);
+                    b.ToTable("TilvalgAlternativer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TilvalgMal", b =>
@@ -5244,7 +5247,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("TilvalgMaler", (string)null);
+                    b.ToTable("TilvalgMaler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TilvalgMalAlternativ", b =>
@@ -5279,7 +5282,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("TilvalgMalId");
 
-                    b.ToTable("TilvalgMalAlternativer", (string)null);
+                    b.ToTable("TilvalgMalAlternativer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Timeregistrering", b =>
@@ -5332,7 +5335,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("MontorId");
 
-                    b.ToTable("Timeregistreringer", (string)null);
+                    b.ToTable("Timeregistreringer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TripletexSyncTilstand", b =>
@@ -5346,7 +5349,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("TripletexSyncTilstand", (string)null);
+                    b.ToTable("TripletexSyncTilstand");
                 });
 
             modelBuilder.Entity("BrukerProsjekt", b =>

@@ -3,6 +3,7 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 
@@ -25,6 +26,17 @@
         Til
         <input type="date" @bind="_tilDato" />
     </label>
+    <label>
+        Kundetype
+        <select @bind="_typeFilter">
+            <option value="">Alle</option>
+            <option value="IkkeSatt">Ikke satt</option>
+            @foreach (var t in Enum.GetValues<KundeType>())
+            {
+                <option value="@t">@t.Visningsnavn()</option>
+            }
+        </select>
+    </label>
     <button type="button" class="save-button" @onclick="HentRapport" disabled="@_lasterNa">
         @(_lasterNa ? "Henter..." : "Vis rapport")
     </button>
@@ -32,33 +44,62 @@
 
 @if (_harHentet)
 {
-    @if (_rader.Count == 0)
+    @if (_alleRader.Count == 0)
     {
         <p class="list-empty">Ingen ferdigmeldte arbeidsordre med omsetning i denne perioden.</p>
     }
     else
     {
+        <h2>Omsetning pr. kundetype</h2>
         <table class="rapport-table">
             <thead>
                 <tr>
-                    <th>#</th>
-                    <th>Kunde</th>
+                    <th>Kundetype</th>
                     <th>Omsetning</th>
                 </tr>
             </thead>
             <tbody>
-                @{ var plass = 0; }
-                @foreach (var r in _rader)
+                @foreach (var (typeNavn, sum) in SumPrType)
                 {
-                    plass++;
                     <tr>
-                        <td>@plass</td>
-                        <td>@r.Navn</td>
-                        <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
+                        <td>@typeNavn</td>
+                        <td class="tall-cell">@sum.ToString("N0", Kultur) kr</td>
                     </tr>
                 }
             </tbody>
         </table>
+
+        <h2>Topp 20 kunder@(string.IsNullOrEmpty(_typeFilter) ? "" : $" - {TypeFilterNavn}")</h2>
+        @if (FiltrerteRader.Count == 0)
+        {
+            <p class="list-empty">Ingen kunder med omsetning i denne perioden for valgt kundetype.</p>
+        }
+        else
+        {
+            <table class="rapport-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Kunde</th>
+                        <th>Kundetype</th>
+                        <th>Omsetning</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ var plass = 0; }
+                    @foreach (var r in FiltrerteRader)
+                    {
+                        plass++;
+                        <tr>
+                            <td>@plass</td>
+                            <td>@r.Navn</td>
+                            <td>@(r.Type?.Visningsnavn() ?? "Ikke satt")</td>
+                            <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
     }
 }
 
@@ -67,11 +108,29 @@
 
     private DateTime _fraDato = new(DateTime.Today.Year, 1, 1);
     private DateTime _tilDato = DateTime.Today;
+    private string _typeFilter = "";
     private bool _lasterNa;
     private bool _harHentet;
 
-    private sealed record KundeRad(string Navn, decimal Sum);
-    private List<KundeRad> _rader = [];
+    private sealed record KundeRad(string Navn, KundeType? Type, decimal Sum);
+    private List<KundeRad> _alleRader = [];
+
+    private string TypeFilterNavn => _typeFilter == "IkkeSatt"
+        ? "Ikke satt"
+        : Enum.TryParse<KundeType>(_typeFilter, out var t) ? t.Visningsnavn() : "";
+
+    private List<KundeRad> FiltrerteRader => _alleRader
+        .Where(r => string.IsNullOrEmpty(_typeFilter)
+            || (_typeFilter == "IkkeSatt" ? r.Type is null : r.Type.HasValue && r.Type.Value.ToString() == _typeFilter))
+        .OrderByDescending(r => r.Sum)
+        .Take(20)
+        .ToList();
+
+    private List<(string TypeNavn, decimal Sum)> SumPrType => _alleRader
+        .GroupBy(r => r.Type)
+        .Select(g => (g.Key?.Visningsnavn() ?? "Ikke satt", g.Sum(r => r.Sum)))
+        .OrderByDescending(x => x.Item2)
+        .ToList();
 
     protected override async Task OnInitializedAsync() => await HentRapport();
 
@@ -89,12 +148,10 @@
                 .Include(a => a.Varer).ThenInclude(v => v.Component)
                 .ToListAsync();
 
-            _rader = ordrer
+            _alleRader = ordrer
                 .Where(a => (a.Kunde ?? a.Prosjekt?.Kunde) is not null)
-                .GroupBy(a => (a.Kunde ?? a.Prosjekt!.Kunde!).Navn)
-                .Select(g => new KundeRad(g.Key, g.Sum(a => ArbeidsordreOkonomiBeregner.BeregnLinjer(a).Sum(l => l.Belop))))
-                .OrderByDescending(r => r.Sum)
-                .Take(20)
+                .GroupBy(a => a.Kunde ?? a.Prosjekt!.Kunde!)
+                .Select(g => new KundeRad(g.Key.Navn, g.Key.Type, g.Sum(a => ArbeidsordreOkonomiBeregner.BeregnLinjer(a).Sum(l => l.Belop))))
                 .ToList();
             _harHentet = true;
         }

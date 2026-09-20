@@ -16,8 +16,13 @@ public class Kunde
     public DateTime? NesteOppfolgingsDato { get; set; }
     public decimal? FastPaslagProsent { get; set; }
 
+    // Brukes til å sortere/summere salg pr. kundetype i Kunderapporten - se
+    // RapportKunde.razor.
+    public KundeType? Type { get; set; }
+
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     public List<Prosjekt> Prosjekter { get; set; } = [];
     public List<KundeOppfolgingNotat> OppfolgingNotater { get; set; } = [];
+    public List<KundeLisens> Lisenser { get; set; } = [];
 }

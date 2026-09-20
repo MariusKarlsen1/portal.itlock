@@ -27,6 +27,7 @@ else if (_kunde is not null)
         <button type="button" class="@FaneClass(KundeFane.Tilbud)" @onclick="@(() => _fane = KundeFane.Tilbud)">Tilbud @if (_tilbudListe.Count > 0) { <span class="kunde-fane-teller">@_tilbudListe.Count</span> }</button>
         <button type="button" class="@FaneClass(KundeFane.Tickets)" @onclick="@(() => _fane = KundeFane.Tickets)">Tickets @if (_tickets.Count > 0) { <span class="kunde-fane-teller">@_tickets.Count</span> }</button>
         <button type="button" class="@FaneClass(KundeFane.Rabatter)" @onclick="@(() => _fane = KundeFane.Rabatter)">Rabatter</button>
+        <button type="button" class="@FaneClass(KundeFane.Lisenser)" @onclick="@(() => _fane = KundeFane.Lisenser)">Lisenser @if (_kundeLisenser.Count > 0) { <span class="kunde-fane-teller">@_kundeLisenser.Count</span> }</button>
     </div>
 
     @if (_fane == KundeFane.Detaljer)
@@ -79,6 +80,16 @@ else if (_kunde is not null)
                 <label>Adresse<input @bind="_kunde.Adresse" /></label>
                 <label>Post nr<input @bind="_kunde.Postnr" /></label>
                 <label>Sted<input @bind="_kunde.Sted" /></label>
+                <label>
+                    Kundetype
+                    <select @bind="_kunde.Type">
+                        <option value="">Ikke satt</option>
+                        @foreach (var t in Enum.GetValues<KundeType>())
+                        {
+                            <option value="@t">@t.Visningsnavn()</option>
+                        }
+                    </select>
+                </label>
                 <label>
                     Tripletex kundenr.
                     <input @bind="_kunde.TripletexKundenummer" placeholder="F.eks. 10010" />
@@ -356,12 +367,88 @@ else if (_kunde is not null)
             }
         </section>
     }
+    else if (_fane == KundeFane.Lisenser)
+    {
+        <section class="kunde-section">
+            <p class="section-hint">
+                Oversikt over kundens lisenser. Årshjulet viser når på året de forfaller - det sendes
+                automatisk e-postvarsel når en lisens er innen @LisensVarselService.VarselFrist.Days dager fra utløp.
+            </p>
+
+            <KundeLisensArshjul Lisenser="_kundeLisenser" />
+
+            @if (_kundeLisenser.Count == 0)
+            {
+                <p class="list-empty">Ingen lisenser registrert for denne kunden ennå.</p>
+            }
+            else
+            {
+                <table class="rabatt-table">
+                    <thead>
+                        <tr>
+                            <th>Lisens</th>
+                            <th>Utløpsdato</th>
+                            <th>Status</th>
+                            <th>Notat</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var l in _kundeLisenser)
+                        {
+                            <tr @key="l.Id">
+                                <td><input @bind="l.Navn" /></td>
+                                <td><input type="date" @bind="l.UtlopsDato" /></td>
+                                <td>
+                                    @if (l.UtlopsDato.Date < DateTime.Today)
+                                    {
+                                        <span class="status-badge status-badge-red">Utgått</span>
+                                    }
+                                    else if (l.UtlopsDato.Date <= DateTime.Today.Add(LisensVarselService.VarselFrist))
+                                    {
+                                        <span class="status-badge status-badge-amber">Nærmer seg</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="status-badge status-badge-green">OK</span>
+                                    }
+                                </td>
+                                <td><input @bind="l.Notat" placeholder="Valgfritt" /></td>
+                                <td class="rabatt-actions">
+                                    <button type="button" class="save-button" @onclick="@(() => LagreLisens(l))">Lagre</button>
+                                    <button type="button" class="remove-button" @onclick="@(() => SlettLisens(l))">Slett</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            <div class="ny-rabattgruppe">
+                <h2>Legg til lisens</h2>
+                <div class="ny-rabattgruppe-form">
+                    <input @bind="_nyLisensNavn" placeholder="Lisensnavn, f.eks. iLOQ S5" />
+                    <input type="date" @bind="_nyLisensUtlopsDato" />
+                    <button type="button" class="add-button" @onclick="LeggTilLisens">Legg til</button>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_lisensFeil))
+            {
+                <p class="form-error">@_lisensFeil</p>
+            }
+            @if (!string.IsNullOrEmpty(_lisensMelding))
+            {
+                <p class="save-success">@_lisensMelding</p>
+            }
+        </section>
+    }
 }
 
 @code {
     [Parameter] public int Id { get; set; }
 
-    private enum KundeFane { Detaljer, Ordrer, Tilbud, Tickets, Rabatter }
+    private enum KundeFane { Detaljer, Ordrer, Tilbud, Tickets, Rabatter, Lisenser }
 
     private sealed class ProsjektOption
     {
@@ -403,6 +490,11 @@ else if (_kunde is not null)
     private string? _paslagMelding;
     private List<Kunde> _andreKunder = [];
     private int? _kopierTilKundeId;
+    private List<KundeLisens> _kundeLisenser = [];
+    private string _nyLisensNavn = "";
+    private DateTime _nyLisensUtlopsDato = DateTime.Today.AddYears(1);
+    private string? _lisensFeil;
+    private string? _lisensMelding;
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -539,6 +631,70 @@ else if (_kunde is not null)
         _produktgrupper = await Db.Produktgrupper.OrderBy(p => p.Navn).ToListAsync();
         _andreKunder = await Db.Kunder.Where(k => k.Id != Id).OrderBy(k => k.Navn).ToListAsync();
         await LastKundeRabatterAsync();
+        await LastKundeLisenserAsync();
+    }
+
+    private async Task LastKundeLisenserAsync()
+    {
+        _kundeLisenser = await Db.KundeLisenser
+            .Where(l => l.KundeId == Id)
+            .OrderBy(l => l.UtlopsDato)
+            .ToListAsync();
+    }
+
+    private async Task LeggTilLisens()
+    {
+        _lisensFeil = null;
+        _lisensMelding = null;
+
+        if (string.IsNullOrWhiteSpace(_nyLisensNavn))
+        {
+            _lisensFeil = "Skriv inn navn på lisensen.";
+            return;
+        }
+
+        Db.KundeLisenser.Add(new KundeLisens
+        {
+            KundeId = Id,
+            Navn = _nyLisensNavn.Trim(),
+            UtlopsDato = _nyLisensUtlopsDato
+        });
+        await Db.SaveChangesAsync();
+
+        _nyLisensNavn = "";
+        _nyLisensUtlopsDato = DateTime.Today.AddYears(1);
+        _lisensMelding = "Lisens lagt til.";
+        await LastKundeLisenserAsync();
+    }
+
+    private async Task LagreLisens(KundeLisens l)
+    {
+        var entitet = await Db.KundeLisenser.FirstOrDefaultAsync(x => x.Id == l.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Navn = l.Navn.Trim();
+        entitet.UtlopsDato = l.UtlopsDato;
+        entitet.Notat = l.Notat;
+        await Db.SaveChangesAsync();
+        _lisensFeil = null;
+        _lisensMelding = "Lagret.";
+    }
+
+    private async Task SlettLisens(KundeLisens l)
+    {
+        var entitet = await Db.KundeLisenser.FirstOrDefaultAsync(x => x.Id == l.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        Db.KundeLisenser.Remove(entitet);
+        await Db.SaveChangesAsync();
+        _lisensMelding = "Lisens fjernet.";
+        await LastKundeLisenserAsync();
     }
 
     private async Task LastKundeRabatterAsync()

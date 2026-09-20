@@ -44,6 +44,13 @@ public class Component
     // varekortet i stedet for å ligge synlig på alle varer, se
     // KomponentPanel.razor.
     public int? ProgrammeringstidMinutter { get; set; }
+
+    // Vises som en avkrysning på varekortet - krysses den av vises Batteritype
+    // og AntallBatterier slik at montør vet hva som må tas med/skiftes.
+    public bool KreverBatterier { get; set; }
+    public string? Batteritype { get; set; }
+    public int? AntallBatterier { get; set; }
+
     public string? Enhet { get; set; }
     public bool Aktiv { get; set; } = true;
 

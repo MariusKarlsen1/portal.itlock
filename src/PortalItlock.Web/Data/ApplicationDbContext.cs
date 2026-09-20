@@ -71,6 +71,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Rabattgruppe> Rabattgrupper => Set<Rabattgruppe>();
     public DbSet<Produktgruppe> Produktgrupper => Set<Produktgruppe>();
     public DbSet<KundeRabatt> KundeRabatter => Set<KundeRabatt>();
+    public DbSet<KundeLisens> KundeLisenser => Set<KundeLisens>();
+    public DbSet<LisensVarselSendt> LisensVarselSendt => Set<LisensVarselSendt>();
     public DbSet<SjekklistePunkt> SjekklistePunkter => Set<SjekklistePunkt>();
     public DbSet<ArbeidsordreSjekkpunkt> ArbeidsordreSjekkpunkter => Set<ArbeidsordreSjekkpunkt>();
     public DbSet<PrisHistorikk> PrisHistorikk => Set<PrisHistorikk>();

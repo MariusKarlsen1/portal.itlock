@@ -1,0 +1,109 @@
+@page "/lisenser"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+<PageTitle>Kundelisenser - itlock</PageTitle>
+
+<h1>Kundelisenser</h1>
+<p class="section-hint">
+    Alle lisenser på tvers av kunder, samlet på ett sted. Legg til eller rediger lisenser fra
+    "Lisenser"-fanen på det enkelte kundekortet. Det sendes automatisk e-postvarsel når en lisens
+    er innen @LisensVarselService.VarselFrist.Days dager fra utløp.
+</p>
+
+<input class="search-input" @bind="_search" @bind:event="oninput" placeholder="Søk på kunde eller lisensnavn" />
+<label class="filter-option"><input type="checkbox" @bind="_kunNaermerSegUtlop" /> Kun utløpt eller nærmer seg utløp (@LisensVarselService.VarselFrist.Days dager)</label>
+
+<p class="result-count">@_filtrert.Count av @_rader.Count lisenser</p>
+
+@if (_filtrert.Count == 0)
+{
+    <p class="list-empty">Ingen lisenser funnet.</p>
+}
+else
+{
+    <div class="godkjenning-table-wrap">
+        <table class="godkjenning-table">
+            <thead>
+                <tr>
+                    <th>Kunde</th>
+                    <th>Lisens</th>
+                    <th>Utløpsdato</th>
+                    <th>Status</th>
+                    <th>Notat</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _filtrert)
+                {
+                    <tr @key="r.Id" class="@(r.ErUtgatt ? "godkjenning-tr-utgatt" : (r.NaermerSegUtlop ? "godkjenning-tr-naermer" : ""))">
+                        <td><a href="@($"/kunder/{r.KundeId}")">@r.KundeNavn</a></td>
+                        <td>@r.Navn</td>
+                        <td>@r.UtlopsDato.ToString("dd.MM.yyyy")</td>
+                        <td>
+                            @if (r.ErUtgatt)
+                            {
+                                <span class="godkjenning-badge godkjenning-badge-feil">Utgått</span>
+                            }
+                            else if (r.NaermerSegUtlop)
+                            {
+                                <span class="godkjenning-badge godkjenning-badge-varsel">Nærmer seg</span>
+                            }
+                            else
+                            {
+                                <span class="godkjenning-badge godkjenning-badge-ok">OK</span>
+                            }
+                        </td>
+                        <td>@(r.Notat ?? "-")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private sealed class Rad
+    {
+        public int Id { get; set; }
+        public int KundeId { get; set; }
+        public required string KundeNavn { get; set; }
+        public required string Navn { get; set; }
+        public DateTime UtlopsDato { get; set; }
+        public string? Notat { get; set; }
+        public bool ErUtgatt => UtlopsDato.Date < DateTime.Today;
+        public bool NaermerSegUtlop => !ErUtgatt && UtlopsDato.Date <= DateTime.Today.Add(LisensVarselService.VarselFrist);
+    }
+
+    private List<Rad> _rader = [];
+    private string _search = "";
+    private bool _kunNaermerSegUtlop;
+
+    private List<Rad> _filtrert => _rader
+        .Where(r => !_kunNaermerSegUtlop || r.ErUtgatt || r.NaermerSegUtlop)
+        .Where(r => string.IsNullOrWhiteSpace(_search)
+            || r.KundeNavn.Contains(_search, StringComparison.OrdinalIgnoreCase)
+            || r.Navn.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(r => r.UtlopsDato)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _rader = await Db.KundeLisenser
+            .Include(l => l.Kunde)
+            .Select(l => new Rad
+            {
+                Id = l.Id,
+                KundeId = l.KundeId,
+                KundeNavn = l.Kunde!.Navn,
+                Navn = l.Navn,
+                UtlopsDato = l.UtlopsDato,
+                Notat = l.Notat
+            })
+            .ToListAsync();
+    }
+}
