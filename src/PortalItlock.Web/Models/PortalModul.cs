@@ -19,6 +19,7 @@ public static class PortalModulRegister
                     new Lenke("Prosjekt", "Prosjekter og arbeidsordre", "prosjektmodul", "folder"),
                     new Lenke("Timer og fravær", "Fravær og timeregistrering", "timerfravarmodul", "clock"),
                     new Lenke("Utskiftning av låskasse", "Søk opp gammel lås, se hva du trenger", "lasekasse-utskiftning", "tool"),
+                    new Lenke("ABC-kalkulator", "Sylinderforlenger, skilt og skruer fra A/B/C-mål", "abc-kalkulator", "tool"),
                 ]),
                 new LenkeGruppe("Kart og kalender", [
                     new Lenke("Min dag", "Dagens jobber, adresse og varer å pakke, samlet", "min-dag", "calendar"),
