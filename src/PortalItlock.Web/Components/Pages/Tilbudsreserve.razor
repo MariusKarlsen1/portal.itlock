@@ -1,0 +1,91 @@
+@page "/rapporter/tilbudsreserve"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Tilbudsreserve - itlock</PageTitle>
+
+<a class="back-link" href="/rapportermodul">&larr; Tilbake til rapporter</a>
+<h1>Tilbudsreserve</h1>
+<p class="section-hint">
+    Alle tilbud som er sendt til kunde, med dato sendt og sum på sendetidspunktet
+    (endres ikke selv om linjene på tilbudet redigeres i etterkant). Merkes som sendt
+    ved å sette Status til "Sendt til kunde" på tilbudet.
+</p>
+
+@if (_rader.Count == 0)
+{
+    <p class="list-empty">Ingen tilbud er sendt til kunde ennå.</p>
+}
+else
+{
+    <table class="rapport-table">
+        <thead>
+            <tr>
+                <th>Dato sendt</th>
+                <th>Kunde</th>
+                <th>Prosjekt</th>
+                <th>Tilbud</th>
+                <th>Status</th>
+                <th>Sum eks. mva</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var r in _rader)
+            {
+                <tr>
+                    <td>@r.SendtDato.ToString("dd.MM.yyyy")</td>
+                    <td>@(r.KundeNavn ?? "-")</td>
+                    <td><a href="@($"/prosjekter/{r.ProsjektId}")">@r.ProsjektNavn</a></td>
+                    <td><a href="@($"/tilbud/{r.TilbudId}")">@r.Tittel</a></td>
+                    <td><span class="status-badge @StatusFarge(r.Status)">@r.Status.Visningsnavn()</span></td>
+                    <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
+                </tr>
+            }
+        </tbody>
+        <tfoot>
+            <tr class="reserve-sum-rad">
+                <td colspan="5">Tilbudsreserve (tilbud som fortsatt venter på svar fra kunde)</td>
+                <td class="tall-cell">@TilbudsreserveSum.ToString("N0", Kultur) kr</td>
+            </tr>
+        </tfoot>
+    </table>
+}
+
+@code {
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+    private sealed record Rad(
+        int TilbudId, string Tittel, DateTime SendtDato, decimal Sum, EndringsmeldingStatus Status,
+        int ProsjektId, string ProsjektNavn, string? KundeNavn);
+
+    private List<Rad> _rader = [];
+
+    private static string StatusFarge(EndringsmeldingStatus s) => s switch
+    {
+        EndringsmeldingStatus.Utkast => "status-badge-grey",
+        EndringsmeldingStatus.SendtTilKunde => "status-badge-blue",
+        EndringsmeldingStatus.Godkjent => "status-badge-green",
+        EndringsmeldingStatus.Avslatt => "status-badge-red",
+        _ => "status-badge-grey"
+    };
+
+    private decimal TilbudsreserveSum => _rader
+        .Where(r => r.Status == EndringsmeldingStatus.SendtTilKunde)
+        .Sum(r => r.Sum);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _rader = await Db.Tilbud
+            .Where(t => t.SendtDato != null)
+            .Include(t => t.Prosjekt).ThenInclude(p => p!.Kunde)
+            .OrderByDescending(t => t.SendtDato)
+            .Select(t => new Rad(
+                t.Id, t.Tittel, t.SendtDato!.Value, t.SendtSum ?? 0, t.Status,
+                t.ProsjektId, t.Prosjekt!.Navn, t.Prosjekt!.Kunde == null ? null : t.Prosjekt!.Kunde!.Navn))
+            .ToListAsync();
+    }
+}

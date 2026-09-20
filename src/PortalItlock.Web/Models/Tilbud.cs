@@ -32,6 +32,12 @@ public class Tilbud
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
     public DateTime? OppdatertDato { get; set; }
 
+    // Settes automatisk når Status endres til SendtTilKunde (se
+    // TilbudSkjema.razor/StatusEndret) - fryser dato og sum på
+    // sendetidspunktet til bruk i Tilbudsreserve-rapporten.
+    public DateTime? SendtDato { get; set; }
+    public decimal? SendtSum { get; set; }
+
     public List<TilbudLinje> Linjer { get; set; } = [];
     public List<TilbudHendelse> Hendelser { get; set; } = [];
 }
