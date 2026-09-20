@@ -11,7 +11,7 @@ export function attachTilt(selector) {
             return;
         }
 
-        const maxTilt = 9;
+        const maxTilt = 5;
 
         card.addEventListener('mousemove', (e) => {
             const rect = card.getBoundingClientRect();
