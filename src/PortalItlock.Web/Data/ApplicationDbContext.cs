@@ -28,6 +28,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<LasUtskifting> LasUtskiftinger => Set<LasUtskifting>();
     public DbSet<Prosjekt> Prosjekter => Set<Prosjekt>();
     public DbSet<ProsjektVedlegg> ProsjektVedlegg => Set<ProsjektVedlegg>();
+    public DbSet<ProsjektMappe> ProsjektMapper => Set<ProsjektMappe>();
     public DbSet<Plantegning> Plantegninger => Set<Plantegning>();
     public DbSet<Dor> Dorer => Set<Dor>();
     public DbSet<DorKomponent> DorKomponenter => Set<DorKomponent>();

@@ -9,7 +9,9 @@ public class ProsjektVedlegg
     public required string Filnavn { get; set; }
     public required string ContentType { get; set; }
     public required byte[] Data { get; set; }
-    public string? Type { get; set; }
+
+    public int? MappeId { get; set; }
+    public ProsjektMappe? Mappe { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 }

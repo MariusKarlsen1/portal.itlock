@@ -426,9 +426,12 @@ app.MapGet("/plantegningbilde/{id:int}", async (int id, ApplicationDbContext db)
 app.MapGet("/prosjektvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var vedlegg = await db.ProsjektVedlegg.FindAsync(id);
+    // Inline i stedet for attachment - skal åpnes som forhåndsvisning i egen
+    // fane akkurat som de genererte PDF-ene (tilbud, plukkliste osv.) gjør,
+    // ikke tvinge frem nedlasting slik Results.File med filnavn ellers gjør.
     return vedlegg is null
         ? Results.NotFound()
-        : Results.File(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
+        : new InlineFileResult(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/koblingsbibliotek/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -990,3 +993,19 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
 }).AllowAnonymous();
 
 app.Run();
+
+// IResult som setter Content-Disposition: inline (med bevart filnavn) i
+// stedet for attachment - Results.File(...) sin filnavn-parameter tvinger
+// alltid frem nedlasting, se bruk på /prosjektvedlegg/{id}.
+sealed class InlineFileResult(byte[] data, string contentType, string filename) : IResult
+{
+    public Task ExecuteAsync(HttpContext httpContext)
+    {
+        var disposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("inline");
+        disposition.SetHttpFileName(filename);
+        httpContext.Response.Headers.ContentDisposition = disposition.ToString();
+        httpContext.Response.ContentType = contentType;
+        httpContext.Response.ContentLength = data.Length;
+        return httpContext.Response.Body.WriteAsync(data).AsTask();
+    }
+}
