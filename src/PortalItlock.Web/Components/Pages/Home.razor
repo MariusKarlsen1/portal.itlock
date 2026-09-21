@@ -140,6 +140,23 @@
         }
     </section>
 
+    @if (!Verktoylinje.FullversjonAktiv && _ukeAktivitet.Count > 0)
+    {
+        <section class="home-section">
+            <h2 class="home-section-tittel">Fullførte arbeidsordre siste 7 dager</h2>
+            <div class="aktivitet-graf">
+                @foreach (var dag in _ukeAktivitet)
+                {
+                    <div class="aktivitet-soyle-wrap">
+                        <span class="aktivitet-soyle-tall">@dag.Antall</span>
+                        <div class="aktivitet-soyle" style="height:@(AktivitetHoyde(dag.Antall))%"></div>
+                        <span class="aktivitet-soyle-label">@dag.DagKort</span>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+
     @if (VisBiler)
     {
         <div class="home-drive-strip" aria-hidden="true">
@@ -172,6 +189,7 @@
 
     private sealed record HeroStat(string? Href, string Ikon, int Verdi, string Label, bool Varsel);
     private sealed record NesteJobb(int Id, string Tittel, string Klokkeslett, string? KundeNavn, string? Adresse);
+    private sealed record DagsAktivitet(string DagKort, int Antall);
 
     // Sekunder pr. nøkkeltall i den kontinuerlige marquee-animasjonen -
     // styrer farten (holder tempoet likt uansett hvor mange nøkkeltall
@@ -194,6 +212,7 @@
 
     private List<HeroStat> _alleStats = [];
     private NesteJobb? _nesteJobb;
+    private List<DagsAktivitet> _ukeAktivitet = [];
 
     private Nyhet? _sisteNyhet;
     private Bruker? _naverendeBruker;
@@ -294,6 +313,24 @@
                 forsteJobb.Kunde?.Navn,
                 string.IsNullOrWhiteSpace(forsteJobb.Adresse) ? null : forsteJobb.Adresse);
         }
+
+        var syvDagerSiden = DateTime.Today.AddDays(-6);
+        var fullfortSisteUkeQuery = Db.Arbeidsordre.Where(a =>
+            a.FullfortDato != null && a.FullfortDato.Value.Date >= syvDagerSiden && a.FullfortDato.Value.Date <= DateTime.Today);
+
+        if (rolle == BrukerRolle.Montor && brukerId.HasValue)
+        {
+            fullfortSisteUkeQuery = fullfortSisteUkeQuery.Where(a => a.AnsvarligMontorId == brukerId.Value);
+        }
+
+        var fullfortDatoer = await fullfortSisteUkeQuery.Select(a => a.FullfortDato!.Value.Date).ToListAsync();
+        var kulturNb = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+        _ukeAktivitet = Enumerable.Range(0, 7)
+            .Select(i => syvDagerSiden.AddDays(i))
+            .Select(dato => new DagsAktivitet(
+                dato.ToString("ddd", kulturNb).TrimEnd('.'),
+                fullfortDatoer.Count(d => d == dato)))
+            .ToList();
 
         _visServiceavtaleVarsel = rolle == BrukerRolle.Admin || rolle == BrukerRolle.Prosjektleder;
         if (_visServiceavtaleVarsel)
@@ -447,6 +484,17 @@
     private List<HeroStat> MarqueeStats => _alleStats.Concat(_alleStats).ToList();
 
     private double MarqueeVarighet => Math.Max(_alleStats.Count, 1) * MarqueeSekunderPrStat;
+
+    private int AktivitetHoyde(int antall)
+    {
+        var maks = _ukeAktivitet.Count > 0 ? _ukeAktivitet.Max(d => d.Antall) : 0;
+        if (maks == 0)
+        {
+            return 6;
+        }
+
+        return Math.Max(6, (int)Math.Round(100.0 * antall / maks));
+    }
 
     private static string Idag
     {
