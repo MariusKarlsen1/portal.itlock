@@ -32,23 +32,13 @@ public static class PortalModulRegister
             "For prosjektledere",
             "Systemer, prosjektering og prosjekter",
             [
-                new LenkeGruppe("Prosjekt modul", [
+                new LenkeGruppe("Moduler", [
                     new Lenke("Prosjekt modul", "Prosjekter, dørpakker, prisoverslag og systemregister samlet på ett sted", "prosjekteringmodul", "folder"),
-                ]),
-                new LenkeGruppe("Kunder", [
                     new Lenke("Kunder", "Kunderegister, oppfølging, portaltilgang og tilvalg samlet på ett sted", "kundemodul", "users"),
-                ]),
-                new LenkeGruppe("Drift", [
                     new Lenke("Drift", "Kart, kalender og fravær samlet på ett sted", "driftmodul", "map"),
                     new Lenke("Ressursplanlegger", "Sett av montører på dager fremover, vises i deres kalender", "ressursplanlegger", "calendar"),
-                ]),
-                new LenkeGruppe("Forespørsler", [
                     new Lenke("Forespørsler", "E-poster sendt til post@itlock.no", "foresporsler", "mail"),
-                ]),
-                new LenkeGruppe("Tickets", [
                     new Lenke("Tickets", "Samlet oversikt over alle henvendelser og saker", "tickets", "tag"),
-                ]),
-                new LenkeGruppe("Service modul", [
                     new Lenke("Service modul", "Serviceavtaler, serviceoppdrag og tilbud service samlet på ett sted", "servicemodul", "clock"),
                 ]),
             ]),
@@ -57,19 +47,11 @@ public static class PortalModulRegister
             "For admin",
             "Opprett og vedlikehold grunnlagsdata",
             [
-                new LenkeGruppe("Oppsett og maler", [
+                new LenkeGruppe("Moduler", [
                     new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings"),
-                ]),
-                new LenkeGruppe("Komponenter og priser", [
                     new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul", "box"),
-                ]),
-                new LenkeGruppe("Brukere og kunder", [
                     new Lenke("Brukere og kunder", "Brukere, kunder, kundeoppfølging og fravær samlet på ett sted", "brukerkundemodul", "users"),
-                ]),
-                new LenkeGruppe("Integrasjoner", [
                     new Lenke("Tripletex", "Test tilkobling og kundeoppslag mot Tripletex-API-et (testmiljø)", "integrasjoner/tripletex", "box"),
-                ]),
-                new LenkeGruppe("Rapporter", [
                     new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt"),
                 ]),
             ]),
