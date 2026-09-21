@@ -140,7 +140,7 @@
         }
     </section>
 
-    @if (!Verktoylinje.FullversjonAktiv && _ukeAktivitet.Count > 0)
+    @if (!Verktoylinje.FullversjonAktiv && _ukeAktivitet.Any(d => d.Antall > 0))
     {
         <section class="home-section">
             <h2 class="home-section-tittel">Fullførte arbeidsordre siste 7 dager</h2>
@@ -151,6 +151,27 @@
                         <span class="aktivitet-soyle-tall">@dag.Antall</span>
                         <div class="aktivitet-soyle" style="height:@(AktivitetHoyde(dag.Antall))%"></div>
                         <span class="aktivitet-soyle-label">@dag.DagKort</span>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+
+    @if (!Verktoylinje.FullversjonAktiv && _visServiceavtaleVarsel && _montorLeaderboard.Count > 0)
+    {
+        <section class="home-section">
+            <h2 class="home-section-tittel">Montører denne uken</h2>
+            <div class="leaderboard">
+                @for (var i = 0; i < _montorLeaderboard.Count; i++)
+                {
+                    var rad = _montorLeaderboard[i];
+                    <div class="leaderboard-rad">
+                        <span class="leaderboard-rang @(i < 3 ? $"leaderboard-rang-{i + 1}" : "")">@(i + 1)</span>
+                        <span class="leaderboard-navn">@rad.Navn</span>
+                        <div class="leaderboard-bar-spor">
+                            <div class="leaderboard-bar" style="width:@(LeaderboardBredde(rad.Antall))%"></div>
+                        </div>
+                        <span class="leaderboard-tall">@rad.Antall</span>
                     </div>
                 }
             </div>
@@ -190,6 +211,7 @@
     private sealed record HeroStat(string? Href, string Ikon, int Verdi, string Label, bool Varsel);
     private sealed record NesteJobb(int Id, string Tittel, string Klokkeslett, string? KundeNavn, string? Adresse);
     private sealed record DagsAktivitet(string DagKort, int Antall);
+    private sealed record MontorAktivitet(string Navn, int Antall);
 
     // Sekunder pr. nøkkeltall i den kontinuerlige marquee-animasjonen -
     // styrer farten (holder tempoet likt uansett hvor mange nøkkeltall
@@ -213,6 +235,7 @@
     private List<HeroStat> _alleStats = [];
     private NesteJobb? _nesteJobb;
     private List<DagsAktivitet> _ukeAktivitet = [];
+    private List<MontorAktivitet> _montorLeaderboard = [];
 
     private Nyhet? _sisteNyhet;
     private Bruker? _naverendeBruker;
@@ -368,6 +391,28 @@
 
             var lisensTerskel = DateTime.Today.AddDays(30);
             _lisensVarsel = await Db.KundeLisenser.CountAsync(l => l.UtlopsDato.Date <= lisensTerskel);
+
+            var montorAntall = await Db.Arbeidsordre
+                .Where(a => a.FullfortDato != null
+                    && a.FullfortDato.Value.Date >= syvDagerSiden && a.FullfortDato.Value.Date <= DateTime.Today
+                    && a.AnsvarligMontorId != null)
+                .GroupBy(a => a.AnsvarligMontorId!.Value)
+                .Select(g => new { BrukerId = g.Key, Antall = g.Count() })
+                .ToListAsync();
+
+            if (montorAntall.Count > 0)
+            {
+                var montorIder = montorAntall.Select(m => m.BrukerId).ToList();
+                var montorNavn = await Db.Brukere
+                    .Where(b => montorIder.Contains(b.Id))
+                    .ToDictionaryAsync(b => b.Id, b => b.Navn);
+
+                _montorLeaderboard = montorAntall
+                    .OrderByDescending(m => m.Antall)
+                    .Take(5)
+                    .Select(m => new MontorAktivitet(montorNavn.GetValueOrDefault(m.BrukerId, "Ukjent"), m.Antall))
+                    .ToList();
+            }
         }
 
         _alleStats =
@@ -484,6 +529,17 @@
     private List<HeroStat> MarqueeStats => _alleStats.Concat(_alleStats).ToList();
 
     private double MarqueeVarighet => Math.Max(_alleStats.Count, 1) * MarqueeSekunderPrStat;
+
+    private int LeaderboardBredde(int antall)
+    {
+        var maks = _montorLeaderboard.Count > 0 ? _montorLeaderboard.Max(m => m.Antall) : 0;
+        if (maks == 0)
+        {
+            return 6;
+        }
+
+        return Math.Max(6, (int)Math.Round(100.0 * antall / maks));
+    }
 
     private int AktivitetHoyde(int antall)
     {
