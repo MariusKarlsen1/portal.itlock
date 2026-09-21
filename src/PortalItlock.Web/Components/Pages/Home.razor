@@ -157,23 +157,36 @@
         </section>
     }
 
-    @if (!Verktoylinje.FullversjonAktiv && _visServiceavtaleVarsel && _montorLeaderboard.Count > 0)
+    @if (!Verktoylinje.FullversjonAktiv && _visServiceavtaleVarsel && _fakturaPerManed.Count > 0)
     {
         <section class="home-section">
-            <h2 class="home-section-tittel">Montører denne uken</h2>
-            <div class="leaderboard">
-                @for (var i = 0; i < _montorLeaderboard.Count; i++)
-                {
-                    var rad = _montorLeaderboard[i];
-                    <div class="leaderboard-rad">
-                        <span class="leaderboard-rang @(i < 3 ? $"leaderboard-rang-{i + 1}" : "")">@(i + 1)</span>
-                        <span class="leaderboard-navn">@rad.Navn</span>
-                        <div class="leaderboard-bar-spor">
-                            <div class="leaderboard-bar" style="width:@(LeaderboardBredde(rad.Antall))%"></div>
-                        </div>
-                        <span class="leaderboard-tall">@rad.Antall</span>
-                    </div>
-                }
+            <h2 class="home-section-tittel">Fakturerte arbeidsordre siste 12 måneder</h2>
+            <div class="faktura-graf">
+                <svg class="faktura-graf-svg" viewBox="0 0 300 100" preserveAspectRatio="none" aria-hidden="true">
+                    <defs>
+                        <linearGradient id="fakturaOmradeGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stop-color="var(--itlock-accent)" stop-opacity="0.32" />
+                            <stop offset="100%" stop-color="var(--itlock-accent)" stop-opacity="0" />
+                        </linearGradient>
+                    </defs>
+                    <path class="faktura-omrade" d="@FakturaGraf.Omrade" fill="url(#fakturaOmradeGradient)" />
+                    <path class="faktura-linje" d="@FakturaGraf.Linje" style="--faktura-lengde:@(FakturaGraf.Lengde.ToString(System.Globalization.CultureInfo.InvariantCulture))" />
+                    @for (var i = 0; i < FakturaGraf.Punkter.Count; i++)
+                    {
+                        var punkt = FakturaGraf.Punkter[i];
+                        <circle class="faktura-punkt"
+                                cx="@(punkt.X.ToString(System.Globalization.CultureInfo.InvariantCulture))"
+                                cy="@(punkt.Y.ToString(System.Globalization.CultureInfo.InvariantCulture))"
+                                r="2.6"
+                                style="animation-delay:@((1.5 + i * 0.08).ToString(System.Globalization.CultureInfo.InvariantCulture))s" />
+                    }
+                </svg>
+                <div class="faktura-graf-labels">
+                    @foreach (var maned in _fakturaPerManed)
+                    {
+                        <span>@maned.ManedKort</span>
+                    }
+                </div>
             </div>
         </section>
     }
@@ -211,7 +224,8 @@
     private sealed record HeroStat(string? Href, string Ikon, int Verdi, string Label, bool Varsel);
     private sealed record NesteJobb(int Id, string Tittel, string Klokkeslett, string? KundeNavn, string? Adresse);
     private sealed record DagsAktivitet(string DagKort, int Antall);
-    private sealed record MontorAktivitet(string Navn, int Antall);
+    private sealed record FakturaManed(string ManedKort, int Antall);
+    private sealed record GrafPunkt(double X, double Y);
 
     // Sekunder pr. nøkkeltall i den kontinuerlige marquee-animasjonen -
     // styrer farten (holder tempoet likt uansett hvor mange nøkkeltall
@@ -235,7 +249,7 @@
     private List<HeroStat> _alleStats = [];
     private NesteJobb? _nesteJobb;
     private List<DagsAktivitet> _ukeAktivitet = [];
-    private List<MontorAktivitet> _montorLeaderboard = [];
+    private List<FakturaManed> _fakturaPerManed = [];
 
     private Nyhet? _sisteNyhet;
     private Bruker? _naverendeBruker;
@@ -392,27 +406,18 @@
             var lisensTerskel = DateTime.Today.AddDays(30);
             _lisensVarsel = await Db.KundeLisenser.CountAsync(l => l.UtlopsDato.Date <= lisensTerskel);
 
-            var montorAntall = await Db.Arbeidsordre
-                .Where(a => a.FullfortDato != null
-                    && a.FullfortDato.Value.Date >= syvDagerSiden && a.FullfortDato.Value.Date <= DateTime.Today
-                    && a.AnsvarligMontorId != null)
-                .GroupBy(a => a.AnsvarligMontorId!.Value)
-                .Select(g => new { BrukerId = g.Key, Antall = g.Count() })
+            var forsteManedStart = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1).AddMonths(-11);
+            var fakturerteOrdreDatoer = await Db.Arbeidsordre
+                .Where(a => a.Status == ArbeidsordreStatus.Fakturert && a.FakturertDato != null && a.FakturertDato.Value >= forsteManedStart)
+                .Select(a => a.FakturertDato!.Value)
                 .ToListAsync();
 
-            if (montorAntall.Count > 0)
-            {
-                var montorIder = montorAntall.Select(m => m.BrukerId).ToList();
-                var montorNavn = await Db.Brukere
-                    .Where(b => montorIder.Contains(b.Id))
-                    .ToDictionaryAsync(b => b.Id, b => b.Navn);
-
-                _montorLeaderboard = montorAntall
-                    .OrderByDescending(m => m.Antall)
-                    .Take(5)
-                    .Select(m => new MontorAktivitet(montorNavn.GetValueOrDefault(m.BrukerId, "Ukjent"), m.Antall))
-                    .ToList();
-            }
+            _fakturaPerManed = Enumerable.Range(0, 12)
+                .Select(i => forsteManedStart.AddMonths(i))
+                .Select(maned => new FakturaManed(
+                    maned.ToString("MMM", kulturNb).TrimEnd('.'),
+                    fakturerteOrdreDatoer.Count(d => d.Year == maned.Year && d.Month == maned.Month)))
+                .ToList();
         }
 
         _alleStats =
@@ -530,15 +535,53 @@
 
     private double MarqueeVarighet => Math.Max(_alleStats.Count, 1) * MarqueeSekunderPrStat;
 
-    private int LeaderboardBredde(int antall)
+    private (string Linje, string Omrade, double Lengde, List<GrafPunkt> Punkter) FakturaGraf
     {
-        var maks = _montorLeaderboard.Count > 0 ? _montorLeaderboard.Max(m => m.Antall) : 0;
-        if (maks == 0)
+        get
         {
-            return 6;
-        }
+            const double bredde = 300;
+            const double hoyde = 100;
+            const double toppMargin = 14;
+            const double bunn = hoyde - 8;
 
-        return Math.Max(6, (int)Math.Round(100.0 * antall / maks));
+            var maks = _fakturaPerManed.Count > 0 ? _fakturaPerManed.Max(m => m.Antall) : 0;
+            var antallPunkter = _fakturaPerManed.Count;
+            var steg = antallPunkter > 1 ? bredde / (antallPunkter - 1) : 0;
+
+            var punkter = _fakturaPerManed
+                .Select((m, i) =>
+                {
+                    var x = i * steg;
+                    var y = maks == 0
+                        ? bunn
+                        : bunn - (m.Antall / (double)maks) * (bunn - toppMargin);
+                    return new GrafPunkt(x, y);
+                })
+                .ToList();
+
+            if (punkter.Count == 0)
+            {
+                return ("", "", 1, punkter);
+            }
+
+            var kultur = System.Globalization.CultureInfo.InvariantCulture;
+            var linje = "M " + string.Join(" L ", punkter.Select(p =>
+                $"{p.X.ToString(kultur)},{p.Y.ToString(kultur)}"));
+
+            var omrade = linje
+                + $" L {punkter[^1].X.ToString(kultur)},{hoyde.ToString(kultur)}"
+                + $" L {punkter[0].X.ToString(kultur)},{hoyde.ToString(kultur)} Z";
+
+            var lengde = 0.0;
+            for (var i = 1; i < punkter.Count; i++)
+            {
+                var dx = punkter[i].X - punkter[i - 1].X;
+                var dy = punkter[i].Y - punkter[i - 1].Y;
+                lengde += Math.Sqrt(dx * dx + dy * dy);
+            }
+
+            return (linje, omrade, Math.Max(lengde, 1), punkter);
+        }
     }
 
     private int AktivitetHoyde(int antall)
