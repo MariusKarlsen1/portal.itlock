@@ -103,33 +103,47 @@
                 </button>
             }
         </div>
-
-        @if (_valgtRolle is not null)
-        {
-            var valgt = Roller.First(r => r.Nokkel == _valgtRolle);
-
-            <div class="home-links-panel home-links-panel-@_valgtRolle @(_valgtRolle is "prosjektledere" or "admin" ? "home-links-panel-row" : "")">
-                @foreach (var gruppe in valgt.Grupper)
-                {
-                    <div class="home-links-gruppe">
-                        <h3 class="home-links-gruppe-navn">@gruppe.Navn</h3>
-                        <div class="home-links">
-                            @foreach (var link in gruppe.Lenker)
-                            {
-                                <a class="home-card" href="@link.Href">
-                                    <span class="home-card-ikon"><Icon Name="@link.IconNavn" /></span>
-                                    <span class="home-card-tekst">
-                                        <span class="home-card-title">@link.Tittel</span>
-                                        <span class="home-card-desc">@link.Beskrivelse</span>
-                                    </span>
-                                </a>
-                            }
-                        </div>
-                    </div>
-                }
-            </div>
-        }
     </section>
+
+    @if (_valgtRolle is not null)
+    {
+        var valgt = Roller.First(r => r.Nokkel == _valgtRolle);
+
+        <div class="modul-modal-bakteppe" @onclick="LukkModulPanel">
+            <div class="modul-modal modul-modal-@_valgtRolle" @onclick:stopPropagation="true">
+                <div class="modul-modal-header">
+                    <span class="modul-modal-ikon"><Icon Name="@IkonForRolle(_valgtRolle)" /></span>
+                    <span class="modul-modal-header-tekst">
+                        <span class="modul-modal-tittel">@valgt.Tittel</span>
+                        <span class="modul-modal-beskrivelse">@valgt.Beskrivelse</span>
+                    </span>
+                    <button type="button" class="modul-modal-lukk" @onclick="LukkModulPanel" aria-label="Lukk">
+                        <Icon Name="x" />
+                    </button>
+                </div>
+                <div class="modul-modal-innhold">
+                    @foreach (var gruppe in valgt.Grupper)
+                    {
+                        <div class="home-links-gruppe">
+                            <h3 class="home-links-gruppe-navn">@gruppe.Navn</h3>
+                            <div class="home-links">
+                                @foreach (var link in gruppe.Lenker)
+                                {
+                                    <a class="home-card" href="@link.Href">
+                                        <span class="home-card-ikon"><Icon Name="@link.IconNavn" /></span>
+                                        <span class="home-card-tekst">
+                                            <span class="home-card-title">@link.Tittel</span>
+                                            <span class="home-card-desc">@link.Beskrivelse</span>
+                                        </span>
+                                    </a>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
 
     @if (!Verktoylinje.FullversjonAktiv && _ukeAktivitet.Any(d => d.Antall > 0))
     {
@@ -158,7 +172,8 @@
             <div class="faktura-graf">
                 <div class="faktura-graf-header">
                     <span class="faktura-graf-tittel">Fakturerte arbeidsordre i år</span>
-                    <span class="faktura-graf-totalt">@FakturaTotalt<span class="faktura-graf-totalt-label">totalt fakturert</span></span>
+                    <span class="faktura-graf-totalt">@FakturaTotalt<span class="faktura-graf-totalt-label">stk fakturert</span></span>
+                    <span class="faktura-graf-sum">@FakturaSumFormatert<span class="faktura-graf-totalt-label">totalt fakturert beløp</span></span>
                 </div>
                 <div class="faktura-graf-plot">
                     <svg class="faktura-graf-svg" viewBox="0 0 300 100" preserveAspectRatio="none" aria-hidden="true">
@@ -250,6 +265,7 @@
     private NesteJobb? _nesteJobb;
     private List<DagsAktivitet> _ukeAktivitet = [];
     private List<FakturaManed> _fakturaPerManed = [];
+    private decimal _fakturaSum;
 
     private Nyhet? _sisteNyhet;
     private Bruker? _naverendeBruker;
@@ -407,17 +423,21 @@
             _lisensVarsel = await Db.KundeLisenser.CountAsync(l => l.UtlopsDato.Date <= lisensTerskel);
 
             var inneverendeAr = DateTime.Today.Year;
-            var fakturerteOrdreDatoer = await Db.Arbeidsordre
+            var fakturerteOrdrer = await Db.Arbeidsordre
                 .Where(a => a.Status == ArbeidsordreStatus.Fakturert && a.FakturertDato != null && a.FakturertDato.Value.Year == inneverendeAr)
-                .Select(a => a.FakturertDato!.Value)
+                .Include(a => a.Tilbud!).ThenInclude(t => t.Linjer)
+                .Include(a => a.Varer)
+                .Include(a => a.Timeregistreringer)
                 .ToListAsync();
 
             _fakturaPerManed = Enumerable.Range(1, 12)
                 .Select(manedNr => new DateTime(inneverendeAr, manedNr, 1))
                 .Select(maned => new FakturaManed(
                     maned.ToString("MMM", kulturNb).TrimEnd('.'),
-                    fakturerteOrdreDatoer.Count(d => d.Month == maned.Month)))
+                    fakturerteOrdrer.Count(a => a.FakturertDato!.Value.Month == maned.Month)))
                 .ToList();
+
+            _fakturaSum = fakturerteOrdrer.Sum(PortalItlock.Web.Services.ArbeidsordreBeregningHelper.BeregnVareSum);
         }
 
         _alleStats =
@@ -455,6 +475,8 @@
     {
         _valgtRolle = _valgtRolle == nokkel ? null : nokkel;
     }
+
+    private void LukkModulPanel() => _valgtRolle = null;
 
     private string TittelFor(Rolle rolle) => (rolle.Nokkel, _tekst) switch
     {
@@ -551,6 +573,8 @@
         </text>;
 
     private int FakturaTotalt => _fakturaPerManed.Sum(m => m.Antall);
+
+    private string FakturaSumFormatert => _fakturaSum.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("nb-NO")) + " kr";
 
     private (string Linje, string Omrade, double Lengde, List<GrafPunkt> Punkter) FakturaGraf
     {
