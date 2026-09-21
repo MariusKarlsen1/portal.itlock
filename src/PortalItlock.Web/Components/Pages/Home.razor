@@ -79,6 +79,28 @@
         </div>
     </div>
 
+    @if (!Verktoylinje.FullversjonAktiv && _nesteJobb is not null)
+    {
+        <a href="@($"/arbeidsordre/{_nesteJobb.Id}")" class="neste-jobb-kort">
+            <span class="neste-jobb-ikon"><Icon Name="calendar" /></span>
+            <span class="neste-jobb-tekst">
+                <span class="neste-jobb-label">Neste jobb i dag · @_nesteJobb.Klokkeslett</span>
+                <span class="neste-jobb-tittel">
+                    @_nesteJobb.Tittel
+                    @if (_nesteJobb.KundeNavn is not null)
+                    {
+                        <text> · @_nesteJobb.KundeNavn</text>
+                    }
+                </span>
+                @if (_nesteJobb.Adresse is not null)
+                {
+                    <span class="neste-jobb-adresse">@_nesteJobb.Adresse</span>
+                }
+            </span>
+            <span class="neste-jobb-pil"><Icon Name="chevron-down" /></span>
+        </a>
+    }
+
     <section class="home-section">
         <div class="role-grid">
             @foreach (var rolle in Roller)
@@ -151,6 +173,7 @@
     private const bool VisBiler = false;
 
     private sealed record HeroStat(string? Href, string Ikon, int Verdi, string Label, bool Varsel);
+    private sealed record NesteJobb(int Id, string Tittel, string Klokkeslett, string? KundeNavn, string? Adresse);
 
     private const int HeroSideStorrelse = 4;
     private static readonly TimeSpan HeroRotasjonsIntervall = TimeSpan.FromSeconds(30);
@@ -171,7 +194,8 @@
 
     private List<List<HeroStat>> _heroSider = [];
     private int _heroSideIndex;
-    private System.Threading.Timer? _heroTimer;
+    private CancellationTokenSource? _heroRotasjonCts;
+    private NesteJobb? _nesteJobb;
 
     private IJSObjectReference? _module;
     private Nyhet? _sisteNyhet;
@@ -253,6 +277,27 @@
         _dagensJobber = await dagensQuery.CountAsync();
         _ferdigDenneUken = await ferdigQuery.CountAsync();
 
+        var nesteJobbQuery = Db.Arbeidsordre
+            .Include(a => a.Kunde)
+            .Where(a => a.PlanlagtDato != null && a.PlanlagtDato.Value.Date == DateTime.Today
+                && a.Status != ArbeidsordreStatus.Ferdig && a.Status != ArbeidsordreStatus.Fakturert);
+
+        if (rolle == BrukerRolle.Montor && brukerId.HasValue)
+        {
+            nesteJobbQuery = nesteJobbQuery.Where(a => a.AnsvarligMontorId == brukerId.Value);
+        }
+
+        var forsteJobb = await nesteJobbQuery.OrderBy(a => a.PlanlagtDato).FirstOrDefaultAsync();
+        if (forsteJobb is not null)
+        {
+            _nesteJobb = new NesteJobb(
+                forsteJobb.Id,
+                forsteJobb.Tittel,
+                forsteJobb.PlanlagtDato!.Value.ToString("HH:mm"),
+                forsteJobb.Kunde?.Navn,
+                string.IsNullOrWhiteSpace(forsteJobb.Adresse) ? null : forsteJobb.Adresse);
+        }
+
         _visServiceavtaleVarsel = rolle == BrukerRolle.Admin || rolle == BrukerRolle.Prosjektleder;
         if (_visServiceavtaleVarsel)
         {
@@ -309,15 +354,6 @@
         }
 
         _heroSider = LagHeroSider(alleStats, HeroSideStorrelse);
-
-        if (_heroSider.Count > 1)
-        {
-            _heroTimer = new System.Threading.Timer(_ =>
-            {
-                _heroSideIndex = (_heroSideIndex + 1) % _heroSider.Count;
-                InvokeAsync(StateHasChanged);
-            }, null, HeroRotasjonsIntervall, HeroRotasjonsIntervall);
-        }
     }
 
     private static List<List<HeroStat>> LagHeroSider(List<HeroStat> stats, int sideStorrelse)
@@ -351,6 +387,34 @@
     {
         _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/hjem.js?v=3");
         await _module.InvokeVoidAsync("attachTilt", ".home-hero-stat");
+
+        // Startes her (ikke i OnInitializedAsync) fordi InteractiveServer
+        // prerenderer siden - OnInitializedAsync kjører da to ganger (én gang
+        // for den statiske prerenderingen, én gang for den faktiske kretsen),
+        // noe som tidligere ga to overlappende timere og en synlig rotasjon
+        // hvert 1.-2. sekund i stedet for hvert 30. sekund. OnAfterRenderAsync
+        // med firstRender kjører garantert bare én gang per faktiske krets.
+        if (firstRender && _heroSider.Count > 1)
+        {
+            _heroRotasjonCts = new CancellationTokenSource();
+            _ = KjorHeroRotasjon(_heroRotasjonCts.Token);
+        }
+    }
+
+    private async Task KjorHeroRotasjon(CancellationToken token)
+    {
+        using var timer = new PeriodicTimer(HeroRotasjonsIntervall);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                _heroSideIndex = (_heroSideIndex + 1) % _heroSider.Count;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 
     private void OnVerktoylinjeEndret() => InvokeAsync(StateHasChanged);
@@ -358,7 +422,8 @@
     public async ValueTask DisposeAsync()
     {
         Verktoylinje.Endret -= OnVerktoylinjeEndret;
-        _heroTimer?.Dispose();
+        _heroRotasjonCts?.Cancel();
+        _heroRotasjonCts?.Dispose();
 
         if (_module is not null)
         {
