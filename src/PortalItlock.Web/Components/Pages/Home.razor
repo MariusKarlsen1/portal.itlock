@@ -1,12 +1,11 @@
 @page "/"
 @rendermode InteractiveServer
-@implements IAsyncDisposable
+@implements IDisposable
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
-@inject IJSRuntime JS
 @inject PortalItlock.Web.Services.MobilVerktoylinjeService Verktoylinje
 
 <PageTitle>Itlock Full Kontroll</PageTitle>
@@ -41,39 +40,32 @@
                 }
             </div>
 
-            @if (!Verktoylinje.FullversjonAktiv && _heroSider.Count > 0)
+            @if (!Verktoylinje.FullversjonAktiv && _alleStats.Count > 0)
             {
                 <div class="home-hero-stats-wrap">
-                    <div class="home-hero-stats" @key="_heroSideIndex">
-                        @foreach (var stat in _heroSider[_heroSideIndex])
-                        {
-                            if (stat.Href is not null)
+                    <div class="home-hero-stats-marquee">
+                        <div class="home-hero-stats-track" style="animation-duration:@(MarqueeVarighet.ToString(System.Globalization.CultureInfo.InvariantCulture))s">
+                            @foreach (var stat in MarqueeStats)
                             {
-                                <a href="@stat.Href" class="home-hero-stat @(stat.Varsel ? "home-hero-stat-varsel" : "")">
-                                    <span class="home-hero-stat-ikon"><Icon Name="@stat.Ikon" /></span>
-                                    <span class="home-hero-stat-value">@stat.Verdi</span>
-                                    <span class="home-hero-stat-label">@stat.Label</span>
-                                </a>
-                            }
-                            else
-                            {
-                                <div class="home-hero-stat @(stat.Varsel ? "home-hero-stat-varsel" : "")">
-                                    <span class="home-hero-stat-ikon"><Icon Name="@stat.Ikon" /></span>
-                                    <span class="home-hero-stat-value">@stat.Verdi</span>
-                                    <span class="home-hero-stat-label">@stat.Label</span>
-                                </div>
-                            }
-                        }
-                    </div>
-                    @if (_heroSider.Count > 1)
-                    {
-                        <div class="home-hero-dots" aria-hidden="true">
-                            @for (var i = 0; i < _heroSider.Count; i++)
-                            {
-                                <span class="home-hero-dot @(i == _heroSideIndex ? "home-hero-dot-active" : "")"></span>
+                                if (stat.Href is not null)
+                                {
+                                    <a href="@stat.Href" class="home-hero-stat @(stat.Varsel ? "home-hero-stat-varsel" : "")">
+                                        <span class="home-hero-stat-ikon"><Icon Name="@stat.Ikon" /></span>
+                                        <span class="home-hero-stat-value">@stat.Verdi</span>
+                                        <span class="home-hero-stat-label">@stat.Label</span>
+                                    </a>
+                                }
+                                else
+                                {
+                                    <div class="home-hero-stat @(stat.Varsel ? "home-hero-stat-varsel" : "")">
+                                        <span class="home-hero-stat-ikon"><Icon Name="@stat.Ikon" /></span>
+                                        <span class="home-hero-stat-value">@stat.Verdi</span>
+                                        <span class="home-hero-stat-label">@stat.Label</span>
+                                    </div>
+                                }
                             }
                         </div>
-                    }
+                    </div>
                 </div>
             }
         </div>
@@ -181,8 +173,10 @@
     private sealed record HeroStat(string? Href, string Ikon, int Verdi, string Label, bool Varsel);
     private sealed record NesteJobb(int Id, string Tittel, string Klokkeslett, string? KundeNavn, string? Adresse);
 
-    private const int HeroSideStorrelse = 4;
-    private static readonly TimeSpan HeroRotasjonsIntervall = TimeSpan.FromSeconds(30);
+    // Sekunder pr. nøkkeltall i den kontinuerlige marquee-animasjonen -
+    // styrer farten (holder tempoet likt uansett hvor mange nøkkeltall
+    // som faktisk vises, siden varigheten skaleres med antallet).
+    private const double MarqueeSekunderPrStat = 4.0;
 
     private string? _valgtRolle;
     private HjemmesideTekst? _tekst;
@@ -198,12 +192,9 @@
     private int _varerLavBeholdning;
     private int _lisensVarsel;
 
-    private List<List<HeroStat>> _heroSider = [];
-    private int _heroSideIndex;
-    private CancellationTokenSource? _heroRotasjonCts;
+    private List<HeroStat> _alleStats = [];
     private NesteJobb? _nesteJobb;
 
-    private IJSObjectReference? _module;
     private Nyhet? _sisteNyhet;
     private Bruker? _naverendeBruker;
     private bool _visNyhet;
@@ -342,105 +333,29 @@
             _lisensVarsel = await Db.KundeLisenser.CountAsync(l => l.UtlopsDato.Date <= lisensTerskel);
         }
 
-        var alleStats = new List<HeroStat>
-        {
+        _alleStats =
+        [
             new("/prosjekter", "folder", _aktiveProsjekter, "Aktive prosjekter", false),
             new(null, "alert", _avvikSomVenter, "Avvik venter", _avvikSomVenter > 0),
             new("/kalender", "calendar", _dagensJobber, "Dagens jobber", false),
             new("/arbeidsordre", "check-circle", _ferdigDenneUken, "Ferdig denne uken", false),
-        };
+        ];
 
         if (_visServiceavtaleVarsel)
         {
-            alleStats.Add(new("/service", "clock", _serviceavtalerVarsel, "Serviceavtaler nærmer seg forfall", _serviceavtalerVarsel > 0));
-            alleStats.Add(new("/arbeidsordre/fakturert", "receipt", _nyligFakturerteOrdre, "Fakturert siste 7 dager", false));
-            alleStats.Add(new("/kundeoppfolging", "users", _kunderTrengerOppfolging, "Kunder trenger oppfølging", _kunderTrengerOppfolging > 0));
-            alleStats.Add(new("/lager", "box", _varerLavBeholdning, "Lav lagerbeholdning", _varerLavBeholdning > 0));
-            alleStats.Add(new("/lisenser", "clock", _lisensVarsel, "Lisenser går ut snart", _lisensVarsel > 0));
-        }
-
-        _heroSider = LagHeroSider(alleStats, HeroSideStorrelse);
-    }
-
-    private static List<List<HeroStat>> LagHeroSider(List<HeroStat> stats, int sideStorrelse)
-    {
-        if (stats.Count == 0)
-        {
-            return [];
-        }
-
-        if (stats.Count <= sideStorrelse)
-        {
-            return [stats];
-        }
-
-        var sider = new List<List<HeroStat>>();
-        for (var start = 0; start < stats.Count; start += sideStorrelse)
-        {
-            var side = stats.Skip(start).Take(sideStorrelse).ToList();
-            if (side.Count < sideStorrelse)
-            {
-                side.AddRange(stats.Take(sideStorrelse - side.Count));
-            }
-
-            sider.Add(side);
-        }
-
-        return sider;
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/hjem.js?v=3");
-        await _module.InvokeVoidAsync("attachTilt", ".home-hero-stat");
-
-        // Startes her (ikke i OnInitializedAsync) fordi InteractiveServer
-        // prerenderer siden - OnInitializedAsync kjører da to ganger (én gang
-        // for den statiske prerenderingen, én gang for den faktiske kretsen),
-        // noe som tidligere ga to overlappende timere og en synlig rotasjon
-        // hvert 1.-2. sekund i stedet for hvert 30. sekund. OnAfterRenderAsync
-        // med firstRender kjører garantert bare én gang per faktiske krets.
-        if (firstRender && _heroSider.Count > 1)
-        {
-            _heroRotasjonCts = new CancellationTokenSource();
-            _ = KjorHeroRotasjon(_heroRotasjonCts.Token);
-        }
-    }
-
-    private async Task KjorHeroRotasjon(CancellationToken token)
-    {
-        using var timer = new PeriodicTimer(HeroRotasjonsIntervall);
-        try
-        {
-            while (await timer.WaitForNextTickAsync(token))
-            {
-                _heroSideIndex = (_heroSideIndex + 1) % _heroSider.Count;
-                await InvokeAsync(StateHasChanged);
-            }
-        }
-        catch (OperationCanceledException)
-        {
+            _alleStats.Add(new("/service", "clock", _serviceavtalerVarsel, "Serviceavtaler nærmer seg forfall", _serviceavtalerVarsel > 0));
+            _alleStats.Add(new("/arbeidsordre/fakturert", "receipt", _nyligFakturerteOrdre, "Fakturert siste 7 dager", false));
+            _alleStats.Add(new("/kundeoppfolging", "users", _kunderTrengerOppfolging, "Kunder trenger oppfølging", _kunderTrengerOppfolging > 0));
+            _alleStats.Add(new("/lager", "box", _varerLavBeholdning, "Lav lagerbeholdning", _varerLavBeholdning > 0));
+            _alleStats.Add(new("/lisenser", "clock", _lisensVarsel, "Lisenser går ut snart", _lisensVarsel > 0));
         }
     }
 
     private void OnVerktoylinjeEndret() => InvokeAsync(StateHasChanged);
 
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
         Verktoylinje.Endret -= OnVerktoylinjeEndret;
-        _heroRotasjonCts?.Cancel();
-        _heroRotasjonCts?.Dispose();
-
-        if (_module is not null)
-        {
-            try
-            {
-                await _module.DisposeAsync();
-            }
-            catch (JSDisconnectedException)
-            {
-            }
-        }
     }
 
     private static DateTime FinnForrigeMandag(DateTime dato)
@@ -525,6 +440,13 @@
             return $"{_avvikSomVenter} avvik venter på godkjenning.";
         }
     }
+
+    // Dupliserer listen slik at CSS-animasjonen kan gå fra 0% til -50% og
+    // hoppe sømløst tilbake til start - den andre halvdelen er identisk med
+    // den første, så hoppet er usynlig for øyet.
+    private List<HeroStat> MarqueeStats => _alleStats.Concat(_alleStats).ToList();
+
+    private double MarqueeVarighet => Math.Max(_alleStats.Count, 1) * MarqueeSekunderPrStat;
 
     private static string Idag
     {
