@@ -437,9 +437,11 @@ app.MapGet("/prosjektvedlegg/{id:int}", async (int id, ApplicationDbContext db) 
 app.MapGet("/nedlastningsfil/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var fil = await db.NedlastningsFiler.FindAsync(id);
+    // Inline i stedet for attachment - skal kunne åpnes som forhåndsvisning i
+    // egen fane, ikke tvinge frem nedlasting.
     return fil is null
         ? Results.NotFound()
-        : Results.File(fil.Data, fil.ContentType, fil.Filnavn);
+        : new InlineFileResult(fil.Data, fil.ContentType, fil.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/koblingsbibliotek/{id:int}", async (int id, ApplicationDbContext db) =>
