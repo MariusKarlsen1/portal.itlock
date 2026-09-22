@@ -906,7 +906,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         modelBuilder.Entity<NedlastningsKategori>().HasData(
             new NedlastningsKategori { Id = 1, Navn = "Salto Space", Rekkefolge = 1 },
-            new NedlastningsKategori { Id = 2, Navn = "Salto KS", Rekkefolge = 2 }
+            new NedlastningsKategori { Id = 2, Navn = "Salto KS", Rekkefolge = 2 },
+            new NedlastningsKategori { Id = 3, Navn = "ARX", Rekkefolge = 3 },
+            new NedlastningsKategori { Id = 4, Navn = "iLOQ", Rekkefolge = 4 }
         );
 
         modelBuilder.Entity<TicketKategori>().HasData(
