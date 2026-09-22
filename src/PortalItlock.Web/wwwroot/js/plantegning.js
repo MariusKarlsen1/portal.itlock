@@ -291,22 +291,20 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
         let startX = 0;
         let startY = 0;
 
-        // Låst/mobil-visning: åpne døren kun ved et ekte trykk direkte på
-        // selve sirkelen (ikke hele markøren med etikett+funksjoner rundt) -
-        // en native "click" respekterer automatisk nettleserens egne regler
-        // for om dette faktisk var et trykk eller en finger som beveget seg
-        // (f.eks. som del av en klype-zoom som tilfeldigvis startet der).
-        const dot = markerEl.querySelector('.dor-marker-dot') || markerEl;
-        dot.addEventListener('click', (e) => {
+        // Låst/mobil-visning: åpne døren ved et ekte trykk hvor som helst på
+        // markøren (sirkel, etikett eller funksjonsmerke) - en native "click"
+        // respekterer automatisk nettleserens egne regler for om dette
+        // faktisk var et trykk eller en finger som beveget seg (f.eks. som
+        // del av en klype-zoom som tilfeldigvis startet der). Hele markøren
+        // må være klikkbar (ikke bare selve sirkelen) fordi dører som ligger
+        // tett kan få etiketten sin til å dekke naboens sirkel - da endte
+        // klikket med å treffe etiketten og gjøre ingenting.
+        markerEl.addEventListener('click', (e) => {
+            e.stopPropagation();
             if (containerEl.dataset.locked !== '1') {
                 return;
             }
-            e.stopPropagation();
             dotNetRef.invokeMethodAsync('OnDoorClicked', dorId);
-        });
-
-        markerEl.addEventListener('click', (e) => {
-            e.stopPropagation();
         });
 
         markerEl.addEventListener('contextmenu', (e) => {
