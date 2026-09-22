@@ -98,6 +98,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<HjemmesideTekst> HjemmesideTekster => Set<HjemmesideTekst>();
     public DbSet<KoblingsKategori> KoblingsKategorier => Set<KoblingsKategori>();
     public DbSet<KoblingsSkjema> KoblingsSkjemaer => Set<KoblingsSkjema>();
+    public DbSet<NedlastningsKategori> NedlastningsKategorier => Set<NedlastningsKategori>();
+    public DbSet<NedlastningsFil> NedlastningsFiler => Set<NedlastningsFil>();
     public DbSet<KoblingsSymbol> KoblingsSymboler => Set<KoblingsSymbol>();
     public DbSet<KoblingsStrek> KoblingsStreker => Set<KoblingsStrek>();
     public DbSet<KoblingsSymbolBibliotek> KoblingsSymbolBibliotek => Set<KoblingsSymbolBibliotek>();
@@ -900,6 +902,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             new KoblingsKategori { Id = 1, Navn = "ARX", Rekkefolge = 1 },
             new KoblingsKategori { Id = 2, Navn = "Salto", Rekkefolge = 2 },
             new KoblingsKategori { Id = 3, Navn = "Diverse", Rekkefolge = 3 }
+        );
+
+        modelBuilder.Entity<NedlastningsKategori>().HasData(
+            new NedlastningsKategori { Id = 1, Navn = "Salto Space", Rekkefolge = 1 },
+            new NedlastningsKategori { Id = 2, Navn = "Salto KS", Rekkefolge = 2 }
         );
 
         modelBuilder.Entity<TicketKategori>().HasData(

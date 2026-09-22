@@ -434,6 +434,14 @@ app.MapGet("/prosjektvedlegg/{id:int}", async (int id, ApplicationDbContext db) 
         : new InlineFileResult(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
 }).RequireAuthorization();
 
+app.MapGet("/nedlastningsfil/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var fil = await db.NedlastningsFiler.FindAsync(id);
+    return fil is null
+        ? Results.NotFound()
+        : Results.File(fil.Data, fil.ContentType, fil.Filnavn);
+}).RequireAuthorization();
+
 app.MapGet("/koblingsbibliotek/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var symbol = await db.KoblingsSymbolBibliotek.FindAsync(id);

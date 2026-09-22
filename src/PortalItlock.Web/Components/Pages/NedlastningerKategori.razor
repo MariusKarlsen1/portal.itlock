@@ -1,0 +1,150 @@
+@page "/nedlastninger/{KategoriId:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Nedlastninger - @_tittel</PageTitle>
+
+@if (_ugyldigKategori)
+{
+    <p class="form-error">Ukjent kategori.</p>
+}
+else
+{
+    <a class="back-link" href="/nedlastninger"><Icon Name="arrow-left" />Tilbake til nedlastninger</a>
+
+    <div class="side-header">
+        <span class="side-header-ikon"><Icon Name="folder" /></span>
+        <div>
+            <h1>@_tittel</h1>
+        </div>
+    </div>
+
+    @if (_filer.Count == 0)
+    {
+        <p class="list-empty">Ingen filer lastet opp ennå.</p>
+    }
+    else
+    {
+        <div class="fil-liste">
+            @foreach (var f in _filer)
+            {
+                <div @key="f.Id" class="fil-rad">
+                    <span class="fil-ikon"><Icon Name="file-text" /></span>
+                    <div class="fil-tekst">
+                        <span class="fil-navn">@f.Navn</span>
+                        <span class="fil-meta">@f.OpprettetDato.ToString("dd.MM.yyyy")</span>
+                    </div>
+                    <a class="knapp knapp-ghost" href="@($"/nedlastningsfil/{f.Id}")" target="_blank"><span class="last-ned-ikon"><Icon Name="arrow-left" /></span>Last ned</a>
+                    <button type="button" class="fil-slett-button" title="Slett" @onclick="@(() => SlettFil(f))"><Icon Name="x" /></button>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="fil-opplasting">
+        <label class="fil-opplasting-label">
+            <Icon Name="upload" />
+            <span>@(_laster ? "Laster opp..." : "Last opp fil")</span>
+            <InputFile OnChange="LastOppFil" disabled="@_laster" />
+        </label>
+        @if (_feilmelding is not null)
+        {
+            <span class="fil-feil">@_feilmelding</span>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public int KategoriId { get; set; }
+
+    private bool _ugyldigKategori;
+    private string _tittel = "";
+    private List<NedlastningsFil> _filer = [];
+    private bool _laster;
+    private string? _feilmelding;
+    private int? _loadetKategoriId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadetKategoriId == KategoriId)
+        {
+            return;
+        }
+
+        _loadetKategoriId = KategoriId;
+
+        var kategori = await Db.NedlastningsKategorier.FirstOrDefaultAsync(k => k.Id == KategoriId);
+        if (kategori is null)
+        {
+            _ugyldigKategori = true;
+            return;
+        }
+
+        _ugyldigKategori = false;
+        _tittel = kategori.Navn;
+
+        await LoadFilerAsync();
+    }
+
+    private async Task LoadFilerAsync()
+    {
+        _filer = await Db.NedlastningsFiler
+            .Where(f => f.KategoriId == KategoriId)
+            .OrderByDescending(f => f.OpprettetDato)
+            .ToListAsync();
+    }
+
+    private async Task LastOppFil(InputFileChangeEventArgs e)
+    {
+        if (_laster)
+        {
+            return;
+        }
+
+        var file = e.File;
+        _feilmelding = null;
+
+        if (file.Size > 20_000_000)
+        {
+            _feilmelding = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        _laster = true;
+        try
+        {
+            using var buffer = new MemoryStream();
+            await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            Db.NedlastningsFiler.Add(new NedlastningsFil
+            {
+                KategoriId = KategoriId,
+                Navn = file.Name,
+                Filnavn = file.Name,
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                Data = buffer.ToArray()
+            });
+            await Db.SaveChangesAsync();
+
+            await LoadFilerAsync();
+        }
+        finally
+        {
+            _laster = false;
+        }
+    }
+
+    private async Task SlettFil(NedlastningsFil f)
+    {
+        Db.NedlastningsFiler.Remove(f);
+        await Db.SaveChangesAsync();
+        _filer.Remove(f);
+    }
+}
