@@ -18,6 +18,24 @@ export function setDorVisningsmodus(modus) {
     }
 }
 
+const markorStilKey = 'itlock-dor-markor-stil';
+
+export function getMarkorStil() {
+    try {
+        return localStorage.getItem(markorStilKey);
+    } catch {
+        return null;
+    }
+}
+
+export function setMarkorStil(stil) {
+    try {
+        localStorage.setItem(markorStilKey, stil);
+    } catch {
+        // Ignorer - f.eks. privat nettlesing der localStorage kan være blokkert.
+    }
+}
+
 export function initSaveShortcut(dotNetRef) {
     currentSaveRef = dotNetRef;
 
