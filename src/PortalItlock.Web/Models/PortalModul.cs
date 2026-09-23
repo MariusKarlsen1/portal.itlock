@@ -161,4 +161,38 @@ public static class PortalModulRegister
                 ]),
             ]),
     ];
+
+    // Finner "ett steg tilbake"-målet for en gitt sluttside: hub-siden (med
+    // eget navn/href) som lenker til denne siden i en av rollenes moduler.
+    // Brukes av MainLayout til å vise "Til <hub>" i stedet for et generisk
+    // "Til hjem" på sider som er en direkte undermodul av en hub (f.eks.
+    // Befaringsliste -> Befaring). Returnerer null hvis siden ikke er en
+    // kjent undermodul av noen hub (da faller MainLayout tilbake til "Til hjem").
+    public static (string Href, string Tittel)? FinnForelderHub(string path)
+    {
+        var normalisert = path.Trim('/').ToLowerInvariant();
+        foreach (var rolle in Roller)
+        {
+            foreach (var gruppe in rolle.Grupper)
+            {
+                foreach (var hub in gruppe.Lenker)
+                {
+                    if (hub.Undermoduler is null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var under in hub.Undermoduler)
+                    {
+                        if (under.Href.Trim('/').Equals(normalisert, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return (hub.Href, hub.Tittel);
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
 }
