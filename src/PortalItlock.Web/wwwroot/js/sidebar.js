@@ -86,53 +86,6 @@ window.sidebarMeny = (function () {
     oppdaterMobilTittel();
 })();
 
-// Den generiske "ett steg tilbake"-lenken øverst på hver side (se
-// MainLayout.razor sin GeneriskTilbakeMal) regner alltid ut samme statiske
-// forelder-hub for en gitt side, uavhengig av hvordan brukeren faktisk kom
-// dit. Det stemmer når man kommer via selve hub-siden (f.eks.
-// /befaringsmodul -> /befaringsliste), men er feil når man i stedet kom via
-// forsidens modul-modal, som hopper rett fra "/" til undersiden uten
-// noensinne å vise hub-siden - da skal tilbake-lenken gå rett til forsiden.
-// Lenkene inni modul-modalen (se Home.razor) setter derfor et sessionStorage-
-// flagg rett før navigering; her leses det av og brukes til å overstyre
-// lenken denne ene gangen, før flagget fjernes igjen - et senere, vanlig
-// besøk på samme side (f.eks. via hub-siden) skal fortsatt vise riktig
-// statisk forelder.
-(function () {
-    var FLAGG_NOKKEL = 'itlock-kom-fra-hjem';
-
-    function overstyrTilbakeTilHjemOmNodvendig() {
-        var komFraHjem = false;
-        try {
-            komFraHjem = sessionStorage.getItem(FLAGG_NOKKEL) === '1';
-            sessionStorage.removeItem(FLAGG_NOKKEL);
-        } catch (e) {
-            return;
-        }
-        if (!komFraHjem) {
-            return;
-        }
-
-        var lenke = document.querySelector('.content-kompakt-tilbake');
-        if (!lenke) {
-            return;
-        }
-        lenke.setAttribute('href', '/');
-        while (lenke.lastChild && lenke.lastChild.nodeType === Node.TEXT_NODE) {
-            lenke.removeChild(lenke.lastChild);
-        }
-        lenke.appendChild(document.createTextNode('Til hjem'));
-    }
-
-    document.addEventListener('DOMContentLoaded', overstyrTilbakeTilHjemOmNodvendig);
-    if (window.Blazor && typeof window.Blazor.addEventListener === 'function') {
-        window.Blazor.addEventListener('enhancedload', overstyrTilbakeTilHjemOmNodvendig);
-    } else {
-        document.addEventListener('enhancedload', overstyrTilbakeTilHjemOmNodvendig);
-    }
-    overstyrTilbakeTilHjemOmNodvendig();
-})();
-
 // Kjent iOS-kvirk i hjemskjerm-app-modus (standalone): den faste bunn-fanen
 // (.mobil-tabbar, position:fixed;bottom:0) kan flyte for høyt med et tomt
 // gap under seg ved kaldstart. Flere runder med CSS-triksing (translateZ,
