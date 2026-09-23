@@ -291,22 +291,13 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
         let startX = 0;
         let startY = 0;
 
-        // Låst/mobil-visning: åpne døren ved et ekte trykk hvor som helst på
-        // markøren (sirkel, etikett eller funksjonsmerke) - en native "click"
-        // respekterer automatisk nettleserens egne regler for om dette
-        // faktisk var et trykk eller en finger som beveget seg (f.eks. som
-        // del av en klype-zoom som tilfeldigvis startet der). Hele markøren
-        // må være klikkbar (ikke bare selve sirkelen) fordi dører som ligger
-        // tett kan få etiketten sin til å dekke naboens sirkel - da endte
-        // klikket med å treffe etiketten og gjøre ingenting.
-        markerEl.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (containerEl.dataset.locked !== '1') {
-                return;
-            }
-            dotNetRef.invokeMethodAsync('OnDoorClicked', dorId);
-        });
-
+        // Trykk/slipp (pointerdown/pointerup) brukes til å avgjøre klikk vs.
+        // dra i BEGGE moduser - en enkel "click"-lytter viste seg upålitelig
+        // i låst/normal-visning (trykket nådde ikke alltid frem), så nå
+        // brukes samme robuste logikk uansett modus. Selve flyttingen av
+        // posisjonen skjer likevel kun når "Rediger posisjoner" er aktiv
+        // (containerEl.dataset.locked !== '1') - i låst modus er det bare
+        // klikk-deteksjonen som er aktiv, ikke selve flyttingen.
         markerEl.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -314,16 +305,6 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
 
         markerEl.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) {
-                return;
-            }
-            if (containerEl.dataset.locked === '1') {
-                // Ikke fang pekeren her i låst/mobil-visning - la den boble
-                // videre til klype/dra-håndteringen på selve
-                // tegningselementet. Ellers mister en klype-zoom det ene
-                // fingertrykket (og brytes) hvis det lander på en
-                // dørmarkør, og enda verre: siden dørene er låst her og
-                // dermed ikke kan telle som "flyttet", ble ethvert slikt
-                // trykk feilaktig tolket som et klikk som åpnet døren.
                 return;
             }
             e.preventDefault();
@@ -347,6 +328,11 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
                 }
                 moved = true;
             }
+            if (containerEl.dataset.locked === '1') {
+                // Låst/normal-visning: ikke flytt markøren visuelt, bare
+                // registrer at det ble en bevegelse (avbryter klikket under).
+                return;
+            }
             const p = getClickPercent(containerEl, e.clientX, e.clientY);
             markerEl.style.left = p.x + '%';
             markerEl.style.top = p.y + '%';
@@ -361,11 +347,11 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
             dragging = false;
             markerEl.releasePointerCapture(e.pointerId);
 
-            if (moved) {
+            if (moved && containerEl.dataset.locked !== '1') {
                 const x = parseFloat(markerEl.dataset.x);
                 const y = parseFloat(markerEl.dataset.y);
                 dotNetRef.invokeMethodAsync('OnDoorMoved', dorId, x, y);
-            } else {
+            } else if (!moved) {
                 dotNetRef.invokeMethodAsync('OnDoorClicked', dorId);
             }
         });
