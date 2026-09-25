@@ -35,113 +35,61 @@ public class ArbeidsordrePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             doc.Page(page =>
             {
                 page.Size(PageSizes.A4);
-                page.Margin(2, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(10));
+                page.Margin(1.8f, Unit.Centimetre);
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Arbeidsordrerapport", ordre.Tittel));
+
+                page.Content().PaddingTop(14).Column(col =>
                 {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Text("Arbeidsordrerapport").FontSize(20).SemiBold();
-                        row.RelativeItem().AlignRight().Element(e => pdfLogo.Render(e, 16));
-                    });
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                    col.Spacing(10);
 
-                page.Content().PaddingTop(16).Column(col =>
-                {
-                    col.Spacing(6);
+                    PdfStil.InfoBoks(col, 3,
+                        ("Prosjekt", prosjektNavn), ("Kunde", kundeNavn),
+                        ("Dato", ordre.PlanlagtDato?.ToString("dd.MM.yyyy")),
+                        ("Utført av", ordre.AnsvarligMontor?.Navn));
 
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Tittel: ").Bold();
-                        t.Span(ordre.Tittel);
-                    });
-
-                    if (!string.IsNullOrWhiteSpace(prosjektNavn))
-                    {
-                        col.Item().Text(t =>
-                        {
-                            t.Span("Prosjekt: ").Bold();
-                            t.Span(prosjektNavn);
-                        });
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(kundeNavn))
-                    {
-                        col.Item().Text(t =>
-                        {
-                            t.Span("Kunde: ").Bold();
-                            t.Span(kundeNavn);
-                        });
-                    }
-
-                    if (ordre.PlanlagtDato.HasValue)
-                    {
-                        col.Item().Text(t =>
-                        {
-                            t.Span("Dato: ").Bold();
-                            t.Span(ordre.PlanlagtDato.Value.ToString("dd.MM.yyyy"));
-                        });
-                    }
-
-                    if (ordre.AnsvarligMontor is not null)
-                    {
-                        col.Item().Text(t =>
-                        {
-                            t.Span("Utført av: ").Bold();
-                            t.Span(ordre.AnsvarligMontor.Navn);
-                        });
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(ordre.Beskrivelse))
-                    {
-                        col.Item().PaddingTop(10).Text("Beskrivelse av jobben").Bold();
-                        col.Item().Text(ordre.Beskrivelse);
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(ordre.UtfortArbeid))
-                    {
-                        col.Item().PaddingTop(10).Text("Hva er gjort").Bold();
-                        col.Item().Text(ordre.UtfortArbeid);
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(ordre.Anbefalinger))
-                    {
-                        col.Item().PaddingTop(10).Text("Hva var galt / anbefalinger").Bold();
-                        col.Item().Text(ordre.Anbefalinger);
-                    }
+                    PdfStil.FriSeksjon(col, "Beskrivelse av jobben", ordre.Beskrivelse);
+                    PdfStil.FriSeksjon(col, "Hva er gjort", ordre.UtfortArbeid);
+                    PdfStil.FriSeksjon(col, "Hva var galt / anbefalinger", ordre.Anbefalinger);
 
                     if (ordre.Sjekkpunkter.Count > 0)
                     {
-                        col.Item().PaddingTop(10).Text("Sjekkliste").Bold();
-                        col.Item().Column(sjekkCol =>
+                        col.Item().Column(inner =>
                         {
-                            foreach (var punkt in ordre.Sjekkpunkter.OrderBy(p => p.Rekkefolge))
+                            PdfStil.SeksjonTittel(inner, "Sjekkliste");
+                            inner.Item().PaddingTop(3).Column(sjekkCol =>
                             {
-                                sjekkCol.Item().Row(row =>
+                                sjekkCol.Spacing(3);
+                                foreach (var punkt in ordre.Sjekkpunkter.OrderBy(p => p.Rekkefolge))
                                 {
-                                    row.ConstantItem(16).Text(punkt.Fullfort ? "[x]" : "[ ]");
-                                    row.RelativeItem().Text(punkt.Tekst);
-                                });
-                            }
+                                    PdfStil.SjekkRad(sjekkCol, punkt.Fullfort, punkt.Tekst);
+                                }
+                            });
                         });
                     }
 
                     if (ordre.Media.Count > 0)
                     {
-                        col.Item().PaddingTop(10).Text("Bilder").Bold();
-                        foreach (var bilde in ordre.Media)
+                        col.Item().Column(inner =>
                         {
-                            col.Item().PaddingTop(6).Width(220).Image(PdfBilde.Forminsk(bilde.Data));
-                        }
+                            PdfStil.SeksjonTittel(inner, "Bilder");
+                            foreach (var chunk in ordre.Media.Chunk(3))
+                            {
+                                inner.Item().PaddingTop(4).Row(row =>
+                                {
+                                    foreach (var bilde in chunk)
+                                    {
+                                        row.RelativeItem().Padding(2).Border(1).BorderColor(PdfStil.SandBorder).Height(140)
+                                            .Image(PdfBilde.Forminsk(bilde.Data)).FitArea();
+                                    }
+                                });
+                            }
+                        });
                     }
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(8).Column(c =>
-                {
-                    c.Item().AlignCenter().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon} - {FirmaInfo.Epost}").FontSize(8);
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 

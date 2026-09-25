@@ -25,55 +25,26 @@ public class TicketRapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             doc.Page(page =>
             {
                 page.Size(PageSizes.A4);
-                page.Margin(2, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(10));
+                page.Margin(1.8f, Unit.Centimetre);
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
-                {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                        row.RelativeItem().AlignRight().Text($"Sak #{ticket.Id} - oppsummering").FontSize(9).FontColor(Colors.Grey.Darken1);
-                    });
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, $"Sak #{ticket.Id}", ticket.Tittel));
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
-                    col.Item().Text(ticket.Tittel).FontSize(16).Bold();
-                    col.Item().PaddingTop(8);
+                    col.Spacing(10);
 
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Text($"Kunde: {ticket.Kunde?.Navn ?? "-"}");
-                        row.RelativeItem().Text($"Lokasjon: {ticket.Lokasjon ?? "-"}");
-                    });
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Text($"Opprettet: {ticket.OpprettetDato:dd.MM.yyyy}");
-                        row.RelativeItem().Text($"Lukket: {(ticket.LukketDato.HasValue ? ticket.LukketDato.Value.ToString("dd.MM.yyyy") : "-")}");
-                    });
-                    col.Item().Text($"Ansvarlig: {ticket.AnsvarligBruker?.Navn ?? "-"}");
+                    PdfStil.InfoBoks(col, 3,
+                        ("Kunde", ticket.Kunde?.Navn), ("Lokasjon", ticket.Lokasjon),
+                        ("Opprettet", ticket.OpprettetDato.ToString("dd.MM.yyyy")),
+                        ("Lukket", ticket.LukketDato?.ToString("dd.MM.yyyy")),
+                        ("Ansvarlig", ticket.AnsvarligBruker?.Navn));
 
-                    if (!string.IsNullOrWhiteSpace(ticket.Beskrivelse))
-                    {
-                        col.Item().PaddingTop(12).Text("Beskrivelse").Bold();
-                        col.Item().Text(ticket.Beskrivelse);
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(ticket.Sluttoppsummering))
-                    {
-                        col.Item().PaddingTop(12).Text("Oppsummering").Bold();
-                        col.Item().Text(ticket.Sluttoppsummering);
-                    }
+                    PdfStil.FriSeksjon(col, "Beskrivelse", ticket.Beskrivelse);
+                    PdfStil.FriSeksjon(col, "Oppsummering", ticket.Sluttoppsummering);
                 });
 
-                page.Footer().AlignCenter().Text(x =>
-                {
-                    x.CurrentPageNumber();
-                    x.Span(" / ");
-                    x.TotalPages();
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 

@@ -39,18 +39,10 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 doc.Page(page =>
                 {
                     page.Size(PageSizes.A4);
-                    page.Margin(2, Unit.Centimetre);
-                    page.DefaultTextStyle(x => x.FontSize(10));
+                    page.Margin(1.8f, Unit.Centimetre);
+                    page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                    page.Header().Column(col =>
-                    {
-                        col.Item().Row(row =>
-                        {
-                            row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                            row.RelativeItem().AlignRight().Text($"Servicerapport – {prosjektNavn}").FontSize(9).FontColor(Colors.Grey.Darken1);
-                        });
-                        col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                    });
+                    page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Servicerapport", prosjektNavn));
 
                     page.Content().PaddingTop(14).Column(col => ForsideRenderer.Render(col, runde.Forside));
                 });
@@ -59,132 +51,105 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             doc.Page(page =>
             {
                 page.Size(PageSizes.A4);
-                page.Margin(2, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(10));
+                page.Margin(1.8f, Unit.Centimetre);
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Servicerapport", prosjektNavn));
+
+                page.Content().PaddingTop(14).Column(col =>
                 {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Text("Servicerapport").FontSize(20).SemiBold();
-                        row.RelativeItem().AlignRight().Element(e => pdfLogo.Render(e, 16));
-                    });
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                    col.Spacing(10);
 
-                page.Content().PaddingTop(16).Column(col =>
-                {
-                    col.Spacing(6);
+                    PdfStil.InfoBoks(col, 3,
+                        ("Prosjekt", prosjektNavn), ("Kunde", kundeNavn),
+                        ("Dato", runde.Dato.ToString("dd.MM.yyyy")),
+                        ("Utført av", runde.UtfortAvBruker?.Navn));
 
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Prosjekt: ").Bold();
-                        t.Span(prosjektNavn);
-                    });
-
-                    if (!string.IsNullOrWhiteSpace(kundeNavn))
-                    {
-                        col.Item().Text(t =>
-                        {
-                            t.Span("Kunde: ").Bold();
-                            t.Span(kundeNavn);
-                        });
-                    }
-
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Dato: ").Bold();
-                        t.Span(runde.Dato.ToString("dd.MM.yyyy"));
-                    });
-
-                    if (runde.UtfortAvBruker is not null)
-                    {
-                        col.Item().Text(t =>
-                        {
-                            t.Span("Utført av: ").Bold();
-                            t.Span(runde.UtfortAvBruker.Navn);
-                        });
-                    }
-
-                    col.Item().PaddingTop(10).Text("Status og utført arbeid").Bold();
-                    col.Item().Text(runde.StatusBeskrivelse);
-
-                    if (!string.IsNullOrWhiteSpace(runde.Anbefalinger))
-                    {
-                        col.Item().PaddingTop(10).Text("Anbefalinger").Bold();
-                        col.Item().Text(runde.Anbefalinger);
-                    }
+                    PdfStil.FriSeksjon(col, "Status og utført arbeid", runde.StatusBeskrivelse);
+                    PdfStil.FriSeksjon(col, "Anbefalinger", runde.Anbefalinger);
 
                     if (runde.NesteServiceDato.HasValue)
                     {
-                        col.Item().PaddingTop(10).Text(t =>
+                        col.Item().Column(inner =>
                         {
-                            t.Span("Neste planlagte service: ").Bold();
-                            t.Span(runde.NesteServiceDato.Value.ToString("dd.MM.yyyy"));
+                            PdfStil.SeksjonTittel(inner, "Neste planlagte service");
+                            inner.Item().PaddingTop(3).Text(runde.NesteServiceDato.Value.ToString("dd.MM.yyyy")).FontSize(9);
                         });
                     }
 
                     if (runde.Deler.Count > 0)
                     {
-                        col.Item().PaddingTop(10).Text("Byttede deler").Bold();
-                        col.Item().Table(table =>
+                        col.Item().Column(inner =>
                         {
-                            table.ColumnsDefinition(c =>
+                            PdfStil.SeksjonTittel(inner, "Byttede deler");
+                            inner.Item().PaddingTop(4).Table(table =>
                             {
-                                c.ConstantColumn(70);
-                                c.ConstantColumn(70);
-                                c.RelativeColumn(2);
-                                c.RelativeColumn(2);
-                            });
+                                table.ColumnsDefinition(c =>
+                                {
+                                    c.ConstantColumn(65);
+                                    c.ConstantColumn(60);
+                                    c.RelativeColumn(2);
+                                    c.RelativeColumn(2);
+                                });
 
-                            table.Header(h =>
-                            {
-                                h.Cell().Text("Dato").SemiBold();
-                                h.Cell().Text("Dør").SemiBold();
-                                h.Cell().Text("Hva ble byttet").SemiBold();
-                                h.Cell().Text("Hva var galt").SemiBold();
-                            });
+                                table.Header(h =>
+                                {
+                                    PdfStil.TabellHode(h.Cell()).Text("Dato").FontSize(8).Bold().FontColor(Colors.White);
+                                    PdfStil.TabellHode(h.Cell()).Text("Dør").FontSize(8).Bold().FontColor(Colors.White);
+                                    PdfStil.TabellHode(h.Cell()).Text("Hva ble byttet").FontSize(8).Bold().FontColor(Colors.White);
+                                    PdfStil.TabellHode(h.Cell()).Text("Hva var galt").FontSize(8).Bold().FontColor(Colors.White);
+                                });
 
-                            foreach (var del in runde.Deler.OrderBy(d => d.Dato))
-                            {
-                                table.Cell().Text(del.Dato.ToString("dd.MM.yyyy"));
-                                table.Cell().Text(del.Dor?.Dornummer ?? "-");
-                                table.Cell().Text(del.Beskrivelse);
-                                table.Cell().Text(del.Feil ?? "-");
-                            }
+                                var i = 0;
+                                foreach (var del in runde.Deler.OrderBy(d => d.Dato))
+                                {
+                                    var alt = i++ % 2 == 1;
+                                    PdfStil.TabellRad(table.Cell(), alt).Text(del.Dato.ToString("dd.MM.yyyy")).FontSize(8.5f);
+                                    PdfStil.TabellRad(table.Cell(), alt).Text(del.Dor?.Dornummer ?? "-").FontSize(8.5f);
+                                    PdfStil.TabellRad(table.Cell(), alt).Text(del.Beskrivelse).FontSize(8.5f);
+                                    PdfStil.TabellRad(table.Cell(), alt).Text(del.Feil ?? "-").FontSize(8.5f);
+                                }
+                            });
                         });
                     }
 
                     if (runde.Sjekkpunkter.Count > 0)
                     {
-                        col.Item().PaddingTop(10).Text("Sjekkliste").Bold();
-                        col.Item().Column(sjekkCol =>
+                        col.Item().Column(inner =>
                         {
-                            foreach (var punkt in runde.Sjekkpunkter.OrderBy(p => p.Rekkefolge))
+                            PdfStil.SeksjonTittel(inner, "Sjekkliste");
+                            inner.Item().PaddingTop(3).Column(sjekkCol =>
                             {
-                                sjekkCol.Item().Row(row =>
+                                sjekkCol.Spacing(3);
+                                foreach (var punkt in runde.Sjekkpunkter.OrderBy(p => p.Rekkefolge))
                                 {
-                                    row.ConstantItem(16).Text(punkt.Fullfort ? "[x]" : "[ ]");
-                                    row.RelativeItem().Text(punkt.Tekst);
-                                });
-                            }
+                                    PdfStil.SjekkRad(sjekkCol, punkt.Fullfort, punkt.Tekst);
+                                }
+                            });
                         });
                     }
 
                     if (runde.Media.Count > 0)
                     {
-                        col.Item().PaddingTop(10).Text("Bilder").Bold();
-                        foreach (var bilde in runde.Media)
+                        col.Item().Column(inner =>
                         {
-                            col.Item().PaddingTop(6).Width(220).Image(PdfBilde.Forminsk(bilde.Data));
-                        }
+                            PdfStil.SeksjonTittel(inner, "Bilder");
+                            foreach (var chunk in runde.Media.Chunk(3))
+                            {
+                                inner.Item().PaddingTop(4).Row(row =>
+                                {
+                                    foreach (var bilde in chunk)
+                                    {
+                                        row.RelativeItem().Padding(2).Border(1).BorderColor(PdfStil.SandBorder).Height(140)
+                                            .Image(PdfBilde.Forminsk(bilde.Data)).FitArea();
+                                    }
+                                });
+                            }
+                        });
                     }
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(8).Column(c =>
-                {
-                    c.Item().AlignCenter().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon} - {FirmaInfo.Epost}").FontSize(8);
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 

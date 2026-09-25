@@ -31,74 +31,49 @@ public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             doc.Page(page =>
             {
                 page.Size(PageSizes.A4);
-                page.Margin(2, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(10));
+                page.Margin(1.8f, Unit.Centimetre);
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Avviksmelding", $"{prosjektNavn} · Dør {dor?.Dornummer}"));
+
+                page.Content().PaddingTop(14).Column(col =>
                 {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Text("Avviksmelding").FontSize(20).SemiBold();
-                        row.RelativeItem().AlignRight().Element(e => pdfLogo.Render(e, 16));
-                    });
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                    col.Spacing(10);
 
-                page.Content().PaddingTop(16).Column(col =>
-                {
-                    col.Spacing(6);
+                    PdfStil.InfoBoks(col, 3,
+                        ("Prosjekt", prosjektNavn), ("Dør", dor?.Dornummer),
+                        ("Dato", avvik.OpprettetDato.ToString("dd.MM.yyyy")));
 
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Prosjekt: ").Bold();
-                        t.Span(prosjektNavn);
-                    });
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Dør: ").Bold();
-                        t.Span(dor?.Dornummer ?? "");
-                    });
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Dato: ").Bold();
-                        t.Span(avvik.OpprettetDato.ToString("dd.MM.yyyy"));
-                    });
-
-                    col.Item().PaddingTop(10).Text("Beskrivelse av avvik").Bold();
-                    col.Item().Text(avvik.Beskrivelse);
-
-                    if (!string.IsNullOrWhiteSpace(avvik.UtbedringBeskrivelse))
-                    {
-                        col.Item().PaddingTop(10).Text("Foreslått utbedring").Bold();
-                        col.Item().Text(avvik.UtbedringBeskrivelse);
-                    }
+                    PdfStil.FriSeksjon(col, "Beskrivelse av avvik", avvik.Beskrivelse);
+                    PdfStil.FriSeksjon(col, "Foreslått utbedring", avvik.UtbedringBeskrivelse);
 
                     if (avvik.Pris.HasValue)
                     {
-                        col.Item().PaddingTop(10).Text(t =>
+                        col.Item().Column(inner =>
                         {
-                            t.Span("Pris for utbedring: ").Bold();
-                            t.Span($"{avvik.Pris.Value.ToString("N2", Kultur)} kr eks. mva");
+                            PdfStil.SeksjonTittel(inner, "Pris for utbedring");
+                            inner.Item().PaddingTop(3).Text($"{avvik.Pris.Value.ToString("N2", Kultur)} kr eks. mva").FontSize(9);
                         });
                     }
 
-                    col.Item().PaddingTop(30).Text("Godkjenning").Bold();
-                    if (avvik.Signatur is not null)
+                    col.Item().Column(inner =>
                     {
-                        col.Item().PaddingTop(6).Width(200).Image(avvik.Signatur);
-                        col.Item().Text($"{avvik.SignertAvNavn} - signert {avvik.SignertDato?.ToString("dd.MM.yyyy HH:mm")}");
-                    }
-                    else
-                    {
-                        col.Item().PaddingTop(30).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                        col.Item().Text("Signatur / navn / dato");
-                    }
+                        PdfStil.SeksjonTittel(inner, "Godkjenning");
+                        if (avvik.Signatur is not null)
+                        {
+                            inner.Item().PaddingTop(4).Background(PdfStil.Sand).Border(1).BorderColor(PdfStil.SandBorder).Padding(6)
+                                .Height(70).Width(200).Image(avvik.Signatur).FitArea();
+                            inner.Item().PaddingTop(3).Text($"{avvik.SignertAvNavn} - signert {avvik.SignertDato?.ToString("dd.MM.yyyy HH:mm")}").FontSize(8.5f).FontColor(Colors.Grey.Darken1);
+                        }
+                        else
+                        {
+                            inner.Item().PaddingTop(4).Background(PdfStil.Sand).Border(1).BorderColor(PdfStil.SandBorder).Padding(6)
+                                .Height(60).AlignMiddle().AlignCenter().Text("Signatur / navn / dato").FontSize(8.5f).FontColor(Colors.Grey.Medium);
+                        }
+                    });
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(8).Column(c =>
-                {
-                    c.Item().AlignCenter().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon} - {FirmaInfo.Epost}").FontSize(8);
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 

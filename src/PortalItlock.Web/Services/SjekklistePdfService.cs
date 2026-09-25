@@ -33,44 +33,18 @@ public class SjekklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             doc.Page(page =>
             {
                 page.Size(PageSizes.A4);
-                page.Margin(2, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(10));
+                page.Margin(1.8f, Unit.Centimetre);
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Sjekkliste", ordre.Tittel));
+
+                page.Content().PaddingTop(14).Column(col =>
                 {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Text("Sjekkliste").FontSize(18).SemiBold();
-                        row.RelativeItem().AlignRight().Element(e => pdfLogo.Render(e, 16));
-                    });
-                    col.Item().PaddingTop(2).Text(ordre.Tittel).FontSize(11).FontColor(Colors.Grey.Darken1);
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                    col.Spacing(10);
 
-                page.Content().PaddingTop(16).Column(col =>
-                {
-                    col.Spacing(6);
-
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Prosjekt: ").Bold();
-                        t.Span(ordre.Prosjekt?.Navn ?? "-");
-                    });
-                    if (ordre.AnsvarligMontor is not null)
-                    {
-                        col.Item().Text(t =>
-                        {
-                            t.Span("Ansvarlig montør: ").Bold();
-                            t.Span(ordre.AnsvarligMontor.Navn);
-                        });
-                    }
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Dato: ").Bold();
-                        t.Span(DateTime.Now.ToString("dd.MM.yyyy"));
-                    });
-
-                    col.Item().PaddingTop(10);
+                    PdfStil.InfoBoks(col, 3,
+                        ("Prosjekt", ordre.Prosjekt?.Navn), ("Ansvarlig montør", ordre.AnsvarligMontor?.Navn),
+                        ("Dato", DateTime.Now.ToString("dd.MM.yyyy")));
 
                     if (punkter.Count == 0)
                     {
@@ -79,31 +53,25 @@ public class SjekklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     else
                     {
                         var fullfort = punkter.Count(p => p.Fullfort);
-                        col.Item().PaddingBottom(6).Text($"{fullfort} av {punkter.Count} punkter fullført").SemiBold();
-
-                        foreach (var p in punkter)
+                        col.Item().Column(inner =>
                         {
-                            col.Item().Row(row =>
+                            PdfStil.SeksjonTittel(inner, $"{fullfort} av {punkter.Count} punkter fullført");
+                            inner.Item().PaddingTop(4).Column(sjekkCol =>
                             {
-                                row.ConstantItem(18).Text(p.Fullfort ? "☑" : "☐").FontSize(12);
-                                row.RelativeItem().Column(pc =>
+                                sjekkCol.Spacing(4);
+                                foreach (var p in punkter)
                                 {
-                                    pc.Item().Text(p.Tekst);
-                                    if (p.Fullfort && p.FullfortDato.HasValue)
-                                    {
-                                        pc.Item().Text($"Fullført {p.FullfortDato.Value.ToString("dd.MM.yyyy HH:mm")}{(p.FullfortAvBruker is not null ? $" av {p.FullfortAvBruker.Navn}" : "")}")
-                                            .FontSize(8).FontColor(Colors.Grey.Darken1);
-                                    }
-                                });
+                                    var underTekst = p.Fullfort && p.FullfortDato.HasValue
+                                        ? $"Fullført {p.FullfortDato.Value.ToString("dd.MM.yyyy HH:mm")}{(p.FullfortAvBruker is not null ? $" av {p.FullfortAvBruker.Navn}" : "")}"
+                                        : null;
+                                    PdfStil.SjekkRad(sjekkCol, p.Fullfort, p.Tekst, underTekst);
+                                }
                             });
-                        }
+                        });
                     }
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(8).Column(c =>
-                {
-                    c.Item().AlignCenter().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon} - {FirmaInfo.Epost}").FontSize(8);
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 
