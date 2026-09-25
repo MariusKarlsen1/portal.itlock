@@ -65,24 +65,15 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             doc.Page(page =>
             {
                 page.Size(PageSizes.A4);
-                page.Margin(2, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(9));
+                page.Margin(1.8f, Unit.Centimetre);
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
-                {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                        row.RelativeItem().AlignRight().Text($"Plukkliste – {prosjekt.Navn}{(valgteByggetrinn is not null ? $" ({string.Join(", ", valgteByggetrinn)})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
-                    });
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                var byggetrinnTekst = valgteByggetrinn is not null ? $"Byggetrinn {string.Join(", ", valgteByggetrinn)}" : null;
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Plukkliste", string.Join(" · ", new[] { prosjekt.Navn, byggetrinnTekst }.Where(s => !string.IsNullOrWhiteSpace(s)))));
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
-                    col.Item().Text("Plukkliste").FontSize(16).SemiBold();
-
-                    col.Item().PaddingTop(6).Table(table =>
+                    col.Item().Table(table =>
                     {
                         table.ColumnsDefinition(columns =>
                         {
@@ -100,18 +91,18 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
                         table.Header(header =>
                         {
-                            IContainer Hode() => header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).PaddingRight(4);
+                            IContainer Hode() => PdfStil.TabellHode(header.Cell());
 
-                            Hode().Text("#").Bold();
-                            Hode().Text("Beslagstype").Bold();
-                            Hode().Text("Varenr").Bold();
-                            Hode().Text("Varenavn").Bold();
-                            Hode().Text("Overflate").Bold();
-                            Hode().Text("Enhet").Bold();
-                            Hode().Text("Antall").Bold();
-                            Hode().Text("Plukket").Bold();
-                            Hode().Text("Bestilt").Bold();
-                            Hode().Text("Må bestilles").Bold();
+                            Hode().Text("#").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Varenr").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Varenavn").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Overflate").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Enhet").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Antall").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Plukket").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Bestilt").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Må bestilles").FontSize(8).Bold().FontColor(Colors.White);
                         });
 
                         var i = 0;
@@ -122,33 +113,29 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                             var plukket = linje?.AntallPlukket ?? 0;
                             var bestilt = linje?.VarerBestilt ?? 0;
                             var maBestilles = Math.Max(g.Antall - bestilt, 0);
+                            var alt = i % 2 == 0;
 
-                            IContainer Rad() => table.Cell().BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(3).PaddingRight(4);
+                            IContainer Rad() => PdfStil.TabellRad(table.Cell(), alt);
 
-                            Rad().Text(i.ToString());
-                            Rad().Text(g.Component.Type?.Navn ?? "");
-                            Rad().Text(g.Component.Produktkode ?? "");
-                            Rad().Text(g.Component.Navn);
-                            Rad().Text(g.Component.Overflate ?? "");
-                            Rad().Text(g.Component.Enhet ?? "Stk");
-                            Rad().Text(g.Antall.ToString());
-                            Rad().Text(plukket.ToString());
-                            Rad().Text(bestilt.ToString());
-                            var maBestillesCelle = Rad().Text(maBestilles.ToString());
+                            Rad().Text(i.ToString()).FontSize(8.5f);
+                            Rad().Text(g.Component.Type?.Navn ?? "").FontSize(8.5f);
+                            Rad().Text(g.Component.Produktkode ?? "").FontSize(8.5f);
+                            Rad().Text(g.Component.Navn).FontSize(8.5f);
+                            Rad().Text(g.Component.Overflate ?? "").FontSize(8.5f);
+                            Rad().Text(g.Component.Enhet ?? "Stk").FontSize(8.5f);
+                            Rad().Text(g.Antall.ToString()).FontSize(8.5f);
+                            Rad().Text(plukket.ToString()).FontSize(8.5f);
+                            Rad().Text(bestilt.ToString()).FontSize(8.5f);
+                            var maBestillesCelle = Rad().Text(maBestilles.ToString()).FontSize(8.5f);
                             if (maBestilles > 0)
                             {
-                                maBestillesCelle.Bold();
+                                maBestillesCelle.Bold().FontColor(Color.FromHex("#B5502D"));
                             }
                         }
                     });
                 });
 
-                page.Footer().AlignCenter().Text(x =>
-                {
-                    x.CurrentPageNumber();
-                    x.Span(" / ");
-                    x.TotalPages();
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 

@@ -45,24 +45,14 @@ public class ProduktsammendragPdfService(ApplicationDbContext db, PdfLogo pdfLog
             doc.Page(page =>
             {
                 page.Size(PageSizes.A4);
-                page.Margin(2, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(9));
+                page.Margin(1.8f, Unit.Centimetre);
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
-                {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                        row.RelativeItem().AlignRight().Text($"Produktsammendrag – {prosjekt.Navn}").FontSize(9).FontColor(Colors.Grey.Darken1);
-                    });
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Produktsammendrag", prosjekt.Navn));
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
-                    col.Item().Text("Produktsammendrag").FontSize(16).SemiBold();
-
-                    col.Item().PaddingTop(6).Table(table =>
+                    col.Item().Table(table =>
                     {
                         table.ColumnsDefinition(columns =>
                         {
@@ -77,38 +67,35 @@ public class ProduktsammendragPdfService(ApplicationDbContext db, PdfLogo pdfLog
 
                         table.Header(header =>
                         {
-                            IContainer Hode() => header.Cell().BorderBottom(1).BorderColor(Colors.Grey.Darken1).PaddingBottom(3).PaddingRight(4);
+                            IContainer Hode() => PdfStil.TabellHode(header.Cell());
 
-                            Hode().Text("Beslagstype").Bold();
-                            Hode().Text("Varenr").Bold();
-                            Hode().Text("Varenavn").Bold();
-                            Hode().Text("Overflate").Bold();
-                            Hode().Text("Enhet").Bold();
-                            Hode().Text("Levering").Bold();
-                            Hode().Text("Antall").Bold();
+                            Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Varenr").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Varenavn").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Overflate").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Enhet").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Levering").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Antall").FontSize(8).Bold().FontColor(Colors.White);
                         });
 
+                        var i = 0;
                         foreach (var r in rader)
                         {
-                            IContainer Rad() => table.Cell().BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2).PaddingVertical(3).PaddingRight(4);
+                            var alt = i++ % 2 == 1;
+                            IContainer Rad() => PdfStil.TabellRad(table.Cell(), alt);
 
-                            Rad().Text(r.Component.Type?.Navn ?? "");
-                            Rad().Text(r.Component.Produktkode ?? "");
-                            Rad().Text(r.Component.Navn);
-                            Rad().Text(r.Component.Overflate ?? "");
-                            Rad().Text(r.Component.Enhet ?? "Stk");
-                            Rad().Text(r.LevertAv.Visningsnavn());
-                            Rad().Text(r.Antall.ToString());
+                            Rad().Text(r.Component.Type?.Navn ?? "").FontSize(8.5f);
+                            Rad().Text(r.Component.Produktkode ?? "").FontSize(8.5f);
+                            Rad().Text(r.Component.Navn).FontSize(8.5f);
+                            Rad().Text(r.Component.Overflate ?? "").FontSize(8.5f);
+                            Rad().Text(r.Component.Enhet ?? "Stk").FontSize(8.5f);
+                            Rad().Text(r.LevertAv.Visningsnavn()).FontSize(8.5f);
+                            Rad().Text(r.Antall.ToString()).FontSize(8.5f);
                         }
                     });
                 });
 
-                page.Footer().AlignCenter().Text(x =>
-                {
-                    x.CurrentPageNumber();
-                    x.Span(" / ");
-                    x.TotalPages();
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 
