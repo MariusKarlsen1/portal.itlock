@@ -51,24 +51,17 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 doc.Page(page =>
                 {
                     page.Size(PageSizes.A4);
-                    page.Margin(2, Unit.Centimetre);
-                    page.DefaultTextStyle(x => x.FontSize(10));
+                    page.Margin(1.8f, Unit.Centimetre);
+                    page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                    page.Header().Column(col =>
-                    {
-                        col.Item().Row(row =>
-                        {
-                            row.RelativeItem().Element(e => pdfLogo.Render(e, 15));
-                            row.RelativeItem().AlignRight().Text($"FDV – {prosjekt.Navn}{(valgteByggetrinn is not null ? $" ({string.Join(", ", valgteByggetrinn)})" : "")}").FontSize(9).FontColor(Colors.Grey.Darken1);
-                        });
-                        col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                    });
+                    var undertittel = string.Join(" · ", new[] { prosjekt.Navn, valgteByggetrinn is not null ? $"Byggetrinn {string.Join(", ", valgteByggetrinn)}" : null }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                    page.Header().Column(col => PdfStil.Header(col, pdfLogo, "FDV-dokumentasjon", undertittel));
 
                     page.Content().PaddingTop(14).Column(col => ForsideRenderer.Render(col, prosjekt.FdvForside));
                 });
             }
 
-            void LeggTilPdfSider(byte[] pdfData, Action<TextDescriptor> renderTittel)
+            void LeggTilPdfSider(byte[] pdfData, string tittel)
             {
                 List<SKBitmap> sider;
                 try
@@ -95,7 +88,7 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
                         if (erForsteSide)
                         {
-                            page.Header().PaddingBottom(6).Text(renderTittel);
+                            page.Header().PaddingBottom(6).Background(PdfStil.Sand).Padding(6).Text(tittel).FontSize(9).Bold().FontColor(PdfStil.Accent);
                         }
 
                         page.Content().AlignCenter().AlignMiddle().Image(bildeData).FitArea();
@@ -105,33 +98,18 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
             foreach (var komponent in komponenter)
             {
-                LeggTilPdfSider(komponent.FdvData!, t =>
-                {
-                    t.Span("FDV – ").SemiBold();
-                    t.Span(komponent.Navn);
-                    if (!string.IsNullOrWhiteSpace(komponent.Produktkode))
-                    {
-                        t.Span($" ({komponent.Produktkode})").FontColor(Colors.Grey.Darken1);
-                    }
-                });
+                var tittel = $"FDV – {komponent.Navn}" + (!string.IsNullOrWhiteSpace(komponent.Produktkode) ? $" ({komponent.Produktkode})" : "");
+                LeggTilPdfSider(komponent.FdvData!, tittel);
 
                 foreach (var ekstraDokument in komponent.FdvDokumenter)
                 {
-                    LeggTilPdfSider(ekstraDokument.Data, t =>
-                    {
-                        t.Span("FDV – ").SemiBold();
-                        t.Span($"{komponent.Navn} - {ekstraDokument.Filnavn}");
-                    });
+                    LeggTilPdfSider(ekstraDokument.Data, $"FDV – {komponent.Navn} - {ekstraDokument.Filnavn}");
                 }
             }
 
             foreach (var vedlegg in ekstraVedlegg)
             {
-                LeggTilPdfSider(vedlegg.Data, t =>
-                {
-                    t.Span("FDV – ").SemiBold();
-                    t.Span(vedlegg.Navn);
-                });
+                LeggTilPdfSider(vedlegg.Data, $"FDV – {vedlegg.Navn}");
             }
         });
 

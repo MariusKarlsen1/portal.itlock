@@ -49,61 +49,40 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             {
                 page.Size(PageSizes.A4.Landscape());
                 page.Margin(1.5f, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(9));
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
-                {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Column(headCol =>
-                        {
-                            headCol.Item().Text("Koblingsskjema").FontSize(18).SemiBold();
-                            headCol.Item().Text(skjema.Navn).FontSize(11).FontColor(Colors.Grey.Darken1);
-                        });
-                        row.RelativeItem().AlignRight().Element(e => pdfLogo.Render(e, 16));
-                    });
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Koblingsskjema", skjema.Navn));
 
                 page.Content().PaddingTop(10).Column(col =>
                 {
-                    col.Spacing(10);
+                    col.Spacing(8);
 
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Kategori: ").Bold();
-                        t.Span(skjema.Kategori?.Navn ?? "-");
-                        t.Span("     Prosjekt: ").Bold();
-                        t.Span(skjema.Prosjekt?.Navn ?? "-");
-                        t.Span("     Dato: ").Bold();
-                        t.Span(DateTime.Now.ToString("dd.MM.yyyy"));
-                    });
+                    PdfStil.InfoBoks(col, 3,
+                        ("Kategori", skjema.Kategori?.Navn), ("Prosjekt", skjema.Prosjekt?.Navn),
+                        ("Dato", DateTime.Now.ToString("dd.MM.yyyy")));
 
                     col.Item().AlignCenter().Width(650).Height(360).Svg(svg).FitArea();
 
                     col.Item().Column(listCol =>
                     {
-                        listCol.Item().Text("Symboler").Bold();
+                        PdfStil.SeksjonTittel(listCol, "Symboler");
                         if (navngitte.Count == 0)
                         {
-                            listCol.Item().Text("Ingen navngitte symboler.").FontColor(Colors.Grey.Darken1);
+                            listCol.Item().PaddingTop(3).Text("Ingen navngitte symboler.").FontSize(9).FontColor(Colors.Grey.Darken1);
                         }
 
                         foreach (var s in navngitte)
                         {
-                            listCol.Item().PaddingTop(2).Row(r =>
+                            listCol.Item().PaddingTop(4).Row(r =>
                             {
                                 r.ConstantItem(10).Height(10).Background(Color.FromHex(s.Farge));
-                                r.RelativeItem().PaddingLeft(6).Text($"{s.Navn} ({ElementTypeNavn(s.ElementType)})");
+                                r.RelativeItem().PaddingLeft(6).Text($"{s.Navn} ({ElementTypeNavn(s.ElementType)})").FontSize(9);
                             });
                         }
                     });
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(8).Column(c =>
-                {
-                    c.Item().AlignCenter().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon} - {FirmaInfo.Epost}").FontSize(8);
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 
