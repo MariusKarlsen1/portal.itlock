@@ -51,33 +51,15 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             {
                 page.Size(PageSizes.A4.Landscape());
                 page.Margin(1.5f, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(9));
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
-                {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Column(headCol =>
-                        {
-                            headCol.Item().Text("Dørplantegning").FontSize(18).SemiBold();
-                            headCol.Item().Text(plantegning.Navn).FontSize(11).FontColor(Colors.Grey.Darken1);
-                        });
-                        row.RelativeItem().AlignRight().Element(e => pdfLogo.Render(e, 16));
-                    });
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Dørplantegning", plantegning.Navn));
 
                 page.Content().PaddingTop(10).Column(col =>
                 {
-                    col.Spacing(10);
+                    col.Spacing(8);
 
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Prosjekt: ").Bold();
-                        t.Span(plantegning.Prosjekt?.Navn ?? "");
-                        t.Span("     Dato: ").Bold();
-                        t.Span(DateTime.Now.ToString("dd.MM.yyyy"));
-                    });
+                    PdfStil.InfoBoks(col, 2, ("Prosjekt", plantegning.Prosjekt?.Navn), ("Dato", DateTime.Now.ToString("dd.MM.yyyy")));
 
                     col.Item().AlignCenter().Width(svgBredde).Height(svgHoyde).Svg(svg).FitArea();
 
@@ -85,19 +67,16 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     {
                         foreach (var status in new[] { MontasjeStatus.FerdigMontert, MontasjeStatus.Montert, MontasjeStatus.IkkeStartet })
                         {
-                            row.RelativeItem().Row(r =>
+                            row.AutoItem().PaddingRight(16).Row(r =>
                             {
                                 r.ConstantItem(10).Height(10).Background(Color.FromHex(StatusFarge[status]));
-                                r.RelativeItem().PaddingLeft(6).Text(status.Visningsnavn());
+                                r.AutoItem().PaddingLeft(6).Text(status.Visningsnavn()).FontSize(9).SemiBold();
                             });
                         }
                     });
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(8).Column(c =>
-                {
-                    c.Item().AlignCenter().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon} - {FirmaInfo.Epost}").FontSize(8);
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 

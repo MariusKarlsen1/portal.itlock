@@ -53,33 +53,15 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             {
                 page.Size(PageSizes.A4.Landscape());
                 page.Margin(1.5f, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(9));
+                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col =>
-                {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Column(headCol =>
-                        {
-                            headCol.Item().Text("Utstyr og kabeltrekk").FontSize(18).SemiBold();
-                            headCol.Item().Text(plantegning.Navn).FontSize(11).FontColor(Colors.Grey.Darken1);
-                        });
-                        row.RelativeItem().AlignRight().Element(e => pdfLogo.Render(e, 16));
-                    });
-                    col.Item().PaddingTop(4).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten1);
-                });
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Utstyr og kabeltrekk", plantegning.Navn));
 
                 page.Content().PaddingTop(10).Column(col =>
                 {
-                    col.Spacing(10);
+                    col.Spacing(8);
 
-                    col.Item().Text(t =>
-                    {
-                        t.Span("Prosjekt: ").Bold();
-                        t.Span(plantegning.Prosjekt?.Navn ?? "");
-                        t.Span("     Dato: ").Bold();
-                        t.Span(DateTime.Now.ToString("dd.MM.yyyy"));
-                    });
+                    PdfStil.InfoBoks(col, 2, ("Prosjekt", plantegning.Prosjekt?.Navn), ("Dato", DateTime.Now.ToString("dd.MM.yyyy")));
 
                     col.Item().AlignCenter().Width(svgBredde).Height(svgHoyde).Svg(svg).FitArea();
 
@@ -87,44 +69,41 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     {
                         row.RelativeItem().Column(legendCol =>
                         {
-                            legendCol.Item().Text("Utstyr").Bold();
+                            PdfStil.SeksjonTittel(legendCol, "Utstyr");
                             if (brukteTyper.Count == 0)
                             {
-                                legendCol.Item().Text("Ingen utstyr plassert.").FontColor(Colors.Grey.Darken1);
+                                legendCol.Item().PaddingTop(3).Text("Ingen utstyr plassert.").FontSize(9).FontColor(Colors.Grey.Darken1);
                             }
                             foreach (var type in brukteTyper)
                             {
-                                legendCol.Item().PaddingTop(2).Row(r =>
+                                legendCol.Item().PaddingTop(4).Row(r =>
                                 {
                                     r.ConstantItem(10).Height(10).Background(Color.FromHex(type.Farge()));
-                                    r.RelativeItem().PaddingLeft(6).Text($"{type.Kode()} - {type.Visningsnavn()}");
+                                    r.RelativeItem().PaddingLeft(6).Text($"{type.Kode()} - {type.Visningsnavn()}").FontSize(9);
                                 });
                             }
                         });
 
                         row.RelativeItem().Column(legendCol =>
                         {
-                            legendCol.Item().Text("Kabling").Bold();
+                            PdfStil.SeksjonTittel(legendCol, "Kabling");
                             if (brukteKabler.Count == 0)
                             {
-                                legendCol.Item().Text("Ingen forbindelser tegnet.").FontColor(Colors.Grey.Darken1);
+                                legendCol.Item().PaddingTop(3).Text("Ingen forbindelser tegnet.").FontSize(9).FontColor(Colors.Grey.Darken1);
                             }
                             foreach (var kt in brukteKabler)
                             {
-                                legendCol.Item().PaddingTop(2).Row(r =>
+                                legendCol.Item().PaddingTop(4).Row(r =>
                                 {
                                     r.ConstantItem(10).Height(10).Background(Color.FromHex(kt.Farge()));
-                                    r.RelativeItem().PaddingLeft(6).Text(kt.Visningsnavn());
+                                    r.RelativeItem().PaddingLeft(6).Text(kt.Visningsnavn()).FontSize(9);
                                 });
                             }
                         });
                     });
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(8).Column(c =>
-                {
-                    c.Item().AlignCenter().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon} - {FirmaInfo.Epost}").FontSize(8);
-                });
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 
