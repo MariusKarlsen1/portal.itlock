@@ -1,5 +1,7 @@
 @page "/guide/kobling/{KategoriId:int}"
 @rendermode InteractiveServer
+@using System.Globalization
+@using System.Text.Json
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -14,35 +16,123 @@
 }
 else
 {
-    <a class="back-link" href="/guide/kobling">&larr; Tilbake til kobling</a>
-    <h1>Kobling - @_tittel</h1>
+    <a class="back-link" href="/guide/kobling"><Icon Name="arrow-left" />Tilbake til kobling</a>
 
-    @if (_skjemaer.Count == 0)
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="lock" /></span>
+            <div>
+                <h1>Kobling – @_tittel</h1>
+                <p class="section-hint">
+                    @(_skjemaer.Count == 1 ? "1 koblingsskjema er laget for dette systemet." : $"{_skjemaer.Count} koblingsskjema er laget for dette systemet.")
+                </p>
+            </div>
+        </div>
+        <AuthorizeView Roles="Admin">
+            <button type="button" class="knapp @(_redigerModus ? "knapp-aktiv" : "knapp-ghost")" @onclick="ToggleRedigerModus">
+                <Icon Name="edit" />
+                @(_redigerModus ? "Ferdig" : "Rediger")
+            </button>
+        </AuthorizeView>
+    </div>
+
+    @if (_skjemaer.Count == 0 && !_redigerModus)
     {
         <p class="list-empty">Ingen koblingsskjema laget ennå.</p>
     }
     else
     {
-        <ul class="kobling-skjema-list">
+        <div class="kobling-skjema-grid">
             @foreach (var s in _skjemaer)
             {
-                <li @key="s.Id" class="kobling-skjema-item">
-                    <a href="@($"/koblingsskjema/{s.Id}")">@s.Navn</a>
-                    <span class="kobling-skjema-meta">@((s.OppdatertDato ?? s.OpprettetDato).ToString("dd.MM.yyyy"))</span>
-                    <AuthorizeView Roles="Admin">
-                        <button type="button" class="remove-button" @onclick="@(() => SlettSkjema(s))">Slett</button>
-                    </AuthorizeView>
-                </li>
+                <div @key="s.Id" class="kobling-skjema-wrap">
+                    <a class="kobling-skjema-kort" href="@($"/koblingsskjema/{s.Id}")">
+                        <div class="kobling-skjema-preview">
+                            @if (s.Symboler.Count == 0 && s.Streker.Count == 0)
+                            {
+                                <span class="kobling-skjema-preview-tom"><Icon Name="file-text" /></span>
+                            }
+                            else
+                            {
+                                <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="kobling-skjema-preview-svg">
+                                    @foreach (var strek in s.Streker)
+                                    {
+                                        <polyline points="@PunkterTilSvgPoints(strek.PunkterJson)" fill="none"
+                                                  stroke="@strek.Farge" stroke-width="1"
+                                                  stroke-dasharray="@(strek.Stiplet ? "3,2" : null)" />
+                                    }
+                                    @foreach (var sym in s.Symboler.OrderBy(sy => sy.ZIndex))
+                                    {
+                                        @if (sym.ElementType == KoblingsElementType.Bilde && sym.SymbolBibliotekId.HasValue)
+                                        {
+                                            <image href="@($"/koblingsbibliotek/{sym.SymbolBibliotekId}")"
+                                                   x="@Pos(sym.PosX)" y="@Pos(sym.PosY)" width="@Pos(sym.Bredde)" height="@Pos(sym.Hoyde)"
+                                                   preserveAspectRatio="xMidYMid slice" />
+                                        }
+                                        else if (sym.ElementType == KoblingsElementType.Rektangel)
+                                        {
+                                            <rect x="@Pos(sym.PosX)" y="@Pos(sym.PosY)" width="@Pos(sym.Bredde)" height="@Pos(sym.Hoyde)"
+                                                  fill="@(sym.Fylt ? sym.Farge : "none")" stroke="@sym.Farge" stroke-width="1" />
+                                        }
+                                        else if (sym.ElementType == KoblingsElementType.Sirkel)
+                                        {
+                                            <ellipse cx="@Pos(sym.PosX + sym.Bredde / 2)" cy="@Pos(sym.PosY + sym.Hoyde / 2)"
+                                                     rx="@Pos(sym.Bredde / 2)" ry="@Pos(sym.Hoyde / 2)"
+                                                     fill="@(sym.Fylt ? sym.Farge : "none")" stroke="@sym.Farge" stroke-width="1" />
+                                        }
+                                        else if (sym.ElementType is KoblingsElementType.Linje or KoblingsElementType.Pil)
+                                        {
+                                            <line x1="@Pos(sym.PosX)" y1="@Pos(sym.PosY)" x2="@Pos(sym.PosX + sym.Bredde)" y2="@Pos(sym.PosY + sym.Hoyde)"
+                                                  stroke="@sym.Farge" stroke-width="1" />
+                                        }
+                                        else if (sym.ElementType == KoblingsElementType.Punkt)
+                                        {
+                                            <circle cx="@Pos(sym.PosX + sym.Bredde / 2)" cy="@Pos(sym.PosY + sym.Hoyde / 2)" r="1.6" fill="@sym.Farge" />
+                                        }
+                                    }
+                                </svg>
+                            }
+                        </div>
+                        <div class="kobling-skjema-info">
+                            <span class="kobling-skjema-navn">@s.Navn</span>
+                            <span class="kobling-skjema-meta">@MetaTekst(s)</span>
+                            @if (s.Prosjekt is not null)
+                            {
+                                <span class="kobling-skjema-prosjekt"><Icon Name="tag" />@s.Prosjekt.Navn</span>
+                            }
+                        </div>
+                    </a>
+                    @if (_redigerModus)
+                    {
+                        @if (_slettId == s.Id)
+                        {
+                            <div class="kobling-skjema-slett-confirm">
+                                <p>Slette «@s.Navn»?</p>
+                                <div class="kobling-skjema-slett-confirm-rad">
+                                    <button type="button" class="delete-confirm-button" @onclick="@(() => SlettSkjema(s))">Ja, slett</button>
+                                    <button type="button" class="cancel-button" @onclick="@(() => _slettId = null)">Avbryt</button>
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <button type="button" class="kobling-skjema-slett-button" title="Slett" @onclick="@(() => _slettId = s.Id)"><Icon Name="x" /></button>
+                        }
+                    }
+                </div>
             }
-        </ul>
-    }
 
-    <AuthorizeView Roles="Admin">
-        <div class="kobling-nytt-skjema">
-            <input @bind="_nyttNavn" @bind:event="oninput" placeholder="Navn på nytt koblingsskjema" />
-            <button type="button" class="add-button" @onclick="OpprettSkjema" disabled="@string.IsNullOrWhiteSpace(_nyttNavn)">Nytt skjema</button>
+            @if (_redigerModus)
+            {
+                <div class="kobling-skjema-ny">
+                    <input @bind="_nyttNavn" @bind:event="oninput"
+                           @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettSkjema(); } })"
+                           placeholder="Navn på nytt koblingsskjema" />
+                    <button type="button" class="knapp knapp-primaer" @onclick="OpprettSkjema" disabled="@string.IsNullOrWhiteSpace(_nyttNavn)"><Icon Name="plus" />Nytt skjema</button>
+                </div>
+            }
         </div>
-    </AuthorizeView>
+    }
 }
 
 @code {
@@ -51,6 +141,8 @@ else
     private bool _ugyldigKategori;
     private string _tittel = "";
     private List<KoblingsSkjema> _skjemaer = [];
+    private bool _redigerModus;
+    private int? _slettId;
     private string _nyttNavn = "";
     private int? _loadetKategoriId;
 
@@ -73,10 +165,25 @@ else
         _ugyldigKategori = false;
         _tittel = kategori.Navn;
 
+        await LastSkjemaer();
+    }
+
+    private async Task LastSkjemaer()
+    {
         _skjemaer = await Db.KoblingsSkjemaer
             .Where(s => s.KategoriId == KategoriId)
+            .Include(s => s.Symboler)
+            .Include(s => s.Streker)
+            .Include(s => s.Prosjekt)
             .OrderByDescending(s => s.OppdatertDato ?? s.OpprettetDato)
             .ToListAsync();
+    }
+
+    private void ToggleRedigerModus()
+    {
+        _redigerModus = !_redigerModus;
+        _slettId = null;
+        _nyttNavn = "";
     }
 
     private async Task OpprettSkjema()
@@ -99,5 +206,23 @@ else
         Db.KoblingsSkjemaer.Remove(s);
         await Db.SaveChangesAsync();
         _skjemaer.Remove(s);
+        _slettId = null;
+    }
+
+    private static string MetaTekst(KoblingsSkjema s)
+    {
+        var dato = s.OppdatertDato is null
+            ? $"Opprettet {s.OpprettetDato:dd.MM.yyyy}"
+            : $"Oppdatert {s.OppdatertDato:dd.MM.yyyy}";
+        var antall = s.Symboler.Count;
+        return antall == 1 ? $"{dato} · 1 symbol" : $"{dato} · {antall} symboler";
+    }
+
+    private static string Pos(double verdi) => verdi.ToString(CultureInfo.InvariantCulture);
+
+    private static string PunkterTilSvgPoints(string punkterJson)
+    {
+        var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(punkterJson) ?? [];
+        return string.Join(" ", punkter.Select(p => $"{Pos(p.X)},{Pos(p.Y)}"));
     }
 }
