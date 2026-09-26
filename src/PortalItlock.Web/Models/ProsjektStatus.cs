@@ -16,7 +16,7 @@ public static class ProsjektStatusExtensions
     public static string Visningsnavn(this ProsjektStatus status) => status switch
     {
         ProsjektStatus.Aktiv => "Aktiv (prosjektering pågår)",
-        ProsjektStatus.Tilbud => "Tilbud",
+        ProsjektStatus.Tilbud => "Tilbud sendt",
         ProsjektStatus.TilbudAvslatt => "Tilbud avslått",
         ProsjektStatus.Registrert => "Registrert",
         ProsjektStatus.Avsluttet => "Avsluttet",
