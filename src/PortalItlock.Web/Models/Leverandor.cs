@@ -12,5 +12,9 @@ public class Leverandor
     public string? Sted { get; set; }
     public string? Notater { get; set; }
 
+    public byte[]? LogoData { get; set; }
+    public string? LogoContentType { get; set; }
+    public string? LogoFilnavn { get; set; }
+
     public List<ComponentLeverandor> Komponenter { get; set; } = [];
 }
