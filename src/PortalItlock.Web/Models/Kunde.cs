@@ -29,4 +29,5 @@ public class Kunde
     public List<Prosjekt> Prosjekter { get; set; } = [];
     public List<KundeOppfolgingNotat> OppfolgingNotater { get; set; } = [];
     public List<KundeLisens> Lisenser { get; set; } = [];
+    public List<KundeKontaktperson> Kontaktpersoner { get; set; } = [];
 }
