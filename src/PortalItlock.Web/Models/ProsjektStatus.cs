@@ -8,7 +8,11 @@ public enum ProsjektStatus
     Registrert,
     Avsluttet,
     Serviceavtale,
-    Overlevert
+    Overlevert,
+
+    // Lagt til etter de andre (ikke midt i lista) for at de lagrede
+    // tallverdiene til eksisterende prosjekter ikke skal endre betydning.
+    UnderArbeid
 }
 
 public static class ProsjektStatusExtensions
@@ -18,10 +22,11 @@ public static class ProsjektStatusExtensions
         ProsjektStatus.Aktiv => "Aktiv (prosjektering pågår)",
         ProsjektStatus.Tilbud => "Tilbud sendt",
         ProsjektStatus.TilbudAvslatt => "Tilbud avslått",
-        ProsjektStatus.Registrert => "Registrert/Under arbeid",
+        ProsjektStatus.Registrert => "Registrert",
         ProsjektStatus.Avsluttet => "Avsluttet",
         ProsjektStatus.Serviceavtale => "Serviceavtale",
         ProsjektStatus.Overlevert => "Overlevert",
+        ProsjektStatus.UnderArbeid => "Under arbeid",
         _ => status.ToString()
     };
 
@@ -34,6 +39,7 @@ public static class ProsjektStatusExtensions
         ProsjektStatus.Avsluttet => "check-circle",
         ProsjektStatus.Serviceavtale => "shield",
         ProsjektStatus.Overlevert => "check-circle",
+        ProsjektStatus.UnderArbeid => "clock",
         _ => "folder"
     };
 
@@ -46,6 +52,7 @@ public static class ProsjektStatusExtensions
         ProsjektStatus.Avsluttet => "noytral",
         ProsjektStatus.Serviceavtale => "lilla",
         ProsjektStatus.Overlevert => "gronn",
+        ProsjektStatus.UnderArbeid => "blaa",
         _ => "noytral"
     };
 }
