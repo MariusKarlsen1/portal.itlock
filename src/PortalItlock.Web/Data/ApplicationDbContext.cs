@@ -41,6 +41,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServiceKategoriPris> ServiceKategoriPriser => Set<ServiceKategoriPris>();
     public DbSet<DorHendelse> DorHendelser => Set<DorHendelse>();
     public DbSet<Nyhet> Nyheter => Set<Nyhet>();
+    public DbSet<Kunngjoring> Kunngjoringer => Set<Kunngjoring>();
     public DbSet<ServiceVarselSendt> ServiceVarselSendt => Set<ServiceVarselSendt>();
     public DbSet<Foresporsel> Foresporsler => Set<Foresporsel>();
     public DbSet<ForesporselMedia> ForesporselMedia => Set<ForesporselMedia>();

@@ -14,6 +14,7 @@ public class Bruker
 
     public int FerieKvote { get; set; } = 25;
     public int? SisteNyhetSettId { get; set; }
+    public int? SisteKunngjoringSettId { get; set; }
     public string? SkjulteNavLenker { get; set; }
     public string? TopplinjeSnarveier { get; set; }
 
