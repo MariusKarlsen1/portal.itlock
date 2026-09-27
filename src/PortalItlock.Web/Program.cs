@@ -931,6 +931,14 @@ app.MapGet("/leverandorlogo/{id:int}", async (int id, ApplicationDbContext db) =
         : Results.File(leverandor.LogoData, leverandor.LogoContentType ?? "application/octet-stream", leverandor.LogoFilnavn);
 }).RequireAuthorization();
 
+app.MapGet("/kundebilde/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var kunde = await db.Kunder.FindAsync(id);
+    return kunde?.BildeData is null
+        ? Results.NotFound()
+        : Results.File(kunde.BildeData, kunde.BildeContentType ?? "application/octet-stream", kunde.BildeFilnavn);
+}).RequireAuthorization();
+
 app.MapGet("/arbeidsordre/{id:int}/rapport/pdf", async (int id, HttpContext context, ArbeidsordrePdfService service) =>
 {
     var pdf = await service.GenerateAsync(id);

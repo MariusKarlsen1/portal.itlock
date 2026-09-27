@@ -13,6 +13,10 @@ public class Kunde
     public string? Sted { get; set; }
     public string? Notater { get; set; }
     public string? TripletexKundenummer { get; set; }
+
+    public byte[]? BildeData { get; set; }
+    public string? BildeContentType { get; set; }
+    public string? BildeFilnavn { get; set; }
     public DateTime? NesteOppfolgingsDato { get; set; }
     public decimal? FastPaslagProsent { get; set; }
 
