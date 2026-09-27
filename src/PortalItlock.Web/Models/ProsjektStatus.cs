@@ -18,7 +18,7 @@ public static class ProsjektStatusExtensions
         ProsjektStatus.Aktiv => "Aktiv (prosjektering pågår)",
         ProsjektStatus.Tilbud => "Tilbud sendt",
         ProsjektStatus.TilbudAvslatt => "Tilbud avslått",
-        ProsjektStatus.Registrert => "Registrert",
+        ProsjektStatus.Registrert => "Registrert/Under arbeid",
         ProsjektStatus.Avsluttet => "Avsluttet",
         ProsjektStatus.Serviceavtale => "Serviceavtale",
         ProsjektStatus.Overlevert => "Overlevert",

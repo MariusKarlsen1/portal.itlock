@@ -173,6 +173,7 @@
         {
             <a class="new-button prosjekt-admin-knapp" href="prosjekter/ny"><Icon Name="plus" />Nytt prosjekt</a>
             <a class="filter-button prosjekt-admin-knapp" href="prosjekter/ferdigstilte"><Icon Name="check-circle" />Ferdigstilte prosjekter</a>
+            <a class="filter-button prosjekt-admin-knapp" href="prosjekter/avslatte"><Icon Name="x" />Avslåtte prosjekter</a>
         }
         @if (!Verktoylinje.ErMobilvisning)
         {
@@ -202,12 +203,12 @@
             <button type="button" class="cancel-button" @onclick="@(() => _visFilter = false)">Lukk</button>
         </div>
         <ul class="funksjon-chip-list">
-            @foreach (var s in Enum.GetValues<ProsjektStatus>().Where(s => s != ProsjektStatus.Serviceavtale && s != ProsjektStatus.Overlevert))
+            @foreach (var s in StatusKolonneRekkefolge)
             {
                 <li>
                     <label class="filter-option">
-                        <input type="checkbox" checked="@_valgteStatusFilter.Contains(s)" @onchange="@(() => ToggleStatusFilter(s))" />
-                        @s.Visningsnavn()
+                        <input type="checkbox" checked="@_valgteStatusFilter.Contains(s!.Value)" @onchange="@(() => ToggleStatusFilter(s!.Value))" />
+                        @s!.Value.Visningsnavn()
                     </label>
                 </li>
             }
@@ -246,6 +247,10 @@
             <span class="flis-tall">@_alle.Count</span>
             <span class="flis-etikett">Totalt</span>
         </button>
+        <button type="button" class="flis @(_hurtigfilter == "registrert" ? "aktiv" : "")" @onclick='@(() => SettHurtigfilter("registrert"))'>
+            <span class="flis-tall flis-blaa">@_alle.Count(p => p.Status == ProsjektStatus.Registrert)</span>
+            <span class="flis-etikett">Registrert/Under arbeid</span>
+        </button>
         <button type="button" class="flis @(_hurtigfilter == "aktiv" ? "aktiv" : "")" @onclick='@(() => SettHurtigfilter("aktiv"))'>
             <span class="flis-tall flis-blaa">@_alle.Count(p => p.Status == ProsjektStatus.Aktiv)</span>
             <span class="flis-etikett">Aktiv</span>
@@ -253,10 +258,6 @@
         <button type="button" class="flis @(_hurtigfilter == "tilbud" ? "aktiv" : "")" @onclick='@(() => SettHurtigfilter("tilbud"))'>
             <span class="flis-tall flis-gul">@_alle.Count(p => p.Status == ProsjektStatus.Tilbud)</span>
             <span class="flis-etikett">Tilbud sendt</span>
-        </button>
-        <button type="button" class="flis @(_hurtigfilter == "avsluttet" ? "aktiv" : "")" @onclick='@(() => SettHurtigfilter("avsluttet"))'>
-            <span class="flis-tall">@_alle.Count(p => p.Status == ProsjektStatus.Avsluttet)</span>
-            <span class="flis-etikett">Avsluttet</span>
         </button>
     </div>
 }
@@ -444,14 +445,15 @@ else
     // Rekkefølgen kanban-kolonnene vises i på skrivebordsvisningen - samme
     // rekkefølge som prosessen faktisk går i. Status er nå påkrevd ved
     // opprettelse (se Lagre() i ProsjektSkjema.razor), så det skal ikke
-    // lenger kunne oppstå prosjekter uten status.
+    // lenger kunne oppstå prosjekter uten status. Tilbud avslått, Avsluttet,
+    // Overlevert og Serviceavtale er ikke egne kolonner her - de flytter
+    // prosjektet til et eget arkiv (Avslåtte/Ferdigstilte prosjekter,
+    // eller serviceavtale-modulen) i stedet.
     private static readonly ProsjektStatus?[] StatusKolonneRekkefolge =
     [
-        ProsjektStatus.Aktiv,
-        ProsjektStatus.Tilbud,
-        ProsjektStatus.TilbudAvslatt,
         ProsjektStatus.Registrert,
-        ProsjektStatus.Avsluttet
+        ProsjektStatus.Aktiv,
+        ProsjektStatus.Tilbud
     ];
 
     private static string PersonInitialer(string navn)
@@ -584,9 +586,9 @@ else
         {
             IEnumerable<ProsjektRad> rader = _basisFiltrert.Where(p => _hurtigfilter switch
             {
+                "registrert" => p.Status == ProsjektStatus.Registrert,
                 "aktiv" => p.Status == ProsjektStatus.Aktiv,
                 "tilbud" => p.Status == ProsjektStatus.Tilbud,
-                "avsluttet" => p.Status == ProsjektStatus.Avsluttet,
                 _ => true
             });
 
@@ -667,11 +669,18 @@ else
             }
         }
 
-        // Ferdigstilte (Overlevert) prosjekter vises ikke i denne lista -
-        // de finnes i stedet under "Ferdigstilte prosjekter" (se
-        // ProsjekterFerdigstilte.razor), samme prinsipp som Fakturert-status
-        // holdes utenfor arbeidsordre-lista.
-        IQueryable<Prosjekt> query = Db.Prosjekter.Where(p => p.Status != ProsjektStatus.Serviceavtale && p.Status != ProsjektStatus.Overlevert);
+        // Ferdigstilte (Overlevert) og avslåtte (TilbudAvslatt) prosjekter
+        // vises ikke i denne lista - de finnes i stedet under egne arkiv-sider
+        // ("Ferdigstilte prosjekter" / "Avslåtte prosjekter", se
+        // ProsjekterFerdigstilte.razor / ProsjekterAvslatte.razor), samme
+        // prinsipp som Fakturert-status holdes utenfor arbeidsordre-lista.
+        // Avsluttet er en pensjonert status (kan ikke lenger velges i
+        // ProsjektSkjema) og holdes derfor også utenfor.
+        IQueryable<Prosjekt> query = Db.Prosjekter.Where(p =>
+            p.Status != ProsjektStatus.Serviceavtale
+            && p.Status != ProsjektStatus.Overlevert
+            && p.Status != ProsjektStatus.TilbudAvslatt
+            && p.Status != ProsjektStatus.Avsluttet);
         if (_naverendeRolle == BrukerRolle.Montor)
         {
             query = query.Where(p => p.Medlemmer.Any(m => m.Id == _naverendeBrukerId));
