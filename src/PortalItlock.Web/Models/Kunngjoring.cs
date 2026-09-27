@@ -11,4 +11,8 @@ public class Kunngjoring
 
     public int? OpprettetAvBrukerId { get; set; }
     public Bruker? OpprettetAvBruker { get; set; }
+
+    public byte[]? BildeData { get; set; }
+    public string? BildeContentType { get; set; }
+    public string? BildeFilnavn { get; set; }
 }

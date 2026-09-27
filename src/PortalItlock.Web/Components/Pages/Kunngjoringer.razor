@@ -49,6 +49,17 @@
                 Fest øverst
             </label>
         </div>
+        <label>
+            Bilde (valgfritt)
+            <InputFile OnChange="LastOppBilde" accept="image/*" />
+        </label>
+        @if (_nyBildeData is not null)
+        {
+            <p class="kunngjoring-bilde-valgt">
+                Bilde valgt: @_nyBildeFilnavn
+                <button type="button" class="remove-button" @onclick="FjernValgtBilde">Fjern</button>
+            </p>
+        }
         @if (!string.IsNullOrEmpty(_feil))
         {
             <p class="form-error">@_feil</p>
@@ -70,21 +81,30 @@ else
         @foreach (var k in _kunngjoringer)
         {
             <div class="kunngjoring-post" @key="k.Id">
-                <div class="kunngjoring-post-header">
-                    <StatusPill Tekst="@k.Kategori.Visningsnavn()" Ikon="@k.Kategori.PillIkon()" Farge="@k.Kategori.PillFarge()" />
-                    @if (k.Festet)
-                    {
-                        <span class="kunngjoring-festet"><Icon Name="heart" /> Festet</span>
-                    }
-                    <span class="kunngjoring-dato">@k.OpprettetDato.ToString("d. MMMM yyyy", _kultur)</span>
-                    @if (ErAdminEllerPl)
-                    {
-                        <button type="button" class="remove-button" @onclick="@(() => Slett(k))">Slett</button>
-                    }
+                @if (k.BildeData is not null)
+                {
+                    <div class="kunngjoring-cover" style="background-image:url('@($"/kunngjoringbilde/{k.Id}")');"></div>
+                }
+                <div class="kunngjoring-post-body">
+                    <div class="kunngjoring-post-header">
+                        <StatusPill Tekst="@k.Kategori.Visningsnavn()" Ikon="@k.Kategori.PillIkon()" Farge="@k.Kategori.PillFarge()" />
+                        @if (k.Festet)
+                        {
+                            <span class="kunngjoring-festet"><Icon Name="heart" /> Festet</span>
+                        }
+                        <span class="kunngjoring-dato">@k.OpprettetDato.ToString("d. MMMM yyyy", _kultur)</span>
+                        @if (ErAdminEllerPl)
+                        {
+                            <button type="button" class="remove-button" @onclick="@(() => Slett(k))">Slett</button>
+                        }
+                    </div>
+                    <h2>@k.Tittel</h2>
+                    <p class="kunngjoring-tekst">@k.Innhold</p>
+                    <div class="kunngjoring-forfatter-rad">
+                        <span class="kunngjoring-avatar" style="background:@AvatarFarge(k.OpprettetAvBruker?.Navn ?? "?");">@Initialer(k.OpprettetAvBruker?.Navn ?? "?")</span>
+                        <span class="kunngjoring-forfatter">@(k.OpprettetAvBruker?.Navn ?? "Ukjent")</span>
+                    </div>
                 </div>
-                <h2>@k.Tittel</h2>
-                <p class="kunngjoring-tekst">@k.Innhold</p>
-                <p class="kunngjoring-forfatter">@(k.OpprettetAvBruker?.Navn ?? "Ukjent")</p>
             </div>
         }
     </div>
@@ -99,7 +119,25 @@ else
     private string _nyInnhold = "";
     private KunngjoringKategori _nyKategori = KunngjoringKategori.Info;
     private bool _nyFestet;
+    private byte[]? _nyBildeData;
+    private string? _nyBildeContentType;
+    private string? _nyBildeFilnavn;
     private string? _feil;
+
+    private static readonly string[] _avatarPaletten = ["#835e41", "#2054a3", "#a1690a", "#2b7a4b", "#7a2b96", "#a32020"];
+
+    private static string AvatarFarge(string navn) => _avatarPaletten[Math.Abs(navn.GetHashCode()) % _avatarPaletten.Length];
+
+    private static string Initialer(string navn)
+    {
+        var deler = navn.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return deler.Length switch
+        {
+            0 => "?",
+            1 => deler[0][..Math.Min(2, deler[0].Length)].ToUpperInvariant(),
+            _ => string.Concat(deler[0][0], deler[^1][0]).ToUpperInvariant()
+        };
+    }
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -154,6 +192,34 @@ else
         }
     }
 
+    private async Task LastOppBilde(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        var fil = e.File;
+        if (fil.Size > 8_000_000)
+        {
+            _feil = $"\"{fil.Name}\" er for stort (maks 8 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = fil.OpenReadStream(maxAllowedSize: 8_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        _nyBildeData = buffer.ToArray();
+        _nyBildeContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType;
+        _nyBildeFilnavn = fil.Name;
+    }
+
+    private void FjernValgtBilde()
+    {
+        _nyBildeData = null;
+        _nyBildeContentType = null;
+        _nyBildeFilnavn = null;
+    }
+
     private async Task Opprett()
     {
         if (string.IsNullOrWhiteSpace(_nyTittel) || string.IsNullOrWhiteSpace(_nyInnhold))
@@ -168,7 +234,10 @@ else
             Innhold = _nyInnhold.Trim(),
             Kategori = _nyKategori,
             Festet = _nyFestet,
-            OpprettetAvBrukerId = _naverendeBrukerId
+            OpprettetAvBrukerId = _naverendeBrukerId,
+            BildeData = _nyBildeData,
+            BildeContentType = _nyBildeContentType,
+            BildeFilnavn = _nyBildeFilnavn
         });
         await Db.SaveChangesAsync();
 
@@ -177,6 +246,7 @@ else
         _nyInnhold = "";
         _nyKategori = KunngjoringKategori.Info;
         _nyFestet = false;
+        FjernValgtBilde();
         _visNyForm = false;
         await LastAsync();
         await MarkerSomLestAsync();
