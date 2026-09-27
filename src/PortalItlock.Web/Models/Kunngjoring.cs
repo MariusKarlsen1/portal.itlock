@@ -15,4 +15,7 @@ public class Kunngjoring
     public byte[]? BildeData { get; set; }
     public string? BildeContentType { get; set; }
     public string? BildeFilnavn { get; set; }
+
+    public List<KunngjoringLike> Likes { get; set; } = [];
+    public List<KunngjoringKommentar> Kommentarer { get; set; } = [];
 }

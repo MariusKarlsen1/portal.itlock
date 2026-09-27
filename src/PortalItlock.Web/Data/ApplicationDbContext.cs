@@ -42,6 +42,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<DorHendelse> DorHendelser => Set<DorHendelse>();
     public DbSet<Nyhet> Nyheter => Set<Nyhet>();
     public DbSet<Kunngjoring> Kunngjoringer => Set<Kunngjoring>();
+    public DbSet<KunngjoringLike> KunngjoringLikes => Set<KunngjoringLike>();
+    public DbSet<KunngjoringKommentar> KunngjoringKommentarer => Set<KunngjoringKommentar>();
     public DbSet<ServiceVarselSendt> ServiceVarselSendt => Set<ServiceVarselSendt>();
     public DbSet<Foresporsel> Foresporsler => Set<Foresporsel>();
     public DbSet<ForesporselMedia> ForesporselMedia => Set<ForesporselMedia>();
@@ -291,6 +293,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         modelBuilder.Entity<PlukklisteLinje>()
             .HasIndex(p => new { p.ProsjektId, p.ComponentId })
+            .IsUnique();
+
+        modelBuilder.Entity<KunngjoringLike>()
+            .HasIndex(l => new { l.KunngjoringId, l.BrukerId })
             .IsUnique();
 
         modelBuilder.Entity<NokkelSylinder>(entity =>

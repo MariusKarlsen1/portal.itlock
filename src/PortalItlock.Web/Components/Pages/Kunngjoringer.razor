@@ -103,6 +103,38 @@ else
                     <div class="kunngjoring-forfatter-rad">
                         <span class="kunngjoring-avatar" style="background:@AvatarFarge(k.OpprettetAvBruker?.Navn ?? "?");">@Initialer(k.OpprettetAvBruker?.Navn ?? "?")</span>
                         <span class="kunngjoring-forfatter">@(k.OpprettetAvBruker?.Navn ?? "Ukjent")</span>
+                        <button type="button" class="kunngjoring-like-knapp @(HarLikt(k) ? "likt" : "")" @onclick="@(() => ToggleLike(k))" title="@(HarLikt(k) ? "Fjern liker" : "Lik")">
+                            <Icon Name="heart" />
+                            @if (k.Likes.Count > 0)
+                            {
+                                <span>@k.Likes.Count</span>
+                            }
+                        </button>
+                    </div>
+
+
+                    @if (k.Kommentarer.Count > 0)
+                    {
+                        <div class="kunngjoring-kommentarer">
+                            @foreach (var kom in k.Kommentarer.OrderBy(c => c.OpprettetDato))
+                            {
+                                <div class="kunngjoring-kommentar" @key="kom.Id">
+                                    <span class="kunngjoring-avatar kunngjoring-avatar-liten" style="background:@AvatarFarge(kom.Bruker?.Navn ?? "?");">@Initialer(kom.Bruker?.Navn ?? "?")</span>
+                                    <div class="kunngjoring-kommentar-boble">
+                                        <strong>@(kom.Bruker?.Navn ?? "Ukjent")</strong>
+                                        <p>@kom.Tekst</p>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    <div class="kunngjoring-kommentar-input-rad">
+                        <span class="kunngjoring-avatar kunngjoring-avatar-liten" style="background:@AvatarFarge(_naverendeBruker?.Navn ?? "?");">@Initialer(_naverendeBruker?.Navn ?? "?")</span>
+                        <input placeholder="Skriv en kommentar..." value="@GetUtkast(k.Id)"
+                               @oninput="@(e => _kommentarUtkast[k.Id] = e.Value?.ToString() ?? "")"
+                               @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilKommentar(k); } })" />
+                        <button type="button" @onclick="@(() => LeggTilKommentar(k))">Send</button>
                     </div>
                 </div>
             </div>
@@ -141,7 +173,13 @@ else
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
+    private Bruker? _naverendeBruker;
     private bool ErAdminEllerPl;
+    private readonly Dictionary<int, string> _kommentarUtkast = [];
+
+    private string GetUtkast(int kunngjoringId) => _kommentarUtkast.GetValueOrDefault(kunngjoringId, "");
+
+    private bool HarLikt(Kunngjoring k) => _naverendeBrukerId is not null && k.Likes.Any(l => l.BrukerId == _naverendeBrukerId);
 
     protected override async Task OnInitializedAsync()
     {
@@ -155,6 +193,7 @@ else
             if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
             {
                 _naverendeBrukerId = bid;
+                _naverendeBruker = await Db.Brukere.FindAsync(bid);
             }
         }
 
@@ -166,9 +205,58 @@ else
     {
         _kunngjoringer = await Db.Kunngjoringer
             .Include(k => k.OpprettetAvBruker)
+            .Include(k => k.Likes)
+            .Include(k => k.Kommentarer).ThenInclude(kom => kom.Bruker)
             .OrderByDescending(k => k.Festet)
             .ThenByDescending(k => k.OpprettetDato)
             .ToListAsync();
+    }
+
+    private async Task ToggleLike(Kunngjoring k)
+    {
+        if (_naverendeBrukerId is null)
+        {
+            return;
+        }
+
+        var eksisterende = await Db.KunngjoringLikes
+            .FirstOrDefaultAsync(l => l.KunngjoringId == k.Id && l.BrukerId == _naverendeBrukerId);
+
+        if (eksisterende is not null)
+        {
+            Db.KunngjoringLikes.Remove(eksisterende);
+            k.Likes.RemoveAll(l => l.BrukerId == _naverendeBrukerId);
+        }
+        else
+        {
+            var ny = new KunngjoringLike { KunngjoringId = k.Id, BrukerId = _naverendeBrukerId.Value };
+            Db.KunngjoringLikes.Add(ny);
+            k.Likes.Add(ny);
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LeggTilKommentar(Kunngjoring k)
+    {
+        var tekst = GetUtkast(k.Id).Trim();
+        if (string.IsNullOrWhiteSpace(tekst))
+        {
+            return;
+        }
+
+        var kommentar = new KunngjoringKommentar
+        {
+            KunngjoringId = k.Id,
+            Tekst = tekst,
+            BrukerId = _naverendeBrukerId
+        };
+        Db.KunngjoringKommentarer.Add(kommentar);
+        await Db.SaveChangesAsync();
+
+        kommentar.Bruker = _naverendeBruker;
+        k.Kommentarer.Add(kommentar);
+        _kommentarUtkast[k.Id] = "";
     }
 
     private async Task MarkerSomLestAsync()
