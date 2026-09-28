@@ -15,11 +15,12 @@ public record VarselTeller(
     int TicketerVarsel,
     int CeGodkjenningerVarsel,
     int KlarTilFaktureringVarsel,
-    int LisensVarsel)
+    int LisensVarsel,
+    int ForesporslerVarsel)
 {
     public int Totalt => AvvikSomVenter + ServiceavtalerVarsel + KunderTrengerOppfolging + VarerLavBeholdning
         + FravarSoknaderVenter + TilvalgVarsel + DriftsmeldingerVarsel + TicketerVarsel + CeGodkjenningerVarsel
-        + KlarTilFaktureringVarsel + LisensVarsel;
+        + KlarTilFaktureringVarsel + LisensVarsel + ForesporslerVarsel;
 }
 
 // Delt mellom NavMenu (venstremeny-badge) og TopBar (brukermeny-badge), slik at
@@ -39,6 +40,7 @@ public class VarselTellerService(ApplicationDbContext db)
         var ceGodkjenningerVarsel = 0;
         var klarTilFaktureringVarsel = 0;
         var lisensVarsel = 0;
+        var foresporslerVarsel = 0;
 
         if (visUtvidet)
         {
@@ -83,6 +85,8 @@ public class VarselTellerService(ApplicationDbContext db)
 
             var lisensTerskel = DateTime.Today.AddDays(30);
             lisensVarsel = await db.KundeLisenser.CountAsync(l => l.UtlopsDato.Date <= lisensTerskel);
+
+            foresporslerVarsel = await db.Foresporsler.CountAsync(f => !f.Lest);
         }
 
         var fravarSoknaderVenter = erAdmin
@@ -92,6 +96,6 @@ public class VarselTellerService(ApplicationDbContext db)
         return new VarselTeller(
             avvikSomVenter, serviceavtalerVarsel, kunderTrengerOppfolging, varerLavBeholdning,
             fravarSoknaderVenter, tilvalgVarsel, driftsmeldingerVarsel, ticketerVarsel, ceGodkjenningerVarsel,
-            klarTilFaktureringVarsel, lisensVarsel);
+            klarTilFaktureringVarsel, lisensVarsel, foresporslerVarsel);
     }
 }
