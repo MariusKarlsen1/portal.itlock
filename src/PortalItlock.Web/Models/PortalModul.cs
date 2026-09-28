@@ -74,7 +74,7 @@ public static class PortalModulRegister
         new Lenke("Tilvalg", "Publiserte og besvarte tilvalg på tvers av prosjekter.", "tilvalg", "tag"),
         new Lenke("Tilvalgsmaler", "Ferdige maler med alternativer, bilder og priser til gjenbruk.", "tilvalgmaler", "receipt"),
         new Lenke("Forsider", "Lag forside-/forbeholdstekster til bruk på tilbud.", "forsider", "folder"),
-        new Lenke("Timegodkjenning", "Godkjenn innsendte timer, se sammendrag og eksporter til lønn.", "timegodkjenning", "check-circle"),
+        new Lenke("Godkjenninger", "Godkjenn innsendte timer og fraværssøknader, se sammendrag og eksporter til lønn.", "timegodkjenning", "check-circle"),
         new Lenke("Hjemmesidetekster", "Rediger overskrift, ingress og rolle-tekstene på forsiden.", "hjemmesidetekster", "users"),
         new Lenke("CE-sertifisering", "Sett CE-kategori og standarddokument på beslagstyper, og grenseverdier for mål.", "ce-oppsett", "check-circle"),
         new Lenke("Nyheter", "Se automatisk genererte \"Hva er nytt\"-oppdateringer som vises på forsiden til alle brukere.", "nyheter", "bell"),
