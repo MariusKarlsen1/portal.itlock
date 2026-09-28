@@ -226,15 +226,20 @@
                             </div>
                         }
 
-                        @foreach (var gruppe in GrupperteLenker)
+                        @foreach (var (modul, undermoduler) in ModulGrupper)
                         {
-                            <p class="innstillinger-gruppe-navn">@gruppe.RolleTittel</p>
-                            @foreach (var lenke in gruppe.Lenker)
+                            <p class="innstillinger-gruppe-navn">@modul.Tittel</p>
+                            <div class="innstillinger-rad-2col">
+                                <span class="innstillinger-lenke-navn">Hele modulen</span>
+                                <input type="checkbox" title="Vis i venstremeny" checked="@(!_skjulteLenker.Contains(modul.Href))" @onchange="@(e => ToggleLenke(modul.Href, (bool)e.Value!))" />
+                                <input type="checkbox" title="Vis som snarvei ved navnet" checked="@(_snarveier.Contains(modul.Href))" @onchange="@(e => ToggleSnarvei(modul.Href, (bool)e.Value!))" />
+                            </div>
+                            @foreach (var under in undermoduler)
                             {
-                                <div class="innstillinger-rad-2col">
-                                    <span class="innstillinger-lenke-navn">@lenke.Tittel</span>
-                                    <input type="checkbox" title="Vis i venstremeny" checked="@(!_skjulteLenker.Contains(lenke.Href))" @onchange="@(e => ToggleLenke(lenke.Href, (bool)e.Value!))" />
-                                    <input type="checkbox" title="Vis som snarvei ved navnet" checked="@(_snarveier.Contains(lenke.Href))" @onchange="@(e => ToggleSnarvei(lenke.Href, (bool)e.Value!))" />
+                                <div class="innstillinger-rad-2col innstillinger-rad-undermodul">
+                                    <span class="innstillinger-lenke-navn">@under.Tittel</span>
+                                    <input type="checkbox" title="Vis i venstremeny" checked="@(_ekstraLenker.Contains(under.Href))" @onchange="@(e => ToggleEkstraLenke(under.Href, (bool)e.Value!))" />
+                                    <input type="checkbox" title="Vis som snarvei ved navnet" checked="@(_snarveier.Contains(under.Href))" @onchange="@(e => ToggleSnarvei(under.Href, (bool)e.Value!))" />
                                 </div>
                             }
                         }
@@ -259,6 +264,7 @@
     private Bruker? _naverendeBruker;
     private HashSet<string> _skjulteLenker = [];
     private HashSet<string> _snarveier = [];
+    private HashSet<string> _ekstraLenker = [];
     private bool _visUtvidetVarsel;
     private bool _erAdmin;
     private bool _visBrukerMeny;
@@ -327,26 +333,32 @@
         }
     }
 
-    private List<(string RolleTittel, List<Lenke> Lenker)> GrupperteLenker
+    // Flat pool av BÅDE modul-hubene og deres undermoduler (f.eks.
+    // "Arbeidsordre" inni "Prosjekt modul") - brukes til snarvei-listen øverst,
+    // slik at en fastnålet undermodul også kan vises som snarvei ved navnet,
+    // ikke bare selve huben.
+    private List<Lenke> AlleLenkerInklUndermoduler => TilgjengeligeLenker
+        .SelectMany(hub => new[] { hub }.Concat(hub.Undermoduler ?? []))
+        .ToList();
+
+    // Grupperer Tilpass meny PER MODUL (hub) i stedet for per rolle, slik at
+    // f.eks. "Arbeidsordre" dukker opp som egen rad under "Prosjekt modul" -
+    // ikke bare som ett samlet av/på-valg for hele huben. Modulen selv beholder
+    // opt-out-oppførselen (vist med mindre den er skjult), mens undermodulene
+    // er opt-in (skjult med mindre eksplisitt lagt til) siden det ville blitt
+    // altfor mange lenker i sidemenyen om alle vistes som standard.
+    private List<(Lenke Modul, List<Lenke> Undermoduler)> ModulGrupper
     {
         get
         {
-            var nokler = _naverendeRolle switch
-            {
-                BrukerRolle.Admin => new[] { "montorer", "prosjektledere", "admin" },
-                BrukerRolle.Prosjektleder => new[] { "montorer", "prosjektledere" },
-                BrukerRolle.Montor => new[] { "montorer" },
-                _ => []
-            };
-
-            return PortalModulRegister.Roller
-                .Where(r => nokler.Contains(r.Nokkel))
-                .Select(r => (r.Tittel, r.Grupper.SelectMany(g => g.Lenker).ToList()))
+            return TilgjengeligeLenker
+                .DistinctBy(hub => hub.Href)
+                .Select(hub => (hub, hub.Undermoduler ?? []))
                 .ToList();
         }
     }
 
-    private List<Lenke> Snarveier => TilgjengeligeLenker.Where(l => _snarveier.Contains(l.Href)).ToList();
+    private List<Lenke> Snarveier => AlleLenkerInklUndermoduler.Where(l => _snarveier.Contains(l.Href)).ToList();
 
     protected override async Task OnInitializedAsync()
     {
@@ -382,6 +394,11 @@
             _snarveier = string.IsNullOrWhiteSpace(snarveier)
                 ? []
                 : snarveier.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+
+            var ekstra = _naverendeBruker?.EkstraNavLenker;
+            _ekstraLenker = string.IsNullOrWhiteSpace(ekstra)
+                ? []
+                : ekstra.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
 
             Presence.Registrer(_oktId, _naverendeBrukerId.Value, _naverendeBruker?.Navn ?? "Ukjent bruker");
         }
@@ -541,6 +558,33 @@
             if (bruker is not null)
             {
                 bruker.TopplinjeSnarveier = _snarveier.Count == 0 ? null : string.Join(",", _snarveier);
+                await Db.SaveChangesAsync();
+            }
+        }
+    }
+
+    // Fastnåler en undermodul (f.eks. "Arbeidsordre") i venstremenyen - se
+    // NavMenu.razor sin bruk av samme Bruker.EkstraNavLenker. Motsatt av
+    // ToggleLenke/SkjulteNavLenker: undermoduler er skjult med mindre de er
+    // lagt til her (opt-in), ellers ville sidemenyen blitt full av alle
+    // undermoduler for alle roller med det samme.
+    private async Task ToggleEkstraLenke(string key, bool vis)
+    {
+        if (vis)
+        {
+            _ekstraLenker.Add(key);
+        }
+        else
+        {
+            _ekstraLenker.Remove(key);
+        }
+
+        if (_naverendeBrukerId.HasValue)
+        {
+            var bruker = await Db.Brukere.FindAsync(_naverendeBrukerId.Value);
+            if (bruker is not null)
+            {
+                bruker.EkstraNavLenker = _ekstraLenker.Count == 0 ? null : string.Join(",", _ekstraLenker);
                 await Db.SaveChangesAsync();
             }
         }
