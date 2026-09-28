@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Http
+@using Microsoft.AspNetCore.Components.Authorization
 @using PortalItlock.Web.Models
 @inject NavigationManager Nav
 
@@ -67,9 +68,34 @@ else
     // klassen blir riktig på hver eneste veksling og består uendret gjennom vanlig
     // SPA-navigasjon innad i samme fullversjon-økt.
     [CascadingParameter] private HttpContext? HttpContext { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private bool ErFullversjon =>
         HttpContext is not null && HttpContext.Request.Query.ContainsKey("fullversjon");
+
+    // Brukerens egen rolle-nøkkel (se PortalModulRegister.Roller), brukt som
+    // fallback-mål for "Hjem"-lenken på sluttdestinasjoner uten "?rolle="
+    // i URL-en fra før (f.eks. nådd via sidemenyen i stedet for forsidens
+    // modul-modal) - se GeneriskTilbakeMal under.
+    private string? _egenRolleNokkel;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+        _egenRolleNokkel = rolleClaim switch
+        {
+            "Montor" => "montorer",
+            "Prosjektleder" => "prosjektledere",
+            "Admin" => "admin",
+            _ => null
+        };
+    }
 
     // Alle sluttdestinasjoner i portalen (alt utenom forsiden "/") vises uten
     // sidemeny/toppfelt på skrivebord - kun innholdet sentrert, med en
@@ -86,11 +112,12 @@ else
         }
     }
 
-    // "Ett steg tilbake mot hjem": hvis siden er en kjent undermodul av en
-    // hub (f.eks. Befaringsliste under Befaring), gå dit først i stedet for
-    // rett hjem - fra hub-siden går man videre hjem via dens egen tilbakepil.
-    // Ukjente sider (uten registrert forelder) går rett til forsiden. Denne
-    // lenken vises alltid i markup, men CSS skjuler den automatisk (via
+    // Sluttdestinasjoner (f.eks. Befaringsliste under Befaring-huben) går
+    // ALLTID rett hjem - ikke bare ett steg opp til hub-siden - slik at man
+    // fra hvor som helst i en hub kommer seg helt tilbake til rollevisningen
+    // man startet fra i ett trykk. Hub-sidene selv (uten registrert forelder
+    // her) beholder sin egen faste "Til hjem"-lenke uendret. Denne lenken
+    // vises alltid i markup, men CSS skjuler den automatisk (via
     // :has(.back-link)) på sider som allerede har sin egen tilbakepil fra før
     // - unngår å måtte holde styr på hvilke sider det gjelder her i C#.
     //
@@ -124,7 +151,12 @@ else
 
             var path = new Uri(Nav.Uri).AbsolutePath.TrimEnd('/');
             var forelder = PortalModulRegister.FinnForelderHub(path);
-            return forelder is { } f ? ("/" + f.Href.TrimStart('/'), f.Tittel) : ("/", "hjem");
+            if (forelder is null)
+            {
+                return ("/", "hjem");
+            }
+
+            return (_egenRolleNokkel is null ? "/" : $"/?rolle={_egenRolleNokkel}", "hjem");
         }
     }
 
