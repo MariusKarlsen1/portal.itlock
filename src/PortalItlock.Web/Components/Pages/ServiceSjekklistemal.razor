@@ -8,46 +8,83 @@
 
 <PageTitle>Sjekkliste for servicerunder</PageTitle>
 
-<h1>Sjekkliste for servicerunder</h1>
-<p>Denne sjekklisten legges automatisk til hver gang en ny servicerunde registreres i Serviceavtaler-modulen, slik at punktene kan hukes av på stedet eller årlig.</p>
-
-@if (_punkter.Count == 0)
-{
-    <p class="list-empty">Ingen punkter lagt til ennå.</p>
-}
-else
-{
-    <ol class="punkt-list">
-        @foreach (var punkt in _punkter.OrderBy(p => p.Rekkefolge))
-        {
-            <li @key="punkt.Id">
-                <input @bind="punkt.Tekst" @bind:event="oninput" />
-                <button type="button" class="remove-button" @onclick="@(() => SlettPunkt(punkt))">Fjern</button>
-            </li>
-        }
-    </ol>
-    <button type="button" class="save-button" @onclick="LagreAlle">Lagre</button>
-}
-
-<div class="ny-mal">
-    <h2>Nytt punkt</h2>
-    <div class="ny-mal-form">
-        <input @bind="_nyttPunktTekst" @bind:event="oninput"
-               @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilPunkt(); } })"
-               placeholder="Nytt sjekkpunkt" />
-        <button type="button" class="add-button" @onclick="LeggTilPunkt">Legg til punkt</button>
+<div class="side-header">
+    <span class="side-header-ikon"><Icon Name="check-circle" /></span>
+    <div>
+        <h1>Sjekkliste for servicerunder</h1>
+        <p class="section-hint">Denne sjekklisten legges automatisk til hver gang en ny servicerunde registreres i Serviceavtaler-modulen, slik at punktene kan hukes av på stedet eller årlig.</p>
     </div>
 </div>
 
-@if (!string.IsNullOrEmpty(_melding))
-{
-    <p class="save-success">@_melding</p>
-}
+<div class="service-splitt">
+    <div class="mal-editor">
+        @if (_punkter.Count == 0)
+        {
+            <p class="list-empty">Ingen punkter lagt til ennå.</p>
+        }
+        else
+        {
+            <ol class="punkt-list">
+                @foreach (var punkt in _punkter.OrderBy(p => p.Rekkefolge))
+                {
+                    <li @key="punkt.Id" class="@(_dragPunkt?.Id == punkt.Id ? "punkt-dragging" : "")"
+                        draggable="true"
+                        @ondragstart="@(() => OnDragStart(punkt))"
+                        @ondragover="@(() => { })" @ondragover:preventDefault
+                        @ondrop="@(() => OnDrop(punkt))">
+                        <span class="punkt-handle" title="Dra for å endre rekkefølge">⠿</span>
+                        <input @bind="punkt.Tekst" @bind:event="oninput" />
+                        <button type="button" class="knapp-liten-fjern" @onclick="@(() => SlettPunkt(punkt))">Fjern</button>
+                    </li>
+                }
+            </ol>
+        }
+
+        <div class="ny-punkt-form">
+            <input @bind="_nyttPunktTekst" @bind:event="oninput"
+                   @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilPunkt(); } })"
+                   placeholder="Nytt sjekkpunkt" />
+            <button type="button" class="knapp knapp-primaer" @onclick="LeggTilPunkt">Legg til punkt</button>
+        </div>
+
+        <div class="mal-editor-footer">
+            <button type="button" class="knapp knapp-primaer" @onclick="LagreAlle">Lagre endringer</button>
+            @if (!string.IsNullOrEmpty(_melding))
+            {
+                <span class="save-success">@_melding</span>
+            }
+        </div>
+    </div>
+
+    <div class="rapport-panel">
+        <div class="rapport-ark">
+            <div class="rapport-topp">
+                <span class="rapport-logo">itlock</span>
+                <span class="rapport-dato">Servicerapport &middot; @DateTime.Now.ToString("dd.MM.yyyy")</span>
+            </div>
+            <div class="rapport-tittel">Utført sjekkliste</div>
+            @if (_punkter.Count == 0)
+            {
+                <p class="rapport-tom">Ingen punkter lagt til ennå.</p>
+            }
+            else
+            {
+                @foreach (var punkt in _punkter.OrderBy(p => p.Rekkefolge))
+                {
+                    <div class="rapport-punkt" @key="punkt.Id"><span class="rapport-boks"></span>@punkt.Tekst</div>
+                }
+            }
+            <div class="rapport-fot">Signert av montør ved fullført servicerunde</div>
+        </div>
+        <p class="rapport-hint">Slik ser sjekklisten ut på servicerapporten kunden mottar.</p>
+    </div>
+</div>
 
 @code {
     private List<ServicerundeSjekklistepunkt> _punkter = [];
     private string _nyttPunktTekst = "";
     private string? _melding;
+    private ServicerundeSjekklistepunkt? _dragPunkt;
 
     protected override async Task OnInitializedAsync()
     {
@@ -103,5 +140,45 @@ else
 
         await Db.SaveChangesAsync();
         _melding = "Sjekklisten er lagret.";
+    }
+
+    private void OnDragStart(ServicerundeSjekklistepunkt punkt)
+    {
+        _dragPunkt = punkt;
+    }
+
+    private async Task OnDrop(ServicerundeSjekklistepunkt target)
+    {
+        if (_dragPunkt is null || _dragPunkt.Id == target.Id)
+        {
+            _dragPunkt = null;
+            return;
+        }
+
+        var ordnet = _punkter.OrderBy(p => p.Rekkefolge).ToList();
+        var dragget = ordnet.FirstOrDefault(p => p.Id == _dragPunkt.Id);
+        if (dragget is null)
+        {
+            _dragPunkt = null;
+            return;
+        }
+
+        ordnet.Remove(dragget);
+        var targetIndex = ordnet.FindIndex(p => p.Id == target.Id);
+        ordnet.Insert(targetIndex, dragget);
+
+        for (var i = 0; i < ordnet.Count; i++)
+        {
+            var nyRekkefolge = i + 1;
+            var entitet = await Db.ServicerundeSjekklistepunkter.FirstOrDefaultAsync(p => p.Id == ordnet[i].Id);
+            if (entitet is not null)
+            {
+                entitet.Rekkefolge = nyRekkefolge;
+            }
+            ordnet[i].Rekkefolge = nyRekkefolge;
+        }
+
+        await Db.SaveChangesAsync();
+        _dragPunkt = null;
     }
 }
