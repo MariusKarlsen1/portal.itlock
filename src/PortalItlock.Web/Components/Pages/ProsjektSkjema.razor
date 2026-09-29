@@ -436,6 +436,8 @@ else
                             <p class="section-hint">
                                 Enkel konsistenssjekk basert på registrerte brannklasser og dørfunksjoner i prosjektet
                                 (@(string.IsNullOrWhiteSpace(_form.Tek) ? "byggeregelverk ikke satt" : _form.Tek)) - ikke en juridisk vurdering.
+                                Sjekker selvlukkende-krav (C i brannklassen), rømningsvei/åpningskraft og sensor på
+                                automatikk - se <a href="/guide/regelverk" target="_blank">Regelverk-guiden</a> for kildene.
                                 Bruk som en påminnelse om å dobbeltsjekke, ikke et godkjentstempel.
                             </p>
 
@@ -448,11 +450,35 @@ else
                                 @if (DorerManglerLukker.Count > 0)
                                 {
                                     <div class="brannkontroll-gruppe">
-                                        <p class="brannkontroll-gruppe-tittel">Brannklassifisert dør uten lukkefunksjon (@DorerManglerLukker.Count)</p>
+                                        <p class="brannkontroll-gruppe-tittel">Selvlukkende krav (C) uten lukkefunksjon (@DorerManglerLukker.Count)</p>
                                         <div class="brannkontroll-liste">
                                             @foreach (var d in DorerManglerLukker)
                                             {
                                                 <button type="button" class="brannkontroll-chip" @onclick="@(() => SelectDoor(d))">@d.Dornummer <span class="brannkontroll-chip-detalj">(@d.Brann)</span></button>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                                @if (RomningsveiManglerAutomatikk.Count > 0)
+                                {
+                                    <div class="brannkontroll-gruppe">
+                                        <p class="brannkontroll-gruppe-tittel">Rømningsvei med selvlukkende krav (C), men uten dørautomatikk - maks åpningskraft (@RomningsveiManglerAutomatikk.Count)</p>
+                                        <div class="brannkontroll-liste">
+                                            @foreach (var d in RomningsveiManglerAutomatikk)
+                                            {
+                                                <button type="button" class="brannkontroll-chip" @onclick="@(() => SelectDoor(d))">@d.Dornummer <span class="brannkontroll-chip-detalj">(@d.Brann)</span></button>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                                @if (AutomatikkManglerSensor.Count > 0)
+                                {
+                                    <div class="brannkontroll-gruppe">
+                                        <p class="brannkontroll-gruppe-tittel">Dørautomatikk uten sikkerhetssensor (@AutomatikkManglerSensor.Count)</p>
+                                        <div class="brannkontroll-liste">
+                                            @foreach (var d in AutomatikkManglerSensor)
+                                            {
+                                                <button type="button" class="brannkontroll-chip" @onclick="@(() => SelectDoor(d))">@d.Dornummer</button>
                                             }
                                         </div>
                                     </div>
@@ -1820,18 +1846,42 @@ else
     private List<string> DistinkteByggetrinn =>
         ByggetrinnHelper.Sorter(_dorer.Select(d => d.Plantegning?.Byggetrinn).Where(b => !string.IsNullOrWhiteSpace(b)).Distinct()!).ToList();
 
-    // Enkel, mekanisk konsistenssjekk - IKKE en juridisk vurdering opp mot TEK/byggeregelverket.
-    // Flagger kun ting som er avledet av data allerede registrert på dørene: en brannklassifisert
-    // dør bør normalt ha en lukkefunksjon (dørlukker/automatikk), og dører i samme sone bør ha lik
-    // brannklasse med mindre noe tilsier annet - avvik er en påminnelse om å dobbeltsjekke.
-    private static readonly string[] LukkerNokkelord = ["lukker", "automatikk"];
+    // Enkel, mekanisk konsistenssjekk - IKKE en juridisk vurdering opp mot TEK/byggeregelverket eller
+    // maskindirektivet/NS-EN 16005. Flagger kun ting som er avledet av data allerede registrert på
+    // dørene, se "Regelverk"-guiden (Guider) for kildene sjekkene er basert på:
+    //  - En brannklasse med "C" (f.eks. EI60C, EI30-CSa) er selvlukkende-kravet i TEK17 §11-8 - slike
+    //    dører bør ha en lukkefunksjon (dørlukker eller automatikk) registrert.
+    //  - En slik dør som i tillegg er i rømningsvei bør ha AUTOMATIKK spesifikt (ikke bare manuell
+    //    dørlukker), av hensyn til maks åpningskraft for rømningsdører (TEK17 §12-13).
+    //  - Enhver dør med automatikk er en motordrevet dør (maskin) og bør ha en sikkerhetssensor
+    //    registrert, jf. maskindirektivet/NS-EN 16005-kravene til automatiske gangdører.
+    private static bool HarFunksjon(Dor d, params string[] nokkelord) =>
+        d.Funksjoner.Any(f => nokkelord.Any(n => f.Navn.Contains(n, StringComparison.OrdinalIgnoreCase)));
 
-    private static bool HarLukkefunksjon(Dor d) =>
-        d.Funksjoner.Any(f => LukkerNokkelord.Any(n => f.Navn.Contains(n, StringComparison.OrdinalIgnoreCase)));
+    private static bool KreverSelvlukking(Dor d) =>
+        !string.IsNullOrWhiteSpace(d.Brann) && d.Brann.Contains('C');
+
+    private static bool HarLukkefunksjon(Dor d) => HarFunksjon(d, "lukker", "automatikk");
+    private static bool HarAutomatikk(Dor d) => HarFunksjon(d, "automatikk");
+    private static bool ErRomningsvei(Dor d) => HarFunksjon(d, "rømning");
+    private static bool HarSikkerhetssensor(Dor d) => HarFunksjon(d, "sensor");
 
     private List<Dor> DorerManglerLukker =>
         _dorer
-            .Where(d => !string.IsNullOrWhiteSpace(d.Brann) && !HarLukkefunksjon(d))
+            .Where(d => KreverSelvlukking(d) && !HarLukkefunksjon(d))
+            .OrderBy(d => d.Dornummer)
+            .ToList();
+
+    private List<Dor> RomningsveiManglerAutomatikk =>
+        _dorer
+            .Where(d => KreverSelvlukking(d) && ErRomningsvei(d) && !HarAutomatikk(d))
+            .OrderBy(d => d.Dornummer)
+            .ToList();
+
+    private List<Dor> AutomatikkManglerSensor =>
+        _dorer
+            .Where(HarAutomatikk)
+            .Where(d => !HarSikkerhetssensor(d))
             .OrderBy(d => d.Dornummer)
             .ToList();
 
@@ -1846,6 +1896,8 @@ else
 
     private int AntallBrannavvik =>
         DorerManglerLukker.Select(d => d.Id)
+            .Union(RomningsveiManglerAutomatikk.Select(d => d.Id))
+            .Union(AutomatikkManglerSensor.Select(d => d.Id))
             .Union(SonerMedUliktBrannkrav.SelectMany(s => s.Dorer.Select(d => d.Id)))
             .Distinct()
             .Count();

@@ -17,6 +17,7 @@ public static class PortalModulRegister
         new Lenke("Kobling", "Guide for kobling.", "guide/kobling", "trend-up"),
         new Lenke("Dørmiljø", "Tegninger til bruk på befaring og i prosjektering.", "dormiljo", "box"),
         new Lenke("Oppsett adgangskontroll", "Guide for oppsett av adgangskontroll.", "guide/oppsett-adgangskontroll", "bell"),
+        new Lenke("Regelverk", "TEK17-brannkrav, maskindirektivet og NS-EN 16005 for dørautomatikk - kilder og huskeliste.", "guide/regelverk", "shield"),
     ];
 
     private static readonly List<Lenke> ProsjektMontorUndermoduler =
@@ -121,7 +122,7 @@ public static class PortalModulRegister
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Befaring", "Befaringsliste og utskiftning av lås", "befaringsmodul", "eye", BefaringUndermoduler),
-                    new Lenke("Guider", "Kobling, dørmiljø og oppsett adgangskontroll", "guidermodul", "tool", GuiderUndermoduler),
+                    new Lenke("Guider", "Kobling, dørmiljø, oppsett adgangskontroll og regelverk", "guidermodul", "tool", GuiderUndermoduler),
                     new Lenke("Prosjekt", "Prosjekter og arbeidsordre", "prosjektmodul", "folder", ProsjektMontorUndermoduler),
                     new Lenke("Timer og fravær", "Fravær og timeregistrering", "timerfravarmodul", "clock", TimerFravarUndermoduler),
                     new Lenke("Utskiftning av låskasse", "Søk opp gammel lås, se hva du trenger", "lasekasse-utskiftning", "tool"),
