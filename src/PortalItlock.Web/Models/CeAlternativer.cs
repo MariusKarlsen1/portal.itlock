@@ -23,6 +23,8 @@ public static class CeAlternativer
 
     public static readonly string[] Risikoklasser = ["Høy risiko", "Tolerert risiko"];
 
+    public static readonly string[] TekVersjoner = ["TEK10", "TEK17"];
+
     public static readonly string[] EnergiKlasser = ["Lav", "Høy"];
 
     public static readonly int[] GyldighetMånederAlternativer = [3, 6, 9, 12];

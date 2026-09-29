@@ -16,6 +16,7 @@ public class Prosjekt
     public string? System { get; set; }
     public string? Byggkategori { get; set; }
     public string? Risikoklasse { get; set; }
+    public string? Tek { get; set; }
     public int CeGyldighetMåneder { get; set; } = 12;
     public ProsjektStatus? Status { get; set; }
     public DateTime? OverlevertDato { get; set; }
