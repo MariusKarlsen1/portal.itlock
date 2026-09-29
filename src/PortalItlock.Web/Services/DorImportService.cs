@@ -6,6 +6,7 @@ namespace PortalItlock.Web.Services;
 
 public record DorImportRad(
     string Dornummer,
+    string? DorIdKode,
     string? Etasje,
     string? Sone,
     string? Romnr,
@@ -17,7 +18,20 @@ public record DorImportRad(
     string? Lyd,
     string? Energi,
     bool? FriBredde086,
-    string? Notater);
+    string? Notater,
+    // Type-/spesifikasjonsfelt som hører til Dør-ID-en (DorIdMal) - kun relevante når
+    // DorIdKode er satt, se DorImportModal.Importer().
+    string? FargeKarm,
+    string? Dorkonstruksjon,
+    string? FargeDorblad,
+    string? Karmtype,
+    string? Karmkonstruksjon,
+    string? Terskel,
+    string? Sparkeplate,
+    int? AMal,
+    int? BMal,
+    bool? GlassIDor,
+    string? Merknad);
 
 public record DorImportResultat(List<DorImportRad> Rader, string? Feil);
 
@@ -68,9 +82,20 @@ public class DorImportService(HttpClient http, IConfiguration config)
             {
                 ["type"] = "text",
                 ["text"] = "Dette er et dørskjema/dørliste fra en dørleverandør eller arkitekt. Les ut ALLE dørene som er " +
-                    "listet opp, og kall verktøyet lever_dorer med alle radene. Dørnummer (dør-ID/betegnelsen på døren) er " +
-                    "obligatorisk for hver rad - bruk nøyaktig samme dørnummer som i kilden, det brukes til å matche mot " +
-                    "eksisterende dører. La felt du ikke finner data for stå tomme/null, ikke gjett eller finn på verdier."
+                    "listet opp, og kall verktøyet lever_dorer med alle radene. Dørnummer (den unike betegnelsen/nummeret " +
+                    "på den fysiske døren, f.eks. \"203\" eller \"D101\") er obligatorisk for hver rad - bruk nøyaktig samme " +
+                    "dørnummer som i kilden, det brukes til å matche mot eksisterende dører. " +
+                    "VIKTIG om Dør-ID: mange dørskjema har i tillegg en EGEN kolonne kalt noe sånt som \"Dør-ID\", \"Type\", " +
+                    "\"Typebetegnelse\" eller \"Dørtype-kode\" (f.eks. \"A.YD100-N\", \"D01\", \"T30x21-2\") - dette er en " +
+                    "gjenbrukbar spesifikasjonskode som FLERE dører kan dele, og som gjerne definerer felles mål/brann-/" +
+                    "lydkrav for den typen. Denne er forskjellig fra selve dørnummeret. Hvis skjemaet har en slik egen " +
+                    "kolonne, fyll den ut i dorIdKode - ikke bland den sammen med dornummer, og ikke fyll ut dorIdKode med " +
+                    "en verdi som bare er en kopi av dornummer med mindre kilden faktisk bruker samme kolonne til begge. " +
+                    "Hvis skjemaet ikke har noen slik egen kode, la dorIdKode stå tom. " +
+                    "Når det finnes en Dør-ID, fyll også ut alt av type-/produktinfo du finner for den i skjemaet, ikke " +
+                    "bare mål/brann/lyd: farge på karm og dørblad, dørkonstruksjon, karmtype/-konstruksjon, terskel, " +
+                    "sparkeplate, A-mål/B-mål, om det er glass i døren, og eventuell merknad/fritekst knyttet til typen. " +
+                    "La ellers felt du ikke finner data for stå tomme/null, ikke gjett eller finn på verdier."
             }
         };
 
@@ -124,6 +149,7 @@ public class DorImportService(HttpClient http, IConfiguration config)
 
                 rader.Add(new DorImportRad(
                     dornummer,
+                    Tekst(d, "dorIdKode"),
                     Tekst(d, "etasje"),
                     Tekst(d, "sone"),
                     Tekst(d, "romnr"),
@@ -135,7 +161,18 @@ public class DorImportService(HttpClient http, IConfiguration config)
                     Tekst(d, "lyd"),
                     Tekst(d, "energi"),
                     Bool(d, "fribredde086"),
-                    Tekst(d, "notater")));
+                    Tekst(d, "notater"),
+                    Tekst(d, "fargeKarm"),
+                    Tekst(d, "dorkonstruksjon"),
+                    Tekst(d, "fargeDorblad"),
+                    Tekst(d, "karmtype"),
+                    Tekst(d, "karmkonstruksjon"),
+                    Tekst(d, "terskel"),
+                    Tekst(d, "sparkeplate"),
+                    Heltall(d, "aMal"),
+                    Heltall(d, "bMal"),
+                    Bool(d, "glassIDor"),
+                    Tekst(d, "merknad")));
             }
 
             return rader.Count == 0
@@ -250,7 +287,8 @@ public class DorImportService(HttpClient http, IConfiguration config)
                         ["type"] = "object",
                         ["properties"] = new JsonObject
                         {
-                            ["dornummer"] = new JsonObject { ["type"] = "string", ["description"] = "Dørnummer/dør-ID, obligatorisk" },
+                            ["dornummer"] = new JsonObject { ["type"] = "string", ["description"] = "Det unike dørnummeret/betegnelsen på den fysiske døren, obligatorisk" },
+                            ["dorIdKode"] = new JsonObject { ["type"] = "string", ["description"] = "Gjenbrukbar type-/spesifikasjonskode (\"Dør-ID\") flere dører kan dele - KUN hvis skjemaet har en egen kolonne for dette, ellers utelates feltet" },
                             ["etasje"] = new JsonObject { ["type"] = "string" },
                             ["sone"] = new JsonObject { ["type"] = "string" },
                             ["romnr"] = new JsonObject { ["type"] = "string", ["description"] = "Romnummer og/eller romnavn" },
@@ -262,7 +300,18 @@ public class DorImportService(HttpClient http, IConfiguration config)
                             ["lyd"] = new JsonObject { ["type"] = "string", ["description"] = "Lydklasse" },
                             ["energi"] = new JsonObject { ["type"] = "string" },
                             ["fribredde086"] = new JsonObject { ["type"] = "boolean", ["description"] = "Om døren krever fri bredde 0,86m" },
-                            ["notater"] = new JsonObject { ["type"] = "string", ["description"] = "Annen relevant info som ikke passer i de andre feltene" }
+                            ["notater"] = new JsonObject { ["type"] = "string", ["description"] = "Annen relevant info som ikke passer i de andre feltene" },
+                            ["fargeKarm"] = new JsonObject { ["type"] = "string", ["description"] = "Farge på karm - type-/produktinfo knyttet til Dør-ID" },
+                            ["dorkonstruksjon"] = new JsonObject { ["type"] = "string" },
+                            ["fargeDorblad"] = new JsonObject { ["type"] = "string", ["description"] = "Farge på dørblad" },
+                            ["karmtype"] = new JsonObject { ["type"] = "string" },
+                            ["karmkonstruksjon"] = new JsonObject { ["type"] = "string" },
+                            ["terskel"] = new JsonObject { ["type"] = "string" },
+                            ["sparkeplate"] = new JsonObject { ["type"] = "string" },
+                            ["aMal"] = new JsonObject { ["type"] = "integer", ["description"] = "A-mål i mm" },
+                            ["bMal"] = new JsonObject { ["type"] = "integer", ["description"] = "B-mål i mm" },
+                            ["glassIDor"] = new JsonObject { ["type"] = "boolean", ["description"] = "Om det er glass i døren" },
+                            ["merknad"] = new JsonObject { ["type"] = "string", ["description"] = "Merknad/fritekst knyttet til Dør-ID-typen (ikke den enkelte døren)" }
                         },
                         ["required"] = new JsonArray { "dornummer" }
                     }

@@ -48,6 +48,10 @@
                 <span class="import-tall import-tall-ny">@_rader.Count(r => r.Valgt && !r.ErOppdatering) nye</span>
                 <span class="import-tall import-tall-oppdater">@_rader.Count(r => r.Valgt && r.ErOppdatering) oppdateres</span>
                 <span class="import-tall">@_rader.Count(r => !r.Valgt) valgt bort</span>
+                @if (AntallUnikeDorIdKoder > 0)
+                {
+                    <span class="import-tall">@AntallUnikeDorIdKoder ulike Dør ID</span>
+                }
             </div>
 
             <div class="import-table-wrap">
@@ -56,6 +60,7 @@
                         <tr>
                             <th></th>
                             <th>Dørnummer</th>
+                            <th>Dør ID</th>
                             <th>Etasje</th>
                             <th>Sone</th>
                             <th>Romnr</th>
@@ -70,6 +75,7 @@
                             <tr @key="r" class="@(r.Valgt ? "" : "import-rad-avvalgt")">
                                 <td><input type="checkbox" @bind="r.Valgt" /></td>
                                 <td><input class="import-cell-input" @bind="r.Dornummer" /></td>
+                                <td>@(r.Kilde.DorIdKode ?? "-")</td>
                                 <td>@(r.Kilde.Etasje ?? "-")</td>
                                 <td>@(r.Kilde.Sone ?? "-")</td>
                                 <td><input class="import-cell-input" @bind="r.Romnr" placeholder="Romnavn..." /></td>
@@ -224,12 +230,100 @@
                 .GroupBy(d => d.Dornummer, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
+            var eksisterendeMaler = await Db.DorIdMaler
+                .Where(m => m.ProsjektId == ProsjektId)
+                .ToListAsync();
+            var malMap = eksisterendeMaler
+                .GroupBy(m => m.Kode, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+            // Løser/oppretter Dør ID-maler FØR dørene selv, slik at malens felt kan brukes
+            // som fallback for spek-felt som mangler på enkeltrader - vanlig i dørskjema der
+            // typeraden har full spesifikasjon, mens individuelle dørrader bare har
+            // dørnummer + Dør-ID. Finnes malen fra før fylles kun tomme felt (samme
+            // partial-update-prinsipp som for dørene), den overskrives aldri.
+            var antallNyeMaler = 0;
+            var koderIBruk = valgte
+                .Select(r => r.Kilde.DorIdKode)
+                .Where(k => !string.IsNullOrWhiteSpace(k))
+                .Select(k => k!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var kode in koderIBruk)
+            {
+                var radMedKode = valgte.Where(r => string.Equals(r.Kilde.DorIdKode?.Trim(), kode, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (malMap.TryGetValue(kode, out var mal))
+                {
+                    foreach (var k in radMedKode.Select(r => r.Kilde))
+                    {
+                        if (!string.IsNullOrWhiteSpace(k.Brann) && string.IsNullOrWhiteSpace(mal.Brann)) mal.Brann = k.Brann;
+                        if (!string.IsNullOrWhiteSpace(k.Lyd) && string.IsNullOrWhiteSpace(mal.Lyd)) mal.Lyd = k.Lyd;
+                        if (k.Bredde is not null && mal.Bredde is null) mal.Bredde = k.Bredde;
+                        if (k.Hoyde is not null && mal.Hoyde is null) mal.Hoyde = k.Hoyde;
+                        if (!string.IsNullOrWhiteSpace(k.Dortype) && string.IsNullOrWhiteSpace(mal.Dortype)) mal.Dortype = k.Dortype;
+                        if (k.FriBredde086 is not null && mal.FriBredde086 is null) mal.FriBredde086 = k.FriBredde086;
+                        if (!string.IsNullOrWhiteSpace(k.FargeKarm) && string.IsNullOrWhiteSpace(mal.FargeKarm)) mal.FargeKarm = k.FargeKarm;
+                        if (!string.IsNullOrWhiteSpace(k.Dorkonstruksjon) && string.IsNullOrWhiteSpace(mal.Dorkonstruksjon)) mal.Dorkonstruksjon = k.Dorkonstruksjon;
+                        if (!string.IsNullOrWhiteSpace(k.FargeDorblad) && string.IsNullOrWhiteSpace(mal.FargeDorblad)) mal.FargeDorblad = k.FargeDorblad;
+                        if (!string.IsNullOrWhiteSpace(k.Karmtype) && string.IsNullOrWhiteSpace(mal.Karmtype)) mal.Karmtype = k.Karmtype;
+                        if (!string.IsNullOrWhiteSpace(k.Karmkonstruksjon) && string.IsNullOrWhiteSpace(mal.Karmkonstruksjon)) mal.Karmkonstruksjon = k.Karmkonstruksjon;
+                        if (!string.IsNullOrWhiteSpace(k.Terskel) && string.IsNullOrWhiteSpace(mal.Terskel)) mal.Terskel = k.Terskel;
+                        if (!string.IsNullOrWhiteSpace(k.Sparkeplate) && string.IsNullOrWhiteSpace(mal.Sparkeplate)) mal.Sparkeplate = k.Sparkeplate;
+                        if (k.AMal is not null && mal.AMal is null) mal.AMal = k.AMal;
+                        if (k.BMal is not null && mal.BMal is null) mal.BMal = k.BMal;
+                        if (k.GlassIDor is not null && mal.GlassIDor is null) mal.GlassIDor = k.GlassIDor;
+                        if (!string.IsNullOrWhiteSpace(k.Merknad) && string.IsNullOrWhiteSpace(mal.Merknad)) mal.Merknad = k.Merknad;
+                    }
+                }
+                else
+                {
+                    mal = new DorIdMal
+                    {
+                        ProsjektId = ProsjektId,
+                        Kode = kode,
+                        Brann = radMedKode.Select(r => r.Kilde.Brann).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        Lyd = radMedKode.Select(r => r.Kilde.Lyd).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        Bredde = radMedKode.Select(r => r.Kilde.Bredde).FirstOrDefault(v => v is not null),
+                        Hoyde = radMedKode.Select(r => r.Kilde.Hoyde).FirstOrDefault(v => v is not null),
+                        Dortype = radMedKode.Select(r => r.Kilde.Dortype).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        FriBredde086 = radMedKode.Select(r => r.Kilde.FriBredde086).FirstOrDefault(v => v is not null),
+                        FargeKarm = radMedKode.Select(r => r.Kilde.FargeKarm).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        Dorkonstruksjon = radMedKode.Select(r => r.Kilde.Dorkonstruksjon).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        FargeDorblad = radMedKode.Select(r => r.Kilde.FargeDorblad).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        Karmtype = radMedKode.Select(r => r.Kilde.Karmtype).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        Karmkonstruksjon = radMedKode.Select(r => r.Kilde.Karmkonstruksjon).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        Terskel = radMedKode.Select(r => r.Kilde.Terskel).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        Sparkeplate = radMedKode.Select(r => r.Kilde.Sparkeplate).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)),
+                        AMal = radMedKode.Select(r => r.Kilde.AMal).FirstOrDefault(v => v is not null),
+                        BMal = radMedKode.Select(r => r.Kilde.BMal).FirstOrDefault(v => v is not null),
+                        GlassIDor = radMedKode.Select(r => r.Kilde.GlassIDor).FirstOrDefault(v => v is not null),
+                        Merknad = radMedKode.Select(r => r.Kilde.Merknad).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))
+                    };
+                    Db.DorIdMaler.Add(mal);
+                    malMap[kode] = mal;
+                    antallNyeMaler++;
+                }
+            }
+
             var antallNye = 0;
             var antallOppdatert = 0;
 
             foreach (var r in valgte)
             {
                 var k = r.Kilde;
+                DorIdMal? mal = !string.IsNullOrWhiteSpace(k.DorIdKode) && malMap.TryGetValue(k.DorIdKode.Trim(), out var funnetMal)
+                    ? funnetMal
+                    : null;
+
+                // Mal-feltene brukes som fallback der raden selv mangler data.
+                var brann = k.Brann ?? mal?.Brann;
+                var lyd = k.Lyd ?? mal?.Lyd;
+                var bredde = k.Bredde ?? mal?.Bredde;
+                var hoyde = k.Hoyde ?? mal?.Hoyde;
+                var dortype = k.Dortype ?? mal?.Dortype;
+                var friBredde = k.FriBredde086 ?? mal?.FriBredde086;
+
                 if (eksisterendeMap.TryGetValue(r.Dornummer, out var eksisterende))
                 {
                     // Partial update - overskriver ALDRI et felt som allerede har en verdi
@@ -238,15 +332,16 @@
                     if (!string.IsNullOrWhiteSpace(k.Etasje)) eksisterende.Etasje = k.Etasje;
                     if (!string.IsNullOrWhiteSpace(k.Sone)) eksisterende.Sone = k.Sone;
                     if (!string.IsNullOrWhiteSpace(r.Romnr)) eksisterende.Romnr = r.Romnr;
-                    if (!string.IsNullOrWhiteSpace(k.Dortype)) eksisterende.Dortype = k.Dortype;
-                    if (k.Bredde is not null) eksisterende.Bredde = k.Bredde;
-                    if (k.Hoyde is not null) eksisterende.Hoyde = k.Hoyde;
+                    if (!string.IsNullOrWhiteSpace(dortype)) eksisterende.Dortype = dortype;
+                    if (bredde is not null) eksisterende.Bredde = bredde;
+                    if (hoyde is not null) eksisterende.Hoyde = hoyde;
                     if (!string.IsNullOrWhiteSpace(k.Slagretning)) eksisterende.Slagretning = k.Slagretning;
-                    if (!string.IsNullOrWhiteSpace(k.Brann)) eksisterende.Brann = k.Brann;
-                    if (!string.IsNullOrWhiteSpace(k.Lyd)) eksisterende.Lyd = k.Lyd;
+                    if (!string.IsNullOrWhiteSpace(brann)) eksisterende.Brann = brann;
+                    if (!string.IsNullOrWhiteSpace(lyd)) eksisterende.Lyd = lyd;
                     if (!string.IsNullOrWhiteSpace(k.Energi)) eksisterende.Energi = k.Energi;
-                    if (k.FriBredde086 is not null) eksisterende.FriBredde086 = k.FriBredde086;
+                    if (friBredde is not null) eksisterende.FriBredde086 = friBredde;
                     if (!string.IsNullOrWhiteSpace(k.Notater) && string.IsNullOrWhiteSpace(eksisterende.Notater)) eksisterende.Notater = k.Notater;
+                    if (mal is not null) eksisterende.DorIdMal = mal;
                     eksisterende.OppdatertDato = DateTime.Now;
                     eksisterende.OppdatertAvBrukerId = _naverendeBrukerId;
                     antallOppdatert++;
@@ -257,17 +352,18 @@
                     {
                         ProsjektId = ProsjektId,
                         Dornummer = r.Dornummer,
+                        DorIdMal = mal,
                         Etasje = k.Etasje,
                         Sone = k.Sone,
                         Romnr = r.Romnr,
-                        Dortype = k.Dortype,
-                        Bredde = k.Bredde,
-                        Hoyde = k.Hoyde,
+                        Dortype = dortype,
+                        Bredde = bredde,
+                        Hoyde = hoyde,
                         Slagretning = k.Slagretning,
-                        Brann = k.Brann,
-                        Lyd = k.Lyd,
+                        Brann = brann,
+                        Lyd = lyd,
                         Energi = k.Energi,
-                        FriBredde086 = k.FriBredde086,
+                        FriBredde086 = friBredde,
                         Notater = k.Notater
                     };
                     Db.Dorer.Add(ny);
@@ -277,11 +373,12 @@
 
             await Db.SaveChangesAsync();
 
-            _resultatMelding = antallNye == 0
+            var malTekst = antallNyeMaler > 0 ? $" Opprettet {antallNyeMaler} ny(e) Dør ID." : "";
+            _resultatMelding = (antallNye == 0
                 ? $"Oppdaterte {antallOppdatert} eksisterende dør(er)."
                 : antallOppdatert == 0
                     ? $"Opprettet {antallNye} nye dør(er)."
-                    : $"Opprettet {antallNye} nye dør(er) og oppdaterte {antallOppdatert} eksisterende.";
+                    : $"Opprettet {antallNye} nye dør(er) og oppdaterte {antallOppdatert} eksisterende.") + malTekst;
 
             _steg = 3;
             await OnImportert.InvokeAsync();
@@ -295,6 +392,12 @@
             _importerer = false;
         }
     }
+
+    private int AntallUnikeDorIdKoder => _rader
+        .Where(r => r.Valgt && !string.IsNullOrWhiteSpace(r.Kilde.DorIdKode))
+        .Select(r => r.Kilde.DorIdKode!.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
 
     private static string BxH(DorImportRad r) =>
         r.Bredde is not null && r.Hoyde is not null ? $"{r.Bredde}x{r.Hoyde}" : "-";
