@@ -123,6 +123,11 @@ builder.Services.AddHttpClient<AiAssistentService>(client =>
     client.BaseAddress = new Uri("https://api.anthropic.com/");
     client.Timeout = TimeSpan.FromSeconds(60);
 });
+builder.Services.AddHttpClient<DorImportService>(client =>
+{
+    client.BaseAddress = new Uri("https://api.anthropic.com/");
+    client.Timeout = TimeSpan.FromSeconds(120);
+});
 builder.Services.Configure<TripletexOptions>(builder.Configuration.GetSection("Tripletex"));
 // Navngitt (ikke typet) HttpClient - TripletexService må være singleton for at
 // det cachede session-tokenet (se HentSessionTokenAsync) faktisk skal deles på

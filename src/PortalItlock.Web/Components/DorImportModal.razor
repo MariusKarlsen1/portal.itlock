@@ -1,0 +1,314 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject DorImportService Import
+
+<div class="import-overlay" @onclick="LukkHvisUtenfor">
+    <div class="import-panel" @onclick:stopPropagation="true">
+        <div class="import-header">
+            <span class="import-header-ikon"><Icon Name="upload" /></span>
+            <div>
+                <h2>Importer dørskjema</h2>
+                <p class="import-hint">Last opp en dørliste fra dørleverandør eller arkitekt (PDF, Excel, CSV eller bilde). Dørene tolkes automatisk og du får se over før de opprettes.</p>
+            </div>
+            <button type="button" class="import-lukk" @onclick="Lukk" title="Lukk"><Icon Name="x" /></button>
+        </div>
+
+        @if (_steg == 1)
+        {
+            <label class="import-dropzone">
+                <InputFile OnChange="LastOppFil" accept=".pdf,.xlsx,.xls,.csv,.jpg,.jpeg,.png" class="import-dropzone-input" disabled="@_tolkerFil" />
+                <div class="import-dropzone-content">
+                    <Icon Name="upload" />
+                    @if (_tolkerFil)
+                    {
+                        <p><strong>Leser @_filnavn...</strong></p>
+                        <p class="import-hint">AI-en tolker filen, dette kan ta litt tid.</p>
+                    }
+                    else
+                    {
+                        <p><strong>Klikk for å velge fil</strong></p>
+                        <p class="import-hint">PDF, Excel (.xlsx), CSV eller bilde</p>
+                    }
+                </div>
+            </label>
+
+            @if (!string.IsNullOrEmpty(_feil))
+            {
+                <p class="form-error">@_feil</p>
+            }
+        }
+        else if (_steg == 2)
+        {
+            <div class="import-oppsummering">
+                <span class="import-tall import-tall-ny">@_rader.Count(r => r.Valgt && !r.ErOppdatering) nye</span>
+                <span class="import-tall import-tall-oppdater">@_rader.Count(r => r.Valgt && r.ErOppdatering) oppdateres</span>
+                <span class="import-tall">@_rader.Count(r => !r.Valgt) valgt bort</span>
+            </div>
+
+            <div class="import-table-wrap">
+                <table class="import-table">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th>Dørnummer</th>
+                            <th>Etasje</th>
+                            <th>Sone</th>
+                            <th>Romnr</th>
+                            <th>B x H</th>
+                            <th>Brann / Lyd</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in _rader)
+                        {
+                            <tr @key="r" class="@(r.Valgt ? "" : "import-rad-avvalgt")">
+                                <td><input type="checkbox" @bind="r.Valgt" /></td>
+                                <td><input class="import-cell-input" @bind="r.Dornummer" /></td>
+                                <td>@(r.Kilde.Etasje ?? "-")</td>
+                                <td>@(r.Kilde.Sone ?? "-")</td>
+                                <td><input class="import-cell-input" @bind="r.Romnr" placeholder="Romnavn..." /></td>
+                                <td>@BxH(r.Kilde)</td>
+                                <td>@BrannLyd(r.Kilde)</td>
+                                <td>
+                                    @if (r.ErOppdatering)
+                                    {
+                                        <span class="import-badge import-badge-oppdater">Oppdaterer</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="import-badge import-badge-ny">Ny dør</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_feil))
+            {
+                <p class="form-error">@_feil</p>
+            }
+
+            <div class="import-actions">
+                <button type="button" class="save-button" @onclick="Importer" disabled="@(_importerer || _rader.Count(r => r.Valgt) == 0)">
+                    @(_importerer ? "Importerer..." : $"Importer {_rader.Count(r => r.Valgt)} dør(er)")
+                </button>
+                <button type="button" class="cancel-button" @onclick="Lukk" disabled="@_importerer">Avbryt</button>
+            </div>
+        }
+        else
+        {
+            <p class="import-ferdig-tekst">@_resultatMelding</p>
+            <div class="import-actions">
+                <button type="button" class="save-button" @onclick="Lukk">Lukk</button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnImportert { get; set; }
+    [CascadingParameter] public Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private class ImportRadState
+    {
+        public bool Valgt { get; set; } = true;
+        public string Dornummer { get; set; } = "";
+        public string? Romnr { get; set; }
+        public bool ErOppdatering { get; set; }
+        public required DorImportRad Kilde { get; set; }
+    }
+
+    private int _steg = 1;
+    private string? _filnavn;
+    private bool _tolkerFil;
+    private string? _feil;
+    private List<ImportRadState> _rader = [];
+    private bool _importerer;
+    private string? _resultatMelding;
+    private int? _naverendeBrukerId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var claim = state.User.FindFirst("BrukerId")?.Value;
+            if (claim is not null && int.TryParse(claim, out var id))
+            {
+                _naverendeBrukerId = id;
+            }
+        }
+    }
+
+    private async Task LastOppFil(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        var file = e.File;
+
+        if (file.Size > 20_000_000)
+        {
+            _feil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        byte[] bytes;
+        using (var buffer = new MemoryStream())
+        {
+            await using var stream = file.OpenReadStream(maxAllowedSize: 20_000_000);
+            await stream.CopyToAsync(buffer);
+            bytes = buffer.ToArray();
+        }
+
+        _filnavn = file.Name;
+        _tolkerFil = true;
+        StateHasChanged();
+
+        var resultat = await Import.TolkFilAsync(bytes, file.Name);
+
+        _tolkerFil = false;
+
+        if (resultat.Feil is not null)
+        {
+            _feil = resultat.Feil;
+            return;
+        }
+
+        var eksisterende = await Db.Dorer
+            .Where(d => d.ProsjektId == ProsjektId)
+            .Select(d => d.Dornummer)
+            .ToListAsync();
+        var eksisterendeSet = eksisterende.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        _rader = resultat.Rader.Select(r => new ImportRadState
+        {
+            Dornummer = r.Dornummer,
+            Romnr = r.Romnr,
+            ErOppdatering = eksisterendeSet.Contains(r.Dornummer),
+            Kilde = r
+        }).ToList();
+
+        _steg = 2;
+    }
+
+    private async Task Importer()
+    {
+        _importerer = true;
+        _feil = null;
+
+        try
+        {
+            var valgte = _rader.Where(r => r.Valgt && !string.IsNullOrWhiteSpace(r.Dornummer)).ToList();
+            if (valgte.Count == 0)
+            {
+                _feil = "Ingen dører valgt.";
+                return;
+            }
+
+            var eksisterendeDorer = await Db.Dorer
+                .Where(d => d.ProsjektId == ProsjektId)
+                .ToListAsync();
+            var eksisterendeMap = eksisterendeDorer.ToDictionary(d => d.Dornummer, d => d, StringComparer.OrdinalIgnoreCase);
+
+            var antallNye = 0;
+            var antallOppdatert = 0;
+
+            foreach (var r in valgte)
+            {
+                var k = r.Kilde;
+                if (eksisterendeMap.TryGetValue(r.Dornummer, out var eksisterende))
+                {
+                    // Partial update - overskriver ALDRI et felt som allerede har en verdi
+                    // med tomt/manglende data fra importen. Kun felt filen faktisk ga oss
+                    // oppdateres, resten av det som er registrert på døren fra før røres ikke.
+                    if (!string.IsNullOrWhiteSpace(k.Etasje)) eksisterende.Etasje = k.Etasje;
+                    if (!string.IsNullOrWhiteSpace(k.Sone)) eksisterende.Sone = k.Sone;
+                    if (!string.IsNullOrWhiteSpace(r.Romnr)) eksisterende.Romnr = r.Romnr;
+                    if (!string.IsNullOrWhiteSpace(k.Dortype)) eksisterende.Dortype = k.Dortype;
+                    if (k.Bredde is not null) eksisterende.Bredde = k.Bredde;
+                    if (k.Hoyde is not null) eksisterende.Hoyde = k.Hoyde;
+                    if (!string.IsNullOrWhiteSpace(k.Slagretning)) eksisterende.Slagretning = k.Slagretning;
+                    if (!string.IsNullOrWhiteSpace(k.Brann)) eksisterende.Brann = k.Brann;
+                    if (!string.IsNullOrWhiteSpace(k.Lyd)) eksisterende.Lyd = k.Lyd;
+                    if (!string.IsNullOrWhiteSpace(k.Energi)) eksisterende.Energi = k.Energi;
+                    if (k.FriBredde086 is not null) eksisterende.FriBredde086 = k.FriBredde086;
+                    if (!string.IsNullOrWhiteSpace(k.Notater) && string.IsNullOrWhiteSpace(eksisterende.Notater)) eksisterende.Notater = k.Notater;
+                    eksisterende.OppdatertDato = DateTime.Now;
+                    eksisterende.OppdatertAvBrukerId = _naverendeBrukerId;
+                    antallOppdatert++;
+                }
+                else
+                {
+                    var ny = new Dor
+                    {
+                        ProsjektId = ProsjektId,
+                        Dornummer = r.Dornummer,
+                        Etasje = k.Etasje,
+                        Sone = k.Sone,
+                        Romnr = r.Romnr,
+                        Dortype = k.Dortype,
+                        Bredde = k.Bredde,
+                        Hoyde = k.Hoyde,
+                        Slagretning = k.Slagretning,
+                        Brann = k.Brann,
+                        Lyd = k.Lyd,
+                        Energi = k.Energi,
+                        FriBredde086 = k.FriBredde086,
+                        Notater = k.Notater
+                    };
+                    Db.Dorer.Add(ny);
+                    antallNye++;
+                }
+            }
+
+            await Db.SaveChangesAsync();
+
+            _resultatMelding = antallNye == 0
+                ? $"Oppdaterte {antallOppdatert} eksisterende dør(er)."
+                : antallOppdatert == 0
+                    ? $"Opprettet {antallNye} nye dør(er)."
+                    : $"Opprettet {antallNye} nye dør(er) og oppdaterte {antallOppdatert} eksisterende.";
+
+            _steg = 3;
+            await OnImportert.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _feil = $"Klarte ikke å importere: {ex.Message}";
+        }
+        finally
+        {
+            _importerer = false;
+        }
+    }
+
+    private static string BxH(DorImportRad r) =>
+        r.Bredde is not null && r.Hoyde is not null ? $"{r.Bredde}x{r.Hoyde}" : "-";
+
+    private static string BrannLyd(DorImportRad r)
+    {
+        var deler = new List<string>();
+        if (!string.IsNullOrWhiteSpace(r.Brann)) deler.Add(r.Brann);
+        if (!string.IsNullOrWhiteSpace(r.Lyd)) deler.Add(r.Lyd);
+        return deler.Count == 0 ? "-" : string.Join(" / ", deler);
+    }
+
+    private async Task Lukk() => await OnClose.InvokeAsync();
+
+    private async Task LukkHvisUtenfor()
+    {
+        if (!_tolkerFil && !_importerer)
+        {
+            await Lukk();
+        }
+    }
+}
