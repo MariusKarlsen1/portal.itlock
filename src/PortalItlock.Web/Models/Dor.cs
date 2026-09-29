@@ -21,6 +21,8 @@ public class Dor
     public string? Etasje { get; set; }
     public string? Sone { get; set; }
     public string? Dortype { get; set; }
+    public string? AluProfil { get; set; }
+    public bool ToFloyet { get; set; }
     public string? BxH { get; set; }
     public string? Slagretning { get; set; }
     public string? Notater { get; set; }
