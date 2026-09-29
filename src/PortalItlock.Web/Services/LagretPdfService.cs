@@ -95,18 +95,21 @@ public class LagretPdfService(ApplicationDbContext db)
             var harGammel = gammelPerNavn.TryGetValue(n.Navn, out var g);
             var gammelVerdi = harGammel ? g!.Verdi : "-";
 
-            if (harGammel && g!.Verdi == n.Verdi)
-            {
-                continue;
-            }
-
             if (!harGammel)
             {
                 endringer.Add(new LagretPdfNokkeltallEndring(n.Navn, gammelVerdi, n.Verdi, "ny", 0));
                 continue;
             }
 
-            var harTallgrunnlag = n.Tall != 0 || g!.Tall != 0 || !string.IsNullOrEmpty(n.Enhet) || !string.IsNullOrEmpty(g.Enhet);
+            // Viser ALLE nøkkeltall, ikke bare de som endret seg - gir full oversikt i
+            // sammenligningen fremfor å skjule det som står stille.
+            if (g!.Verdi == n.Verdi)
+            {
+                endringer.Add(new LagretPdfNokkeltallEndring(n.Navn, gammelVerdi, n.Verdi, "uendret", 0));
+                continue;
+            }
+
+            var harTallgrunnlag = n.Tall != 0 || g.Tall != 0 || !string.IsNullOrEmpty(n.Enhet) || !string.IsNullOrEmpty(g.Enhet);
             if (!harTallgrunnlag)
             {
                 // Eldre lagrede versjoner (før tall/enhet ble sporet) - vi vet verdien endret seg, men ikke retning/størrelse.
