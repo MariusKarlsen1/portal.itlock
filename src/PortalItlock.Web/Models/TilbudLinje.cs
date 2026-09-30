@@ -25,4 +25,9 @@ public class TilbudLinje
     public int Rekkefolge { get; set; }
     public bool ErGruppering { get; set; }
     public string? Beskrivelse { get; set; }
+
+    public bool Plukket { get; set; }
+    public DateTime? PlukketDato { get; set; }
+    public int? PlukketAvBrukerId { get; set; }
+    public Bruker? PlukketAvBruker { get; set; }
 }

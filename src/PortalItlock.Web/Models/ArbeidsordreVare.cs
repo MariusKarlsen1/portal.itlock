@@ -17,4 +17,9 @@ public class ArbeidsordreVare
     public int? LagtTilAvBrukerId { get; set; }
     public Bruker? LagtTilAvBruker { get; set; }
     public DateTime? LagtTilDato { get; set; }
+
+    public bool Plukket { get; set; }
+    public DateTime? PlukketDato { get; set; }
+    public int? PlukketAvBrukerId { get; set; }
+    public Bruker? PlukketAvBruker { get; set; }
 }
