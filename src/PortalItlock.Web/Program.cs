@@ -56,8 +56,27 @@ if (!string.IsNullOrEmpty(dataProtectionKeysPath))
         .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
 }
 
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+// Flerkunde-oppsett (steg 1): ApplicationDbContext peker på én SQLite-fil
+// per kunde (tenant), valgt av TenantContext i stedet for en fast
+// connection string. PlatformDbContext er katalogen over hvilke kunder som
+// finnes og hvilken fil hver av dem eier - lever i en egen liten SQLite-fil
+// ved siden av den vanlige databasen (samme mappe/volum, ingen ny
+// Railway-konfigurasjon nødvendig). I dag finnes det kun én kunde (itlock AS
+// selv, markert ErStandard), som fortsatt peker på nøyaktig samme fil som før
+// - ingen data er flyttet.
+var defaultConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+var platformConnectionString = PlatformConnectionStringHelper.AvledFra(defaultConnectionString);
+
+builder.Services.AddDbContext<PlatformDbContext>(options =>
+    options.UseSqlite(platformConnectionString));
+
+builder.Services.AddScoped<ITenantContext, TenantContext>();
+
+builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
+{
+    var tenantContext = sp.GetRequiredService<ITenantContext>();
+    options.UseSqlite(tenantContext.Current?.ConnectionString ?? defaultConnectionString);
+});
 
 builder.Services.AddScoped<PackageMatchingService>();
 builder.Services.AddScoped<MobilVerktoylinjeService>();
@@ -192,38 +211,63 @@ var app = builder.Build();
 
 using (var seedScope = app.Services.CreateScope())
 {
-    var seedDb = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    seedDb.Database.Migrate();
+    var platformDb = seedScope.ServiceProvider.GetRequiredService<PlatformDbContext>();
+    platformDb.Database.Migrate();
 
-    var endringsloggPath = Path.Combine(AppContext.BaseDirectory, "nyheter.json");
-    var kjenteKildeIder = seedDb.Nyheter.Where(n => n.KildeId != null).Select(n => n.KildeId!).ToHashSet();
-    foreach (var innslag in PortalItlock.Web.Services.EndringsloggLeser.LesAlle(endringsloggPath))
+    // Steg 1 av flerkunde-oppsettet: sørger for at itlock AS finnes som
+    // "standard"-kunde, pekende på nøyaktig samme fil som appen alltid har
+    // brukt - ingen data flyttes. Nye kunder legges til her senere via en
+    // egen admin-side, ikke ved å redigere dette.
+    if (!platformDb.Tenants.Any())
     {
-        if (kjenteKildeIder.Contains(innslag.Id))
+        platformDb.Tenants.Add(new Tenant
         {
-            continue;
-        }
-
-        seedDb.Nyheter.Add(new PortalItlock.Web.Models.Nyhet
-        {
-            Tittel = innslag.Tittel,
-            Innhold = innslag.Innhold,
-            OpprettetDato = innslag.Dato.DateTime,
-            KildeId = innslag.Id,
+            Navn = "itlock AS",
+            ConnectionString = defaultConnectionString,
+            ErStandard = true
         });
-        kjenteKildeIder.Add(innslag.Id);
+        platformDb.SaveChanges();
     }
-    seedDb.SaveChanges();
 
-    if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
+    var aktiveTenants = platformDb.Tenants.Where(t => t.Status == TenantStatus.Aktiv).ToList();
+    foreach (var tenant in aktiveTenants)
     {
-        seedDb.Brukere.Add(new PortalItlock.Web.Models.Bruker
+        var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(tenant.ConnectionString)
+            .Options;
+        using var seedDb = new ApplicationDbContext(tenantOptions);
+        seedDb.Database.Migrate();
+
+        var endringsloggPath = Path.Combine(AppContext.BaseDirectory, "nyheter.json");
+        var kjenteKildeIder = seedDb.Nyheter.Where(n => n.KildeId != null).Select(n => n.KildeId!).ToHashSet();
+        foreach (var innslag in PortalItlock.Web.Services.EndringsloggLeser.LesAlle(endringsloggPath))
         {
-            Navn = "Marius Karlsen",
-            Epost = "marius@itlock.no",
-            Rolle = PortalItlock.Web.Models.BrukerRolle.Admin
-        });
+            if (kjenteKildeIder.Contains(innslag.Id))
+            {
+                continue;
+            }
+
+            seedDb.Nyheter.Add(new PortalItlock.Web.Models.Nyhet
+            {
+                Tittel = innslag.Tittel,
+                Innhold = innslag.Innhold,
+                OpprettetDato = innslag.Dato.DateTime,
+                KildeId = innslag.Id,
+            });
+            kjenteKildeIder.Add(innslag.Id);
+        }
         seedDb.SaveChanges();
+
+        if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
+        {
+            seedDb.Brukere.Add(new PortalItlock.Web.Models.Bruker
+            {
+                Navn = "Marius Karlsen",
+                Epost = "marius@itlock.no",
+                Rolle = PortalItlock.Web.Models.BrukerRolle.Admin
+            });
+            seedDb.SaveChanges();
+        }
     }
 }
 
@@ -235,6 +279,28 @@ var forwardedHeadersOptions = new ForwardedHeadersOptions
 forwardedHeadersOptions.KnownNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
+
+// Flerkunde-oppsett: slår fast hvilken kunde (tenant) denne forespørselen
+// gjelder, FØR noe annet i pipelinen trenger databasen. TenantContext er
+// scoped og gjenbrukes for hele den interaktive Blazor-kretsen (samme
+// DI-scope i hele brukerøkten), så dette trenger bare kjøre én gang per
+// krets - ikke per SignalR-melding. Så lenge det bare finnes én kunde
+// (ErStandard) spiller ikke Host-headeren noen rolle ennå; dette er
+// forberedelsen for når kunde nummer to kommer med sitt eget subdomene.
+app.Use(async (context, next) =>
+{
+    var tenantContext = context.RequestServices.GetRequiredService<ITenantContext>();
+    if (tenantContext.Current is null)
+    {
+        var platformDb = context.RequestServices.GetRequiredService<PlatformDbContext>();
+        var host = context.Request.Host.Host;
+        tenantContext.Current = await platformDb.Tenants
+            .FirstOrDefaultAsync(t => t.Subdomene == host && t.Status == TenantStatus.Aktiv)
+            ?? await platformDb.Tenants.FirstOrDefaultAsync(t => t.ErStandard && t.Status == TenantStatus.Aktiv);
+    }
+
+    await next();
+});
 
 // Mobil skal alltid starte på Oppgaver ("/min-dag"), ikke skrivebordets
 // prosjektoversikt på "/". Dette var tidligere en klientside-omdirigering
