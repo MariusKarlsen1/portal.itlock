@@ -248,6 +248,22 @@ using (var seedScope = app.Services.CreateScope())
         platformDb.SaveChanges();
     }
 
+    // Backfyller vertsnavnet til standard-kunden (itlock) med Railways
+    // offentlige domene, slik at den fortsatt resolves korrekt nå som et
+    // ukjent vertsnavn ikke lenger faller tilbake til den automatisk (se
+    // ITenantContext). Gjøres kun når Railway faktisk oppgir domenet (altså
+    // aldri lokalt), og kun én gang - overskriver ikke et senere satt egendefinert domene.
+    var produksjonsVertsnavn = Environment.GetEnvironmentVariable("RAILWAY_PUBLIC_DOMAIN");
+    if (!string.IsNullOrEmpty(produksjonsVertsnavn))
+    {
+        var standardTenant = platformDb.Tenants.FirstOrDefault(t => t.ErStandard && t.Subdomene == null);
+        if (standardTenant is not null)
+        {
+            standardTenant.Subdomene = produksjonsVertsnavn;
+            platformDb.SaveChanges();
+        }
+    }
+
     if (!platformDb.PlattformBrukere.Any())
     {
         platformDb.PlattformBrukere.Add(new PlattformBruker
