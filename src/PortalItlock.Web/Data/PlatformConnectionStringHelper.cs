@@ -1,13 +1,16 @@
 namespace PortalItlock.Web.Data;
 
-// Plasserer platform.db (katalogen over kunder) i samme mappe som den
-// vanlige SQLite-filen peker til, slik at den havner på samme skrivbare
+// Plasserer platform.db og nye kunde-databaser i samme mappe som den
+// opprinnelige SQLite-filen peker til, slik at alt havner på samme skrivbare
 // Railway-volum uten at noe nytt må settes opp der.
 public static class PlatformConnectionStringHelper
 {
-    public static string AvledFra(string applikasjonsConnectionString)
+    public static string AvledFra(string applikasjonsConnectionString) =>
+        $"Data Source={Path.Combine(FinnDataMappe(applikasjonsConnectionString), "platform.db")}";
+
+    public static string FinnDataMappe(string connectionString)
     {
-        var dataSource = applikasjonsConnectionString
+        var dataSource = connectionString
             .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(del => del.Split('=', 2))
             .Where(par => par.Length == 2 && par[0].Equals("Data Source", StringComparison.OrdinalIgnoreCase))
@@ -16,8 +19,6 @@ public static class PlatformConnectionStringHelper
             ?? "portalitlock.db";
 
         var mappe = Path.GetDirectoryName(dataSource);
-        var platformFil = string.IsNullOrEmpty(mappe) ? "platform.db" : Path.Combine(mappe, "platform.db");
-
-        return $"Data Source={platformFil}";
+        return string.IsNullOrEmpty(mappe) ? "." : mappe;
     }
 }

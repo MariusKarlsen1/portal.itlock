@@ -1,0 +1,164 @@
+@page "/plattform"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject PlatformDbContext PlatformDb
+@inject ITenantContext TenantCtx
+@inject TenantProvisioningService Provisioning
+
+<PageTitle>Plattform</PageTitle>
+
+@if (TenantCtx.Current?.ErStandard != true)
+{
+    <p class="form-error">Fant ikke siden.</p>
+}
+else
+{
+    <h1>Plattform - kunder</h1>
+    <p class="section-hint">Oversikt over alle kunder (tenants) som bruker løsningen, og opprettelse av nye. Kun synlig for deg, ikke for kundenes egne brukere.</p>
+
+    <section class="ordre-section">
+        <h2>Opprett ny kunde</h2>
+        <p class="section-hint">
+            Oppretter en splitter ny, tom database for kunden, migrerer og seeder den akkurat som i dag, og legger
+            inn den første admin-brukeren deres. Husk: vertsnavnet må i tillegg pekes til denne serveren i DNS
+            (og legges til som custom domain i Railway) før kunden faktisk kan nå det.
+        </p>
+        <div class="field-grid">
+            <label>
+                Firmanavn
+                <input @bind="_navn" placeholder="F.eks. Eksempel Lås AS" />
+            </label>
+            <label>
+                Vertsnavn (domenet kunden skal bruke)
+                <input @bind="_vertsnavn" placeholder="f.eks. eksempellas.dittprodukt.no" />
+            </label>
+            <label>
+                Navn på første admin-bruker
+                <input @bind="_adminNavn" placeholder="F.eks. Ola Nordmann" />
+            </label>
+            <label>
+                E-post til første admin-bruker
+                <input @bind="_adminEpost" placeholder="ola@eksempellas.no" />
+            </label>
+        </div>
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="OpprettKunde" disabled="@_oppretter">
+                @(_oppretter ? "Oppretter..." : "Opprett kunde")
+            </button>
+        </div>
+        @if (!string.IsNullOrEmpty(_feilmelding))
+        {
+            <p class="form-error">@_feilmelding</p>
+        }
+        @if (!string.IsNullOrEmpty(_suksessmelding))
+        {
+            <p class="save-success">@_suksessmelding</p>
+        }
+    </section>
+
+    <section class="ordre-section">
+        <h2>Kunder (@_tenants.Count)</h2>
+        @if (_tenants.Count == 0)
+        {
+            <p class="list-empty">Ingen kunder registrert ennå.</p>
+        }
+        else
+        {
+            <table class="varer-table">
+                <thead>
+                    <tr>
+                        <th>Navn</th>
+                        <th>Vertsnavn</th>
+                        <th>Status</th>
+                        <th>Opprettet</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in _tenants)
+                    {
+                        <tr @key="t.Id">
+                            <td>@t.Navn @(t.ErStandard ? "(standard)" : "")</td>
+                            <td>@(t.Subdomene ?? "-")</td>
+                            <td>
+                                @if (t.ErStandard)
+                                {
+                                    @t.Status.ToString()
+                                }
+                                else
+                                {
+                                    <select @bind="t.Status" @bind:after="@(() => LagreStatus(t))">
+                                        @foreach (var s in Enum.GetValues<TenantStatus>())
+                                        {
+                                            <option value="@s">@s</option>
+                                        }
+                                    </select>
+                                }
+                            </td>
+                            <td>@t.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+@code {
+    private List<Tenant> _tenants = [];
+    private string _navn = "";
+    private string _vertsnavn = "";
+    private string _adminNavn = "";
+    private string _adminEpost = "";
+    private bool _oppretter;
+    private string? _feilmelding;
+    private string? _suksessmelding;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (TenantCtx.Current?.ErStandard == true)
+        {
+            await LastTenants();
+        }
+    }
+
+    private async Task LastTenants()
+    {
+        _tenants = await PlatformDb.Tenants.OrderBy(t => t.OpprettetDato).ToListAsync();
+    }
+
+    private async Task OpprettKunde()
+    {
+        _feilmelding = null;
+        _suksessmelding = null;
+        _oppretter = true;
+        StateHasChanged();
+        try
+        {
+            var (ok, feil) = await Provisioning.OpprettKundeAsync(_navn, _vertsnavn, _adminNavn, _adminEpost);
+            if (ok)
+            {
+                _suksessmelding = $"Kunden \"{_navn}\" er opprettet med admin-bruker {_adminEpost}. " +
+                    "Sett opp DNS/custom domain for vertsnavnet, og be dem deretter bruke \"Sett passord første gang\" på innloggingssiden.";
+                _navn = "";
+                _vertsnavn = "";
+                _adminNavn = "";
+                _adminEpost = "";
+                await LastTenants();
+            }
+            else
+            {
+                _feilmelding = feil;
+            }
+        }
+        finally
+        {
+            _oppretter = false;
+        }
+    }
+
+    private async Task LagreStatus(Tenant t) => await PlatformDb.SaveChangesAsync();
+}

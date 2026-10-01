@@ -70,6 +70,7 @@ var platformConnectionString = PlatformConnectionStringHelper.AvledFra(defaultCo
 builder.Services.AddDbContext<PlatformDbContext>(options =>
     options.UseSqlite(platformConnectionString));
 
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 
 builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
@@ -77,6 +78,8 @@ builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
     var tenantContext = sp.GetRequiredService<ITenantContext>();
     options.UseSqlite(tenantContext.Current?.ConnectionString ?? defaultConnectionString);
 });
+
+builder.Services.AddScoped<TenantProvisioningService>();
 
 builder.Services.AddScoped<PackageMatchingService>();
 builder.Services.AddScoped<MobilVerktoylinjeService>();
@@ -237,26 +240,7 @@ using (var seedScope = app.Services.CreateScope())
             .Options;
         using var seedDb = new ApplicationDbContext(tenantOptions);
         seedDb.Database.Migrate();
-
-        var endringsloggPath = Path.Combine(AppContext.BaseDirectory, "nyheter.json");
-        var kjenteKildeIder = seedDb.Nyheter.Where(n => n.KildeId != null).Select(n => n.KildeId!).ToHashSet();
-        foreach (var innslag in PortalItlock.Web.Services.EndringsloggLeser.LesAlle(endringsloggPath))
-        {
-            if (kjenteKildeIder.Contains(innslag.Id))
-            {
-                continue;
-            }
-
-            seedDb.Nyheter.Add(new PortalItlock.Web.Models.Nyhet
-            {
-                Tittel = innslag.Tittel,
-                Innhold = innslag.Innhold,
-                OpprettetDato = innslag.Dato.DateTime,
-                KildeId = innslag.Id,
-            });
-            kjenteKildeIder.Add(innslag.Id);
-        }
-        seedDb.SaveChanges();
+        PortalItlock.Web.Services.TenantSeedHelper.SeedNyheter(seedDb);
 
         if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
         {
@@ -279,28 +263,6 @@ var forwardedHeadersOptions = new ForwardedHeadersOptions
 forwardedHeadersOptions.KnownNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
-
-// Flerkunde-oppsett: slår fast hvilken kunde (tenant) denne forespørselen
-// gjelder, FØR noe annet i pipelinen trenger databasen. TenantContext er
-// scoped og gjenbrukes for hele den interaktive Blazor-kretsen (samme
-// DI-scope i hele brukerøkten), så dette trenger bare kjøre én gang per
-// krets - ikke per SignalR-melding. Så lenge det bare finnes én kunde
-// (ErStandard) spiller ikke Host-headeren noen rolle ennå; dette er
-// forberedelsen for når kunde nummer to kommer med sitt eget subdomene.
-app.Use(async (context, next) =>
-{
-    var tenantContext = context.RequestServices.GetRequiredService<ITenantContext>();
-    if (tenantContext.Current is null)
-    {
-        var platformDb = context.RequestServices.GetRequiredService<PlatformDbContext>();
-        var host = context.Request.Host.Host;
-        tenantContext.Current = await platformDb.Tenants
-            .FirstOrDefaultAsync(t => t.Subdomene == host && t.Status == TenantStatus.Aktiv)
-            ?? await platformDb.Tenants.FirstOrDefaultAsync(t => t.ErStandard && t.Status == TenantStatus.Aktiv);
-    }
-
-    await next();
-});
 
 // Mobil skal alltid starte på Oppgaver ("/min-dag"), ikke skrivebordets
 // prosjektoversikt på "/". Dette var tidligere en klientside-omdirigering
