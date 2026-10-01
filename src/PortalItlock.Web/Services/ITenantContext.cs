@@ -57,10 +57,28 @@ public class TenantContext(
             }
         }
 
-        var pavertsnavn = string.IsNullOrEmpty(host)
-            ? null
-            : platformDb.Tenants.FirstOrDefault(t => t.Subdomene == host && t.Status == TenantStatus.Aktiv);
+        if (string.IsNullOrEmpty(host))
+        {
+            return platformDb.Tenants.FirstOrDefault(t => t.ErStandard && t.Status == TenantStatus.Aktiv);
+        }
 
-        return pavertsnavn ?? platformDb.Tenants.FirstOrDefault(t => t.ErStandard && t.Status == TenantStatus.Aktiv);
+        var eksakt = platformDb.Tenants.FirstOrDefault(t => t.Subdomene == host && t.Status == TenantStatus.Aktiv);
+        if (eksakt is not null)
+        {
+            return eksakt;
+        }
+
+        // Lokal utvikling (localhost og *.localhost) faller alltid tilbake til
+        // standard-kunden, slik at lokal testing virker uten eget DNS-oppsett.
+        // I produksjon gir derimot et vertsnavn som ikke matcher noen kunde
+        // IKKE lenger automatisk itlock sine data (slik det gjorde før) -
+        // TenantRedirectMiddleware sender i stedet brukeren til "Finn min
+        // side", f.eks. for det bare produkt-domenet uten subdomene.
+        if (host == "localhost" || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return platformDb.Tenants.FirstOrDefault(t => t.ErStandard && t.Status == TenantStatus.Aktiv);
+        }
+
+        return null;
     }
 }

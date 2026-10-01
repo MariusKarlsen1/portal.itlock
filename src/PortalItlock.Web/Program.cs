@@ -319,6 +319,36 @@ app.Use(async (context, next) =>
     await next();
 });
 
+// Flerkunde-oppsett: et vertsnavn som ikke tilhører noen kunde (f.eks. det
+// bare produkt-domenet uten subdomene, "fullkontroll.no") skal IKKE lenger
+// vise itlock sine data (se ITenantContext) - i stedet sendes brukeren til
+// "Finn min side" for å slå opp riktig kunde ut fra e-posten sin. Unntar
+// plattform-sidene (helt egen innlogging, ikke kundeknyttet), konto-
+// endepunktene, og statiske filer (kjennetegnet ved filendelse).
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path.Value ?? "/";
+    var erUnntatt = path.StartsWith("/finn-min-side", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/plattform", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/konto", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/account", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/_blazor", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase)
+        || Path.HasExtension(path);
+
+    if (!erUnntatt && HttpMethods.IsGet(context.Request.Method))
+    {
+        var tenantContext = context.RequestServices.GetRequiredService<ITenantContext>();
+        if (tenantContext.Current is null)
+        {
+            context.Response.Redirect("/finn-min-side");
+            return;
+        }
+    }
+
+    await next();
+});
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
@@ -459,6 +489,40 @@ app.MapPost("/account/logout", async (HttpContext http) =>
     await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     return Results.Redirect("/login");
 }).RequireAuthorization();
+
+// "Finn min side": felles inngang på det bare produkt-domenet (uten
+// subdomene) - slår opp hvilken kunde som eier e-posten og sender brukeren
+// videre til riktig <kunde>.fullkontroll.no/login, forhåndsutfylt. Selve
+// passordsjekken skjer fortsatt der, mot nøyaktig den kundens egen
+// Brukere-tabell - dette er bare et oppslag, ikke en innlogging i seg selv.
+app.MapPost("/konto/finn-min-side", async (HttpContext http, PlatformDbContext platformDb) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var epost = form["epost"].ToString().Trim();
+
+    if (!string.IsNullOrWhiteSpace(epost))
+    {
+        var aktiveKunder = await platformDb.Tenants
+            .Where(t => t.Status == TenantStatus.Aktiv && t.Subdomene != null)
+            .ToListAsync();
+
+        foreach (var kunde in aktiveKunder)
+        {
+            var kundeOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseSqlite(kunde.ConnectionString)
+                .Options;
+            using var kundeDb = new ApplicationDbContext(kundeOptions);
+            var finnes = await kundeDb.Brukere.AnyAsync(b => b.Epost.ToLower() == epost.ToLower());
+            if (finnes)
+            {
+                var lenke = $"{http.Request.Scheme}://{kunde.Subdomene}/login?epost={Uri.EscapeDataString(epost)}";
+                return Results.Redirect(lenke);
+            }
+        }
+    }
+
+    return Results.Redirect("/finn-min-side?ikkeFunnet=1");
+}).AllowAnonymous().RequireRateLimiting("login");
 
 // Plattform-innlogging: helt egen cookie ("Plattform"-schemaet) og helt egen
 // konto-tabell (PlattformBruker i PlatformDbContext) - se kommentaren ved
