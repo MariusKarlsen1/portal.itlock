@@ -167,11 +167,24 @@ builder.Services.AddSingleton<TripletexService>(sp =>
 builder.Services.AddScoped<TripletexSyncService>();
 builder.Services.AddHostedService<TripletexSyncBackgroundService>();
 
+// To helt adskilte innloggings-cookies: den vanlige (kundenes egne brukere,
+// per tenant-database) og "Plattform" (kun deg - gir tilgang til /plattform
+// for å opprette/administrere kunder). Ingen Admin-rolle hos noen kunde, selv
+// itlock AS sin egen, gir noensinne tilgang til Plattform-cookien - det er en
+// helt egen konto (PlattformBruker) i PlatformDbContext.
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
         options.LoginPath = "/login";
         options.AccessDeniedPath = "/login";
+        options.ExpireTimeSpan = TimeSpan.FromDays(30);
+        options.SlidingExpiration = true;
+    })
+    .AddCookie("Plattform", options =>
+    {
+        options.Cookie.Name = "PlattformAuth";
+        options.LoginPath = "/plattform/logg-inn";
+        options.AccessDeniedPath = "/plattform/logg-inn";
         options.ExpireTimeSpan = TimeSpan.FromDays(30);
         options.SlidingExpiration = true;
     });
@@ -180,6 +193,9 @@ builder.Services.AddAuthorization(options =>
     options.FallbackPolicy = new AuthorizationPolicyBuilder()
         .RequireAuthenticatedUser()
         .Build();
+    options.AddPolicy("Plattform", policy => policy
+        .AddAuthenticationSchemes("Plattform")
+        .RequireAuthenticatedUser());
 });
 builder.Services.AddCascadingAuthenticationState();
 
@@ -228,6 +244,16 @@ using (var seedScope = app.Services.CreateScope())
             Navn = "itlock AS",
             ConnectionString = defaultConnectionString,
             ErStandard = true
+        });
+        platformDb.SaveChanges();
+    }
+
+    if (!platformDb.PlattformBrukere.Any())
+    {
+        platformDb.PlattformBrukere.Add(new PlattformBruker
+        {
+            Navn = "Marius Karlsen",
+            Epost = "marius@itlock.no"
         });
         platformDb.SaveChanges();
     }
@@ -433,6 +459,123 @@ app.MapPost("/account/logout", async (HttpContext http) =>
     await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     return Results.Redirect("/login");
 }).RequireAuthorization();
+
+// Plattform-innlogging: helt egen cookie ("Plattform"-schemaet) og helt egen
+// konto-tabell (PlattformBruker i PlatformDbContext) - se kommentaren ved
+// AddAuthentication lenger opp for hvorfor dette er adskilt fra /account/*.
+app.MapPost("/plattform/konto/login", async (HttpContext http, PlatformDbContext db) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var epost = form["username"].ToString().Trim();
+    var password = form["password"].ToString();
+
+    var bruker = await db.PlattformBrukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
+    var passwordOk = bruker?.PasswordHash is not null && PasswordHasher.Verify(password, bruker.PasswordHash);
+
+    if (bruker is null || !passwordOk)
+    {
+        return Results.Redirect("/plattform/logg-inn?feil=1");
+    }
+
+    var claims = new List<Claim>
+    {
+        new(ClaimTypes.Name, bruker.Navn),
+        new("PlattformBrukerId", bruker.Id.ToString())
+    };
+    var identity = new ClaimsIdentity(claims, "Plattform");
+    await http.SignInAsync("Plattform", new ClaimsPrincipal(identity));
+
+    return Results.Redirect("/plattform");
+}).AllowAnonymous().RequireRateLimiting("login");
+
+app.MapPost("/plattform/konto/sett-passord", async (HttpContext http, PlatformDbContext db) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var epost = form["epost"].ToString().Trim();
+    var passord = form["passord"].ToString();
+    var bekreft = form["bekreft"].ToString();
+
+    var bruker = await db.PlattformBrukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
+
+    if (bruker is null)
+    {
+        return Results.Redirect("/plattform/sett-passord?feil=finnes-ikke");
+    }
+    if (bruker.PasswordHash is not null)
+    {
+        return Results.Redirect("/plattform/sett-passord?feil=allerede-satt");
+    }
+    if (passord.Length < 8 || passord != bekreft)
+    {
+        return Results.Redirect("/plattform/sett-passord?feil=ugyldig");
+    }
+
+    bruker.PasswordHash = PasswordHasher.Hash(passord);
+    await db.SaveChangesAsync();
+
+    return Results.Redirect("/plattform/logg-inn?satt=1");
+}).AllowAnonymous();
+
+app.MapPost("/plattform/konto/glemt-passord", async (HttpContext http, PlatformDbContext db, EmailService epost) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var epostAdresse = form["epost"].ToString().Trim();
+
+    var bruker = await db.PlattformBrukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epostAdresse.ToLower());
+    if (bruker is not null)
+    {
+        var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        db.PlattformBrukerPasswordResetTokener.Add(new PlattformBrukerPasswordResetToken
+        {
+            PlattformBrukerId = bruker.Id,
+            Token = token,
+            UtlopsDato = DateTime.Now.AddHours(1)
+        });
+        await db.SaveChangesAsync();
+
+        var lenke = $"{http.Request.Scheme}://{http.Request.Host}/plattform/tilbakestill-passord?token={token}";
+        var html = "<p>Hei,</p>" +
+            "<p>Du (eller noen andre) har bedt om å tilbakestille passordet for plattform-kontoen din.</p>" +
+            $"<p><a href=\"{lenke}\">Trykk her for å velge nytt passord</a></p>" +
+            "<p>Lenken er gyldig i 1 time. Har du ikke bedt om dette, kan du se bort fra denne e-posten.</p>";
+        await epost.SendAsync(bruker.Epost, "Tilbakestill plattform-passord - itlock", html);
+    }
+
+    return Results.Redirect("/plattform/glemt-passord?sendt=1");
+}).AllowAnonymous().RequireRateLimiting("passord-reset");
+
+app.MapPost("/plattform/konto/tilbakestill-passord", async (HttpContext http, PlatformDbContext db) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var token = form["token"].ToString();
+    var passord = form["passord"].ToString();
+    var bekreft = form["bekreft"].ToString();
+
+    var resetToken = await db.PlattformBrukerPasswordResetTokener
+        .Include(t => t.PlattformBruker)
+        .FirstOrDefaultAsync(t => t.Token == token);
+
+    if (resetToken?.PlattformBruker is null || resetToken.Brukt || resetToken.UtlopsDato < DateTime.Now)
+    {
+        return Results.Redirect("/plattform/tilbakestill-passord?feil=ugyldig-token");
+    }
+    if (passord.Length < 8 || passord != bekreft)
+    {
+        return Results.Redirect($"/plattform/tilbakestill-passord?token={Uri.EscapeDataString(token)}&feil=ugyldig-passord");
+    }
+
+    resetToken.PlattformBruker.PasswordHash = PasswordHasher.Hash(passord);
+    resetToken.Brukt = true;
+    await db.SaveChangesAsync();
+
+    return Results.Redirect("/plattform/logg-inn?satt=1");
+}).AllowAnonymous();
+
+app.MapPost("/plattform/konto/logout", async (HttpContext http) =>
+{
+    await http.SignOutAsync("Plattform");
+    return Results.Redirect("/plattform/logg-inn");
+}).RequireAuthorization("Plattform");
 
 app.MapGet("/bilder/{id:int}", async (int id, ApplicationDbContext db) =>
 {

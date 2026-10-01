@@ -9,4 +9,6 @@ namespace PortalItlock.Web.Data;
 public class PlatformDbContext(DbContextOptions<PlatformDbContext> options) : DbContext(options)
 {
     public DbSet<Tenant> Tenants => Set<Tenant>();
+    public DbSet<PlattformBruker> PlattformBrukere => Set<PlattformBruker>();
+    public DbSet<PlattformBrukerPasswordResetToken> PlattformBrukerPasswordResetTokener => Set<PlattformBrukerPasswordResetToken>();
 }
