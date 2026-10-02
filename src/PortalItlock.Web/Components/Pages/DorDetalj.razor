@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using System.Globalization
+@using System.Text.Json
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
@@ -200,11 +201,11 @@ else
             <span class="dor-panel-ikon"><Icon Name="grip" /></span>
             <h2>Prinsippskisse</h2>
         </div>
-        <p class="section-hint">Visualisering av dørmiljøet - produkter, funksjoner og grensesnitt satt sammen, til bruk mot RIE/elektro og montør.</p>
+        <p class="section-hint">Visualisering av dørmiljøet - produkter, funksjoner og grensesnitt satt sammen, til bruk mot RIE/elektro og montør. Genereres automatisk ut fra beslaget under, og kan redigeres fritt videre.</p>
 
         @if (_prinsippskisser.Count == 0)
         {
-            <p class="list-empty">Ingen prinsippskisse laget ennå.</p>
+            <p class="list-empty">Ingen prinsippskisse laget ennå. Trykk "Ny prinsippskisse" for å generere en basert på beslaget på denne døren.</p>
         }
         else
         {
@@ -690,7 +691,120 @@ else
         Db.KoblingsSkjemaer.Add(skjema);
         await Db.SaveChangesAsync();
 
+        GenererSymbolerFraBestykning(skjema.Id);
+        await Db.SaveChangesAsync();
+
         Nav.NavigateTo($"/koblingsskjema/{skjema.Id}");
+    }
+
+    // Autogenererer en startskisse ut fra dørens bestykning, i samme stil som
+    // de håndtegnede rørførings-/koblingsskissene i dørmiljø-biblioteket:
+    // hvert produkt som en utfylt, merket boks, med en stiplet linje inn mot
+    // døren i midten (tilsvarer "Koblingsnode"-mønsteret der). Komponenter
+    // fordeles i kolonner etter Plassering (Hengselside/Karmside) - uten
+    // registrert plassering havner de på den korteste kolonnen slik at alt
+    // vises. Dette er kun et startpunkt - alt kan flyttes/omformes/slettes
+    // videre i editoren.
+    private void GenererSymbolerFraBestykning(int skjemaId)
+    {
+        const double dorX = 42, dorY = 8, dorBredde = 16, dorHoyde = 84;
+
+        Db.KoblingsSymboler.Add(new KoblingsSymbol
+        {
+            KoblingsSkjemaId = skjemaId,
+            ElementType = KoblingsElementType.Tekstboks,
+            Tekst = $"Dør {_dor!.Dornummer}",
+            Farge = "#292927",
+            FontStorrelse = 13,
+            PosX = 38,
+            PosY = 1,
+            Bredde = 24,
+            Hoyde = 5,
+            ZIndex = 2
+        });
+        Db.KoblingsSymboler.Add(new KoblingsSymbol
+        {
+            KoblingsSkjemaId = skjemaId,
+            ElementType = KoblingsElementType.Rektangel,
+            Farge = "#292927",
+            Strokbredde = 2,
+            PosX = dorX,
+            PosY = dorY,
+            Bredde = dorBredde,
+            Hoyde = dorHoyde,
+            ZIndex = 0
+        });
+
+        var hengsel = _dor.Komponenter.Where(k => k.Plassering == DorKomponentPlassering.Hengselside).ToList();
+        var karm = _dor.Komponenter.Where(k => k.Plassering == DorKomponentPlassering.Karmside).ToList();
+        foreach (var k in _dor.Komponenter.Where(k => k.Plassering is null))
+        {
+            (hengsel.Count <= karm.Count ? hengsel : karm).Add(k);
+        }
+
+        LeggSymbolKolonne(skjemaId, hengsel, startX: 3, koblesTilX: dorX, dorY: dorY, dorHoyde: dorHoyde);
+        LeggSymbolKolonne(skjemaId, karm, startX: 65, koblesTilX: dorX + dorBredde, dorY: dorY, dorHoyde: dorHoyde);
+    }
+
+    // koblesTilX er x-koordinaten på dørens kant boksene skal trekke en
+    // stiplet linje til (venstre kant for hengselside, høyre kant for
+    // karmside), slik at alle komponentene visuelt peker inn mot døren -
+    // samme "comb"-mønster som i de håndtegnede referanseskissene.
+    private void LeggSymbolKolonne(int skjemaId, List<DorKomponent> komponenter, double startX, double koblesTilX, double dorY, double dorHoyde)
+    {
+        if (komponenter.Count == 0)
+        {
+            return;
+        }
+
+        var startY = dorY + 2;
+        var sluttY = dorY + dorHoyde - 2;
+        var radHoyde = Math.Min(10, (sluttY - startY) / komponenter.Count);
+        const double boksBredde = 30;
+
+        var y = startY;
+        foreach (var k in komponenter)
+        {
+            var boksHoyde = Math.Max(radHoyde - 2, 4);
+            var navn = k.Component?.Navn ?? "Ukjent komponent";
+            if (k.Antall > 1)
+            {
+                navn += $" ({k.Antall} stk)";
+            }
+
+            Db.KoblingsSymboler.Add(new KoblingsSymbol
+            {
+                KoblingsSkjemaId = skjemaId,
+                ElementType = KoblingsElementType.Rektangel,
+                Navn = navn,
+                Farge = "#835e41",
+                Strokbredde = 1,
+                Fylt = true,
+                PosX = startX,
+                PosY = y,
+                Bredde = boksBredde,
+                Hoyde = boksHoyde,
+                ZIndex = 1
+            });
+
+            var linjeY = y + boksHoyde / 2;
+            var boksKantX = startX < koblesTilX ? startX + boksBredde : startX;
+            var punkter = JsonSerializer.Serialize(new[]
+            {
+                new KoblingsStrekPunkt { X = boksKantX, Y = linjeY },
+                new KoblingsStrekPunkt { X = koblesTilX, Y = linjeY }
+            });
+            Db.KoblingsStreker.Add(new KoblingsStrek
+            {
+                KoblingsSkjemaId = skjemaId,
+                PunkterJson = punkter,
+                Farge = "#835e41",
+                Tykkelse = 1,
+                Stiplet = true
+            });
+
+            y += radHoyde;
+        }
     }
 
     private async Task FjernBeslag(DorKomponent dk)
