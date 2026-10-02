@@ -654,6 +654,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<KoblingsSkjema>()
+            .HasOne(k => k.Dor)
+            .WithMany()
+            .HasForeignKey(k => k.DorId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<KoblingsSkjema>()
             .HasOne(k => k.Kategori)
             .WithMany(k => k.Skjemaer)
             .HasForeignKey(k => k.KategoriId)
@@ -909,7 +915,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         modelBuilder.Entity<KoblingsKategori>().HasData(
             new KoblingsKategori { Id = 1, Navn = "ARX", Rekkefolge = 1 },
             new KoblingsKategori { Id = 2, Navn = "Salto", Rekkefolge = 2 },
-            new KoblingsKategori { Id = 3, Navn = "Diverse", Rekkefolge = 3 }
+            new KoblingsKategori { Id = 3, Navn = "Diverse", Rekkefolge = 3 },
+            new KoblingsKategori { Id = 4, Navn = "Prinsippskisser", Rekkefolge = 4 }
         );
 
         modelBuilder.Entity<NedlastningsKategori>().HasData(

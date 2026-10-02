@@ -11,6 +11,10 @@ public class KoblingsSkjema
     public int? ProsjektId { get; set; }
     public Prosjekt? Prosjekt { get; set; }
 
+    // Valgfri kobling til en dør - skjemaet vises da som prinsippskisse på dørsiden.
+    public int? DorId { get; set; }
+    public Dor? Dor { get; set; }
+
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
     public DateTime? OppdatertDato { get; set; }
 
