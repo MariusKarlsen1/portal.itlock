@@ -18,6 +18,7 @@ public class Bruker
     public string? SkjulteNavLenker { get; set; }
     public string? TopplinjeSnarveier { get; set; }
     public string? EkstraNavLenker { get; set; }
+    public bool HjemLayoutKlassisk { get; set; }
 
     public int? KundeId { get; set; }
     public Kunde? Kunde { get; set; }
