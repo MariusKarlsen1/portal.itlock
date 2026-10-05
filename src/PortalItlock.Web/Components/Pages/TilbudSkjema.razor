@@ -5,6 +5,7 @@
 @using System.Globalization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.EntityFrameworkCore.ChangeTracking
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
@@ -306,15 +307,23 @@ else if (_tilbud is not null)
             </div>
             @if (_hendelser.Count > 0)
             {
-                <ul class="hendelse-liste">
+                <div class="tidslinje">
                     @foreach (var h in _hendelser)
                     {
-                        <li @key="h.Id">
-                            <span class="hendelse-dato">@h.Tidspunkt.ToString("dd.MM.yyyy HH:mm") @(h.UtfortAvBruker is not null ? $"- {h.UtfortAvBruker.Navn}" : "")</span>
-                            <span>@h.Beskrivelse</span>
-                        </li>
+                        var (ikon, farge, tittel) = HendelseVisning(h.Beskrivelse);
+                        <div class="hend" @key="h.Id">
+                            <div class="hend-linje"></div>
+                            <div class="hend-ikon hend-ikon-@farge"><Icon Name="@ikon" /></div>
+                            <div class="hend-body">
+                                <div>
+                                    <div class="hend-tittel">@tittel</div>
+                                    <div class="hend-meta">@(h.UtfortAvBruker?.Navn ?? "Ukjent bruker") · @h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</div>
+                                </div>
+                                <div class="hend-beskrivelse">@h.Beskrivelse</div>
+                            </div>
+                        </div>
                     }
-                </ul>
+                </div>
             }
             else
             {
@@ -906,12 +915,120 @@ else if (_tilbud is not null)
 
         _sisteLoggetStatus = _tilbud.Status;
         await Db.SaveChangesAsync();
+        await OppdaterHendelser();
+    }
 
+    private async Task OppdaterHendelser()
+    {
         _hendelser = await Db.TilbudHendelser
             .Include(h => h.UtfortAvBruker)
-            .Where(h => h.TilbudId == _tilbud.Id)
+            .Where(h => h.TilbudId == _tilbud!.Id)
             .OrderByDescending(h => h.Tidspunkt)
             .ToListAsync();
+    }
+
+    // Kategoriserer en hendelse ut fra beskrivelsesteksten (ikon+farge+kort
+    // tittel for tidslinjen) - rekkefølgen på sjekkene betyr noe: "pris"-
+    // treffet må komme før "antall", siden "Endret antall ... på {varenavn}"
+    // aldri skal havne i pris-bøtta selv om varenavnet skulle inneholde "pris".
+    private static (string Ikon, string Farge, string Tittel) HendelseVisning(string beskrivelse)
+    {
+        if (beskrivelse.StartsWith("Tilbudet ble opprettet", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("file-text", "gronn", "Tilbud opprettet");
+        }
+        if (beskrivelse.StartsWith("Status endret", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("clock", "noytral", "Status endret");
+        }
+        if (beskrivelse.StartsWith("Genererte PDF", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("file-text", "mork", "PDF generert");
+        }
+        if (beskrivelse.StartsWith("Endret innpris", StringComparison.OrdinalIgnoreCase)
+            || beskrivelse.StartsWith("Endret utpris", StringComparison.OrdinalIgnoreCase)
+            || beskrivelse.StartsWith("Endret timepris", StringComparison.OrdinalIgnoreCase)
+            || beskrivelse.StartsWith("Endret prosentsats", StringComparison.OrdinalIgnoreCase)
+            || beskrivelse.StartsWith("Endret montasjekost", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("trend-up", "teal", "Pris oppdatert");
+        }
+        if (beskrivelse.StartsWith("Vare lagt til", StringComparison.OrdinalIgnoreCase)
+            || beskrivelse.StartsWith("Vare fjernet", StringComparison.OrdinalIgnoreCase)
+            || beskrivelse.StartsWith("Endret antall", StringComparison.OrdinalIgnoreCase)
+            || beskrivelse.Contains("synkronisert", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("box", "blaa", "Vare oppdatert");
+        }
+
+        return ("check", "orange", "Tilbud lagret");
+    }
+
+    private TilbudHendelse NyHendelse(string beskrivelse) => new()
+    {
+        TilbudId = _tilbud!.Id,
+        Beskrivelse = beskrivelse,
+        UtfortAvBrukerId = _naverendeBrukerId
+    };
+
+    private static string FormatAntall(decimal verdi) => verdi.ToString("0.##", Kultur);
+
+    // Sjekker om en sporet egenskap faktisk er endret siden sist lagret - brukes
+    // til å generere beskrivende historikk-linjer ("Endret antall fra 2 til 3 på
+    // X") for felter som er direkte to-veis bundet i skjemaet (@@bind) og derfor
+    // ikke har noen egen lagre-knapp/handler, kun den store Lagre-knappen øverst.
+    private static bool FeltEndret(EntityEntry entry, string felt, out object? fra, out object? til)
+    {
+        var prop = entry.Property(felt);
+        fra = prop.OriginalValue;
+        til = prop.CurrentValue;
+        return prop.IsModified && !Equals(fra, til);
+    }
+
+    private List<TilbudHendelse> FinnVareOgPrisEndringer()
+    {
+        var funnet = new List<TilbudHendelse>();
+
+        foreach (var entry in Db.ChangeTracker.Entries<TilbudLinje>())
+        {
+            if (entry.Entity.ErGruppering || entry.State != EntityState.Modified)
+            {
+                continue;
+            }
+
+            var navn = entry.Entity.Navn;
+            if (FeltEndret(entry, nameof(TilbudLinje.Antall), out var antallFra, out var antallTil))
+            {
+                funnet.Add(NyHendelse($"Endret antall fra {FormatAntall((decimal)antallFra!)} til {FormatAntall((decimal)antallTil!)} på {navn}"));
+            }
+            if (FeltEndret(entry, nameof(TilbudLinje.Innpris), out var innFra, out var innTil))
+            {
+                funnet.Add(NyHendelse($"Endret innpris fra {FormatKr((decimal)innFra!)} til {FormatKr((decimal)innTil!)} på {navn}"));
+            }
+            if (FeltEndret(entry, nameof(TilbudLinje.Utpris), out var utFra, out var utTil))
+            {
+                funnet.Add(NyHendelse($"Endret utpris fra {FormatKr((decimal)utFra!)} til {FormatKr((decimal)utTil!)} på {navn}"));
+            }
+        }
+
+        if (_tilbud is not null)
+        {
+            var tilbudEntry = Db.Entry(_tilbud);
+            if (FeltEndret(tilbudEntry, nameof(Tilbud.Timepris), out var tpFra, out var tpTil))
+            {
+                funnet.Add(NyHendelse($"Endret timepris fra {FormatKr((decimal)tpFra!)} til {FormatKr((decimal)tpTil!)}"));
+            }
+            if (FeltEndret(tilbudEntry, nameof(Tilbud.Prosentsats), out var psFra, out var psTil))
+            {
+                funnet.Add(NyHendelse($"Endret prosentsats fra {((decimal)psFra!).ToString("0.#", Kultur)} % til {((decimal)psTil!).ToString("0.#", Kultur)} %"));
+            }
+            if (FeltEndret(tilbudEntry, nameof(Tilbud.MontasjeInnpris), out var miFra, out var miTil))
+            {
+                funnet.Add(NyHendelse($"Endret montasjekost fra {FormatKr((decimal)(miFra ?? 0m))} til {FormatKr((decimal)(miTil ?? 0m))}"));
+            }
+        }
+
+        return funnet;
     }
 
     private async Task OpprettArbeidsordre()
@@ -961,7 +1078,16 @@ else if (_tilbud is not null)
     private async Task Lagre()
     {
         _tilbud!.OppdatertDato = DateTime.UtcNow;
+
+        var endringer = FinnVareOgPrisEndringer();
+        if (endringer.Count == 0)
+        {
+            endringer.Add(NyHendelse("Tilbudet ble lagret"));
+        }
+        Db.TilbudHendelser.AddRange(endringer);
+
         await Db.SaveChangesAsync();
+        await OppdaterHendelser();
         _savedMessage = "Lagret.";
     }
 
@@ -1072,7 +1198,12 @@ else if (_tilbud is not null)
         }
 
         OppdaterMontasjekostAutomatisk();
+        if (gruppert.Count > 0)
+        {
+            Db.TilbudHendelser.Add(NyHendelse($"{gruppert.Count} varetyper synkronisert fra prosjektets dører"));
+        }
         await Db.SaveChangesAsync();
+        await OppdaterHendelser();
         _syncMessage = $"{gruppert.Count} varetyper synkronisert fra prosjektets dører.";
     }
 
@@ -1179,7 +1310,9 @@ else if (_tilbud is not null)
         var existing = _tilbud!.Linjer.FirstOrDefault(l => l.ComponentId == r.Id);
         if (existing is not null)
         {
+            var fra = existing.Antall;
             existing.Antall += 1;
+            Db.TilbudHendelser.Add(NyHendelse($"Endret antall fra {FormatAntall(fra)} til {FormatAntall(existing.Antall)} på {existing.Navn}"));
         }
         else
         {
@@ -1206,9 +1339,11 @@ else if (_tilbud is not null)
             OppdaterLinjePris(linje);
             _tilbud.Linjer.Add(linje);
             Db.TilbudLinjer.Add(linje);
+            Db.TilbudHendelser.Add(NyHendelse($"Vare lagt til: {linje.Navn}"));
         }
 
         await Db.SaveChangesAsync();
+        await OppdaterHendelser();
         _componentSearch = "";
         _searchResults = [];
     }
@@ -1231,15 +1366,23 @@ else if (_tilbud is not null)
         };
         _tilbud.Linjer.Add(linje);
         Db.TilbudLinjer.Add(linje);
+        Db.TilbudHendelser.Add(NyHendelse($"Vare lagt til: {linje.Navn}"));
         await Db.SaveChangesAsync();
+        await OppdaterHendelser();
         _nyLinjeNavn = "";
     }
 
     private async Task FjernLinje(TilbudLinje l)
     {
+        var navn = l.Navn;
         Db.TilbudLinjer.Remove(l);
+        if (!l.ErGruppering && !string.IsNullOrWhiteSpace(navn))
+        {
+            Db.TilbudHendelser.Add(NyHendelse($"Vare fjernet: {navn}"));
+        }
         await Db.SaveChangesAsync();
         _tilbud!.Linjer.Remove(l);
+        await OppdaterHendelser();
     }
 
     private async Task LeggTilTomRad()
@@ -1369,7 +1512,9 @@ else if (_tilbud is not null)
         linje.RabattProsent = await HentKundeRabattProsent(component);
         OppdaterLinjePris(linje);
 
+        Db.TilbudHendelser.Add(NyHendelse($"Vare lagt til: {linje.Navn}"));
         await Db.SaveChangesAsync();
+        await OppdaterHendelser();
         LukkProduktVelger();
     }
 
@@ -1454,6 +1599,11 @@ else if (_tilbud is not null)
             "Tilbud", Id, $"Tilbud - {_tilbud.Tittel} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes, linjer, nokkeltall);
 
         _lagredePdfer.Add(pdf);
+
+        Db.TilbudHendelser.Add(NyHendelse($"Genererte PDF: {pdf.Navn}"));
+        await Db.SaveChangesAsync();
+        await OppdaterHendelser();
+
         _pdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
