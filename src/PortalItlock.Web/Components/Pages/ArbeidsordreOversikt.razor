@@ -87,6 +87,35 @@ else
             }
         </tbody>
     </table>
+
+    <h2 class="detalj-tittel">Fakturerte arbeidsordre i perioden</h2>
+    <table class="ordre-table">
+        <thead>
+            <tr>
+                <th>Tittel</th>
+                <th>Tilbud</th>
+                <th>Kunde</th>
+                <th>Fakturert</th>
+                <th>Sum</th>
+                <th>DG</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var r in _ordreRader)
+            {
+                <tr @key="r.Id">
+                    <td>@r.Tittel</td>
+                    <td>@(r.TilbudTittel ?? "-")</td>
+                    <td>@(r.KundeNavn ?? "-")</td>
+                    <td>@r.FakturertDato?.ToString("dd.MM.yyyy")</td>
+                    <td class="timer-cell">@FormatKr(r.Sum)</td>
+                    <td class="timer-cell">@FormatKr(r.Dg) (@r.DgProsent.ToString("N0", Kultur) %)</td>
+                    <td class="ordre-actions"><a class="edit-link" href="@($"/arbeidsordre/{r.Id}")">Åpne</a></td>
+                </tr>
+            }
+        </tbody>
+    </table>
 }
 
 @code {
@@ -102,10 +131,24 @@ else
         public int AntallOrdre { get; set; }
     }
 
+    private sealed class OrdreRad
+    {
+        public int Id { get; set; }
+        public string Tittel { get; set; } = "";
+        public string? TilbudTittel { get; set; }
+        public string? KundeNavn { get; set; }
+        public DateTime? FakturertDato { get; set; }
+        public decimal Sum { get; set; }
+        public decimal Kost { get; set; }
+        public decimal Dg => Sum - Kost;
+        public decimal DgProsent => Sum == 0 ? 0 : Dg / Sum * 100;
+    }
+
     private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
     private readonly string[] _perioder = ["Siste 6 måneder", "Siste 12 måneder", "I år", "Alle"];
     private string _valgtPeriode = "Siste 12 måneder";
     private List<ManedData> _maneder = [];
+    private List<OrdreRad> _ordreRader = [];
     private decimal _maksSum;
 
     private decimal SnittDgProsent
@@ -143,9 +186,25 @@ else
         var ordre = await Db.Arbeidsordre
             .Where(a => a.Status == ArbeidsordreStatus.Fakturert && a.FakturertDato != null && a.FakturertDato >= fra)
             .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer)
+            .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Include(a => a.Kunde)
             .Include(a => a.Varer)
             .Include(a => a.Timeregistreringer)
             .ToListAsync();
+
+        _ordreRader = ordre
+            .OrderByDescending(a => a.FakturertDato)
+            .Select(a => new OrdreRad
+            {
+                Id = a.Id,
+                Tittel = a.Tittel,
+                TilbudTittel = a.Tilbud?.Tittel,
+                KundeNavn = a.Kunde?.Navn ?? a.Prosjekt?.Kunde?.Navn,
+                FakturertDato = a.FakturertDato,
+                Sum = ArbeidsordreBeregningHelper.BeregnVareSum(a),
+                Kost = ArbeidsordreBeregningHelper.BeregnVareKost(a)
+            })
+            .ToList();
 
         var gruppert = ordre
             .GroupBy(a => new { a.FakturertDato!.Value.Year, a.FakturertDato.Value.Month })
