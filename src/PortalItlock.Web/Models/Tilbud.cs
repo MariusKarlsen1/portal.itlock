@@ -8,6 +8,11 @@ public class Tilbud
 
     public required string Tittel { get; set; }
     public string? ForesporselBeskrivelse { get; set; }
+    public string? KontaktpersonNavn { get; set; }
+    public string? KontaktpersonTelefon { get; set; }
+    public string? KontaktpersonEpost { get; set; }
+    public DateTime? GyldigTil { get; set; }
+    public string? Leveringstid { get; set; }
     public TilbudType Type { get; set; } = TilbudType.Tilbud;
     public int? OpprinneligTilbudId { get; set; }
     public Tilbud? OpprinneligTilbud { get; set; }
