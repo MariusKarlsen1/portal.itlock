@@ -18,7 +18,12 @@ public class Bruker
     public string? SkjulteNavLenker { get; set; }
     public string? TopplinjeSnarveier { get; set; }
     public string? EkstraNavLenker { get; set; }
-    public bool HjemLayoutKlassisk { get; set; }
+
+    // Styrer hvilken av de tre Hjem-layoutene brukeren ser - velges via
+    // "Layout N"-knappen i Tilpass meny (se TopBar.razor). Bilde er standard
+    // (matcher tidligere HjemLayoutKlassisk=false), som bevart av migrasjonen
+    // som la til dette feltet.
+    public HjemLayout HjemLayoutValg { get; set; } = HjemLayout.Bilde;
 
     public int? KundeId { get; set; }
     public Kunde? Kunde { get; set; }
