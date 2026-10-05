@@ -56,7 +56,9 @@
                 <Icon Name="file-text" />Liste
             </button>
         </div>
-        <span class="stat-chip"><span class="dot"></span>@_tilbud.Count tilbud</span>
+        <a class="arkiv-lenke" href="/tilbud-service/godkjent"><Icon Name="check-circle" />Godkjente</a>
+        <a class="arkiv-lenke" href="/tilbud-service/avslatt"><Icon Name="x" />Avslåtte</a>
+        <span class="stat-chip"><span class="dot"></span>@_synlige.Count tilbud</span>
     </div>
 }
 
@@ -168,18 +170,26 @@ else
         public EndringsmeldingStatus Status { get; set; }
         public decimal? SendtSum { get; set; }
         public string? ProsjektlederNavn { get; set; }
+
+        // Godkjent tilbud forsvinner fra denne siden og over til "Godkjente
+        // tilbud" (/tilbud-service/godkjent) først når arbeidsordren som ble
+        // laget av det er ferdigmeldt - se OnInitializedAsync. Før det skal
+        // det fortsatt vises her i Godkjent-kolonnen, siden jobben ennå
+        // pågår. Avslåtte tilbud vises aldri her i det hele tatt - de ligger
+        // utelukkende på /tilbud-service/avslatt.
+        public bool ArbeidsordreFerdig { get; set; }
     }
 
     private enum Visning { Kanban, Liste }
 
-    // Samme rekkefølge som statusene naturlig flyter i (Tickets/Arbeidsordre
-    // sin tavle bruker samme mønster) - se EndringsmeldingStatus.
+    // Avslått vises aldri på hovedsiden (kun på /tilbud-service/avslatt),
+    // og Godkjent vises her kun så lenge arbeidsordren ikke er ferdigmeldt
+    // ennå - se TilbudRad.ArbeidsordreFerdig og _synlige under.
     private static readonly EndringsmeldingStatus[] TavleStatuser =
     [
         EndringsmeldingStatus.Utkast,
         EndringsmeldingStatus.SendtTilKunde,
-        EndringsmeldingStatus.Godkjent,
-        EndringsmeldingStatus.Avslatt
+        EndringsmeldingStatus.Godkjent
     ];
 
     private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
@@ -195,11 +205,15 @@ else
     private string _sok = "";
     private Visning _visning = Visning.Kanban;
 
-    private List<TilbudRad> _synlige => string.IsNullOrWhiteSpace(_sok)
-        ? _tilbud
-        : _tilbud.Where(t => t.Tittel.Contains(_sok, StringComparison.OrdinalIgnoreCase)
+    // Hovedsiden viser kun tilbud som fortsatt er "i arbeid": aldri avslåtte
+    // (de ligger på egen side), og godkjente kun frem til arbeidsordren er
+    // ferdigmeldt (deretter flyttes de til /tilbud-service/godkjent).
+    private List<TilbudRad> _synlige => _tilbud
+        .Where(t => t.Status != EndringsmeldingStatus.Avslatt && !(t.Status == EndringsmeldingStatus.Godkjent && t.ArbeidsordreFerdig))
+        .Where(t => string.IsNullOrWhiteSpace(_sok)
+            || t.Tittel.Contains(_sok, StringComparison.OrdinalIgnoreCase)
             || (t.KundeNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false))
-          .ToList();
+        .ToList();
 
     [Inject] private NavigationManager Nav { get; set; } = default!;
     [SupplyParameterFromQuery(Name = "navn")] private string? NavnFraQuery { get; set; }
@@ -230,7 +244,9 @@ else
                 OpprettetDato = t.OpprettetDato,
                 Status = t.Status,
                 SendtSum = t.SendtSum,
-                ProsjektlederNavn = t.Prosjekt.Prosjektleder != null ? t.Prosjekt.Prosjektleder.Navn : null
+                ProsjektlederNavn = t.Prosjekt.Prosjektleder != null ? t.Prosjekt.Prosjektleder.Navn : null,
+                ArbeidsordreFerdig = Db.Arbeidsordre.Any(a => a.TilbudId == t.Id
+                    && (a.Status == ArbeidsordreStatus.Ferdig || a.Status == ArbeidsordreStatus.Fakturert))
             })
             .ToListAsync();
     }
