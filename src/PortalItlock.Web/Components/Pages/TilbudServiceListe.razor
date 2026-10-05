@@ -48,6 +48,14 @@
             <Icon Name="search" />
             <input @bind="_sok" @bind:event="oninput" placeholder="Søk på navn eller kunde..." />
         </div>
+        <div class="visning-veksler">
+            <button type="button" class="visning-knapp @(_visning == Visning.Kanban ? "visning-knapp-aktiv" : "")" @onclick="@(() => _visning = Visning.Kanban)">
+                <Icon Name="box" />Kanban
+            </button>
+            <button type="button" class="visning-knapp @(_visning == Visning.Liste ? "visning-knapp-aktiv" : "")" @onclick="@(() => _visning = Visning.Liste)">
+                <Icon Name="file-text" />Liste
+            </button>
+        </div>
         <span class="stat-chip"><span class="dot"></span>@_tilbud.Count tilbud</span>
     </div>
 }
@@ -60,7 +68,7 @@ else if (_synlige.Count == 0)
 {
     <p class="list-empty">Ingen treff.</p>
 }
-else
+else if (_visning == Visning.Liste)
 {
     <div class="avtale-liste">
         @foreach (var t in _synlige)
@@ -82,7 +90,63 @@ else
                         &middot; Opprettet @t.OpprettetDato.ToString("dd.MM.yyyy")
                     </div>
                 </div>
+                <StatusPill Tekst="@t.Status.Visningsnavn()" Ikon="@t.Status.PillIkon()" Farge="@t.Status.PillFarge()" />
                 <span class="apne-pil"><Icon Name="arrow-left" /></span>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="tilbud-tavle">
+        @foreach (var status in TavleStatuser)
+        {
+            var tilbudIKolonne = _synlige.Where(t => t.Status == status).ToList();
+            <div class="tilbud-kolonne tilbud-kolonne-@status.PillFarge()">
+                <div class="tilbud-kolonne-header">
+                    <span class="tilbud-kolonne-tittel"><span class="tilbud-kolonne-prikk"></span>@status.Visningsnavn() <span class="tilbud-kolonne-antall">@tilbudIKolonne.Count</span></span>
+                    @{ var sum = tilbudIKolonne.Sum(t => t.SendtSum ?? 0); }
+                    @if (sum > 0)
+                    {
+                        <span class="tilbud-kolonne-sum">@sum.ToString("N0", Kultur) kr</span>
+                    }
+                </div>
+                <div class="tilbud-kort-stabel">
+                    @if (tilbudIKolonne.Count == 0)
+                    {
+                        <div class="tilbud-kolonne-tom">
+                            <Icon Name="check-circle" />
+                            <span>Ingen her akkurat nå</span>
+                        </div>
+                    }
+                    else
+                    {
+                        @foreach (var t in tilbudIKolonne)
+                        {
+                            <a @key="t.TilbudId" class="tilbud-kort tilbud-kort-@status.PillFarge()" href="@($"/tilbud/{t.TilbudId}")">
+                                <span class="tilbud-kort-tittel">@t.Tittel</span>
+                                <span class="tilbud-kort-linje">
+                                    <Icon Name="users" />
+                                    <span>@(t.KundeNavn ?? "Ingen kunde satt")</span>
+                                </span>
+                                <div class="tilbud-kort-bunn">
+                                    @if (t.SendtSum is { } sendtSum)
+                                    {
+                                        <span class="tilbud-kort-sum">@sendtSum.ToString("N0", Kultur) kr</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="tilbud-kort-dato">Opprettet @t.OpprettetDato.ToString("dd.MM.yyyy")</span>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(t.ProsjektlederNavn))
+                                    {
+                                        <span class="tilbud-kort-avatar" title="@t.ProsjektlederNavn">@Initialer(t.ProsjektlederNavn)</span>
+                                    }
+                                </div>
+                            </a>
+                        }
+                    }
+                </div>
             </div>
         }
     </div>
@@ -101,7 +165,27 @@ else
         public string Tittel { get; set; } = "";
         public string? KundeNavn { get; set; }
         public DateTime OpprettetDato { get; set; }
+        public EndringsmeldingStatus Status { get; set; }
+        public decimal? SendtSum { get; set; }
+        public string? ProsjektlederNavn { get; set; }
     }
+
+    private enum Visning { Kanban, Liste }
+
+    // Samme rekkefølge som statusene naturlig flyter i (Tickets/Arbeidsordre
+    // sin tavle bruker samme mønster) - se EndringsmeldingStatus.
+    private static readonly EndringsmeldingStatus[] TavleStatuser =
+    [
+        EndringsmeldingStatus.Utkast,
+        EndringsmeldingStatus.SendtTilKunde,
+        EndringsmeldingStatus.Godkjent,
+        EndringsmeldingStatus.Avslatt
+    ];
+
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+    private static string Initialer(string navn) => string.Concat(
+        navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(d => char.ToUpperInvariant(d[0])));
 
     private List<TilbudRad> _tilbud = [];
     private List<KundeOption> _kunder = [];
@@ -109,6 +193,7 @@ else
     private int? _valgtKundeId;
     private string? _nyAdresse;
     private string _sok = "";
+    private Visning _visning = Visning.Kanban;
 
     private List<TilbudRad> _synlige => string.IsNullOrWhiteSpace(_sok)
         ? _tilbud
@@ -135,13 +220,17 @@ else
         _tilbud = await Db.Tilbud
             .Where(t => t.Prosjekt!.Status == ProsjektStatus.Serviceavtale)
             .Include(t => t.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Include(t => t.Prosjekt).ThenInclude(p => p!.Prosjektleder)
             .OrderByDescending(t => t.OpprettetDato)
             .Select(t => new TilbudRad
             {
                 TilbudId = t.Id,
                 Tittel = t.Tittel,
                 KundeNavn = t.Prosjekt!.Kunde != null ? t.Prosjekt.Kunde.Navn : null,
-                OpprettetDato = t.OpprettetDato
+                OpprettetDato = t.OpprettetDato,
+                Status = t.Status,
+                SendtSum = t.SendtSum,
+                ProsjektlederNavn = t.Prosjekt.Prosjektleder != null ? t.Prosjekt.Prosjektleder.Navn : null
             })
             .ToListAsync();
     }
