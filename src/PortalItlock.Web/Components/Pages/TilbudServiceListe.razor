@@ -203,27 +203,39 @@ else
         public EndringsmeldingStatus Status { get; set; }
         public decimal? SendtSum { get; set; }
         public string? ProsjektlederNavn { get; set; }
+        public DateTime? AvslattDato { get; set; }
 
         // Godkjent tilbud forsvinner fra denne siden og over til "Godkjente
         // tilbud" (/tilbud-service/godkjent) først når arbeidsordren som ble
         // laget av det er ferdigmeldt - se OnInitializedAsync. Før det skal
         // det fortsatt vises her i Godkjent-kolonnen, siden jobben ennå
-        // pågår. Avslåtte tilbud vises aldri her i det hele tatt - de ligger
-        // utelukkende på /tilbud-service/avslatt.
+        // pågår. Avslåtte tilbud vises her i Avslått-kolonnen i 7 dager etter
+        // AvslattDato, deretter kun på /tilbud-service/avslatt - se _synlige.
         public bool ArbeidsordreFerdig { get; set; }
     }
 
     private enum Visning { Kanban, Liste }
 
-    // Avslått vises aldri på hovedsiden (kun på /tilbud-service/avslatt),
-    // og Godkjent vises her kun så lenge arbeidsordren ikke er ferdigmeldt
-    // ennå - se TilbudRad.ArbeidsordreFerdig og _synlige under.
+    // Avslått vises på hovedsiden i 7 dager etter AvslattDato (deretter kun
+    // på /tilbud-service/avslatt), og Godkjent vises her kun så lenge
+    // arbeidsordren ikke er ferdigmeldt ennå - se TilbudRad.ArbeidsordreFerdig,
+    // ErNyligAvslatt og _synlige under.
     private static readonly EndringsmeldingStatus[] TavleStatuser =
     [
         EndringsmeldingStatus.Utkast,
         EndringsmeldingStatus.SendtTilKunde,
-        EndringsmeldingStatus.Godkjent
+        EndringsmeldingStatus.Godkjent,
+        EndringsmeldingStatus.Avslatt
     ];
+
+    private static readonly TimeSpan AvslattVinduILenKanban = TimeSpan.FromDays(7);
+
+    // Nylig avslått = innenfor 7-dagers-vinduet der tilbudet fortsatt skal
+    // vises i Avslått-kolonnen her. Tilbud avslått FØR dette feltet fantes
+    // (AvslattDato er null) regnes IKKE som nylig avslått - de havner rett
+    // i arkivet i stedet for å plutselig dukke opp i Kanban-tavlen.
+    private static bool ErNyligAvslatt(TilbudRad t) =>
+        t.AvslattDato is { } dato && DateTime.UtcNow - dato < AvslattVinduILenKanban;
 
     private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
 
@@ -248,7 +260,8 @@ else
         .Sum(t => t.SendtSum ?? 0);
 
     private List<TilbudRad> _synlige => _tilbud
-        .Where(t => t.Status != EndringsmeldingStatus.Avslatt && !(t.Status == EndringsmeldingStatus.Godkjent && t.ArbeidsordreFerdig))
+        .Where(t => !(t.Status == EndringsmeldingStatus.Godkjent && t.ArbeidsordreFerdig))
+        .Where(t => t.Status != EndringsmeldingStatus.Avslatt || ErNyligAvslatt(t))
         .Where(t => string.IsNullOrWhiteSpace(_sok)
             || t.Tittel.Contains(_sok, StringComparison.OrdinalIgnoreCase)
             || (t.KundeNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false))
@@ -283,6 +296,7 @@ else
                 OpprettetDato = t.OpprettetDato,
                 Status = t.Status,
                 SendtSum = t.SendtSum,
+                AvslattDato = t.AvslattDato,
                 ProsjektlederNavn = t.Prosjekt.Prosjektleder != null ? t.Prosjekt.Prosjektleder.Navn : null,
                 ArbeidsordreFerdig = Db.Arbeidsordre.Any(a => a.TilbudId == t.Id
                     && (a.Status == ArbeidsordreStatus.Ferdig || a.Status == ArbeidsordreStatus.Fakturert))

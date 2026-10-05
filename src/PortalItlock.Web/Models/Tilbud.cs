@@ -43,6 +43,13 @@ public class Tilbud
     public DateTime? SendtDato { get; set; }
     public decimal? SendtSum { get; set; }
 
+    // Settes automatisk når Status endres til Avslatt (se
+    // TilbudSkjema.razor/StatusEndret) - brukes til å styre hvor lenge et
+    // avslått tilbud vises i Avslått-kolonnen på /tilbud-service (7 dager)
+    // før det kun vises på arkivsiden /tilbud-service/avslatt. Nullstilles
+    // hvis status endres bort fra Avslatt igjen.
+    public DateTime? AvslattDato { get; set; }
+
     public List<TilbudLinje> Linjer { get; set; } = [];
     public List<TilbudHendelse> Hendelser { get; set; } = [];
 }
