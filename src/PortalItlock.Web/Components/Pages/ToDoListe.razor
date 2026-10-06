@@ -1,0 +1,385 @@
+@page "/todo"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>To-do liste</PageTitle>
+
+<div class="td-side">
+
+    <div class="td-topbar">
+        <div class="td-topbar-tekst">
+            <h1>To-do liste</h1>
+            <p>Din private oppgaveliste - synlig kun for deg.</p>
+        </div>
+        <button type="button" class="td-knapp td-knapp-primaer" @onclick="ApneNyOppgave"><Icon Name="plus" />Ny oppgave</button>
+    </div>
+
+    <div class="td-fanerad">
+        <button type="button" class="td-fane @(_visning == "liste" ? "aktiv" : "")" @onclick="@(() => _visning = "liste")">Liste</button>
+        <button type="button" class="td-fane @(_visning == "grupper" ? "aktiv" : "")" @onclick="@(() => _visning = "grupper")">Grupper</button>
+        <button type="button" class="td-fane @(_visning == "mine" ? "aktiv" : "")" @onclick="@(() => _visning = "mine")">Flat liste</button>
+    </div>
+
+    <div class="td-verktoylinje">
+        <label class="td-sok">
+            <Icon Name="search" />
+            <input @bind="_sok" @bind:event="oninput" placeholder="Søk oppgaver..." />
+        </label>
+        <select class="td-filter-select" @bind="_gruppeFilter">
+            <option value="">Alle typer</option>
+            @foreach (var g in AlleGrupper)
+            {
+                <option value="@g">@g</option>
+            }
+        </select>
+        <select class="td-filter-select" @bind="_statusFilter">
+            <option value="alle">Alle status</option>
+            <option value="aktive">Ikke fullført</option>
+            <option value="fullfort">Fullført</option>
+        </select>
+        <button type="button" class="td-sorter-knapp" @onclick="BytSortering" title="Bytt sortering">
+            <Icon Name="filter" />@SorteringTekst
+        </button>
+    </div>
+
+    @if (_oppgaver.Count == 0)
+    {
+        <p class="td-tom">Ingen oppgaver ennå. Trykk "Ny oppgave" for å legge til din første.</p>
+    }
+    else if (_visning == "grupper")
+    {
+        <div class="td-gruppegrid">
+            @foreach (var g in GruppertVisning)
+            {
+                <button type="button" class="td-gruppekort" @onclick="@(() => VelgGruppe(g.Navn))">
+                    <span class="td-gruppekort-navn">@g.Navn</span>
+                    <span class="td-gruppekort-frac">@g.Fullforte/@g.Totalt fullført</span>
+                    <span class="td-fremdrift"><span class="td-fremdrift-indre" style="width:@(g.Prosent)%"></span></span>
+                    <span class="td-gruppekort-prosent">@g.Prosent %</span>
+                </button>
+            }
+        </div>
+    }
+    else if (_visning == "mine")
+    {
+        @if (FlatListe.Count == 0)
+        {
+            <p class="td-tom">Ingen oppgaver matcher filteret.</p>
+        }
+        else
+        {
+            <ul class="td-rader">
+                @foreach (var o in FlatListe)
+                {
+                    @RadMarkup(o)
+                }
+            </ul>
+        }
+    }
+    else
+    {
+        @if (GruppertVisning.Count == 0)
+        {
+            <p class="td-tom">Ingen oppgaver matcher filteret.</p>
+        }
+        else
+        {
+            @foreach (var g in GruppertVisning)
+            {
+                <div class="td-gruppe" @key="g.Navn">
+                    <button type="button" class="td-gruppe-header" @onclick="@(() => ToggleKollaps(g.Navn))">
+                        <span class="td-gruppe-chevron @(ErKollapset(g.Navn) ? "kollapset" : "")"><Icon Name="chevron-down" /></span>
+                        <span class="td-gruppe-navn">@g.Navn</span>
+                        <span class="td-gruppe-frac">@g.Fullforte/@g.Totalt fullført</span>
+                        <span class="td-fremdrift td-fremdrift-liten"><span class="td-fremdrift-indre" style="width:@(g.Prosent)%"></span></span>
+                        <span class="td-gruppe-prosent">@g.Prosent %</span>
+                    </button>
+
+                    @if (!ErKollapset(g.Navn))
+                    {
+                        <ul class="td-rader">
+                            @foreach (var o in g.Oppgaver)
+                            {
+                                @RadMarkup(o)
+                            }
+                        </ul>
+                    }
+                </div>
+            }
+        }
+    }
+</div>
+
+@if (_visNyOppgave)
+{
+    <div class="td-modal-overlay" @onclick="@(() => _visNyOppgave = false)">
+        <div class="td-modal" @onclick:stopPropagation="true">
+            <h2>Ny oppgave</h2>
+
+            <label class="td-felt">Tittel <input @bind="_nyDraft.Tittel" @bind:event="oninput" placeholder="Hva skal gjøres?" /></label>
+            <label class="td-felt">
+                Gruppe
+                <input @bind="_nyDraft.Gruppe" @bind:event="oninput" list="td-gruppeliste" placeholder="F.eks. Nye dører" />
+                <datalist id="td-gruppeliste">
+                    @foreach (var g in AlleGrupper)
+                    {
+                        <option value="@g" />
+                    }
+                </datalist>
+            </label>
+            <div class="td-felt-rad">
+                <label class="td-felt">
+                    Prioritet
+                    <select @bind="_nyDraft.Prioritet">
+                        @foreach (var p in Enum.GetValues<ToDoPrioritet>())
+                        {
+                            <option value="@p">@p.Visningsnavn()</option>
+                        }
+                    </select>
+                </label>
+                <label class="td-felt">Frist <input type="date" @bind="_nyDraft.Frist" /></label>
+            </div>
+
+            @if (_nyFeil is not null)
+            {
+                <p class="td-feil">@_nyFeil</p>
+            }
+
+            <div class="td-modal-actions">
+                <button type="button" class="td-knapp td-knapp-primaer" @onclick="LagreNyOppgave">Legg til</button>
+                <button type="button" class="td-knapp" @onclick="@(() => _visNyOppgave = false)">Avbryt</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int? _naverendeBrukerId;
+    private string _naverendeInitialer = "?";
+
+    private List<ToDoOppgave> _oppgaver = [];
+    private string _visning = "liste";
+    private string _sok = "";
+    private string _gruppeFilter = "";
+    private string _statusFilter = "alle";
+    private string _sortering = "frist";
+    private HashSet<string> _kollapsedeGrupper = [];
+
+    private bool _visNyOppgave;
+    private string? _nyFeil;
+
+    private sealed class NyOppgaveDraft
+    {
+        public string Tittel { get; set; } = "";
+        public string Gruppe { get; set; } = "";
+        public ToDoPrioritet Prioritet { get; set; } = ToDoPrioritet.Normal;
+        public DateTime? Frist { get; set; }
+    }
+
+    private NyOppgaveDraft _nyDraft = new();
+
+    private sealed class GruppeVisning
+    {
+        public string Navn { get; set; } = "";
+        public List<ToDoOppgave> Oppgaver { get; set; } = [];
+        public int Totalt => Oppgaver.Count;
+        public int Fullforte => Oppgaver.Count(o => o.Fullfort);
+        public int Prosent => Totalt == 0 ? 0 : (int)Math.Round(Fullforte / (double)Totalt * 100);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+
+            var navn = state.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+            if (!string.IsNullOrWhiteSpace(navn))
+            {
+                var deler = navn.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                _naverendeInitialer = deler.Length >= 2
+                    ? $"{deler[0][0]}{deler[^1][0]}".ToUpperInvariant()
+                    : navn.Length >= 2 ? navn[..2].ToUpperInvariant() : navn.ToUpperInvariant();
+            }
+        }
+
+        await LastDataAsync();
+    }
+
+    private async Task LastDataAsync()
+    {
+        if (_naverendeBrukerId is null)
+        {
+            return;
+        }
+
+        _oppgaver = await Db.ToDoOppgaver
+            .Where(o => o.BrukerId == _naverendeBrukerId)
+            .ToListAsync();
+    }
+
+    private List<string> AlleGrupper => _oppgaver
+        .Select(o => string.IsNullOrWhiteSpace(o.Gruppe) ? "Annet" : o.Gruppe!.Trim())
+        .Distinct()
+        .OrderBy(g => g)
+        .ToList();
+
+    private List<ToDoOppgave> Filtrert
+    {
+        get
+        {
+            IEnumerable<ToDoOppgave> q = _oppgaver;
+
+            if (!string.IsNullOrWhiteSpace(_sok))
+            {
+                var s = _sok.Trim();
+                q = q.Where(o => o.Tittel.Contains(s, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(_gruppeFilter))
+            {
+                q = q.Where(o => (string.IsNullOrWhiteSpace(o.Gruppe) ? "Annet" : o.Gruppe!.Trim()) == _gruppeFilter);
+            }
+
+            q = _statusFilter switch
+            {
+                "aktive" => q.Where(o => !o.Fullfort),
+                "fullfort" => q.Where(o => o.Fullfort),
+                _ => q
+            };
+
+            return q.ToList();
+        }
+    }
+
+    private IEnumerable<ToDoOppgave> SorterOppgaver(IEnumerable<ToDoOppgave> rader) => _sortering switch
+    {
+        "prioritet" => rader.OrderBy(o => o.Fullfort).ThenByDescending(o => o.Prioritet).ThenBy(o => o.Frist ?? DateTime.MaxValue),
+        "nyeste" => rader.OrderBy(o => o.Fullfort).ThenByDescending(o => o.OpprettetDato),
+        _ => rader.OrderBy(o => o.Fullfort).ThenBy(o => o.Frist ?? DateTime.MaxValue).ThenByDescending(o => o.Prioritet)
+    };
+
+    private string SorteringTekst => _sortering switch
+    {
+        "prioritet" => "Prioritet",
+        "nyeste" => "Nyeste",
+        _ => "Frist"
+    };
+
+    private void BytSortering()
+    {
+        _sortering = _sortering switch
+        {
+            "frist" => "prioritet",
+            "prioritet" => "nyeste",
+            _ => "frist"
+        };
+    }
+
+    private List<GruppeVisning> GruppertVisning
+    {
+        get
+        {
+            var grupper = Filtrert
+                .GroupBy(o => string.IsNullOrWhiteSpace(o.Gruppe) ? "Annet" : o.Gruppe!.Trim())
+                .Select(g => new GruppeVisning { Navn = g.Key, Oppgaver = SorterOppgaver(g).ToList() })
+                .ToList();
+
+            return grupper
+                .OrderBy(g => g.Oppgaver.Where(o => !o.Fullfort).Select(o => (DateTime?)o.Frist).DefaultIfEmpty().Min() ?? DateTime.MaxValue)
+                .ThenBy(g => g.Navn)
+                .ToList();
+        }
+    }
+
+    private List<ToDoOppgave> FlatListe => SorterOppgaver(Filtrert).ToList();
+
+    private bool ErKollapset(string gruppe) => _kollapsedeGrupper.Contains(gruppe);
+
+    private void ToggleKollaps(string gruppe)
+    {
+        if (!_kollapsedeGrupper.Add(gruppe))
+        {
+            _kollapsedeGrupper.Remove(gruppe);
+        }
+    }
+
+    private void VelgGruppe(string gruppe)
+    {
+        _gruppeFilter = gruppe;
+        _visning = "liste";
+        _kollapsedeGrupper.Remove(gruppe);
+    }
+
+    private async Task ToggleFullfort(ToDoOppgave o)
+    {
+        o.Fullfort = !o.Fullfort;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SlettOppgave(ToDoOppgave o)
+    {
+        Db.ToDoOppgaver.Remove(o);
+        await Db.SaveChangesAsync();
+        await LastDataAsync();
+    }
+
+    private void ApneNyOppgave()
+    {
+        _nyDraft = new NyOppgaveDraft { Gruppe = string.IsNullOrEmpty(_gruppeFilter) ? "" : _gruppeFilter };
+        _nyFeil = null;
+        _visNyOppgave = true;
+    }
+
+    private async Task LagreNyOppgave()
+    {
+        if (_naverendeBrukerId is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_nyDraft.Tittel))
+        {
+            _nyFeil = "Skriv inn en tittel.";
+            return;
+        }
+
+        Db.ToDoOppgaver.Add(new ToDoOppgave
+        {
+            BrukerId = _naverendeBrukerId.Value,
+            Tittel = _nyDraft.Tittel.Trim(),
+            Gruppe = string.IsNullOrWhiteSpace(_nyDraft.Gruppe) ? null : _nyDraft.Gruppe.Trim(),
+            Prioritet = _nyDraft.Prioritet,
+            Frist = _nyDraft.Frist
+        });
+
+        await Db.SaveChangesAsync();
+        _visNyOppgave = false;
+        await LastDataAsync();
+    }
+
+    private RenderFragment RadMarkup(ToDoOppgave o) => @<li class="td-rad @(o.Fullfort ? "fullfort" : "")" @key="o.Id">
+        <input type="checkbox" checked="@o.Fullfort" @onchange="@(() => ToggleFullfort(o))" />
+        <span class="td-rad-tittel">@o.Tittel</span>
+        <span class="td-rad-avatar">@_naverendeInitialer</span>
+        @if (!string.IsNullOrWhiteSpace(o.Gruppe))
+        {
+            <span class="td-rad-gruppe">@o.Gruppe</span>
+        }
+        <span class="td-rad-frist">@(o.Frist?.ToString("dd.MM.yyyy") ?? "")</span>
+        <span class="td-prioritet-pill td-prioritet-@o.Prioritet.Farge()">@o.Prioritet.Visningsnavn()</span>
+        <button type="button" class="td-rad-slett" @onclick="@(() => SlettOppgave(o))" title="Slett oppgave"><Icon Name="trash" /></button>
+    </li>;
+}

@@ -48,6 +48,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Foresporsel> Foresporsler => Set<Foresporsel>();
     public DbSet<ForesporselMedia> ForesporselMedia => Set<ForesporselMedia>();
     public DbSet<ForesporselNotat> ForesporselNotater => Set<ForesporselNotat>();
+    public DbSet<ToDoOppgave> ToDoOppgaver => Set<ToDoOppgave>();
     public DbSet<Ticket> Tickets => Set<Ticket>();
     public DbSet<TicketHendelse> TicketHendelser => Set<TicketHendelse>();
     public DbSet<TicketMedia> TicketMedia => Set<TicketMedia>();
@@ -593,6 +594,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(n => n.OpprettetAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<ToDoOppgave>()
+            .HasOne(o => o.Bruker)
+            .WithMany()
+            .HasForeignKey(o => o.BrukerId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Notat>()
             .HasOne(n => n.Bruker)
