@@ -7,6 +7,7 @@ public class Driftsmelding
     public Dor? Dor { get; set; }
 
     public required string Tekst { get; set; }
+    public string? Tittel { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.Now;
     public int? InnmeldtAvBrukerId { get; set; }

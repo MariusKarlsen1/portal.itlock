@@ -1,79 +1,545 @@
 @page "/driftsmeldinger"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject NavigationManager Nav
 
 <PageTitle>Driftsmeldinger</PageTitle>
 
-<div class="side-header">
-    <div class="side-header-venstre">
+<div class="dm-side">
+
+    <div class="dm-topbar">
         <span class="side-header-ikon"><Icon Name="bell" /></span>
-        <div>
+        <div class="dm-topbar-tekst">
             <h1>Driftsmeldinger</h1>
-            <p class="section-hint">Meldinger sendt inn av driftslisenser (vaktmestere) på dører i prosjektene dine. Trykk på en melding for å se hele saken og opprette ticket.</p>
+            <p class="section-hint">Meldinger fra driftslisenser (vaktmestere) på dører i prosjektene dine.</p>
+        </div>
+        <button type="button" class="knapp knapp-primaer" @onclick="ApneNyMelding"><Icon Name="plus" />Ny driftsmelding</button>
+    </div>
+
+    <div class="dm-statrow">
+        <div class="kort dm-statcard">
+            <span class="dm-statcard-ic dm-ic-aksent"><Icon Name="bell" /></span>
+            <div><span class="dm-statcard-num">@_rader.Count</span><span class="dm-statcard-lbl">Totalt</span></div>
+        </div>
+        @foreach (var s in DmRekkefolge)
+        {
+            <div class="kort dm-statcard">
+                <span class="dm-statcard-ic dm-ic-@DmFarge(s)"><Icon Name="@DmIkon(s)" /></span>
+                <div><span class="dm-statcard-num">@_rader.Count(r => r.Status == s)</span><span class="dm-statcard-lbl">@DmNavn(s)</span></div>
+            </div>
+        }
+    </div>
+
+    <div class="dm-verktoylinje">
+        <label class="dm-sok">
+            <Icon Name="search" />
+            <input @bind="_sok" @bind:event="oninput" placeholder="Søk i driftsmeldinger..." />
+        </label>
+        <select class="dm-filter-select" @bind="_statusFilter">
+            <option value="">Alle status</option>
+            @foreach (var s in DmRekkefolge)
+            {
+                <option value="@s">@DmNavn(s)</option>
+            }
+        </select>
+        <select class="dm-filter-select" @bind="_alvorlighetFilter">
+            <option value="">Alle alvorlighet</option>
+            @foreach (var p in Enum.GetValues<TicketPrioritet>())
+            {
+                <option value="@p">@p.Visningsnavn()</option>
+            }
+        </select>
+        <select class="dm-filter-select" @bind="_prosjektFilter">
+            <option value="">Alle prosjekter</option>
+            @foreach (var p in _prosjekter)
+            {
+                <option value="@p.Id">@p.Navn</option>
+            }
+        </select>
+        <select class="dm-filter-select" @bind="_sortering">
+            <option value="nyeste">Nyeste først</option>
+            <option value="eldste">Eldste først</option>
+        </select>
+        <div class="dm-visningtoggle">
+            <button type="button" class="@(_visning == "kanban" ? "aktiv" : "")" @onclick='@(() => _visning = "kanban")'><Icon Name="box" />Kanban</button>
+            <button type="button" class="@(_visning == "liste" ? "aktiv" : "")" @onclick='@(() => _visning = "liste")'><Icon Name="file-text" />Liste</button>
         </div>
     </div>
-    @if (AntallUleste > 0)
+
+    @if (_rader.Count == 0)
     {
-        <span class="uleste-pill"><Icon Name="alert" />@AntallUleste uleste</span>
+        <p class="list-empty">Ingen driftsmeldinger registrert ennå.</p>
     }
+    else if (_visning == "kanban")
+    {
+        <div class="dm-board">
+            @foreach (var s in DmRekkefolge)
+            {
+                var radISs = FiltrerteRader.Where(r => r.Status == s).ToList();
+                <div @key="s" class="dm-board-kolonne dm-board-kolonne-@s" @ondragover="@(() => { })" @ondragover:preventDefault="true" @ondrop="@(() => OnDrop(s))">
+                    <div class="dm-board-header dm-status-@s">
+                        <span>@DmNavn(s)</span>
+                        <span class="dm-board-antall">@radISs.Count</span>
+                    </div>
+                    @if (radISs.Count == 0)
+                    {
+                        <p class="dm-board-tom">Ingen meldinger her.</p>
+                    }
+                    else
+                    {
+                        @foreach (var r in radISs)
+                        {
+                            <a @key="r.Melding.Id" class="dm-board-kort" href="@($"/driftsmelding/{r.Melding.Id}")" draggable="true" @ondragstart="@(() => _draggetId = r.Melding.Id)">
+                                <span class="dm-kort-ikon dm-ic-@AlvorlighetFarge(r.Alvorlighet)"><Icon Name="@AlvorlighetIkon(r.Alvorlighet)" /></span>
+                                <span class="dm-kort-innhold">
+                                    <strong>@r.Tittel</strong>
+                                    <span class="dm-kort-prosjekt">@r.ProsjektNavn</span>
+                                    <span class="dm-kort-utdrag">@Utdrag(r.Melding.Tekst)</span>
+                                    <span class="dm-kort-footer">
+                                        <span class="dm-kort-dato">@r.Melding.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
+                                        <span class="prioritet-pill prioritet-@r.Alvorlighet">@r.Alvorlighet.Visningsnavn()</span>
+                                    </span>
+                                </span>
+                            </a>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <p class="dm-resultat">@FiltrerteRader.Count driftsmeldinger</p>
+        <div class="dm-tablewrap">
+            <table class="dm-table">
+                <thead>
+                    <tr class="dm-thr">
+                        <th><input type="checkbox" checked="@AlleValgt" @onchange="ToggleAlleValgt" /></th>
+                        <th>#</th>
+                        <th>Tittel</th>
+                        <th>Prosjekt</th>
+                        <th>Dør</th>
+                        <th>Mottatt</th>
+                        <th>Status</th>
+                        <th>Alvorlighet</th>
+                        <th>Innsender</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in FiltrerteRader)
+                    {
+                        <tr @key="r.Melding.Id" class="dm-tr">
+                            <td @onclick:stopPropagation="true"><input type="checkbox" checked="@_valgteIder.Contains(r.Melding.Id)" @onchange="@(() => ToggleValgt(r.Melding.Id))" /></td>
+                            <td class="dm-td-id">#@r.Melding.Id</td>
+                            <td class="dm-td-tittel"><a href="@($"/driftsmelding/{r.Melding.Id}")">@r.Tittel</a></td>
+                            <td>@r.ProsjektNavn</td>
+                            <td>@r.DorNummer</td>
+                            <td>@r.Melding.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</td>
+                            <td><span class="dm-status-pill dm-status-pill-@DmFarge(r.Status)">@DmNavn(r.Status)</span></td>
+                            <td><span class="prioritet-pill prioritet-@r.Alvorlighet">@r.Alvorlighet.Visningsnavn()</span></td>
+                            <td>@r.InnsenderNavn</td>
+                            <td class="dm-td-meny" @onclick:stopPropagation="true">
+                                <div class="dm-meny-wrap">
+                                    <button type="button" class="dm-meny-knapp" @onclick="@(() => _apenMenyId = _apenMenyId == r.Melding.Id ? null : r.Melding.Id)">⋯</button>
+                                    @if (_apenMenyId == r.Melding.Id)
+                                    {
+                                        <div class="dm-meny">
+                                            <a href="@($"/driftsmelding/{r.Melding.Id}")">Åpne</a>
+                                            @if (r.Ticket is not null)
+                                            {
+                                                <a href="@($"/ticket/{r.Ticket.Id}")">Åpne ticket #@r.Ticket.Id</a>
+                                            }
+                                            else
+                                            {
+                                                <button type="button" @onclick="@(() => OpprettTicket(r))">Opprett ticket</button>
+                                            }
+                                            <button type="button" class="dm-meny-slett" @onclick="@(() => SlettMelding(r))">Slett</button>
+                                        </div>
+                                    }
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
 </div>
 
-@if (_meldinger.Count == 0)
+@if (_visNyMelding)
 {
-    <p class="list-empty">Ingen driftsmeldinger registrert ennå.</p>
-}
-else
-{
-    <div class="filter-rad">
-        <button type="button" class="filter-chip @(!_visKunUleste ? "aktiv" : "")" @onclick="@(() => _visKunUleste = false)">Alle (@_meldinger.Count)</button>
-        <button type="button" class="filter-chip @(_visKunUleste ? "aktiv" : "")" @onclick="@(() => _visKunUleste = true)">Uleste (@AntallUleste)</button>
-    </div>
+    <div class="dm-modal-overlay" @onclick="@(() => _visNyMelding = false)">
+        <div class="dm-modal" @onclick:stopPropagation="true">
+            <h2>Ny driftsmelding</h2>
 
-    <ul class="melding-liste">
-        @foreach (var m in SynligeMeldinger)
-        {
-            <li @key="m.Id">
-                <a class="melding-rad @(m.LestAvAnsatt ? "" : "ulest")" href="@($"/driftsmelding/{m.Id}")">
-                    <span class="melding-ikon">
-                        <Icon Name="tool" />
-                        @if (!m.LestAvAnsatt)
-                        {
-                            <span class="prikk-ulest"></span>
-                        }
-                    </span>
-                    <span class="melding-innhold">
-                        <span class="melding-topp">
-                            <span class="melding-dor">Dør @m.Dor?.Dornummer - @m.Dor?.Prosjekt?.Navn</span>
-                            <span class="melding-dato">@m.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
-                        </span>
-                        <span class="melding-utdrag">@Utdrag(m.Tekst)</span>
-                    </span>
-                </a>
-            </li>
-        }
-    </ul>
+            <label class="dm-felt">
+                Dør
+                <select @bind="_nyDorId">
+                    <option value="">Velg dør...</option>
+                    @foreach (var d in _dorer)
+                    {
+                        <option value="@d.Id">@d.ProsjektNavn - Dør @d.Dornummer</option>
+                    }
+                </select>
+            </label>
+            <label class="dm-felt">Tittel <input @bind="_nyTittel" @bind:event="oninput" placeholder="Kort beskrivelse" /></label>
+            <label class="dm-felt">Melding <textarea rows="4" @bind="_nyTekst" @bind:event="oninput" placeholder="Beskriv problemet..."></textarea></label>
+
+            @if (_nyFeil is not null)
+            {
+                <p class="dm-feil">@_nyFeil</p>
+            }
+
+            <div class="dm-modal-actions">
+                <button type="button" class="knapp knapp-primaer" @onclick="LagreNyMelding">Opprett</button>
+                <button type="button" class="knapp" @onclick="@(() => _visNyMelding = false)">Avbryt</button>
+            </div>
+        </div>
+    </div>
 }
 
 @code {
-    private List<Driftsmelding> _meldinger = [];
-    private bool _visKunUleste;
+    private enum DmStatus { Ubehandlet, UnderBehandling, Lost, Lukket }
+
+    private static readonly DmStatus[] DmRekkefolge = [DmStatus.Ubehandlet, DmStatus.UnderBehandling, DmStatus.Lost, DmStatus.Lukket];
+
+    private static DmStatus StatusForTicket(Ticket? t) => t?.Status switch
+    {
+        TicketStatus.UnderBehandling => DmStatus.UnderBehandling,
+        TicketStatus.VenterGodkjenning => DmStatus.Lost,
+        TicketStatus.Lukket => DmStatus.Lukket,
+        _ => DmStatus.Ubehandlet
+    };
+
+    private static TicketStatus ToTicketStatus(DmStatus s) => s switch
+    {
+        DmStatus.UnderBehandling => TicketStatus.UnderBehandling,
+        DmStatus.Lost => TicketStatus.VenterGodkjenning,
+        DmStatus.Lukket => TicketStatus.Lukket,
+        _ => TicketStatus.Ny
+    };
+
+    private static string DmNavn(DmStatus s) => s switch
+    {
+        DmStatus.Ubehandlet => "Ubehandlet",
+        DmStatus.UnderBehandling => "Under behandling",
+        DmStatus.Lost => "Løst",
+        DmStatus.Lukket => "Lukket",
+        _ => s.ToString()
+    };
+
+    private static string DmFarge(DmStatus s) => s switch
+    {
+        DmStatus.Ubehandlet => "rod",
+        DmStatus.UnderBehandling => "gul",
+        DmStatus.Lost => "gronn",
+        DmStatus.Lukket => "noytral",
+        _ => "noytral"
+    };
+
+    private static string DmIkon(DmStatus s) => s switch
+    {
+        DmStatus.Ubehandlet => "alert",
+        DmStatus.UnderBehandling => "tool",
+        DmStatus.Lost => "check-circle",
+        DmStatus.Lukket => "check-circle",
+        _ => "alert"
+    };
+
+    private static string AlvorlighetFarge(TicketPrioritet p) => p switch
+    {
+        TicketPrioritet.Hoy or TicketPrioritet.Kritisk => "rod",
+        TicketPrioritet.Normal => "gul",
+        _ => "gronn"
+    };
+
+    private static string AlvorlighetIkon(TicketPrioritet p) => p switch
+    {
+        TicketPrioritet.Hoy or TicketPrioritet.Kritisk => "alert",
+        TicketPrioritet.Normal => "tool",
+        _ => "check-circle"
+    };
+
+    private sealed class DmRad
+    {
+        public Driftsmelding Melding { get; set; } = null!;
+        public Ticket? Ticket { get; set; }
+        public string Tittel => string.IsNullOrWhiteSpace(Melding.Tittel) ? $"Dør {Melding.Dor?.Dornummer}" : Melding.Tittel!;
+        public string ProsjektNavn => Melding.Dor?.Prosjekt?.Navn ?? "-";
+        public string DorNummer => Melding.Dor?.Dornummer ?? "-";
+        public string InnsenderNavn => Melding.InnmeldtAvBruker?.Navn ?? "Vaktmester";
+        public DmStatus Status => StatusForTicket(Ticket);
+        public TicketPrioritet Alvorlighet => Ticket?.Prioritet ?? TicketPrioritet.Normal;
+    }
+
+    private sealed class ProsjektOption
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private sealed class DorOption
+    {
+        public int Id { get; set; }
+        public string Dornummer { get; set; } = "";
+        public string ProsjektNavn { get; set; } = "";
+    }
+
+    private sealed class NyMeldingDraft
+    {
+        public string Tittel { get; set; } = "";
+        public string Tekst { get; set; } = "";
+    }
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
+
+    private List<DmRad> _rader = [];
+    private List<ProsjektOption> _prosjekter = [];
+    private List<DorOption> _dorer = [];
+
+    private string _visning = "kanban";
+    private string _sok = "";
+    private string _statusFilter = "";
+    private string _alvorlighetFilter = "";
+    private string _prosjektFilter = "";
+    private string _sortering = "nyeste";
+
+    private int? _draggetId;
+    private int? _apenMenyId;
+    private readonly HashSet<int> _valgteIder = [];
+
+    private bool _visNyMelding;
+    private int? _nyDorId;
+    private string _nyTittel = "";
+    private string _nyTekst = "";
+    private string? _nyFeil;
+
+    private List<DmRad> FiltrerteRader
+    {
+        get
+        {
+            IEnumerable<DmRad> q = _rader;
+
+            if (!string.IsNullOrWhiteSpace(_sok))
+            {
+                var s = _sok.Trim();
+                q = q.Where(r => r.Tittel.Contains(s, StringComparison.OrdinalIgnoreCase)
+                    || r.Melding.Tekst.Contains(s, StringComparison.OrdinalIgnoreCase)
+                    || r.ProsjektNavn.Contains(s, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(_statusFilter) && Enum.TryParse<DmStatus>(_statusFilter, out var status))
+            {
+                q = q.Where(r => r.Status == status);
+            }
+
+            if (!string.IsNullOrEmpty(_alvorlighetFilter) && Enum.TryParse<TicketPrioritet>(_alvorlighetFilter, out var alvor))
+            {
+                q = q.Where(r => r.Alvorlighet == alvor);
+            }
+
+            if (int.TryParse(_prosjektFilter, out var prosjektId))
+            {
+                q = q.Where(r => r.Melding.Dor?.ProsjektId == prosjektId);
+            }
+
+            q = _sortering == "eldste" ? q.OrderBy(r => r.Melding.OpprettetDato) : q.OrderByDescending(r => r.Melding.OpprettetDato);
+
+            return q.ToList();
+        }
+    }
+
+    private bool AlleValgt => FiltrerteRader.Count > 0 && FiltrerteRader.All(r => _valgteIder.Contains(r.Melding.Id));
 
     protected override async Task OnInitializedAsync()
     {
-        _meldinger = await Db.Driftsmeldinger
-            .Include(m => m.Dor).ThenInclude(d => d!.Prosjekt)
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+        }
+
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        var meldinger = await Db.Driftsmeldinger
+            .Include(m => m.Dor).ThenInclude(d => d!.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Include(m => m.InnmeldtAvBruker)
+            .Include(m => m.Media)
             .OrderByDescending(m => m.OpprettetDato)
+            .ToListAsync();
+
+        var tickets = await Db.Tickets
+            .Where(t => t.DriftsmeldingId != null)
+            .ToListAsync();
+
+        var ticketPerMelding = tickets
+            .GroupBy(t => t.DriftsmeldingId!.Value)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(t => t.OpprettetDato).First());
+
+        _rader = meldinger.Select(m => new DmRad { Melding = m, Ticket = ticketPerMelding.GetValueOrDefault(m.Id) }).ToList();
+
+        _prosjekter = await Db.Prosjekter
+            .OrderBy(p => p.Navn)
+            .Select(p => new ProsjektOption { Id = p.Id, Navn = p.Navn })
+            .ToListAsync();
+
+        _dorer = await Db.Dorer
+            .Include(d => d.Prosjekt)
+            .OrderBy(d => d.Prosjekt!.Navn).ThenBy(d => d.Dornummer)
+            .Select(d => new DorOption { Id = d.Id, Dornummer = d.Dornummer, ProsjektNavn = d.Prosjekt!.Navn })
             .ToListAsync();
     }
 
-    private int AntallUleste => _meldinger.Count(m => !m.LestAvAnsatt);
+    private static string Utdrag(string tekst) => tekst.Length > 70 ? tekst[..70] + "..." : tekst;
 
-    private IEnumerable<Driftsmelding> SynligeMeldinger =>
-        _visKunUleste ? _meldinger.Where(m => !m.LestAvAnsatt) : _meldinger;
+    private void ToggleValgt(int id)
+    {
+        if (!_valgteIder.Add(id))
+        {
+            _valgteIder.Remove(id);
+        }
+    }
 
-    private static string Utdrag(string tekst) => tekst.Length > 80 ? tekst[..80] + "..." : tekst;
+    private void ToggleAlleValgt(ChangeEventArgs e)
+    {
+        var skalVelges = (bool)(e.Value ?? false);
+        foreach (var r in FiltrerteRader)
+        {
+            if (skalVelges)
+            {
+                _valgteIder.Add(r.Melding.Id);
+            }
+            else
+            {
+                _valgteIder.Remove(r.Melding.Id);
+            }
+        }
+    }
+
+    private async Task<Ticket> SikreTicketAsync(DmRad rad)
+    {
+        if (rad.Ticket is not null)
+        {
+            return rad.Ticket;
+        }
+
+        var m = rad.Melding;
+        var ticket = new Ticket
+        {
+            Tittel = rad.Tittel,
+            Beskrivelse = m.Tekst,
+            DriftsmeldingId = m.Id,
+            KundeId = m.Dor?.Prosjekt?.KundeId,
+            Lokasjon = m.Dor?.Prosjekt?.Navn
+        };
+        ticket.Hendelser.Add(new TicketHendelse
+        {
+            Beskrivelse = "Opprettet fra driftsmelding.",
+            UtfortAvBrukerId = _naverendeBrukerId
+        });
+
+        Db.Tickets.Add(ticket);
+        await Db.SaveChangesAsync();
+        rad.Ticket = ticket;
+        return ticket;
+    }
+
+    private async Task OpprettTicket(DmRad rad)
+    {
+        var ticket = await SikreTicketAsync(rad);
+        Nav.NavigateTo($"/ticket/{ticket.Id}");
+    }
+
+    private async Task OnDrop(DmStatus mal)
+    {
+        var id = _draggetId;
+        _draggetId = null;
+        if (id is null)
+        {
+            return;
+        }
+
+        var rad = _rader.FirstOrDefault(r => r.Melding.Id == id.Value);
+        if (rad is null || rad.Status == mal)
+        {
+            return;
+        }
+
+        var ticket = await SikreTicketAsync(rad);
+        var gammel = ticket.Status;
+        var ny = ToTicketStatus(mal);
+        if (gammel == ny)
+        {
+            return;
+        }
+
+        ticket.Status = ny;
+        Db.TicketHendelser.Add(new TicketHendelse
+        {
+            TicketId = ticket.Id,
+            Beskrivelse = $"Status endret fra {gammel.Visningsnavn()} til {ny.Visningsnavn()} (board).",
+            UtfortAvBrukerId = _naverendeBrukerId
+        });
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SlettMelding(DmRad rad)
+    {
+        Db.Driftsmeldinger.Remove(rad.Melding);
+        await Db.SaveChangesAsync();
+        _apenMenyId = null;
+        await LastAsync();
+    }
+
+    private void ApneNyMelding()
+    {
+        _nyDorId = null;
+        _nyTittel = "";
+        _nyTekst = "";
+        _nyFeil = null;
+        _visNyMelding = true;
+    }
+
+    private async Task LagreNyMelding()
+    {
+        if (_nyDorId is null)
+        {
+            _nyFeil = "Velg en dør.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_nyTittel) || string.IsNullOrWhiteSpace(_nyTekst))
+        {
+            _nyFeil = "Fyll ut tittel og melding.";
+            return;
+        }
+
+        Db.Driftsmeldinger.Add(new Driftsmelding
+        {
+            DorId = _nyDorId.Value,
+            Tittel = _nyTittel.Trim(),
+            Tekst = _nyTekst.Trim(),
+            InnmeldtAvBrukerId = _naverendeBrukerId,
+            LestAvAnsatt = true
+        });
+
+        await Db.SaveChangesAsync();
+        _visNyMelding = false;
+        await LastAsync();
+    }
 }
