@@ -47,6 +47,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServiceVarselSendt> ServiceVarselSendt => Set<ServiceVarselSendt>();
     public DbSet<Foresporsel> Foresporsler => Set<Foresporsel>();
     public DbSet<ForesporselMedia> ForesporselMedia => Set<ForesporselMedia>();
+    public DbSet<ForesporselNotat> ForesporselNotater => Set<ForesporselNotat>();
     public DbSet<Ticket> Tickets => Set<Ticket>();
     public DbSet<TicketHendelse> TicketHendelser => Set<TicketHendelse>();
     public DbSet<TicketMedia> TicketMedia => Set<TicketMedia>();
@@ -576,6 +577,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<KundeOppfolgingNotat>()
+            .HasOne(n => n.OpprettetAvBruker)
+            .WithMany()
+            .HasForeignKey(n => n.OpprettetAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<ForesporselNotat>()
+            .HasOne(n => n.Foresporsel)
+            .WithMany(f => f.Notater)
+            .HasForeignKey(n => n.ForesporselId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ForesporselNotat>()
             .HasOne(n => n.OpprettetAvBruker)
             .WithMany()
             .HasForeignKey(n => n.OpprettetAvBrukerId)

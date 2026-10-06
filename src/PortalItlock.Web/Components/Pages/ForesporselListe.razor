@@ -1,120 +1,908 @@
 @page "/foresporsler"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject NavigationManager Nav
+@inject EmailService Epost
 
 <PageTitle>Forespørsler</PageTitle>
 
-<div class="side-header">
-    <div class="side-header-venstre">
-        <span class="side-header-ikon"><Icon Name="mail" /></span>
-        <div>
+<div class="fp-side">
+
+    <div class="fp-topbar">
+        <span class="fp-topbar-ikon"><Icon Name="mail" /></span>
+        <div class="fp-topbar-tekst">
             <h1>Forespørsler</h1>
-            <p class="section-hint">
-                E-poster sendt til post&#64;itlock.no havner her automatisk via Resend, med tekst og vedlegg. Trykk på en
-                forespørsel for å se hele innholdet og opprette ticket.
-            </p>
+            <p>Omhandler henvendelser mottatt på e-post, kundeportal eller manuelt.</p>
+        </div>
+        <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="ApneNyForesporsel"><Icon Name="plus" />Ny forespørsel</button>
+    </div>
+
+    <div class="fp-statrow">
+        <div class="fp-statcard">
+            <span class="fp-statcard-ic fp-ic-aksent"><Icon Name="mail" /></span>
+            <div>
+                <span class="fp-statcard-num">@_foresporsler.Count</span>
+                <span class="fp-statcard-lbl">Totale forespørsler</span>
+                <span class="fp-statcard-delta">@TotaltDelta</span>
+            </div>
+        </div>
+        <div class="fp-statcard">
+            <span class="fp-statcard-ic fp-ic-blaa"><Icon Name="bell" /></span>
+            <div>
+                <span class="fp-statcard-num">@NyeCount</span>
+                <span class="fp-statcard-lbl">Nye</span>
+                <span class="fp-statcard-delta">@NyeDelta</span>
+            </div>
+        </div>
+        <div class="fp-statcard">
+            <span class="fp-statcard-ic fp-ic-gul"><Icon Name="tool" /></span>
+            <div>
+                <span class="fp-statcard-num">@UnderBehandlingCount</span>
+                <span class="fp-statcard-lbl">Under behandling</span>
+                <span class="fp-statcard-delta">@UnderBehandlingDelta</span>
+            </div>
+        </div>
+        <div class="fp-statcard">
+            <span class="fp-statcard-ic fp-ic-lilla"><Icon Name="clock" /></span>
+            <div>
+                <span class="fp-statcard-num">@VenterCount</span>
+                <span class="fp-statcard-lbl">Venter godkjenning</span>
+                <span class="fp-statcard-delta">@VenterDelta</span>
+            </div>
+        </div>
+        <div class="fp-statcard">
+            <span class="fp-statcard-ic fp-ic-gronn"><Icon Name="check-circle" /></span>
+            <div>
+                <span class="fp-statcard-num">@FerdigCount</span>
+                <span class="fp-statcard-lbl">Ferdig</span>
+                <span class="fp-statcard-delta">@FerdigDelta</span>
+            </div>
         </div>
     </div>
-    @if (_uleste > 0)
-    {
-        <span class="ulest-pill">@_uleste ulest@(_uleste == 1 ? "" : "e")</span>
-    }
-</div>
 
-@if (_foresporsler.Count == 0)
-{
-    <p class="list-empty">Ingen forespørsler mottatt ennå.</p>
-}
-else
-{
-    <label class="sok-rad">
-        <Icon Name="search" />
-        <input @bind="_sok" @bind:event="oninput" placeholder="Søk i avsender eller emne …" />
-    </label>
+    <div class="fp-verktoylinje">
+        <label class="fp-sok">
+            <Icon Name="search" />
+            <input @bind="_sok" @bind:event="oninput" placeholder="Søk i forespørsler..." />
+        </label>
+        <select class="fp-filter-select" @bind="_kanalFilter">
+            <option value="">Alle kanaler</option>
+            @foreach (var k in Enum.GetValues<ForesporselKanal>())
+            {
+                <option value="@k">@k.Visningsnavn()</option>
+            }
+        </select>
+        <select class="fp-filter-select" @bind="_kundeFilterRaw">
+            <option value="">Alle kunder</option>
+            @foreach (var k in RelevanteKunder)
+            {
+                <option value="@k.Id">@k.Navn</option>
+            }
+        </select>
+        <select class="fp-filter-select" @bind="_ansvarligFilterRaw">
+            <option value="">Alle ansvarlige</option>
+            @foreach (var b in _brukere)
+            {
+                <option value="@b.Id">@b.Navn</option>
+            }
+        </select>
+        <select class="fp-filter-select" @bind="_sortering">
+            <option value="nyeste">Nyeste først</option>
+            <option value="eldste">Eldste først</option>
+        </select>
+    </div>
 
-    @if (VisteForesporsler.Count == 0)
+    @if (_foresporsler.Count == 0)
     {
-        <p class="list-empty">Ingen forespørsler matcher søket.</p>
+        <p class="fp-tom">Ingen forespørsler mottatt ennå.</p>
     }
     else
     {
-        <ul class="foresporsel-liste">
-            @foreach (var f in VisteForesporsler)
-            {
-                <li @key="f.Id">
-                    <a class="foresporsel-rad @(f.Lest ? "" : "ulest")" href="@($"/foresporsel/{f.Id}")">
-                        <span class="foresporsel-avatar">@Initialer(f)</span>
-                        <span class="foresporsel-tekst">
-                            <span class="foresporsel-topprad">
-                                <span class="foresporsel-fra">@(string.IsNullOrWhiteSpace(f.FraNavn) ? f.FraEpost : f.FraNavn)</span>
-                                @if (!f.Lest)
-                                {
-                                    <span class="ny-prikk"></span>
-                                }
+        <div class="fp-grid">
+            <div class="fp-liste">
+                @if (VisteForesporsler.Count == 0)
+                {
+                    <p class="fp-tom">Ingen forespørsler matcher filteret.</p>
+                }
+                else
+                {
+                    @foreach (var f in VisteForesporsler)
+                    {
+                        var status = StatusFor(f);
+                        <button type="button" class="fp-kort @(f.Id == _valgt?.Id ? "valgt" : "") @(f.Lest ? "" : "ulest")" @key="f.Id" @onclick="@(() => Velg(f))">
+                            <span class="fp-kort-ikon fp-kanal-@f.Kanal"><Icon Name="@f.Kanal.Ikon()" /></span>
+                            <span class="fp-kort-info">
+                                <span class="fp-kort-topprad">
+                                    <span class="fp-kort-tittel">@f.Emne</span>
+                                    @if (!f.Lest)
+                                    {
+                                        <span class="fp-ny-prikk"></span>
+                                    }
+                                </span>
+                                <span class="fp-kort-meta">@(KundeFor(f)?.Navn ?? (string.IsNullOrWhiteSpace(f.FraNavn) ? f.FraEpost : f.FraNavn)) &middot; @f.Kanal.Visningsnavn()</span>
+                                <span class="fp-kort-bunnrad">
+                                    <span class="fp-kort-dato">@f.MottattDato.ToString("dd.MM.yyyy HH:mm")</span>
+                                    <StatusPill Tekst="@status.Visningsnavn()" Ikon="@status.PillIkon()" Farge="@status.PillFarge()" />
+                                </span>
                             </span>
-                            <span class="foresporsel-emne">@f.Emne</span>
-                        </span>
-                        <span class="foresporsel-hoyre">
-                            <span class="foresporsel-dato">@f.MottattDato.ToString("dd.MM.yyyy HH:mm")</span>
-                            @if (f.Media.Count > 0)
+                        </button>
+                    }
+                }
+            </div>
+
+            <div class="fp-detalj">
+                @if (_valgt is null)
+                {
+                    <div class="fp-tomvisning">
+                        <Icon Name="mail" />
+                        <p>Velg en forespørsel i listen for å se detaljer.</p>
+                    </div>
+                }
+                else
+                {
+                    var status = StatusFor(_valgt);
+                    var ticket = TicketFor(_valgt);
+                    var liste = VisteForesporsler;
+                    var idx = liste.FindIndex(f => f.Id == _valgt.Id);
+
+                    <div class="fp-detalj-header">
+                        <span class="fp-kort-ikon fp-kanal-@_valgt.Kanal"><Icon Name="@_valgt.Kanal.Ikon()" /></span>
+                        <StatusPill Tekst="@status.Visningsnavn()" Ikon="@status.PillIkon()" Farge="@status.PillFarge()" />
+                        <span class="fp-detalj-id">#@_valgt.Id</span>
+                        <div class="fp-detalj-nav">
+                            <button type="button" disabled="@(idx <= 0)" @onclick="Forrige"><Icon Name="arrow-left" /></button>
+                            <button type="button" disabled="@(idx < 0 || idx >= liste.Count - 1)" @onclick="Neste" style="transform:scaleX(-1);"><Icon Name="arrow-left" /></button>
+                        </div>
+                        <div class="fp-detalj-meny-wrap">
+                            <button type="button" class="fp-meny-knapp" @onclick="@(() => _visMeny = !_visMeny)" title="Mer">⋯</button>
+                            @if (_visMeny)
                             {
-                                <span class="vedlegg-tag"><Icon Name="file-text" />@f.Media.Count vedlegg</span>
+                                <div class="fp-meny">
+                                    @if (ticket is not null)
+                                    {
+                                        <button type="button" @onclick="ApneTicket"><Icon Name="tag" />Åpne ticket #@ticket.Id</button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" @onclick="OpprettEllerApneTicket"><Icon Name="plus" />Opprett ticket</button>
+                                    }
+                                    <button type="button" @onclick="MerkLestUlest"><Icon Name="check-circle" />@(_valgt.Lest ? "Merk som ulest" : "Merk som lest")</button>
+                                    <button type="button" class="fp-meny-slett" @onclick="SlettForesporsel"><Icon Name="trash" />Slett forespørsel</button>
+                                </div>
                             }
-                        </span>
-                    </a>
-                </li>
-            }
-        </ul>
+                        </div>
+                    </div>
+
+                    <h2 class="fp-detalj-tittel">@_valgt.Emne</h2>
+
+                    <div class="fp-fanerad">
+                        <button type="button" class="fp-fane @(_aktivFane == "oversikt" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "oversikt")">Oversikt</button>
+                        <button type="button" class="fp-fane @(_aktivFane == "epost" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "epost")">E-post</button>
+                        <button type="button" class="fp-fane @(_aktivFane == "vedlegg" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "vedlegg")">Vedlegg<span class="fp-fane-badge">@_valgt.Media.Count</span></button>
+                        <button type="button" class="fp-fane @(_aktivFane == "notater" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "notater")">Interne notater<span class="fp-fane-badge">@_valgt.Notater.Count</span></button>
+                        <button type="button" class="fp-fane @(_aktivFane == "aktivitet" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "aktivitet")">Aktivitet</button>
+                    </div>
+
+                    <div class="fp-fane-innhold">
+                        @if (_aktivFane == "oversikt")
+                        {
+                            <div class="fp-avatar-rad">
+                                <span class="fp-avatar" style="background:@AvatarFarge(_valgt)">@Initialer(_valgt)</span>
+                                <div>
+                                    <strong>@(string.IsNullOrWhiteSpace(_valgt.FraNavn) ? _valgt.FraEpost : _valgt.FraNavn)</strong>
+                                    <span class="fp-avatar-sub">@_valgt.FraEpost</span>
+                                </div>
+                            </div>
+
+                            @if (string.IsNullOrWhiteSpace(_valgt.Innhold))
+                            {
+                                <p class="fp-tom">Ingen tekst registrert.</p>
+                            }
+                            else
+                            {
+                                <p class="fp-innhold-tekst">@_valgt.Innhold</p>
+                            }
+
+                            <div class="fp-metagrid">
+                                <div class="fp-metafelt"><span class="fp-metafelt-ikon"><Icon Name="users" /></span><div><span class="fp-metafelt-lbl">Kunde</span><span class="fp-metafelt-verdi">@(KundeFor(_valgt)?.Navn ?? "-")</span></div></div>
+                                <div class="fp-metafelt"><span class="fp-metafelt-ikon"><Icon Name="folder" /></span><div><span class="fp-metafelt-lbl">Prosjekt</span><span class="fp-metafelt-verdi">@(ticket?.Prosjekt?.Navn ?? "-")</span></div></div>
+                                <div class="fp-metafelt"><span class="fp-metafelt-ikon"><Icon Name="trend-up" /></span><div><span class="fp-metafelt-lbl">Prioritet</span><span class="fp-metafelt-verdi">@(ticket?.Prioritet.Visningsnavn() ?? "-")</span></div></div>
+                                <div class="fp-metafelt"><span class="fp-metafelt-ikon"><Icon Name="calendar" /></span><div><span class="fp-metafelt-lbl">Frist</span><span class="fp-metafelt-verdi">@(ticket?.SlaFrist?.ToString("dd.MM.yyyy") ?? "-")</span></div></div>
+                            </div>
+
+                            @if (_visSvarBoks)
+                            {
+                                <div class="fp-svar-boks">
+                                    <textarea rows="4" @bind="_svarTekst" @bind:event="oninput" placeholder="Skriv svar til kunde..."></textarea>
+                                    <div class="fp-svar-actions">
+                                        <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="SendSvar" disabled="@string.IsNullOrWhiteSpace(_svarTekst)">Send svar</button>
+                                        <button type="button" class="fp-knapp" @onclick="@(() => _visSvarBoks = false)">Avbryt</button>
+                                    </div>
+                                </div>
+                            }
+                            @if (_svarSendtOk is bool ok)
+                            {
+                                <p class="@(ok ? "fp-svar-ok" : "fp-svar-feil")">@(ok ? "Svar sendt." : "Svar lagret, men e-post kunne ikke sendes.")</p>
+                            }
+                        }
+                        else if (_aktivFane == "epost")
+                        {
+                            <div class="fp-epost-meta">
+                                <div><span class="fp-metafelt-lbl">Fra</span><span class="fp-metafelt-verdi">@(string.IsNullOrWhiteSpace(_valgt.FraNavn) ? _valgt.FraEpost : $"{_valgt.FraNavn} <{_valgt.FraEpost}>")</span></div>
+                                <div><span class="fp-metafelt-lbl">Emne</span><span class="fp-metafelt-verdi">@_valgt.Emne</span></div>
+                                <div><span class="fp-metafelt-lbl">Mottatt</span><span class="fp-metafelt-verdi">@_valgt.MottattDato.ToString("dd.MM.yyyy HH:mm")</span></div>
+                            </div>
+                            @if (string.IsNullOrWhiteSpace(_valgt.Innhold))
+                            {
+                                <p class="fp-tom">Ingen tekst i e-posten.</p>
+                            }
+                            else
+                            {
+                                <p class="fp-innhold-tekst">@_valgt.Innhold</p>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_valgt.RawJson))
+                            {
+                                <button type="button" class="fp-raadata-toggle" @onclick="@(() => _visRaadata = !_visRaadata)">
+                                    <Icon Name="chevron-down" />@(_visRaadata ? "Skjul rådata" : "Vis rådata")
+                                </button>
+                                @if (_visRaadata)
+                                {
+                                    <pre class="fp-raadata-boks">@_valgt.RawJson</pre>
+                                }
+                            }
+                        }
+                        else if (_aktivFane == "vedlegg")
+                        {
+                            @if (_valgt.Media.Count == 0)
+                            {
+                                <p class="fp-tom">Ingen vedlegg.</p>
+                            }
+                            else
+                            {
+                                <ul class="fp-vedlegg-liste">
+                                    @foreach (var m in _valgt.Media)
+                                    {
+                                        <li>
+                                            <a class="fp-vedlegg-chip" href="@($"/foresporselmedia/{m.Id}/fil")" target="_blank">
+                                                <span class="fp-vedlegg-chip-ikon"><Icon Name="file-text" /></span>
+                                                <span class="fp-vedlegg-chip-navn">@m.Filnavn</span>
+                                            </a>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        }
+                        else if (_aktivFane == "notater")
+                        {
+                            <div class="fp-notat-input">
+                                <textarea rows="2" @bind="_nyttNotat" @bind:event="oninput" placeholder="Legg til internt notat..."></textarea>
+                                <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="LeggTilNotat" disabled="@string.IsNullOrWhiteSpace(_nyttNotat)">Legg til</button>
+                            </div>
+                            @if (_valgt.Notater.Count == 0)
+                            {
+                                <p class="fp-tom">Ingen interne notater ennå.</p>
+                            }
+                            else
+                            {
+                                <ul class="fp-notat-liste">
+                                    @foreach (var n in _valgt.Notater.OrderByDescending(n => n.OpprettetDato))
+                                    {
+                                        <li class="fp-notat-rad" @key="n.Id">
+                                            <span class="fp-notat-tidspunkt">@n.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
+                                            <span class="fp-notat-tekst">@n.Tekst @if (n.OpprettetAvBruker is not null) { <text> (@n.OpprettetAvBruker.Navn)</text> }</span>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        }
+                        else if (_aktivFane == "aktivitet")
+                        {
+                            var aktivitet = AktivitetFor(_valgt);
+                            @if (aktivitet.Count == 0)
+                            {
+                                <p class="fp-tom">Ingen aktivitet registrert.</p>
+                            }
+                            else
+                            {
+                                <ul class="fp-aktivitet-liste">
+                                    @foreach (var a in aktivitet)
+                                    {
+                                        <li class="fp-aktivitet-rad">
+                                            <span class="fp-aktivitet-tidspunkt">@a.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</span>
+                                            <span class="fp-aktivitet-tekst">@a.Tekst@(a.UtfortAv is not null ? $" ({a.UtfortAv})" : "")</span>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        }
+                    </div>
+
+                    <div class="fp-handlingrad">
+                        <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="@(() => _visSvarBoks = !_visSvarBoks)"><Icon Name="mail" />Svar</button>
+                        <div class="fp-handling-select">
+                            <Icon Name="users" />
+                            <select value="@(ticket?.AnsvarligBrukerId)" @onchange="Tildel">
+                                <option value="">Tildel...</option>
+                                @foreach (var b in _brukere)
+                                {
+                                    <option value="@b.Id">@b.Navn</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="fp-handling-select">
+                            <Icon Name="toggle-right" />
+                            <select value="@(ticket?.Status ?? TicketStatus.Ny)" @onchange="EndreStatus">
+                                @foreach (var s in TicketStatusExtensions.Rekkefolge)
+                                {
+                                    <option value="@s">@s.Visningsnavn()</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
     }
+</div>
+
+@if (_visNyForesporselSkjema)
+{
+    <div class="fp-modal-overlay" @onclick="@(() => _visNyForesporselSkjema = false)">
+        <div class="fp-modal" @onclick:stopPropagation="true">
+            <h2>Ny forespørsel</h2>
+            <p class="fp-section-hint">Registrer en henvendelse som kom inn på telefon, skjema eller på annet vis.</p>
+
+            <label class="fp-felt">
+                Kanal
+                <select @bind="_nyDraft.Kanal">
+                    @foreach (var k in Enum.GetValues<ForesporselKanal>())
+                    {
+                        <option value="@k">@k.Visningsnavn()</option>
+                    }
+                </select>
+            </label>
+            <label class="fp-felt">Navn <input @bind="_nyDraft.FraNavn" @bind:event="oninput" placeholder="Kontaktperson" /></label>
+            <label class="fp-felt">E-post / telefon <input @bind="_nyDraft.FraKontakt" @bind:event="oninput" placeholder="ola@eksempel.no eller 900 12 345" /></label>
+            <label class="fp-felt">Emne <input @bind="_nyDraft.Emne" @bind:event="oninput" placeholder="Kort beskrivelse" /></label>
+            <label class="fp-felt">Innhold <textarea rows="4" @bind="_nyDraft.Innhold" @bind:event="oninput" placeholder="Hva gjelder henvendelsen?"></textarea></label>
+
+            @if (_nyFeil is not null)
+            {
+                <p class="fp-svar-feil">@_nyFeil</p>
+            }
+
+            <div class="fp-svar-actions">
+                <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="LagreNyForesporsel">Opprett forespørsel</button>
+                <button type="button" class="fp-knapp" @onclick="@(() => _visNyForesporselSkjema = false)">Avbryt</button>
+            </div>
+        </div>
+    </div>
 }
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "id")] public int? Id { get; set; }
+
     private List<Foresporsel> _foresporsler = [];
+    private Dictionary<int, Ticket> _ticketPerForesporsel = [];
+    private Dictionary<string, Kunde> _kundeByEpost = [];
+    private List<Kunde> _kunder = [];
+    private List<Bruker> _brukere = [];
+
+    private int? _naverendeBrukerId;
+    private Bruker? _naverendeBruker;
+
+    private Foresporsel? _valgt;
+    private string _aktivFane = "oversikt";
+    private bool _visMeny;
+    private bool _visRaadata;
+    private bool _visSvarBoks;
+    private string _svarTekst = "";
+    private bool? _svarSendtOk;
+    private string _nyttNotat = "";
+
     private string _sok = "";
+    private string _kanalFilter = "";
+    private int? _kundeFilter;
+    private int? _ansvarligFilter;
+    private string _sortering = "nyeste";
+
+    private string _kundeFilterRaw
+    {
+        get => _kundeFilter?.ToString() ?? "";
+        set => _kundeFilter = int.TryParse(value, out var v) ? v : null;
+    }
+
+    private string _ansvarligFilterRaw
+    {
+        get => _ansvarligFilter?.ToString() ?? "";
+        set => _ansvarligFilter = int.TryParse(value, out var v) ? v : null;
+    }
+
+    private bool _visNyForesporselSkjema;
+    private string? _nyFeil;
+
+    private sealed class NyForesporselDraft
+    {
+        public ForesporselKanal Kanal { get; set; } = ForesporselKanal.Telefon;
+        public string FraNavn { get; set; } = "";
+        public string FraKontakt { get; set; } = "";
+        public string Emne { get; set; } = "";
+        public string Innhold { get; set; } = "";
+    }
+
+    private NyForesporselDraft _nyDraft = new();
+
+    private sealed class AktivitetRad
+    {
+        public DateTime Tidspunkt { get; set; }
+        public string Tekst { get; set; } = "";
+        public string? UtfortAv { get; set; }
+    }
 
     protected override async Task OnInitializedAsync()
     {
-        _foresporsler = await Db.Foresporsler
-            .Include(f => f.Media)
-            .OrderByDescending(f => f.MottattDato)
-            .ToListAsync();
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+                _naverendeBruker = await Db.Brukere.FindAsync(bid);
+            }
+        }
+
+        await LastDataAsync();
+
+        if (Id.HasValue)
+        {
+            var treff = _foresporsler.FirstOrDefault(f => f.Id == Id.Value);
+            if (treff is not null)
+            {
+                _valgt = treff;
+            }
+        }
     }
 
-    private int _uleste => _foresporsler.Count(f => !f.Lest);
+    private async Task LastDataAsync()
+    {
+        var valgtId = _valgt?.Id;
+
+        _foresporsler = await Db.Foresporsler
+            .Include(f => f.Media)
+            .Include(f => f.Notater).ThenInclude(n => n.OpprettetAvBruker)
+            .OrderByDescending(f => f.MottattDato)
+            .ToListAsync();
+
+        _ticketPerForesporsel = await Db.Tickets
+            .Include(t => t.Kunde)
+            .Include(t => t.Prosjekt)
+            .Include(t => t.AnsvarligBruker)
+            .Include(t => t.Hendelser).ThenInclude(h => h.UtfortAvBruker)
+            .Where(t => t.ForesporselId != null)
+            .ToDictionaryAsync(t => t.ForesporselId!.Value);
+
+        _kunder = await Db.Kunder.OrderBy(k => k.Navn).ToListAsync();
+        _kundeByEpost = _kunder
+            .Where(k => !string.IsNullOrWhiteSpace(k.Epost))
+            .GroupBy(k => k.Epost!.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First());
+
+        _brukere = await Db.Brukere.OrderBy(b => b.Navn).ToListAsync();
+
+        _valgt = (valgtId.HasValue ? _foresporsler.FirstOrDefault(f => f.Id == valgtId) : null) ?? VisteForesporsler.FirstOrDefault();
+    }
+
+    private Ticket? TicketFor(Foresporsel f) => _ticketPerForesporsel.GetValueOrDefault(f.Id);
+    private TicketStatus StatusFor(Foresporsel f) => TicketFor(f)?.Status ?? TicketStatus.Ny;
+
+    private Kunde? KundeFor(Foresporsel f)
+    {
+        var ticket = TicketFor(f);
+        if (ticket?.Kunde is not null)
+        {
+            return ticket.Kunde;
+        }
+
+        return _kundeByEpost.TryGetValue(f.FraEpost.Trim().ToLowerInvariant(), out var k) ? k : null;
+    }
+
+    private List<Kunde> RelevanteKunder => _kunder.Where(k => _foresporsler.Any(f => KundeFor(f)?.Id == k.Id)).ToList();
 
     private List<Foresporsel> VisteForesporsler
     {
         get
         {
-            if (string.IsNullOrWhiteSpace(_sok))
+            IEnumerable<Foresporsel> q = _foresporsler;
+
+            if (!string.IsNullOrWhiteSpace(_sok))
             {
-                return _foresporsler;
+                var s = _sok.Trim();
+                q = q.Where(f =>
+                    f.Emne.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    (f.FraNavn is not null && f.FraNavn.Contains(s, StringComparison.OrdinalIgnoreCase)) ||
+                    f.FraEpost.Contains(s, StringComparison.OrdinalIgnoreCase) ||
+                    f.Innhold.Contains(s, StringComparison.OrdinalIgnoreCase));
             }
 
-            var sok = _sok.Trim();
-            return _foresporsler.Where(f =>
-                (f.FraNavn is not null && f.FraNavn.Contains(sok, StringComparison.OrdinalIgnoreCase)) ||
-                f.FraEpost.Contains(sok, StringComparison.OrdinalIgnoreCase) ||
-                f.Emne.Contains(sok, StringComparison.OrdinalIgnoreCase)
-            ).ToList();
+            if (!string.IsNullOrEmpty(_kanalFilter) && Enum.TryParse<ForesporselKanal>(_kanalFilter, out var kanal))
+            {
+                q = q.Where(f => f.Kanal == kanal);
+            }
+
+            if (_kundeFilter is int kid)
+            {
+                q = q.Where(f => KundeFor(f)?.Id == kid);
+            }
+
+            if (_ansvarligFilter is int aid)
+            {
+                q = q.Where(f => TicketFor(f)?.AnsvarligBrukerId == aid);
+            }
+
+            q = _sortering == "eldste" ? q.OrderBy(f => f.MottattDato) : q.OrderByDescending(f => f.MottattDato);
+
+            return q.ToList();
         }
+    }
+
+    private (int Denne, int Forrige) Telling(Func<Foresporsel, bool> predikat)
+    {
+        var na = DateTime.Now;
+        var denneStart = na.AddDays(-30);
+        var forrigeStart = na.AddDays(-60);
+        var denne = _foresporsler.Count(f => predikat(f) && f.MottattDato >= denneStart);
+        var forrige = _foresporsler.Count(f => predikat(f) && f.MottattDato >= forrigeStart && f.MottattDato < denneStart);
+        return (denne, forrige);
+    }
+
+    private static string DeltaTekst((int Denne, int Forrige) t)
+    {
+        if (t.Forrige == 0)
+        {
+            return t.Denne > 0 ? "Nytt siste 30 dager" : "Ingen siste 30 dager";
+        }
+
+        var prosent = (int)Math.Round((t.Denne - t.Forrige) / (decimal)t.Forrige * 100);
+        if (prosent == 0)
+        {
+            return "Uendret siste 30 dager";
+        }
+
+        return (prosent > 0 ? "+" : "") + prosent + "% siste 30 dager";
+    }
+
+    private int NyeCount => _foresporsler.Count(f => StatusFor(f) == TicketStatus.Ny);
+    private int UnderBehandlingCount => _foresporsler.Count(f => StatusFor(f) == TicketStatus.UnderBehandling);
+    private int VenterCount => _foresporsler.Count(f => StatusFor(f) == TicketStatus.VenterGodkjenning);
+    private int FerdigCount => _foresporsler.Count(f => StatusFor(f) == TicketStatus.Lukket);
+
+    private string TotaltDelta => DeltaTekst(Telling(_ => true));
+    private string NyeDelta => DeltaTekst(Telling(f => StatusFor(f) == TicketStatus.Ny));
+    private string UnderBehandlingDelta => DeltaTekst(Telling(f => StatusFor(f) == TicketStatus.UnderBehandling));
+    private string VenterDelta => DeltaTekst(Telling(f => StatusFor(f) == TicketStatus.VenterGodkjenning));
+    private string FerdigDelta => DeltaTekst(Telling(f => StatusFor(f) == TicketStatus.Lukket));
+
+    private static readonly string[] _avatarPaletten = ["#835e41", "#2054a3", "#a1690a", "#2b7a4b", "#7a2b96", "#a32020"];
+
+    private static string AvatarFarge(Foresporsel f)
+    {
+        var navn = string.IsNullOrWhiteSpace(f.FraNavn) ? f.FraEpost : f.FraNavn;
+        return _avatarPaletten[Math.Abs(navn.GetHashCode()) % _avatarPaletten.Length];
     }
 
     private static string Initialer(Foresporsel f)
     {
-        if (!string.IsNullOrWhiteSpace(f.FraNavn))
+        var navn = string.IsNullOrWhiteSpace(f.FraNavn) ? f.FraEpost : f.FraNavn;
+        var deler = navn.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return deler.Length >= 2
+            ? $"{deler[0][0]}{deler[^1][0]}".ToUpperInvariant()
+            : navn.Length >= 2 ? navn[..2].ToUpperInvariant() : navn.ToUpperInvariant();
+    }
+
+    private List<AktivitetRad> AktivitetFor(Foresporsel f)
+    {
+        var liste = new List<AktivitetRad>
         {
-            var deler = f.FraNavn.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            return deler.Length >= 2
-                ? $"{deler[0][0]}{deler[^1][0]}".ToUpperInvariant()
-                : f.FraNavn.Length >= 2 ? f.FraNavn[..2].ToUpperInvariant() : f.FraNavn.ToUpperInvariant();
+            new() { Tidspunkt = f.MottattDato, Tekst = $"Forespørsel mottatt via {f.Kanal.Visningsnavn()}." }
+        };
+
+        var ticket = TicketFor(f);
+        if (ticket is not null)
+        {
+            liste.Add(new AktivitetRad { Tidspunkt = ticket.OpprettetDato, Tekst = $"Ticket #{ticket.Id} opprettet." });
+            foreach (var h in ticket.Hendelser)
+            {
+                liste.Add(new AktivitetRad { Tidspunkt = h.Tidspunkt, Tekst = h.Beskrivelse, UtfortAv = h.UtfortAvBruker?.Navn });
+            }
         }
 
-        var lokalDel = f.FraEpost.Split('@')[0];
-        return lokalDel.Length >= 2 ? lokalDel[..2].ToUpperInvariant() : lokalDel.ToUpperInvariant();
+        return liste.OrderByDescending(a => a.Tidspunkt).ToList();
+    }
+
+    private async Task Velg(Foresporsel f)
+    {
+        _valgt = f;
+        _aktivFane = "oversikt";
+        _visSvarBoks = false;
+        _visMeny = false;
+        _visRaadata = false;
+        _svarSendtOk = null;
+
+        if (!f.Lest)
+        {
+            f.Lest = true;
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    private async Task Forrige()
+    {
+        var liste = VisteForesporsler;
+        var idx = liste.FindIndex(f => f.Id == _valgt?.Id);
+        if (idx > 0)
+        {
+            await Velg(liste[idx - 1]);
+        }
+    }
+
+    private async Task Neste()
+    {
+        var liste = VisteForesporsler;
+        var idx = liste.FindIndex(f => f.Id == _valgt?.Id);
+        if (idx >= 0 && idx < liste.Count - 1)
+        {
+            await Velg(liste[idx + 1]);
+        }
+    }
+
+    private async Task<Ticket> SikreTicket()
+    {
+        if (_valgt is null)
+        {
+            throw new InvalidOperationException("Ingen forespørsel valgt.");
+        }
+
+        if (_ticketPerForesporsel.TryGetValue(_valgt.Id, out var eksisterende))
+        {
+            return eksisterende;
+        }
+
+        var kunde = KundeFor(_valgt);
+        var ticket = new Ticket
+        {
+            Tittel = _valgt.Emne,
+            KundeId = kunde?.Id,
+            Kontaktperson = _valgt.FraNavn,
+            ForesporselId = _valgt.Id
+        };
+        ticket.Hendelser.Add(new TicketHendelse
+        {
+            Beskrivelse = "Opprettet fra forespørsel.",
+            UtfortAvBrukerId = _naverendeBrukerId,
+            UtfortAvBruker = _naverendeBruker
+        });
+
+        Db.Tickets.Add(ticket);
+        await Db.SaveChangesAsync();
+
+        ticket.Kunde = kunde;
+        _ticketPerForesporsel[_valgt.Id] = ticket;
+        return ticket;
+    }
+
+    private async Task SendSvar()
+    {
+        if (_valgt is null || string.IsNullOrWhiteSpace(_svarTekst))
+        {
+            return;
+        }
+
+        var ticket = await SikreTicket();
+        var kanSendeEpost = _valgt.Kanal == ForesporselKanal.Epost && _valgt.FraEpost.Contains('@');
+        var html = $"<p>{System.Net.WebUtility.HtmlEncode(_svarTekst).Replace("\n", "<br>")}</p>";
+        var sendt = kanSendeEpost && await Epost.SendAsync(_valgt.FraEpost, "Re: " + _valgt.Emne, html);
+
+        ticket.Hendelser.Add(new TicketHendelse
+        {
+            TicketId = ticket.Id,
+            Beskrivelse = sendt
+                ? $"Svar sendt til {_valgt.FraEpost}."
+                : kanSendeEpost ? $"Klarte ikke å sende e-post til {_valgt.FraEpost}." : "Svar registrert (ingen e-postadresse å sende til).",
+            UtfortAvBrukerId = _naverendeBrukerId,
+            UtfortAvBruker = _naverendeBruker
+        });
+
+        if (ticket.Status == TicketStatus.Ny)
+        {
+            ticket.Status = TicketStatus.UnderBehandling;
+            ticket.Hendelser.Add(new TicketHendelse
+            {
+                TicketId = ticket.Id,
+                Beskrivelse = "Status endret fra Ny til Under behandling.",
+                UtfortAvBrukerId = _naverendeBrukerId,
+                UtfortAvBruker = _naverendeBruker
+            });
+        }
+
+        await Db.SaveChangesAsync();
+        _svarSendtOk = sendt || !kanSendeEpost;
+        _svarTekst = "";
+        _visSvarBoks = false;
+        await LastDataAsync();
+    }
+
+    private async Task Tildel(ChangeEventArgs e)
+    {
+        if (_valgt is null)
+        {
+            return;
+        }
+
+        var ticket = await SikreTicket();
+        var val = e.Value?.ToString();
+        var nyId = string.IsNullOrEmpty(val) ? (int?)null : int.Parse(val);
+        if (nyId == ticket.AnsvarligBrukerId)
+        {
+            return;
+        }
+
+        ticket.AnsvarligBrukerId = nyId;
+        var navn = nyId is int bid ? _brukere.FirstOrDefault(b => b.Id == bid)?.Navn ?? "ukjent" : null;
+        ticket.Hendelser.Add(new TicketHendelse
+        {
+            TicketId = ticket.Id,
+            Beskrivelse = nyId is null ? "Tildeling fjernet." : $"Tildelt til {navn}.",
+            UtfortAvBrukerId = _naverendeBrukerId,
+            UtfortAvBruker = _naverendeBruker
+        });
+
+        await Db.SaveChangesAsync();
+        await LastDataAsync();
+    }
+
+    private async Task EndreStatus(ChangeEventArgs e)
+    {
+        if (_valgt is null || !Enum.TryParse<TicketStatus>(e.Value?.ToString(), out var ny))
+        {
+            return;
+        }
+
+        var ticket = await SikreTicket();
+        if (ny == ticket.Status)
+        {
+            return;
+        }
+
+        var gammel = ticket.Status;
+        ticket.Status = ny;
+
+        if (ny == TicketStatus.Lukket)
+        {
+            ticket.LukketDato = DateTime.Now;
+            ticket.GodkjentAvBrukerId = _naverendeBrukerId;
+        }
+        else if (gammel == TicketStatus.Lukket)
+        {
+            ticket.LukketDato = null;
+            ticket.GodkjentAvBrukerId = null;
+        }
+
+        ticket.Hendelser.Add(new TicketHendelse
+        {
+            TicketId = ticket.Id,
+            Beskrivelse = $"Status endret fra {gammel.Visningsnavn()} til {ny.Visningsnavn()}.",
+            UtfortAvBrukerId = _naverendeBrukerId,
+            UtfortAvBruker = _naverendeBruker
+        });
+
+        await Db.SaveChangesAsync();
+        await LastDataAsync();
+    }
+
+    private void ApneTicket()
+    {
+        var ticket = _valgt is null ? null : TicketFor(_valgt);
+        if (ticket is not null)
+        {
+            Nav.NavigateTo($"/ticket/{ticket.Id}");
+        }
+    }
+
+    private async Task OpprettEllerApneTicket()
+    {
+        if (_valgt is null)
+        {
+            return;
+        }
+
+        var ticket = await SikreTicket();
+        Nav.NavigateTo($"/ticket/{ticket.Id}");
+    }
+
+    private async Task MerkLestUlest()
+    {
+        if (_valgt is null)
+        {
+            return;
+        }
+
+        _valgt.Lest = !_valgt.Lest;
+        await Db.SaveChangesAsync();
+        _visMeny = false;
+    }
+
+    private async Task SlettForesporsel()
+    {
+        if (_valgt is null)
+        {
+            return;
+        }
+
+        Db.Foresporsler.Remove(_valgt);
+        await Db.SaveChangesAsync();
+        _visMeny = false;
+        _valgt = null;
+        await LastDataAsync();
+    }
+
+    private async Task LeggTilNotat()
+    {
+        if (_valgt is null || string.IsNullOrWhiteSpace(_nyttNotat))
+        {
+            return;
+        }
+
+        Db.ForesporselNotater.Add(new ForesporselNotat
+        {
+            ForesporselId = _valgt.Id,
+            Tekst = _nyttNotat.Trim(),
+            OpprettetAvBrukerId = _naverendeBrukerId
+        });
+
+        await Db.SaveChangesAsync();
+        _nyttNotat = "";
+        await LastDataAsync();
+    }
+
+    private void ApneNyForesporsel()
+    {
+        _nyDraft = new NyForesporselDraft();
+        _nyFeil = null;
+        _visNyForesporselSkjema = true;
+    }
+
+    private async Task LagreNyForesporsel()
+    {
+        if (string.IsNullOrWhiteSpace(_nyDraft.Emne) || string.IsNullOrWhiteSpace(_nyDraft.FraKontakt))
+        {
+            _nyFeil = "Fyll ut minst e-post/telefon og emne.";
+            return;
+        }
+
+        var ny = new Foresporsel
+        {
+            Kanal = _nyDraft.Kanal,
+            FraNavn = string.IsNullOrWhiteSpace(_nyDraft.FraNavn) ? null : _nyDraft.FraNavn.Trim(),
+            FraEpost = _nyDraft.FraKontakt.Trim(),
+            Emne = _nyDraft.Emne.Trim(),
+            Innhold = _nyDraft.Innhold.Trim(),
+            MottattDato = DateTime.Now,
+            Lest = true
+        };
+
+        Db.Foresporsler.Add(ny);
+        await Db.SaveChangesAsync();
+
+        _visNyForesporselSkjema = false;
+        await LastDataAsync();
+        _valgt = _foresporsler.FirstOrDefault(f => f.Id == ny.Id);
     }
 }
