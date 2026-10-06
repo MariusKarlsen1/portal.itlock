@@ -9,6 +9,13 @@ public class Kunngjoring
     public bool Festet { get; set; }
     public DateTime OpprettetDato { get; set; } = DateTime.Now;
 
+    // Valgfrie felter for arrangement-type kunngjøringer (f.eks. Firmatur) -
+    // vises kun i detaljvisningen når satt, se KunngjoringDetalj.razor.
+    public DateTime? EventDato { get; set; }
+    public string? Sted { get; set; }
+    public string? Detaljer { get; set; }
+    public string? InfoTekst { get; set; }
+
     public int? OpprettetAvBrukerId { get; set; }
     public Bruker? OpprettetAvBruker { get; set; }
 
