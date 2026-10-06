@@ -19,6 +19,7 @@ public class Prosjekt
     public string? Tek { get; set; }
     public int CeGyldighetMåneder { get; set; } = 12;
     public ProsjektStatus? Status { get; set; }
+    public ProsjektType Type { get; set; } = ProsjektType.Annet;
     public DateTime? OverlevertDato { get; set; }
     public string? Notater { get; set; }
     public string? Info { get; set; }
