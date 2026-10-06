@@ -9,6 +9,8 @@
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 @inject PortalItlock.Web.Services.MobilVerktoylinjeService Verktoylinje
+@inject PortalItlock.Web.Services.GeocodingService Geokoding
+@inject IJSRuntime JS
 
 <PageTitle>Arbeidsordre</PageTitle>
 
@@ -19,7 +21,12 @@
             <span class="ordre-header-ikon"><Icon Name="file-text" /></span>
             <h1>Arbeidsordre</h1>
         </div>
-        <p class="ordre-intro">@(_visning == "kanban" ? "Opprett, tildel og følg opp arbeidsordre. Dra og slipp mellom status." : "Full oversikt over alle arbeidsordre med mulighet for sortering og filtrering.")</p>
+        <p class="ordre-intro">@(_visning switch
+        {
+            "kanban" => "Opprett, tildel og følg opp arbeidsordre. Dra og slipp mellom status.",
+            "kart" => "Se alle arbeidsordre på kartet. Klikk på markører for å se detaljer.",
+            _ => "Full oversikt over alle arbeidsordre med mulighet for sortering og filtrering."
+        })</p>
     </div>
 
     <div class="ordre-toolbar">
@@ -31,6 +38,7 @@
             <div class="ao-viewtoggle mobil-ny-ordre-skjul">
                 <button type="button" class="@(_visning == "kanban" ? "aktiv" : "")" @onclick='@(() => _visning = "kanban")'><Icon Name="box" />Kanban</button>
                 <button type="button" class="@(_visning == "liste" ? "aktiv" : "")" @onclick='@(() => _visning = "liste")'><Icon Name="file-text" />Liste</button>
+                <button type="button" class="@(_visning == "kart" ? "aktiv" : "")" @onclick="VelgKartvisning"><Icon Name="map" />Kart</button>
             </div>
             <button type="button" class="add-button mobil-ny-ordre-skjul" @onclick="NyArbeidsordre"><Icon Name="plus" />Ny arbeidsordre</button>
             <AuthorizeView Roles="Admin,Prosjektleder">
@@ -87,7 +95,34 @@
         </div>
     }
 
-    @if (!Verktoylinje.ErMobilvisning && _rader.Count > 0)
+    @if (!Verktoylinje.ErMobilvisning && _rader.Count > 0 && _visning == "kart")
+    {
+        <div class="ao-pillrow">
+            <button type="button" class="ao-pill ao-pill-aktiv @(_kartStatusFilter == "alle" ? "valgt" : "")" @onclick='@(() => _kartStatusFilter = "alle")'>Alle <span>(@_filtrert.Count)</span></button>
+            @foreach (var s in TavleStatuser)
+            {
+                <button type="button" class="ao-pill ao-pill-@KolonneFarge(s) @(_kartStatusFilter == s ? "valgt" : "")" @onclick="@(() => _kartStatusFilter = s)">
+                    <span class="ao-pill-prikk"></span>@s
+                </button>
+            }
+            <select class="ao-filter-select" value="@(_montorRadFilter?.ToString() ?? "")" @onchange="@(e => { _montorRadFilter = string.IsNullOrEmpty(e.Value as string) ? null : int.Parse((string)e.Value!); })">
+                <option value="">Montør</option>
+                @foreach (var b in _alleBrukere)
+                {
+                    <option value="@b.Id">@b.Navn</option>
+                }
+            </select>
+            <select class="ao-filter-select" value="@(_prosjektFilter?.ToString() ?? "")" @onchange="@(e => { _prosjektFilter = string.IsNullOrEmpty(e.Value as string) ? null : int.Parse((string)e.Value!); })">
+                <option value="">Prosjekt</option>
+                @foreach (var p in _alleProsjekter)
+                {
+                    <option value="@p.Id">@p.Navn</option>
+                }
+            </select>
+        </div>
+    }
+
+    @if (!Verktoylinje.ErMobilvisning && _rader.Count > 0 && _visning != "kart")
     {
         @if (_visning == "liste")
         {
@@ -329,6 +364,32 @@
             </div>
         }
 
+        @if (!Verktoylinje.ErMobilvisning && _visning == "kart")
+        {
+            <div class="ao-kartside">
+                <div class="ao-kartliste">
+                    @if (_kartFiltrert.Count == 0)
+                    {
+                        <p class="list-empty">Ingen arbeidsordre funnet.</p>
+                    }
+                    else
+                    {
+                        @foreach (var r in _kartFiltrert)
+                        {
+                            <a @key="r.Id" href="@($"/arbeidsordre/{r.Id}")" class="ao-kartkort ao-kartkort-@KolonneFargeForRad(r)">
+                                <span class="ao-kartkort-tittel">@r.Tittel</span>
+                                <span class="ao-kartkort-adresse">@(KartAdresse(r) ?? r.ProsjektNavn ?? "Ingen adresse")</span>
+                                <StatusPill Tekst="@(ErForfalt(r) ? "Forfalt" : r.Status.Visningsnavn())" Ikon="@(ErForfalt(r) ? "clock" : r.Status.PillIkon())" Farge="@(ErForfalt(r) ? "rod" : r.Status.PillFarge())" />
+                            </a>
+                        }
+                    }
+                </div>
+                <div class="ao-kartwrap">
+                    <div id="ao-kart" class="ao-kart"></div>
+                </div>
+            </div>
+        }
+
         <ul class="mobil-ordre-liste">
             @foreach (var r in _filtrert)
             {
@@ -370,6 +431,15 @@
         public DateTime OpprettetDato { get; set; }
         public DateTime? PlanlagtDato { get; set; }
         public DateTime? FullfortDato { get; set; }
+
+        // Brukes kun av kartvisningen - Arbeidsordre sin egen adresse har
+        // forrang, med Prosjekt sin som fallback (samme mønster som
+        // KundeNavn over), siden mange ordre ikke har adresse satt direkte.
+        public string? Adresse { get; set; }
+        public string? Postnr { get; set; }
+        public string? Sted { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
     }
 
     private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
@@ -393,6 +463,10 @@
     private bool _visFilter;
     private string _hurtigfilter = "alle";
     private string _visning = "kanban";
+    private string _kartStatusFilter = "alle";
+    private bool _kartLastet;
+    private bool _kartInitialisert;
+    private string? _sisteKartSignatur;
 
     // Rad-nivå filtre (den nye filterraden - Prosjekt/Kunde/Montør/Status/
     // Prioritet/Dato - delt mellom begge visningene, i tillegg til det
@@ -465,6 +539,129 @@
         .ToList();
 
     private int AntallSider => Math.Max(1, (int)Math.Ceiling(_filtrert.Count / (double)_sideStorrelse));
+
+    private List<ArbeidsordreRad> _kartFiltrert => _filtrert
+        .Where(r => _kartStatusFilter switch
+        {
+            "Ny" => !ErForfalt(r) && (r.Status == ArbeidsordreStatus.Ny || r.Status == ArbeidsordreStatus.Klar),
+            "Pågående" => !ErForfalt(r) && r.Status == ArbeidsordreStatus.Pagaende,
+            "Ferdig" => r.Status == ArbeidsordreStatus.Ferdig,
+            "Forfalt" => ErForfalt(r),
+            _ => true
+        })
+        .ToList();
+
+    private static string? KartAdresse(ArbeidsordreRad r) =>
+        string.IsNullOrWhiteSpace(r.Adresse) ? null : $"{r.Adresse}{(string.IsNullOrWhiteSpace(r.Sted) ? "" : $", {r.Sted}")}";
+
+    private static string KolonneFargeForRad(ArbeidsordreRad r) => r switch
+    {
+        _ when ErForfalt(r) => "rod",
+        { Status: ArbeidsordreStatus.Ferdig } => "gronn",
+        { Status: ArbeidsordreStatus.Pagaende } => "gul",
+        _ => "blaa"
+    };
+
+    private static string HexForFarge(string farge) => farge switch
+    {
+        "blaa" => "#0b66e6",
+        "gul" => "#fd7a17",
+        "gronn" => "#0c9c5c",
+        "rod" => "#d13a3a",
+        _ => "#835e41"
+    };
+
+    private static string HexBgForFarge(string farge) => farge switch
+    {
+        "blaa" => "#dbe7f7",
+        "gul" => "#fde7d3",
+        "gronn" => "#d3ecdb",
+        "rod" => "#f9dcdc",
+        _ => "#eee7df"
+    };
+
+    private List<object> KartPunkter() => _kartFiltrert
+        .Where(r => r.Latitude is not null && r.Longitude is not null)
+        .Select(r =>
+        {
+            var farge = KolonneFargeForRad(r);
+            return (object)new
+            {
+                lat = r.Latitude!.Value,
+                lng = r.Longitude!.Value,
+                tittel = r.Tittel,
+                undertekst = KartAdresse(r) ?? r.ProsjektNavn ?? "",
+                undertekst2 = string.IsNullOrWhiteSpace(r.AnsvarligMontorNavn) ? null : r.AnsvarligMontorNavn,
+                farge = HexForFarge(farge),
+                pin = true,
+                rikPopup = true,
+                statusTekst = ErForfalt(r) ? "Forfalt" : r.Status.Visningsnavn(),
+                statusBg = HexBgForFarge(farge),
+                datoTekst = DatoBadgeTekst(r),
+                timerTekst = r.SumTimer > 0 ? $"{r.SumTimer.ToString("N1", Kultur)} t" : null,
+                href = $"/arbeidsordre/{r.Id}"
+            };
+        })
+        .ToList();
+
+    // Henter adresse (egen eller arvet fra Prosjekt) og geokoder de som
+    // mangler lagret posisjon - kun kjørt første gang kartvisningen åpnes,
+    // for å ikke belaste Kanban/liste-brukere med dette unødig.
+    private async Task LastInnKartData()
+    {
+        if (_kartLastet)
+        {
+            return;
+        }
+        _kartLastet = true;
+
+        var ider = _rader.Select(r => r.Id).ToList();
+        var ordre = await Db.Arbeidsordre
+            .Where(a => ider.Contains(a.Id))
+            .Include(a => a.Prosjekt)
+            .ToListAsync();
+
+        var endret = false;
+        foreach (var rad in _rader)
+        {
+            var a = ordre.FirstOrDefault(o => o.Id == rad.Id);
+            if (a is null)
+            {
+                continue;
+            }
+
+            var harEgenAdresse = !string.IsNullOrWhiteSpace(a.Adresse);
+            rad.Adresse = harEgenAdresse ? a.Adresse : a.Prosjekt?.Adresse;
+            rad.Postnr = harEgenAdresse ? a.Postnr : a.Prosjekt?.Postnr;
+            rad.Sted = harEgenAdresse ? a.Sted : a.Prosjekt?.Sted;
+            rad.Latitude = a.Latitude ?? a.Prosjekt?.Latitude;
+            rad.Longitude = a.Longitude ?? a.Prosjekt?.Longitude;
+
+            if (rad.Latitude is null && !string.IsNullOrWhiteSpace(rad.Adresse))
+            {
+                var treff = await Geokoding.GeocodeAsync(rad.Adresse!, rad.Postnr, rad.Sted);
+                if (treff is not null)
+                {
+                    rad.Latitude = treff.Value.Latitude;
+                    rad.Longitude = treff.Value.Longitude;
+                    a.Latitude = treff.Value.Latitude;
+                    a.Longitude = treff.Value.Longitude;
+                    endret = true;
+                }
+            }
+        }
+
+        if (endret)
+        {
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    private async Task VelgKartvisning()
+    {
+        _visning = "kart";
+        await LastInnKartData();
+    }
 
     private static DateTime FinnForrigeMandag(DateTime dato)
     {
@@ -672,5 +869,31 @@
         Db.Arbeidsordre.Add(ordre);
         await Db.SaveChangesAsync();
         Nav.NavigateTo($"/arbeidsordre/{ordre.Id}");
+    }
+
+    // Tegner/oppdaterer kartet kun når kartvisningen faktisk er aktiv, og kun
+    // når det synlige punktsettet (filter/søk) faktisk har endret seg siden
+    // sist - samme mønster som Serviceavtaler.razor/Home.razor sine kart.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Verktoylinje.ErMobilvisning || _visning != "kart" || !_kartLastet)
+        {
+            return;
+        }
+
+        var punkter = KartPunkter();
+        var signatur = string.Join("|", punkter.Select(p => p!.ToString()));
+
+        if (!_kartInitialisert)
+        {
+            await JS.InvokeVoidAsync("kart.init", "ao-kart", punkter);
+            _kartInitialisert = true;
+            _sisteKartSignatur = signatur;
+        }
+        else if (signatur != _sisteKartSignatur)
+        {
+            await JS.InvokeVoidAsync("kart.setPunkter", punkter);
+            _sisteKartSignatur = signatur;
+        }
     }
 }
