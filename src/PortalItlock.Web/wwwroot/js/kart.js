@@ -1,6 +1,7 @@
 window.kart = (function () {
     let map = null;
     let markers = [];
+    let markersById = {};
 
     function lagIkon(farge) {
         return L.divIcon({
@@ -94,13 +95,40 @@ window.kart = (function () {
     function tegnMarkorer(punkter) {
         markers.forEach(m => map.removeLayer(m));
         markers = [];
+        markersById = {};
 
         (punkter || []).forEach(p => {
             const ikon = p.pin ? lagPinIkon(p.farge) : lagIkon(p.farge);
             const marker = L.marker([p.lat, p.lng], { icon: ikon }).addTo(map);
             marker.bindPopup(lagPopup(p), { minWidth: 220 });
             markers.push(marker);
+            if (p.id !== undefined && p.id !== null) {
+                markersById[p.id] = marker;
+            }
         });
+    }
+
+    // Panorerer/zoomer til punktet med gitt id (sendt inn som p.id fra siden),
+    // åpner popup-en og lar markøren pulsere et par ganger - brukt når man
+    // klikker et kort i en liste ved siden av et kart, for å vise hvor det
+    // kortet faktisk er uten å måtte lete etter det selv.
+    function fremhev(id) {
+        const marker = markersById[id];
+        if (!marker || !map) {
+            return;
+        }
+
+        const malZoom = Math.max(map.getZoom(), 16);
+        map.flyTo(marker.getLatLng(), malZoom, { duration: 0.6 });
+        marker.openPopup();
+
+        const el = marker.getElement();
+        if (el) {
+            el.classList.remove('kart-punkt-blink');
+            void el.offsetWidth; // tvinger reflow så animasjonen starter på nytt ved gjentatte klikk
+            el.classList.add('kart-punkt-blink');
+            setTimeout(() => el.classList.remove('kart-punkt-blink'), 1800);
+        }
     }
 
     function setPunkter(punkter) {
@@ -131,5 +159,5 @@ window.kart = (function () {
         tegnMarkorer(punkter);
     }
 
-    return { init, setPunkter, oppdaterPunkter };
+    return { init, setPunkter, oppdaterPunkter, fremhev };
 })();
