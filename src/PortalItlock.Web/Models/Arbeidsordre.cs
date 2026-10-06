@@ -24,6 +24,7 @@ public class Arbeidsordre
     public Tilbud? Tilbud { get; set; }
 
     public ArbeidsordreStatus Status { get; set; } = ArbeidsordreStatus.Ny;
+    public ArbeidsordrePrioritet Prioritet { get; set; } = ArbeidsordrePrioritet.Normal;
     public ArbeidsordreType? Type { get; set; }
     public decimal? EstimerteTimer { get; set; }
     public string? Hentehylle { get; set; }
