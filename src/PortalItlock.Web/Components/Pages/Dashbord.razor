@@ -5,6 +5,7 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 
 <PageTitle>Dashbord - Full Kontroll</PageTitle>
@@ -270,42 +271,47 @@
     }
     else if (_fane == "prosjekter")
     {
-        <div class="db-statrow db-statrow-4">
-            @foreach (var d in _prosjektDonutDeler)
-            {
-                <div class="kort db-statcard">
-                    <span class="db-statcard-ic db-ic-@d.Farge"><Icon Name="folder" /></span>
-                    <div>
-                        <span class="db-statcard-num">@d.Verdi</span>
-                        <span class="db-statcard-lbl">@d.Navn</span>
-                    </div>
+        <div class="db-statrow db-statrow-2">
+            <div class="kort db-statcard">
+                <span class="db-statcard-ic db-ic-gronn"><Icon Name="check-circle" /></span>
+                <div>
+                    <span class="db-statcard-num">@Kr(ProsjekterVunnet.Sum(x => x.Verdi))</span>
+                    <span class="db-statcard-lbl">Vunnet (@ProsjekterVunnet.Count)</span>
                 </div>
-            }
+            </div>
+            <div class="kort db-statcard">
+                <span class="db-statcard-ic db-ic-rod"><Icon Name="x" /></span>
+                <div>
+                    <span class="db-statcard-num">@Kr(ProsjekterTapt.Sum(x => x.Verdi))</span>
+                    <span class="db-statcard-lbl">Tapt (@ProsjekterTapt.Count)</span>
+                </div>
+            </div>
         </div>
 
         <div class="kort tabell-kort">
             <div class="tabell-header">
-                <h2>Siste prosjekter</h2>
+                <h2>Vunnet og tapt prosjekter</h2>
                 <a class="db-se-alle" href="/prosjekter">Se alle →</a>
             </div>
-            @if (_prosjekterAlle.Count == 0)
+            @if (VunnetOgTapt.Count == 0)
             {
-                <p class="list-empty">Ingen prosjekter registrert ennå.</p>
+                <p class="list-empty">Ingen vunnet eller tapte prosjekter ennå.</p>
             }
             else
             {
                 <table class="dashbord-tabell">
                     <thead>
-                        <tr><th>Prosjekt</th><th>Kunde</th><th>Status</th><th>Opprettet</th></tr>
+                        <tr><th>Prosjekt</th><th>Kunde</th><th>Status</th><th>Verdi</th><th>Dato</th></tr>
                     </thead>
                     <tbody>
-                        @foreach (var p in _prosjekterAlle.Take(8))
+                        @foreach (var x in VunnetOgTapt.Take(8))
                         {
-                            <tr @key="p.Id">
-                                <td><a href="@($"/prosjekter/{p.Id}")">@p.Navn</a></td>
-                                <td>@(p.Kunde?.Navn ?? "Ingen kunde")</td>
-                                <td><StatusPill Tekst="@(p.Status?.Visningsnavn() ?? "Ukjent")" Ikon="@(p.Status?.PillIkon() ?? "folder")" Farge="@(p.Status?.PillFarge() ?? "noytral")" /></td>
-                                <td>@p.OpprettetDato.ToString("dd.MM.yyyy")</td>
+                            <tr @key="x.Prosjekt.Id">
+                                <td><a href="@($"/prosjekter/{x.Prosjekt.Id}")">@x.Prosjekt.Navn</a></td>
+                                <td>@(x.Prosjekt.Kunde?.Navn ?? "Ingen kunde")</td>
+                                <td><StatusPill Tekst="@(x.ErVunnet ? "Vunnet" : "Tapt")" Ikon="@(x.ErVunnet ? "check-circle" : "x")" Farge="@(x.ErVunnet ? "gronn" : "rod")" /></td>
+                                <td>@Kr(x.Verdi)</td>
+                                <td>@x.Dato.ToString("dd.MM.yyyy")</td>
                             </tr>
                         }
                     </tbody>
@@ -726,6 +732,24 @@
     private List<DonutDel> _prosjektDonutDeler = [];
     private List<DonutDel> _arbeidsordreDonutDeler = [];
 
+    private List<(Prosjekt Prosjekt, decimal Verdi)> ProsjekterVunnet => _prosjekterAlle
+        .Where(p => p.Status == ProsjektStatus.Overlevert)
+        .Select(p => (p, p.Arbeidsordre.Sum(ArbeidsordreBeregningHelper.BeregnVareSum)))
+        .ToList();
+
+    private List<(Prosjekt Prosjekt, decimal Verdi)> ProsjekterTapt => _prosjekterAlle
+        .Where(p => p.Status == ProsjektStatus.TilbudAvslatt)
+        .Select(p => (p, p.Tilbud.Where(t => t.Status == EndringsmeldingStatus.Avslatt).Sum(t => t.SendtSum ?? TilbudBeregningHelper.BeregnTotaltUtenMva(t))))
+        .ToList();
+
+    private sealed record VunnetTaptRad(Prosjekt Prosjekt, decimal Verdi, bool ErVunnet, DateTime Dato);
+
+    private List<VunnetTaptRad> VunnetOgTapt => ProsjekterVunnet
+        .Select(x => new VunnetTaptRad(x.Prosjekt, x.Verdi, true, x.Prosjekt.OverlevertDato ?? x.Prosjekt.OpprettetDato))
+        .Concat(ProsjekterTapt.Select(x => new VunnetTaptRad(x.Prosjekt, x.Verdi, false, x.Prosjekt.OpprettetDato)))
+        .OrderByDescending(x => x.Dato)
+        .ToList();
+
     private sealed class FristRad
     {
         public string Tittel { get; set; } = "";
@@ -795,6 +819,10 @@
 
         _prosjekterAlle = await Db.Prosjekter
             .Include(p => p.Kunde)
+            .Include(p => p.Arbeidsordre).ThenInclude(a => a.Tilbud).ThenInclude(t => t!.Linjer)
+            .Include(p => p.Arbeidsordre).ThenInclude(a => a.Varer)
+            .Include(p => p.Arbeidsordre).ThenInclude(a => a.Timeregistreringer)
+            .Include(p => p.Tilbud).ThenInclude(t => t.Linjer)
             .OrderByDescending(p => p.OpprettetDato)
             .ToListAsync();
 
