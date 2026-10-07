@@ -1,0 +1,606 @@
+@page "/plattform/organisasjoner"
+@rendermode InteractiveServer
+@layout PortalItlock.Web.Components.Layout.PlattformLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "Plattform")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject PlatformDbContext PlatformDb
+@inject TenantProvisioningService Provisioning
+@inject TenantStatistikkService Statistikk
+@inject NavigationManager Nav
+
+<PageTitle>Organisasjoner</PageTitle>
+
+<div class="pf-root">
+
+        <div class="pf-topbar">
+            <div>
+                <div class="pf-eyebrow">Plattform</div>
+                <h1 class="pf-h1">Organisasjonsadministrasjon</h1>
+                <p class="pf-subtitle">Opprett og administrer organisasjonene (tenants) som bruker Full Kontroll. Hver organisasjon har sin egen separate plattform med egne brukere, prosjekter og innstillinger.</p>
+            </div>
+            <div class="pf-topbar-actions">
+                <div class="pf-search">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-4.3-4.3" /></svg>
+                    <input type="search" class="pf-input pf-search-input" placeholder="Søk etter organisasjon..." @bind="_sok" @bind:event="oninput" aria-label="Søk etter organisasjon" />
+                </div>
+                <span class="pf-badge pf-badge-aktiv"><span class="pf-dot"></span>Alle systemer operative</span>
+            </div>
+        </div>
+
+        <div class="pf-kpi-grid">
+            <div class="pf-card pf-kpi">
+                <div class="pf-eyebrow">Totalt antall organisasjoner</div>
+                <div class="pf-kpi-value">@_tenants.Count</div>
+                <div class="pf-kpi-sub">Siden lansering</div>
+            </div>
+            <div class="pf-card pf-kpi">
+                <div class="pf-eyebrow">Aktive</div>
+                <div class="pf-kpi-value">@_tenants.Count(t => t.Status == TenantStatus.Aktiv)</div>
+                <div class="pf-kpi-sub">Betaler og i drift</div>
+            </div>
+            <div class="pf-card pf-kpi">
+                <div class="pf-eyebrow">Nye siste 30 dager</div>
+                <div class="pf-kpi-value">@_tenants.Count(t => (DateTime.Now - t.OpprettetDato).TotalDays <= 30)</div>
+                <div class="pf-kpi-sub">Vekst måned for måned</div>
+            </div>
+            <div class="pf-card pf-kpi">
+                <div class="pf-eyebrow">Suspendert</div>
+                <div class="pf-kpi-value">@_tenants.Count(t => t.Status == TenantStatus.Suspendert)</div>
+                <div class="pf-kpi-sub">Venter på oppfølging</div>
+            </div>
+            <div class="pf-card pf-kpi pf-kpi-penger">
+                <div class="pf-eyebrow">Månedlig lisensinntekt</div>
+                <div class="pf-kpi-value">@TotalManedligInntekt.ToString("N0") kr</div>
+                <div class="pf-kpi-sub">Sum av aktiverte lisenser hos aktive organisasjoner</div>
+            </div>
+        </div>
+
+        <section class="pf-card pf-section">
+            <div class="pf-section-title-row">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A5A34" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9 9h.01M15 9h.01M9 15c.7.7 1.8 1 3 1s2.3-.3 3-1" /></svg>
+                <h2 class="pf-h2">Lisenspriser</h2>
+            </div>
+            <p class="pf-hint">Fast pris per lisens per måned, felles for alle organisasjoner. Styrer "Månedlig lisensinntekt" over og beløpet vist på hver organisasjon.</p>
+            <div class="pf-pris-rad">
+                @foreach (var type in Enum.GetValues<LisensType>())
+                {
+                    var pris = _lisensPriser.First(p => p.Type == type);
+                    <label class="pf-label pf-pris-felt">
+                        @type.Visningsnavn() (kr/mnd)
+                        <input class="pf-input" type="number" min="0" step="1" @bind="pris.KrPerManed" @bind:after="@(() => LagrePris(pris))" />
+                    </label>
+                }
+            </div>
+            @if (!string.IsNullOrEmpty(_prisMelding))
+            {
+                <p class="pf-suksessmelding">@_prisMelding</p>
+            }
+        </section>
+
+        <section class="pf-card pf-section">
+            <div class="pf-section-title-row">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A5A34" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                <h2 class="pf-h2">Opprett ny organisasjon</h2>
+            </div>
+            @if (!_visOpprettSkjema)
+            {
+                <p class="pf-hint">
+                    Oppretter en splitter ny, tom database for organisasjonen, migrerer og seeder den akkurat som i dag, og
+                    legger inn den første admin-brukeren deres. De logger inn på samme adresse som alle andre
+                    (<code>@_delLoginAdresse</code>) - systemet finner riktig organisasjon ut fra e-posten som logger inn.
+                </p>
+                <button type="button" class="pf-btn-primary" @onclick="@(() => _visOpprettSkjema = true)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                    Opprett organisasjon
+                </button>
+            }
+            else
+            {
+                <div class="pf-form-grid">
+                    <label class="pf-label">
+                        Firmanavn
+                        <input class="pf-input" @bind="_navn" placeholder="F.eks. Eksempel Lås AS" />
+                    </label>
+                    <label class="pf-label">
+                        Navn på første admin-bruker
+                        <input class="pf-input" @bind="_adminNavn" placeholder="F.eks. Ola Nordmann" />
+                    </label>
+                    <label class="pf-label">
+                        E-post til første admin-bruker
+                        <input class="pf-input" @bind="_adminEpost" placeholder="ola@eksempellas.no" />
+                    </label>
+                </div>
+                <div class="pf-knapperad">
+                    <button type="button" class="pf-btn-primary" @onclick="OpprettOrganisasjon" disabled="@_oppretter">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                        @(_oppretter ? "Oppretter..." : "Opprett organisasjon")
+                    </button>
+                    <button type="button" class="pf-btn-ghost" @onclick="@(() => _visOpprettSkjema = false)">Avbryt</button>
+                </div>
+            }
+            @if (!string.IsNullOrEmpty(_feilmelding))
+            {
+                <p class="pf-feilmelding">@_feilmelding</p>
+            }
+            @if (!string.IsNullOrEmpty(_suksessmelding))
+            {
+                <p class="pf-suksessmelding">@_suksessmelding</p>
+            }
+        </section>
+
+        <div class="pf-split">
+            <section class="pf-card pf-liste-card">
+                <div class="pf-liste-header">
+                    <h2 class="pf-h2">Organisasjoner <span class="pf-liste-antall">(@FiltrerteOrganisasjoner.Count)</span></h2>
+                    <div class="pf-filter-rad">
+                        <button type="button" class="pf-btn-ghost @(_statusFilter is null ? "pf-btn-ghost-aktiv" : "")" @onclick="@(() => _statusFilter = null)">Alle</button>
+                        @foreach (var s in Enum.GetValues<TenantStatus>())
+                        {
+                            <button type="button" class="pf-btn-ghost @(_statusFilter == s ? "pf-btn-ghost-aktiv" : "")" @onclick="@(() => _statusFilter = s)">@Flertall(s)</button>
+                        }
+                    </div>
+                </div>
+
+                @if (FiltrerteOrganisasjoner.Count == 0)
+                {
+                    <p class="pf-liste-tom">Ingen organisasjoner matcher @(string.IsNullOrWhiteSpace(_sok) ? "filteret" : $"søket \"{_sok}\"").</p>
+                }
+                else
+                {
+                    <div class="pf-tabell-hode">
+                        <div>Organisasjon</div>
+                        <div>Vertsnavn</div>
+                        <div>Type</div>
+                        <div>Status</div>
+                        <div>Opprettet</div>
+                    </div>
+                    @foreach (var t in FiltrerteOrganisasjoner)
+                    {
+                        var (bg, ink) = AvatarFarge(t.Id);
+                        <button type="button" class="pf-rad @(_valgtId == t.Id ? "pf-rad-aktiv" : "")" @key="t.Id" @onclick="@(() => VelgOrganisasjon(t.Id))">
+                            <div class="pf-rad-kunde">
+                                <div class="pf-avatar" style="background: @bg; color: @ink;">@Initialer(t.Navn)</div>
+                                <div class="pf-rad-kunde-tekst">
+                                    <div class="pf-rad-navn">@t.Navn</div>
+                                    @if (t.ErStandard)
+                                    {
+                                        <div class="pf-rad-standard">Standard-organisasjon</div>
+                                    }
+                                </div>
+                            </div>
+                            <div class="pf-rad-vertsnavn">@(t.Subdomene ?? "-")</div>
+                            <div>
+                                @if (t.Type.HasValue)
+                                {
+                                    <span class="pf-type-pille">@t.Type.Value.Visningsnavn()</span>
+                                }
+                                else
+                                {
+                                    <span class="pf-type-pille pf-type-pille-tom">Ikke satt</span>
+                                }
+                            </div>
+                            <div><span class="pf-badge pf-badge-@StatusKlasse(t.Status)"><span class="pf-dot"></span>@t.Status</span></div>
+                            <div class="pf-rad-dato">@t.OpprettetDato.ToString("dd.MM.yyyy")</div>
+                        </button>
+                    }
+                }
+            </section>
+
+            @if (_valgt is not null)
+            {
+                <aside class="pf-card pf-detalj">
+                    <div class="pf-detalj-topp">
+                        <div class="pf-avatar pf-avatar-stor" style="background: @AvatarFarge(_valgt.Id).Bg; color: @AvatarFarge(_valgt.Id).Ink;">@Initialer(_valgt.Navn)</div>
+                        <span class="pf-badge pf-badge-@StatusKlasse(_valgt.Status)"><span class="pf-dot"></span>@_valgt.Status</span>
+                    </div>
+                    <h3 class="pf-detalj-navn">@_valgt.Navn</h3>
+                    @if (!string.IsNullOrWhiteSpace(_valgt.Subdomene))
+                    {
+                        <a class="pf-detalj-lenke" href="@($"https://{_valgt.Subdomene}")" target="_blank" rel="noopener">@_valgt.Subdomene ↗</a>
+                    }
+
+                    <div class="pf-detalj-boks">
+                        <h4>Grunninformasjon</h4>
+                        <label class="pf-detalj-felt">Org.nr<input class="pf-input" @bind="_valgt.OrgNr" @bind:event="oninput" @bind:after="LagreValgt" /></label>
+                        <label class="pf-detalj-felt">Adresse<input class="pf-input" @bind="_valgt.Adresse" @bind:event="oninput" @bind:after="LagreValgt" /></label>
+                        <div class="pf-detalj-felt-rad">
+                            <label class="pf-detalj-felt">Postnr<input class="pf-input" @bind="_valgt.Postnr" @bind:event="oninput" @bind:after="LagreValgt" /></label>
+                            <label class="pf-detalj-felt">Sted<input class="pf-input" @bind="_valgt.Sted" @bind:event="oninput" @bind:after="LagreValgt" /></label>
+                        </div>
+                        <label class="pf-detalj-felt">Telefon<input class="pf-input" @bind="_valgt.Telefon" @bind:event="oninput" @bind:after="LagreValgt" /></label>
+                        <label class="pf-detalj-felt">E-post<input class="pf-input" @bind="_valgt.Epost" @bind:event="oninput" @bind:after="LagreValgt" /></label>
+                        <label class="pf-detalj-felt">Kundeansvarlig<input class="pf-input" @bind="_valgt.Kundeansvarlig" @bind:event="oninput" @bind:after="LagreValgt" /></label>
+                        <label class="pf-detalj-felt">
+                            Type
+                            <select class="pf-input" @bind="_valgt.Type" @bind:after="LagreValgt">
+                                <option value="">Ikke satt</option>
+                                @foreach (var t in Enum.GetValues<TenantType>())
+                                {
+                                    <option value="@t">@t.Visningsnavn()</option>
+                                }
+                            </select>
+                        </label>
+                        @if (!_valgt.ErStandard)
+                        {
+                            <label class="pf-detalj-felt">
+                                Status
+                                <select class="pf-input" @bind="_valgt.Status" @bind:after="LagreValgt">
+                                    @foreach (var s in Enum.GetValues<TenantStatus>())
+                                    {
+                                        <option value="@s">@s</option>
+                                    }
+                                </select>
+                            </label>
+                        }
+                        <div class="pf-detalj-meta">
+                            <span>Opprettet @_valgt.OpprettetDato.ToString("dd.MM.yyyy")</span>
+                            @if (_valgt.SistOppdatert.HasValue)
+                            {
+                                <span>Sist oppdatert @_valgt.SistOppdatert.Value.ToString("dd.MM.yyyy HH:mm")</span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="pf-detalj-boks">
+                        <h4>Merkevare i portalen</h4>
+                        <p class="pf-hint pf-hint-tett">Vises i organisasjonens egen portal - sidemeny, innloggingsside og fargetema. Blank = samme standardoppsett som før.</p>
+                        <label class="pf-detalj-felt">
+                            Visningsnavn (under "Organisasjon" i sidemenyen)
+                            <input class="pf-input" @bind="_valgt.PortalVisningsnavn" @bind:event="oninput" @bind:after="LagreValgt" placeholder="@_valgt.Navn" />
+                        </label>
+
+                        <div class="pf-logo-rad">
+                            @if (_valgt.LogoData is not null)
+                            {
+                                <img class="pf-logo-forhandsvisning" src="@($"/plattform/organisasjon/{_valgt.Id}/logo?v={_valgt.SistOppdatert?.Ticks}")" alt="Logo" />
+                                <button type="button" class="pf-btn-ghost" @onclick="FjernLogo">Fjern logo</button>
+                            }
+                            else
+                            {
+                                <span class="pf-logo-tom">Ingen logo lastet opp</span>
+                            }
+                            <label class="pf-btn-ghost pf-logo-opplasting">
+                                Last opp logo
+                                <InputFile OnChange="OnLogoValgt" accept="image/*" style="display:none;" />
+                            </label>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_logoFeil))
+                        {
+                            <p class="pf-feilmelding">@_logoFeil</p>
+                        }
+
+                        <div class="pf-detalj-felt-rad">
+                            <label class="pf-detalj-felt">
+                                Merkevarefarge (knapper, aksent)
+                                <input type="color" class="pf-input pf-fargevelger" value="@(_valgt.TemaFarge ?? "#835e41")" @onchange="@(e => SettFarge(false, (string)e.Value!))" />
+                            </label>
+                            <label class="pf-detalj-felt">
+                                Bakgrunnsfarge (side)
+                                <input type="color" class="pf-input pf-fargevelger" value="@(_valgt.TemaBakgrunn ?? "#f4f0e9")" @onchange="@(e => SettFarge(true, (string)e.Value!))" />
+                            </label>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(_valgt.TemaFarge) || !string.IsNullOrWhiteSpace(_valgt.TemaBakgrunn))
+                        {
+                            <button type="button" class="pf-btn-ghost" @onclick="TilbakestillFarger">Tilbakestill til standardfarger</button>
+                        }
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(_valgt.Subdomene))
+                    {
+                        <a class="pf-btn-primary pf-detalj-apne" href="@($"https://{_valgt.Subdomene}")" target="_blank" rel="noopener">Åpne organisasjonens plattform →</a>
+                    }
+
+                    @if (_valgtTall is not null)
+                    {
+                        <div class="pf-stat-grid">
+                            <div class="pf-stat-boks"><div class="pf-stat-tall">@_valgtTall.Prosjekter</div><div class="pf-stat-label">Prosjekter</div></div>
+                            <div class="pf-stat-boks"><div class="pf-stat-tall">@_valgtTall.Brukere</div><div class="pf-stat-label">Brukere</div></div>
+                            <div class="pf-stat-boks"><div class="pf-stat-tall">@_valgtTall.Dokumenter</div><div class="pf-stat-label">Dokumenter</div></div>
+                            <div class="pf-stat-boks"><div class="pf-stat-tall">@_valgtTall.Systemer</div><div class="pf-stat-label">Systemer</div></div>
+                        </div>
+                    }
+
+                    <div class="pf-detalj-boks">
+                        <h4>Lisenser</h4>
+                        <p class="pf-hint pf-hint-tett">Antall de kan ta i bruk før de må vente på at du aktiverer flere. Når de går tomme, varsles de om det i sin egen portal.</p>
+                        @foreach (var type in Enum.GetValues<LisensType>())
+                        {
+                            var lisens = _valgtLisenser.First(l => l.Type == type);
+                            var brukt = type == LisensType.Brukere ? _valgtTall?.Brukere ?? 0 : _valgtKundeTilgangBrukt;
+                            <div class="pf-lisens-rad">
+                                <div class="pf-lisens-info">
+                                    <span class="pf-lisens-navn">@type.Visningsnavn()</span>
+                                    <span class="pf-lisens-bruk @(brukt >= lisens.AntallTildelt ? "pf-lisens-bruk-full" : "")">@brukt av @lisens.AntallTildelt i bruk</span>
+                                </div>
+                                <input type="number" min="0" class="pf-input pf-lisens-input" @bind="lisens.AntallTildelt" />
+                                <button type="button" class="pf-btn-ghost" @onclick="@(() => LagreLisens(lisens))">Aktiver</button>
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(_lisensMelding))
+                        {
+                            <p class="pf-suksessmelding">@_lisensMelding</p>
+                        }
+                        <div class="pf-pris-sum">Månedlig beløp: <strong>@ManedligBelop(_valgt.Id).ToString("N0") kr</strong></div>
+                    </div>
+                </aside>
+            }
+        </div>
+
+    </div>
+
+@code {
+    private List<Tenant> _tenants = [];
+    private string _navn = "";
+    private string _adminNavn = "";
+    private string _adminEpost = "";
+    private bool _oppretter;
+    private bool _visOpprettSkjema;
+    private string? _feilmelding;
+    private string? _suksessmelding;
+    private string _sok = "";
+    private TenantStatus? _statusFilter;
+
+    private string _delLoginAdresse => $"{new Uri(Nav.Uri).GetLeftPart(UriPartial.Authority)}/login";
+
+    private int? _valgtId;
+    private Tenant? _valgt;
+    private TenantStatistikkService.TenantTall? _valgtTall;
+    private int _valgtKundeTilgangBrukt;
+    private List<TenantLisens> _valgtLisenser = [];
+    private string? _lisensMelding;
+    private string? _logoFeil;
+    private List<TenantLisens> _alleLisenser = [];
+    private List<LisensPris> _lisensPriser = [];
+    private string? _prisMelding;
+
+    private static readonly (string Bg, string Ink)[] AvatarPalett =
+    [
+        ("#F1E7DA", "#8A5A34"),
+        ("#E3EEE6", "#3C6E55"),
+        ("#E5E8F1", "#4B5A8A"),
+        ("#F1E3DD", "#8A4334"),
+        ("#EAE8F4", "#5A4B8A")
+    ];
+
+    private List<Tenant> FiltrerteOrganisasjoner =>
+        _tenants
+            .Where(t => _statusFilter is null || t.Status == _statusFilter)
+            .Where(t => string.IsNullOrWhiteSpace(_sok)
+                || t.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase)
+                || (t.Subdomene?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (t.OrgNr?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false))
+            .ToList();
+
+    protected override async Task OnInitializedAsync() => await LastTenants();
+
+    private async Task LastTenants()
+    {
+        _tenants = await PlatformDb.Tenants.OrderBy(t => t.OpprettetDato).ToListAsync();
+        _alleLisenser = await PlatformDb.TenantLisenser.ToListAsync();
+
+        _lisensPriser = await PlatformDb.LisensPriser.ToListAsync();
+        var manglerPris = false;
+        foreach (var type in Enum.GetValues<LisensType>())
+        {
+            if (_lisensPriser.All(p => p.Type != type))
+            {
+                var ny = new LisensPris { Type = type, KrPerManed = 0 };
+                PlatformDb.LisensPriser.Add(ny);
+                _lisensPriser.Add(ny);
+                manglerPris = true;
+            }
+        }
+        if (manglerPris)
+        {
+            await PlatformDb.SaveChangesAsync();
+        }
+    }
+
+    private decimal PrisFor(LisensType type) => _lisensPriser.FirstOrDefault(p => p.Type == type)?.KrPerManed ?? 0;
+
+    private decimal ManedligBelop(int tenantId) =>
+        _alleLisenser.Where(l => l.TenantId == tenantId).Sum(l => l.AntallTildelt * PrisFor(l.Type));
+
+    private decimal TotalManedligInntekt =>
+        _tenants.Where(t => t.Status == TenantStatus.Aktiv).Sum(t => ManedligBelop(t.Id));
+
+    private async Task LagrePris(LisensPris pris)
+    {
+        await PlatformDb.SaveChangesAsync();
+        _prisMelding = $"{pris.Type.Visningsnavn()} satt til {pris.KrPerManed:N0} kr/mnd.";
+    }
+
+    private async Task OpprettOrganisasjon()
+    {
+        _feilmelding = null;
+        _suksessmelding = null;
+        _oppretter = true;
+        StateHasChanged();
+        try
+        {
+            var (ok, feil) = await Provisioning.OpprettKundeAsync(_navn, null, _adminNavn, _adminEpost);
+            if (ok)
+            {
+                _suksessmelding = $"Organisasjonen \"{_navn}\" er opprettet med admin-bruker {_adminEpost}. " +
+                    "Be dem bruke \"Sett passord første gang\" på innloggingssiden.";
+                _navn = "";
+                _adminNavn = "";
+                _adminEpost = "";
+                _visOpprettSkjema = false;
+                await LastTenants();
+            }
+            else
+            {
+                _feilmelding = feil;
+            }
+        }
+        finally
+        {
+            _oppretter = false;
+        }
+    }
+
+    private async Task VelgOrganisasjon(int id)
+    {
+        _valgtId = id;
+        _valgt = await PlatformDb.Tenants.FirstOrDefaultAsync(t => t.Id == id);
+        _lisensMelding = null;
+
+        if (_valgt is null)
+        {
+            _valgtTall = null;
+            _valgtLisenser = [];
+            return;
+        }
+
+        _valgtTall = Statistikk.Hent(_valgt.ConnectionString);
+        _valgtKundeTilgangBrukt = Statistikk.TellKundeTilganger(_valgt.ConnectionString);
+
+        _valgtLisenser = await PlatformDb.TenantLisenser.Where(l => l.TenantId == id).ToListAsync();
+        foreach (var type in Enum.GetValues<LisensType>())
+        {
+            if (_valgtLisenser.All(l => l.Type != type))
+            {
+                var ny = new TenantLisens { TenantId = id, Type = type, AntallTildelt = 0 };
+                PlatformDb.TenantLisenser.Add(ny);
+                _valgtLisenser.Add(ny);
+            }
+        }
+        await PlatformDb.SaveChangesAsync();
+    }
+
+    private async Task LagreValgt()
+    {
+        if (_valgt is null)
+        {
+            return;
+        }
+
+        _valgt.SistOppdatert = DateTime.Now;
+        await PlatformDb.SaveChangesAsync();
+        var i = _tenants.FindIndex(t => t.Id == _valgt.Id);
+        if (i >= 0)
+        {
+            _tenants[i] = _valgt;
+        }
+    }
+
+    private async Task OnLogoValgt(InputFileChangeEventArgs e)
+    {
+        if (_valgt is null)
+        {
+            return;
+        }
+
+        _logoFeil = null;
+        var file = e.File;
+        if (file.Size > 5_000_000)
+        {
+            _logoFeil = "Logoet er for stort (maks 5 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = file.OpenReadStream(maxAllowedSize: 5_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        _valgt.LogoData = buffer.ToArray();
+        _valgt.LogoContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "image/png" : file.ContentType;
+        await LagreValgt();
+    }
+
+    private async Task FjernLogo()
+    {
+        if (_valgt is null)
+        {
+            return;
+        }
+
+        _valgt.LogoData = null;
+        _valgt.LogoContentType = null;
+        await LagreValgt();
+    }
+
+    private async Task SettFarge(bool erBakgrunn, string hex)
+    {
+        if (_valgt is null)
+        {
+            return;
+        }
+
+        if (erBakgrunn)
+        {
+            _valgt.TemaBakgrunn = hex;
+        }
+        else
+        {
+            _valgt.TemaFarge = hex;
+        }
+
+        await LagreValgt();
+    }
+
+    private async Task TilbakestillFarger()
+    {
+        if (_valgt is null)
+        {
+            return;
+        }
+
+        _valgt.TemaFarge = null;
+        _valgt.TemaBakgrunn = null;
+        await LagreValgt();
+    }
+
+    private async Task LagreLisens(TenantLisens lisens)
+    {
+        lisens.SistEndret = DateTime.Now;
+        await PlatformDb.SaveChangesAsync();
+        _lisensMelding = $"{lisens.Type.Visningsnavn()} oppdatert til {lisens.AntallTildelt}.";
+
+        var i = _alleLisenser.FindIndex(l => l.Id == lisens.Id);
+        if (i >= 0)
+        {
+            _alleLisenser[i] = lisens;
+        }
+        else
+        {
+            _alleLisenser.Add(lisens);
+        }
+    }
+
+    private static string StatusKlasse(TenantStatus status) => status switch
+    {
+        TenantStatus.Aktiv => "aktiv",
+        TenantStatus.Suspendert => "suspendert",
+        _ => "oppsagt"
+    };
+
+    private static string Flertall(TenantStatus status) => status switch
+    {
+        TenantStatus.Aktiv => "Aktive",
+        TenantStatus.Suspendert => "Suspendert",
+        _ => "Oppsagt"
+    };
+
+    private static string Initialer(string navn)
+    {
+        var ord = navn.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (ord.Length == 0)
+        {
+            return "?";
+        }
+        if (ord.Length == 1)
+        {
+            return ord[0].Length >= 2 ? ord[0][..2].ToUpperInvariant() : ord[0].ToUpperInvariant();
+        }
+        return $"{ord[0][0]}{ord[^1][0]}".ToUpperInvariant();
+    }
+
+    private static (string Bg, string Ink) AvatarFarge(int tenantId) => AvatarPalett[Math.Abs(tenantId) % AvatarPalett.Length];
+}
