@@ -4,13 +4,27 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject PlatformDbContext PlatformDb
+@inject ITenantContext TenantCtx
 
 <PageTitle>Kundetilganger</PageTitle>
 
 <span class="eyebrow">Kundeportal</span>
 <h1>Kundetilganger</h1>
 <p class="section-hint">Innlogging for kunder som skal kunne sende inn servicehenvendelser via "For kunden". Sett en tilgang inaktiv for å midlertidig sperre den ute uten å slette den.</p>
+
+@if (_lisensTildelt > 0)
+{
+    <p class="@(_lisensBrukt >= _lisensTildelt ? "lisens-varsel lisens-varsel-full" : "lisens-varsel")">
+        @_lisensBrukt av @_lisensTildelt kundetilganger i bruk.
+        @if (_lisensBrukt >= _lisensTildelt)
+        {
+            <text> Dere har nådd grensen - ta kontakt med Itlock for å få aktivert flere før dere kan opprette nye kundetilganger.</text>
+        }
+    </p>
+}
 
 @if (!string.IsNullOrEmpty(_melding))
 {
@@ -119,6 +133,8 @@
     private int? _nyKundeId;
     private string? _melding;
     private string? _feil;
+    private int _lisensTildelt;
+    private int _lisensBrukt;
 
     protected override async Task OnInitializedAsync()
     {
@@ -157,6 +173,15 @@
                 HarPassord = b.PasswordHash != null
             })
             .ToListAsync();
+
+        _lisensBrukt = _tilganger.Count;
+        var tenantId = TenantCtx.Current?.Id;
+        _lisensTildelt = tenantId is null
+            ? 0
+            : await PlatformDb.TenantLisenser
+                .Where(l => l.TenantId == tenantId && l.Type == LisensType.KundeTilgang)
+                .Select(l => l.AntallTildelt)
+                .FirstOrDefaultAsync();
     }
 
     private async Task OpprettTilgang()
@@ -172,6 +197,12 @@
         if (await Db.Brukere.AnyAsync(b => b.Epost.ToLower() == epost.ToLower()))
         {
             _feil = "Det finnes allerede en bruker med denne e-posten.";
+            return;
+        }
+
+        if (_lisensTildelt > 0 && _lisensBrukt >= _lisensTildelt)
+        {
+            _feil = $"Dere har brukt opp alle {_lisensTildelt} kundetilgangene deres. Ta kontakt med Itlock for å få aktivert flere før dere kan opprette nye kundetilganger.";
             return;
         }
 

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PortalItlock.Web.Data;
 
@@ -10,9 +11,11 @@ using PortalItlock.Web.Data;
 namespace PortalItlock.Web.Migrations.Platform
 {
     [DbContext(typeof(PlatformDbContext))]
-    partial class PlatformDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261007122254_LeggTilTenantOrganisasjonsfelterOgLisenser")]
+    partial class LeggTilTenantOrganisasjonsfelterOgLisenser
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
@@ -87,12 +90,6 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.Property<string>("Kundeansvarlig")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LogoContentType")
-                        .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("LogoData")
-                        .HasColumnType("BLOB");
-
                     b.Property<string>("Navn")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -101,9 +98,6 @@ namespace PortalItlock.Web.Migrations.Platform
                         .HasColumnType("TEXT");
 
                     b.Property<string>("OrgNr")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("PortalVisningsnavn")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Postnr")
@@ -122,12 +116,6 @@ namespace PortalItlock.Web.Migrations.Platform
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Telefon")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("TemaBakgrunn")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("TemaFarge")
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("Type")

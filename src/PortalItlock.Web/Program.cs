@@ -80,6 +80,7 @@ builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
 });
 
 builder.Services.AddScoped<TenantProvisioningService>();
+builder.Services.AddSingleton<TenantStatistikkService>();
 
 builder.Services.AddScoped<PackageMatchingService>();
 builder.Services.AddScoped<MobilVerktoylinjeService>();
@@ -1194,6 +1195,30 @@ app.MapGet("/leverandorlogo/{id:int}", async (int id, ApplicationDbContext db) =
         ? Results.NotFound()
         : Results.File(leverandor.LogoData, leverandor.LogoContentType ?? "application/octet-stream", leverandor.LogoFilnavn);
 }).RequireAuthorization();
+
+// Organisasjonens eget merkevare-bilde (satt av plattformeier på /plattform)
+// - vises i sidemenyen, innloggingssiden osv. for akkurat denne organisasjonen.
+// Ingen RequireAuthorization: må kunne vises på innloggingssiden før man er
+// logget inn. Faller tilbake til 404 (layoutene bruker da sin vanlige
+// fk-logo-mark.png) når organisasjonen ikke har satt et eget.
+app.MapGet("/organisasjon/logo", (ITenantContext tenantCtx) =>
+{
+    var tenant = tenantCtx.Current;
+    return tenant?.LogoData is null
+        ? Results.NotFound()
+        : Results.File(tenant.LogoData, tenant.LogoContentType ?? "image/png");
+});
+
+// Samme som over, men for forhåndsvisning på /plattform - der admin ser på en
+// ANNEN organisasjon enn den han selv tilhører, så ITenantContext (som alltid
+// peker på organisasjonen til den innloggede forespørselen) duger ikke her.
+app.MapGet("/plattform/organisasjon/{id:int}/logo", async (int id, PlatformDbContext platformDb) =>
+{
+    var tenant = await platformDb.Tenants.FindAsync(id);
+    return tenant?.LogoData is null
+        ? Results.NotFound()
+        : Results.File(tenant.LogoData, tenant.LogoContentType ?? "image/png");
+}).RequireAuthorization("Plattform");
 
 app.MapGet("/kundebilde/{id:int}", async (int id, ApplicationDbContext db) =>
 {

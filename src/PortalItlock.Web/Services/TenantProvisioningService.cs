@@ -66,13 +66,21 @@ public class TenantProvisioningService(PlatformDbContext platformDb, IConfigurat
             nyDb.SaveChanges();
         });
 
-        platformDb.Tenants.Add(new Tenant
+        var tenant = new Tenant
         {
             Navn = navn,
             Subdomene = vertsnavn,
             ConnectionString = connectionString,
             ErStandard = false
-        });
+        };
+        platformDb.Tenants.Add(tenant);
+        await platformDb.SaveChangesAsync();
+
+        // Starter-kvote slik at de ikke er helt blokkert fra dag én - juster
+        // opp/ned fra plattformsiden etter avtalt lisensomfang.
+        platformDb.TenantLisenser.AddRange(
+            new TenantLisens { TenantId = tenant.Id, Type = LisensType.Brukere, AntallTildelt = 3 },
+            new TenantLisens { TenantId = tenant.Id, Type = LisensType.KundeTilgang, AntallTildelt = 10 });
         await platformDb.SaveChangesAsync();
 
         return (true, "");

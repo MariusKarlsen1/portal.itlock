@@ -20,4 +20,25 @@ public class Tenant
     public bool ErStandard { get; set; }
     public TenantStatus Status { get; set; } = TenantStatus.Aktiv;
     public DateTime OpprettetDato { get; set; } = DateTime.Now;
+
+    public string? OrgNr { get; set; }
+    public string? Adresse { get; set; }
+    public string? Postnr { get; set; }
+    public string? Sted { get; set; }
+    public string? Telefon { get; set; }
+    public string? Epost { get; set; }
+    public string? Kundeansvarlig { get; set; }
+    public TenantType? Type { get; set; }
+    public DateTime? SistOppdatert { get; set; }
+
+    // Merkevare - vises i organisasjonens EGEN portal (sidemeny-logo,
+    // "Organisasjon"-navn under hurtigmenyen, og temafargene). Satt av
+    // plattformeier på /plattform, ikke av organisasjonen selv.
+    public string? PortalVisningsnavn { get; set; }
+    public byte[]? LogoData { get; set; }
+    public string? LogoContentType { get; set; }
+    public string? TemaFarge { get; set; }
+    public string? TemaBakgrunn { get; set; }
+
+    public List<TenantLisens> Lisenser { get; set; } = [];
 }
