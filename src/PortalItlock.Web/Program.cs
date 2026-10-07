@@ -192,7 +192,14 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     });
 builder.Services.AddAuthorization(options =>
 {
-    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+    // Må godta BEGGE cookie-schemaene her - ikke bare standard-schemaet - ellers
+    // mister en innlogget plattform-admin (egen "Plattform"-cookie, se over)
+    // automatisk tilgang til Blazors egen interaktive krets (SignalR-hub/
+    // rammeverksfiler går via denne fallback-policyen når de ikke har noen egen
+    // [Authorize]), og sidene faller stille tilbake til ikke-interaktiv
+    // sideinnlasting ved hvert klikk uten noen synlig feil.
+    options.FallbackPolicy = new AuthorizationPolicyBuilder(
+            CookieAuthenticationDefaults.AuthenticationScheme, "Plattform")
         .RequireAuthenticatedUser()
         .Build();
     options.AddPolicy("Plattform", policy => policy
