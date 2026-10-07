@@ -10,6 +10,7 @@
 @inject PlatformDbContext PlatformDb
 @inject TenantStatistikkService Statistikk
 @inject TenantOppslagService Oppslag
+@inject NavigationManager Nav
 
 <PageTitle>@(_tenant?.Navn ?? "Organisasjon") - Plattform</PageTitle>
 
@@ -383,6 +384,36 @@ else
                     <p class="pod-suksessmelding">@_lisensMelding</p>
                 }
             </section>
+
+            @if (!_tenant.ErStandard)
+            {
+                <section class="pod-card pod-faresone">
+                    <h3 class="pod-h3 pod-faresone-tittel">Faresone</h3>
+                    <p class="pod-tom-tekst">Sletter organisasjonen og all data permanent - brukere, prosjekter, dokumenter og alt annet. Kan ikke angres.</p>
+
+                    @if (!_visSlettBekreftelse)
+                    {
+                        <button type="button" class="pod-btn-slett" @onclick="@(() => _visSlettBekreftelse = true)"><Icon Name="trash" /> Slett organisasjon</button>
+                    }
+                    else
+                    {
+                        <label class="pod-label">
+                            Skriv <strong>@SlettBekreftelseFasit</strong> for å bekrefte at du vil slette @_tenant.Navn for alltid
+                            <input class="pod-input" @bind="_slettBekreftelseTekst" @bind:event="oninput" placeholder="@SlettBekreftelseFasit" />
+                        </label>
+                        <div class="pod-knapperad">
+                            <button type="button" class="pod-btn-slett" disabled="@(_slettBekreftelseTekst != SlettBekreftelseFasit || _sletter)" @onclick="SlettOrganisasjon">
+                                <Icon Name="trash" /> @(_sletter ? "Sletter..." : "Slett for alltid")
+                            </button>
+                            <button type="button" class="pod-btn-ghost" @onclick="@(() => { _visSlettBekreftelse = false; _slettBekreftelseTekst = ""; })">Avbryt</button>
+                        </div>
+                    }
+                    @if (!string.IsNullOrEmpty(_slettFeil))
+                    {
+                        <p class="pod-feilmelding">@_slettFeil</p>
+                    }
+                </section>
+            }
         }
     </div>
 }
@@ -405,6 +436,12 @@ else
     private BrukerRolle _nyBrukerRolle = BrukerRolle.Montor;
     private string? _brukerFeil;
     private string? _brukerMelding;
+
+    private const string SlettBekreftelseFasit = "JEG SLETTER DENNE!!";
+    private bool _visSlettBekreftelse;
+    private string _slettBekreftelseTekst = "";
+    private bool _sletter;
+    private string? _slettFeil;
 
     private string? _logoFeil;
     private string? _lisensMelding;
@@ -552,6 +589,54 @@ else
         await PlatformDb.SaveChangesAsync();
         _lisensMelding = $"{lisens.Type.Visningsnavn()} oppdatert til {lisens.AntallTildelt}.";
         BeregnAktivitet();
+    }
+
+    // Krever bekreftelsestekst skrevet nøyaktig for å unngå utilsiktet
+    // sletting - sletter organisasjonens rad i platform.db FØR selve
+    // SQLite-filen slettes fra disk, slik at vi aldri havner i en
+    // mellomtilstand med en organisasjon-rad som peker til en fil som ikke
+    // lenger finnes.
+    private async Task SlettOrganisasjon()
+    {
+        if (_tenant is null || _tenant.ErStandard || _slettBekreftelseTekst != SlettBekreftelseFasit)
+        {
+            return;
+        }
+
+        _slettFeil = null;
+        _sletter = true;
+        StateHasChanged();
+        try
+        {
+            var lisenser = await PlatformDb.TenantLisenser.Where(l => l.TenantId == _tenant.Id).ToListAsync();
+            PlatformDb.TenantLisenser.RemoveRange(lisenser);
+            PlatformDb.Tenants.Remove(_tenant);
+            await PlatformDb.SaveChangesAsync();
+
+            var dataSource = _tenant.ConnectionString
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(del => del.Split('=', 2))
+                .Where(par => par.Length == 2 && par[0].Equals("Data Source", StringComparison.OrdinalIgnoreCase))
+                .Select(par => par[1])
+                .FirstOrDefault();
+
+            if (!string.IsNullOrWhiteSpace(dataSource) && File.Exists(dataSource))
+            {
+                // Microsoft.Data.Sqlite holder native SQLite-tilkoblinger åpne i en
+                // pool for gjenbruk selv etter at DbContext-instansen er disposet -
+                // uten å tømme poolen først feiler File.Delete med "filen er i bruk
+                // av en annen prosess", selv om ingen C#-kode faktisk bruker den lenger.
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                File.Delete(dataSource);
+            }
+
+            Nav.NavigateTo("/plattform", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            _slettFeil = $"Klarte ikke å slette organisasjonen: {ex.Message}";
+            _sletter = false;
+        }
     }
 
     private async Task OpprettBruker()
