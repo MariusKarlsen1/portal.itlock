@@ -81,6 +81,7 @@ builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
 
 builder.Services.AddScoped<TenantProvisioningService>();
 builder.Services.AddSingleton<TenantStatistikkService>();
+builder.Services.AddScoped<TenantOppslagService>();
 
 builder.Services.AddScoped<PackageMatchingService>();
 builder.Services.AddScoped<MobilVerktoylinjeService>();
@@ -307,6 +308,25 @@ forwardedHeadersOptions.KnownNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error", createScopeForErrors: true);
+    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
+    app.UseHsts();
+}
+
+app.UseHttpsRedirection();
+
+app.UseStaticFiles();
+app.UseAntiforgery();
+
+// UseAuthentication() MÅ kjøre før begge de egendefinerte middlewarene under
+// - ITenantContext leser nå en "TenantId"-claim fra innloggingscookien
+// (se Services/ITenantContext.cs), og den claimen finnes først etter at
+// UseAuthentication() har bygget context.User fra cookien.
+app.UseAuthentication();
+app.UseAuthorization();
+
 // Mobil skal alltid starte på Oppgaver ("/min-dag"), ikke skrivebordets
 // prosjektoversikt på "/". Dette var tidligere en klientside-omdirigering
 // (window.location.replace i App.razor), men det ga et kaldstart-tilfelle
@@ -315,8 +335,9 @@ app.UseForwardedHeaders(forwardedHeadersOptions);
 // bunn-fanen (position: fixed) ble stående på feil posisjon til man byttet
 // fane. Gjøres nå i stedet som en ren server-omdirigering FØR noe HTML i det
 // hele tatt sendes, slik at nettleseren bare gjør ÉN navigasjon på kaldstart.
-// Ligger aller først i pipelinen (før auth) for å garantert kjøre før
-// Blazors egen AuthorizeRouteView-omdirigering til /login rekker å skje.
+// Kjører fortsatt FØR Blazors egen AuthorizeRouteView-omdirigering til
+// /login rekker å skje (den skjer inne i MapRazorComponents, lenger ned) -
+// trenger bare å ligge etter UseAuthentication/UseAuthorization, ikke aller først.
 app.Use(async (context, next) =>
 {
     var erGet = HttpMethods.IsGet(context.Request.Method);
@@ -337,11 +358,12 @@ app.Use(async (context, next) =>
 });
 
 // Flerkunde-oppsett: et vertsnavn som ikke tilhører noen kunde (f.eks. det
-// bare produkt-domenet uten subdomene, "fullkontroll.no") skal IKKE lenger
-// vise itlock sine data (se ITenantContext) - i stedet sendes brukeren til
-// "Finn min side" for å slå opp riktig kunde ut fra e-posten sin. Unntar
-// plattform-sidene (helt egen innlogging, ikke kundeknyttet), konto-
-// endepunktene, og statiske filer (kjennetegnet ved filendelse).
+// bare produkt-domenet uten subdomene, "fullkontroll.no") OG som ikke er
+// innlogget (se ITenantContext - innlogget bruker resolves nå via
+// TenantId-claimen uansett vertsnavn) skal IKKE lenger vise itlock sine data
+// - i stedet sendes brukeren til "Finn min side" for å slå opp riktig kunde
+// ut fra e-posten sin. Unntar plattform-sidene (helt egen innlogging, ikke
+// kundeknyttet), konto-endepunktene, og statiske filer (kjennetegnet ved filendelse).
 app.Use(async (context, next) =>
 {
     var path = context.Request.Path.Value ?? "/";
@@ -366,26 +388,12 @@ app.Use(async (context, next) =>
     await next();
 });
 
-if (!app.Environment.IsDevelopment())
-{
-    app.UseExceptionHandler("/Error", createScopeForErrors: true);
-    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
-    app.UseHsts();
-}
-
-app.UseHttpsRedirection();
-
-app.UseStaticFiles();
-app.UseAntiforgery();
-
-app.UseAuthentication();
-app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
-app.MapPost("/account/login", async (HttpContext http, ApplicationDbContext db) =>
+app.MapPost("/account/login", async (HttpContext http, TenantOppslagService oppslag) =>
 {
     var form = await http.Request.ReadFormAsync();
     var epost = form["username"].ToString().Trim();
@@ -395,6 +403,20 @@ app.MapPost("/account/login", async (HttpContext http, ApplicationDbContext db) 
     var safeReturnUrl = !string.IsNullOrEmpty(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//")
         ? returnUrl
         : "/";
+
+    // Slår opp hvilken organisasjon e-posten hører til FØR passordsjekk - de
+    // kan dele samme adresse med andre organisasjoner (se TenantOppslagService),
+    // så dette er ikke nødvendigvis organisasjonen vertsnavnet i seg selv peker til.
+    var tenant = await oppslag.FinnTenantForEpostAsync(epost);
+    if (tenant is null)
+    {
+        return Results.Redirect($"/login?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
+    }
+
+    var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+        .UseSqlite(tenant.ConnectionString)
+        .Options;
+    await using var db = new ApplicationDbContext(tenantOptions);
 
     var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
     var passwordOk = bruker?.PasswordHash is not null && PasswordHasher.Verify(password, bruker.PasswordHash);
@@ -408,7 +430,8 @@ app.MapPost("/account/login", async (HttpContext http, ApplicationDbContext db) 
     {
         new(ClaimTypes.Name, bruker.Navn),
         new(ClaimTypes.Role, bruker.Rolle.ToString()),
-        new("BrukerId", bruker.Id.ToString())
+        new("BrukerId", bruker.Id.ToString()),
+        new("TenantId", tenant.Id.ToString())
     };
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
@@ -416,29 +439,36 @@ app.MapPost("/account/login", async (HttpContext http, ApplicationDbContext db) 
     return Results.Redirect(safeReturnUrl);
 }).AllowAnonymous().RequireRateLimiting("login");
 
-app.MapPost("/account/glemt-passord", async (HttpContext http, ApplicationDbContext db, EmailService epost) =>
+app.MapPost("/account/glemt-passord", async (HttpContext http, TenantOppslagService oppslag, EmailService epost) =>
 {
     var form = await http.Request.ReadFormAsync();
     var epostAdresse = form["epost"].ToString().Trim();
 
-    var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epostAdresse.ToLower());
-    if (bruker is not null && bruker.Aktiv)
+    var tenant = await oppslag.FinnTenantForEpostAsync(epostAdresse);
+    if (tenant is not null)
     {
-        var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-        db.BrukerPasswordResetTokener.Add(new BrukerPasswordResetToken
-        {
-            BrukerId = bruker.Id,
-            Token = token,
-            UtlopsDato = DateTime.Now.AddHours(1)
-        });
-        await db.SaveChangesAsync();
+        var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options;
+        await using var db = new ApplicationDbContext(tenantOptions);
 
-        var lenke = $"{http.Request.Scheme}://{http.Request.Host}/tilbakestill-passord?token={token}";
-        var html = "<p>Hei,</p>" +
-            "<p>Du (eller noen andre) har bedt om å tilbakestille passordet for kontoen din hos itlock.</p>" +
-            $"<p><a href=\"{lenke}\">Trykk her for å velge nytt passord</a></p>" +
-            "<p>Lenken er gyldig i 1 time. Har du ikke bedt om dette, kan du se bort fra denne e-posten.</p>";
-        await epost.SendAsync(bruker.Epost, "Tilbakestill passord - itlock", html);
+        var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epostAdresse.ToLower());
+        if (bruker is not null && bruker.Aktiv)
+        {
+            var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+            db.BrukerPasswordResetTokener.Add(new BrukerPasswordResetToken
+            {
+                BrukerId = bruker.Id,
+                Token = token,
+                UtlopsDato = DateTime.Now.AddHours(1)
+            });
+            await db.SaveChangesAsync();
+
+            var lenke = $"{http.Request.Scheme}://{http.Request.Host}/tilbakestill-passord?token={token}";
+            var html = "<p>Hei,</p>" +
+                "<p>Du (eller noen andre) har bedt om å tilbakestille passordet for kontoen din hos itlock.</p>" +
+                $"<p><a href=\"{lenke}\">Trykk her for å velge nytt passord</a></p>" +
+                "<p>Lenken er gyldig i 1 time. Har du ikke bedt om dette, kan du se bort fra denne e-posten.</p>";
+            await epost.SendAsync(bruker.Epost, "Tilbakestill passord - itlock", html);
+        }
     }
 
     // Samme melding uansett om e-posten finnes hos oss eller ikke,
@@ -446,40 +476,66 @@ app.MapPost("/account/glemt-passord", async (HttpContext http, ApplicationDbCont
     return Results.Redirect("/glemt-passord?sendt=1");
 }).AllowAnonymous().RequireRateLimiting("passord-reset");
 
-app.MapPost("/account/tilbakestill-passord", async (HttpContext http, ApplicationDbContext db) =>
+app.MapPost("/account/tilbakestill-passord", async (HttpContext http, PlatformDbContext platformDb) =>
 {
     var form = await http.Request.ReadFormAsync();
     var token = form["token"].ToString();
     var passord = form["passord"].ToString();
     var bekreft = form["bekreft"].ToString();
 
-    var resetToken = await db.BrukerPasswordResetTokener
-        .Include(t => t.Bruker)
-        .FirstOrDefaultAsync(t => t.Token == token);
-
-    if (resetToken?.Bruker is null || resetToken.Brukt || resetToken.UtlopsDato < DateTime.Now)
+    // Tokenet finnes i organisasjonens EGEN database, og vertsnavnet man
+    // trykket lenken på er ikke nødvendigvis den organisasjonen (delt
+    // adresse) - søker derfor på tvers av aktive organisasjoner, samme
+    // mønster som i TenantOppslagService.
+    var aktive = await platformDb.Tenants.Where(t => t.Status == TenantStatus.Aktiv).ToListAsync();
+    foreach (var tenant in aktive)
     {
-        return Results.Redirect("/tilbakestill-passord?feil=ugyldig-token");
-    }
-    if (passord.Length < 8 || passord != bekreft)
-    {
-        return Results.Redirect($"/tilbakestill-passord?token={Uri.EscapeDataString(token)}&feil=ugyldig-passord");
+        var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options;
+        await using var db = new ApplicationDbContext(tenantOptions);
+
+        var resetToken = await db.BrukerPasswordResetTokener
+            .Include(t => t.Bruker)
+            .FirstOrDefaultAsync(t => t.Token == token);
+
+        if (resetToken is null)
+        {
+            continue;
+        }
+
+        if (resetToken.Bruker is null || resetToken.Brukt || resetToken.UtlopsDato < DateTime.Now)
+        {
+            return Results.Redirect("/tilbakestill-passord?feil=ugyldig-token");
+        }
+        if (passord.Length < 8 || passord != bekreft)
+        {
+            return Results.Redirect($"/tilbakestill-passord?token={Uri.EscapeDataString(token)}&feil=ugyldig-passord");
+        }
+
+        resetToken.Bruker.PasswordHash = PasswordHasher.Hash(passord);
+        resetToken.Brukt = true;
+        await db.SaveChangesAsync();
+
+        return Results.Redirect("/login?satt=1");
     }
 
-    resetToken.Bruker.PasswordHash = PasswordHasher.Hash(passord);
-    resetToken.Brukt = true;
-    await db.SaveChangesAsync();
-
-    return Results.Redirect("/login?satt=1");
+    return Results.Redirect("/tilbakestill-passord?feil=ugyldig-token");
 }).AllowAnonymous();
 
-app.MapPost("/account/sett-passord", async (HttpContext http, ApplicationDbContext db) =>
+app.MapPost("/account/sett-passord", async (HttpContext http, TenantOppslagService oppslag) =>
 {
     var form = await http.Request.ReadFormAsync();
     var epost = form["epost"].ToString().Trim();
     var passord = form["passord"].ToString();
     var bekreft = form["bekreft"].ToString();
 
+    var tenant = await oppslag.FinnTenantForEpostAsync(epost);
+    if (tenant is null)
+    {
+        return Results.Redirect("/sett-passord?feil=finnes-ikke");
+    }
+
+    var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options;
+    await using var db = new ApplicationDbContext(tenantOptions);
     var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
 
     if (bruker is null)

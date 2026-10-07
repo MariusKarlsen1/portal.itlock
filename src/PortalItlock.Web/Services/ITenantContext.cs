@@ -44,6 +44,26 @@ public class TenantContext(
     // da initialisert med nettleserens faktiske adresse, og brukes i stedet.
     private Tenant? Sla()
     {
+        // Innlogget bruker: organisasjonen ligger som en claim på
+        // innloggingscookien (satt i /account/login, som kan ha autentisert
+        // mot en HELT ANNEN organisasjon enn den gjeldende verten tilhører -
+        // f.eks. når flere organisasjoner deler samme adresse). Vinner alltid
+        // over vertsnavn-oppslag når den finnes og fortsatt er gyldig, slik
+        // at man ikke plutselig havner i feil organisasjons data bare fordi
+        // man er innlogget på delt domene. Krever at UseAuthentication() har
+        // kjørt FØR denne tjenesten første gang leses i pipelinen (se
+        // Program.cs - de to egendefinerte middlewarene ligger derfor etter
+        // UseAuthentication/UseAuthorization, ikke før).
+        var tenantIdClaim = httpContextAccessor.HttpContext?.User?.FindFirst("TenantId")?.Value;
+        if (tenantIdClaim is not null && int.TryParse(tenantIdClaim, out var tenantId))
+        {
+            var fraInnlogging = platformDb.Tenants.FirstOrDefault(t => t.Id == tenantId && t.Status == TenantStatus.Aktiv);
+            if (fraInnlogging is not null)
+            {
+                return fraInnlogging;
+            }
+        }
+
         var host = httpContextAccessor.HttpContext?.Request.Host.Host;
         if (string.IsNullOrEmpty(host))
         {

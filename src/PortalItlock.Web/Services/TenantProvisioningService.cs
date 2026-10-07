@@ -7,36 +7,66 @@ namespace PortalItlock.Web.Services;
 // Oppretter en splitter ny kunde (tenant): egen SQLite-fil, migrert og seedet
 // akkurat som alle andre, pluss kundens egen første admin-bruker. Brukes kun
 // fra plattform-admin-siden - ikke tilgjengelig for kundenes egne brukere.
-public class TenantProvisioningService(PlatformDbContext platformDb, IConfiguration config)
+public class TenantProvisioningService(PlatformDbContext platformDb, IConfiguration config, TenantOppslagService oppslag)
 {
     public async Task<(bool Ok, string Feilmelding)> OpprettKundeAsync(
-        string navn, string vertsnavn, string adminNavn, string adminEpost)
+        string navn, string? vertsnavn, string adminNavn, string adminEpost)
     {
         navn = navn.Trim();
-        vertsnavn = vertsnavn.Trim().ToLowerInvariant();
+        vertsnavn = vertsnavn?.Trim().ToLowerInvariant();
         adminNavn = adminNavn.Trim();
         adminEpost = adminEpost.Trim();
 
-        if (string.IsNullOrWhiteSpace(navn) || string.IsNullOrWhiteSpace(vertsnavn)
-            || string.IsNullOrWhiteSpace(adminNavn) || string.IsNullOrWhiteSpace(adminEpost))
+        if (string.IsNullOrWhiteSpace(navn) || string.IsNullOrWhiteSpace(adminNavn) || string.IsNullOrWhiteSpace(adminEpost))
         {
-            return (false, "Alle felt må fylles ut.");
+            return (false, "Firmanavn, admin-navn og admin-e-post må fylles ut.");
         }
 
-        if (await platformDb.Tenants.AnyAsync(t => t.Subdomene == vertsnavn))
+        // Vertsnavn er valgfritt - organisasjoner logger som standard inn på
+        // samme delte adresse og finnes igjen ut fra e-posten sin (se
+        // TenantOppslagService), og trenger derfor ikke et eget domene for å
+        // kunne bruke løsningen. Sett det kun hvis de faktisk skal ha sitt
+        // eget domene i tillegg.
+        if (!string.IsNullOrWhiteSpace(vertsnavn) && await platformDb.Tenants.AnyAsync(t => t.Subdomene == vertsnavn))
         {
             return (false, $"Vertsnavnet \"{vertsnavn}\" er allerede i bruk av en annen kunde.");
         }
 
-        var defaultConnectionString = config.GetConnectionString("DefaultConnection")!;
-        var dataMappe = PlatformConnectionStringHelper.FinnDataMappe(defaultConnectionString);
-        var filsti = Path.Combine(dataMappe, $"{vertsnavn}.db");
-
-        if (File.Exists(filsti))
+        // E-post må være unik på tvers av ALLE organisasjoner nå som
+        // innlogging kan skje på delt adresse - ellers vet ikke
+        // TenantOppslagService hvilken organisasjon admin-brukeren faktisk tilhører.
+        if (await oppslag.FinnTenantForEpostAsync(adminEpost) is not null)
         {
-            return (false, $"Det finnes allerede en databasefil for \"{vertsnavn}\" på serveren.");
+            return (false, $"E-posten \"{adminEpost}\" er allerede registrert hos en annen organisasjon.");
         }
 
+        var defaultConnectionString = config.GetConnectionString("DefaultConnection")!;
+        var dataMappe = PlatformConnectionStringHelper.FinnDataMappe(defaultConnectionString);
+
+        string filBasis;
+        if (string.IsNullOrWhiteSpace(vertsnavn))
+        {
+            filBasis = SlugifiserNavn(navn);
+            var forsok = 0;
+            while (File.Exists(Path.Combine(dataMappe, $"{filBasis}{(forsok == 0 ? "" : "-" + forsok)}.db")))
+            {
+                forsok++;
+            }
+            if (forsok > 0)
+            {
+                filBasis = $"{filBasis}-{forsok}";
+            }
+        }
+        else
+        {
+            filBasis = vertsnavn;
+            if (File.Exists(Path.Combine(dataMappe, $"{filBasis}.db")))
+            {
+                return (false, $"Det finnes allerede en databasefil for \"{vertsnavn}\" på serveren.");
+            }
+        }
+
+        var filsti = Path.Combine(dataMappe, $"{filBasis}.db");
         var connectionString = $"Data Source={filsti}";
 
         // Appen har etter hvert ~190 migrasjoner - å kjøre dem alle synkront
@@ -69,7 +99,7 @@ public class TenantProvisioningService(PlatformDbContext platformDb, IConfigurat
         var tenant = new Tenant
         {
             Navn = navn,
-            Subdomene = vertsnavn,
+            Subdomene = string.IsNullOrWhiteSpace(vertsnavn) ? null : vertsnavn,
             ConnectionString = connectionString,
             ErStandard = false
         };
@@ -84,5 +114,19 @@ public class TenantProvisioningService(PlatformDbContext platformDb, IConfigurat
         await platformDb.SaveChangesAsync();
 
         return (true, "");
+    }
+
+    private static string SlugifiserNavn(string navn)
+    {
+        var normalisert = navn.ToLowerInvariant()
+            .Replace('æ', 'a').Replace('ø', 'o').Replace('å', 'a');
+        var tegn = normalisert.Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray();
+        var slug = new string(tegn);
+        while (slug.Contains("--"))
+        {
+            slug = slug.Replace("--", "-");
+        }
+        slug = slug.Trim('-');
+        return string.IsNullOrWhiteSpace(slug) ? "organisasjon" : slug;
     }
 }
