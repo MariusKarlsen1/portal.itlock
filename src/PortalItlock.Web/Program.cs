@@ -425,7 +425,8 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
         .Options;
     await using var db = new ApplicationDbContext(tenantOptions);
 
-    var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
+    var brukerKandidater = await db.Brukere.ToListAsync();
+    var bruker = brukerKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
     var passwordOk = bruker?.PasswordHash is not null && PasswordHasher.Verify(password, bruker.PasswordHash);
 
     if (bruker is null || !passwordOk || !bruker.Aktiv)
@@ -457,7 +458,8 @@ app.MapPost("/account/glemt-passord", async (HttpContext http, TenantOppslagServ
         var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options;
         await using var db = new ApplicationDbContext(tenantOptions);
 
-        var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epostAdresse.ToLower());
+        var glemtKandidater = await db.Brukere.ToListAsync();
+        var bruker = glemtKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epostAdresse));
         if (bruker is not null && bruker.Aktiv)
         {
             var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
@@ -543,7 +545,8 @@ app.MapPost("/account/sett-passord", async (HttpContext http, TenantOppslagServi
 
     var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options;
     await using var db = new ApplicationDbContext(tenantOptions);
-    var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
+    var settPassordKandidater = await db.Brukere.ToListAsync();
+    var bruker = settPassordKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
 
     if (bruker is null)
     {
@@ -592,7 +595,8 @@ app.MapPost("/konto/finn-min-side", async (HttpContext http, PlatformDbContext p
                 .UseSqlite(kunde.ConnectionString)
                 .Options;
             using var kundeDb = new ApplicationDbContext(kundeOptions);
-            var finnes = await kundeDb.Brukere.AnyAsync(b => b.Epost.ToLower() == epost.ToLower());
+            var kundeBrukere = await kundeDb.Brukere.Select(b => b.Epost).ToListAsync();
+            var finnes = kundeBrukere.Any(e => EpostHjelper.ErLik(e, epost));
             if (finnes)
             {
                 var lenke = $"{http.Request.Scheme}://{kunde.Subdomene}/login?epost={Uri.EscapeDataString(epost)}";
@@ -613,7 +617,8 @@ app.MapPost("/plattform/konto/login", async (HttpContext http, PlatformDbContext
     var epost = form["username"].ToString().Trim();
     var password = form["password"].ToString();
 
-    var bruker = await db.PlattformBrukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
+    var plattformKandidater = await db.PlattformBrukere.ToListAsync();
+    var bruker = plattformKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
     var passwordOk = bruker?.PasswordHash is not null && PasswordHasher.Verify(password, bruker.PasswordHash);
 
     if (bruker is null || !passwordOk)
@@ -639,7 +644,8 @@ app.MapPost("/plattform/konto/sett-passord", async (HttpContext http, PlatformDb
     var passord = form["passord"].ToString();
     var bekreft = form["bekreft"].ToString();
 
-    var bruker = await db.PlattformBrukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epost.ToLower());
+    var plattformSettKandidater = await db.PlattformBrukere.ToListAsync();
+    var bruker = plattformSettKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
 
     if (bruker is null)
     {
@@ -665,7 +671,8 @@ app.MapPost("/plattform/konto/glemt-passord", async (HttpContext http, PlatformD
     var form = await http.Request.ReadFormAsync();
     var epostAdresse = form["epost"].ToString().Trim();
 
-    var bruker = await db.PlattformBrukere.FirstOrDefaultAsync(b => b.Epost.ToLower() == epostAdresse.ToLower());
+    var plattformGlemtKandidater = await db.PlattformBrukere.ToListAsync();
+    var bruker = plattformGlemtKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epostAdresse));
     if (bruker is not null)
     {
         var token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));

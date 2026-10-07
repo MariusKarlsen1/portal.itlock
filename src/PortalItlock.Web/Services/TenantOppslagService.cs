@@ -49,12 +49,13 @@ public class TenantOppslagService(PlatformDbContext platformDb, ITenantContext t
         return null;
     }
 
-    private static async Task<bool> FinnesIAsync(Tenant tenant, string epostLower)
+    private static async Task<bool> FinnesIAsync(Tenant tenant, string epost)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseSqlite(tenant.ConnectionString)
             .Options;
         await using var db = new ApplicationDbContext(options);
-        return await db.Brukere.AnyAsync(b => b.Epost.ToLower() == epostLower);
+        var eposter = await db.Brukere.Select(b => b.Epost).ToListAsync();
+        return eposter.Any(e => EpostHjelper.ErLik(e, epost));
     }
 }
