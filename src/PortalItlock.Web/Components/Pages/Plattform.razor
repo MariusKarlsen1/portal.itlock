@@ -54,7 +54,34 @@
                 <div class="pf-kpi-value">@_tenants.Count(t => t.Status == TenantStatus.Suspendert)</div>
                 <div class="pf-kpi-sub">Venter på oppfølging</div>
             </div>
+            <div class="pf-card pf-kpi pf-kpi-penger">
+                <div class="pf-eyebrow">Månedlig lisensinntekt</div>
+                <div class="pf-kpi-value">@TotalManedligInntekt.ToString("N0") kr</div>
+                <div class="pf-kpi-sub">Sum av aktiverte lisenser hos aktive organisasjoner</div>
+            </div>
         </div>
+
+        <section class="pf-card pf-section">
+            <div class="pf-section-title-row">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A5A34" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9 9h.01M15 9h.01M9 15c.7.7 1.8 1 3 1s2.3-.3 3-1" /></svg>
+                <h2 class="pf-h2">Lisenspriser</h2>
+            </div>
+            <p class="pf-hint">Fast pris per lisens per måned, felles for alle organisasjoner. Styrer "Månedlig lisensinntekt" over og beløpet vist på hver organisasjon.</p>
+            <div class="pf-pris-rad">
+                @foreach (var type in Enum.GetValues<LisensType>())
+                {
+                    var pris = _lisensPriser.First(p => p.Type == type);
+                    <label class="pf-label pf-pris-felt">
+                        @type.Visningsnavn() (kr/mnd)
+                        <input class="pf-input" type="number" min="0" step="1" @bind="pris.KrPerManed" @bind:after="@(() => LagrePris(pris))" />
+                    </label>
+                }
+            </div>
+            @if (!string.IsNullOrEmpty(_prisMelding))
+            {
+                <p class="pf-suksessmelding">@_prisMelding</p>
+            }
+        </section>
 
         <section class="pf-card pf-section">
             <div class="pf-section-title-row">
@@ -290,6 +317,7 @@
                         {
                             <p class="pf-suksessmelding">@_lisensMelding</p>
                         }
+                        <div class="pf-pris-sum">Månedlig beløp: <strong>@ManedligBelop(_valgt.Id).ToString("N0") kr</strong></div>
                     </div>
                 </aside>
             }
@@ -316,6 +344,9 @@
     private List<TenantLisens> _valgtLisenser = [];
     private string? _lisensMelding;
     private string? _logoFeil;
+    private List<TenantLisens> _alleLisenser = [];
+    private List<LisensPris> _lisensPriser = [];
+    private string? _prisMelding;
 
     private static readonly (string Bg, string Ink)[] AvatarPalett =
     [
@@ -340,6 +371,38 @@
     private async Task LastTenants()
     {
         _tenants = await PlatformDb.Tenants.OrderBy(t => t.OpprettetDato).ToListAsync();
+        _alleLisenser = await PlatformDb.TenantLisenser.ToListAsync();
+
+        _lisensPriser = await PlatformDb.LisensPriser.ToListAsync();
+        var manglerPris = false;
+        foreach (var type in Enum.GetValues<LisensType>())
+        {
+            if (_lisensPriser.All(p => p.Type != type))
+            {
+                var ny = new LisensPris { Type = type, KrPerManed = 0 };
+                PlatformDb.LisensPriser.Add(ny);
+                _lisensPriser.Add(ny);
+                manglerPris = true;
+            }
+        }
+        if (manglerPris)
+        {
+            await PlatformDb.SaveChangesAsync();
+        }
+    }
+
+    private decimal PrisFor(LisensType type) => _lisensPriser.FirstOrDefault(p => p.Type == type)?.KrPerManed ?? 0;
+
+    private decimal ManedligBelop(int tenantId) =>
+        _alleLisenser.Where(l => l.TenantId == tenantId).Sum(l => l.AntallTildelt * PrisFor(l.Type));
+
+    private decimal TotalManedligInntekt =>
+        _tenants.Where(t => t.Status == TenantStatus.Aktiv).Sum(t => ManedligBelop(t.Id));
+
+    private async Task LagrePris(LisensPris pris)
+    {
+        await PlatformDb.SaveChangesAsync();
+        _prisMelding = $"{pris.Type.Visningsnavn()} satt til {pris.KrPerManed:N0} kr/mnd.";
     }
 
     private async Task OpprettOrganisasjon()
@@ -491,6 +554,16 @@
         lisens.SistEndret = DateTime.Now;
         await PlatformDb.SaveChangesAsync();
         _lisensMelding = $"{lisens.Type.Visningsnavn()} oppdatert til {lisens.AntallTildelt}.";
+
+        var i = _alleLisenser.FindIndex(l => l.Id == lisens.Id);
+        if (i >= 0)
+        {
+            _alleLisenser[i] = lisens;
+        }
+        else
+        {
+            _alleLisenser.Add(lisens);
+        }
     }
 
     private static string StatusKlasse(TenantStatus status) => status switch

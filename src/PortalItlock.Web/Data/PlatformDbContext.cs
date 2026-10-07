@@ -12,4 +12,5 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options) : Db
     public DbSet<PlattformBruker> PlattformBrukere => Set<PlattformBruker>();
     public DbSet<PlattformBrukerPasswordResetToken> PlattformBrukerPasswordResetTokener => Set<PlattformBrukerPasswordResetToken>();
     public DbSet<TenantLisens> TenantLisenser => Set<TenantLisens>();
+    public DbSet<LisensPris> LisensPriser => Set<LisensPris>();
 }
