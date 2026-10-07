@@ -671,6 +671,14 @@ app.MapGet("/systemvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
         : Results.File(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
 }).RequireAuthorization();
 
+app.MapGet("/nokkelsystem/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
+{
+    var system = await db.Nokkelsystemer.FindAsync(id);
+    return system?.BildeData is null
+        ? Results.NotFound()
+        : Results.File(system.BildeData, system.BildeContentType ?? "image/jpeg");
+}).RequireAuthorization();
+
 app.MapGet("/plantegningbilde/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var plantegning = await db.Plantegninger.FindAsync(id);

@@ -13,11 +13,17 @@ public class Nokkelsystem
     public string? Telefon { get; set; }
     public string? Epost { get; set; }
     public string? Fabrikat { get; set; }
+    public string? Type { get; set; }
     public string? Notater { get; set; }
+    public NokkelsystemStatus Status { get; set; } = NokkelsystemStatus.Aktiv;
+
+    public byte[]? BildeData { get; set; }
+    public string? BildeContentType { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     public List<Rekvirent> Rekvirenter { get; set; } = [];
     public List<SystemVedlegg> Vedlegg { get; set; } = [];
     public List<NokkelKvittering> Kvitteringer { get; set; } = [];
+    public List<NokkelsystemHendelse> Hendelser { get; set; } = [];
 }

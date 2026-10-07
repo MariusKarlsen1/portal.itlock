@@ -23,6 +23,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Rekvirent> Rekvirenter => Set<Rekvirent>();
     public DbSet<SystemVedlegg> SystemVedlegg => Set<SystemVedlegg>();
     public DbSet<NokkelKvittering> NokkelKvitteringer => Set<NokkelKvittering>();
+    public DbSet<NokkelsystemHendelse> NokkelsystemHendelser => Set<NokkelsystemHendelse>();
     public DbSet<Prisoverslag> Prisoverslag => Set<Prisoverslag>();
     public DbSet<PrisoverslagLinje> PrisoverslagLinjer => Set<PrisoverslagLinje>();
     public DbSet<LasUtskifting> LasUtskiftinger => Set<LasUtskifting>();
