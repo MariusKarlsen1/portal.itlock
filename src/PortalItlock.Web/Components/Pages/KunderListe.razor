@@ -1,6 +1,8 @@
 @page "/kunder"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -9,21 +11,39 @@
 
 <PageTitle>Kunder</PageTitle>
 
+<div class="kunder-side">
+
 <div class="side-header">
     <div class="side-header-venstre">
         <span class="side-header-ikon"><Icon Name="users" /></span>
         <div>
             <h1>Kunder</h1>
-            <p class="section-hint">Opprett og vedlikehold kunderegisteret. Kunder kan knyttes til prosjekter fra prosjektets oversiktsfane.</p>
+            <p class="section-hint">Oversikt over alle kunder. Klikk på en kunde for å se detaljer.</p>
         </div>
     </div>
+    <button type="button" class="knapp knapp-primaer" @onclick="NyKunde"><Icon Name="plus" />Ny kunde</button>
 </div>
 
 <div class="verktoy-rad">
     <div class="sok-boks">
         <Icon Name="search" />
-        <input @bind="_search" @bind:event="oninput" placeholder="Søk på navn, kontaktperson eller sted" />
+        <input @bind="_search" @bind:event="oninput" placeholder="Søk på kunde, org.nr, kontaktperson..." />
     </div>
+    <select class="filter-dropdown" @bind="_typeFilter">
+        <option value="">Alle typer</option>
+        @foreach (var t in Enum.GetValues<KundeType>())
+        {
+            <option value="@t">@t.Visningsnavn()</option>
+        }
+    </select>
+    <select class="filter-dropdown" @bind="_statusFilter">
+        <option value="">Alle status</option>
+        <option value="@KundeStatus.Aktiv">Aktiv</option>
+        <option value="@KundeStatus.Inaktiv">Inaktiv</option>
+    </select>
+    <button type="button" class="@(ErFilterAktivt ? "edit-button-active" : "filter-button")" @onclick="@(() => _visFlereFiltre = !_visFlereFiltre)">
+        <Icon Name="filter" />Flere filtre@(ErFilterAktivt ? " (aktiv)" : "")
+    </button>
     <div class="visning-veksler">
         <button type="button" class="visning-knapp @(_visning == "kort" ? "aktiv" : "")" title="Kortvisning" @onclick='@(() => _visning = "kort")'>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
@@ -31,14 +51,35 @@
         <button type="button" class="visning-knapp @(_visning == "liste" ? "aktiv" : "")" title="Listevisning" @onclick='@(() => _visning = "liste")'>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="1.5"/><path d="M9.5 6h11"/><circle cx="5" cy="12" r="1.5"/><path d="M9.5 12h11"/><circle cx="5" cy="18" r="1.5"/><path d="M9.5 18h11"/></svg>
         </button>
+        <button type="button" class="visning-knapp @(_visning == "sidepanel" ? "aktiv" : "")" title="Med detaljer i sidepanel" @onclick="@(() => VelgVisningSidepanel())">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/></svg>
+        </button>
     </div>
-    <div class="knapp-rad">
-        <button type="button" class="knapp knapp-primaer" @onclick="NyKunde"><Icon Name="plus" />Ny kunde</button>
+    @if (_visning == "kort")
+    {
         <button type="button" class="knapp @(_redigerModus ? "knapp-aktiv" : "")" @onclick="ToggleRedigerModus">
             @(_redigerModus ? "Ferdig" : "Rediger")
         </button>
-    </div>
+    }
 </div>
+
+@if (_visFlereFiltre)
+{
+    <div class="filterpanel">
+        <label>
+            Sorter
+            <select @bind="_sortering">
+                <option value="navn">Navn A-Å</option>
+                <option value="flest">Flest prosjekter</option>
+                <option value="nyeste">Nyeste først</option>
+            </select>
+        </label>
+        @if (ErFilterAktivt)
+        {
+            <button type="button" class="cancel-button" @onclick="NullstillFilter">Nullstill filter</button>
+        }
+    </div>
+}
 
 @if (_filtrert.Count == 0)
 {
@@ -46,26 +87,324 @@
 }
 else if (_visning == "liste")
 {
-    <div class="kunde-liste">
-        @foreach (var k in _filtrert)
-        {
-            <a @key="k.Id" class="kunde-rad" href="@($"/kunder/{k.Id}")">
-                @if (k.HarBilde)
+    <div class="kunde-tabell-wrap">
+        <table class="kunde-tabell">
+            <thead>
+                <tr>
+                    <th>Kunde</th>
+                    <th>Org.nr</th>
+                    <th>Kontaktperson</th>
+                    <th>Telefon</th>
+                    <th>E-post</th>
+                    <th>Prosjekter</th>
+                    <th>Status</th>
+                    <th>Handlinger</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var k in _sidevisning)
                 {
-                    <img class="kunde-rad-foto" src="@($"/kundebilde/{k.Id}")" alt="@k.Navn" />
+                    <tr @key="k.Id">
+                        <td>
+                            <div class="tabell-kunde-celle">
+                                @if (k.HarBilde)
+                                {
+                                    <img class="tabell-kunde-foto" src="@($"/kundebilde/{k.Id}")" alt="@k.Navn" />
+                                }
+                                else
+                                {
+                                    <span class="tabell-kunde-foto-tom">@Initialer(k.Navn)</span>
+                                }
+                                <span class="tabell-kunde-navn">@k.Navn</span>
+                            </div>
+                        </td>
+                        <td class="mono">@(k.OrgNr ?? "-")</td>
+                        <td>@(k.Kontaktperson ?? "-")</td>
+                        <td class="mono">@(k.Telefon ?? "-")</td>
+                        <td>@(k.Epost ?? "-")</td>
+                        <td>@k.AntallProsjekter</td>
+                        <td><span class="status-pille status-pille-@(k.Status == KundeStatus.Aktiv ? "aktiv" : "inaktiv")">@k.Status.Visningsnavn()</span></td>
+                        <td class="tabell-handling">
+                            <a class="ikon-btn" href="@($"/kunder/{k.Id}")" title="Åpne"><Icon Name="eye" /></a>
+                            <button type="button" class="ikon-btn ikon-btn-fare" title="Slett" @onclick="@(() => _slettId = k.Id)"><Icon Name="trash" /></button>
+                        </td>
+                    </tr>
                 }
-                else
+            </tbody>
+        </table>
+    </div>
+
+    <div class="paginering">
+        <span class="paginering-info">Viser @VisningsStart-@VisningsSlutt av @_filtrert.Count</span>
+        <div class="paginering-sider">
+            <button type="button" class="side-knapp" disabled="@(GjeldendeSide <= 1)" @onclick="@(() => _sideNummer = GjeldendeSide - 1)">&lsaquo;</button>
+            @for (var side = 1; side <= TotalSider; side++)
+            {
+                var denneSiden = side;
+                <button type="button" class="side-knapp @(denneSiden == GjeldendeSide ? "aktiv" : "")" @onclick="@(() => _sideNummer = denneSiden)">@denneSiden</button>
+            }
+            <button type="button" class="side-knapp" disabled="@(GjeldendeSide >= TotalSider)" @onclick="@(() => _sideNummer = GjeldendeSide + 1)">&rsaquo;</button>
+        </div>
+        <select class="filter-dropdown side-storrelse" @bind="_sideStorrelseStr" @bind:after="@(() => _sideNummer = 1)">
+            <option value="10">10 per side</option>
+            <option value="25">25 per side</option>
+            <option value="50">50 per side</option>
+        </select>
+    </div>
+}
+else if (_visning == "sidepanel")
+{
+    <div class="kunder-split">
+        <div class="kunder-split-liste">
+            @foreach (var k in _filtrert)
+            {
+                <button type="button" class="split-rad @(_valgtId == k.Id ? "aktiv" : "")" @onclick="@(() => VelgKunde(k.Id))">
+                    @if (k.HarBilde)
+                    {
+                        <img class="split-rad-foto" src="@($"/kundebilde/{k.Id}")" alt="@k.Navn" />
+                    }
+                    else
+                    {
+                        <span class="split-rad-foto-tom">@Initialer(k.Navn)</span>
+                    }
+                    <span class="split-rad-info">
+                        <span class="split-rad-navn">@k.Navn</span>
+                        <span class="split-rad-adresse">@(k.Adresse ?? k.Sted ?? "")</span>
+                    </span>
+                    <span class="status-pille status-pille-@(k.Status == KundeStatus.Aktiv ? "aktiv" : "inaktiv")">@k.Status.Visningsnavn()</span>
+                    <span class="split-rad-pil"><Icon Name="arrow-left" /></span>
+                </button>
+            }
+        </div>
+
+        <div class="kunder-split-detalj">
+            @if (_valgtKunde is null)
+            {
+                <p class="list-empty">Velg en kunde for å se detaljer.</p>
+            }
+            else
+            {
+                <div class="detalj-topprad">
+                    <div class="detalj-bilde-wrap">
+                        @if (_valgtKunde.BildeData is not null)
+                        {
+                            <img class="detalj-bilde" src="@($"/kundebilde/{_valgtKunde.Id}")" alt="@_valgtKunde.Navn" />
+                        }
+                        else
+                        {
+                            <span class="detalj-bilde-tom">@Initialer(_valgtKunde.Navn)</span>
+                        }
+                    </div>
+                    <div class="detalj-navnblokk">
+                        <h2>@_valgtKunde.Navn</h2>
+                        <span class="status-pille status-pille-@(_valgtKunde.Status == KundeStatus.Aktiv ? "aktiv" : "inaktiv")">@_valgtKunde.Status.Visningsnavn()</span>
+                    </div>
+                    <div class="detalj-handlinger">
+                        <a class="knapp" href="@($"/kunder/{_valgtKunde.Id}")"><Icon Name="edit" />Rediger</a>
+                        <div class="detalj-dropdown">
+                            <button type="button" class="knapp" @onclick="@(() => _visPanelHandlinger = !_visPanelHandlinger)">Flere valg<Icon Name="chevron-down" /></button>
+                            @if (_visPanelHandlinger)
+                            {
+                                <div class="detalj-dropdown-meny">
+                                    <button type="button" class="detalj-dropdown-fare" @onclick="@(() => { _slettId = _valgtKunde.Id; _visPanelHandlinger = false; })"><Icon Name="trash" />Slett kunde</button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <nav class="detalj-fane-nav">
+                    <button type="button" class="@PanelFaneClass("oversikt")" @onclick='@(() => _panelFane = "oversikt")'>Oversikt</button>
+                    <button type="button" class="@PanelFaneClass("kontaktpersoner")" @onclick='@(() => _panelFane = "kontaktpersoner")'>Kontaktpersoner</button>
+                    <button type="button" class="@PanelFaneClass("prosjekter")" @onclick='@(() => _panelFane = "prosjekter")'>Prosjekter</button>
+                    <button type="button" class="@PanelFaneClass("dokumenter")" @onclick='@(() => _panelFane = "dokumenter")'>Dokumenter</button>
+                    <button type="button" class="@PanelFaneClass("historikk")" @onclick='@(() => _panelFane = "historikk")'>Historikk</button>
+                </nav>
+
+                @if (_panelFane == "oversikt")
                 {
-                    <span class="kunde-rad-foto-tom">@Initialer(k.Navn)</span>
+                    <div class="detalj-grid2">
+                        <div class="detalj-boks">
+                            <h3>Grunninformasjon</h3>
+                            <dl class="detalj-infoliste">
+                                <div><dt><Icon Name="users" />Kundenavn</dt><dd>@_valgtKunde.Navn</dd></div>
+                                <div><dt><Icon Name="tag" />Org.nr</dt><dd>@(_valgtKunde.OrgNr ?? "-")</dd></div>
+                                <div><dt><Icon Name="folder" />Kundetype</dt><dd>@(_valgtKunde.Type?.Visningsnavn() ?? "-")</dd></div>
+                                <div><dt><Icon Name="map" />Adresse</dt><dd>@(SamletAdresse(_valgtKunde) ?? "-")</dd></div>
+                            </dl>
+                        </div>
+                        <div class="detalj-boks">
+                            <h3>Kontaktinformasjon</h3>
+                            <dl class="detalj-infoliste">
+                                <div><dt><Icon Name="users" />Hovedkontakt</dt><dd>@(_valgtKunde.Kontaktperson ?? "-")</dd></div>
+                                <div><dt><Icon Name="phone" />Telefon</dt><dd>@(_valgtKunde.Telefon ?? "-")</dd></div>
+                                <div><dt><Icon Name="mail" />E-post</dt><dd>@(_valgtKunde.Epost ?? "-")</dd></div>
+                            </dl>
+                        </div>
+                    </div>
+
+                    <div class="detalj-boks">
+                        <h3>Notater</h3>
+                        <textarea rows="2" @bind="_valgtKunde.Notater" @bind:after="LagreNotater" placeholder="Skriv et notat om kunden..."></textarea>
+                    </div>
+
+                    <div class="detalj-boks">
+                        <div class="detalj-boks-header">
+                            <h3>Prosjekter (@_valgtProsjekter.Count)</h3>
+                            <a class="knapp knapp-primaer" href="@($"/prosjekter/ny?KundeId={_valgtKunde.Id}")"><Icon Name="plus" />Nytt prosjekt</a>
+                        </div>
+                        @if (_valgtProsjekter.Count == 0)
+                        {
+                            <p class="list-empty">Ingen prosjekter registrert ennå.</p>
+                        }
+                        else
+                        {
+                            <div class="prosjekt-tabell-wrap">
+                                <table class="prosjekt-tabell">
+                                    <thead><tr><th>Prosjekt</th><th>Status</th><th>Oppstart</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var p in _valgtProsjekter)
+                                        {
+                                            <tr @key="p.Id">
+                                                <td><a href="@($"/prosjekter/{p.Id}")">@p.Navn</a></td>
+                                                <td>
+                                                    @if (p.Status.HasValue)
+                                                    {
+                                                        <StatusPill Tekst="@p.Status.Value.Visningsnavn()" Ikon="@p.Status.Value.PillIkon()" Farge="@p.Status.Value.PillFarge()" />
+                                                    }
+                                                </td>
+                                                <td class="mono">@p.OpprettetDato.ToString("dd.MM.yyyy")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
                 }
-                <span class="kunde-rad-info">
-                    <span class="kunde-navn">@k.Navn</span>
-                    <span class="kunde-kontakt">@(k.Kontaktperson ?? "Ingen kontaktperson")@(string.IsNullOrWhiteSpace(k.Telefon) ? "" : $" · {k.Telefon}")</span>
-                </span>
-                <span class="prosjekt-badge"><Icon Name="folder" />@k.AntallProsjekter prosjekt@(k.AntallProsjekter == 1 ? "" : "er")</span>
-                <span class="kunde-rad-pil"><Icon Name="arrow-left" /></span>
-            </a>
-        }
+                else if (_panelFane == "kontaktpersoner")
+                {
+                    <div class="detalj-boks">
+                        <h3>Kontaktpersoner</h3>
+                        @if (_valgtKunde.Kontaktpersoner.Count == 0)
+                        {
+                            <p class="list-empty">Ingen kontaktpersoner lagt til ennå.</p>
+                        }
+                        @foreach (var kp in _valgtKunde.Kontaktpersoner)
+                        {
+                            <div @key="kp.Id" class="kontaktperson-rad">
+                                <input @bind="kp.Navn" @bind:after="@(() => LagreKontaktpersonPanel(kp))" placeholder="Navn" />
+                                <input @bind="kp.Rolle" @bind:after="@(() => LagreKontaktpersonPanel(kp))" placeholder="Rolle (valgfritt)" />
+                                <input @bind="kp.Telefon" @bind:after="@(() => LagreKontaktpersonPanel(kp))" placeholder="Telefon" />
+                                <input @bind="kp.Epost" @bind:after="@(() => LagreKontaktpersonPanel(kp))" placeholder="E-post" />
+                                <button type="button" class="remove-button" @onclick="@(() => SlettKontaktpersonPanel(kp))">Fjern</button>
+                            </div>
+                        }
+                        <div class="ny-kontaktperson-rad">
+                            <input @bind="_nyKontaktpersonNavn" @bind:event="oninput" placeholder="Navn på ny kontaktperson" />
+                            <button type="button" class="add-button" @onclick="LeggTilKontaktpersonPanel" disabled="@string.IsNullOrWhiteSpace(_nyKontaktpersonNavn)">Legg til</button>
+                        </div>
+                    </div>
+                }
+                else if (_panelFane == "prosjekter")
+                {
+                    <div class="detalj-boks">
+                        <div class="detalj-boks-header">
+                            <h3>Prosjekter (@_valgtProsjekter.Count)</h3>
+                            <a class="knapp knapp-primaer" href="@($"/prosjekter/ny?KundeId={_valgtKunde.Id}")"><Icon Name="plus" />Nytt prosjekt</a>
+                        </div>
+                        @if (_valgtProsjekter.Count == 0)
+                        {
+                            <p class="list-empty">Ingen prosjekter registrert ennå.</p>
+                        }
+                        else
+                        {
+                            <div class="prosjekt-tabell-wrap">
+                                <table class="prosjekt-tabell">
+                                    <thead><tr><th>Prosjekt</th><th>Status</th><th>Adresse</th><th>Oppstart</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var p in _valgtProsjekter)
+                                        {
+                                            <tr @key="p.Id">
+                                                <td><a href="@($"/prosjekter/{p.Id}")">@p.Navn</a></td>
+                                                <td>
+                                                    @if (p.Status.HasValue)
+                                                    {
+                                                        <StatusPill Tekst="@p.Status.Value.Visningsnavn()" Ikon="@p.Status.Value.PillIkon()" Farge="@p.Status.Value.PillFarge()" />
+                                                    }
+                                                </td>
+                                                <td>@(p.Adresse ?? "-")</td>
+                                                <td class="mono">@p.OpprettetDato.ToString("dd.MM.yyyy")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+                else if (_panelFane == "dokumenter")
+                {
+                    <div class="detalj-boks">
+                        <h3>Dokumenter</h3>
+                        @if (_valgtDokumenter.Count > 0)
+                        {
+                            <ul class="dokument-liste">
+                                @foreach (var d in _valgtDokumenter)
+                                {
+                                    <li @key="d.Id" class="dokument-item">
+                                        <Icon Name="file-text" />
+                                        <a href="@($"/kundedokument/{d.Id}")" target="_blank">@d.Filnavn</a>
+                                        <span class="dokument-dato">@d.OpprettetDato.ToString("dd.MM.yyyy")</span>
+                                        <button type="button" class="remove-button" @onclick="@(() => SlettDokument(d.Id))">Fjern</button>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        else
+                        {
+                            <p class="list-empty">Ingen dokumenter lastet opp ennå.</p>
+                        }
+
+                        <label class="dokument-opplasting">
+                            <Icon Name="upload" />
+                            <span>Last opp dokument</span>
+                            <InputFile OnChange="OnDokumentValgt" multiple style="display:none;" />
+                        </label>
+                        @if (_lasterOppDokument)
+                        {
+                            <p class="list-empty">Laster opp...</p>
+                        }
+                        @if (!string.IsNullOrEmpty(_dokumentFeil))
+                        {
+                            <p class="form-error">@_dokumentFeil</p>
+                        }
+                    </div>
+                }
+                else if (_panelFane == "historikk")
+                {
+                    <div class="detalj-boks">
+                        <h3>Historikk</h3>
+                        @if (_valgtHendelser.Count == 0)
+                        {
+                            <p class="list-empty">Ingen aktivitet registrert ennå.</p>
+                        }
+                        else
+                        {
+                            <ul class="historikk-liste">
+                                @foreach (var h in _valgtHendelser)
+                                {
+                                    <li>
+                                        <span class="historikk-tekst">@h.Beskrivelse</span>
+                                        <span class="historikk-meta">av @(h.UtfortAvBruker?.Navn ?? "Ukjent") - @h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</span>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                }
+            }
+        </div>
     </div>
 }
 else
@@ -84,25 +423,30 @@ else
                     {
                         <span class="kunde-kort-foto-tom">@Initialer(k.Navn)</span>
                     }
-                    @{ var oppf = OppfolgingStatus(k.NesteOppfolgingsDato); }
-                    @if (oppf.Farge is not null)
-                    {
-                        <svg class="oppf-ring oppf-ring-@oppf.Farge" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" /></svg>
-                    }
+                    <span class="status-pille kort-status-pille status-pille-@(k.Status == KundeStatus.Aktiv ? "aktiv" : "inaktiv")">@k.Status.Visningsnavn()</span>
                 </div>
                 <div class="kunde-kort-innhold">
                     <div class="kunde-navn">@k.Navn</div>
-                    <div class="kunde-kontakt">@(k.Kontaktperson ?? "Ingen kontaktperson")</div>
+                    @if (!string.IsNullOrWhiteSpace(k.OrgNr))
+                    {
+                        <div class="kunde-kontakt">@k.OrgNr</div>
+                    }
                     <div class="kunde-info-rad">
-                        <span>📞 @(k.Telefon ?? "Ingen telefon")</span>
-                        <span><Icon Name="map" />@(k.Sted ?? "Ingen sted registrert")</span>
+                        <span><Icon Name="users" />@(k.Kontaktperson ?? "Ingen kontaktperson")</span>
+                        <span><Icon Name="phone" />@(k.Telefon ?? "Ingen telefon")</span>
+                        <span><Icon Name="mail" />@(k.Epost ?? "Ingen e-post")</span>
                     </div>
+                    @{ var oppf = OppfolgingStatus(k.NesteOppfolgingsDato); }
                     @if (oppf.Tekst is not null)
                     {
                         <div class="oppf-tekst oppf-tekst-@oppf.Farge">@oppf.Tekst</div>
                     }
                     <div class="kunde-kort-bunn">
                         <span class="prosjekt-badge"><Icon Name="folder" />@k.AntallProsjekter prosjekt@(k.AntallProsjekter == 1 ? "" : "er")</span>
+                        @if (k.Type.HasValue)
+                        {
+                            <span class="type-badge">@k.Type.Value.Visningsnavn()</span>
+                        }
                         @if (_redigerModus)
                         {
                             @if (_slettId == k.Id)
@@ -118,10 +462,6 @@ else
                                 <button type="button" class="kunde-slett-button" title="Slett kunde" @onclick="@(() => _slettId = k.Id)">&times;</button>
                             }
                         }
-                        else
-                        {
-                            <span class="apne-pil"><Icon Name="arrow-left" /></span>
-                        }
                     </div>
                 </div>
             </div>
@@ -129,34 +469,117 @@ else
     </div>
 }
 
+@if (_slettId is not null && _visning != "kort")
+{
+    <div class="confirm-overlay">
+        <div class="confirm-box">
+            <h3>Slette kunden?</h3>
+            <p>Kunden fjernes permanent fra kunderegisteret.</p>
+            <div class="confirm-actions">
+                <button type="button" class="cancel-button" @onclick="@(() => _slettId = null)">Avbryt</button>
+                <button type="button" class="delete-confirm-button" @onclick="@(() => SlettKunde(_slettId!.Value))">Ja, slett</button>
+            </div>
+        </div>
+    </div>
+}
+
+</div>
+
 @code {
     private sealed class KundeRad
     {
         public int Id { get; set; }
         public string Navn { get; set; } = "";
+        public string? OrgNr { get; set; }
         public string? Kontaktperson { get; set; }
         public string? Telefon { get; set; }
+        public string? Epost { get; set; }
         public string? Sted { get; set; }
+        public string? Adresse { get; set; }
         public int AntallProsjekter { get; set; }
         public bool HarBilde { get; set; }
         public DateTime? NesteOppfolgingsDato { get; set; }
+        public KundeStatus Status { get; set; }
+        public KundeType? Type { get; set; }
     }
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private int? _naverendeBrukerId;
 
     private List<KundeRad> _alle = [];
     private string _search = "";
+    private string _typeFilter = "";
+    private string _statusFilter = "";
+    private string _sortering = "navn";
+    private bool _visFlereFiltre;
     private string _visning = "kort";
     private bool _redigerModus;
     private int? _slettId;
 
-    private List<KundeRad> _filtrert => string.IsNullOrWhiteSpace(_search)
-        ? _alle
-        : _alle.Where(k =>
-                k.Navn.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
-                (k.Kontaktperson?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (k.Sted?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false))
-            .ToList();
+    private int _sideNummer = 1;
+    private string _sideStorrelseStr = "10";
+    private int _sideStorrelse => int.TryParse(_sideStorrelseStr, out var n) ? n : 10;
+
+    private int? _valgtId;
+    private Kunde? _valgtKunde;
+    private string _panelFane = "oversikt";
+    private string? _opprinneligNotater;
+    private List<Prosjekt> _valgtProsjekter = [];
+    private List<KundeDokument> _valgtDokumenter = [];
+    private List<KundeHendelse> _valgtHendelser = [];
+    private string _nyKontaktpersonNavn = "";
+    private string? _dokumentFeil;
+    private bool _lasterOppDokument;
+    private bool _visPanelHandlinger;
+
+    private bool ErFilterAktivt => !string.IsNullOrEmpty(_typeFilter) || !string.IsNullOrEmpty(_statusFilter) || _sortering != "navn";
+
+    private List<KundeRad> _filtrert
+    {
+        get
+        {
+            IEnumerable<KundeRad> rader = _alle
+                .Where(k => string.IsNullOrEmpty(_typeFilter) || k.Type?.ToString() == _typeFilter)
+                .Where(k => string.IsNullOrEmpty(_statusFilter) || k.Status.ToString() == _statusFilter)
+                .Where(k => string.IsNullOrWhiteSpace(_search)
+                    || k.Navn.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                    || (k.OrgNr?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (k.Kontaktperson?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (k.Sted?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+            rader = _sortering switch
+            {
+                "flest" => rader.OrderByDescending(k => k.AntallProsjekter),
+                "nyeste" => rader.OrderByDescending(k => k.Id),
+                _ => rader.OrderBy(k => k.Navn, StringComparer.OrdinalIgnoreCase)
+            };
+
+            return rader.ToList();
+        }
+    }
+
+    private int TotalSider => Math.Max(1, (int)Math.Ceiling(_filtrert.Count / (double)_sideStorrelse));
+    private int GjeldendeSide => Math.Clamp(_sideNummer, 1, TotalSider);
+    private int VisningsStart => _filtrert.Count == 0 ? 0 : (GjeldendeSide - 1) * _sideStorrelse + 1;
+    private int VisningsSlutt => Math.Min(_filtrert.Count, GjeldendeSide * _sideStorrelse);
+    private List<KundeRad> _sidevisning => _filtrert.Skip((GjeldendeSide - 1) * _sideStorrelse).Take(_sideStorrelse).ToList();
 
     protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
+            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+            {
+                _naverendeBrukerId = bid;
+            }
+        }
+
+        await LastAlleAsync();
+    }
+
+    private async Task LastAlleAsync()
     {
         _alle = await Db.Kunder
             .OrderBy(k => k.Navn)
@@ -164,20 +587,28 @@ else
             {
                 Id = k.Id,
                 Navn = k.Navn,
+                OrgNr = k.OrgNr,
                 Kontaktperson = k.Kontaktperson,
                 Telefon = k.Telefon,
+                Epost = k.Epost,
                 Sted = k.Sted,
+                Adresse = k.Adresse,
                 AntallProsjekter = k.Prosjekter.Count,
                 HarBilde = k.BildeData != null,
-                NesteOppfolgingsDato = k.NesteOppfolgingsDato
+                NesteOppfolgingsDato = k.NesteOppfolgingsDato,
+                Status = k.Status,
+                Type = k.Type
             })
             .ToListAsync();
     }
 
-    // Ringen rundt kundebildet og statuslinjen under bruker samme "forfalt
-    // innen 7 dager"-grense som Kundeoppfolging.razor - ingen dato satt gir
-    // ingen ring (ikke en nøytral farge), siden det rett og slett ikke er
-    // noe å vise fram ennå.
+    private void NullstillFilter()
+    {
+        _typeFilter = "";
+        _statusFilter = "";
+        _sortering = "navn";
+    }
+
     private static (string? Farge, string? Tekst) OppfolgingStatus(DateTime? neste)
     {
         if (!neste.HasValue)
@@ -197,6 +628,13 @@ else
         }
 
         return ("gronn", $"Neste oppfølging {neste.Value:dd.MM.yyyy}");
+    }
+
+    private static string? SamletAdresse(Kunde k)
+    {
+        var deler = new[] { k.Adresse, $"{k.Postnr} {k.Sted}".Trim() }.Where(d => !string.IsNullOrWhiteSpace(d));
+        var tekst = string.Join(", ", deler);
+        return string.IsNullOrWhiteSpace(tekst) ? null : tekst;
     }
 
     private static string Initialer(string navn)
@@ -235,5 +673,219 @@ else
 
         _alle.RemoveAll(k => k.Id == id);
         _slettId = null;
+
+        if (_valgtId == id)
+        {
+            _valgtId = null;
+            _valgtKunde = null;
+        }
+    }
+
+    private async Task VelgVisningSidepanel()
+    {
+        _visning = "sidepanel";
+        if (_valgtId is null && _filtrert.Count > 0)
+        {
+            await VelgKunde(_filtrert[0].Id);
+        }
+    }
+
+    private string PanelFaneClass(string fane) => _panelFane == fane ? "detalj-fane aktiv" : "detalj-fane";
+
+    private async Task VelgKunde(int id)
+    {
+        _valgtId = id;
+        _panelFane = "oversikt";
+        _visPanelHandlinger = false;
+        await LastValgtKundeAsync();
+    }
+
+    private async Task LastValgtKundeAsync()
+    {
+        if (_valgtId is null)
+        {
+            return;
+        }
+
+        _valgtKunde = await Db.Kunder
+            .Include(k => k.Kontaktpersoner)
+            .FirstOrDefaultAsync(k => k.Id == _valgtId.Value);
+
+        if (_valgtKunde is null)
+        {
+            return;
+        }
+
+        _opprinneligNotater = _valgtKunde.Notater;
+
+        _valgtProsjekter = await Db.Prosjekter
+            .Where(p => p.KundeId == _valgtId.Value)
+            .OrderByDescending(p => p.OpprettetDato)
+            .ToListAsync();
+
+        _valgtDokumenter = await Db.KundeDokumenter
+            .Where(d => d.KundeId == _valgtId.Value)
+            .OrderByDescending(d => d.OpprettetDato)
+            .ToListAsync();
+
+        await LastHendelserForValgtAsync();
+    }
+
+    private async Task LastHendelserForValgtAsync()
+    {
+        if (_valgtId is null)
+        {
+            return;
+        }
+
+        _valgtHendelser = await Db.KundeHendelser
+            .Where(h => h.KundeId == _valgtId.Value)
+            .Include(h => h.UtfortAvBruker)
+            .OrderByDescending(h => h.Tidspunkt)
+            .Take(20)
+            .ToListAsync();
+    }
+
+    private void LoggHendelse(int kundeId, string beskrivelse)
+    {
+        Db.KundeHendelser.Add(new KundeHendelse
+        {
+            KundeId = kundeId,
+            Beskrivelse = beskrivelse,
+            Tidspunkt = DateTime.Now,
+            UtfortAvBrukerId = _naverendeBrukerId
+        });
+    }
+
+    private async Task LagreNotater()
+    {
+        if (_valgtKunde is null)
+        {
+            return;
+        }
+
+        var endret = !string.Equals(_valgtKunde.Notater?.Trim(), _opprinneligNotater?.Trim(), StringComparison.Ordinal);
+        if (!endret)
+        {
+            return;
+        }
+
+        var entitet = await Db.Kunder.FirstOrDefaultAsync(k => k.Id == _valgtKunde.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Notater = _valgtKunde.Notater;
+        LoggHendelse(_valgtKunde.Id, "Notat oppdatert");
+        await Db.SaveChangesAsync();
+        _opprinneligNotater = _valgtKunde.Notater;
+        await LastHendelserForValgtAsync();
+    }
+
+    private async Task LeggTilKontaktpersonPanel()
+    {
+        if (_valgtKunde is null || string.IsNullOrWhiteSpace(_nyKontaktpersonNavn))
+        {
+            return;
+        }
+
+        var kp = new KundeKontaktperson { KundeId = _valgtKunde.Id, Navn = _nyKontaktpersonNavn.Trim() };
+        Db.KundeKontaktpersoner.Add(kp);
+        LoggHendelse(_valgtKunde.Id, $"Kontaktperson lagt til: {kp.Navn}");
+        await Db.SaveChangesAsync();
+
+        _valgtKunde.Kontaktpersoner.Add(kp);
+        _nyKontaktpersonNavn = "";
+        await LastHendelserForValgtAsync();
+    }
+
+    private async Task LagreKontaktpersonPanel(KundeKontaktperson k)
+    {
+        var entitet = await Db.KundeKontaktpersoner.FirstOrDefaultAsync(x => x.Id == k.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Navn = k.Navn;
+        entitet.Rolle = k.Rolle;
+        entitet.Telefon = k.Telefon;
+        entitet.Epost = k.Epost;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SlettKontaktpersonPanel(KundeKontaktperson k)
+    {
+        var entitet = await Db.KundeKontaktpersoner.FirstOrDefaultAsync(x => x.Id == k.Id);
+        if (entitet is not null)
+        {
+            Db.KundeKontaktpersoner.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        _valgtKunde?.Kontaktpersoner.Remove(k);
+    }
+
+    private async Task OnDokumentValgt(InputFileChangeEventArgs e)
+    {
+        if (_valgtKunde is null)
+        {
+            return;
+        }
+
+        _dokumentFeil = null;
+        _lasterOppDokument = true;
+
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                if (file.Size > 20_000_000)
+                {
+                    _dokumentFeil = $"\"{file.Name}\" er for stor (maks 20 MB) og ble hoppet over.";
+                    continue;
+                }
+
+                using var buffer = new MemoryStream();
+                await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+                {
+                    await stream.CopyToAsync(buffer);
+                }
+
+                var dokument = new KundeDokument
+                {
+                    KundeId = _valgtKunde.Id,
+                    Filnavn = file.Name,
+                    ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                    Data = buffer.ToArray()
+                };
+
+                Db.KundeDokumenter.Add(dokument);
+                LoggHendelse(_valgtKunde.Id, $"Dokument lastet opp: {file.Name}");
+            }
+
+            await Db.SaveChangesAsync();
+            _valgtDokumenter = await Db.KundeDokumenter
+                .Where(d => d.KundeId == _valgtKunde.Id)
+                .OrderByDescending(d => d.OpprettetDato)
+                .ToListAsync();
+            await LastHendelserForValgtAsync();
+        }
+        finally
+        {
+            _lasterOppDokument = false;
+        }
+    }
+
+    private async Task SlettDokument(int id)
+    {
+        var entitet = await Db.KundeDokumenter.FirstOrDefaultAsync(d => d.Id == id);
+        if (entitet is not null)
+        {
+            Db.KundeDokumenter.Remove(entitet);
+            await Db.SaveChangesAsync();
+            _valgtDokumenter.RemoveAll(d => d.Id == id);
+        }
     }
 }

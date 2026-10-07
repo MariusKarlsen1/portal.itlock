@@ -23,6 +23,7 @@ public class Kunde
     // Brukes til å sortere/summere salg pr. kundetype i Kunderapporten - se
     // RapportKunde.razor.
     public KundeType? Type { get; set; }
+    public KundeStatus Status { get; set; } = KundeStatus.Aktiv;
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
@@ -30,4 +31,6 @@ public class Kunde
     public List<KundeOppfolgingNotat> OppfolgingNotater { get; set; } = [];
     public List<KundeLisens> Lisenser { get; set; } = [];
     public List<KundeKontaktperson> Kontaktpersoner { get; set; } = [];
+    public List<KundeDokument> Dokumenter { get; set; } = [];
+    public List<KundeHendelse> Hendelser { get; set; } = [];
 }

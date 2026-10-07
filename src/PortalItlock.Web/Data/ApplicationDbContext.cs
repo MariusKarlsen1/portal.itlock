@@ -80,6 +80,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<KundeRabatt> KundeRabatter => Set<KundeRabatt>();
     public DbSet<KundeLisens> KundeLisenser => Set<KundeLisens>();
     public DbSet<KundeKontaktperson> KundeKontaktpersoner => Set<KundeKontaktperson>();
+    public DbSet<KundeDokument> KundeDokumenter => Set<KundeDokument>();
+    public DbSet<KundeHendelse> KundeHendelser => Set<KundeHendelse>();
     public DbSet<LisensVarselSendt> LisensVarselSendt => Set<LisensVarselSendt>();
     public DbSet<SjekklistePunkt> SjekklistePunkter => Set<SjekklistePunkt>();
     public DbSet<ArbeidsordreSjekkpunkt> ArbeidsordreSjekkpunkter => Set<ArbeidsordreSjekkpunkt>();
