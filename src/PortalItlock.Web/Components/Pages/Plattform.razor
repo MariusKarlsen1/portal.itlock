@@ -10,6 +10,7 @@
 @using PortalItlock.Web.Services
 @inject PlatformDbContext PlatformDb
 @inject TenantStatistikkService Statistikk
+@inject TenantProvisioningService Provisioning
 @inject NavigationManager Nav
 
 <PageTitle>Oversikt - Plattform</PageTitle>
@@ -70,6 +71,66 @@
         </div>
     </div>
 
+    <section class="pfo-card pfo-opprett-kort">
+        <div class="pfo-kort-header-rad">
+            <div class="pfo-kort-header">
+                <div class="pfo-kort-header-ikon"><Icon Name="plus" /></div>
+                <div>
+                    <h2 class="pfo-h2">Opprett ny organisasjon</h2>
+                    <p class="pfo-hint">Lisenspriser er felles for alle organisasjoner, og styrer "Månedlig omsetning" over.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="pfo-pris-rad">
+            @foreach (var type in Enum.GetValues<LisensType>())
+            {
+                var pris = _lisensPriser.First(p => p.Type == type);
+                <label class="pfo-form-label">
+                    @type.Visningsnavn() (kr/mnd)
+                    <input class="pfo-input" type="number" min="0" step="1" @bind="pris.KrPerManed" @bind:after="@(() => LagrePris(pris))" />
+                </label>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_prisMelding))
+        {
+            <p class="pfo-suksessmelding">@_prisMelding</p>
+        }
+
+        @if (!_visOpprettSkjema)
+        {
+            <button type="button" class="pfo-btn-primary" @onclick="@(() => _visOpprettSkjema = true)">
+                <Icon Name="plus" /> Opprett organisasjon
+            </button>
+        }
+        else
+        {
+            <p class="pfo-hint">
+                De logger inn på samme adresse som alle andre (<code>@_delLoginAdresse</code>) - systemet finner riktig
+                organisasjon ut fra e-posten som logger inn.
+            </p>
+            <div class="pfo-form-grid">
+                <label class="pfo-form-label">Firmanavn<input class="pfo-input" @bind="_navn" placeholder="F.eks. Eksempel Lås AS" /></label>
+                <label class="pfo-form-label">Navn på første admin-bruker<input class="pfo-input" @bind="_adminNavn" placeholder="F.eks. Ola Nordmann" /></label>
+                <label class="pfo-form-label">E-post til første admin-bruker<input class="pfo-input" @bind="_adminEpost" placeholder="ola@eksempellas.no" /></label>
+            </div>
+            <div class="pfo-knapperad">
+                <button type="button" class="pfo-btn-primary" @onclick="OpprettOrganisasjon" disabled="@_oppretter">
+                    <Icon Name="plus" /> @(_oppretter ? "Oppretter..." : "Opprett organisasjon")
+                </button>
+                <button type="button" class="pfo-btn-ghost" @onclick="@(() => _visOpprettSkjema = false)">Avbryt</button>
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(_feilmelding))
+        {
+            <p class="pfo-feilmelding">@_feilmelding</p>
+        }
+        @if (!string.IsNullOrEmpty(_suksessmelding))
+        {
+            <p class="pfo-suksessmelding">@_suksessmelding</p>
+        }
+    </section>
+
     <div class="pfo-graf-rad">
         <section class="pfo-card pfo-graf-kort">
             <div class="pfo-kort-header-rad">
@@ -103,7 +164,6 @@
                         <p class="pfo-hint">Status på organisasjoner</p>
                     </div>
                 </div>
-                <NavLink class="pfo-vis-alle" href="/plattform/organisasjoner">Vis alle →</NavLink>
             </div>
             <div class="pfo-donut-wrap">
                 <div class="pfo-donut" style="background: @DonutGradient">
@@ -128,9 +188,6 @@
                     <h2 class="pfo-h2">Siste organisasjoner</h2>
                     <p class="pfo-hint">De nyeste organisasjonene som er opprettet i plattformen.</p>
                 </div>
-                <NavLink class="pfo-btn-primary" href="/plattform/organisasjoner">
-                    <Icon Name="plus" /> Opprett ny organisasjon
-                </NavLink>
             </div>
 
             @if (_tenants.Count == 0)
@@ -169,7 +226,6 @@
             <section class="pfo-card">
                 <div class="pfo-liste-header">
                     <h2 class="pfo-h2">Fakturaer som krever oppfølging</h2>
-                    <NavLink class="pfo-vis-alle" href="/plattform/fakturering">Vis alle →</NavLink>
                 </div>
                 <p class="pfo-tom">Fakturering er ikke tatt i bruk ennå - ingenting å følge opp her.</p>
             </section>
@@ -225,6 +281,17 @@
     private List<(string Mnd, decimal Belop, bool ErNa)> _omsetningHistorikk = [];
     private decimal _omsetningMaks;
     private List<AktivitetHendelse> _sisteAktivitet = [];
+
+    private string? _prisMelding;
+    private bool _visOpprettSkjema;
+    private string _navn = "";
+    private string _adminNavn = "";
+    private string _adminEpost = "";
+    private bool _oppretter;
+    private string? _feilmelding;
+    private string? _suksessmelding;
+
+    private string _delLoginAdresse => $"{new Uri(Nav.Uri).GetLeftPart(UriPartial.Authority)}/login";
 
     private static readonly (string Bg, string Ink)[] AvatarPalett =
     [
@@ -358,6 +425,44 @@
         _alleLisenser.Where(l => l.TenantId == tenantId).Sum(l => l.AntallTildelt * PrisFor(l.Type));
 
     private int BrukereFor(int tenantId) => _brukereForTenant.GetValueOrDefault(tenantId);
+
+    private async Task LagrePris(LisensPris pris)
+    {
+        await PlatformDb.SaveChangesAsync();
+        _prisMelding = $"{pris.Type.Visningsnavn()} satt til {pris.KrPerManed:N0} kr/mnd.";
+        _totalManedligInntekt = _tenants.Where(t => t.Status == TenantStatus.Aktiv).Sum(t => ManedligBelop(t.Id));
+        BeregnOmsetningHistorikk();
+    }
+
+    private async Task OpprettOrganisasjon()
+    {
+        _feilmelding = null;
+        _suksessmelding = null;
+        _oppretter = true;
+        StateHasChanged();
+        try
+        {
+            var (ok, feil) = await Provisioning.OpprettKundeAsync(_navn, null, _adminNavn, _adminEpost);
+            if (ok)
+            {
+                _suksessmelding = $"Organisasjonen \"{_navn}\" er opprettet med admin-bruker {_adminEpost}. " +
+                    "Be dem bruke \"Sett passord første gang\" på innloggingssiden.";
+                _navn = "";
+                _adminNavn = "";
+                _adminEpost = "";
+                _visOpprettSkjema = false;
+                await LastDataAsync();
+            }
+            else
+            {
+                _feilmelding = feil;
+            }
+        }
+        finally
+        {
+            _oppretter = false;
+        }
+    }
 
     private static string StatusKlasse(TenantStatus status) => status switch
     {
