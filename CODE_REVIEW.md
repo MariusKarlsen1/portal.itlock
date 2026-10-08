@@ -5,7 +5,7 @@ Omfang: Hele `src/PortalItlock.Web` — alle 144 sider, alle 73 services, kjerne
 
 **Status: Fase 4 (fiksing) pågår.** Du godkjente "fiks alt" med fire presiseringer (se del D): WAL-modus ja (etter backup-sjekk), kun redusere rundturer (ikke IDbContextFactory), søkefiksen ja (ble underveis en større/riktigere løsning enn først antatt pga. en reell æøå-regresjon oppdaget via test — avklart med deg underveis), filoppdeling nei nå. Se **"Status per modul/funn"**-kolonnen i tabellene under for hva som er gjort.
 
-## Fikset så langt (14 commits, alle bygget + testet + pushet til main)
+## Fikset så langt (15 commits, alle bygget + testet + pushet til main)
 
 | # | Fiks | Commit |
 |---|---|---|
@@ -22,10 +22,13 @@ Omfang: Hele `src/PortalItlock.Web` — alle 144 sider, alle 73 services, kjerne
 | Lav | TripletexSyncBackgroundService: logger nå feil i stedet for stille catch | `73bcc78` |
 | Høy | ForesporselListe: henter kun vedlegg-metadata (Id/Filnavn), ikke full byte-data, for alle forespørsler | `eff3bc1` |
 | Høy (delvis) | ProsjektSkjema: AsNoTracking på 4 av 11 spørringer (de bekreftet rene oppslagene) — resten krever endringssporing for inline rediger/slett og er ikke rørt | `5b86b22` |
+| Høy (delvis) | KundeSkjema: AsNoTracking på 9 av 11 spørringer — samme mønster, kun hovedentiteten `_kunde` er urørt | `89ccb46` |
+
+**Live ytelsesmåling (brukerforespørsel)**: testet faktisk klikk-til-ferdig-render-tid i nettleseren for Komponentregister (92ms) og Dørpakker (169ms) med presis `performance.now()`-instrumentering. Begge føltes umiddelbare — men dev-databasen har kun 1 rad i hver tabell, så dette validerer IKKE om produksjonens treghet (som trolig skyldes mye mer data + ingen paginering i `Komponenter.razor`) er løst. Avventer svar om produksjonsdatamengde for å prioritere riktig.
 
 Alle 51 tester passerer (42 eksisterende + 9 nye regresjonstester). Testet enten live i nettleser (inkludert et fullt opprett→rediger→lagre→last på nytt→slett-syklus for ProsjektSkjema-fiksen, siden det er appens mest brukte og mest kritiske side) eller — der dev-databasen var tom og hindret reell rundtur-testing — dekket av nye enhetstester og nøye kodegjennomgang i stedet, notert eksplisitt i de respektive commit-meldingene.
 
-**Gjenstår** (ikke påbegynt): resten av de tregeste modulene i del B — `ArbeidsordreSkjema.razor` (16 spørringer), `TilbudSkjema.razor` (7+), `KundeSkjema.razor` (11), `Home.razor` sin standard-variant (15-20+), `Komponenter.razor` (full katalog + 5 spørringer), `Timeregistrering.razor` (ubegrenset historikk), og `Dashbord.razor` (venter fortsatt på din avklaring om hvilke nøkkeltall-widgets som skal være år-avgrenset). Samme forsiktige mønster som ProsjektSkjema bør brukes på disse — identifisere nøyaktig hvilke av spørringene som er rene oppslag vs. brukt til inline-redigering, før AsNoTracking eller andre endringer gjøres. De resterende "Middels"-funnene i del C (struktur, Program.cs-opprydding, TilbudBeregningHelper-duplisering) er heller ikke påbegynt.
+**Gjenstår** (ikke påbegynt): resten av de tregeste modulene i del B — `ArbeidsordreSkjema.razor` (16 spørringer), `TilbudSkjema.razor` (7+), `Home.razor` sin standard-variant (15-20+), `Komponenter.razor` (full katalog + 5 spørringer — **se ytelsesmåling over, prioriteres så snart jeg vet mer om produksjonsdatamengden**), `Timeregistrering.razor` (ubegrenset historikk), og `Dashbord.razor` (venter fortsatt på din avklaring om hvilke nøkkeltall-widgets som skal være år-avgrenset). Samme forsiktige mønster som ProsjektSkjema/KundeSkjema bør brukes på disse — identifisere nøyaktig hvilke av spørringene som er rene oppslag vs. brukt til inline-redigering, før AsNoTracking eller andre endringer gjøres. De resterende "Middels"-funnene i del C (struktur, Program.cs-opprydding, TilbudBeregningHelper-duplisering) er heller ikke påbegynt.
 
 Denne gjennomgangen er adskilt fra `SECURITY_AUDIT.md` (sikkerhet er allerede dekket og fikset i en tidligere, separat jobb) — denne rapporten dupliserer ikke det arbeidet.
 
