@@ -44,6 +44,14 @@ public class DatabaseBackupService(ApplicationDbContext db, HttpClient http, ICo
                 return await LagreOgReturnerAsync(resultat);
             }
 
+            // I WAL-modus (se CODE_REVIEW.md 2026-10-08, funn A3) ligger ikke-
+            // checkpointede endringer i en egen "-wal"-følgefil ved siden av
+            // selve .db-fila - en ren fil-kopi av KUN hoveddatafila ville derfor
+            // gått glipp av de ferskeste endringene. TRUNCATE-checkpoint skriver
+            // alt fra WAL-fila inn i hoveddatafila før kopiering, slik at
+            // backupen forblir en komplett, selvstendig fil akkurat som før.
+            await db.Database.ExecuteSqlRawAsync("PRAGMA wal_checkpoint(TRUNCATE);");
+
             // Kopier filen først, for å unngå å lese den midt i en skriveoperasjon.
             var tempCopy = Path.Combine(Path.GetTempPath(), $"backup-{Guid.NewGuid():N}.db");
             byte[] raw;

@@ -263,6 +263,12 @@ using (var seedScope = app.Services.CreateScope())
 {
     var platformDb = seedScope.ServiceProvider.GetRequiredService<PlatformDbContext>();
     platformDb.Database.Migrate();
+    // WAL lar lesere fortsette uforstyrret mens noe skrives, i stedet for at
+    // skriving låser hele filen - se CODE_REVIEW.md 2026-10-08, funn A3.
+    // Idempotent: SQLite lagrer journalmodus i selve fila, så dette er kun en
+    // no-op etter første oppstart. DatabaseBackupService checkpointer før
+    // kopiering, så backup forblir komplett.
+    platformDb.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
 
     // Steg 1 av flerkunde-oppsettet: sørger for at itlock AS finnes som
     // "standard"-kunde, pekende på nøyaktig samme fil som appen alltid har
@@ -320,6 +326,8 @@ using (var seedScope = app.Services.CreateScope())
                 .Options;
             using var seedDb = new ApplicationDbContext(tenantOptions);
             seedDb.Database.Migrate();
+            // Se tilsvarende kommentar ved platformDb over - samme idempotente WAL-aktivering per tenant-fil.
+            seedDb.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
             PortalItlock.Web.Services.TenantSeedHelper.SeedNyheter(seedDb);
 
             if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))

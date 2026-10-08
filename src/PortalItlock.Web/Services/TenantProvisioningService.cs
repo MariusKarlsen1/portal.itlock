@@ -84,6 +84,13 @@ public class TenantProvisioningService(PlatformDbContext platformDb, IConfigurat
             using var nyDb = new ApplicationDbContext(tenantOptions);
             nyDb.Database.OpenConnection();
             nyDb.Database.ExecuteSqlRaw("PRAGMA synchronous = NORMAL;");
+            // WAL (Write-Ahead Logging) lar lesere fortsette uforstyrret mens
+            // bakgrunnstjenester (Tripletex-synk m.fl.) skriver, i stedet for
+            // at skriving låser hele filen for alle samtidige lesere - se
+            // CODE_REVIEW.md 2026-10-08, funn A3. DatabaseBackupService gjør
+            // en WAL-checkpoint før den kopierer filen, så backupen blir
+            // fortsatt komplett.
+            nyDb.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
             nyDb.Database.Migrate();
             TenantSeedHelper.SeedNyheter(nyDb);
 
