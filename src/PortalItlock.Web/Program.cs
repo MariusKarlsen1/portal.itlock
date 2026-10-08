@@ -489,12 +489,21 @@ app.Use(async (context, next) =>
 // kontroll.no har nå egne faste mål, se middlewaren lenger opp - dette er
 // kun en siste fallback for andre, ukjente vertsnavn). Unntar
 // plattform-sidene (helt egen innlogging, ikke kundeknyttet),
-// konto-endepunktene, og statiske filer (kjennetegnet ved filendelse).
+// konto-endepunktene, de anonyme innloggings-/passord-sidene (/login m.fl. -
+// MÅ være unntatt siden "/login" er nettopp dit denne middlewaren selv
+// sender uinnloggede, ukjente vertsnavn: uten unntaket ville "/login" blitt
+// sendt til "/login" i det uendelige - oppdaget som reell produksjonsbug på
+// full-kontroll.no 2026-10-08, siden det er et helt nytt vertsnavn uten
+// tilhørende organisasjon), og statiske filer (kjennetegnet ved filendelse).
 app.Use(async (context, next) =>
 {
     var path = context.Request.Path.Value ?? "/";
     var erUnntatt = path.StartsWith("/plattform", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/account", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/login", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/glemt-passord", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/sett-passord", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("/tilbakestill-passord", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/_blazor", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase)
         || Path.HasExtension(path);
