@@ -5,6 +5,20 @@ namespace PortalItlock.Web.Data;
 
 public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : DbContext(options)
 {
+    // Brukes i LINQ-spørringer (f.eks. SokResultat.razor) for å filtrere
+    // tekstsøk I DATABASEN i stedet for å måtte hente hele tabellen til
+    // minnet først - EF Core sin Sqlite-provider kan ikke oversette
+    // string.Contains(x, StringComparison.OrdinalIgnoreCase) til SQL, og
+    // SQLite sin egen innebygde LIKE er kun case-insensitiv for a-z/A-Z, ikke
+    // æøå. Mappet til en egen SQL-funksjon (se SqliteUnicodeFunctionsInterceptor)
+    // som kjører EKSAKT samme .NET-sammenligning som før - oppfører seg
+    // identisk, bare filtrert under selve databasescanet i stedet for etterpå.
+    // Kalles ALDRI direkte fra C# (kun inne i LINQ-spørringer som oversettes
+    // til SQL) - kastes derfor hvis den noen gang skulle bli kalt direkte.
+    public static bool InneholderUavhengigAvStorForbokstav(string? tekst, string? sok) =>
+        throw new NotSupportedException($"{nameof(InneholderUavhengigAvStorForbokstav)} skal kun brukes inne i LINQ-spørringer mot databasen.");
+
+
     public DbSet<RequirementDimension> RequirementDimensions => Set<RequirementDimension>();
     public DbSet<RequirementValue> RequirementValues => Set<RequirementValue>();
     public DbSet<ComponentType> ComponentTypes => Set<ComponentType>();
@@ -129,6 +143,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasDbFunction(typeof(ApplicationDbContext).GetMethod(nameof(InneholderUavhengigAvStorForbokstav))!)
+            .HasName(SqliteUnicodeFunctionsInterceptor.FunksjonNavn);
+
         modelBuilder.Entity<PackageRequirement>(entity =>
         {
             entity.HasKey(pr => new { pr.PackageId, pr.RequirementValueId });

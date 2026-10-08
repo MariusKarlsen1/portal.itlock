@@ -88,6 +88,10 @@ builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
 {
     var tenantContext = sp.GetRequiredService<ITenantContext>();
     options.UseSqlite(tenantContext.Current?.ConnectionString ?? defaultConnectionString);
+    // Se SqliteUnicodeFunctionsInterceptor - lar tekstsøk (f.eks.
+    // SokResultat.razor) filtreres i databasen med korrekt æøå-håndtering,
+    // i stedet for å måtte hente hele tabellen til minnet.
+    options.AddInterceptors(new SqliteUnicodeFunctionsInterceptor());
 });
 
 builder.Services.AddScoped<TenantProvisioningService>();
