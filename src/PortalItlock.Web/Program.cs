@@ -189,7 +189,12 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.Cookie.Name = "PlattformAuth";
         options.LoginPath = "/plattform/logg-inn";
         options.AccessDeniedPath = "/plattform/logg-inn";
-        options.ExpireTimeSpan = TimeSpan.FromDays(30);
+        // Kortere levetid enn den vanlige brukercookien (30 dager) med vilje -
+        // denne gir tilgang til å opprette/administrere/slette organisasjoner,
+        // så konsekvensen av en stjålet cookie er mye høyere, mens gjeninn-
+        // logging her koster lite (lite trafikkert, kun én bruker). Se
+        // sikkerhetsgjennomgangen 2026-10-08.
+        options.ExpireTimeSpan = TimeSpan.FromHours(12);
         options.SlidingExpiration = true;
     });
 builder.Services.AddAuthorization(options =>
@@ -343,6 +348,23 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// Grunnleggende sikkerhets-headere på alt - trygt å sette globalt siden
+// ingen av dem endrer hvordan siden faktisk fungerer, kun hvordan
+// nettleseren håndterer den (hindrer f.eks. at innloggingssiden eller
+// den autentiserte appen legges i en skjult iframe på et annet nettsted
+// for clickjacking, se sikkerhetsgjennomgangen 2026-10-08).
+app.Use(async (context, next) =>
+{
+    // SAMEORIGIN/'self', ikke DENY/'none' - appen bruker selv <iframe> for
+    // PDF-forhåndsvisning (PdfPreviewModal.razor m.fl., samme-opphav), som
+    // DENY/'none' ville blokkert.
+    context.Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    context.Response.Headers["Content-Security-Policy"] = "frame-ancestors 'self'";
+    await next();
+});
+
 app.UseStaticFiles();
 app.UseAntiforgery();
 
@@ -434,21 +456,24 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
     // kan dele samme adresse med andre organisasjoner (se TenantOppslagService),
     // så dette er ikke nødvendigvis organisasjonen vertsnavnet i seg selv peker til.
     var tenant = await oppslag.FinnTenantForEpostAsync(epost);
-    if (tenant is null)
+
+    Bruker? bruker = null;
+    if (tenant is not null)
     {
-        return Results.Redirect($"/login?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
+        var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(tenant.ConnectionString)
+            .Options;
+        await using var db = new ApplicationDbContext(tenantOptions);
+        var brukerKandidater = await db.Brukere.ToListAsync();
+        bruker = brukerKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
     }
 
-    var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
-        .UseSqlite(tenant.ConnectionString)
-        .Options;
-    await using var db = new ApplicationDbContext(tenantOptions);
+    // Kjøres alltid - også når organisasjonen/brukeren ikke finnes, mot en
+    // fast "dummy"-hash - slik at svartiden ikke avslører om kontoen
+    // finnes (tidsbasert sidekanal, se sikkerhetsgjennomgangen 2026-10-08).
+    var passwordOk = PasswordHasher.Verify(password, bruker?.PasswordHash ?? PasswordHasher.DummyHash);
 
-    var brukerKandidater = await db.Brukere.ToListAsync();
-    var bruker = brukerKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
-    var passwordOk = bruker?.PasswordHash is not null && PasswordHasher.Verify(password, bruker.PasswordHash);
-
-    if (bruker is null || !passwordOk || !bruker.Aktiv)
+    if (tenant is null || bruker is null || !passwordOk || !bruker.Aktiv)
     {
         return Results.Redirect($"/login?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
     }
@@ -559,7 +584,7 @@ app.MapPost("/account/sett-passord", async (HttpContext http, TenantOppslagServi
     var tenant = await oppslag.FinnTenantForEpostAsync(epost);
     if (tenant is null)
     {
-        return Results.Redirect("/sett-passord?feil=finnes-ikke");
+        return Results.Redirect("/sett-passord?feil=ikke-tilgjengelig");
     }
 
     var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options;
@@ -567,13 +592,13 @@ app.MapPost("/account/sett-passord", async (HttpContext http, TenantOppslagServi
     var settPassordKandidater = await db.Brukere.ToListAsync();
     var bruker = settPassordKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
 
-    if (bruker is null)
+    // Samme generiske feilmelding uansett om e-posten finnes eller allerede
+    // har satt passord, slik at skjemaet ikke kan brukes til å sjekke hvem
+    // som er registrert (kontoenumerering, se sikkerhetsgjennomgangen
+    // 2026-10-08) - samme mønster som /account/glemt-passord bruker.
+    if (bruker is null || bruker.PasswordHash is not null)
     {
-        return Results.Redirect("/sett-passord?feil=finnes-ikke");
-    }
-    if (bruker.PasswordHash is not null)
-    {
-        return Results.Redirect("/sett-passord?feil=allerede-satt");
+        return Results.Redirect("/sett-passord?feil=ikke-tilgjengelig");
     }
     if (passord.Length < 8 || passord != bekreft)
     {
@@ -666,13 +691,11 @@ app.MapPost("/plattform/konto/sett-passord", async (HttpContext http, PlatformDb
     var plattformSettKandidater = await db.PlattformBrukere.ToListAsync();
     var bruker = plattformSettKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
 
-    if (bruker is null)
+    // Samme generiske feilmelding uansett om e-posten finnes eller allerede
+    // har satt passord (kontoenumerering, se sikkerhetsgjennomgangen 2026-10-08).
+    if (bruker is null || bruker.PasswordHash is not null)
     {
-        return Results.Redirect("/plattform/sett-passord?feil=finnes-ikke");
-    }
-    if (bruker.PasswordHash is not null)
-    {
-        return Results.Redirect("/plattform/sett-passord?feil=allerede-satt");
+        return Results.Redirect("/plattform/sett-passord?feil=ikke-tilgjengelig");
     }
     if (passord.Length < 8 || passord != bekreft)
     {

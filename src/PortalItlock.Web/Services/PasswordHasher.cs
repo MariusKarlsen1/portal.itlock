@@ -15,6 +15,14 @@ public static class PasswordHasher
         return $"{Convert.ToBase64String(salt)}.{Convert.ToBase64String(hash)}";
     }
 
+    // Brukes til å kjøre en "dummy"-PBKDF2-verifisering med samme kostnad
+    // som en ekte sjekk, når det ikke finnes noen ekte bruker/passord å
+    // sjekke mot - slik at svartiden på innlogging ikke avslører om en
+    // konto/organisasjon finnes (tidsbasert sidekanal, se
+    // sikkerhetsgjennomgangen 2026-10-08). Verdien er vilkårlig og skal
+    // aldri faktisk matche et ekte passord.
+    public static readonly string DummyHash = Hash(Guid.NewGuid().ToString());
+
     public static bool Verify(string password, string stored)
     {
         var parts = stored.Split('.');

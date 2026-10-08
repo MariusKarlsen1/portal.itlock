@@ -182,9 +182,16 @@ public static class ForsideRenderer
 
             case "a":
                 var href = el.GetAttribute("href");
-                if (!string.IsNullOrWhiteSpace(href))
+                // Kun http(s)/mailto - uten denne sjekken kunne en lagret
+                // "javascript:"/"data:"-lenke endt opp som en klikkbar
+                // hyperlenke i PDF-en (se sikkerhetsgjennomgangen 2026-10-08).
+                var erTryggSkjema = !string.IsNullOrWhiteSpace(href) && (
+                    href.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    href.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+                    href.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase));
+                if (erTryggSkjema)
                 {
-                    t.Hyperlink(el.TextContent, href);
+                    t.Hyperlink(el.TextContent, href!);
                     return;
                 }
 

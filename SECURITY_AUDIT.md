@@ -3,7 +3,7 @@
 Dato: 2026-10-08
 Omfang: Hele kodebasen i `src/PortalItlock.Web` (Blazor Server, .NET 8, EF Core + SQLite per leietaker, flerkundeløsning, driftet på Railway).
 
-Status: **Fase 1-4 pågår.** Kritisk- og Høy-funnene (1-4) er fikset og testet. Funn 5 kan ikke fikses ennå (ingen patch finnes). Middels/Lav-funn (6-12) er ikke fikset - venter på klarsignal.
+Status: **Fase 1-4 pågår.** Kritisk-, Høy- og Middels/Lav-funnene (1-4, 6-7, 9-12) er fikset og testet. Funn 5 og 8 krever ingen kodeendring (se under). Ett nytt funn (14) ble oppdaget underveis i Fase 4 og venter på avgjørelse.
 
 ---
 
@@ -253,11 +253,46 @@ Ingen `AddRateLimiter`-policy finnes for PDF-generering, Excel-import/eksport el
 ### Funn 5 — Høy — Sårbar avhengighet (SQLitePCLRaw)
 **Ikke fikset**: Ingen patchet NuGet-pakke finnes ennå for CVE-2025-6965. Anbefaling: sjekk `dotnet list package --vulnerable --include-transitive` jevnlig (f.eks. månedlig) og oppgrader `Microsoft.EntityFrameworkCore.Sqlite` så snart en fikset `SQLitePCLRaw`-versjon publiseres.
 
+### Funn 6 — Middels — Kontoenumerering via `sett-passord`
+**Løsning**: Slo sammen `?feil=finnes-ikke` og `?feil=allerede-satt` til én generisk `?feil=ikke-tilgjengelig`, for både `/account/sett-passord` og `/plattform/konto/sett-passord`, med tilhørende oppdatert feilmelding i `SettPassord.razor`/`PlattformSettPassord.razor`. `?feil=ugyldig` (passordvalidering) beholdt som egen melding - se funn 14 under for hvorfor dette alene ikke er en fullstendig løsning.
+**Testet**: Verifisert live med `curl` at et ikke-eksisterende e-postforsøk nå gir `?feil=ikke-tilgjengelig`.
+
+### Funn 7 — Middels — Mangler sikkerhets-headere
+**Løsning**: La til en global middleware som setter `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, og `X-Frame-Options`/`Content-Security-Policy: frame-ancestors` satt til **SAMEORIGIN/'self'** (ikke DENY/'none' - appen bruker selv `<iframe>` for PDF-forhåndsvisning internt, f.eks. `PdfPreviewModal.razor`, som ville blitt blokkert av en strengere verdi).
+**Testet**: Verifisert live med `curl` at headerne er til stede på vanlige sider. Oppdaget og rettet selv en regresjon underveis (satte først `DENY`/`'none'`, som ville ødelagt PDF-forhåndsvisningene - byttet til SAMEORIGIN/'self' før commit).
+
+### Funn 8 — Middels — Passordhash i git-historikk
+**Ingen kodeendring mulig**: dette er historisk data, ikke noe i gjeldende kode. Se anbefaling nederst (roter passordet).
+
+### Funn 9 — Lav — Tidsbasert sidekanal på innlogging
+**Løsning**: `/account/login` kjører nå alltid en PBKDF2-verifisering (mot en ny `PasswordHasher.DummyHash` når bruker/organisasjon ikke finnes), så svartiden er lik uansett om kontoen finnes eller ikke.
+**Testet**: Bygget feilfritt, logikken for treff-tilfellet (riktig passord) er uendret og bekreftet logisk ekvivalent med koden før endringen.
+
+### Funn 10 — Lav — 30 dagers admin-cookie
+**Løsning**: `"Plattform"`-cookien sin `ExpireTimeSpan` kortet ned fra 30 dager til 12 timer. Vanlig brukercookie uendret (30 dager).
+
+### Funn 11 — Lav — Inkonsekvent HTML-escaping i kunde-e-post
+**Løsning**: `_kundeNavn` og `henvendelse.Dortype` pakkes nå i `WebUtility.HtmlEncode(...)` i `KundeNyHenvendelse.razor`, i tråd med de andre feltene på samme sted.
+
+### Funn 12 — Lav — Uvalidert lenke-skjema i PDF-forside
+**Løsning**: `ForsideRenderer.cs` godtar nå kun `http://`/`https://`/`mailto:`-lenker som ekte hyperlenker i PDF-en; alt annet rendres som vanlig tekst.
+
+---
+
+## Nytt funn oppdaget under Fase 4 (fiks) - venter på avgjørelse
+
+### Funn 14 — Høy — `/sett-passord` har ingen bevis for e-post-eierskap
+**Fil:linje**: `Program.cs` (`/account/sett-passord`, `/plattform/konto/sett-passord`), `Components/Pages/SettPassord.razor`.
+**Problem**: I motsetning til `glemt-passord` (som sender et 256-bit token til e-posten og krever det tokenet i lenken) lar "sett passord første gang"-skjemaet hvem som helst sette passordet for en konto bare ved å skrive inn riktig e-postadresse - helt uten noe bevis for at de faktisk eier den e-posten. Dette oppdaget jeg mens jeg fikset kontoenumereringen i funn 6 (den opprinnelige gjennomgangen flagget bare *at man kan sjekke hvilke e-poster finnes*, ikke at man også kan *ta over* en ikke-aktivert konto).
+**Hvordan det kan utnyttes**: Når en admin oppretter en ny bruker (f.eks. en ny ansatt eller kunde), får kontoen en e-post men intet passord. Før den ekte personen rekker å gå inn på `/sett-passord` selv, kan hvem som helst som vet/gjetter den e-postadressen (ofte forutsigbar, f.eks. `fornavn@firma.no`) gå inn og sette passordet først - og dermed logge inn som den personen, med akkurat de rettighetene kontoen har (opptil Admin).
+**Hvorfor jeg ikke bare har fikset dette**: En ordentlig løsning krever samme mønster som `glemt-passord` - et token sendt på e-post som må være med i lenken - noe som endrer flyten for "sett passord første gang" (ny e-post sendes automatisk når en bruker opprettes, eller en "send meg lenke"-knapp legges til på `/sett-passord` i stedet for et rått e-post-felt). Det er en reell, om enn liten, endring i hvordan appen oppfører seg for administratorer som oppretter nye brukere - derfor spør jeg deg først, som instruert, i stedet for å gjøre det på egen hånd.
+**Foreslått løsning (venter på klarsignal)**: Gjør `/sett-passord`-flyten token-basert, samme mønster som `glemt-passord`: enten (a) send automatisk en "sett passord"-e-post med token når en admin oppretter en ny bruker, eller (b) la `/sett-passord`-siden be om e-post, sende et token-lenke på e-post (som `glemt-passord` gjør), og fjerne det rå passord-skjemaet uten token.
+
 ---
 
 ## Gjenstår - venter på klarsignal
 
-- **Middels/Lav-funn (6-12)**: ikke fikset ennå.
+- **Funn 14** (over): ny, ikke fikset.
 - **Test-prosjekt**: Repoet har ingen eksisterende automatiserte tester. Å skrive ordentlige regresjonstester for disse fiksene (spesielt rate limiting og filserving) krever å sette opp et nytt xUnit-testprosjekt i solution-filen (ny avhengighet/arkitekturendring) - gjort ikke uten klarsignal, som instruert. Alt over er i stedet verifisert manuelt live (bygget + kjørt lokalt + kontrollert med curl/nettleser).
 - **Opplastingsside-validering** (defense-in-depth for funn 1): ikke gjort, se notat under funn 1.
 
