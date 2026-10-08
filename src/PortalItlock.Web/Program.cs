@@ -219,8 +219,22 @@ builder.Services.AddAuthorization(options =>
     // rammeverksfiler går via denne fallback-policyen når de ikke har noen egen
     // [Authorize]), og sidene faller stille tilbake til ikke-interaktiv
     // sideinnlasting ved hvert klikk uten noen synlig feil.
+    //
+    // Rekkefølgen her er IKKE kosmetisk: når INGEN av de to er innlogget,
+    // utfordres (redirectes) begge schemaene i rekkefølgen de står oppført i
+    // - og siden begge skriver til samme Response.Redirect, er det det SISTE
+    // schemaet i lista som faktisk vinner. Sto tidligere som
+    // (standard, "Plattform"), som betyd at en helt uinnlogget besøkende på
+    // EN HVILKEN SOM HELST vanlig side (de aller fleste sider har ingen egen
+    // @attribute [Authorize] og bruker derfor nettopp denne fallback-
+    // policyen) ble sendt til plattform-adminens innloggingsside
+    // (/plattform/logg-inn) i stedet for den vanlige (/login) - en reell bug,
+    // oppdaget 2026-10-08. "Plattform"-sidene selv (Plattform.razor m.fl.)
+    // er upåvirket av denne rekkefølgen uansett, siden de har sin EGEN
+    // eksplisitte @attribute [Authorize(Policy = "Plattform")] og dermed
+    // aldri bruker denne fallback-policyen i utgangspunktet.
     options.FallbackPolicy = new AuthorizationPolicyBuilder(
-            CookieAuthenticationDefaults.AuthenticationScheme, "Plattform")
+            "Plattform", CookieAuthenticationDefaults.AuthenticationScheme)
         .RequireAuthenticatedUser()
         .Build();
     options.AddPolicy("Plattform", policy => policy
@@ -389,6 +403,41 @@ app.Use(async (context, next) =>
 
 app.UseStaticFiles();
 app.UseAntiforgery();
+
+// De to offentlige, kunde-uavhengige inngangsdørene til tjenesten - selve
+// produktdomenet og admin-subdomenet - skal alltid lande på sin faste side
+// når noen besøker roten, UANSETT om nettleseren allerede har en gyldig
+// innloggingscookie fra en tidligere økt (f.eks. fra å ha vært innlogget
+// som admin hos en kunde tidligere - ITenantContext sin "TenantId-claimen
+// vinner alltid"-regel skal IKKE få lov til å stille sende besøkende rett
+// inn i en gammel økt her). Ekte kunder bruker sin egen
+// <kunde>.full-kontroll.no-adresse, som er upåvirket av dette.
+// MÅ ligge FØR UseAuthentication/UseAuthorization - ikke etter, slik
+// tilsvarende egendefinerte middlewarer lenger ned gjør - fordi en helt
+// uinnlogget forespørsel til "/" (som ikke har noen egen @attribute
+// [Authorize]) ellers blir fanget opp og omdirigert av
+// FallbackPolicy-utfordringen INNE i UseAuthorization() selv, FØR den i det
+// hele tatt når frem til noen av de senere app.Use(...)-blokkene.
+app.Use(async (context, next) =>
+{
+    if (HttpMethods.IsGet(context.Request.Method) && context.Request.Path == "/")
+    {
+        var host = context.Request.Host.Host;
+        if (string.Equals(host, "admin.full-kontroll.no", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Response.Redirect("/plattform");
+            return;
+        }
+        if (string.Equals(host, "full-kontroll.no", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(host, "www.full-kontroll.no", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Response.Redirect("/login");
+            return;
+        }
+    }
+
+    await next();
+});
 
 // UseAuthentication() MÅ kjøre før begge de egendefinerte middlewarene under
 // - ITenantContext leser nå en "TenantId"-claim fra innloggingscookien
