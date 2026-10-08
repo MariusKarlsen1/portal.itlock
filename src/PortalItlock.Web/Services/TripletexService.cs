@@ -33,6 +33,15 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
+    // SalgPerKunde.razor og Fakturaoversikt.razor hentet tidligere live fra
+    // Tripletex ved HVER sideåpning (opptil 20s timeout, ingen fallback hvis
+    // Tripletex er treg/nede) - se CODE_REVIEW.md 2026-10-08. Siden
+    // fakturering skjer manuelt INNE i Tripletex (ikke i denne portalen),
+    // trenger ikke tallene være sekundfriske - en kort cache her gjør begge
+    // sidene umiddelbare ved gjentatt besøk/navigasjon innen samme vindu.
+    private static readonly TimeSpan FakturaCacheLevetid = TimeSpan.FromMinutes(5);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime HentetUtc, List<TripletexFaktura> Fakturaer, string? Feilmelding)> _fakturaCache = new();
+
     public bool ErKonfigurert =>
         !string.IsNullOrWhiteSpace(_options.ConsumerToken) && !string.IsNullOrWhiteSpace(_options.EmployeeToken);
 
@@ -370,6 +379,28 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
     // live. Brukes av Fakturaoversikt.razor og SalgPerKunde.razor.
     public async Task<(List<TripletexFaktura> Fakturaer, string? Feilmelding)> HentFakturaerAsync(
         DateTime dateFrom, DateTime dateTo, int? kundeId = null, CancellationToken ct = default)
+    {
+        var cacheNokkel = $"{dateFrom:yyyy-MM-dd}|{dateTo:yyyy-MM-dd}|{kundeId}";
+        if (_fakturaCache.TryGetValue(cacheNokkel, out var cachet) && DateTime.UtcNow - cachet.HentetUtc < FakturaCacheLevetid)
+        {
+            return (cachet.Fakturaer, cachet.Feilmelding);
+        }
+
+        var resultat = await HentFakturaerFraTripletexAsync(dateFrom, dateTo, kundeId, ct);
+
+        // Cacher ikke feilresultater - en forbigående Tripletex-feil skal
+        // ikke "henge igjen" og vises på nytt i flere minutter etter at
+        // tjenesten er tilbake, den nye sidelastingen bør prøve på nytt.
+        if (resultat.Feilmelding is null)
+        {
+            _fakturaCache[cacheNokkel] = (DateTime.UtcNow, resultat.Fakturaer, resultat.Feilmelding);
+        }
+
+        return resultat;
+    }
+
+    private async Task<(List<TripletexFaktura> Fakturaer, string? Feilmelding)> HentFakturaerFraTripletexAsync(
+        DateTime dateFrom, DateTime dateTo, int? kundeId, CancellationToken ct)
     {
         try
         {
