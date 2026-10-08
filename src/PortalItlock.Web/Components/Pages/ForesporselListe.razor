@@ -184,7 +184,7 @@
                     <div class="fp-fanerad">
                         <button type="button" class="fp-fane @(_aktivFane == "oversikt" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "oversikt")">Oversikt</button>
                         <button type="button" class="fp-fane @(_aktivFane == "epost" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "epost")">E-post</button>
-                        <button type="button" class="fp-fane @(_aktivFane == "vedlegg" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "vedlegg")">Vedlegg<span class="fp-fane-badge">@_valgt.Media.Count</span></button>
+                        <button type="button" class="fp-fane @(_aktivFane == "vedlegg" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "vedlegg")">Vedlegg<span class="fp-fane-badge">@VedleggForValgt.Count</span></button>
                         <button type="button" class="fp-fane @(_aktivFane == "notater" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "notater")">Interne notater<span class="fp-fane-badge">@_valgt.Notater.Count</span></button>
                         <button type="button" class="fp-fane @(_aktivFane == "aktivitet" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "aktivitet")">Aktivitet</button>
                     </div>
@@ -259,14 +259,14 @@
                         }
                         else if (_aktivFane == "vedlegg")
                         {
-                            @if (_valgt.Media.Count == 0)
+                            @if (VedleggForValgt.Count == 0)
                             {
                                 <p class="fp-tom">Ingen vedlegg.</p>
                             }
                             else
                             {
                                 <ul class="fp-vedlegg-liste">
-                                    @foreach (var m in _valgt.Media)
+                                    @foreach (var m in VedleggForValgt)
                                     {
                                         <li>
                                             <a class="fp-vedlegg-chip" href="@($"/foresporselmedia/{m.Id}/fil")" target="_blank">
@@ -393,6 +393,9 @@
     private List<Foresporsel> _foresporsler = [];
     private Dictionary<int, Ticket> _ticketPerForesporsel = [];
     private Dictionary<string, Kunde> _kundeByEpost = [];
+    private Dictionary<int, List<VedleggRad>> _vedleggForForesporsel = [];
+    private sealed record VedleggRad(int Id, string Filnavn);
+    private List<VedleggRad> VedleggForValgt => _valgt is null ? [] : _vedleggForForesporsel.GetValueOrDefault(_valgt.Id, []);
     private List<Kunde> _kunder = [];
     private List<Bruker> _brukere = [];
 
@@ -477,10 +480,21 @@
         var valgtId = _valgt?.Id;
 
         _foresporsler = await Db.Foresporsler
-            .Include(f => f.Media)
             .Include(f => f.Notater).ThenInclude(n => n.OpprettetAvBruker)
             .OrderByDescending(f => f.MottattDato)
             .ToListAsync();
+
+        // Vedleggslisten viser kun Id/Filnavn (selve nedlastingen skjer via
+        // /foresporselmedia/{id}/fil, uten å gå via C#) - henter derfor KUN
+        // disse to feltene i stedet for full byte[] Data for samtlige
+        // vedlegg på ALLE forespørsler ved hver sideinnlasting/handling, slik
+        // det tidligere .Include(f => f.Media) gjorde. Se CODE_REVIEW.md 2026-10-08.
+        _vedleggForForesporsel = (await Db.ForesporselMedia
+                .AsNoTracking()
+                .Select(m => new { m.ForesporselId, m.Id, m.Filnavn })
+                .ToListAsync())
+            .GroupBy(m => m.ForesporselId)
+            .ToDictionary(g => g.Key, g => g.Select(m => new VedleggRad(m.Id, m.Filnavn)).ToList());
 
         var tickets = await Db.Tickets
             .Include(t => t.Kunde)
