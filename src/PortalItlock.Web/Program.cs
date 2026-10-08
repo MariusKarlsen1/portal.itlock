@@ -92,6 +92,7 @@ builder.Services.AddScoped<DorBeslagslistePdfService>();
 builder.Services.AddScoped<PlukklistePdfService>();
 builder.Services.AddScoped<TicketRapportPdfService>();
 builder.Services.AddScoped<ProduktsammendragPdfService>();
+builder.Services.AddScoped<DorpakkePdfService>();
 builder.Services.AddScoped<LasplanPdfService>();
 builder.Services.AddScoped<TripletexOrdreCsvService>();
 builder.Services.AddScoped<PrisimportService>();
@@ -885,6 +886,27 @@ app.MapGet("/prosjekt/{id:int}/produktsammendrag/pdf", async (int id, HttpContex
 
     var prosjekt = await db.Prosjekter.FindAsync(id);
     var filnavn = $"Produktsammendrag - {prosjekt?.Navn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
+    foreach (var ugyldig in Path.GetInvalidFileNameChars())
+    {
+        filnavn = filnavn.Replace(ugyldig, '-');
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+app.MapGet("/dorpakke/{id:int}/pdf", async (int id, HttpContext context, ApplicationDbContext db, DorpakkePdfService dorpakkePdfService) =>
+{
+    var pdf = await dorpakkePdfService.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var pakke = await db.Packages.FindAsync(id);
+    var filnavn = $"Dorpakke - {pakke?.Navn} - itlock AS - {DateTime.Now:dd.MM.yyyy}.pdf";
     foreach (var ugyldig in Path.GetInvalidFileNameChars())
     {
         filnavn = filnavn.Replace(ugyldig, '-');

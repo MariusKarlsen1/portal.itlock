@@ -5,6 +5,7 @@ public class Package
     public int Id { get; set; }
     public required string Navn { get; set; }
     public string? Beskrivelse { get; set; }
+    public string? Bruksomrade { get; set; }
 
     public bool ErManuell { get; set; }
     public string? OpprettetAv { get; set; }
