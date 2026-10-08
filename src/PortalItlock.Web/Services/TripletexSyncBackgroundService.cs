@@ -7,7 +7,10 @@ namespace PortalItlock.Web.Services;
 // noen må huske å trykke en "synk nå"-knapp - se TripletexSyncService for
 // selve logikken. Kjører kun hvis Tripletex faktisk er konfigurert
 // (ConsumerToken/EmployeeToken satt), ellers venter den bare.
-public sealed class TripletexSyncBackgroundService(IServiceScopeFactory scopeFactory, IOptions<TripletexOptions> options) : BackgroundService
+public sealed class TripletexSyncBackgroundService(
+    IServiceScopeFactory scopeFactory,
+    IOptions<TripletexOptions> options,
+    ILogger<TripletexSyncBackgroundService> logger) : BackgroundService
 {
     private static readonly TimeSpan Intervall = TimeSpan.FromMinutes(15);
 
@@ -36,10 +39,15 @@ public sealed class TripletexSyncBackgroundService(IServiceScopeFactory scopeFac
                     var sync = new TripletexSyncService(db, tripletex);
                     await sync.SynkroniserKunderAsync(stoppingToken);
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
                     // Nettverksfeil/Tripletex nede skal ikke krasje bakgrunns-
-                    // jobben for godt - bare prøv igjen neste runde.
+                    // jobben for godt - bare prøv igjen neste runde. Logges nå
+                    // (var tidligere en stille, tom catch - se CODE_REVIEW.md
+                    // 2026-10-08), samme mønster som de andre bakgrunns-
+                    // tjenestene, slik at f.eks. en utløpt Tripletex-nøkkel
+                    // faktisk er synlig i loggen i stedet for usporbar.
+                    logger.LogError(ex, "Feil under Tripletex-kundesynkronisering.");
                 }
             }
 
