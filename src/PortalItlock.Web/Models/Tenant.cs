@@ -32,13 +32,13 @@ public class Tenant
     public DateTime? SistOppdatert { get; set; }
 
     // Merkevare - vises i organisasjonens EGEN portal (sidemeny-logo,
-    // "Organisasjon"-navn under hurtigmenyen, og temafargene). Satt av
-    // plattformeier på /plattform, ikke av organisasjonen selv.
+    // "Organisasjon"-navn under hurtigmenyen, og fargetemaet). Satt av
+    // plattformeier på /plattform, ikke av organisasjonen selv. Tema er
+    // en Id fra OrganisasjonTema.Alle (kuratert utvalg), ikke en fri hex-kode.
     public string? PortalVisningsnavn { get; set; }
     public byte[]? LogoData { get; set; }
     public string? LogoContentType { get; set; }
-    public string? TemaFarge { get; set; }
-    public string? TemaBakgrunn { get; set; }
+    public string Tema { get; set; } = OrganisasjonTema.Standard.Id;
 
     public List<TenantLisens> Lisenser { get; set; } = [];
 }
