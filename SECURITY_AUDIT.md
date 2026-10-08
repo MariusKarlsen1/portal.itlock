@@ -3,7 +3,7 @@
 Dato: 2026-10-08
 Omfang: Hele kodebasen i `src/PortalItlock.Web` (Blazor Server, .NET 8, EF Core + SQLite per leietaker, flerkundeløsning, driftet på Railway).
 
-Status: **Fase 1-4 pågår.** Kritisk-, Høy- og Middels/Lav-funnene (1-4, 6-7, 9-12) er fikset og testet. Funn 5 og 8 krever ingen kodeendring (se under). Ett nytt funn (14) ble oppdaget underveis i Fase 4 og venter på avgjørelse.
+Status: **Alle funn er nå enten fikset eller krever ingen kodeendring.** Funn 5 (sårbar avhengighet, ingen patch finnes) og 8 (historisk git-data) er de eneste som ikke er lukket i kode - se anbefalinger nederst.
 
 ---
 
@@ -279,20 +279,19 @@ Ingen `AddRateLimiter`-policy finnes for PDF-generering, Excel-import/eksport el
 
 ---
 
-## Nytt funn oppdaget under Fase 4 (fiks) - venter på avgjørelse
+## Nytt funn oppdaget under Fase 4, fikset etter klarsignal
 
-### Funn 14 — Høy — `/sett-passord` har ingen bevis for e-post-eierskap
-**Fil:linje**: `Program.cs` (`/account/sett-passord`, `/plattform/konto/sett-passord`), `Components/Pages/SettPassord.razor`.
-**Problem**: I motsetning til `glemt-passord` (som sender et 256-bit token til e-posten og krever det tokenet i lenken) lar "sett passord første gang"-skjemaet hvem som helst sette passordet for en konto bare ved å skrive inn riktig e-postadresse - helt uten noe bevis for at de faktisk eier den e-posten. Dette oppdaget jeg mens jeg fikset kontoenumereringen i funn 6 (den opprinnelige gjennomgangen flagget bare *at man kan sjekke hvilke e-poster finnes*, ikke at man også kan *ta over* en ikke-aktivert konto).
-**Hvordan det kan utnyttes**: Når en admin oppretter en ny bruker (f.eks. en ny ansatt eller kunde), får kontoen en e-post men intet passord. Før den ekte personen rekker å gå inn på `/sett-passord` selv, kan hvem som helst som vet/gjetter den e-postadressen (ofte forutsigbar, f.eks. `fornavn@firma.no`) gå inn og sette passordet først - og dermed logge inn som den personen, med akkurat de rettighetene kontoen har (opptil Admin).
-**Hvorfor jeg ikke bare har fikset dette**: En ordentlig løsning krever samme mønster som `glemt-passord` - et token sendt på e-post som må være med i lenken - noe som endrer flyten for "sett passord første gang" (ny e-post sendes automatisk når en bruker opprettes, eller en "send meg lenke"-knapp legges til på `/sett-passord` i stedet for et rått e-post-felt). Det er en reell, om enn liten, endring i hvordan appen oppfører seg for administratorer som oppretter nye brukere - derfor spør jeg deg først, som instruert, i stedet for å gjøre det på egen hånd.
-**Foreslått løsning (venter på klarsignal)**: Gjør `/sett-passord`-flyten token-basert, samme mønster som `glemt-passord`: enten (a) send automatisk en "sett passord"-e-post med token når en admin oppretter en ny bruker, eller (b) la `/sett-passord`-siden be om e-post, sende et token-lenke på e-post (som `glemt-passord` gjør), og fjerne det rå passord-skjemaet uten token.
+### Funn 14 — Høy — `/sett-passord` hadde ingen bevis for e-post-eierskap
+**Fil:linje**: `Program.cs` (`/account/sett-passord`, `/plattform/konto/sett-passord` - nå fjernet), `Components/Pages/SettPassord.razor`, `PlattformSettPassord.razor`.
+**Problem**: I motsetning til `glemt-passord` (som sender et 256-bit token til e-posten og krever det i lenken) lot "sett passord første gang"-skjemaet hvem som helst sette passordet for en konto bare ved å skrive inn riktig e-postadresse - uten noe bevis for at de faktisk eier den. Oppdaget mens kontoenumereringen i funn 6 ble fikset.
+**Hvordan det kunne utnyttes**: Noen som visste/gjettet en nyopprettet brukers e-post (ofte forutsigbar, f.eks. `fornavn@firma.no`) kunne sette passordet først og dermed logge inn som den personen, før vedkommende selv rakk det.
+**Løsning**: Oppdaget at `/account/glemt-passord` + `/tilbakestill-passord` allerede håndterer "sett passord for en bruker uten passord" korrekt og sikkert (tokenet settes uansett om `PasswordHash` er null eller ikke fra før) - det var altså ingen reell funksjonell forskjell mellom "glemt passord" og "sett passord første gang", bare to forskjellige (og den ene usikre) inngangsdører til samme ting. Slo dem sammen: `SettPassord.razor`/`PlattformSettPassord.razor` er nå rene e-post-skjemaer (som `GlemtPassord.razor`) som poster til det samme, allerede sikre `/account/glemt-passord`-endepunktet, med et skjult `redirectTil`-felt (begrenset til to kjente, trygge verdier - ikke en åpen omdirigering) som bare styrer hvilken side "lenke sendt"-meldingen vises på. De gamle, usikre `/account/sett-passord`- og `/plattform/konto/sett-passord`-endepunktene er fjernet.
+**Testet**: Bygget feilfritt. Verifisert live i nettleser at `/sett-passord` viser riktig "lenke sendt"-melding på riktig side etter innsending, og med `curl` at det gamle usikre endepunktet ikke lenger fungerer (treffer nå autentiseringsfallbacken i stedet, siden ruten ikke finnes). Bekreftet i loggen at en ekte e-post med tilbakestillingslenke faktisk sendes for en ekte konto, og at ingen e-post sendes for en ikke-eksisterende adresse (samtidig som brukeren får samme generiske svar begge veier).
 
 ---
 
-## Gjenstår - venter på klarsignal
+## Gjenstår
 
-- **Funn 14** (over): ny, ikke fikset.
 - **Test-prosjekt**: Repoet har ingen eksisterende automatiserte tester. Å skrive ordentlige regresjonstester for disse fiksene (spesielt rate limiting og filserving) krever å sette opp et nytt xUnit-testprosjekt i solution-filen (ny avhengighet/arkitekturendring) - gjort ikke uten klarsignal, som instruert. Alt over er i stedet verifisert manuelt live (bygget + kjørt lokalt + kontrollert med curl/nettleser).
 - **Opplastingsside-validering** (defense-in-depth for funn 1): ikke gjort, se notat under funn 1.
 

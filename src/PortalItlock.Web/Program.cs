@@ -496,6 +496,15 @@ app.MapPost("/account/glemt-passord", async (HttpContext http, TenantOppslagServ
     var form = await http.Request.ReadFormAsync();
     var epostAdresse = form["epost"].ToString().Trim();
 
+    // "Sett passord første gang" (/sett-passord) og "Glemt passord"
+    // (/glemt-passord) er nå samme sikre, token-baserte flyt - det finnes
+    // ingen reell forskjell mellom de to (begge ender med å sette
+    // PasswordHash via et e-postet, tidsbegrenset token), så de deler dette
+    // endepunktet. redirectTil styrer kun hvilken side den vennlige
+    // "lenke sendt"-meldingen vises på, og er begrenset til disse to kjente,
+    // trygge sidene - ikke en åpen omdirigering.
+    var redirectTil = form["redirectTil"].ToString() == "sett-passord" ? "sett-passord" : "glemt-passord";
+
     var tenant = await oppslag.FinnTenantForEpostAsync(epostAdresse);
     if (tenant is not null)
     {
@@ -517,7 +526,7 @@ app.MapPost("/account/glemt-passord", async (HttpContext http, TenantOppslagServ
 
             var lenke = $"{http.Request.Scheme}://{http.Request.Host}/tilbakestill-passord?token={token}";
             var html = "<p>Hei,</p>" +
-                "<p>Du (eller noen andre) har bedt om å tilbakestille passordet for kontoen din hos itlock.</p>" +
+                "<p>Du (eller noen andre) har bedt om å sette eller tilbakestille passordet for kontoen din hos itlock.</p>" +
                 $"<p><a href=\"{lenke}\">Trykk her for å velge nytt passord</a></p>" +
                 "<p>Lenken er gyldig i 1 time. Har du ikke bedt om dette, kan du se bort fra denne e-posten.</p>";
             await epost.SendAsync(bruker.Epost, "Tilbakestill passord - itlock", html);
@@ -526,7 +535,7 @@ app.MapPost("/account/glemt-passord", async (HttpContext http, TenantOppslagServ
 
     // Samme melding uansett om e-posten finnes hos oss eller ikke,
     // slik at man ikke kan bruke skjemaet til å sjekke hvem som er registrert.
-    return Results.Redirect("/glemt-passord?sendt=1");
+    return Results.Redirect($"/{redirectTil}?sendt=1");
 }).AllowAnonymous().RequireRateLimiting("passord-reset");
 
 app.MapPost("/account/tilbakestill-passord", async (HttpContext http, PlatformDbContext platformDb) =>
@@ -572,43 +581,6 @@ app.MapPost("/account/tilbakestill-passord", async (HttpContext http, PlatformDb
     }
 
     return Results.Redirect("/tilbakestill-passord?feil=ugyldig-token");
-}).AllowAnonymous().RequireRateLimiting("passord-reset");
-
-app.MapPost("/account/sett-passord", async (HttpContext http, TenantOppslagService oppslag) =>
-{
-    var form = await http.Request.ReadFormAsync();
-    var epost = form["epost"].ToString().Trim();
-    var passord = form["passord"].ToString();
-    var bekreft = form["bekreft"].ToString();
-
-    var tenant = await oppslag.FinnTenantForEpostAsync(epost);
-    if (tenant is null)
-    {
-        return Results.Redirect("/sett-passord?feil=ikke-tilgjengelig");
-    }
-
-    var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options;
-    await using var db = new ApplicationDbContext(tenantOptions);
-    var settPassordKandidater = await db.Brukere.ToListAsync();
-    var bruker = settPassordKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
-
-    // Samme generiske feilmelding uansett om e-posten finnes eller allerede
-    // har satt passord, slik at skjemaet ikke kan brukes til å sjekke hvem
-    // som er registrert (kontoenumerering, se sikkerhetsgjennomgangen
-    // 2026-10-08) - samme mønster som /account/glemt-passord bruker.
-    if (bruker is null || bruker.PasswordHash is not null)
-    {
-        return Results.Redirect("/sett-passord?feil=ikke-tilgjengelig");
-    }
-    if (passord.Length < 8 || passord != bekreft)
-    {
-        return Results.Redirect("/sett-passord?feil=ugyldig");
-    }
-
-    bruker.PasswordHash = PasswordHasher.Hash(passord);
-    await db.SaveChangesAsync();
-
-    return Results.Redirect("/login?satt=1");
 }).AllowAnonymous().RequireRateLimiting("passord-reset");
 
 app.MapPost("/account/logout", async (HttpContext http) =>
@@ -681,37 +653,14 @@ app.MapPost("/plattform/konto/login", async (HttpContext http, PlatformDbContext
     return Results.Redirect("/plattform");
 }).AllowAnonymous().RequireRateLimiting("login");
 
-app.MapPost("/plattform/konto/sett-passord", async (HttpContext http, PlatformDbContext db) =>
-{
-    var form = await http.Request.ReadFormAsync();
-    var epost = form["epost"].ToString().Trim();
-    var passord = form["passord"].ToString();
-    var bekreft = form["bekreft"].ToString();
-
-    var plattformSettKandidater = await db.PlattformBrukere.ToListAsync();
-    var bruker = plattformSettKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
-
-    // Samme generiske feilmelding uansett om e-posten finnes eller allerede
-    // har satt passord (kontoenumerering, se sikkerhetsgjennomgangen 2026-10-08).
-    if (bruker is null || bruker.PasswordHash is not null)
-    {
-        return Results.Redirect("/plattform/sett-passord?feil=ikke-tilgjengelig");
-    }
-    if (passord.Length < 8 || passord != bekreft)
-    {
-        return Results.Redirect("/plattform/sett-passord?feil=ugyldig");
-    }
-
-    bruker.PasswordHash = PasswordHasher.Hash(passord);
-    await db.SaveChangesAsync();
-
-    return Results.Redirect("/plattform/logg-inn?satt=1");
-}).AllowAnonymous().RequireRateLimiting("passord-reset");
-
 app.MapPost("/plattform/konto/glemt-passord", async (HttpContext http, PlatformDbContext db, EmailService epost) =>
 {
     var form = await http.Request.ReadFormAsync();
     var epostAdresse = form["epost"].ToString().Trim();
+
+    // Se tilsvarende kommentar i /account/glemt-passord - "sett passord
+    // første gang" og "glemt passord" er samme sikre, token-baserte flyt.
+    var redirectTil = form["redirectTil"].ToString() == "sett-passord" ? "plattform/sett-passord" : "plattform/glemt-passord";
 
     var plattformGlemtKandidater = await db.PlattformBrukere.ToListAsync();
     var bruker = plattformGlemtKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epostAdresse));
@@ -728,13 +677,13 @@ app.MapPost("/plattform/konto/glemt-passord", async (HttpContext http, PlatformD
 
         var lenke = $"{http.Request.Scheme}://{http.Request.Host}/plattform/tilbakestill-passord?token={token}";
         var html = "<p>Hei,</p>" +
-            "<p>Du (eller noen andre) har bedt om å tilbakestille passordet for plattform-kontoen din.</p>" +
+            "<p>Du (eller noen andre) har bedt om å sette eller tilbakestille passordet for plattform-kontoen din.</p>" +
             $"<p><a href=\"{lenke}\">Trykk her for å velge nytt passord</a></p>" +
             "<p>Lenken er gyldig i 1 time. Har du ikke bedt om dette, kan du se bort fra denne e-posten.</p>";
-        await epost.SendAsync(bruker.Epost, "Tilbakestill plattform-passord - itlock", html);
+        await epost.SendAsync(bruker.Epost, "Sett/tilbakestill plattform-passord - itlock", html);
     }
 
-    return Results.Redirect("/plattform/glemt-passord?sendt=1");
+    return Results.Redirect($"/{redirectTil}?sendt=1");
 }).AllowAnonymous().RequireRateLimiting("passord-reset");
 
 app.MapPost("/plattform/konto/tilbakestill-passord", async (HttpContext http, PlatformDbContext db) =>
