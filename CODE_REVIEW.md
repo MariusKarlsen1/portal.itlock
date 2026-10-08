@@ -3,7 +3,25 @@
 Dato: 2026-10-08
 Omfang: Hele `src/PortalItlock.Web` — alle 144 sider, alle 73 services, kjerneinfrastruktur (Program.cs, DbContext, bakgrunnstjenester, delte layout-/navigasjonskomponenter). Fokus: ytelse (høyeste prioritet), bugs, struktur, kommunikasjon mellom lag.
 
-**Status: Fase 1-3 (kartlegging + funn + denne rapporten). INGEN kodeendringer er gjort ennå.** Venter på klarsignal før Fase 4 (fiksing) starter, slik avtalt.
+**Status: Fase 4 (fiksing) pågår.** Du godkjente "fiks alt" med fire presiseringer (se del D): WAL-modus ja (etter backup-sjekk), kun redusere rundturer (ikke IDbContextFactory), søkefiksen ja (ble underveis en større/riktigere løsning enn først antatt pga. en reell æøå-regresjon oppdaget via test — avklart med deg underveis), filoppdeling nei nå. Se **"Status per modul/funn"**-kolonnen i tabellene under for hva som er gjort.
+
+## Fikset så langt (9 commits, alle bygget + testet + pushet til main)
+
+| # | Fiks | Commit |
+|---|---|---|
+| A1 | Varseltall caches 20s i stedet for å spørres på hver navigasjon | `3977ccb` |
+| A3 | WAL-modus på SQLite + checkpoint før backup | `1ae888d` |
+| Bug | DorDetalj N+1 (lagrede PDF-er) | `33c9228` |
+| Bug | NyPakke N+1 (dørfunksjoner ved lagring) | `33c9228` |
+| Bug | TicketDetalj kartesisk Include → AsSplitQuery | `33c9228` |
+| Bug | koblingsskjema.js lekkende keydown-lytter | `33c9228` |
+| Høy | SokResultat: søk filtreres i SQL (egen Unicode-korrekt funksjon, ikke EF.Functions.Like — se forklaring over) | `9774286` |
+| Høy | SalgPerKunde/Fakturaoversikt: Tripletex-kall caches 5 min | `9713bbf` |
+| Høy | Serviceavtaler + Home (Dashboard3-kart): geokoding kjører i bakgrunnen, blokkerer ikke lenger sidevisning | `6acdec8` |
+
+Alle 49 tester passerer (42 eksisterende + 7 nye regresjonstester skrevet for disse fiksene). Alle er bygget, og testet enten live i nettleser eller — der dev-databasen var tom og hindret reell rundtur-testing (DorDetalj/TicketDetalj/KoblingsSkjemaVisning sine detaljsider, og den progressive kart-pin-oppdateringen) — dekket av nye enhetstester og nøye kodegjennomgang i stedet. Dette er notert eksplisitt i de respektive commit-meldingene.
+
+**Gjenstår** (ikke påbegynt ennå): de resterende "Høy"-radene i modul-tabellen i del B (ArbeidsordreSkjema, ProsjektSkjema, KundeSkjema, TilbudSkjema, Home.razor standard-variant, Komponenter.razor, Timeregistrering, ForesporselListe, Dashbord.razor), samt de "Middels"-vurderte funnene i del C. Dette er write-ups av hva som gjenstår og hvorfor — selve fiksingen fortsetter i påfølgende arbeidsøkter.
 
 Denne gjennomgangen er adskilt fra `SECURITY_AUDIT.md` (sikkerhet er allerede dekket og fikset i en tidligere, separat jobb) — denne rapporten dupliserer ikke det arbeidet.
 
