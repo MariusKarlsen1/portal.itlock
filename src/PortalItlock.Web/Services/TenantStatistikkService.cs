@@ -36,6 +36,33 @@ public class TenantStatistikkService
         }
     }
 
+    // Som Hent(), men uten å blokkere en trådpool-tråd under databasekallene
+    // (synkron ADO.NET-I/O gjør det) - Plattform.razor kaller denne én gang
+    // PER organisasjon ved hvert besøk på admin-dashbordet, se CODE_REVIEW.md
+    // 2026-10-08. Ubetydelig med dagens 1 organisasjon, men blir en reell,
+    // blokkerende kostnad etter hvert som flere kunder legges til.
+    public async Task<TenantTall> HentAsync(string connectionString)
+    {
+        try
+        {
+            await using var conn = new SqliteConnection(connectionString);
+            await conn.OpenAsync();
+
+            var brukere = await TellAsync(conn, "SELECT COUNT(*) FROM Brukere WHERE Rolle <> 3");
+            var prosjekter = await TellAsync(conn, "SELECT COUNT(*) FROM Prosjekter");
+            var systemer = await TellAsync(conn, "SELECT COUNT(*) FROM Nokkelsystemer");
+            var dokumenter = await TellAsync(conn, "SELECT COUNT(*) FROM KundeDokumenter")
+                + await TellAsync(conn, "SELECT COUNT(*) FROM SystemVedlegg")
+                + await TellAsync(conn, "SELECT COUNT(*) FROM ProsjektVedlegg");
+
+            return new TenantTall(prosjekter, brukere, dokumenter, systemer);
+        }
+        catch
+        {
+            return new TenantTall(0, 0, 0, 0);
+        }
+    }
+
     public int TellKundeTilganger(string connectionString)
     {
         try
@@ -57,6 +84,26 @@ public class TenantStatistikkService
             using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             var result = cmd.ExecuteScalar();
+            return result switch
+            {
+                long l => (int)l,
+                int i => i,
+                _ => 0
+            };
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static async Task<int> TellAsync(SqliteConnection conn, string sql)
+    {
+        try
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            var result = await cmd.ExecuteScalarAsync();
             return result switch
             {
                 long l => (int)l,
