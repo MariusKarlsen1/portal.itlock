@@ -1,6 +1,7 @@
 @page "/serviceavtaler"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@implements IDisposable
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -257,20 +258,63 @@ else
             };
         }).ToList();
 
-        await GeokodManglende(prosjekter);
+        // Geokoding skjer nå i bakgrunnen ETTER at siden vises, i stedet for
+        // å blokkere hele sidevisningen mens manglende adresser slås opp mot
+        // en ekstern tjeneste (kunne tidligere ta flere sekunder per avtale,
+        // se CODE_REVIEW.md 2026-10-08). Tabellvisningen trenger ikke
+        // lat/lng i det hele tatt (kun kartvisningen), så dette endrer ikke
+        // hva som vises i tabellen - kun når kart-pinnene dukker opp.
+        // Resultatet lagres fortsatt til databasen akkurat som før.
+        _ = GeokodManglendeIBakgrunnenAsync(prosjekter, _disposedCts.Token);
     }
+
+    private readonly CancellationTokenSource _disposedCts = new();
 
     // Henter posisjon for avtaler som har adresse men ikke lagret lat/lng ennå
     // (samme mønster som Kart.razor) - lagrer resultatet på selve Prosjektet
-    // slik at det ikke må geokodes på nytt neste gang siden lastes.
-    private async Task GeokodManglende(List<Prosjekt> prosjekter)
+    // slik at det ikke må geokodes på nytt neste gang siden lastes. Kjøres nå
+    // som en IKKE-blokkerende bakgrunnsoppgave (se OnInitializedAsync).
+    private async Task GeokodManglendeIBakgrunnenAsync(List<Prosjekt> prosjekter, CancellationToken ct)
     {
         var endret = false;
+        var forste = true;
 
         foreach (var a in _avtaler.Where(a => a.Latitude is null && !string.IsNullOrWhiteSpace(a.Adresse)))
         {
-            var treff = await Geokoding.GeocodeAsync(a.Adresse!, a.Postnr, a.Sted);
-            if (treff is null)
+            if (ct.IsCancellationRequested)
+            {
+                break;
+            }
+
+            // Nominatim (geokodingstjenesten) sine bruksvilkår tillater maks
+            // 1 forespørsel/sekund - overholdes eksplisitt her siden kallene
+            // kjører sekvensielt i bakgrunnen uten at brukeren venter på dem.
+            if (!forste)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(1100), ct);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+            }
+            forste = false;
+
+            (double Latitude, double Longitude)? treff;
+            try
+            {
+                treff = await Geokoding.GeocodeAsync(a.Adresse!, a.Postnr, a.Sted);
+            }
+            catch
+            {
+                // Best-effort bakgrunnsoppgave - en feilet oppslag skal ikke
+                // stoppe resten av listen, bare hoppes over denne gangen.
+                continue;
+            }
+
+            if (treff is null || ct.IsCancellationRequested)
             {
                 continue;
             }
@@ -282,12 +326,34 @@ else
             prosjekt.Latitude = treff.Value.Latitude;
             prosjekt.Longitude = treff.Value.Longitude;
             endret = true;
+
+            try
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
         }
 
-        if (endret)
+        if (endret && !ct.IsCancellationRequested)
         {
-            await Db.SaveChangesAsync();
+            try
+            {
+                await Db.SaveChangesAsync();
+            }
+            catch
+            {
+                // Best-effort - siden kan ha blitt forlatt/disposed underveis.
+            }
         }
+    }
+
+    public void Dispose()
+    {
+        _disposedCts.Cancel();
+        _disposedCts.Dispose();
     }
 
     private void SettHurtigfilter(string filter)

@@ -836,11 +836,60 @@
 
         var alleProsjekter = serviceProsjekter.Concat(aktiveProsjekter).ToList();
 
+        // Viser kartet UMIDDELBART med de punktene som allerede har lagret
+        // lat/lng, i stedet for å blokkere hele forsiden (appens mest
+        // besøkte side) mens manglende adresser slås opp mot en ekstern
+        // tjeneste (kunne tidligere ta opp til N×5s - se CODE_REVIEW.md
+        // 2026-10-08). Manglende punkter dukker opp etter hvert som
+        // geokodingen fullfører i bakgrunnen (GeokodHd3KartIBakgrunnenAsync),
+        // samme sluttresultat som før - bare ikke blokkerende.
+        BySettHd3KartPunkter(serviceProsjekter, aktiveProsjekter, planlagteOrdre);
+        _ = GeokodHd3KartIBakgrunnenAsync(alleProsjekter, serviceProsjekter, aktiveProsjekter, planlagteOrdre, _disposedCts.Token);
+    }
+
+    private readonly CancellationTokenSource _disposedCts = new();
+
+    private async Task GeokodHd3KartIBakgrunnenAsync(
+        List<Prosjekt> alleProsjekter, List<Prosjekt> serviceProsjekter, List<Prosjekt> aktiveProsjekter,
+        List<Arbeidsordre> planlagteOrdre, CancellationToken ct)
+    {
         var endret = false;
+        var forste = true;
+
         foreach (var p in alleProsjekter.Where(p => p.Latitude is null && !string.IsNullOrWhiteSpace(p.Adresse)))
         {
-            var treff = await Geokoding.GeocodeAsync(p.Adresse!, p.Postnr, p.Sted);
-            if (treff is null)
+            if (ct.IsCancellationRequested)
+            {
+                break;
+            }
+
+            // Nominatim (geokodingstjenesten) sine bruksvilkår tillater maks
+            // 1 forespørsel/sekund - overholdes eksplisitt her siden kallene
+            // kjører sekvensielt i bakgrunnen uten at brukeren venter på dem.
+            if (!forste)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(1100), ct);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+            }
+            forste = false;
+
+            (double Latitude, double Longitude)? treff;
+            try
+            {
+                treff = await Geokoding.GeocodeAsync(p.Adresse!, p.Postnr, p.Sted);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (treff is null || ct.IsCancellationRequested)
             {
                 continue;
             }
@@ -848,13 +897,33 @@
             p.Latitude = treff.Value.Latitude;
             p.Longitude = treff.Value.Longitude;
             endret = true;
+
+            BySettHd3KartPunkter(serviceProsjekter, aktiveProsjekter, planlagteOrdre);
+            try
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
         }
 
-        if (endret)
+        if (endret && !ct.IsCancellationRequested)
         {
-            await Db.SaveChangesAsync();
+            try
+            {
+                await Db.SaveChangesAsync();
+            }
+            catch
+            {
+                // Best-effort bakgrunnsoppgave - siden kan ha blitt forlatt/disposed underveis.
+            }
         }
+    }
 
+    private void BySettHd3KartPunkter(List<Prosjekt> serviceProsjekter, List<Prosjekt> aktiveProsjekter, List<Arbeidsordre> planlagteOrdre)
+    {
         var punkter = new List<object>();
 
         punkter.AddRange(serviceProsjekter
@@ -1150,6 +1219,8 @@
     public void Dispose()
     {
         Verktoylinje.Endret -= OnVerktoylinjeEndret;
+        _disposedCts.Cancel();
+        _disposedCts.Dispose();
     }
 
     private static DateTime FinnForrigeMandag(DateTime dato)
@@ -1286,6 +1357,19 @@
         {
             await JS.InvokeVoidAsync("kart.init", "hd3-kart", _hd3KartPunkter);
             _hd3KartInitialisert = true;
+            _hd3KartPunkterVedForrigeRender = _hd3KartPunkter.Count;
+        }
+        else if (_hd3KartPunkter.Count != _hd3KartPunkterVedForrigeRender)
+        {
+            // Nye punkter kan dukke opp etter at kartet først ble vist, siden
+            // geokoding av manglende adresser nå skjer i bakgrunnen (se
+            // GeokodHd3KartIBakgrunnenAsync) i stedet for å blokkere
+            // sidevisningen. oppdaterPunkter tegner markørene på nytt uten å
+            // nullstille kartets zoom/posisjon slik kart.init ville gjort.
+            await JS.InvokeVoidAsync("kart.oppdaterPunkter", _hd3KartPunkter);
+            _hd3KartPunkterVedForrigeRender = _hd3KartPunkter.Count;
         }
     }
+
+    private int _hd3KartPunkterVedForrigeRender;
 }
