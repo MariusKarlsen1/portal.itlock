@@ -23,6 +23,25 @@ public class LagretPdfService(ApplicationDbContext db)
             .ToListAsync();
     }
 
+    // Som HentAsync, men for flere entityId-er i ÉN spørring i stedet for én
+    // runde-tur per id (brukt der HentAsync tidligere ble kalt i en løkke, se
+    // CODE_REVIEW.md 2026-10-08). Returnerer samme data/sortering som om
+    // HentAsync var kalt for hver enkelt id.
+    public async Task<Dictionary<int, List<LagretPdf>>> HentForFlereAsync(string entityType, IReadOnlyCollection<int> entityIder)
+    {
+        if (entityIder.Count == 0)
+        {
+            return [];
+        }
+
+        var alle = await db.LagredePdfer
+            .Where(p => p.EntityType == entityType && entityIder.Contains(p.EntityId))
+            .OrderByDescending(p => p.OpprettetDato)
+            .ToListAsync();
+
+        return alle.GroupBy(p => p.EntityId).ToDictionary(g => g.Key, g => g.ToList());
+    }
+
     public async Task<LagretPdf> LagreAsync(string entityType, int entityId, string navn, byte[] data,
         List<LagretPdfLinje>? linjer = null, List<LagretPdfNokkeltall>? nokkeltall = null)
     {

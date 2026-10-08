@@ -670,7 +670,11 @@ export function enableKeyboardShortcuts(containerEl, dotNetRef) {
     }
     containerEl.dataset.keysBound = '1';
 
-    document.addEventListener('keydown', (e) => {
+    // Lagret på selve elementet (ikke en anonym funksjon rett i
+    // addEventListener) slik at disableKeyboardShortcuts kan fjerne NØYAKTIG
+    // denne lytteren igjen - se CODE_REVIEW.md 2026-10-08 (bekreftet
+    // minnelekkasje: lytteren ble tidligere aldri fjernet).
+    const handler = (e) => {
         if (containerEl.dataset.locked === '1') {
             return;
         }
@@ -722,7 +726,19 @@ export function enableKeyboardShortcuts(containerEl, dotNetRef) {
             const symbolId = parseInt(markerEl.dataset.symbolid, 10);
             dotNetRef.invokeMethodAsync('OnSymbolMoved', symbolId, parseFloat(markerEl.style.left), parseFloat(markerEl.style.top));
         }, 400);
-    });
+    };
+
+    containerEl._keyboardShortcutsHandler = handler;
+    document.addEventListener('keydown', handler);
+}
+
+export function disableKeyboardShortcuts(containerEl) {
+    if (containerEl._keyboardShortcutsHandler) {
+        document.removeEventListener('keydown', containerEl._keyboardShortcutsHandler);
+        containerEl._keyboardShortcutsHandler = null;
+    }
+    containerEl.dataset.keysBound = '0';
+    clearTimeout(nudgeSaveTimer);
 }
 
 export function enableRubberBandSelect(canvasEl, dotNetRef) {
