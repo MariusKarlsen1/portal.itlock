@@ -10,6 +10,7 @@ using PortalItlock.Web.Services;
 using Microsoft.Net.Http.Headers;
 using System.Security.Claims;
 using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using PortalItlock.Web.Models;
 
 QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
@@ -211,20 +212,25 @@ builder.Services.AddCascadingAuthenticationState();
 
 builder.Services.AddRateLimiter(options =>
 {
-    // Begrenser innloggings- og passord-tilbakestillingsforsøk per IP, slik at
-    // noen ikke kan brute-force passord eller spamme e-post-utsendelser.
-    options.AddFixedWindowLimiter("login", opt =>
+    // Begrenser innloggings- og passord-tilbakestillingsforsøk PER IP (via
+    // AddPolicy + partisjonsnøkkel), slik at én klient ikke kan tømme en
+    // delt/global kvote og dermed sperre innlogging for alle andre brukere -
+    // AddFixedWindowLimiter alene (slik dette sto før) lager én delt teller
+    // for ALLE klienter samlet, uansett IP, og var dermed selv en DoS-vei.
+    static string KlientIp(HttpContext http) => http.Connection.RemoteIpAddress?.ToString() ?? "ukjent";
+
+    options.AddPolicy("login", http => RateLimitPartition.GetFixedWindowLimiter(KlientIp(http), _ => new FixedWindowRateLimiterOptions
     {
-        opt.PermitLimit = 8;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-    options.AddFixedWindowLimiter("passord-reset", opt =>
+        PermitLimit = 8,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0
+    }));
+    options.AddPolicy("passord-reset", http => RateLimitPartition.GetFixedWindowLimiter(KlientIp(http), _ => new FixedWindowRateLimiterOptions
     {
-        opt.PermitLimit = 3;
-        opt.Window = TimeSpan.FromMinutes(5);
-        opt.QueueLimit = 0;
-    });
+        PermitLimit = 3,
+        Window = TimeSpan.FromMinutes(5),
+        QueueLimit = 0
+    }));
     options.OnRejected = (context, _) =>
     {
         var path = context.HttpContext.Request.Path;
@@ -541,7 +547,7 @@ app.MapPost("/account/tilbakestill-passord", async (HttpContext http, PlatformDb
     }
 
     return Results.Redirect("/tilbakestill-passord?feil=ugyldig-token");
-}).AllowAnonymous();
+}).AllowAnonymous().RequireRateLimiting("passord-reset");
 
 app.MapPost("/account/sett-passord", async (HttpContext http, TenantOppslagService oppslag) =>
 {
@@ -578,7 +584,7 @@ app.MapPost("/account/sett-passord", async (HttpContext http, TenantOppslagServi
     await db.SaveChangesAsync();
 
     return Results.Redirect("/login?satt=1");
-}).AllowAnonymous();
+}).AllowAnonymous().RequireRateLimiting("passord-reset");
 
 app.MapPost("/account/logout", async (HttpContext http) =>
 {
@@ -677,7 +683,7 @@ app.MapPost("/plattform/konto/sett-passord", async (HttpContext http, PlatformDb
     await db.SaveChangesAsync();
 
     return Results.Redirect("/plattform/logg-inn?satt=1");
-}).AllowAnonymous();
+}).AllowAnonymous().RequireRateLimiting("passord-reset");
 
 app.MapPost("/plattform/konto/glemt-passord", async (HttpContext http, PlatformDbContext db, EmailService epost) =>
 {
@@ -733,7 +739,7 @@ app.MapPost("/plattform/konto/tilbakestill-passord", async (HttpContext http, Pl
     await db.SaveChangesAsync();
 
     return Results.Redirect("/plattform/logg-inn?satt=1");
-}).AllowAnonymous();
+}).AllowAnonymous().RequireRateLimiting("passord-reset");
 
 app.MapPost("/plattform/konto/logout", async (HttpContext http) =>
 {
@@ -744,7 +750,7 @@ app.MapPost("/plattform/konto/logout", async (HttpContext http) =>
 app.MapGet("/bilder/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var bilde = await db.BefaringDorfeltBilder.FindAsync(id);
-    return bilde is null ? Results.NotFound() : Results.File(bilde.Data, bilde.ContentType);
+    return bilde is null ? Results.NotFound() : Results.File(bilde.Data, FilSikkerhet.TryggContentType(bilde.ContentType));
 }).RequireAuthorization();
 
 app.MapGet("/systemvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -752,7 +758,7 @@ app.MapGet("/systemvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
     var vedlegg = await db.SystemVedlegg.FindAsync(id);
     return vedlegg is null
         ? Results.NotFound()
-        : Results.File(vedlegg.Data, vedlegg.ContentType, vedlegg.Filnavn);
+        : Results.File(vedlegg.Data, FilSikkerhet.TryggContentType(vedlegg.ContentType), vedlegg.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/nokkelsystem/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
@@ -760,7 +766,7 @@ app.MapGet("/nokkelsystem/{id:int}/bilde", async (int id, ApplicationDbContext d
     var system = await db.Nokkelsystemer.FindAsync(id);
     return system?.BildeData is null
         ? Results.NotFound()
-        : Results.File(system.BildeData, system.BildeContentType ?? "image/jpeg");
+        : Results.File(system.BildeData, FilSikkerhet.TryggContentType(system.BildeContentType ?? "image/jpeg"));
 }).RequireAuthorization();
 
 app.MapGet("/plantegningbilde/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -768,7 +774,7 @@ app.MapGet("/plantegningbilde/{id:int}", async (int id, ApplicationDbContext db)
     var plantegning = await db.Plantegninger.FindAsync(id);
     return plantegning is null
         ? Results.NotFound()
-        : Results.File(plantegning.Data, plantegning.ContentType);
+        : Results.File(plantegning.Data, FilSikkerhet.TryggContentType(plantegning.ContentType));
 }).RequireAuthorization();
 
 app.MapGet("/prosjektvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -797,7 +803,7 @@ app.MapGet("/koblingsbibliotek/{id:int}", async (int id, ApplicationDbContext db
     var symbol = await db.KoblingsSymbolBibliotek.FindAsync(id);
     return symbol is null
         ? Results.NotFound()
-        : Results.File(symbol.BildeData, symbol.BildeContentType);
+        : Results.File(symbol.BildeData, FilSikkerhet.TryggContentType(symbol.BildeContentType));
 }).RequireAuthorization();
 
 app.MapGet("/tilbud/{id:int}/pdf", async (int id, HttpContext context, ApplicationDbContext db, TilbudPdfService pdfService) =>
@@ -956,7 +962,7 @@ app.MapGet("/servicehenvendelse/bilde/{id:int}", async (int id, ApplicationDbCon
     var bilde = await db.ServicehenvendelseBilder.FindAsync(id);
     return bilde is null
         ? Results.NotFound()
-        : Results.File(bilde.Data, bilde.ContentType, bilde.Filnavn);
+        : Results.File(bilde.Data, FilSikkerhet.TryggContentType(bilde.ContentType), bilde.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/tilvalgalternativ/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
@@ -964,7 +970,7 @@ app.MapGet("/tilvalgalternativ/{id:int}/bilde", async (int id, ApplicationDbCont
     var alternativ = await db.TilvalgAlternativer.FindAsync(id);
     return alternativ?.BildeData is null
         ? Results.NotFound()
-        : Results.File(alternativ.BildeData, alternativ.BildeContentType ?? "application/octet-stream");
+        : Results.File(alternativ.BildeData, FilSikkerhet.TryggContentType(alternativ.BildeContentType ?? "application/octet-stream"));
 }).RequireAuthorization();
 
 app.MapGet("/tilvalgmalalternativ/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
@@ -972,7 +978,7 @@ app.MapGet("/tilvalgmalalternativ/{id:int}/bilde", async (int id, ApplicationDbC
     var alternativ = await db.TilvalgMalAlternativer.FindAsync(id);
     return alternativ?.BildeData is null
         ? Results.NotFound()
-        : Results.File(alternativ.BildeData, alternativ.BildeContentType ?? "application/octet-stream");
+        : Results.File(alternativ.BildeData, FilSikkerhet.TryggContentType(alternativ.BildeContentType ?? "application/octet-stream"));
 }).RequireAuthorization();
 
 app.MapGet("/tilvalg/{id:int}/kundebilde", async (int id, ApplicationDbContext db) =>
@@ -980,7 +986,7 @@ app.MapGet("/tilvalg/{id:int}/kundebilde", async (int id, ApplicationDbContext d
     var tilvalg = await db.Tilvalg.FindAsync(id);
     return tilvalg?.KundeOnskeBildeData is null
         ? Results.NotFound()
-        : Results.File(tilvalg.KundeOnskeBildeData, tilvalg.KundeOnskeBildeContentType ?? "application/octet-stream");
+        : Results.File(tilvalg.KundeOnskeBildeData, FilSikkerhet.TryggContentType(tilvalg.KundeOnskeBildeContentType ?? "application/octet-stream"));
 }).RequireAuthorization();
 
 app.MapGet("/driftsmeldingmedia/{id:int}/fil", async (int id, ApplicationDbContext db) =>
@@ -988,7 +994,7 @@ app.MapGet("/driftsmeldingmedia/{id:int}/fil", async (int id, ApplicationDbConte
     var media = await db.DriftsmeldingMedia.FindAsync(id);
     return media is null
         ? Results.NotFound()
-        : Results.File(media.Data, media.ContentType, enableRangeProcessing: true);
+        : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), enableRangeProcessing: true);
 }).RequireAuthorization();
 
 app.MapGet("/ticketmedia/{id:int}/fil", async (int id, ApplicationDbContext db) =>
@@ -996,7 +1002,7 @@ app.MapGet("/ticketmedia/{id:int}/fil", async (int id, ApplicationDbContext db) 
     var media = await db.TicketMedia.FindAsync(id);
     return media is null
         ? Results.NotFound()
-        : Results.File(media.Data, media.ContentType, enableRangeProcessing: true);
+        : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), enableRangeProcessing: true);
 }).RequireAuthorization();
 
 app.MapGet("/foresporselmedia/{id:int}/fil", async (int id, ApplicationDbContext db) =>
@@ -1004,7 +1010,7 @@ app.MapGet("/foresporselmedia/{id:int}/fil", async (int id, ApplicationDbContext
     var media = await db.ForesporselMedia.FindAsync(id);
     return media is null
         ? Results.NotFound()
-        : Results.File(media.Data, media.ContentType, enableRangeProcessing: true);
+        : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), enableRangeProcessing: true);
 }).RequireAuthorization();
 
 app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
@@ -1012,7 +1018,7 @@ app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
     var komponent = await db.Components.FindAsync(id);
     return komponent?.FdvData is null
         ? Results.NotFound()
-        : Results.File(komponent.FdvData, komponent.FdvContentType ?? "application/pdf", komponent.FdvFilnavn);
+        : Results.File(komponent.FdvData, FilSikkerhet.TryggContentType(komponent.FdvContentType ?? "application/pdf"), komponent.FdvFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/komponent/fdvdokument/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -1020,7 +1026,7 @@ app.MapGet("/komponent/fdvdokument/{id:int}", async (int id, ApplicationDbContex
     var dokument = await db.ComponentFdvDokumenter.FindAsync(id);
     return dokument is null
         ? Results.NotFound()
-        : Results.File(dokument.Data, dokument.ContentType, dokument.Filnavn);
+        : Results.File(dokument.Data, FilSikkerhet.TryggContentType(dokument.ContentType), dokument.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/komponent/{id:int}/montasjeblad", async (int id, ApplicationDbContext db) =>
@@ -1028,7 +1034,7 @@ app.MapGet("/komponent/{id:int}/montasjeblad", async (int id, ApplicationDbConte
     var komponent = await db.Components.FindAsync(id);
     return komponent?.MontasjebladData is null
         ? Results.NotFound()
-        : Results.File(komponent.MontasjebladData, komponent.MontasjebladContentType ?? "application/pdf", komponent.MontasjebladFilnavn);
+        : Results.File(komponent.MontasjebladData, FilSikkerhet.TryggContentType(komponent.MontasjebladContentType ?? "application/pdf"), komponent.MontasjebladFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/komponent/montasjebladdokument/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -1036,7 +1042,7 @@ app.MapGet("/komponent/montasjebladdokument/{id:int}", async (int id, Applicatio
     var dokument = await db.ComponentMontasjebladDokumenter.FindAsync(id);
     return dokument is null
         ? Results.NotFound()
-        : Results.File(dokument.Data, dokument.ContentType, dokument.Filnavn);
+        : Results.File(dokument.Data, FilSikkerhet.TryggContentType(dokument.ContentType), dokument.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/komponent/{id:int}/datablad", async (int id, ApplicationDbContext db) =>
@@ -1044,7 +1050,7 @@ app.MapGet("/komponent/{id:int}/datablad", async (int id, ApplicationDbContext d
     var komponent = await db.Components.FindAsync(id);
     return komponent?.DatabladData is null
         ? Results.NotFound()
-        : Results.File(komponent.DatabladData, komponent.DatabladContentType ?? "application/pdf", komponent.DatabladFilnavn);
+        : Results.File(komponent.DatabladData, FilSikkerhet.TryggContentType(komponent.DatabladContentType ?? "application/pdf"), komponent.DatabladFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/komponent/databladdokument/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -1052,7 +1058,7 @@ app.MapGet("/komponent/databladdokument/{id:int}", async (int id, ApplicationDbC
     var dokument = await db.ComponentDatabladDokumenter.FindAsync(id);
     return dokument is null
         ? Results.NotFound()
-        : Results.File(dokument.Data, dokument.ContentType, dokument.Filnavn);
+        : Results.File(dokument.Data, FilSikkerhet.TryggContentType(dokument.ContentType), dokument.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/komponent/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
@@ -1060,7 +1066,7 @@ app.MapGet("/komponent/{id:int}/bilde", async (int id, ApplicationDbContext db) 
     var komponent = await db.Components.FindAsync(id);
     return komponent?.BildeData is null
         ? Results.NotFound()
-        : Results.File(komponent.BildeData, komponent.BildeContentType ?? "image/jpeg", komponent.BildeFilnavn);
+        : Results.File(komponent.BildeData, FilSikkerhet.TryggContentType(komponent.BildeContentType ?? "image/jpeg"), komponent.BildeFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, string? byggetrinn, HttpContext context, ApplicationDbContext db, FdvPdfService fdvService) =>
@@ -1141,7 +1147,7 @@ app.MapGet("/cegodkjenningmedia/{id:int}", async (int id, ApplicationDbContext d
     var media = await db.CeGodkjenningMedia.FindAsync(id);
     return media is null
         ? Results.NotFound()
-        : Results.File(media.Data, media.ContentType, enableRangeProcessing: true);
+        : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), enableRangeProcessing: true);
 }).RequireAuthorization();
 
 app.MapGet("/komponenttype/{id:int}/ce-dokument", async (int id, ApplicationDbContext db) =>
@@ -1149,7 +1155,7 @@ app.MapGet("/komponenttype/{id:int}/ce-dokument", async (int id, ApplicationDbCo
     var type = await db.ComponentTypes.FindAsync(id);
     return type?.CeDokumentData is null
         ? Results.NotFound()
-        : Results.File(type.CeDokumentData, type.CeDokumentContentType ?? "application/pdf", type.CeDokumentFilnavn);
+        : Results.File(type.CeDokumentData, FilSikkerhet.TryggContentType(type.CeDokumentContentType ?? "application/pdf"), type.CeDokumentFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/befaring/{id:int}/pdf", async (int id, HttpContext context, BefaringPdfService service) =>
@@ -1269,19 +1275,19 @@ app.MapGet("/plantegning/{id:int}/pdf", async (int id, HttpContext context, Plan
 app.MapGet("/dormedia/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var media = await db.DorMedia.FindAsync(id);
-    return media is null ? Results.NotFound() : Results.File(media.Data, media.ContentType, media.Filnavn);
+    return media is null ? Results.NotFound() : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), media.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/servicerundemedia/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var media = await db.ServicerundeMedia.FindAsync(id);
-    return media is null ? Results.NotFound() : Results.File(media.Data, media.ContentType, media.Filnavn);
+    return media is null ? Results.NotFound() : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), media.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/arbeidsordremedia/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var media = await db.ArbeidsordreMedia.FindAsync(id);
-    return media is null ? Results.NotFound() : Results.File(media.Data, media.ContentType, media.Filnavn);
+    return media is null ? Results.NotFound() : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), media.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/kunngjoringbilde/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -1289,7 +1295,7 @@ app.MapGet("/kunngjoringbilde/{id:int}", async (int id, ApplicationDbContext db)
     var kunngjoring = await db.Kunngjoringer.FindAsync(id);
     return kunngjoring?.BildeData is null
         ? Results.NotFound()
-        : Results.File(kunngjoring.BildeData, kunngjoring.BildeContentType ?? "application/octet-stream", kunngjoring.BildeFilnavn);
+        : Results.File(kunngjoring.BildeData, FilSikkerhet.TryggContentType(kunngjoring.BildeContentType ?? "application/octet-stream"), kunngjoring.BildeFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/leverandorlogo/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -1297,7 +1303,7 @@ app.MapGet("/leverandorlogo/{id:int}", async (int id, ApplicationDbContext db) =
     var leverandor = await db.Leverandorer.FindAsync(id);
     return leverandor?.LogoData is null
         ? Results.NotFound()
-        : Results.File(leverandor.LogoData, leverandor.LogoContentType ?? "application/octet-stream", leverandor.LogoFilnavn);
+        : Results.File(leverandor.LogoData, FilSikkerhet.TryggContentType(leverandor.LogoContentType ?? "application/octet-stream"), leverandor.LogoFilnavn);
 }).RequireAuthorization();
 
 // Organisasjonens eget merkevare-bilde (satt av plattformeier på /plattform)
@@ -1310,7 +1316,7 @@ app.MapGet("/organisasjon/logo", (ITenantContext tenantCtx) =>
     var tenant = tenantCtx.Current;
     return tenant?.LogoData is null
         ? Results.NotFound()
-        : Results.File(tenant.LogoData, tenant.LogoContentType ?? "image/png");
+        : Results.File(tenant.LogoData, FilSikkerhet.TryggContentType(tenant.LogoContentType ?? "image/png"));
 });
 
 // Samme som over, men for forhåndsvisning på /plattform - der admin ser på en
@@ -1321,7 +1327,7 @@ app.MapGet("/plattform/organisasjon/{id:int}/logo", async (int id, PlatformDbCon
     var tenant = await platformDb.Tenants.FindAsync(id);
     return tenant?.LogoData is null
         ? Results.NotFound()
-        : Results.File(tenant.LogoData, tenant.LogoContentType ?? "image/png");
+        : Results.File(tenant.LogoData, FilSikkerhet.TryggContentType(tenant.LogoContentType ?? "image/png"));
 }).RequireAuthorization("Plattform");
 
 app.MapGet("/kundebilde/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -1329,7 +1335,7 @@ app.MapGet("/kundebilde/{id:int}", async (int id, ApplicationDbContext db) =>
     var kunde = await db.Kunder.FindAsync(id);
     return kunde?.BildeData is null
         ? Results.NotFound()
-        : Results.File(kunde.BildeData, kunde.BildeContentType ?? "application/octet-stream", kunde.BildeFilnavn);
+        : Results.File(kunde.BildeData, FilSikkerhet.TryggContentType(kunde.BildeContentType ?? "application/octet-stream"), kunde.BildeFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/kundedokument/{id:int}", async (int id, ApplicationDbContext db) =>
@@ -1337,7 +1343,7 @@ app.MapGet("/kundedokument/{id:int}", async (int id, ApplicationDbContext db) =>
     var dokument = await db.KundeDokumenter.FindAsync(id);
     return dokument is null
         ? Results.NotFound()
-        : Results.File(dokument.Data, dokument.ContentType, dokument.Filnavn);
+        : Results.File(dokument.Data, FilSikkerhet.TryggContentType(dokument.ContentType), dokument.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/arbeidsordre/{id:int}/rapport/pdf", async (int id, HttpContext context, ArbeidsordrePdfService service) =>
@@ -1432,14 +1438,46 @@ app.Run();
 // IResult som setter Content-Disposition: inline (med bevart filnavn) i
 // stedet for attachment - Results.File(...) sin filnavn-parameter tvinger
 // alltid frem nedlasting, se bruk på /prosjektvedlegg/{id}.
+// Opplastede/innkommende filer (vedlegg, bilder, dokumenter - inkl.
+// e-postvedlegg fra den anonyme Resend-webhooken) lagres med AVSENDERENS
+// egen, uvaliderte Content-Type. Uten denne sjekken kunne noen lastet opp
+// (eller sendt inn via webhooken) en fil med Content-Type "text/html"
+// eller "application/javascript", og fått den sendt tilbake akkurat slik
+// til hvem som helst som åpnet vedlegget - som ville kjørt skript i
+// mottakerens innloggede sesjon (lagret XSS, funnet i
+// sikkerhetsgjennomgangen 2026-10-08). Brukes ved all serving av lagret,
+// potensielt brukerkontrollert innhold - server-genererte PDF-er/bilder
+// (QuestPDF/SkiaSharp) har alltid en hardkodet, trygg Content-Type og
+// trenger ikke denne sjekken.
+static class FilSikkerhet
+{
+    private static readonly string[] TrygeTyper =
+    [
+        "application/pdf", "application/octet-stream",
+        "image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp",
+        "text/csv", "text/plain"
+    ];
+
+    public static string TryggContentType(string? lagretContentType)
+    {
+        var type = string.IsNullOrWhiteSpace(lagretContentType) ? "application/octet-stream" : lagretContentType.Split(';')[0].Trim();
+        return Array.Exists(TrygeTyper, t => string.Equals(t, type, StringComparison.OrdinalIgnoreCase)) ? type : "application/octet-stream";
+    }
+}
+
 sealed class InlineFileResult(byte[] data, string contentType, string filename) : IResult
 {
     public Task ExecuteAsync(HttpContext httpContext)
     {
-        var disposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("inline");
+        var tryggType = FilSikkerhet.TryggContentType(contentType);
+        // Falt tilbake til application/octet-stream fordi den lagrede typen
+        // ikke er på tillatelseslisten - da skal filen lastes ned, ikke
+        // vises inline (som ellers ville kjørt den i nettleseren).
+        var disposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue(tryggType == contentType ? "inline" : "attachment");
         disposition.SetHttpFileName(filename);
         httpContext.Response.Headers.ContentDisposition = disposition.ToString();
-        httpContext.Response.ContentType = contentType;
+        httpContext.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        httpContext.Response.ContentType = tryggType;
         httpContext.Response.ContentLength = data.Length;
         return httpContext.Response.Body.WriteAsync(data).AsTask();
     }
