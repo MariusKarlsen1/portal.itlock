@@ -8,9 +8,7 @@ namespace PortalItlock.Web.Services;
 // vertsnavn forespørselen faktisk kom inn på. Brukes av alle
 // konto-endepunktene (innlogging, glemt passord, sett passord), slik at de
 // virker likt enten organisasjonen har sitt eget domene, eller alle deler
-// samme adresse (se /konto/finn-min-side, som løste akkurat dette problemet
-// for "finn min side"-siden - dette er samme mønster, bare brukt direkte i
-// selve innloggingsflyten i stedet for en omdirigering til et annet domene).
+// samme adresse.
 public class TenantOppslagService(PlatformDbContext platformDb, ITenantContext tenantCtx)
 {
     public async Task<Tenant?> FinnTenantForEpostAsync(string epost)

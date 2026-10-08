@@ -425,7 +425,11 @@ app.Use(async (context, next) =>
         var host = context.Request.Host.Host;
         if (string.Equals(host, "admin.full-kontroll.no", StringComparison.OrdinalIgnoreCase))
         {
-            context.Response.Redirect("/plattform");
+            // Rett til plattform-innlogging med itlock sin egen organisasjon
+            // forhåndsvalgt som retur-mål (organisasjon-id 3) - på eksplisitt
+            // ønske fra bruker, i stedet for den generelle /plattform-
+            // forsiden (som uansett ville sendt uinnloggede dit).
+            context.Response.Redirect("/plattform/logg-inn?ReturnUrl=%2Fplattform%2Forganisasjoner%2F3");
             return;
         }
         if (string.Equals(host, "full-kontroll.no", StringComparison.OrdinalIgnoreCase)
@@ -480,15 +484,16 @@ app.Use(async (context, next) =>
 // bare produkt-domenet uten subdomene, "fullkontroll.no") OG som ikke er
 // innlogget (se ITenantContext - innlogget bruker resolves nå via
 // TenantId-claimen uansett vertsnavn) skal IKKE lenger vise itlock sine data
-// - i stedet sendes brukeren til "Finn min side" for å slå opp riktig kunde
-// ut fra e-posten sin. Unntar plattform-sidene (helt egen innlogging, ikke
-// kundeknyttet), konto-endepunktene, og statiske filer (kjennetegnet ved filendelse).
+// - i stedet sendes brukeren til vanlig innlogging ("Finn min side" er
+// fjernet på brukerens ønske 2026-10-08; full-kontroll.no/admin.full-
+// kontroll.no har nå egne faste mål, se middlewaren lenger opp - dette er
+// kun en siste fallback for andre, ukjente vertsnavn). Unntar
+// plattform-sidene (helt egen innlogging, ikke kundeknyttet),
+// konto-endepunktene, og statiske filer (kjennetegnet ved filendelse).
 app.Use(async (context, next) =>
 {
     var path = context.Request.Path.Value ?? "/";
-    var erUnntatt = path.StartsWith("/finn-min-side", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/plattform", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/konto", StringComparison.OrdinalIgnoreCase)
+    var erUnntatt = path.StartsWith("/plattform", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/account", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/_blazor", StringComparison.OrdinalIgnoreCase)
         || path.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase)
@@ -499,7 +504,7 @@ app.Use(async (context, next) =>
         var tenantContext = context.RequestServices.GetRequiredService<ITenantContext>();
         if (tenantContext.Current is null)
         {
-            context.Response.Redirect("/finn-min-side");
+            context.Response.Redirect("/login");
             return;
         }
     }
@@ -660,41 +665,6 @@ app.MapPost("/account/logout", async (HttpContext http) =>
     return Results.Redirect("/login");
 }).RequireAuthorization();
 
-// "Finn min side": felles inngang på det bare produkt-domenet (uten
-// subdomene) - slår opp hvilken kunde som eier e-posten og sender brukeren
-// videre til riktig <kunde>.fullkontroll.no/login, forhåndsutfylt. Selve
-// passordsjekken skjer fortsatt der, mot nøyaktig den kundens egen
-// Brukere-tabell - dette er bare et oppslag, ikke en innlogging i seg selv.
-app.MapPost("/konto/finn-min-side", async (HttpContext http, PlatformDbContext platformDb) =>
-{
-    var form = await http.Request.ReadFormAsync();
-    var epost = form["epost"].ToString().Trim();
-
-    if (!string.IsNullOrWhiteSpace(epost))
-    {
-        var aktiveKunder = await platformDb.Tenants
-            .Where(t => t.Status == TenantStatus.Aktiv && t.Subdomene != null)
-            .ToListAsync();
-
-        foreach (var kunde in aktiveKunder)
-        {
-            var kundeOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseSqlite(kunde.ConnectionString)
-                .Options;
-            using var kundeDb = new ApplicationDbContext(kundeOptions);
-            var kundeBrukere = await kundeDb.Brukere.Select(b => b.Epost).ToListAsync();
-            var finnes = kundeBrukere.Any(e => EpostHjelper.ErLik(e, epost));
-            if (finnes)
-            {
-                var lenke = $"{http.Request.Scheme}://{kunde.Subdomene}/login?epost={Uri.EscapeDataString(epost)}";
-                return Results.Redirect(lenke);
-            }
-        }
-    }
-
-    return Results.Redirect("/finn-min-side?ikkeFunnet=1");
-}).AllowAnonymous().RequireRateLimiting("login");
-
 // Plattform-innlogging: helt egen cookie ("Plattform"-schemaet) og helt egen
 // konto-tabell (PlattformBruker i PlatformDbContext) - se kommentaren ved
 // AddAuthentication lenger opp for hvorfor dette er adskilt fra /account/*.
@@ -703,6 +673,15 @@ app.MapPost("/plattform/konto/login", async (HttpContext http, PlatformDbContext
     var form = await http.Request.ReadFormAsync();
     var epost = form["username"].ToString().Trim();
     var password = form["password"].ToString();
+    var returnUrl = form["returnUrl"].ToString();
+
+    // Samme trygge mønster som /account/login - kun relative stier, aldri
+    // "//" (protokoll-relativ åpen omdirigering). Brukes bl.a. av
+    // admin.full-kontroll.no (se Program.cs sin vertsnavn-omdirigering) til å
+    // sende brukeren rett til en bestemt organisasjonsside etter innlogging.
+    var safeReturnUrl = !string.IsNullOrEmpty(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//")
+        ? returnUrl
+        : "/plattform";
 
     var plattformKandidater = await db.PlattformBrukere.ToListAsync();
     var bruker = plattformKandidater.FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, epost));
@@ -710,7 +689,7 @@ app.MapPost("/plattform/konto/login", async (HttpContext http, PlatformDbContext
 
     if (bruker is null || !passwordOk)
     {
-        return Results.Redirect("/plattform/logg-inn?feil=1");
+        return Results.Redirect($"/plattform/logg-inn?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
     }
 
     var claims = new List<Claim>
@@ -721,7 +700,7 @@ app.MapPost("/plattform/konto/login", async (HttpContext http, PlatformDbContext
     var identity = new ClaimsIdentity(claims, "Plattform");
     await http.SignInAsync("Plattform", new ClaimsPrincipal(identity));
 
-    return Results.Redirect("/plattform");
+    return Results.Redirect(safeReturnUrl);
 }).AllowAnonymous().RequireRateLimiting("login");
 
 app.MapPost("/plattform/konto/glemt-passord", async (HttpContext http, PlatformDbContext db, EmailService epost) =>
