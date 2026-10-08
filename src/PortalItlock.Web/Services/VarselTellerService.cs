@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using PortalItlock.Web.Data;
 using PortalItlock.Web.Models;
 
@@ -25,9 +26,30 @@ public record VarselTeller(
 
 // Delt mellom NavMenu (venstremeny-badge) og TopBar (brukermeny-badge), slik at
 // begge viser samme varseltall uten å duplisere sporringene.
-public class VarselTellerService(ApplicationDbContext db)
+public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, ITenantContext tenantCtx)
 {
+    // NavMenu kaller HentAsync() på HVER sidenavigasjon i hele appen (se
+    // NavMenu.razor OnLocationChanged) - uten denne korte cachen gjøres de
+    // ~13 spørringene under på nytt ved hvert eneste klikk, for alle brukere.
+    // Varseltall trenger ikke sekund-fersk presisjon, så en kort levetid gir
+    // stort sett samme opplevde ferskhet som før, bare uten gjentatt arbeid
+    // ved rask klikking rundt i appen.
+    private static readonly TimeSpan CacheLevetid = TimeSpan.FromSeconds(20);
+
     public async Task<VarselTeller> HentAsync(bool visUtvidet, bool erAdmin)
+    {
+        var cacheNokkel = $"varseltall:{tenantCtx.Current?.Id}:{visUtvidet}:{erAdmin}";
+        if (cache.TryGetValue(cacheNokkel, out VarselTeller? cachet) && cachet is not null)
+        {
+            return cachet;
+        }
+
+        var teller = await BeregnAsync(visUtvidet, erAdmin);
+        cache.Set(cacheNokkel, teller, CacheLevetid);
+        return teller;
+    }
+
+    private async Task<VarselTeller> BeregnAsync(bool visUtvidet, bool erAdmin)
     {
         var avvikSomVenter = await db.Avvik.CountAsync(a => a.Status == AvvikStatus.SendtTilKunde);
 

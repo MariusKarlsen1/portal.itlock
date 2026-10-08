@@ -79,6 +79,11 @@ builder.Services.AddDbContext<PlatformDbContext>(options =>
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 
+// Brukes av VarselTellerService (se kommentar der) til å korte ned hvor ofte
+// de ~13 varseltallene regnes ut på nytt - uten denne gjøres de på nytt ved
+// HVER sidenavigasjon i hele appen.
+builder.Services.AddMemoryCache();
+
 builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
 {
     var tenantContext = sp.GetRequiredService<ITenantContext>();
