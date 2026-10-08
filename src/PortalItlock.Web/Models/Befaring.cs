@@ -18,6 +18,7 @@ public class Befaring
     public string? SystemNr { get; set; }
     public string? BefartAv { get; set; }
     public string? Oppdrag { get; set; }
+    public BefaringStatus Status { get; set; } = BefaringStatus.Utkast;
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
