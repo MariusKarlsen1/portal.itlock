@@ -14,6 +14,9 @@ public sealed record GrunndataRad(string Ikon, string Label, string Verdi);
 // "Automatikk"), for å matche det oppgitte designet.
 public static class PakkeVisningHjelper
 {
+    public static string? AntallFloyerVerdi(Package p) =>
+        p.Krav.FirstOrDefault(k => k.RequirementValue?.RequirementDimensionId == 6)?.RequirementValue?.Verdi;
+
     public static List<string> TopPiller(Package p, int antall = 3) =>
         p.Krav
             .Where(k => k.RequirementValue is not null)

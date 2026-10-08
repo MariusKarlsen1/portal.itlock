@@ -841,6 +841,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             new RequirementValue { Id = 20, RequirementDimensionId = 6, Verdi = "1-fløyet", Rekkefolge = 1 },
             new RequirementValue { Id = 21, RequirementDimensionId = 6, Verdi = "2-fløyet", Rekkefolge = 2 },
             new RequirementValue { Id = 22, RequirementDimensionId = 6, Verdi = "Skyvedør", Rekkefolge = 3 },
+            new RequirementValue { Id = 32, RequirementDimensionId = 6, Verdi = "Automatisk skyvedør", Rekkefolge = 4 },
 
             new RequirementValue { Id = 23, RequirementDimensionId = 7, Verdi = "Mekanisk", Rekkefolge = 1 },
             new RequirementValue { Id = 24, RequirementDimensionId = 7, Verdi = "Elektrisk", Rekkefolge = 2 },
