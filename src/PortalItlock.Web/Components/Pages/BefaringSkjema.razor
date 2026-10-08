@@ -11,8 +11,21 @@
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 @inject BefaringPdfService PdfService
+@inject GeocodingService Geokoding
+@inject IJSRuntime JS
 
 <PageTitle>@(Id.HasValue ? "Rediger befaring" : "Ny befaring")</PageTitle>
+
+<script>
+    window.bsScrollOgFokuser = function (id) {
+        var el = document.getElementById(id);
+        if (!el) {
+            return;
+        }
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(function () { el.focus(); }, 300);
+    };
+</script>
 
 @if (_notFound)
 {
@@ -31,31 +44,23 @@ else
                 <p class="section-hint">@(string.IsNullOrWhiteSpace(_form.Navn) ? "Fyll inn informasjon om befaringen under." : _form.Navn)</p>
             </div>
         </div>
-        <div class="bs-header-knapper">
-            <button type="button" class="knapp" @onclick="SaveBefaring"><Icon Name="file-text" />Lagre utkast</button>
-            <a class="knapp" href="/befaringsliste"><Icon Name="x" />Avbryt</a>
-            <button type="button" class="knapp knapp-primaer" @onclick="SaveBefaring">
-                <Icon Name="check" />
-                @(Id.HasValue ? "Lagre endringer" : "Lagre befaring")
-            </button>
-        </div>
     </div>
 
     <div class="befaring-split">
     <div class="befaring-main">
         <nav class="bs-stepper">
-            <a href="#grunninformasjon-seksjon" class="bs-steg bs-steg-aktiv">
+            <span class="bs-steg bs-steg-aktiv">
                 <span class="bs-steg-tall">1</span>Grunninformasjon
-            </a>
-            <a href="#dorfelt-seksjon" class="bs-steg">
+            </span>
+            <span class="bs-steg">
                 <span class="bs-steg-tall">2</span>Dørfelt og registrering
-            </a>
-            <a href="#dokumentasjon-seksjon" class="bs-steg">
+            </span>
+            <span class="bs-steg">
                 <span class="bs-steg-tall">3</span>Dokumentasjon
-            </a>
-            <a href="#befaringsdetaljer-kort" class="bs-steg">
+            </span>
+            <span class="bs-steg">
                 <span class="bs-steg-tall">4</span>Oppsummering
-            </a>
+            </span>
         </nav>
 
         <section class="panel" id="grunninformasjon-seksjon">
@@ -91,9 +96,9 @@ else
                         }
                     </select>
                 </label>
-                <label>Adresse<input @bind="_form.Adresse" /></label>
-                <label>Postnr.<input @bind="_form.Postnr" /></label>
-                <label>Sted<input @bind="_form.Sted" /></label>
+                <label>Adresse<input @bind="_form.Adresse" @bind:after="GeokodLokasjonAsync" /></label>
+                <label>Postnr.<input @bind="_form.Postnr" @bind:after="GeokodLokasjonAsync" /></label>
+                <label>Sted<input @bind="_form.Sted" @bind:after="GeokodLokasjonAsync" /></label>
                 <label>Dato *<input type="date" @bind="_form.Dato" /></label>
                 <label>Tidspunkt<input type="time" @bind="Tidspunkt" /></label>
                 <label>Kontaktperson<input @bind="_form.Kontaktperson" /></label>
@@ -112,7 +117,7 @@ else
                 </label>
                 <label class="span-3" id="oppdrag-felt">
                     Oppdrag / beskrivelse
-                    <textarea rows="2" maxlength="500" @bind="_form.Oppdrag" @bind:event="oninput" placeholder="Kort beskrivelse av befaringen, formål, spesielle forhold osv."></textarea>
+                    <textarea id="oppdrag-tekstfelt" rows="2" maxlength="500" @bind="_form.Oppdrag" @bind:event="oninput" placeholder="Kort beskrivelse av befaringen, formål, spesielle forhold osv."></textarea>
                     <span class="bs-tegnteller">@((_form.Oppdrag?.Length ?? 0))/500</span>
                 </label>
             </div>
@@ -410,9 +415,62 @@ else
             }
         </div>
 
+        <section class="panel" id="vedlegg-seksjon">
+            <div class="panel-header">
+                <span class="panel-ikon"><Icon Name="upload" /></span>
+                <div>
+                    <h2>Bilder og video</h2>
+                    <p class="section-hint">Generelle bilder/videoer for hele befaringen (ikke knyttet til et spesifikt dørfelt).</p>
+                </div>
+            </div>
+
+            @if (!Id.HasValue)
+            {
+                <p class="bilder-hint">Lagre befaringen først for å kunne laste opp bilder/video.</p>
+            }
+            else
+            {
+                @if (_form.Vedlegg.Count > 0)
+                {
+                    <div class="vedlegg-media-grid">
+                        @foreach (var v in _form.Vedlegg)
+                        {
+                            <div class="vedlegg-media-thumb">
+                                @if (v.ErVideo)
+                                {
+                                    <video src="@($"/befaringvedlegg/{v.Id}")" controls></video>
+                                }
+                                else
+                                {
+                                    <img src="@($"/befaringvedlegg/{v.Id}")" alt="@v.Filnavn" />
+                                }
+                                <button type="button" class="bilde-remove" title="Fjern" @onclick="@(() => RemoveVedlegg(v))">×</button>
+                            </div>
+                        }
+                    </div>
+                }
+                <label class="dropzone" id="vedlegg-dropzone">
+                    <span class="dropzone-ikon"><Icon Name="upload" /></span>
+                    <span class="dropzone-tekst">
+                        <strong>Legg til bilder eller video</strong>
+                        <span>Dra og slipp, eller trykk for å velge</span>
+                    </span>
+                    <InputFile OnChange="OnVedleggValgt" multiple accept="image/*,video/*" capture="environment" />
+                </label>
+                @if (_lasterOppVedlegg)
+                {
+                    <p class="bilder-hint">Laster opp...</p>
+                }
+                @if (!string.IsNullOrEmpty(_vedleggFeil))
+                {
+                    <p class="form-error">@_vedleggFeil</p>
+                }
+            }
+        </section>
+
         @if (Id.HasValue)
         {
-            <section class="panel">
+            <section class="panel" id="lagrede-pdfer-seksjon">
                 <div class="panel-header">
                     <span class="panel-ikon"><Icon Name="file-text" /></span>
                     <h2>Lagrede PDF-er</h2>
@@ -454,18 +512,18 @@ else
                 </span>
             </div>
             <nav class="bs-stepper bs-stepper-mini">
-                <a href="#grunninformasjon-seksjon" class="bs-steg bs-steg-aktiv">
+                <span class="bs-steg bs-steg-aktiv">
                     <span class="bs-steg-tall">1</span>Informasjon
-                </a>
-                <a href="#dorfelt-seksjon" class="bs-steg">
+                </span>
+                <span class="bs-steg">
                     <span class="bs-steg-tall">2</span>Dørfelt
-                </a>
-                <a href="#dokumentasjon-seksjon" class="bs-steg">
+                </span>
+                <span class="bs-steg">
                     <span class="bs-steg-tall">3</span>Dokumentasjon
-                </a>
-                <a href="#befaringsdetaljer-kort" class="bs-steg">
+                </span>
+                <span class="bs-steg">
                     <span class="bs-steg-tall">4</span>Oppsummering
-                </a>
+                </span>
             </nav>
         </div>
 
@@ -502,23 +560,23 @@ else
                     <a class="bs-kort-lenke" href="@LokasjonKartUrl" target="_blank" rel="noopener">Åpne i kart<Icon Name="arrow-right" /></a>
                 }
             </div>
-            <div class="bs-kart-placeholder">
-                <Icon Name="map-pin" />
-            </div>
+            @if (_form.Latitude is not null && _form.Longitude is not null)
+            {
+                <div id="befaring-kart-visning" class="bs-kart-visning"></div>
+            }
+            else
+            {
+                <div class="bs-kart-placeholder">
+                    <Icon Name="map-pin" />
+                </div>
+            }
+            @if (_geokodingFeilet)
+            {
+                <p class="bs-kart-feil">Fant ikke posisjon for denne adressen.</p>
+            }
             <div class="bs-lokasjon-rad">
                 <Icon Name="map-pin" />
                 <span>@(HarAdresse ? AdresseTekst : "–")</span>
-            </div>
-            <div class="bs-lokasjon-rad">
-                <Icon Name="arrow-right" />
-                @if (HarAdresse)
-                {
-                    <a href="@LokasjonRuteUrl" target="_blank" rel="noopener">Planlegg rute</a>
-                }
-                else
-                {
-                    <span>Planlegg rute</span>
-                }
             </div>
         </div>
 
@@ -528,9 +586,9 @@ else
                 <h2>Hurtighandlinger</h2>
             </div>
             <div class="bs-hurtig-grid">
-                <a class="bs-hurtig-knapp" href="#dorfelt-seksjon"><Icon Name="upload" />Last opp bilder</a>
-                <a class="bs-hurtig-knapp" href="#oppdrag-felt"><Icon Name="edit" />Legg til notat</a>
-                <button type="button" class="bs-hurtig-knapp" disabled><Icon Name="check-circle" />Tiltak / oppgaver</button>
+                <a class="bs-hurtig-knapp" href="#vedlegg-seksjon"><Icon Name="upload" />Last opp bilder</a>
+                <button type="button" class="bs-hurtig-knapp" @onclick="FokuserNotatfelt"><Icon Name="edit" />Legg til notat</button>
+                <a class="bs-hurtig-knapp" href="#lagrede-pdfer-seksjon"><Icon Name="file-text" />Lagrede</a>
                 @if (Id.HasValue)
                 {
                     <button type="button" class="bs-hurtig-knapp" @onclick="VisPdfForhandsvisning"><Icon Name="file-text" />Generer rapport</button>
@@ -566,6 +624,8 @@ else
     private string? _pdfPreviewUrl;
     private string? _pdfSavedMessage;
     private List<BefaringPdf> _lagredePdfer = [];
+    private bool _lasterOppVedlegg;
+    private string? _vedleggFeil;
     private readonly Dictionary<BefaringDorfelt, string> _aktivFane = [];
 
     private List<string> _kundeNavn = [];
@@ -615,9 +675,7 @@ else
 
     private static readonly BefaringStatus[] StatusValg =
     [
-        BefaringStatus.Utkast,
         BefaringStatus.Planlagt,
-        BefaringStatus.UnderBefaring,
         BefaringStatus.Gjennomfort,
         BefaringStatus.Avlyst
     ];
@@ -626,11 +684,48 @@ else
 
     private string AdresseTekst => string.Join(", ", new[] { _form.Adresse, _form.Postnr, _form.Sted }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
-    // Ingen lagrede koordinater på Befaring (bevisst, se samtale 2026-10-08) -
-    // "Åpne i kart"/"Planlegg rute" lenker derfor til et adressesøk i Google
-    // Maps fremfor et embedded, geokodet kart.
+    // "Åpne i kart" lenker til et adressesøk i Google Maps - selve
+    // Lokasjon-kortet viser nå et ekte, geokodet Leaflet-kart (se
+    // GeokodLokasjonAsync/OnAfterRenderAsync), men denne eksterne lenken er
+    // nyttig i tillegg for faktisk å starte navigasjon på mobil.
     private string LokasjonKartUrl => $"https://www.google.com/maps/search/?api=1&query={Uri.EscapeDataString(AdresseTekst)}";
-    private string LokasjonRuteUrl => $"https://www.google.com/maps/dir/?api=1&destination={Uri.EscapeDataString(AdresseTekst)}";
+
+    private bool _geokodingFeilet;
+    private bool _kartInitialisert;
+    private string? _sistGeokodetAdresse;
+
+    private async Task GeokodLokasjonAsync()
+    {
+        if (!HarAdresse)
+        {
+            _form.Latitude = null;
+            _form.Longitude = null;
+            _geokodingFeilet = false;
+            _kartInitialisert = false;
+            return;
+        }
+
+        if (AdresseTekst == _sistGeokodetAdresse)
+        {
+            return;
+        }
+
+        _sistGeokodetAdresse = AdresseTekst;
+        var treff = await Geokoding.GeocodeAsync(_form.Adresse ?? "", _form.Postnr, _form.Sted);
+        if (treff is null)
+        {
+            _form.Latitude = null;
+            _form.Longitude = null;
+            _geokodingFeilet = true;
+            _kartInitialisert = false;
+            return;
+        }
+
+        _geokodingFeilet = false;
+        _form.Latitude = treff.Value.Latitude;
+        _form.Longitude = treff.Value.Longitude;
+        _kartInitialisert = false;
+    }
 
     private static string Initialer(string navn)
     {
@@ -661,6 +756,25 @@ else
         {
             var state = await AuthStateTask;
             _innloggetNavn = state.User.Identity?.Name;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_kartInitialisert && _form.Latitude is not null && _form.Longitude is not null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("kart.init", "befaring-kart-visning", new[]
+                {
+                    new { lat = _form.Latitude.Value, lng = _form.Longitude.Value, tittel = _form.Navn, undertekst = AdresseTekst, pin = true }
+                });
+                _kartInitialisert = true;
+            }
+            catch (JSException)
+            {
+                // Elementet kan ha rukket å forsvinne igjen (f.eks. adressen ble tømt rett etter) - prøver på nytt neste render.
+            }
         }
     }
 
@@ -695,6 +809,7 @@ else
                 .ThenInclude(d => d.Lassystemer)
             .Include(b => b.Dorfelt)
                 .ThenInclude(d => d.Bilder)
+            .Include(b => b.Vedlegg)
             .FirstOrDefaultAsync(b => b.Id == id);
 
         if (existing is null)
@@ -706,10 +821,23 @@ else
         _form = existing;
         _dorfelt = existing.Dorfelt;
         _opprettetAvNavn = null;
+        _kartInitialisert = false;
+        _sistGeokodetAdresse = HarAdresse ? AdresseTekst : null;
+        _vedleggFeil = null;
 
         _lagredePdfer = await Db.BefaringPdfer
             .Where(p => p.BefaringId == id)
             .ToListAsync();
+
+        // Eldre befaringer kan ha adresse registrert fra før kartstøtten kom
+        // (2026-10-08) og mangler dermed lagrede koordinater - geokoder dem
+        // da automatisk ved åpning, på samme måte som når man skriver inn en
+        // ny adresse.
+        if (HarAdresse && (_form.Latitude is null || _form.Longitude is null))
+        {
+            _sistGeokodetAdresse = null;
+            await GeokodLokasjonAsync();
+        }
     }
 
     private void ResetForm()
@@ -717,6 +845,9 @@ else
         _dorfelt = [];
         _form = new Befaring { Navn = "", Dorfelt = _dorfelt, BefartAv = _innloggetNavn };
         _opprettetAvNavn = _innloggetNavn;
+        _kartInitialisert = false;
+        _sistGeokodetAdresse = null;
+        _geokodingFeilet = false;
     }
 
     private void AddDorfelt()
@@ -786,6 +917,112 @@ else
         Db.BefaringDorfeltBilder.Remove(bilde);
         await Db.SaveChangesAsync();
         d.Bilder.Remove(bilde);
+    }
+
+    private async Task FokuserNotatfelt()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("bsScrollOgFokuser", "oppdrag-tekstfelt");
+        }
+        catch (JSException)
+        {
+            // Ikke kritisk - feltet finnes uansett lenger ned på siden.
+        }
+    }
+
+    private static readonly string[] TilltateVideoTyper = ["video/mp4", "video/quicktime", "video/webm"];
+
+    private async Task OnVedleggValgt(InputFileChangeEventArgs e)
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        _vedleggFeil = null;
+        _lasterOppVedlegg = true;
+
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                var erBilde = file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+                var erVideo = TilltateVideoTyper.Contains(file.ContentType, StringComparer.OrdinalIgnoreCase);
+
+                if (!erBilde && !erVideo)
+                {
+                    _vedleggFeil = $"\"{file.Name}\" er verken et støttet bilde- eller videoformat, og ble hoppet over.";
+                    continue;
+                }
+
+                if (erBilde)
+                {
+                    using var buffer = new MemoryStream();
+                    await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+                    {
+                        await stream.CopyToAsync(buffer);
+                    }
+                    buffer.Position = 0;
+
+                    byte[] jpegBytes;
+                    try
+                    {
+                        jpegBytes = ResizeToJpeg(buffer);
+                    }
+                    catch
+                    {
+                        _vedleggFeil = $"Kunne ikke lese \"{file.Name}\" som bilde.";
+                        continue;
+                    }
+
+                    Db.BefaringVedlegg.Add(new BefaringVedlegg
+                    {
+                        BefaringId = Id.Value,
+                        Filnavn = file.Name,
+                        ContentType = "image/jpeg",
+                        Data = jpegBytes
+                    });
+                }
+                else
+                {
+                    // Video lagres uendret (ingen komprimering/omkoding tilgjengelig server-side)
+                    // - 200 MB tak for å unngå at en enkelt opplasting blir urimelig stor.
+                    const int maxVideoBytes = 200_000_000;
+                    using var buffer = new MemoryStream();
+                    await using (var stream = file.OpenReadStream(maxAllowedSize: maxVideoBytes))
+                    {
+                        await stream.CopyToAsync(buffer);
+                    }
+
+                    Db.BefaringVedlegg.Add(new BefaringVedlegg
+                    {
+                        BefaringId = Id.Value,
+                        Filnavn = file.Name,
+                        ContentType = file.ContentType,
+                        Data = buffer.ToArray()
+                    });
+                }
+            }
+
+            await Db.SaveChangesAsync();
+
+            _form.Vedlegg = await Db.BefaringVedlegg
+                .Where(v => v.BefaringId == Id.Value)
+                .OrderByDescending(v => v.OpprettetDato)
+                .ToListAsync();
+        }
+        finally
+        {
+            _lasterOppVedlegg = false;
+        }
+    }
+
+    private async Task RemoveVedlegg(BefaringVedlegg vedlegg)
+    {
+        Db.BefaringVedlegg.Remove(vedlegg);
+        await Db.SaveChangesAsync();
+        _form.Vedlegg.Remove(vedlegg);
     }
 
     private static byte[] ResizeToJpeg(Stream input, int maxDimension = 1600, int quality = 82)

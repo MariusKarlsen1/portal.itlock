@@ -32,6 +32,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<BefaringLassystem> BefaringLassystemer => Set<BefaringLassystem>();
     public DbSet<BefaringDorfeltBilde> BefaringDorfeltBilder => Set<BefaringDorfeltBilde>();
     public DbSet<BefaringPdf> BefaringPdfer => Set<BefaringPdf>();
+    public DbSet<BefaringVedlegg> BefaringVedlegg => Set<BefaringVedlegg>();
     public DbSet<GuideSide> GuideSider => Set<GuideSide>();
     public DbSet<Nokkelsystem> Nokkelsystemer => Set<Nokkelsystem>();
     public DbSet<Rekvirent> Rekvirenter => Set<Rekvirent>();

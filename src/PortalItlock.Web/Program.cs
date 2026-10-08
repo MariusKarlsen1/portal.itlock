@@ -784,6 +784,12 @@ app.MapGet("/bilder/{id:int}", async (int id, ApplicationDbContext db) =>
     return bilde is null ? Results.NotFound() : Results.File(bilde.Data, FilSikkerhet.TryggContentType(bilde.ContentType));
 }).RequireAuthorization();
 
+app.MapGet("/befaringvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var vedlegg = await db.BefaringVedlegg.FindAsync(id);
+    return vedlegg is null ? Results.NotFound() : Results.File(vedlegg.Data, FilSikkerhet.TryggContentType(vedlegg.ContentType));
+}).RequireAuthorization();
+
 app.MapGet("/systemvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var vedlegg = await db.SystemVedlegg.FindAsync(id);
@@ -1486,6 +1492,7 @@ static class FilSikkerhet
     [
         "application/pdf", "application/octet-stream",
         "image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp",
+        "video/mp4", "video/quicktime", "video/webm",
         "text/csv", "text/plain"
     ];
 
