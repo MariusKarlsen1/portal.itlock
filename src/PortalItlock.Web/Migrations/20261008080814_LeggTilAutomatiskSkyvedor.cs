@@ -10,10 +10,16 @@ namespace PortalItlock.Web.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.InsertData(
-                table: "RequirementValues",
-                columns: new[] { "Id", "Kode", "Rekkefolge", "RequirementDimensionId", "Verdi" },
-                values: new object[] { 32, null, 4, 6, "Automatisk skyvedør" });
+            // INSERT OR IGNORE (ikke InsertData, som genererer en vanlig INSERT) -
+            // gjør denne migrasjonen trygg å kjøre på nytt selv om raden allerede
+            // finnes i en gitt leietakerdatabase (f.eks. etter et avbrutt forsøk),
+            // i stedet for å krasje hele appen på "UNIQUE constraint failed" slik
+            // det gjorde i produksjon 2026-10-08.
+            migrationBuilder.Sql(
+                """
+                INSERT OR IGNORE INTO RequirementValues (Id, Kode, Rekkefolge, RequirementDimensionId, Verdi)
+                VALUES (32, NULL, 4, 6, 'Automatisk skyvedør');
+                """);
         }
 
         /// <inheritdoc />

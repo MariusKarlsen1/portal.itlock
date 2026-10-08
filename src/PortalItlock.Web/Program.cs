@@ -287,22 +287,34 @@ using (var seedScope = app.Services.CreateScope())
     var aktiveTenants = platformDb.Tenants.Where(t => t.Status == TenantStatus.Aktiv).ToList();
     foreach (var tenant in aktiveTenants)
     {
-        var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite(tenant.ConnectionString)
-            .Options;
-        using var seedDb = new ApplicationDbContext(tenantOptions);
-        seedDb.Database.Migrate();
-        PortalItlock.Web.Services.TenantSeedHelper.SeedNyheter(seedDb);
-
-        if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
+        // Én leietakers database som feiler under migrering (f.eks. et
+        // avbrutt tidligere migreringsforsøk, se 2026-10-08-krasjet) skal
+        // aldri ta ned hele appen for alle andre kunder - logg og fortsett
+        // til neste leietaker i stedet for å la unntaket boble opp og
+        // krasje prosessen.
+        try
         {
-            seedDb.Brukere.Add(new PortalItlock.Web.Models.Bruker
+            var tenantOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseSqlite(tenant.ConnectionString)
+                .Options;
+            using var seedDb = new ApplicationDbContext(tenantOptions);
+            seedDb.Database.Migrate();
+            PortalItlock.Web.Services.TenantSeedHelper.SeedNyheter(seedDb);
+
+            if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
             {
-                Navn = "Marius Karlsen",
-                Epost = "marius@itlock.no",
-                Rolle = PortalItlock.Web.Models.BrukerRolle.Admin
-            });
-            seedDb.SaveChanges();
+                seedDb.Brukere.Add(new PortalItlock.Web.Models.Bruker
+                {
+                    Navn = "Marius Karlsen",
+                    Epost = "marius@itlock.no",
+                    Rolle = PortalItlock.Web.Models.BrukerRolle.Admin
+                });
+                seedDb.SaveChanges();
+            }
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogError(ex, "Migrering/seeding feilet for leietaker {TenantId} ({TenantNavn}) - hopper over og fortsetter med neste leietaker.", tenant.Id, tenant.Navn);
         }
     }
 }
