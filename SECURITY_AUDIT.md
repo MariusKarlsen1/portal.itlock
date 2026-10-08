@@ -290,9 +290,19 @@ Ingen `AddRateLimiter`-policy finnes for PDF-generering, Excel-import/eksport el
 
 ---
 
+## Test-prosjekt (etter klarsignal)
+
+Lagt til `src/PortalItlock.Web.Tests` (xUnit), koblet inn i `PortalItlock.sln`, med `ProjectReference` til hovedprosjektet. `[assembly: InternalsVisibleTo("PortalItlock.Web.Tests")]` lagt til i `Program.cs` slik at interne sikkerhetshjelpere kan testes direkte uten å gjøres `public`.
+
+39 regresjonstester, alle grønne (`dotnet test`):
+- **`PasswordHasherTests.cs`**: hash-unikhet (tilfeldig salt), riktig/feil passord, korrupt lagret format gir `false` i stedet for unntak, og at den nye `DummyHash`-mekanismen (funn 9, tidsbasert sidekanal) aldri matcher et ekte passord.
+- **`FilSikkerhetTests.cs`**: alle kjente trygge typer slippes gjennom uendret, kjente farlige typer (`text/html`, `application/javascript`, `image/svg+xml` m.fl.) nedgraderes til `application/octet-stream`, case-insensitivitet, og at `; charset=...`-parametre ikke lurer filteret. Dette er direkte regresjonstest av **funn 1 (Kritisk)**.
+- **`ForsideRendererTests.cs`**: lenke-skjema-filteret (funn 12) - `http(s)`/`mailto` tillates, `javascript:`/`data:`/`vbscript:`/`file:` avvises. Krevde en liten, ufarlig refaktorering (trakk den innebygde sjekken ut til en egen `internal static ErTryggHyperlenke(...)`-metode i `ForsideRenderer.cs`, samme logikk som før, bare navngitt og testbar isolert).
+
+**Bevisst utelatt** (ville krevd en langt tyngre `WebApplicationFactory`-basert integrasjonstest-rigg med mocket e-post/leietaker-infrastruktur, uforholdsmessig stort i seg selv sammenlignet med fiksene): rate limiting-partisjonering (funn 2-3), `[Authorize]`-håndheving på koblingsskjema (funn 4), og kontoenumerering-responsen (funn 6/14) - disse er i stedet verifisert manuelt live mot den kjørende appen (se "Testet"-linjene under hvert funn over).
+
 ## Gjenstår
 
-- **Test-prosjekt**: Repoet har ingen eksisterende automatiserte tester. Å skrive ordentlige regresjonstester for disse fiksene (spesielt rate limiting og filserving) krever å sette opp et nytt xUnit-testprosjekt i solution-filen (ny avhengighet/arkitekturendring) - gjort ikke uten klarsignal, som instruert. Alt over er i stedet verifisert manuelt live (bygget + kjørt lokalt + kontrollert med curl/nettleser).
 - **Opplastingsside-validering** (defense-in-depth for funn 1): ikke gjort, se notat under funn 1.
 
 ## Anbefalinger jeg ikke kan fikse i kode

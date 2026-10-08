@@ -13,6 +13,11 @@ using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
 using PortalItlock.Web.Models;
 
+// Gjør interne typer (f.eks. FilSikkerhet, som filtrerer Content-Type ved
+// filserving - se sikkerhetsgjennomgangen 2026-10-08) synlige for
+// regresjonstestene uten å måtte gjøre dem public.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("PortalItlock.Web.Tests")]
+
 QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 
 var builder = WebApplication.CreateBuilder(args);

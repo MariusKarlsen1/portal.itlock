@@ -27,6 +27,16 @@ public static class ForsideRenderer
         RenderBlocks(col, document.Body!.ChildNodes);
     }
 
+    // Kun http(s)/mailto - uten denne sjekken kunne en lagret
+    // "javascript:"/"data:"-lenke endt opp som en klikkbar hyperlenke i
+    // PDF-en (se sikkerhetsgjennomgangen 2026-10-08). Egen metode (i stedet
+    // for inline i RenderNode) slik at den kan regresjonstestes isolert.
+    internal static bool ErTryggHyperlenke(string? href) =>
+        !string.IsNullOrWhiteSpace(href) && (
+            href.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            href.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+            href.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase));
+
     private static void RenderBlocks(ColumnDescriptor col, INodeList nodes)
     {
         foreach (var node in nodes)
@@ -182,14 +192,7 @@ public static class ForsideRenderer
 
             case "a":
                 var href = el.GetAttribute("href");
-                // Kun http(s)/mailto - uten denne sjekken kunne en lagret
-                // "javascript:"/"data:"-lenke endt opp som en klikkbar
-                // hyperlenke i PDF-en (se sikkerhetsgjennomgangen 2026-10-08).
-                var erTryggSkjema = !string.IsNullOrWhiteSpace(href) && (
-                    href.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                    href.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-                    href.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase));
-                if (erTryggSkjema)
+                if (ErTryggHyperlenke(href))
                 {
                     t.Hyperlink(el.TextContent, href!);
                     return;
