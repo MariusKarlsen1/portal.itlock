@@ -29,6 +29,7 @@ public class LasUtskifting
     public string? Slagretning { get; set; }
 
     public string? Merknad { get; set; }
+    public bool Arkivert { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 }
