@@ -21,6 +21,11 @@ public class KoblingsSkjema
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
     public DateTime? OppdatertDato { get; set; }
 
+    // Satt hver gang noen faktisk åpner/ser på skjemaet (ikke bare redigerer
+    // det) - styrer "Sist brukte"-lista på /guide/kobling, se KoblingKategori.razor
+    // (VelgSkjema) og KoblingsSkjemaVisning.razor.
+    public DateTime? SistApnet { get; set; }
+
     public List<KoblingsSymbol> Symboler { get; set; } = [];
     public List<KoblingsStrek> Streker { get; set; } = [];
     public List<KoblingsSkjemaKomponent> Komponenter { get; set; } = [];
