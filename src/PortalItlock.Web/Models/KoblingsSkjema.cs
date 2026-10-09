@@ -6,6 +6,9 @@ public class KoblingsSkjema
     public int KategoriId { get; set; }
     public KoblingsKategori? Kategori { get; set; }
     public required string Navn { get; set; }
+    public string? Beskrivelse { get; set; }
+    public string? Versjon { get; set; }
+    public string? Notater { get; set; }
 
     // Valgfri kobling til et prosjekt - skjemaet vises da som vedlegg på prosjektet.
     public int? ProsjektId { get; set; }
@@ -20,4 +23,5 @@ public class KoblingsSkjema
 
     public List<KoblingsSymbol> Symboler { get; set; } = [];
     public List<KoblingsStrek> Streker { get; set; } = [];
+    public List<KoblingsSkjemaKomponent> Komponenter { get; set; } = [];
 }

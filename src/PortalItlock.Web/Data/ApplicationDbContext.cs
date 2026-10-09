@@ -126,6 +126,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<NedlastningsFil> NedlastningsFiler => Set<NedlastningsFil>();
     public DbSet<KoblingsSymbol> KoblingsSymboler => Set<KoblingsSymbol>();
     public DbSet<KoblingsStrek> KoblingsStreker => Set<KoblingsStrek>();
+    public DbSet<KoblingsSkjemaKomponent> KoblingsSkjemaKomponenter => Set<KoblingsSkjemaKomponent>();
     public DbSet<KoblingsSymbolBibliotek> KoblingsSymbolBibliotek => Set<KoblingsSymbolBibliotek>();
     public DbSet<LagretPdf> LagredePdfer => Set<LagretPdf>();
     public DbSet<Driftsmelding> Driftsmeldinger => Set<Driftsmelding>();
@@ -680,6 +681,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasOne(s => s.KoblingsSkjema)
             .WithMany(k => k.Streker)
             .HasForeignKey(s => s.KoblingsSkjemaId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<KoblingsSkjemaKomponent>()
+            .HasOne(k => k.KoblingsSkjema)
+            .WithMany(s => s.Komponenter)
+            .HasForeignKey(k => k.KoblingsSkjemaId)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<KoblingsSymbol>()
