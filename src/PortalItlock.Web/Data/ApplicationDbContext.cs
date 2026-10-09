@@ -969,10 +969,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         );
 
         modelBuilder.Entity<NedlastningsKategori>().HasData(
-            new NedlastningsKategori { Id = 1, Navn = "Salto Space", Rekkefolge = 1 },
-            new NedlastningsKategori { Id = 2, Navn = "Salto KS", Rekkefolge = 2 },
-            new NedlastningsKategori { Id = 3, Navn = "ARX", Rekkefolge = 3 },
-            new NedlastningsKategori { Id = 4, Navn = "iLOQ", Rekkefolge = 4 }
+            new NedlastningsKategori { Id = 1, Navn = "Salto Space", Beskrivelse = "Oppsett, dørmiljø, kortlesere og rettigheter.", Farge = "brun", Rekkefolge = 1 },
+            new NedlastningsKategori { Id = 2, Navn = "Salto KS", Beskrivelse = "Skybasert adgangskontroll og brukere.", Farge = "bla", Rekkefolge = 2 },
+            new NedlastningsKategori { Id = 3, Navn = "ARX", Beskrivelse = "Konfigurasjon av sentraler, dørkort og I/O.", Farge = "gronn", Rekkefolge = 3 },
+            new NedlastningsKategori { Id = 4, Navn = "iLOQ", Beskrivelse = "Digital sylinder, nøkler og administrasjon.", Farge = "gra", Rekkefolge = 4 }
         );
 
         modelBuilder.Entity<TicketKategori>().HasData(
