@@ -405,23 +405,36 @@ app.Use(async (context, next) =>
 app.UseStaticFiles();
 app.UseAntiforgery();
 
+// UseAuthentication() MÅ kjøre før begge de egendefinerte middlewarene under
+// - ITenantContext leser nå en "TenantId"-claim fra innloggingscookien
+// (se Services/ITenantContext.cs), og den claimen finnes først etter at
+// UseAuthentication() har bygget context.User fra cookien.
+app.UseAuthentication();
+
 // De to offentlige, kunde-uavhengige inngangsdørene til tjenesten - selve
-// produktdomenet og admin-subdomenet - skal alltid lande på sin faste side
-// når noen besøker roten, UANSETT om nettleseren allerede har en gyldig
-// innloggingscookie fra en tidligere økt (f.eks. fra å ha vært innlogget
-// som admin hos en kunde tidligere - ITenantContext sin "TenantId-claimen
-// vinner alltid"-regel skal IKKE få lov til å stille sende besøkende rett
-// inn i en gammel økt her). Ekte kunder bruker sin egen
-// <kunde>.full-kontroll.no-adresse, som er upåvirket av dette.
-// MÅ ligge FØR UseAuthentication/UseAuthorization - ikke etter, slik
-// tilsvarende egendefinerte middlewarer lenger ned gjør - fordi en helt
+// produktdomenet og admin-subdomenet - skal lande på sin faste side når en
+// UINNLOGGET besøker roten. Ekte kunder bruker sin egen
+// <kunde>.full-kontroll.no-adresse, som er upåvirket av dette; itlock AS
+// selv er derimot "standard"-leietakeren uten eget subdomene (Subdomene er
+// null, ErStandard er true) og bor nettopp på det bare produktdomenet - en
+// vellykket innlogging her må derfor faktisk slippe gjennom til "/" i
+// stedet for å bli sendt rett tilbake til /login. Reell produksjonsbug
+// 2026-10-09: denne sjekken var tidligere UBETINGET (kjørte FØR
+// UseAuthentication, uten noen innlogget-sjekk i det hele tatt), så ENHVER
+// innlogging på full-kontroll.no - uansett riktig passord - endte rett
+// tilbake på /login igjen med en gang, helt uten feilmelding, fordi
+// /account/login sin vellykkede omdirigering går nettopp til "/".
+// Ligger derfor nå EFTER UseAuthentication() (slik at context.User faktisk
+// er bygget fra cookien), men fortsatt FØR UseAuthorization() - en helt
 // uinnlogget forespørsel til "/" (som ikke har noen egen @attribute
-// [Authorize]) ellers blir fanget opp og omdirigert av
+// [Authorize]) ville ellers blitt fanget opp og omdirigert av
 // FallbackPolicy-utfordringen INNE i UseAuthorization() selv, FØR den i det
 // hele tatt når frem til noen av de senere app.Use(...)-blokkene.
 app.Use(async (context, next) =>
 {
-    if (HttpMethods.IsGet(context.Request.Method) && context.Request.Path == "/")
+    if (HttpMethods.IsGet(context.Request.Method)
+        && context.Request.Path == "/"
+        && !(context.User.Identity?.IsAuthenticated ?? false))
     {
         var host = context.Request.Host.Host;
         if (string.Equals(host, "admin.full-kontroll.no", StringComparison.OrdinalIgnoreCase))
@@ -429,7 +442,11 @@ app.Use(async (context, next) =>
             // Rett til plattform-innlogging med itlock sin egen organisasjon
             // forhåndsvalgt som retur-mål (organisasjon-id 3) - på eksplisitt
             // ønske fra bruker, i stedet for den generelle /plattform-
-            // forsiden (som uansett ville sendt uinnloggede dit).
+            // forsiden (som uansett ville sendt uinnloggede dit). Plattform-
+            // innlogging bruker et eget schema/cookie (se "Plattform"-policy
+            // lenger opp) og egen landingsside (ikke "/"), så den er ikke
+            // berørt av bugen over - trenger derfor ingen tilsvarende
+            // schema-spesifikk innlogget-sjekk her.
             context.Response.Redirect("/plattform/logg-inn?ReturnUrl=%2Fplattform%2Forganisasjoner%2F3");
             return;
         }
@@ -444,11 +461,6 @@ app.Use(async (context, next) =>
     await next();
 });
 
-// UseAuthentication() MÅ kjøre før begge de egendefinerte middlewarene under
-// - ITenantContext leser nå en "TenantId"-claim fra innloggingscookien
-// (se Services/ITenantContext.cs), og den claimen finnes først etter at
-// UseAuthentication() har bygget context.User fra cookien.
-app.UseAuthentication();
 app.UseAuthorization();
 
 // Mobil skal alltid starte på Oppgaver ("/min-dag"), ikke skrivebordets
