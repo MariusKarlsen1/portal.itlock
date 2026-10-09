@@ -962,10 +962,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         );
 
         modelBuilder.Entity<KoblingsKategori>().HasData(
-            new KoblingsKategori { Id = 1, Navn = "ARX", Beskrivelse = "Koblingsskjema og dokumentasjon for ARX.", Ikon = "lock", Farge = "oransje", Rekkefolge = 1 },
-            new KoblingsKategori { Id = 2, Navn = "Salto", Beskrivelse = "Koblingsskjema og dokumentasjon for Salto.", Ikon = "door", Farge = "gronn", Rekkefolge = 2 },
-            new KoblingsKategori { Id = 3, Navn = "Diverse", Beskrivelse = "Andre systemer og koblingsløsninger.", Ikon = "settings", Farge = "gul", Rekkefolge = 3 },
-            new KoblingsKategori { Id = 4, Navn = "Prinsippskisser", Beskrivelse = "Prinsippskisser og generelle koblingsskjema.", Ikon = "file-text", Farge = "rosa", Rekkefolge = 4 }
+            new KoblingsKategori { Id = 1, Navn = "ARX", Beskrivelse = "Koblingsskjema og dokumentasjon for ARX.", Ikon = "krets-brikke", Farge = "oransje", Rekkefolge = 1 },
+            new KoblingsKategori { Id = 2, Navn = "Salto", Beskrivelse = "Koblingsskjema og dokumentasjon for Salto.", Ikon = "krets-modul", Farge = "gronn", Rekkefolge = 2 },
+            new KoblingsKategori { Id = 3, Navn = "Diverse", Beskrivelse = "Andre systemer og koblingsløsninger.", Ikon = "krets-bryter", Farge = "gul", Rekkefolge = 3 },
+            new KoblingsKategori { Id = 4, Navn = "Prinsippskisser", Beskrivelse = "Prinsippskisser og generelle koblingsskjema.", Ikon = "krets-dokument", Farge = "rosa", Rekkefolge = 4 }
         );
 
         modelBuilder.Entity<NedlastningsKategori>().HasData(
