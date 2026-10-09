@@ -29,7 +29,13 @@ public class LasUtskifting
     public string? Slagretning { get; set; }
 
     public string? Merknad { get; set; }
-    public bool Arkivert { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
+
+    // Ingen lagret arkiveringsstatus - flyttes automatisk fra "Ny" til
+    // "Arkivert" 14 dager etter datoen satt på sjekklisten (ingen dato satt
+    // betyr at den aldri arkiveres automatisk). På eksplisitt ønske
+    // 2026-10-09, i stedet for en manuelt satt/lagret status.
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public bool ErArkivert => Dato.HasValue && Dato.Value.Date.AddDays(14) < DateTime.Today;
 }
