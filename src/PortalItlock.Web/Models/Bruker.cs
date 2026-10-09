@@ -19,6 +19,13 @@ public class Bruker
     public string? TopplinjeSnarveier { get; set; }
     public string? EkstraNavLenker { get; set; }
 
+    // Husker sist valgte visning (f.eks. "kanban"/"liste"/"kart") pr. modul,
+    // lagret som ett JSON-objekt {"prosjekter":"kart","befaring":"rutenett",...}
+    // - se VisningPreferanseService. På eksplisitt ønske 2026-10-09: valgt
+    // visning skal være standard igjen neste gang man åpner modulen, til man
+    // bytter tilbake.
+    public string? VisningsPreferanser { get; set; }
+
     // Styrer hvilken av de tre Hjem-layoutene brukeren ser - velges via
     // "Layout N"-knappen i Tilpass meny (se TopBar.razor). Bilde er standard
     // (matcher tidligere HjemLayoutKlassisk=false), som bevart av migrasjonen
