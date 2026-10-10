@@ -10,6 +10,8 @@ public static class PortalModulRegister
     [
         new Lenke("Befaringsliste", "Sjekkliste og notater fra befaring.", "befaringsliste", "check-circle"),
         new Lenke("Utskiftning av lås", "Sjekkliste med mål på dør, karm og hengsling.", "lasutskifting", "tool"),
+        new Lenke("Utskiftning av låskasse", "Søk opp gammel lås, se hva du trenger.", "lasekasse-utskiftning", "tool"),
+        new Lenke("ABC-kalkulator", "Sylinderforlenger, skilt og skruer fra A/B/C-mål.", "abc-kalkulator", "tool"),
     ];
 
     private static readonly List<Lenke> GuiderUndermoduler =
@@ -17,7 +19,12 @@ public static class PortalModulRegister
         new Lenke("Kobling", "Guide for kobling.", "guide/kobling", "trend-up"),
         new Lenke("Dørmiljø", "Tegninger til bruk på befaring og i prosjektering.", "dormiljo", "box"),
         new Lenke("Oppsett adgangskontroll", "Guide for oppsett av adgangskontroll.", "guide/oppsett-adgangskontroll", "bell"),
-        new Lenke("Regelverk", "TEK17-brannkrav, maskindirektivet og NS-EN 16005 for dørautomatikk - kilder og huskeliste.", "guide/regelverk", "shield"),
+        // Regelverk-guiden er bevisst tatt ut av menyen/portalen på ønske
+        // 2026-10-10, men selve siden lever videre på /guide/regelverk
+        // (GuideSideVisning + tittelen i Titler-oppslaget der) slik at
+        // innholdet er intakt og lenken fra CE-teksten i ProsjektSkjema
+        // fortsatt virker. Legg linjen under tilbake her for å vise den igjen:
+        // new Lenke("Regelverk", "TEK17-brannkrav, maskindirektivet og NS-EN 16005 for dørautomatikk - kilder og huskeliste.", "guide/regelverk", "shield"),
     ];
 
     private static readonly List<Lenke> ProsjektMontorUndermoduler =
@@ -121,12 +128,10 @@ public static class PortalModulRegister
             "Guide, befaring og vedlegg til bruk i felt",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Befaring", "Befaringsliste og utskiftning av lås", "befaringsmodul", "eye", BefaringUndermoduler),
-                    new Lenke("Guider", "Kobling, dørmiljø, oppsett adgangskontroll og regelverk", "guidermodul", "tool", GuiderUndermoduler),
+                    new Lenke("Befaring", "Befaringsliste, utskiftning av lås og låskasse, og ABC-kalkulator", "befaringsmodul", "eye", BefaringUndermoduler),
+                    new Lenke("Guider", "Kobling, dørmiljø og oppsett adgangskontroll", "guidermodul", "tool", GuiderUndermoduler),
                     new Lenke("Prosjekt", "Prosjekter og arbeidsordre", "prosjektmodul", "folder", ProsjektMontorUndermoduler),
                     new Lenke("Timer og fravær", "Fravær og timeregistrering", "timerfravarmodul", "clock", TimerFravarUndermoduler),
-                    new Lenke("Utskiftning av låskasse", "Søk opp gammel lås, se hva du trenger", "lasekasse-utskiftning", "tool"),
-                    new Lenke("ABC-kalkulator", "Sylinderforlenger, skilt og skruer fra A/B/C-mål", "abc-kalkulator", "tool"),
                 ]),
                 new LenkeGruppe("Kart og kalender", [
                     new Lenke("Min dag", "Dagens jobber, adresse og varer å pakke, samlet", "min-dag", "calendar"),
