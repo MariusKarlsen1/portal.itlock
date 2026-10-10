@@ -203,7 +203,14 @@
                         <button type="button" class="aok-detalj-lukk" aria-label="Lukk" @onclick="@(() => _valgtKartId = null)"><Icon Name="x" /></button>
 
                         <div class="aok-detalj-hoved">
-                            <span class="aok-detalj-bilde" style="background:@HexBgForFarge(KolonneFargeForRad(v)); color:@HexForFarge(KolonneFargeForRad(v))"><Icon Name="box" /></span>
+                            @if (_valgtBildeId is { } bildeId)
+                            {
+                                <img class="aok-detalj-bilde" src="@($"/arbeidsordremedia/{bildeId}")" alt="@v.Tittel" />
+                            }
+                            else
+                            {
+                                <span class="aok-detalj-bilde aok-detalj-bilde-tom" style="background:@HexBgForFarge(KolonneFargeForRad(v)); color:@HexForFarge(KolonneFargeForRad(v))"><Icon Name="box" /></span>
+                            }
                             <div class="aok-detalj-tekst">
                                 <div class="aok-detalj-tittelrad">
                                     <strong>AO-@v.Id</strong>
@@ -324,6 +331,24 @@
                                 </span>
                                 <span class="aok-kort-hoyre">
                                     <StatusPill Tekst="@(ErForfalt(r) ? "Forfalt" : r.Status.Visningsnavn())" Ikon="@(ErForfalt(r) ? "clock" : r.Status.PillIkon())" Farge="@(ErForfalt(r) ? "rod" : r.Status.PillFarge())" />
+                                    <span class="aok-kort-meny-wrap">
+                                        <span class="aok-kort-meny-knapp" role="button" tabindex="0" title="Flere valg"
+                                              @onclick:stopPropagation="true"
+                                              @onclick="@(() => _apenKortMenyId = _apenKortMenyId == r.Id ? null : r.Id)">
+                                            <Icon Name="more-vertical" />
+                                        </span>
+                                        @if (_apenKortMenyId == r.Id)
+                                        {
+                                            <span class="aok-kort-meny" @onclick:stopPropagation="true">
+                                                <a href="@($"/arbeidsordre/{r.Id}")"><Icon Name="folder" />Åpne arbeidsordre</a>
+                                                @if (KartAdresse(r) is { } a2)
+                                                {
+                                                    <a href="@($"https://www.google.com/maps/dir/?api=1&destination={Uri.EscapeDataString(a2)}")" target="_blank"><Icon Name="send" />Veibeskrivelse</a>
+                                                }
+                                                <a href="@($"/timeregistrering?arbeidsordreid={r.Id}")"><Icon Name="clock" />Før timer</a>
+                                            </span>
+                                        }
+                                    </span>
                                 </span>
                             </button>
                         }
@@ -667,6 +692,8 @@
     private string _kartFlate = "kart";
     private string _kartHurtigfilter = "alle";
     private int? _valgtKartId;
+    private int? _apenKortMenyId;
+    private int? _valgtBildeId;
     private DotNetObjectReference<ArbeidsordreListe>? _kartRef;
 
     private bool ErKartvisning => !Verktoylinje.ErMobilvisning && _visning == "kart";
@@ -695,6 +722,16 @@
     private static bool ErHaster(ArbeidsordreRad r) =>
         r.Prioritet is ArbeidsordrePrioritet.Hoy or ArbeidsordrePrioritet.Kritisk;
 
+    // Symbolet som tegnes inni kartmarkøren - se glyfer i kart.js.
+    private static string KartGlyf(ArbeidsordreRad r) => r switch
+    {
+        _ when ErForfalt(r) || ErHaster(r) => "alert",
+        { Status: ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert } => "check",
+        { Status: ArbeidsordreStatus.Pagaende } => "tool",
+        { Status: ArbeidsordreStatus.Klar } => "clock",
+        _ => "user"
+    };
+
     private static string TidsTekst(ArbeidsordreRad r) => r.PlanlagtDato is null
         ? "Ikke planlagt"
         : r.PlanlagtSlutt is null
@@ -718,15 +755,29 @@
     private async Task VelgKartOrdre(int id)
     {
         _valgtKartId = id;
+        _apenKortMenyId = null;
+        await HentBildeAsync(id);
         await JS.InvokeVoidAsync("kart.fremhev", id);
     }
 
     // Kalles fra kart.js når man klikker en markør.
     [JSInvokable]
-    public void OnKartPunktValgt(int id)
+    public async Task OnKartPunktValgt(int id)
     {
         _valgtKartId = id;
+        _apenKortMenyId = null;
+        await HentBildeAsync(id);
         StateHasChanged();
+    }
+
+    // Miniatyrbildet i detaljlinja: første opplastede bilde på ordren.
+    private async Task HentBildeAsync(int ordreId)
+    {
+        _valgtBildeId = await Db.ArbeidsordreMedia
+            .Where(m => m.ArbeidsordreId == ordreId && m.ContentType.StartsWith("image/"))
+            .OrderBy(m => m.Id)
+            .Select(m => (int?)m.Id)
+            .FirstOrDefaultAsync();
     }
 
     // Rad-nivå filtre (den nye filterraden - Prosjekt/Kunde/Montør/Status/
@@ -859,6 +910,11 @@
                 farge = HexForFarge(farge),
                 pin = true,
                 rikPopup = true,
+                // Symbolet inni markøren og infokortet som henger ved den.
+                glyph = KartGlyf(r),
+                kallelut = true,
+                aoNr = $"AO-{r.Id}",
+                prosjekt = r.ProsjektNavn,
                 statusTekst = ErForfalt(r) ? "Forfalt" : r.Status.Visningsnavn(),
                 statusBg = HexBgForFarge(farge),
                 datoTekst = DatoBadgeTekst(r),

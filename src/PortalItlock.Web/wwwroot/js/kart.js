@@ -4,6 +4,7 @@ window.kart = (function () {
     let markersById = {};
     let flate = null;
     let dotNet = null;
+    let klyngelag = null;
 
     const flater = {
         kart: {
@@ -26,20 +27,49 @@ window.kart = (function () {
         });
     }
 
+    // Små hvite symboler inni markørene, så man ser hva slags jobb det er
+    // uten å klikke. Tegnet i et 24x24-rutenett som skaleres ned.
+    const glyfer = {
+        tool: '<path d="M18.5 5.5a4.5 4.5 0 0 1-6 6l-5 5a2 2 0 1 1-3-3l5-5a4.5 4.5 0 0 1 6-6l-2.6 2.6 2 2L17.5 4.5Z"/>',
+        user: '<circle cx="12" cy="8.5" r="3.4"/><path d="M5.5 19c.6-3.4 3.3-5.2 6.5-5.2s5.9 1.8 6.5 5.2Z"/>',
+        check: '<path d="M5.5 12.5 10 17l8.5-9.5-1.9-1.7L10 13.2l-2.7-2.6Z"/>',
+        clock: '<path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm.9 8.3V7.4h-1.8v5.6l4 2.4.9-1.5Z"/>',
+        alert: '<path d="M11.1 5h1.8v8.4h-1.8Zm0 10.2h1.8V18h-1.8Z"/>'
+    };
+
     // Dråpeformet markør (i stedet for prikken over) - brukes når punktet har
-    // pin:true, f.eks. Arbeidsordre sin kartvisning.
-    function lagPinIkon(farge) {
+    // pin:true, f.eks. Arbeidsordre sin kartvisning. glyph velger symbolet.
+    function lagPinIkon(farge, glyph) {
         const f = farge || '#2f6fb3';
+        const symbol = glyfer[glyph] || null;
+        const innhold = symbol
+            ? `<g transform="translate(6 6) scale(0.67)" fill="#fff">${symbol}</g>`
+            : '<circle cx="15" cy="15" r="5.5" fill="#fff"/>';
+
         return L.divIcon({
             className: 'kart-punkt-ikon',
-            html: `<svg width="28" height="38" viewBox="0 0 28 38" style="filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))">
-                <path d="M14 1C6.8 1 1 6.8 1 14c0 9.5 11.3 21.6 12.2 22.6.4.4 1.1.4 1.5 0C15.7 35.6 27 23.5 27 14 27 6.8 21.2 1 14 1Z" fill="${f}" stroke="#fff" stroke-width="2"/>
-                <circle cx="14" cy="14" r="5.5" fill="#fff"/>
+            html: `<svg width="30" height="40" viewBox="0 0 30 40" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.35))">
+                <path d="M15 1C7.8 1 2 6.8 2 14c0 9.9 11.6 23.1 12.3 23.9.4.4 1 .4 1.4 0C16.4 37.1 28 23.9 28 14 28 6.8 22.2 1 15 1Z" fill="${f}" stroke="#fff" stroke-width="2.5"/>
+                ${innhold}
             </svg>`,
-            iconSize: [28, 38],
-            iconAnchor: [14, 37],
-            popupAnchor: [0, -36]
+            iconSize: [30, 40],
+            iconAnchor: [15, 39],
+            popupAnchor: [0, -38],
+            tooltipAnchor: [0, -34]
         });
+    }
+
+    // Infokortet som henger ved markøren i Arbeidsordre sin kartvisning -
+    // vises permanent så lenge det er få nok markører til at de ikke
+    // overlapper hverandre.
+    function lagKallelut(p) {
+        const linjer = [
+            p.aoNr ? `<span class="kart-kallelut-nr">${p.aoNr}</span>` : '',
+            p.prosjekt ? `<span class="kart-kallelut-prosjekt">${p.prosjekt}</span>` : '',
+            `<span class="kart-kallelut-tittel">${p.tittel}</span>`,
+            p.undertekst2 ? `<span class="kart-kallelut-person">${p.undertekst2}</span>` : ''
+        ];
+        return `<span class="kart-kallelut">${linjer.join('')}</span>`;
     }
 
     // dotNetRef er valgfri - sendes inn av sider som vil få beskjed når en
@@ -136,25 +166,78 @@ window.kart = (function () {
         </div>`;
     }
 
+    // Grå klyngeboble med antall, slik referansedesignet viser det.
+    function lagKlyngeIkon(klynge) {
+        const antall = klynge.getChildCount();
+        return L.divIcon({
+            className: 'kart-klynge',
+            html: `<span>${antall}</span>`,
+            iconSize: [34, 34]
+        });
+    }
+
     function tegnMarkorer(punkter) {
+        if (klyngelag) {
+            map.removeLayer(klyngelag);
+            klyngelag = null;
+        }
         markers.forEach(m => map.removeLayer(m));
         markers = [];
         markersById = {};
 
-        (punkter || []).forEach(p => {
-            const ikon = p.pin ? lagPinIkon(p.farge) : lagIkon(p.farge);
-            const marker = L.marker([p.lat, p.lng], { icon: ikon }).addTo(map);
+        const liste = punkter || [];
+
+        // Klynger krever markercluster-utvidelsen. Er den ikke lastet,
+        // legges markørene rett på kartet som før.
+        const brukKlynger = typeof L.markerClusterGroup === 'function';
+        if (brukKlynger) {
+            klyngelag = L.markerClusterGroup({
+                iconCreateFunction: lagKlyngeIkon,
+                showCoverageOnHover: false,
+                maxClusterRadius: 48,
+                spiderfyOnMaxZoom: true
+            });
+        }
+
+        // Permanente infokort bare når det er få nok markører til at de ikke
+        // dekker hverandre - ellers havner de oppå alt.
+        const visKallelut = liste.length > 0 && liste.length <= 12;
+
+        liste.forEach(p => {
+            const ikon = p.pin ? lagPinIkon(p.farge, p.glyph) : lagIkon(p.farge);
+            const marker = L.marker([p.lat, p.lng], { icon: ikon });
             marker.bindPopup(lagPopup(p), { minWidth: 220 });
+
+            if (p.kallelut && visKallelut) {
+                marker.bindTooltip(lagKallelut(p), {
+                    permanent: true,
+                    direction: 'top',
+                    className: 'kart-kallelut-wrap',
+                    opacity: 1
+                });
+            }
+
             if (dotNet && p.id !== undefined && p.id !== null) {
                 marker.on('click', function () {
                     dotNet.invokeMethodAsync('OnKartPunktValgt', p.id);
                 });
             }
+
+            if (brukKlynger) {
+                klyngelag.addLayer(marker);
+            } else {
+                marker.addTo(map);
+            }
+
             markers.push(marker);
             if (p.id !== undefined && p.id !== null) {
                 markersById[p.id] = marker;
             }
         });
+
+        if (brukKlynger) {
+            map.addLayer(klyngelag);
+        }
     }
 
     // Panorerer/zoomer til punktet med gitt id (sendt inn som p.id fra siden),
@@ -167,17 +250,27 @@ window.kart = (function () {
             return;
         }
 
-        const malZoom = Math.max(map.getZoom(), 16);
-        map.flyTo(marker.getLatLng(), malZoom, { duration: 0.6 });
-        marker.openPopup();
-
-        const el = marker.getElement();
-        if (el) {
-            el.classList.remove('kart-punkt-blink');
-            void el.offsetWidth; // tvinger reflow så animasjonen starter på nytt ved gjentatte klikk
-            el.classList.add('kart-punkt-blink');
-            setTimeout(() => el.classList.remove('kart-punkt-blink'), 1800);
+        function blink() {
+            marker.openPopup();
+            const el = marker.getElement();
+            if (el) {
+                el.classList.remove('kart-punkt-blink');
+                void el.offsetWidth; // tvinger reflow så animasjonen starter på nytt ved gjentatte klikk
+                el.classList.add('kart-punkt-blink');
+                setTimeout(() => el.classList.remove('kart-punkt-blink'), 1800);
+            }
         }
+
+        // Ligger markøren i en sammenslått klynge må den pakkes ut først,
+        // ellers finnes den ikke i DOM-en og popup-en har ingenting å feste
+        // seg til.
+        if (klyngelag && typeof klyngelag.zoomToShowLayer === 'function') {
+            klyngelag.zoomToShowLayer(marker, blink);
+            return;
+        }
+
+        map.flyTo(marker.getLatLng(), Math.max(map.getZoom(), 16), { duration: 0.6 });
+        blink();
     }
 
     function setPunkter(punkter) {
