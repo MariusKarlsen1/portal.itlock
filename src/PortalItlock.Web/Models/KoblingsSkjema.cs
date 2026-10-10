@@ -10,6 +10,13 @@ public class KoblingsSkjema
     public string? Versjon { get; set; }
     public string? Notater { get; set; }
 
+    // Visningsvalg for selve tegneflaten, satt i "Skjema-innstillinger" i
+    // editoren. Lagres pr. skjema slik at de overlever at man lukker siden.
+    public string Stil { get; set; } = "Standard";
+    public bool VisRutenett { get; set; } = true;
+    public bool SnapTilRutenett { get; set; } = true;
+    public bool VisKomponentnavn { get; set; } = true;
+
     // Valgfri kobling til et prosjekt - skjemaet vises da som vedlegg på prosjektet.
     public int? ProsjektId { get; set; }
     public Prosjekt? Prosjekt { get; set; }

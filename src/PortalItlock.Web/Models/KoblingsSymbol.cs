@@ -13,6 +13,10 @@ public class KoblingsSymbol
     public int? SymbolBibliotekId { get; set; }
     public KoblingsSymbolBibliotek? SymbolBibliotek { get; set; }
 
+    // Komponent - nøkkelen til en innebygd komponenttype i komponentpaletten
+    // (se KoblingsKomponentKatalog), f.eks. "adk-sentral" eller "kortleser-inn".
+    public string? KomponentNokkel { get; set; }
+
     // Rektangel/Sirkel/Linje/Pil
     public string Farge { get; set; } = "#835e41";
     public int Strokbredde { get; set; } = 2;
