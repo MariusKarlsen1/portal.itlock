@@ -2,6 +2,19 @@ window.kart = (function () {
     let map = null;
     let markers = [];
     let markersById = {};
+    let flate = null;
+    let dotNet = null;
+
+    const flater = {
+        kart: {
+            url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            opts: { attribution: '&copy; OpenStreetMap-bidragsytere', maxZoom: 19 }
+        },
+        satellitt: {
+            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            opts: { attribution: '&copy; Esri', maxZoom: 19 }
+        }
+    };
 
     function lagIkon(farge) {
         return L.divIcon({
@@ -29,7 +42,10 @@ window.kart = (function () {
         });
     }
 
-    function init(elementId, punkter) {
+    // dotNetRef er valgfri - sendes inn av sider som vil få beskjed når en
+    // markør klikkes (Arbeidsordre sin kartvisning åpner detaljlinja under
+    // kartet i stedet for å nøye seg med popup-en).
+    function init(elementId, punkter, dotNetRef) {
         const el = document.getElementById(elementId);
         if (!el || typeof L === 'undefined') {
             return;
@@ -40,14 +56,42 @@ window.kart = (function () {
             map = null;
         }
         markers = [];
+        dotNet = dotNetRef || null;
 
-        map = L.map(elementId);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap-bidragsytere',
-            maxZoom: 19
-        }).addTo(map);
+        map = L.map(elementId, { zoomControl: false });
+        settBakgrunn('kart');
 
         setPunkter(punkter);
+    }
+
+    function settBakgrunn(type) {
+        if (!map) {
+            return;
+        }
+
+        const valgt = flater[type] || flater.kart;
+        if (flate) {
+            map.removeLayer(flate);
+        }
+        flate = L.tileLayer(valgt.url, valgt.opts).addTo(map);
+    }
+
+    function zoom(delta) {
+        if (map) {
+            map.setZoom(map.getZoom() + delta);
+        }
+    }
+
+    // Sentrerer på brukerens egen posisjon. Nettleseren spør om tillatelse
+    // første gang; avslag håndteres stille (kartet står der det står).
+    function finnMeg() {
+        if (!map || !navigator.geolocation) {
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(function (pos) {
+            map.flyTo([pos.coords.latitude, pos.coords.longitude], 14, { duration: 0.6 });
+        }, function () { });
     }
 
     function lagPopup(p) {
@@ -101,6 +145,11 @@ window.kart = (function () {
             const ikon = p.pin ? lagPinIkon(p.farge) : lagIkon(p.farge);
             const marker = L.marker([p.lat, p.lng], { icon: ikon }).addTo(map);
             marker.bindPopup(lagPopup(p), { minWidth: 220 });
+            if (dotNet && p.id !== undefined && p.id !== null) {
+                marker.on('click', function () {
+                    dotNet.invokeMethodAsync('OnKartPunktValgt', p.id);
+                });
+            }
             markers.push(marker);
             if (p.id !== undefined && p.id !== null) {
                 markersById[p.id] = marker;
@@ -159,5 +208,5 @@ window.kart = (function () {
         tegnMarkorer(punkter);
     }
 
-    return { init, setPunkter, oppdaterPunkter, fremhev };
+    return { init, setPunkter, oppdaterPunkter, fremhev, settBakgrunn, zoom, finnMeg };
 })();
