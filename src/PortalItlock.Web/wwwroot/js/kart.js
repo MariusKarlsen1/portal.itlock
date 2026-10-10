@@ -5,6 +5,7 @@ window.kart = (function () {
     let flate = null;
     let dotNet = null;
     let klyngelag = null;
+    let eierId = null;
 
     const flater = {
         kart: {
@@ -86,12 +87,32 @@ window.kart = (function () {
             map = null;
         }
         markers = [];
+        klyngelag = null;
         dotNet = dotNetRef || null;
+        eierId = elementId;
 
         map = L.map(elementId, { zoomControl: false });
         settBakgrunn('kart');
 
         setPunkter(punkter);
+    }
+
+    // Rydder opp når siden som eier kartet forlates. Tar elementId slik at
+    // en side som allerede har overtatt kartet ikke får det revet vekk under
+    // seg når den forrige siden ryddes opp etterpå.
+    function fjern(elementId) {
+        if (!map || (elementId && eierId !== elementId)) {
+            return;
+        }
+
+        map.remove();
+        map = null;
+        klyngelag = null;
+        markers = [];
+        markersById = {};
+        flate = null;
+        dotNet = null;
+        eierId = null;
     }
 
     function settBakgrunn(type) {
@@ -301,5 +322,5 @@ window.kart = (function () {
         tegnMarkorer(punkter);
     }
 
-    return { init, setPunkter, oppdaterPunkter, fremhev, settBakgrunn, zoom, finnMeg };
+    return { init, fjern, setPunkter, oppdaterPunkter, fremhev, settBakgrunn, zoom, finnMeg };
 })();

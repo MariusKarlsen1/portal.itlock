@@ -135,7 +135,11 @@ public static class PortalModulRegister
                 ]),
                 new LenkeGruppe("Kart og kalender", [
                     new Lenke("Min dag", "Dagens jobber, adresse og varer å pakke, samlet", "min-dag", "calendar"),
-                    new Lenke("Kart", "Se dagens jobber geografisk", "kart", "map"),
+                    // Kart er tatt ut for montører: /kart viser nøyaktig samme
+                    // visning som Kart-fanen på Arbeidsordre (begge bruker
+                    // ArbeidsordreKartvisning), så det var to veier til det
+                    // samme. Siden ligger fortsatt under Drift.
+                    // new Lenke("Kart", "Se dagens jobber geografisk", "kart", "map"),
                     new Lenke("Kalender", "Se planlagte arbeidsordre i månedsvisning", "kalender", "calendar"),
                 ]),
             ]),

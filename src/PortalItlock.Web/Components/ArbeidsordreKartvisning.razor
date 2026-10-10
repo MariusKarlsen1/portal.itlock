@@ -1,0 +1,681 @@
+@* Kartvisningen av arbeidsordre. Brukes både av /kart og av Kart-fanen på
+   /arbeidsordre, slik at de to inngangene viser nøyaktig det samme. *@
+@implements IAsyncDisposable
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+@inject PortalItlock.Web.Services.GeocodingService Geokoding
+@inject IJSRuntime JS
+
+<div class="aok-side">
+
+    <header class="aok-topp">
+        <div class="aok-topp-venstre">
+            <span class="aok-topp-ikon"><Icon Name="map" /></span>
+            <div class="aok-topp-tekst">
+                <h1>Arbeidsordre</h1>
+                <p>Viser alle arbeidsordre lokalisert på kartet. Klikk på en markør for mer informasjon.</p>
+            </div>
+        </div>
+        <button type="button" class="aok-ny-knapp" @onclick="NyArbeidsordre"><Icon Name="plus" />Ny arbeidsordre<Icon Name="chevron-down" /></button>
+    </header>
+
+    <div class="aok-verktoylinje">
+        <div class="aok-nav">
+            <button type="button" class="aok-navknapp" aria-label="Forrige dag" @onclick="@(() => _dato = _dato.AddDays(-1))"><Icon Name="chevron-left" /></button>
+            <button type="button" class="aok-navknapp" aria-label="Neste dag" @onclick="@(() => _dato = _dato.AddDays(1))"><Icon Name="chevron-right" /></button>
+        </div>
+        <button type="button" class="aok-datopille" title="Gå til i dag" @onclick="@(() => _dato = DateTime.Today)">
+            @StorForbokstav(_dato.ToString("dddd d. MMMM yyyy", Kultur))
+            <Icon Name="calendar" />
+        </button>
+
+        <select class="aok-velger" @bind="_statusFilter">
+            <option value="alle">Alle statuser</option>
+            @foreach (var s in Enum.GetValues<ArbeidsordreStatus>())
+            {
+                <option value="@s">@s.Visningsnavn()</option>
+            }
+        </select>
+        @if (_rolle != BrukerRolle.Montor)
+        {
+            <select class="aok-velger" value="@(_teknikerFilter?.ToString() ?? "")" @onchange="@(e => _teknikerFilter = string.IsNullOrEmpty(e.Value as string) ? null : int.Parse((string)e.Value!))">
+                <option value="">Alle teknikere</option>
+                @foreach (var b in _ansatte)
+                {
+                    <option value="@b.Id">@b.Navn</option>
+                }
+            </select>
+        }
+        <select class="aok-velger" @bind="_typeFilter">
+            <option value="alle">Alle typer</option>
+            @foreach (var t in Enum.GetValues<ArbeidsordreType>())
+            {
+                <option value="@t">@t.Visningsnavn()</option>
+            }
+        </select>
+
+        <label class="aok-sok">
+            <Icon Name="search" />
+            <input @bind="_sok" @bind:event="oninput" placeholder="Søk adresse, kunde, AO-nummer…" />
+        </label>
+
+        <div class="aok-filter-wrap">
+            <button type="button" class="aok-filterknapp @(_visFilter ? "aktiv" : "")" @onclick="@(() => _visFilter = !_visFilter)">
+                <Icon Name="filter" />Filter
+            </button>
+            @if (_visFilter)
+            {
+                <div class="aok-filterpanel">
+                    <label class="aok-bryter">
+                        <input type="checkbox" @bind="_kunValgtDag" />
+                        <span>Bare valgt dag</span>
+                    </label>
+                    <label class="aok-bryter">
+                        <input type="checkbox" @bind="_skjulFerdige" />
+                        <span>Skjul ferdigstilte</span>
+                    </label>
+                    @if (_utenPosisjon.Count > 0)
+                    {
+                        <p class="aok-filter-hint">@_utenPosisjon.Count arbeidsordre mangler adresse og vises ikke på kartet.</p>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="aok-statrad">
+        <div class="aok-statkort">
+            <span class="aok-statikon aok-ikon-noytral"><Icon Name="map" /></span>
+            <span class="aok-stattekst"><span class="aok-statnum">@Synlige.Count</span><span class="aok-statlbl">Totalt i kartutsnitt</span></span>
+        </div>
+        <div class="aok-statkort">
+            <span class="aok-statikon aok-ikon-blaa"><Icon Name="calendar" /></span>
+            <span class="aok-stattekst"><span class="aok-statnum">@Synlige.Count(r => r.PlanlagtDato?.Date == _dato.Date)</span><span class="aok-statlbl">Planlagt @(_dato.Date == DateTime.Today ? "i dag" : "denne dagen")</span></span>
+        </div>
+        <div class="aok-statkort">
+            <span class="aok-statikon aok-ikon-gronn"><Icon Name="play" /></span>
+            <span class="aok-stattekst"><span class="aok-statnum">@Synlige.Count(r => r.Status == ArbeidsordreStatus.Pagaende)</span><span class="aok-statlbl">Pågår</span></span>
+        </div>
+        <div class="aok-statkort">
+            <span class="aok-statikon aok-ikon-gul"><Icon Name="clock" /></span>
+            <span class="aok-stattekst"><span class="aok-statnum">@Synlige.Count(r => r.Status == ArbeidsordreStatus.Klar)</span><span class="aok-statlbl">Venter på deler</span></span>
+        </div>
+        <div class="aok-statkort">
+            <span class="aok-statikon aok-ikon-rod"><Icon Name="alert-triangle" /></span>
+            <span class="aok-stattekst"><span class="aok-statnum">@Synlige.Count(ErHaster)</span><span class="aok-statlbl">Haster</span></span>
+        </div>
+        <div class="aok-statkort">
+            <span class="aok-statikon aok-ikon-noytral"><Icon Name="check-circle" /></span>
+            <span class="aok-stattekst"><span class="aok-statnum">@Synlige.Count(r => r.Status is ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert)</span><span class="aok-statlbl">Ferdigstilt</span></span>
+        </div>
+    </div>
+
+    <div class="aok-layout">
+        <div class="aok-kartkolonne">
+            <div class="aok-kartwrap">
+                <div class="aok-flatevalg">
+                    <button type="button" class="@(_flate == "kart" ? "aktiv" : "")" @onclick='@(() => SettFlate("kart"))'>Kart</button>
+                    <button type="button" class="@(_flate == "satellitt" ? "aktiv" : "")" @onclick='@(() => SettFlate("satellitt"))'>Satellitt</button>
+                </div>
+                <div class="aok-kartknapper">
+                    <button type="button" aria-label="Zoom inn" @onclick="@(() => JS.InvokeVoidAsync("kart.zoom", 1))"><Icon Name="plus" /></button>
+                    <button type="button" aria-label="Zoom ut" @onclick="@(() => JS.InvokeVoidAsync("kart.zoom", -1))"><Icon Name="minus" /></button>
+                    <button type="button" aria-label="Min posisjon" @onclick="@(() => JS.InvokeVoidAsync("kart.finnMeg"))"><Icon Name="crosshair" /></button>
+                </div>
+                <div id="@KartId" class="aok-kart"></div>
+            </div>
+
+            @if (_valgt is { } v)
+            {
+                <div class="aok-detalj">
+                    <button type="button" class="aok-detalj-lukk" aria-label="Lukk" @onclick="@(() => _valgtId = null)"><Icon Name="x" /></button>
+
+                    <div class="aok-detalj-hoved">
+                        @if (_valgtBildeId is { } bildeId)
+                        {
+                            <img class="aok-detalj-bilde" src="@($"/arbeidsordremedia/{bildeId}")" alt="@v.Tittel" />
+                        }
+                        else
+                        {
+                            <span class="aok-detalj-bilde aok-detalj-bilde-tom" style="background:@HexBg(Farge(v)); color:@Hex(Farge(v))"><Icon Name="box" /></span>
+                        }
+                        <div class="aok-detalj-tekst">
+                            <div class="aok-detalj-tittelrad">
+                                <strong>AO-@v.Id</strong>
+                                <span>@v.Tittel</span>
+                                <StatusPill Tekst="@StatusTekst(v)" Ikon="@(ErForfalt(v) ? "clock" : v.Status.PillIkon())" Farge="@(ErForfalt(v) ? "rod" : v.Status.PillFarge())" />
+                            </div>
+                            <ul class="aok-detalj-fakta">
+                                @if (v.ProsjektNavn is not null)
+                                {
+                                    <li><Icon Name="folder" />@v.ProsjektNavn</li>
+                                }
+                                @if (v.Adresse is not null)
+                                {
+                                    <li><Icon Name="map-pin" />@v.Adresse</li>
+                                }
+                                <li><Icon Name="clock" />@TidsTekst(v)</li>
+                            </ul>
+                            @if (v.MontorNavn is not null)
+                            {
+                                <div class="aok-detalj-montor">
+                                    <span class="aok-avatar" style="background:@MontorFarge(v.MontorNavn)">@MontorInitialer(v.MontorNavn)</span>
+                                    <span>@v.MontorNavn</span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="aok-detalj-kolonne">
+                        <h3>Beskrivelse</h3>
+                        <p>@(string.IsNullOrWhiteSpace(v.Beskrivelse) ? "Ingen beskrivelse lagt inn." : v.Beskrivelse)</p>
+                    </div>
+
+                    <div class="aok-detalj-kolonne">
+                        <h3>Status og fremdrift</h3>
+                        <div class="aok-fremdrift">
+                            @foreach (var (navn, naadd) in Fremdrift(v))
+                            {
+                                <span class="aok-fremdrift-steg @(naadd ? "naadd" : "")">
+                                    <span class="aok-fremdrift-prikk"></span>
+                                    <span class="aok-fremdrift-navn">@navn</span>
+                                </span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="aok-detalj-kolonne">
+                        <h3>Kunde</h3>
+                        <p class="aok-detalj-kunde">@(v.KundeNavn ?? "Ingen kunde")</p>
+                        @if (v.Telefon is not null)
+                        {
+                            <a class="aok-detalj-lenke" href="@($"tel:{v.Telefon}")"><Icon Name="phone" />@v.Telefon</a>
+                        }
+                        @if (v.Adresse is not null)
+                        {
+                            <a class="aok-detalj-lenke" href="@($"https://www.google.com/maps/search/?api=1&query={Uri.EscapeDataString(v.Adresse)}")" target="_blank"><Icon Name="map-pin" />Åpne i kart</a>
+                        }
+                    </div>
+
+                    <div class="aok-detalj-knapper">
+                        <a class="aok-knapp aok-knapp-primaer" href="@($"/arbeidsordre/{v.Id}")">Åpne arbeidsordre<Icon Name="arrow-right" /></a>
+                        <a class="aok-knapp" href="@($"https://www.google.com/maps/dir/?api=1&destination={v.Latitude.ToString(Invariant)},{v.Longitude.ToString(Invariant)}")" target="_blank"><Icon Name="send" />Veibeskrivelse</a>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <aside class="aok-panel">
+            <div class="aok-panel-topp">
+                <h2>Arbeidsordre (@Synlige.Count)</h2>
+                @if (VisVisningsbytte)
+                {
+                    <div class="aok-panel-toggle">
+                        <button type="button" @onclick="OnVisListe"><Icon Name="file-text" />Liste</button>
+                        <button type="button" class="aktiv"><Icon Name="map" />Kart</button>
+                    </div>
+                }
+            </div>
+
+            <label class="aok-panel-sok">
+                <Icon Name="search" />
+                <input @bind="_sok" @bind:event="oninput" placeholder="Søk arbeidsordre, kunde eller adresse…" />
+            </label>
+
+            <div class="aok-chips">
+                <button type="button" class="@(_hurtigfilter == "alle" ? "aktiv" : "")" @onclick='@(() => _hurtigfilter = "alle")'>Alle (@Synlige.Count)</button>
+                <button type="button" class="@(_hurtigfilter == "idag" ? "aktiv" : "")" @onclick='@(() => _hurtigfilter = "idag")'>I dag (@Synlige.Count(r => r.PlanlagtDato?.Date == _dato.Date))</button>
+                <button type="button" class="@(_hurtigfilter == "pagar" ? "aktiv" : "")" @onclick='@(() => _hurtigfilter = "pagar")'>Pågår (@Synlige.Count(r => r.Status == ArbeidsordreStatus.Pagaende))</button>
+                <button type="button" class="@(_hurtigfilter == "haster" ? "aktiv" : "")" @onclick='@(() => _hurtigfilter = "haster")'>Haster (@Synlige.Count(ErHaster))</button>
+                <button type="button" class="@(_hurtigfilter == "annet" ? "aktiv" : "")" @onclick='@(() => _hurtigfilter = "annet")'>Annet (@Synlige.Count(ErAnnet))</button>
+            </div>
+
+            <div class="aok-panel-liste">
+                @if (_laster)
+                {
+                    <p class="list-empty">Laster …</p>
+                }
+                else if (PanelRader.Count == 0)
+                {
+                    <p class="list-empty">Ingen arbeidsordre funnet.</p>
+                }
+                else
+                {
+                    @foreach (var r in PanelRader)
+                    {
+                        <button type="button" @key="r.Id"
+                                class="aok-kort @(_valgtId == r.Id ? "valgt" : "")"
+                                style="border-left-color:@Hex(Farge(r))"
+                                @onclick="@(() => VelgOrdre(r.Id))">
+                            <span class="aok-kort-ikon" style="background:@HexBg(Farge(r)); color:@Hex(Farge(r))"><Icon Name="box" /></span>
+                            <span class="aok-kort-tekst">
+                                <span class="aok-kort-nr">AO-@r.Id</span>
+                                <span class="aok-kort-tittel">@r.Tittel</span>
+                                <span class="aok-kort-adresse">@(r.Adresse ?? r.ProsjektNavn ?? "Ingen adresse")</span>
+                                <span class="aok-kort-tid">@TidsTekst(r)</span>
+                                @if (r.MontorNavn is not null)
+                                {
+                                    <span class="aok-kort-montor">
+                                        <span class="aok-avatar aok-avatar-liten" style="background:@MontorFarge(r.MontorNavn)">@MontorInitialer(r.MontorNavn)</span>
+                                        @r.MontorNavn
+                                    </span>
+                                }
+                            </span>
+                            <span class="aok-kort-hoyre">
+                                <StatusPill Tekst="@StatusTekst(r)" Ikon="@(ErForfalt(r) ? "clock" : r.Status.PillIkon())" Farge="@(ErForfalt(r) ? "rod" : r.Status.PillFarge())" />
+                                <span class="aok-kort-meny-wrap">
+                                    <span class="aok-kort-meny-knapp" role="button" tabindex="0" title="Flere valg"
+                                          @onclick:stopPropagation="true"
+                                          @onclick="@(() => _apenMenyId = _apenMenyId == r.Id ? null : r.Id)">
+                                        <Icon Name="more-vertical" />
+                                    </span>
+                                    @if (_apenMenyId == r.Id)
+                                    {
+                                        <span class="aok-kort-meny" @onclick:stopPropagation="true">
+                                            <a href="@($"/arbeidsordre/{r.Id}")"><Icon Name="folder" />Åpne arbeidsordre</a>
+                                            <a href="@($"https://www.google.com/maps/dir/?api=1&destination={r.Latitude.ToString(Invariant)},{r.Longitude.ToString(Invariant)}")" target="_blank"><Icon Name="send" />Veibeskrivelse</a>
+                                            <a href="@($"/timeregistrering?arbeidsordreid={r.Id}")"><Icon Name="clock" />Før timer</a>
+                                        </span>
+                                    }
+                                </span>
+                            </span>
+                        </button>
+                    }
+                }
+            </div>
+        </aside>
+    </div>
+</div>
+
+@code {
+    // Kart-fanen på /arbeidsordre viser Liste/Kart-bryteren; /kart gjør det
+    // ikke, siden den ikke har noen listevisning å bytte til.
+    [Parameter] public bool VisVisningsbytte { get; set; }
+    [Parameter] public EventCallback OnVisListe { get; set; }
+
+    // Egen id pr. bruksted, slik at to kart aldri kan kollidere i DOM-en.
+    [Parameter] public string KartId { get; set; } = "ao-kart";
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed class Rad
+    {
+        public int Id { get; set; }
+        public string Tittel { get; set; } = "";
+        public string? ProsjektNavn { get; set; }
+        public string? KundeNavn { get; set; }
+        public string? MontorNavn { get; set; }
+        public int? MontorId { get; set; }
+        public ArbeidsordreStatus Status { get; set; }
+        public ArbeidsordrePrioritet Prioritet { get; set; }
+        public ArbeidsordreType? Type { get; set; }
+        public DateTime? PlanlagtDato { get; set; }
+        public DateTime? PlanlagtSlutt { get; set; }
+        public string? Adresse { get; set; }
+        public string? Beskrivelse { get; set; }
+        public string? Telefon { get; set; }
+        public double Latitude { get; set; }
+        public double Longitude { get; set; }
+    }
+
+    private sealed class AnsattValg
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+    }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
+    private static readonly string[] MontorPaletten = ["#835e41", "#2054a3", "#a1690a", "#2b7a4b", "#7a2b96", "#a32020"];
+
+    private List<Rad> _rader = [];
+    private List<AnsattValg> _ansatte = [];
+    private List<string> _utenPosisjon = [];
+    private bool _laster = true;
+
+    private int? _brukerId;
+    private BrukerRolle? _rolle;
+
+    private DateTime _dato = DateTime.Today;
+    private string _flate = "kart";
+    private string _statusFilter = "alle";
+    private string _typeFilter = "alle";
+    private int? _teknikerFilter;
+    private string _sok = "";
+    private string _hurtigfilter = "alle";
+    private bool _visFilter;
+    private bool _kunValgtDag;
+    private bool _skjulFerdige;
+
+    private int? _valgtId;
+    private int? _apenMenyId;
+    private int? _valgtBildeId;
+
+    private bool _kartInitialisert;
+    private string? _sisteSignatur;
+    private DotNetObjectReference<ArbeidsordreKartvisning>? _kartRef;
+
+    private Rad? _valgt => _rader.FirstOrDefault(r => r.Id == _valgtId);
+
+    // ---------- filtrering ----------
+
+    private List<Rad> Synlige => _rader
+        .Where(r => !_kunValgtDag || r.PlanlagtDato?.Date == _dato.Date)
+        .Where(r => !_skjulFerdige || r.Status is not (ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert))
+        .Where(r => _statusFilter == "alle" || r.Status.ToString() == _statusFilter)
+        .Where(r => _typeFilter == "alle" || r.Type?.ToString() == _typeFilter)
+        .Where(r => _teknikerFilter is null || r.MontorId == _teknikerFilter)
+        .Where(r => _sok.Length == 0 || Treffer(r, _sok.Trim()))
+        .ToList();
+
+    private static bool Treffer(Rad r, string sok) =>
+        r.Tittel.Contains(sok, StringComparison.OrdinalIgnoreCase)
+        || $"AO-{r.Id}".Contains(sok, StringComparison.OrdinalIgnoreCase)
+        || (r.Adresse?.Contains(sok, StringComparison.OrdinalIgnoreCase) ?? false)
+        || (r.KundeNavn?.Contains(sok, StringComparison.OrdinalIgnoreCase) ?? false)
+        || (r.ProsjektNavn?.Contains(sok, StringComparison.OrdinalIgnoreCase) ?? false)
+        || (r.MontorNavn?.Contains(sok, StringComparison.OrdinalIgnoreCase) ?? false);
+
+    private List<Rad> PanelRader => Synlige
+        .Where(r => _hurtigfilter switch
+        {
+            "idag" => r.PlanlagtDato?.Date == _dato.Date,
+            "pagar" => r.Status == ArbeidsordreStatus.Pagaende,
+            "haster" => ErHaster(r),
+            "annet" => ErAnnet(r),
+            _ => true
+        })
+        .OrderBy(r => r.PlanlagtDato ?? DateTime.MaxValue)
+        .ToList();
+
+    private bool ErAnnet(Rad r) =>
+        r.PlanlagtDato?.Date != _dato.Date && r.Status != ArbeidsordreStatus.Pagaende && !ErHaster(r);
+
+    private static bool ErHaster(Rad r) =>
+        r.Prioritet is ArbeidsordrePrioritet.Hoy or ArbeidsordrePrioritet.Kritisk;
+
+    private static bool ErForfalt(Rad r) =>
+        r.PlanlagtDato is { } d && d.Date < DateTime.Today
+        && r.Status is not (ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert);
+
+    private static string StatusTekst(Rad r) => ErForfalt(r) ? "Forfalt" : r.Status.Visningsnavn();
+
+    // ---------- utseende ----------
+
+    private static string Farge(Rad r) => r switch
+    {
+        _ when ErForfalt(r) || ErHaster(r) => "rod",
+        { Status: ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert } => "gronn",
+        { Status: ArbeidsordreStatus.Pagaende } => "gul",
+        { Status: ArbeidsordreStatus.Klar } => "gul",
+        _ => "blaa"
+    };
+
+    private static string Hex(string farge) => farge switch
+    {
+        "blaa" => "#0b66e6",
+        "gul" => "#fd7a17",
+        "gronn" => "#0c9c5c",
+        "rod" => "#d13a3a",
+        _ => "#835e41"
+    };
+
+    private static string HexBg(string farge) => farge switch
+    {
+        "blaa" => "#dbe7f7",
+        "gul" => "#fde7d3",
+        "gronn" => "#d3ecdb",
+        "rod" => "#f9dcdc",
+        _ => "#eee7df"
+    };
+
+    private static string Glyf(Rad r) => r switch
+    {
+        _ when ErForfalt(r) || ErHaster(r) => "alert",
+        { Status: ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert } => "check",
+        { Status: ArbeidsordreStatus.Pagaende } => "tool",
+        { Status: ArbeidsordreStatus.Klar } => "clock",
+        _ => "user"
+    };
+
+    private static string MontorFarge(string navn) => MontorPaletten[Math.Abs(navn.GetHashCode()) % MontorPaletten.Length];
+
+    private static string MontorInitialer(string navn) => string.Concat(
+        navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(d => char.ToUpperInvariant(d[0])));
+
+    private static string StorForbokstav(string tekst) =>
+        tekst.Length == 0 ? tekst : char.ToUpper(tekst[0], Kultur) + tekst[1..];
+
+    private static string TidsTekst(Rad r) => r.PlanlagtDato is null
+        ? "Ikke planlagt"
+        : r.PlanlagtSlutt is null
+            ? r.PlanlagtDato.Value.ToString("dd.MM HH:mm")
+            : $"{r.PlanlagtDato.Value:HH:mm} – {r.PlanlagtSlutt.Value:HH:mm}";
+
+    private static List<(string Navn, bool Naadd)> Fremdrift(Rad r)
+    {
+        var ferdig = r.Status is ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert;
+        var pagar = ferdig || r.Status == ArbeidsordreStatus.Pagaende;
+        return [("Planlagt", true), ("Pågår", pagar), ("Ferdig", ferdig)];
+    }
+
+    // ---------- handlinger ----------
+
+    private void NyArbeidsordre() => Nav.NavigateTo("/arbeidsordre");
+
+    private async Task SettFlate(string flate)
+    {
+        _flate = flate;
+        await JS.InvokeVoidAsync("kart.settBakgrunn", flate);
+    }
+
+    private async Task VelgOrdre(int id)
+    {
+        _valgtId = id;
+        _apenMenyId = null;
+        await HentBildeAsync(id);
+        await JS.InvokeVoidAsync("kart.fremhev", id);
+    }
+
+    [JSInvokable]
+    public async Task OnKartPunktValgt(int id)
+    {
+        _valgtId = id;
+        _apenMenyId = null;
+        await HentBildeAsync(id);
+        StateHasChanged();
+    }
+
+    private async Task HentBildeAsync(int ordreId)
+    {
+        _valgtBildeId = await Db.ArbeidsordreMedia
+            .Where(m => m.ArbeidsordreId == ordreId && m.ContentType.StartsWith("image/"))
+            .OrderBy(m => m.Id)
+            .Select(m => (int?)m.Id)
+            .FirstOrDefaultAsync();
+    }
+
+    // ---------- lasting ----------
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            if (int.TryParse(state.User.FindFirst("BrukerId")?.Value, out var id))
+            {
+                _brukerId = id;
+            }
+            if (Enum.TryParse<BrukerRolle>(state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, out var rolle))
+            {
+                _rolle = rolle;
+            }
+        }
+
+        _ansatte = await Db.Brukere
+            .Where(b => b.Aktiv && b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens)
+            .OrderBy(b => b.Navn)
+            .Select(b => new AnsattValg { Id = b.Id, Navn = b.Navn })
+            .ToListAsync();
+
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        _laster = true;
+        _utenPosisjon = [];
+
+        IQueryable<Arbeidsordre> sporring = Db.Arbeidsordre
+            .Include(a => a.Prosjekt)
+            .Include(a => a.Kunde)
+            .Include(a => a.AnsvarligMontor);
+
+        // Montører ser bare sine egne jobber, slik som før.
+        if (_rolle == BrukerRolle.Montor)
+        {
+            sporring = sporring.Where(a => a.AnsvarligMontorId == _brukerId);
+        }
+
+        var ordre = await sporring.ToListAsync();
+
+        var rader = new List<Rad>();
+        var lagret = false;
+
+        foreach (var a in ordre)
+        {
+            var egen = !string.IsNullOrWhiteSpace(a.Adresse);
+            var adresse = egen ? a.Adresse : a.Prosjekt?.Adresse;
+            var postnr = egen ? a.Postnr : a.Prosjekt?.Postnr;
+            var sted = egen ? a.Sted : a.Prosjekt?.Sted;
+            var lat = a.Latitude ?? a.Prosjekt?.Latitude;
+            var lng = a.Longitude ?? a.Prosjekt?.Longitude;
+
+            // Mangler posisjon, men har adresse: slå opp én gang og lagre,
+            // så slipper vi å geokode på nytt ved hvert besøk.
+            if ((lat is null || lng is null) && !string.IsNullOrWhiteSpace(adresse))
+            {
+                var treff = await Geokoding.GeocodeAsync(adresse!, postnr, sted);
+                if (treff is not null)
+                {
+                    lat = treff.Value.Latitude;
+                    lng = treff.Value.Longitude;
+                    a.Latitude = lat;
+                    a.Longitude = lng;
+                    lagret = true;
+                }
+            }
+
+            if (lat is null || lng is null)
+            {
+                _utenPosisjon.Add(a.Tittel);
+                continue;
+            }
+
+            var fullAdresse = string.Join(" ", new[] { adresse, postnr, sted }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+            rader.Add(new Rad
+            {
+                Id = a.Id,
+                Tittel = a.Tittel,
+                ProsjektNavn = a.Prosjekt?.Navn,
+                KundeNavn = a.Kunde?.Navn ?? a.Prosjekt?.Kunde?.Navn,
+                MontorNavn = a.AnsvarligMontor?.Navn,
+                MontorId = a.AnsvarligMontorId,
+                Status = a.Status,
+                Prioritet = a.Prioritet,
+                Type = a.Type,
+                PlanlagtDato = a.PlanlagtDato,
+                PlanlagtSlutt = a.PlanlagtSlutt,
+                Adresse = string.IsNullOrWhiteSpace(fullAdresse) ? null : fullAdresse,
+                Beskrivelse = a.Beskrivelse,
+                Telefon = a.Prosjekt?.Telefon,
+                Latitude = lat.Value,
+                Longitude = lng.Value
+            });
+        }
+
+        if (lagret)
+        {
+            await Db.SaveChangesAsync();
+        }
+
+        _rader = rader;
+        _laster = false;
+    }
+
+    private List<object> Punkter() => Synlige
+        .Select(r => (object)new
+        {
+            id = r.Id,
+            lat = r.Latitude,
+            lng = r.Longitude,
+            tittel = r.Tittel,
+            undertekst = r.Adresse ?? r.ProsjektNavn ?? "",
+            undertekst2 = r.MontorNavn,
+            farge = Hex(Farge(r)),
+            pin = true,
+            rikPopup = true,
+            glyph = Glyf(r),
+            kallelut = true,
+            aoNr = $"AO-{r.Id}",
+            prosjekt = r.ProsjektNavn,
+            statusTekst = StatusTekst(r),
+            statusBg = HexBg(Farge(r)),
+            datoTekst = r.PlanlagtDato?.ToString("dd.MM.yyyy"),
+            timerTekst = (string?)null,
+            href = $"/arbeidsordre/{r.Id}"
+        })
+        .ToList();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_laster)
+        {
+            return;
+        }
+
+        var punkter = Punkter();
+        var signatur = string.Join("|", punkter.Select(p => p!.ToString()));
+
+        if (!_kartInitialisert)
+        {
+            _kartRef ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("kart.init", KartId, punkter, _kartRef);
+            await JS.InvokeVoidAsync("kart.settBakgrunn", _flate);
+            _kartInitialisert = true;
+            _sisteSignatur = signatur;
+        }
+        else if (signatur != _sisteSignatur)
+        {
+            await JS.InvokeVoidAsync("kart.setPunkter", punkter);
+            _sisteSignatur = signatur;
+        }
+    }
+
+    // window.kart holder én delt Leaflet-instans. Uten opprydding her ble
+    // kartet stående tomt når man navigerte mellom /kart og Kart-fanen på
+    // /arbeidsordre i samme økt.
+    public async ValueTask DisposeAsync()
+    {
+        _kartRef?.Dispose();
+
+        if (_kartInitialisert)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("kart.fjern", KartId);
+            }
+            catch (JSDisconnectedException)
+            {
+                // Kretsen er allerede borte - da er kartet det også.
+            }
+        }
+    }
+}
