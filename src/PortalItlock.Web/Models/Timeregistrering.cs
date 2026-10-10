@@ -17,6 +17,15 @@ public class Timeregistrering
     public TimeSpan Slutt { get; set; }
     public int PauseMinutter { get; set; }
     public TimeregistreringType Type { get; set; } = TimeregistreringType.NormalArbeidstid;
+
+    // Hva timene gikk med til (Montering, Programmering, Service ...). Vises
+    // som egen kolonne i timelista og styrer fargen i ukekalenderen.
+    public TimeAktivitet Aktivitet { get; set; } = TimeAktivitet.Montering;
+
+    // Om timene skal viderefaktureres kunden. Standard er ja - interne timer
+    // må aktivt hukes av.
+    public bool Fakturerbar { get; set; } = true;
+
     public string? Kommentar { get; set; }
     public decimal Kilometer { get; set; }
 

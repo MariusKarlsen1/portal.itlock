@@ -1,6 +1,7 @@
 @page "/dormiljo"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
@@ -9,16 +10,28 @@
 <PageTitle>Dørmiljø</PageTitle>
 
 <div class="side-header">
-    <span class="side-header-ikon"><Icon Name="box" /></span>
-    <div>
-        <h1>Dørmiljø</h1>
-        <p class="section-hint">Tegninger av ulike dørmiljø. Velg et dørmiljø i listen for å se tegningen. Du kan endre navnet på hvert dokument.</p>
+    <div class="side-header-venstre">
+        <span class="side-header-ikon"><Icon Name="box" /></span>
+        <div>
+            <h1>Dørmiljø</h1>
+            <p class="section-hint">Tegninger av ulike dørmiljø. Velg et dørmiljø i listen for å se tegningen. Du kan endre navnet på hvert dokument.</p>
+        </div>
     </div>
+    <AuthorizeView Roles="Admin">
+        <button type="button" class="knapp @(_redigerModus ? "knapp-aktiv" : "knapp-ghost")" @onclick="ToggleRedigerModus">
+            <Icon Name="edit" />
+            @(_redigerModus ? "Ferdig" : "Rediger")
+        </button>
+    </AuthorizeView>
 </div>
 
 @if (_documents.Count == 0)
 {
     <p class="list-empty">Ingen dørmiljø lagt inn ennå.</p>
+    @if (_redigerModus)
+    {
+        <FilOpplastingssone Laster="_laster" Feilmelding="_feilmelding" OnFilValgt="LastOppFil" />
+    }
 }
 else
 {
@@ -41,6 +54,12 @@ else
             {
                 <p class="list-empty master-tomt-sok">Ingen treff.</p>
             }
+            @if (_redigerModus)
+            {
+                <div class="master-opplasting">
+                    <FilOpplastingssone Laster="_laster" Feilmelding="_feilmelding" OnFilValgt="LastOppFil" Kompakt="true" />
+                </div>
+            }
         </div>
 
         <div class="detail-panel">
@@ -55,12 +74,34 @@ else
             {
                 <div class="detail-innhold">
                     <div class="doc-preview-boks">
-                        <iframe src="@($"dormiljo/{_valgt.FileName}")" class="doc-preview" title="@_valgt.Navn"></iframe>
+                        @if (_valgt.ErBilde)
+                        {
+                            <img src="@Filadresse(_valgt)" alt="@_valgt.Navn" class="doc-preview doc-preview-bilde" />
+                        }
+                        else
+                        {
+                            <iframe src="@Filadresse(_valgt)" class="doc-preview" title="@_valgt.Navn"></iframe>
+                        }
                     </div>
                     <div class="doc-edit">
                         <input @bind="_valgt.Navn" @bind:event="oninput" />
                         <button type="button" class="knapp knapp-primaer" @onclick="@(() => Save(_valgt))"><Icon Name="check" />Lagre navn</button>
-                        <a class="doc-open" href="@($"dormiljo/{_valgt.FileName}")" target="_blank"><Icon Name="maximize" />Åpne i ny fane</a>
+                        <a class="doc-open" href="@Filadresse(_valgt)" target="_blank"><Icon Name="maximize" />Åpne i ny fane</a>
+                        @if (_redigerModus)
+                        {
+                            @if (_slettId == _valgt.Id)
+                            {
+                                <span class="detail-slett-confirm">
+                                    <span>Slette «@_valgt.Navn»?</span>
+                                    <button type="button" class="delete-confirm-button" @onclick="@(() => Slett(_valgt))">Ja, slett</button>
+                                    <button type="button" class="cancel-button" @onclick="@(() => _slettId = null)">Avbryt</button>
+                                </span>
+                            }
+                            else
+                            {
+                                <button type="button" class="knapp knapp-fare" @onclick="@(() => _slettId = _valgt.Id)"><Icon Name="x" />Slett</button>
+                            }
+                        }
                         @if (_valgt.Lagret)
                         {
                             <span class="lagret-tag"><Icon Name="check-circle" />Lagret</span>
@@ -79,11 +120,25 @@ else
         public string Navn { get; set; } = "";
         public string FileName { get; set; } = "";
         public bool Lagret { get; set; }
+
+        // Opplastede dokumenter ligger i databasen og hentes via
+        // /dormiljofil/{id}; de opprinnelige ligger statisk i wwwroot.
+        public bool Opplastet { get; set; }
+        public string? ContentType { get; set; }
+
+        public bool ErBilde => ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private List<DocDraft> _documents = [];
     private int? _valgtId;
     private string _sok = "";
+    private bool _redigerModus;
+    private int? _slettId;
+    private bool _laster;
+    private string? _feilmelding;
+
+    private static string Filadresse(DocDraft doc) =>
+        doc.Opplastet ? $"/dormiljofil/{doc.Id}" : $"dormiljo/{doc.FileName}";
 
     private List<DocDraft> _filtrerte => string.IsNullOrWhiteSpace(_sok)
         ? _documents
@@ -91,20 +146,96 @@ else
 
     private DocDraft? _valgt => _documents.FirstOrDefault(d => d.Id == _valgtId);
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync() => await LastDokumenterAsync();
+
+    private async Task LastDokumenterAsync()
     {
-        var documents = await Db.DoorEnvironmentDocuments
+        // Select-projeksjonen holder blob-dataen utenfor - vi trenger bare å
+        // vite om den finnes, ikke selve innholdet.
+        _documents = await Db.DoorEnvironmentDocuments
             .OrderBy(d => d.Rekkefolge)
+            .Select(d => new DocDraft
+            {
+                Id = d.Id,
+                Navn = d.Navn,
+                FileName = d.FileName,
+                Opplastet = d.Data != null && d.Data.Length > 0,
+                ContentType = d.ContentType
+            })
             .ToListAsync();
 
-        _documents = documents.Select(d => new DocDraft
+        if (_valgtId is null || _documents.All(d => d.Id != _valgtId))
         {
-            Id = d.Id,
-            Navn = d.Navn,
-            FileName = d.FileName
-        }).ToList();
+            _valgtId = _documents.FirstOrDefault()?.Id;
+        }
+    }
 
-        _valgtId = _documents.FirstOrDefault()?.Id;
+    private void ToggleRedigerModus()
+    {
+        _redigerModus = !_redigerModus;
+        _slettId = null;
+        _feilmelding = null;
+    }
+
+    private async Task LastOppFil(IBrowserFile file)
+    {
+        if (_laster)
+        {
+            return;
+        }
+
+        _feilmelding = null;
+
+        if (file.Size > 20_000_000)
+        {
+            _feilmelding = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            return;
+        }
+
+        _laster = true;
+        try
+        {
+            using var buffer = new MemoryStream();
+            await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+
+            var nesteRekkefolge = await Db.DoorEnvironmentDocuments.AnyAsync()
+                ? await Db.DoorEnvironmentDocuments.MaxAsync(d => d.Rekkefolge) + 1
+                : 1;
+
+            var ny = new DoorEnvironmentDocument
+            {
+                Navn = Path.GetFileNameWithoutExtension(file.Name),
+                FileName = file.Name,
+                Rekkefolge = nesteRekkefolge,
+                Data = buffer.ToArray(),
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType
+            };
+
+            Db.DoorEnvironmentDocuments.Add(ny);
+            await Db.SaveChangesAsync();
+
+            await LastDokumenterAsync();
+            _valgtId = ny.Id;
+        }
+        finally
+        {
+            _laster = false;
+        }
+    }
+
+    private async Task Slett(DocDraft doc)
+    {
+        await Db.DoorEnvironmentDocuments.Where(d => d.Id == doc.Id).ExecuteDeleteAsync();
+        _documents.Remove(doc);
+        _slettId = null;
+
+        if (_valgtId == doc.Id)
+        {
+            _valgtId = _documents.FirstOrDefault()?.Id;
+        }
     }
 
     private async Task Save(DocDraft doc)

@@ -848,6 +848,16 @@ app.MapGet("/nedlastningsfil/{id:int}", async (int id, ApplicationDbContext db) 
         : new InlineFileResult(fil.Data, fil.ContentType, fil.Filnavn);
 }).RequireAuthorization();
 
+app.MapGet("/dormiljofil/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var dok = await db.DoorEnvironmentDocuments.FindAsync(id);
+    // Bare dokumenter som er lastet opp i portalen ligger i databasen. De
+    // opprinnelige dørmiljøene serveres som statiske filer fra wwwroot.
+    return dok?.Data is null or { Length: 0 }
+        ? Results.NotFound()
+        : new InlineFileResult(dok.Data, FilSikkerhet.TryggContentType(dok.ContentType), dok.FileName);
+}).RequireAuthorization();
+
 app.MapGet("/koblingsbibliotek/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var symbol = await db.KoblingsSymbolBibliotek.FindAsync(id);
