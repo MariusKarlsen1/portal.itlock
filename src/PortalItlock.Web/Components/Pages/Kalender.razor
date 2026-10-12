@@ -294,23 +294,33 @@
                                              @oncontextmenu:preventDefault="true">
                                             @foreach (var b in BlokkerFor(ansatt.Id, dag))
                                             {
-                                                <button type="button" @key="b.Nokkel"
-                                                        class="kal-ukeblokk @(_valgtAktivitet?.Nokkel == b.Nokkel ? "valgt" : "")"
-                                                        style="background:@b.Farge.Flate; border-left-color:@b.Farge.Kant; color:@b.Farge.Blekk"
-                                                        @onclick="@(() => VelgAktivitet(b))"
-                                                        @oncontextmenu="@(() => AapneRedigerHendelse(b))"
-                                                        @oncontextmenu:preventDefault="true"
-                                                        @oncontextmenu:stopPropagation="true">
-                                                    <span class="kal-ukeblokk-topp">
-                                                        <span class="kal-ukeblokk-ikon"><Icon Name="@b.Ikon" /></span>
-                                                        <span class="kal-ukeblokk-tid">@b.TidTekst</span>
-                                                    </span>
-                                                    <span class="kal-ukeblokk-tittel">@b.KortTittel</span>
-                                                    @if (b.KortUnder is not null)
-                                                    {
-                                                        <span class="kal-ukeblokk-sub">@b.KortUnder</span>
-                                                    }
-                                                </button>
+                                                @* Brikka og "..."-knappen er sosken og ikke nostet, for en
+                                                   knapp inni en knapp er ugyldig. *@
+                                                <div class="kal-ukeblokk-wrap" @key="b.Nokkel">
+                                                    <button type="button"
+                                                            class="kal-ukeblokk @(_valgtAktivitet?.Nokkel == b.Nokkel ? "valgt" : "")"
+                                                            style="background:@b.Farge.Flate; border-left-color:@b.Farge.Kant; color:@b.Farge.Blekk"
+                                                            @onclick="@(() => VelgAktivitet(b))"
+                                                            @oncontextmenu="@(() => AapneRedigerHendelse(b))"
+                                                            @oncontextmenu:preventDefault="true"
+                                                            @oncontextmenu:stopPropagation="true">
+                                                        <span class="kal-ukeblokk-topp">
+                                                            <span class="kal-ukeblokk-ikon"><Icon Name="@b.Ikon" /></span>
+                                                            <span class="kal-ukeblokk-tid">@b.TidTekst</span>
+                                                        </span>
+                                                        <span class="kal-ukeblokk-tittel">@b.KortTittel</span>
+                                                        @if (b.KortUnder is not null)
+                                                        {
+                                                            <span class="kal-ukeblokk-sub">@b.KortUnder</span>
+                                                        }
+                                                    </button>
+                                                    <button type="button" class="kal-ukeblokk-meny"
+                                                            title="@(b.RessursplanId is null ? "Åpne arbeidsordren" : "Rediger hendelsen")"
+                                                            @onclick="@(() => AapneRedigerHendelse(b))"
+                                                            @onclick:stopPropagation="true">
+                                                        <Icon Name="more-horizontal" />
+                                                    </button>
+                                                </div>
                                             }
                                         </div>
                                     }
@@ -513,7 +523,15 @@
                             }
                             else
                             {
-                                <button type="button" class="kal-minikal-dag @(dag.Value.Date == DateTime.Today ? "idag" : "") @(dag.Value.Date == _valgtDato.Date ? "valgt" : "")" @onclick="@(() => VelgDato(dag.Value))">@dag.Value.Day</button>
+                                <button type="button"
+                                        class="kal-minikal-dag @(dag.Value.Date == DateTime.Today ? "idag" : "") @(dag.Value.Date == _valgtDato.Date ? "valgt" : "") @(ErIVistUke(dag.Value) ? "i-uke" : "")"
+                                        @onclick="@(() => VelgDato(dag.Value))">
+                                    @dag.Value.Day
+                                    @if (_dagerMedAktivitet.Contains(dag.Value.Date))
+                                    {
+                                        <span class="kal-minikal-prikk"></span>
+                                    }
+                                </button>
                             }
                         }
                     </div>
@@ -800,6 +818,7 @@
     private readonly HashSet<string> _skjulteTyper = [];
     private readonly HashSet<int> _skjulteMontorer = [];
     private string _montorSok = "";
+    private HashSet<DateTime> _dagerMedAktivitet = [];
 
     // Skjema for hendelser lagt inn manuelt i rutenettet.
     private bool _visHendelseSkjema;
@@ -900,6 +919,7 @@
 
         _visning = await VisningPref.HentAsync("kalender", _visning);
 
+        await LastDagerMedAktivitetAsync();
         await LastAsync();
     }
 
@@ -939,8 +959,48 @@
         await LastAsync();
     }
 
-    private void MinikalForrigeManed() => _minikalManed = _minikalManed.AddMonths(-1);
-    private void MinikalNesteManed() => _minikalManed = _minikalManed.AddMonths(1);
+    private async Task MinikalForrigeManed()
+    {
+        _minikalManed = _minikalManed.AddMonths(-1);
+        await LastDagerMedAktivitetAsync();
+    }
+
+    private async Task MinikalNesteManed()
+    {
+        _minikalManed = _minikalManed.AddMonths(1);
+        await LastDagerMedAktivitetAsync();
+    }
+
+    // Uken som vises i rutenettet markeres i minikalenderen, slik at man ser
+    // hvor man står i måneden.
+    private bool ErIVistUke(DateTime dag)
+    {
+        var mandag = FinnMandag(_valgtDato);
+        return dag.Date >= mandag && dag.Date <= mandag.AddDays(6);
+    }
+
+    // Prikkene under datoene i minikalenderen. Hentes for hele måneden som
+    // vises der, ikke bare for perioden i rutenettet - ellers ville bare den
+    // ene uken fått prikker.
+    private async Task LastDagerMedAktivitetAsync()
+    {
+        var fra = new DateTime(_minikalManed.Year, _minikalManed.Month, 1);
+        var til = fra.AddMonths(1);
+
+        var ordredatoer = await Db.Arbeidsordre
+            .Where(a => a.PlanlagtDato != null && a.PlanlagtDato >= fra && a.PlanlagtDato < til)
+            .Where(a => _naverendeRolle != BrukerRolle.Montor || a.AnsvarligMontorId == _naverendeBrukerId)
+            .Select(a => a.PlanlagtDato!.Value)
+            .ToListAsync();
+
+        var hendelsesdatoer = await Db.Ressursplaner
+            .Where(r => r.Dato >= fra && r.Dato < til)
+            .Where(r => _naverendeRolle != BrukerRolle.Montor || r.MontorId == _naverendeBrukerId)
+            .Select(r => r.Dato)
+            .ToListAsync();
+
+        _dagerMedAktivitet = ordredatoer.Concat(hendelsesdatoer).Select(d => d.Date).ToHashSet();
+    }
 
     private async Task VelgDato(DateTime dato)
     {
