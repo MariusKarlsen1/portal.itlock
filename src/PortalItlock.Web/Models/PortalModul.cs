@@ -163,7 +163,6 @@ public static class PortalModulRegister
                     new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings", OppsettUndermoduler),
                     new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler),
                     new Lenke("Brukere og kunder", "Brukere, kunder, kundetilgang og fravær samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler),
-                    new Lenke("Tripletex", "Test tilkobling og kundeoppslag mot Tripletex-API-et (testmiljø)", "integrasjoner/tripletex", "box"),
                     new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt", RapporterUndermoduler),
                 ]),
             ]),

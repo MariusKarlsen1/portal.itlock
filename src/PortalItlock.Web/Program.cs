@@ -184,7 +184,9 @@ builder.Services.AddSingleton<TripletexService>(sp =>
         sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(TripletexService)),
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TripletexOptions>>()));
 builder.Services.AddScoped<TripletexSyncService>();
-builder.Services.AddHostedService<TripletexSyncBackgroundService>();
+// Ingen bakgrunnsjobb mot Tripletex. Synkroniseringen kjøres når noen trykker
+// "Synkroniser med Tripletex" i kunderegisteret - da vet man hva som skjer og
+// når, i stedet for at noe flytter kundedata hvert kvarter av seg selv.
 
 // To helt adskilte innloggings-cookies: den vanlige (kundenes egne brukere,
 // per tenant-database) og "Plattform" (kun deg - gir tilgang til /plattform
