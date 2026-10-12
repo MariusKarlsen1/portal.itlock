@@ -317,6 +317,15 @@ public static class PortalModulRegister
         .DistinctBy(l => l.Href)
         .ToList();
 
+    // Som ModulerFor, men hub-modulene er foldet ut til undermodulene sine -
+    // altså bare sider man faktisk kan lande på. Brukes av "Mine hurtigvalg"
+    // på forsiden, som skal peke rett på en modul og ikke på en hub-nøkkel
+    // ("oppsettmodul") det ikke finnes noen side for.
+    public static List<Lenke> BladLenkerFor(BrukerRolle? rolle) => ModulerFor(rolle)
+        .SelectMany(l => l.Undermoduler is { Count: > 0 } under ? under : [l])
+        .DistinctBy(l => l.Href)
+        .ToList();
+
     // Finner "ett steg tilbake"-målet for en gitt sluttside: hub-siden (med
     // eget navn/href) som lenker til denne siden i en av rollenes moduler.
     // Brukes av MainLayout til å vise "Til <hub>" i stedet for et generisk

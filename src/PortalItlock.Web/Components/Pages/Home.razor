@@ -2,12 +2,14 @@
 @rendermode InteractiveServer
 @implements IDisposable
 @using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 @inject PortalItlock.Web.Services.MobilVerktoylinjeService Verktoylinje
 @inject PortalItlock.Web.Services.GeocodingService Geokoding
+@inject ProtectedLocalStorage LokalLagring
 @inject IJSRuntime JS
 
 <PageTitle>Full Kontroll</PageTitle>
@@ -35,58 +37,154 @@
                 <p class="hd3-greet-sub">@HeroSetning</p>
             </div>
             <div class="hd3-statrow">
-                <a href="/arbeidsordre" class="hd3-statcard">
-                    <span class="hd3-statcard-ic hd3-ic-gronn"><Icon Name="check-circle" /></span>
-                    <div><div class="hd3-statcard-num">@_ferdigDenneUken</div><div class="hd3-statcard-lbl">Ferdig denne uken</div></div>
-                </a>
-                <a href="/service" class="hd3-statcard">
-                    <span class="hd3-statcard-ic hd3-ic-gul"><Icon Name="clock" /></span>
-                    <div><div class="hd3-statcard-num">@_serviceavtalerVarsel</div><div class="hd3-statcard-lbl">Nærmer seg forfall</div></div>
-                </a>
-                <a href="/service" class="hd3-statcard">
-                    <span class="hd3-statcard-ic hd3-ic-aksent"><Icon Name="file-text" /></span>
-                    <div><div class="hd3-statcard-num">@_hd3UtenNesteDato</div><div class="hd3-statcard-lbl">Uten neste dato</div></div>
-                </a>
-                <a href="/service" class="hd3-statcard">
-                    <span class="hd3-statcard-ic hd3-ic-aksent"><Icon Name="calendar" /></span>
-                    <div><div class="hd3-statcard-num">@_hd3TotaltAvtaler</div><div class="hd3-statcard-lbl">Totalt avtaler</div></div>
-                </a>
+                @foreach (var n in Nokkeltall)
+                {
+                    <a href="@n.Href" class="hd3-statcard">
+                        <span class="hd3-statcard-ic @n.IkonKlasse"><Icon Name="@n.Ikon" /></span>
+                        <span class="hd3-statcard-tekst">
+                            <span class="hd3-statcard-num">@n.Verdi</span>
+                            <span class="hd3-statcard-lbl">@n.Label</span>
+                            <span class="hd3-statcard-endring @(n.Opp == false ? "hd3-endring-ned" : "hd3-endring-opp")">
+                                @if (n.Opp is { } opp)
+                                {
+                                    <Icon Name="@(opp ? "arrow-up" : "arrow-down")" />
+                                }
+                                @n.Endring
+                            </span>
+                        </span>
+                    </a>
+                }
             </div>
         </div>
 
-        <div class="hd3-rolerow">
-            @foreach (var rolle in Roller)
-            {
-                <button type="button" class="hd3-rolecard" @onclick="@(() => VelgRolle(rolle.Nokkel))">
-                    <span class="hd3-rolecard-vannmerke" aria-hidden="true"><Icon Name="@IkonForRolle(rolle.Nokkel)" /></span>
-                    <span class="hd3-rolecard-ic"><Icon Name="@IkonForRolle(rolle.Nokkel)" /></span>
-                    <span class="hd3-rolecard-info"><span class="hd3-rolecard-title">@TittelFor(rolle)</span><span class="hd3-rolecard-sub">@BeskrivelseFor(rolle)</span></span>
-                    <span class="hd3-rolecard-arrow"><Icon Name="chevron-down" /></span>
-                </button>
-            }
-        </div>
-
-        <div class="hd3-widgetgrid">
-            <div class="hd3-widget">
-                <div class="hd3-widget-head">
-                    <span class="hd3-widget-head-l"><span class="hd3-widget-ic"><Icon Name="calendar" /></span><span class="hd3-widget-title">Neste service og arbeidsordre</span></span>
-                    <a href="/service" class="hd3-widget-link">Se alle<Icon Name="chevron-down" /></a>
+        @* Hurtigvalg + alle moduler, i stedet for de tre rolleknappene. Hvilke
+           moduler som dukker opp her styres av tilgangen på hver enkelt modul
+           (se PortalModulRegister), ikke av hvilken seksjon man går inn i.
+           Hurtigvalgene lagres i nettleseren, ikke i databasen. *@
+        <div class="hd3-modulrad">
+            <section class="hd3-panel">
+                <div class="hd3-panel-topp">
+                    <h2 class="hd3-panel-tittel">Mine hurtigvalg</h2>
+                    <button type="button" class="hd3-panel-knapp" @onclick="VekslTilpass">
+                        <Icon Name="@(_tilpasserHurtigvalg ? "check" : "settings")" />
+                        @(_tilpasserHurtigvalg ? "Ferdig" : "Tilpass")
+                    </button>
                 </div>
-                @if (_hd3NesteService.Count == 0)
+
+                @if (_tilpasserHurtigvalg)
                 {
-                    <p class="home-dash-tom">Ingen kommende service eller arbeidsordre registrert.</p>
+                    <p class="hd3-panel-hjelp">Stjernemerk modulene du vil ha som hurtigvalg.</p>
+                    <div class="hd3-hurtiggrid">
+                        @foreach (var lenke in BladLenker)
+                        {
+                            var erValgt = _hurtigvalg.Contains(lenke.Href);
+                            <button type="button" class="hd3-hurtig @(erValgt ? "hd3-hurtig-valgt" : "")"
+                                    @onclick="@(() => VekslHurtigvalg(lenke.Href))">
+                                <span class="hd3-hurtig-stjerne @(erValgt ? "" : "hd3-hurtig-stjerne-av")">
+                                    <Icon Name="@(erValgt ? "star" : "star-tom")" />
+                                </span>
+                                <span class="hd3-hurtig-ic"><Icon Name="@lenke.IconNavn" /></span>
+                                <span class="hd3-hurtig-lbl">@lenke.Tittel</span>
+                            </button>
+                        }
+                    </div>
+                }
+                else if (_hurtigvalgLastet && Hurtigvalg.Count == 0)
+                {
+                    <p class="home-dash-tom">Ingen hurtigvalg valgt ennå - trykk «Tilpass» for å legge til moduler her.</p>
                 }
                 else
                 {
-                    @foreach (var s in _hd3NesteService)
-                    {
-                        <a href="@s.Href" class="hd3-wl">
-                            <span class="hd3-wl-dot" style="background:@s.Farge"></span>
-                            <span class="hd3-wl-info"><span class="hd3-wl-title">@s.Navn</span><span class="hd3-wl-sub">@s.Adresse</span></span>
-                            <span class="hd3-wl-right"><span class="hd3-wl-val" style="color:@s.Farge">@s.RelativTekst</span><span class="hd3-wl-chev"><Icon Name="chevron-down" /></span></span>
-                        </a>
-                    }
+                    <div class="hd3-hurtiggrid">
+                        @foreach (var lenke in Hurtigvalg)
+                        {
+                            <a href="@($"/{lenke.Href}?fra=hjem")" class="hd3-hurtig">
+                                <span class="hd3-hurtig-stjerne"><Icon Name="star" /></span>
+                                <span class="hd3-hurtig-ic"><Icon Name="@lenke.IconNavn" /></span>
+                                <span class="hd3-hurtig-lbl">@lenke.Tittel</span>
+                            </a>
+                        }
+                    </div>
                 }
+            </section>
+
+            <section class="hd3-panel">
+                <div class="hd3-panel-topp">
+                    <h2 class="hd3-panel-tittel">Alle moduler</h2>
+                    @if (Kategorier.Count > AntallSynligeKategorier)
+                    {
+                        <button type="button" class="hd3-panel-knapp hd3-panel-knapp-flat" @onclick="@(() => _viserAlleKategorier = !_viserAlleKategorier)">
+                            @(_viserAlleKategorier ? "Vis færre" : "Se alle")
+                            <Icon Name="@(_viserAlleKategorier ? "chevron-left" : "chevron-right")" />
+                        </button>
+                    }
+                </div>
+                <div class="hd3-kategorigrid">
+                    @foreach (var kategori in SynligeKategorier)
+                    {
+                        <button type="button" class="hd3-kategori" @onclick="@(() => VelgRolle(kategori.Nokkel))">
+                            <span class="hd3-kategori-plus" aria-hidden="true"><Icon Name="plus" /></span>
+                            <span class="hd3-kategori-ic hd3-kat-@kategori.Nokkel"><Icon Name="@IkonForRolle(kategori.Nokkel)" /></span>
+                            <span class="hd3-kategori-tekst">
+                                <span class="hd3-kategori-navn">@kategori.Tittel</span>
+                                <span class="hd3-kategori-sub">@kategori.Beskrivelse</span>
+                            </span>
+                        </button>
+                    }
+                </div>
+            </section>
+        </div>
+
+        <div class="hd3-widgetgrid">
+            @* Kalender med tidsakse: samme uke-oppsett som /kalender, men
+               komprimert til en widget. Leser kun arbeidsordre - ingen
+               planlegging skjer her, man klikker seg videre til ordren. *@
+            <div class="hd3-widget">
+                <div class="hd3-widget-head">
+                    <span class="hd3-widget-head-l"><span class="hd3-widget-ic"><Icon Name="calendar" /></span><span class="hd3-widget-title">Kalender &ndash; uke @_kalUkenummer</span></span>
+                    <span class="hd3-kal-nav">
+                        <button type="button" class="hd3-kal-navknapp" @onclick="ForrigeUke" aria-label="Forrige uke"><Icon Name="chevron-left" /></button>
+                        <button type="button" class="hd3-kal-navknapp" @onclick="NesteUke" aria-label="Neste uke"><Icon Name="chevron-right" /></button>
+                        <button type="button" class="hd3-kal-idag" @onclick="GaTilDenneUken">I dag</button>
+                        <a href="/kalender?fra=hjem" class="hd3-widget-link">Åpne<Icon Name="chevron-down" /></a>
+                    </span>
+                </div>
+                <div class="hd3-kal-dagrad">
+                    <span></span>
+                    @foreach (var d in _kalDager)
+                    {
+                        <span class="hd3-kal-dag @(d.ErIDag ? "hd3-kal-dag-idag" : "")">
+                            <span class="hd3-kal-dagnavn">@d.Navn</span>
+                            <span class="hd3-kal-dagdato">@d.DatoTekst</span>
+                        </span>
+                    }
+                </div>
+                <div class="hd3-kal-rute">
+                    <div class="hd3-kal-akse">
+                        @foreach (var t in KalenderTimer)
+                        {
+                            <span class="hd3-kal-time" style="top:@KalTopp(t)">@(t.ToString("00")):00</span>
+                        }
+                    </div>
+                    @foreach (var d in _kalDager)
+                    {
+                        <div class="hd3-kal-kolonne">
+                            @foreach (var t in KalenderTimer)
+                            {
+                                <span class="hd3-kal-linje" style="top:@KalTopp(t)"></span>
+                            }
+                            @foreach (var h in d.Hendelser)
+                            {
+                                <a href="@h.Href" class="hd3-kal-hendelse" title="@h.Tittel"
+                                   style="top:@h.Topp;height:@h.Hoyde;border-left-color:@h.Kant;background:@h.Flate;color:@h.Blekk">
+                                    <span class="hd3-kal-h-tittel">@h.Tittel</span>
+                                    <span class="hd3-kal-h-sted">@h.Sted</span>
+                                    <span class="hd3-kal-h-tid">@h.TidTekst</span>
+                                </a>
+                            }
+                        </div>
+                    }
+                </div>
             </div>
 
             <div class="hd3-widget">
@@ -103,21 +201,29 @@
 
             <div class="hd3-widget">
                 <div class="hd3-widget-head">
-                    <span class="hd3-widget-head-l"><span class="hd3-widget-ic"><Icon Name="bell" /></span><span class="hd3-widget-title">Nye forespørsler og driftsmeldinger</span></span>
-                    <a href="/foresporsler" class="hd3-widget-link">Se alle<Icon Name="chevron-down" /></a>
+                    <span class="hd3-widget-head-l"><span class="hd3-widget-ic"><Icon Name="check-circle" /></span><span class="hd3-widget-title">Neste arbeidsordre</span></span>
+                    <a href="/arbeidsordre?fra=hjem" class="hd3-widget-link">Se alle<Icon Name="chevron-down" /></a>
                 </div>
-                @if (_hd3Oppgaver.Count == 0)
+                @if (_hd3NesteOrdre.Count == 0)
                 {
-                    <p class="home-dash-tom">Ingen nye forespørsler eller driftsmeldinger.</p>
+                    <p class="home-dash-tom">Ingen planlagte arbeidsordre framover.</p>
                 }
                 else
                 {
-                    @foreach (var o in _hd3Oppgaver)
+                    @foreach (var o in _hd3NesteOrdre)
                     {
-                        <a href="@o.Href" class="hd3-wl">
-                            <span class="hd3-wl-ic" style="background:@o.BakgrunnFarge;color:@o.Farge"><Icon Name="@o.Ikon" /></span>
-                            <span class="hd3-wl-info"><span class="hd3-wl-title">@o.Navn</span><span class="hd3-wl-sub">@o.Undertekst</span></span>
-                            <span class="hd3-wl-right"><span class="hd3-wl-time">@o.DatoTekst</span><span class="hd3-wl-chev"><Icon Name="chevron-down" /></span></span>
+                        <a href="@o.Href" class="hd3-wl hd3-ao">
+                            <span class="hd3-ao-nar">
+                                <span class="hd3-ao-nar-t">@o.NarTekst</span>
+                                <span class="hd3-ao-nar-d">@o.DatoTekst</span>
+                            </span>
+                            <span class="hd3-ao-tid">@o.TidTekst</span>
+                            <span class="hd3-wl-ic" style="background:@o.Flate;color:@o.Blekk"><Icon Name="@o.Ikon" /></span>
+                            <span class="hd3-wl-info">
+                                <span class="hd3-wl-title">@o.Tittel</span>
+                                <span class="hd3-wl-sub">@o.Person</span>
+                            </span>
+                            <span class="hd3-ao-status" style="background:@o.StatusFlate;color:@o.StatusBlekk">@o.StatusTekst</span>
                         </a>
                     }
                 }
@@ -151,8 +257,30 @@
 
             <div class="hd3-widget">
                 <div class="hd3-widget-head">
+                    <span class="hd3-widget-head-l"><span class="hd3-widget-ic"><Icon Name="bell" /></span><span class="hd3-widget-title">Nye forespørsler og driftsmeldinger</span></span>
+                    <a href="/foresporsler?fra=hjem" class="hd3-widget-link">Se alle<Icon Name="chevron-down" /></a>
+                </div>
+                @if (_hd3Oppgaver.Count == 0)
+                {
+                    <p class="home-dash-tom">Ingen nye forespørsler eller driftsmeldinger.</p>
+                }
+                else
+                {
+                    @foreach (var o in _hd3Oppgaver)
+                    {
+                        <a href="@o.Href" class="hd3-wl">
+                            <span class="hd3-wl-ic" style="background:@o.BakgrunnFarge;color:@o.Farge"><Icon Name="@o.Ikon" /></span>
+                            <span class="hd3-wl-info"><span class="hd3-wl-title">@o.Navn</span><span class="hd3-wl-sub">@o.Undertekst</span></span>
+                            <span class="hd3-wl-right"><span class="hd3-wl-time">@o.DatoTekst</span><span class="hd3-wl-chev"><Icon Name="chevron-down" /></span></span>
+                        </a>
+                    }
+                }
+            </div>
+
+            <div class="hd3-widget">
+                <div class="hd3-widget-head">
                     <span class="hd3-widget-head-l"><span class="hd3-widget-ic"><Icon Name="bell" /></span><span class="hd3-widget-title">Hendelser og kundeoppfølging</span></span>
-                    <a href="/tilbud" class="hd3-widget-link">Se alle<Icon Name="chevron-down" /></a>
+                    <a href="/tilbud?fra=hjem" class="hd3-widget-link">Se alle<Icon Name="chevron-down" /></a>
                 </div>
                 @if (_hd3Meldinger.Count == 0)
                 {
@@ -169,20 +297,6 @@
                         </a>
                     }
                 }
-            </div>
-
-            <div class="hd3-widget">
-                <div class="hd3-widget-head" style="margin-bottom:14px;">
-                    <span class="hd3-widget-head-l"><span class="hd3-widget-ic"><Icon Name="box" /></span><span class="hd3-widget-title">Snarveier</span></span>
-                </div>
-                <div class="hd3-snarveigrid">
-                    <a href="/service" class="hd3-snarvei"><span class="hd3-snarvei-ic"><Icon Name="clock" /></span><span class="hd3-snarvei-lbl">Ny serviceavtale</span></a>
-                    <a href="/arbeidsordre" class="hd3-snarvei"><span class="hd3-snarvei-ic"><Icon Name="file-text" /></span><span class="hd3-snarvei-lbl">Ny arbeidsordre</span></a>
-                    <a href="/kunder" class="hd3-snarvei"><span class="hd3-snarvei-ic"><Icon Name="users" /></span><span class="hd3-snarvei-lbl">Ny kunde</span></a>
-                    <a href="/prosjekter" class="hd3-snarvei"><span class="hd3-snarvei-ic"><Icon Name="folder" /></span><span class="hd3-snarvei-lbl">Nytt prosjekt</span></a>
-                    <a href="/timeregistrering" class="hd3-snarvei"><span class="hd3-snarvei-ic"><Icon Name="clock" /></span><span class="hd3-snarvei-lbl">Registrer timer</span></a>
-                    <a href="/rapporter" class="hd3-snarvei"><span class="hd3-snarvei-ic"><Icon Name="trend-up" /></span><span class="hd3-snarvei-lbl">Generer rapport</span></a>
-                </div>
             </div>
         </div>
     }
@@ -654,6 +768,25 @@
 
     private async Task LastInnDashboard3Data()
     {
+        // ---------- Nøkkeltall, hurtigvalg-kalenderen og neste arbeidsordre ----------
+        if (_naverendeRolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder)
+        {
+            _ubehandledeTickets = await Db.Tickets.CountAsync(t => t.Status != TicketStatus.Lukket);
+            _nyeTicketsDenneUken = await Db.Tickets.CountAsync(t =>
+                t.Status != TicketStatus.Lukket && t.OpprettetDato >= FinnForrigeMandag(DateTime.Today));
+        }
+        else if (_naverendeRolle == BrukerRolle.Montor && _naverendeBruker is not null)
+        {
+            var mineId = _naverendeBruker.Id;
+            _mineApneOrdre = await Db.Arbeidsordre.CountAsync(a =>
+                a.AnsvarligMontorId == mineId && Hd3ApneOrdreStatuser.Contains(a.Status));
+        }
+
+        _kalMandag = FinnForrigeMandag(DateTime.Today);
+        await LastKalenderUke();
+        await LastNesteArbeidsordre();
+
+
         // ---------- Neste service: serviceavtaler + arbeidsordre med planlagt dato, sortert etter nærmest først ----------
         var serviceProsjekter = await Db.Prosjekter
             .Where(p => p.Status == ProsjektStatus.Serviceavtale)
@@ -778,6 +911,294 @@
             .ToList();
 
         await LastInnHd3KartAsync(serviceProsjekter, planlagteOrdre);
+    }
+
+    // ---------- Nøkkeltallene øverst (fire kort) ----------
+    private sealed record Hd3Nokkeltall(
+        string Href, string Ikon, string IkonKlasse, string Verdi, string Label, string Endring, bool? Opp);
+
+    private int _ubehandledeTickets;
+    private int _nyeTicketsDenneUken;
+    private int _mineApneOrdre;
+
+    private List<Hd3Nokkeltall> Nokkeltall
+    {
+        get
+        {
+            var timer = new Hd3Nokkeltall(
+                "/timeregistrering?fra=hjem", "clock", "hd3-ic-gronn",
+                $"{_dashTimerDenneUken.ToString("0.#")} t", "Timer denne uken",
+                _dashTimerEndringProsent is { } prosent
+                    ? $"{Math.Abs(prosent).ToString("0")} % fra forrige uke"
+                    : "Ingen uke å måle mot",
+                _dashTimerEndringProsent is { } p ? p >= 0 : null);
+
+            // Montører har ikke tilgang til tickets, så de får sine egne tall i
+            // de samme kortene i stedet - ingen tall lekker ut av tilgangen.
+            if (_naverendeRolle == BrukerRolle.Montor)
+            {
+                return
+                [
+                    new("/min-dag?fra=hjem", "calendar", "hd3-ic-aksent", _dagensJobber.ToString(), "Jobber i dag",
+                        _dagensJobber > 0 ? "Planlagt for deg" : "Ingen planlagt", null),
+                    new("/arbeidsordre?fra=hjem", "check-circle", "hd3-ic-rod", _mineApneOrdre.ToString(), "Mine åpne ordre",
+                        "Ikke ferdigmeldt", null),
+                    new("/arbeidsordre?fra=hjem", "check", "hd3-ic-lilla", _ferdigDenneUken.ToString(), "Ferdig denne uken",
+                        _ferdigDenneUken > 0 ? "Godt jobbet" : "Ingen ennå", _ferdigDenneUken > 0 ? true : null),
+                    timer
+                ];
+            }
+
+            return
+            [
+                new("/prosjekter?fra=hjem", "folder", "hd3-ic-aksent", _aktiveProsjekter.ToString(), "Aktive prosjekter",
+                    _dashNyeProsjekterDenneUken > 0 ? $"{_dashNyeProsjekterDenneUken} denne uken" : "Uendret denne uken",
+                    _dashNyeProsjekterDenneUken > 0 ? true : null),
+                new("/arbeidsordre?fra=hjem", "check-circle", "hd3-ic-rod", _dashApneArbeidsordre.ToString(), "Åpne arbeidsordre",
+                    _dagensJobber > 0 ? $"{_dagensJobber} planlagt i dag" : "Ingen planlagt i dag", null),
+                new("/tickets?fra=hjem", "tag", "hd3-ic-lilla", _ubehandledeTickets.ToString(), "Ubehandlede tickets",
+                    _nyeTicketsDenneUken > 0 ? $"{_nyeTicketsDenneUken} nye denne uken" : "Ingen nye denne uken",
+                    _nyeTicketsDenneUken > 0 ? true : null),
+                timer
+            ];
+        }
+    }
+
+    // ---------- Mine hurtigvalg ----------
+    // Hurtigvalgene ligger i nettleseren (ProtectedLocalStorage), ikke i
+    // databasen - ingen nye tabeller eller kolonner. Lista inneholder bare
+    // Href-ene; hva som faktisk vises filtreres alltid mot modulene brukeren
+    // har tilgang til, slik at et gammelt hurtigvalg aldri kan gi snarvei til
+    // noe man ikke slipper inn på likevel.
+    private const string HurtigvalgNokkel = "itlock-hurtigvalg";
+
+    private static readonly string[] StandardHurtigvalg =
+        ["kalender", "arbeidsordre", "prosjekter", "kunder", "guide/kobling", "dormiljo", "timeregistrering"];
+
+    private List<string> _hurtigvalg = [];
+    private bool _tilpasserHurtigvalg;
+    private bool _hurtigvalgLastet;
+
+    private List<Lenke> BladLenker => PortalModulRegister.BladLenkerFor(_naverendeRolle);
+
+    private List<Lenke> Hurtigvalg => _hurtigvalg
+        .Select(href => BladLenker.FirstOrDefault(l => l.Href == href))
+        .Where(l => l is not null)
+        .Select(l => l!)
+        .ToList();
+
+    private void VekslTilpass() => _tilpasserHurtigvalg = !_tilpasserHurtigvalg;
+
+    private async Task VekslHurtigvalg(string href)
+    {
+        if (!_hurtigvalg.Remove(href))
+        {
+            _hurtigvalg.Add(href);
+        }
+
+        await LagreHurtigvalg();
+    }
+
+    private async Task LagreHurtigvalg()
+    {
+        try
+        {
+            await LokalLagring.SetAsync(HurtigvalgNokkel, _hurtigvalg);
+        }
+        catch (Exception)
+        {
+            // Nettleserlagring kan være avslått. Hurtigvalgene gjelder da bare
+            // for denne økten - forsiden skal uansett ikke feile på det.
+        }
+    }
+
+    private List<string> StandardHurtigvalgForBruker() => StandardHurtigvalg
+        .Where(href => BladLenker.Any(l => l.Href == href))
+        .ToList();
+
+    private async Task LastHurtigvalg()
+    {
+        try
+        {
+            var lagret = await LokalLagring.GetAsync<List<string>>(HurtigvalgNokkel);
+            _hurtigvalg = lagret is { Success: true, Value: { } verdier }
+                ? verdier
+                : StandardHurtigvalgForBruker();
+        }
+        catch (Exception)
+        {
+            _hurtigvalg = StandardHurtigvalgForBruker();
+        }
+
+        _hurtigvalgLastet = true;
+    }
+
+    // ---------- Kalender-widget med tidsakse ----------
+    private sealed record KalHendelse(
+        string Href, string Tittel, string Sted, string TidTekst,
+        string Topp, string Hoyde, string Kant, string Flate, string Blekk);
+
+    private sealed record KalDag(string Navn, string DatoTekst, bool ErIDag, List<KalHendelse> Hendelser);
+
+    // Tidsaksen går fra 07 til 16. Jobber utenfor dette klemmes inn i kantene
+    // slik at en tidlig eller sen jobb fortsatt er synlig i widgeten.
+    private const double KalFraTime = 7;
+    private const double KalTilTime = 16;
+    private static readonly int[] KalenderTimer = [7, 9, 11, 13, 15];
+
+    private DateTime _kalMandag;
+    private int _kalUkenummer;
+    private List<KalDag> _kalDager = [];
+
+    private static string KalProsent(double verdi) =>
+        verdi.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+    private static string KalTopp(int time) => KalProsent((time - KalFraTime) * 100 / (KalTilTime - KalFraTime));
+
+    private async Task ForrigeUke()
+    {
+        _kalMandag = _kalMandag.AddDays(-7);
+        await LastKalenderUke();
+    }
+
+    private async Task NesteUke()
+    {
+        _kalMandag = _kalMandag.AddDays(7);
+        await LastKalenderUke();
+    }
+
+    private async Task GaTilDenneUken()
+    {
+        _kalMandag = FinnForrigeMandag(DateTime.Today);
+        await LastKalenderUke();
+    }
+
+    private static (string Kant, string Flate, string Blekk) KalFarger(ArbeidsordreStatus status) => status switch
+    {
+        ArbeidsordreStatus.Pagaende => ("#2b7a4b", "#d3ecdb", "#1f5c38"),
+        ArbeidsordreStatus.Klar => ("#6B46C1", "#e9e3f8", "#4a2f91"),
+        ArbeidsordreStatus.Ferdig => ("#8b8378", "#efe9e0", "#4a443c"),
+        ArbeidsordreStatus.Fakturert => ("#8b8378", "#efe9e0", "#4a443c"),
+        _ => ("#2054a3", "#dbe7f7", "#17407d")
+    };
+
+    private async Task LastKalenderUke()
+    {
+        var kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+        _kalUkenummer = System.Globalization.ISOWeek.GetWeekOfYear(_kalMandag);
+
+        var fredag = _kalMandag.AddDays(5);
+        var sporring = Db.Arbeidsordre
+            .AsNoTracking()
+            .Include(a => a.Prosjekt)
+            .Where(a => a.PlanlagtDato != null
+                && a.PlanlagtDato.Value >= _kalMandag
+                && a.PlanlagtDato.Value < fredag);
+
+        // Montører ser bare sine egne jobber i kalenderwidgeten, akkurat som på
+        // resten av forsiden.
+        if (_naverendeRolle == BrukerRolle.Montor && _naverendeBruker is not null)
+        {
+            var mineId = _naverendeBruker.Id;
+            sporring = sporring.Where(a => a.AnsvarligMontorId == mineId);
+        }
+
+        var ordre = await sporring.ToListAsync();
+        var spenn = KalTilTime - KalFraTime;
+
+        _kalDager = Enumerable.Range(0, 5).Select(i =>
+        {
+            var dato = _kalMandag.AddDays(i);
+            var hendelser = ordre
+                .Where(a => a.PlanlagtDato!.Value.Date == dato.Date)
+                .OrderBy(a => a.PlanlagtDato)
+                .Select(a =>
+                {
+                    var start = a.PlanlagtDato!.Value;
+                    var slutt = a.PlanlagtSlutt ?? start.AddHours((double)(a.EstimerteTimer ?? 2m));
+                    var startTime = Math.Clamp(start.TimeOfDay.TotalHours, KalFraTime, KalTilTime - 0.5);
+                    var sluttTime = Math.Clamp(
+                        slutt.Date > start.Date ? KalTilTime : slutt.TimeOfDay.TotalHours,
+                        startTime + 0.5,
+                        KalTilTime);
+
+                    var (kant, flate, blekk) = KalFarger(a.Status);
+                    return new KalHendelse(
+                        $"/arbeidsordre/{a.Id}",
+                        a.Tittel,
+                        a.Prosjekt?.Navn ?? a.Sted ?? "",
+                        $"{start:HH:mm}–{slutt:HH:mm}",
+                        KalProsent((startTime - KalFraTime) * 100 / spenn),
+                        KalProsent(Math.Max((sluttTime - startTime) * 100 / spenn, 14)),
+                        kant, flate, blekk);
+                })
+                .ToList();
+
+            var navn = kultur.DateTimeFormat.GetAbbreviatedDayName(dato.DayOfWeek);
+            return new KalDag(
+                char.ToUpper(navn[0], kultur) + navn[1..],
+                dato.ToString("d.M", kultur),
+                dato.Date == DateTime.Today,
+                hendelser);
+        }).ToList();
+    }
+
+    // ---------- Neste arbeidsordre ----------
+    private sealed record Hd3NesteOrdre(
+        string Href, string NarTekst, string DatoTekst, string TidTekst, string Ikon,
+        string Flate, string Blekk, string Tittel, string Person,
+        string StatusTekst, string StatusFlate, string StatusBlekk);
+
+    private List<Hd3NesteOrdre> _hd3NesteOrdre = [];
+
+    private async Task LastNesteArbeidsordre()
+    {
+        var kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+        var sporring = Db.Arbeidsordre
+            .AsNoTracking()
+            .Include(a => a.AnsvarligMontor)
+            .Include(a => a.Prosjekt)
+            .Where(a => Hd3ApneOrdreStatuser.Contains(a.Status)
+                && a.PlanlagtDato != null
+                && a.PlanlagtDato.Value >= DateTime.Today);
+
+        if (_naverendeRolle == BrukerRolle.Montor && _naverendeBruker is not null)
+        {
+            var mineId = _naverendeBruker.Id;
+            sporring = sporring.Where(a => a.AnsvarligMontorId == mineId);
+        }
+
+        var ordre = await sporring.OrderBy(a => a.PlanlagtDato).Take(5).ToListAsync();
+
+        _hd3NesteOrdre = ordre.Select(a =>
+        {
+            var start = a.PlanlagtDato!.Value;
+            var slutt = a.PlanlagtSlutt ?? start.AddHours((double)(a.EstimerteTimer ?? 2m));
+            var (kant, flate, blekk) = KalFarger(a.Status);
+            var dager = (start.Date - DateTime.Today).Days;
+            var nar = dager switch
+            {
+                0 => "I dag",
+                1 => "I morgen",
+                _ => char.ToUpper(kultur.DateTimeFormat.GetAbbreviatedDayName(start.DayOfWeek)[0], kultur)
+                     + kultur.DateTimeFormat.GetAbbreviatedDayName(start.DayOfWeek)[1..]
+            };
+
+            return new Hd3NesteOrdre(
+                $"/arbeidsordre/{a.Id}",
+                nar,
+                start.ToString("d.M", kultur),
+                $"{start:HH:mm}–{slutt:HH:mm}",
+                a.Status.PillIkon(),
+                flate,
+                blekk,
+                a.Tittel,
+                a.AnsvarligMontor?.Navn ?? a.Prosjekt?.Navn ?? "Ingen ansvarlig",
+                a.Status.Visningsnavn(),
+                flate,
+                kant);
+        }).ToList();
     }
 
     // Egen, hex-fargebasert variant av TilbudSkjema sin HendelseVisning (som
@@ -1381,6 +1802,14 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        // Hurtigvalgene ligger i nettleseren, så de kan først hentes når det
+        // finnes en JS-forbindelse - altså etter første render.
+        if (firstRender && AktivLayout == HjemLayout.Dashboard3)
+        {
+            await LastHurtigvalg();
+            StateHasChanged();
+        }
+
         if (AktivLayout != HjemLayout.Dashboard3 || _hd3KartPunkter.Count == 0)
         {
             return;
