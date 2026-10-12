@@ -1,4 +1,4 @@
-@using Microsoft.EntityFrameworkCore
+﻿@using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
@@ -19,24 +19,45 @@
     </div>
 }
 
+@* Årshjulet viste bare inneværende år. Velgeren her lar deg se tidligere år
+   også - alt på siden regnes om til det valgte året. *@
+<div class="arshjul-arsvelger">
+    <button type="button" class="arshjul-arspil" title="Forrige år" @onclick="@(() => ByttAr(-1))" disabled="@(_valgtAr <= TidligsteAr)">
+        <Icon Name="chevron-left" />
+    </button>
+    <select class="arshjul-arsvalg" @bind="_valgtAr" @bind:after="Beregn">
+        @foreach (var ar in TilgjengeligeAr)
+        {
+            <option value="@ar">@ar</option>
+        }
+    </select>
+    <button type="button" class="arshjul-arspil" title="Neste år" @onclick="@(() => ByttAr(1))" disabled="@(_valgtAr >= SenesteAr)">
+        <Icon Name="chevron-right" />
+    </button>
+    @if (_valgtAr != DateTime.Today.Year)
+    {
+        <button type="button" class="arshjul-iar" @onclick="@(() => { _valgtAr = DateTime.Today.Year; Beregn(); })">I år</button>
+    }
+</div>
+
 <div class="nokkeltall">
     <div class="nokkel-kort">
-        <span class="nokkel-etikett">Utført i år</span>
+        <span class="nokkel-etikett">Utført i @_valgtAr</span>
         <span class="nokkel-verdi gronn">@_rader.Count(r => r.UtfortIAr)</span>
         <span class="nokkel-under">serviceavtaler</span>
     </div>
     <div class="nokkel-kort">
-        <span class="nokkel-etikett">Gjenstår i år</span>
+        <span class="nokkel-etikett">Gjenstår i @_valgtAr</span>
         <span class="nokkel-verdi gul">@_rader.Count(r => r.GjenstarIAr)</span>
         <span class="nokkel-under">serviceavtaler</span>
     </div>
     <div class="nokkel-kort">
-        <span class="nokkel-etikett">Timer gjort i år</span>
+        <span class="nokkel-etikett">Timer gjort i @_valgtAr</span>
         <span class="nokkel-verdi">@FormatTimer(TimerGjortIAr)</span>
         <span class="nokkel-under">estimert fra service-minutter</span>
     </div>
     <div class="nokkel-kort">
-        <span class="nokkel-etikett">Timer gjenstående i år</span>
+        <span class="nokkel-etikett">Timer gjenstående i @_valgtAr</span>
         <span class="nokkel-verdi">@FormatTimer(TimerGjenstarIAr)</span>
         <span class="nokkel-under">estimert fra service-minutter</span>
     </div>
@@ -53,7 +74,7 @@ else
             <thead>
                 <tr>
                     <th>Avtale</th>
-                    <th>Status i år</th>
+                    <th>Status i @_valgtAr</th>
                     <th>Neste planlagte service</th>
                     <th class="tall-kolonne">Estimerte timer pr besøk</th>
                 </tr>
@@ -66,11 +87,11 @@ else
                         <td>
                             @if (r.UtfortIAr)
                             {
-                                <span class="arshjul-status arshjul-status-utfort">Utført i år</span>
+                                <span class="arshjul-status arshjul-status-utfort">Utført i @_valgtAr</span>
                             }
                             else if (r.GjenstarIAr)
                             {
-                                <span class="arshjul-status arshjul-status-gjenstar">Gjenstår i år</span>
+                                <span class="arshjul-status arshjul-status-gjenstar">Gjenstår i @_valgtAr</span>
                             }
                             else
                             {
@@ -105,8 +126,46 @@ else
 
     private List<AvtaleRad> _rader = [];
 
+    // Avtalene, rundene og minuttlinjene hentes én gang. Årsbyttet regnes om i
+    // minnet - det er ingen grunn til å gå til databasen bare fordi man blar
+    // ett år tilbake.
+    private List<Prosjekt> _avtaler = [];
+    private List<Servicerunde> _runder = [];
+    private List<ServiceMinuttLinje> _minuttLinjer = [];
+
+    private int _valgtAr = DateTime.Today.Year;
+
     private decimal TimerGjortIAr => _rader.Where(r => r.UtfortIAr).Sum(r => r.EstimerteTimer);
     private decimal TimerGjenstarIAr => _rader.Where(r => r.GjenstarIAr).Sum(r => r.EstimerteTimer);
+
+    // Årslista dekker fra den eldste registrerte servicerunden til ett år fram
+    // i tid, slik at planlagt service neste år også er synlig.
+    private int TidligsteAr => _runder.Count == 0
+        ? DateTime.Today.Year
+        : Math.Min(_runder.Min(r => r.Dato.Year), DateTime.Today.Year);
+
+    private int SenesteAr
+    {
+        get
+        {
+            var fraNesteService = _runder
+                .Where(r => r.NesteServiceDato.HasValue)
+                .Select(r => r.NesteServiceDato!.Value.Year)
+                .DefaultIfEmpty(DateTime.Today.Year)
+                .Max();
+
+            return Math.Max(DateTime.Today.Year + 1, fraNesteService);
+        }
+    }
+
+    private List<int> TilgjengeligeAr =>
+        Enumerable.Range(TidligsteAr, Math.Max(1, SenesteAr - TidligsteAr + 1)).Reverse().ToList();
+
+    private void ByttAr(int steg)
+    {
+        _valgtAr = Math.Clamp(_valgtAr + steg, TidligsteAr, SenesteAr);
+        Beregn();
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -116,32 +175,44 @@ else
             _erAdmin = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value is "Admin";
         }
 
-        var iAr = DateTime.Today.Year;
-
-        var avtaler = await Db.Prosjekter
+        _avtaler = await Db.Prosjekter
             .Where(p => p.Status == ProsjektStatus.Serviceavtale)
             .ToListAsync();
 
-        var avtaleIder = avtaler.Select(p => p.Id).ToList();
+        var avtaleIder = _avtaler.Select(p => p.Id).ToList();
 
-        var runder = await Db.Servicerunder
+        _runder = await Db.Servicerunder
             .Where(r => avtaleIder.Contains(r.ProsjektId))
             .OrderByDescending(r => r.Dato)
             .ToListAsync();
 
-        var minuttLinjer = await Db.ServiceMinuttLinjer
+        _minuttLinjer = await Db.ServiceMinuttLinjer
             .Where(l => avtaleIder.Contains(l.ProsjektId))
             .ToListAsync();
 
-        _rader = avtaler.Select(p =>
+        Beregn();
+    }
+
+    private void Beregn()
+    {
+        _rader = _avtaler.Select(p =>
         {
-            var proRunder = runder.Where(r => r.ProsjektId == p.Id).ToList();
-            var nesteServiceDato = proRunder.FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato;
-            var utfortIAr = proRunder.Any(r => r.Dato.Year == iAr);
-            var gjenstarIAr = !utfortIAr && nesteServiceDato.HasValue && nesteServiceDato.Value.Year == iAr
+            var proRunder = _runder.Where(r => r.ProsjektId == p.Id).ToList();
+
+            // "Neste planlagte service" er den ferskeste som er satt. Står man
+            // i et tidligere år, er det datoen som ble planlagt den gangen som
+            // er interessant - derfor den første som ikke ligger etter året.
+            var nesteServiceDato = proRunder
+                .Where(r => r.NesteServiceDato.HasValue && r.Dato.Year <= _valgtAr)
+                .Select(r => r.NesteServiceDato)
+                .FirstOrDefault()
+                ?? proRunder.FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato;
+
+            var utfortIAr = proRunder.Any(r => r.Dato.Year == _valgtAr);
+            var gjenstarIAr = !utfortIAr && nesteServiceDato.HasValue && nesteServiceDato.Value.Year == _valgtAr
                 && !proRunder.Any(r => r.Dato >= nesteServiceDato.Value);
 
-            var minutter = minuttLinjer.Where(l => l.ProsjektId == p.Id).Sum(l => (l.Minutter ?? 0) * l.Antall);
+            var minutter = _minuttLinjer.Where(l => l.ProsjektId == p.Id).Sum(l => (l.Minutter ?? 0) * l.Antall);
 
             return new AvtaleRad
             {
