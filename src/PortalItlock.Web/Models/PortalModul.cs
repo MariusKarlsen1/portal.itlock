@@ -45,7 +45,6 @@ public static class PortalModulRegister
         new Lenke("Prosjekter", "Dører, plantegninger og montasjestatus per prosjekt.", "prosjekter", "folder"),
         new Lenke("Arbeidsordre", "Opprett arbeidsordre med info om jobben og ansvarlig montør.", "arbeidsordre", "check-circle"),
         new Lenke("Finn dørpakke", "Huk av krav og finn riktig dørpakke til prosjektet.", "finn-dorpakke", "box"),
-        new Lenke("Prisoverslag", "Rask kalkulator med komponenter, timer og påslag.", "prisoverslag", "receipt"),
         new Lenke("Systemregister", "Søk opp låssystem, kunde, adresse og rekvirenter.", "systemregister", "users"),
         new Lenke("CE Modul", "Alle CE-sertifiseringer på tvers av prosjekter, med status, vilkår og gyldighet.", "ce-godkjenninger", "shield"),
     ];
@@ -149,7 +148,7 @@ public static class PortalModulRegister
             "Systemer, prosjektering og prosjekter",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Prosjekt modul", "Prosjekter, dørpakker, prisoverslag og systemregister samlet på ett sted", "prosjekteringmodul", "folder", ProsjekteringUndermoduler),
+                    new Lenke("Prosjekt modul", "Prosjekter, dørpakker og systemregister samlet på ett sted", "prosjekteringmodul", "folder", ProsjekteringUndermoduler),
                     new Lenke("Kunder", "Kunderegister, oppfølging, portaltilgang og tilvalg samlet på ett sted", "kundemodul", "users", KunderUndermoduler),
                     new Lenke("Drift", "Kart, kalender og fravær samlet på ett sted", "driftmodul", "map", DriftUndermoduler),
                     new Lenke("Ressursplanlegger", "Sett av montører på dager fremover, vises i deres kalender", "ressursplanlegger", "calendar"),
