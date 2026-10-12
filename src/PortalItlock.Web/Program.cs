@@ -689,6 +689,67 @@ app.MapPost("/account/logout", async (HttpContext http) =>
     return Results.Redirect("/login");
 }).RequireAuthorization();
 
+// "Vis som" - bytter rollen i innloggingscookien slik at portalen ser ut som
+// den gjør for en montør eller prosjektleder, uten å logge inn som noen andre.
+//
+// Rollen det sjekkes mot er brukerens EKTE rolle, lest fra databasen - ikke
+// rollen som står i cookien. Hadde vi stolt på cookien, kunne en montør kalt
+// dette endepunktet én gang for å "vise som Admin", og dermed gitt seg selv
+// admin-tilgang for resten av økten. Bare en faktisk Admin kan bytte, og
+// Admin er høyeste rolle, så det er alltid et steg ned.
+app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var onsketRolle = form["rolle"].ToString();
+    var returUrl = form["returUrl"].ToString();
+    var trygReturUrl = !string.IsNullOrWhiteSpace(returUrl) && returUrl.StartsWith('/') && !returUrl.StartsWith("//")
+        ? returUrl
+        : "/";
+
+    var brukerIdClaim = http.User.FindFirst("BrukerId")?.Value;
+    if (!int.TryParse(brukerIdClaim, out var brukerId))
+    {
+        return Results.Redirect(trygReturUrl);
+    }
+
+    var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Id == brukerId && b.Aktiv);
+    if (bruker is null || bruker.Rolle != BrukerRolle.Admin)
+    {
+        return Results.Redirect(trygReturUrl);
+    }
+
+    // Bare rollene som faktisk har en skrivebordsvisning kan velges. Kunde og
+    // Driftslisens har sine egne portaler og hører ikke hjemme her.
+    if (!Enum.TryParse<BrukerRolle>(onsketRolle, out var rolle)
+        || rolle is not (BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor))
+    {
+        return Results.Redirect(trygReturUrl);
+    }
+
+    var claims = new List<Claim>
+    {
+        new(ClaimTypes.Name, bruker.Navn),
+        new(ClaimTypes.Role, rolle.ToString()),
+        new("BrukerId", bruker.Id.ToString()),
+        new("EkteRolle", bruker.Rolle.ToString())
+    };
+
+    var tenantIdClaim = http.User.FindFirst("TenantId")?.Value;
+    if (tenantIdClaim is not null)
+    {
+        claims.Add(new Claim("TenantId", tenantIdClaim));
+    }
+
+    var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+
+    // Går man ned til montør eller prosjektleder, kan siden man står på være
+    // stengt for den rollen - og AccessDeniedPath er /login, så man ville sett
+    // ut som utlogget. Da er hjem riktigere. Tilbake til Admin er alltid
+    // trygt, og da lander man der man var.
+    return Results.Redirect(rolle == BrukerRolle.Admin ? trygReturUrl : "/");
+}).RequireAuthorization();
+
 // Plattform-innlogging: helt egen cookie ("Plattform"-schemaet) og helt egen
 // konto-tabell (PlattformBruker i PlatformDbContext) - se kommentaren ved
 // AddAuthentication lenger opp for hvorfor dette er adskilt fra /account/*.
