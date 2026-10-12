@@ -4882,6 +4882,10 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Kategori")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("MontorId")
                         .HasColumnType("INTEGER");
 

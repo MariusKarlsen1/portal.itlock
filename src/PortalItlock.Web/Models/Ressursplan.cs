@@ -16,6 +16,10 @@ public class Ressursplan
     public required string Tittel { get; set; }
     public required string Info { get; set; }
 
+    // Hva slags hendelse det er - styrer farge og avkryssingen under "Vis i
+    // kalender" på /kalender. Verdiene er nøklene i KalenderKategori.
+    public string Kategori { get; set; } = "internt";
+
     public int? OpprettetAvBrukerId { get; set; }
     public Bruker? OpprettetAvBruker { get; set; }
     public DateTime OpprettetDato { get; set; } = DateTime.Now;
