@@ -36,7 +36,15 @@
             <button type="button" class="@(_visning == "dag" ? "aktiv" : "")" @onclick='@(() => _visning = "dag")'>Dag</button>
             <button type="button" class="@(_visning == "uke" ? "aktiv" : "")" @onclick='@(() => _visning = "uke")'>Uke</button>
         </div>
-        <a class="md-ny-knapp" href="/arbeidsordre"><Icon Name="plus" />Ny aktivitet</a>
+        @* "Ny aktivitet" lager en egen aktivitet på den valgte dagen - noe som
+           skal stå i dagen uten at det finnes en arbeidsordre for det (møte,
+           kjøring, internarbeid). Arbeidsordrene havner her av seg selv via
+           PlanlagtDato, så knappen trenger ikke sende deg til dem. Lagres som
+           Ressursplan, samme type som ressursplanleggeren og kalenderen
+           bruker. *@
+        <button type="button" class="md-ny-knapp" @onclick="AapneNyAktivitet" disabled="@(_valgtMontorId is null)">
+            <Icon Name="plus" />Ny aktivitet
+        </button>
 
         @if (_naverendeRolle != BrukerRolle.Montor)
         {
@@ -99,6 +107,14 @@
                                         <span class="md-blokk-meta">@jobb.TidTekst</span>
                                     </a>
                                 }
+                                @foreach (var akt in UkeAktiviteter(dag))
+                                {
+                                    <button type="button" class="md-blokk md-blokk-kompakt md-blokk-aktivitet" @key="@($"akt-{akt.Id}")"
+                                            style="top:@ToppAkt(akt)px; height:@HoydeAkt(akt)px" @onclick="@(() => AapneRedigerAktivitet(akt))">
+                                        <span class="md-blokk-tittel">@akt.Tittel</span>
+                                        <span class="md-blokk-meta">@akt.TidTekst</span>
+                                    </button>
+                                }
                             </div>
                         }
                     </div>
@@ -151,7 +167,30 @@
                             </div>
                         }
 
-                        @if (_jobber.Count(j => j.Start is not null) == 0)
+                        @foreach (var akt in _aktiviteter)
+                        {
+                            <div class="md-blokk md-blokk-aktivitet" @key="@($"akt-{akt.Id}")"
+                                 style="top:@ToppAkt(akt)px; height:@HoydeAkt(akt)px">
+                                <div class="md-blokk-tekst">
+                                    <span class="md-blokk-tittel">@akt.Tittel</span>
+                                    <span class="md-blokk-meta">@akt.MetaTekst</span>
+                                </div>
+                                <div class="md-blokk-meny-wrap">
+                                    <button type="button" class="md-blokk-meny-knapp" title="Flere valg" @onclick="@(() => _apenAktivitetMenyId = _apenAktivitetMenyId == akt.Id ? null : akt.Id)">
+                                        <Icon Name="more-vertical" />
+                                    </button>
+                                    @if (_apenAktivitetMenyId == akt.Id)
+                                    {
+                                        <div class="md-blokk-meny">
+                                            <button type="button" @onclick="@(() => AapneRedigerAktivitet(akt))"><Icon Name="edit" />Rediger aktivitet</button>
+                                            <button type="button" class="md-blokk-meny-slett" @onclick="@(() => SlettAktivitet(akt.Id))"><Icon Name="trash" />Slett aktivitet</button>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        @if (_jobber.Count(j => j.Start is not null) == 0 && _aktiviteter.Count == 0)
                         {
                             <p class="md-tom md-tom-spor">Ingen planlagte aktiviteter denne dagen.</p>
                         }
@@ -224,6 +263,51 @@
         </aside>
     </div>
 </div>
+
+@if (_visAktivitetSkjema)
+{
+    <div class="md-modal-overlay" @onclick="LukkAktivitetSkjema">
+        <div class="md-modal" @onclick:stopPropagation="true">
+            <h2>@(_redigererAktivitetId is null ? "Ny aktivitet" : "Rediger aktivitet")</h2>
+            <p class="md-modal-dag">@StorForbokstav(_valgtDato.ToString("dddd d. MMMM yyyy", Kultur))@(ValgtMontorNavn is null ? "" : $" · {ValgtMontorNavn}")</p>
+
+            <label class="md-modal-felt">
+                Tittel
+                <input type="text" @bind="_formTittel" placeholder="F.eks. Møte med leverandør" />
+            </label>
+
+            <div class="md-modal-tider">
+                <label class="md-modal-felt">
+                    Fra
+                    <input type="time" @bind="_formFra" />
+                </label>
+                <label class="md-modal-felt">
+                    Til
+                    <input type="time" @bind="_formTil" />
+                </label>
+            </div>
+
+            <label class="md-modal-felt">
+                Beskrivelse
+                <textarea rows="3" @bind="_formInfo" placeholder="Valgfritt - vises under tittelen i dagen"></textarea>
+            </label>
+
+            @if (_formFeil is not null)
+            {
+                <p class="md-modal-feil">@_formFeil</p>
+            }
+
+            <div class="md-modal-knapper">
+                <button type="button" class="cancel-button" @onclick="LukkAktivitetSkjema">Avbryt</button>
+                @if (_redigererAktivitetId is not null)
+                {
+                    <button type="button" class="remove-button" @onclick="@(() => SlettAktivitet(_redigererAktivitetId!.Value))">Slett</button>
+                }
+                <button type="button" class="save-button" @onclick="LagreAktivitet">Lagre</button>
+            </div>
+        </div>
+    </div>
+}
 
 <div class="mobil-ukestripe">
     @foreach (var dag in UkeDager)
@@ -417,6 +501,22 @@ else
                 : $"{Start.Value:HH:mm}–{Slutt.Value:HH:mm}";
     }
 
+    // En aktivitet lagt inn manuelt på dagen - lagret som Ressursplan, samme
+    // rad som ressursplanleggeren og kalenderen viser. Arbeidsordre kommer inn
+    // som JobbRad over; dette er alt det andre dagen består av.
+    private sealed class AktivitetRad
+    {
+        public int Id { get; set; }
+        public string Tittel { get; set; } = "";
+        public string? Info { get; set; }
+        public DateTime Start { get; set; }
+        public DateTime Slutt { get; set; }
+
+        public string TidTekst => $"{Start:HH:mm}–{Slutt:HH:mm}";
+
+        public string MetaTekst => Info is null ? TidTekst : $"{TidTekst} · {Info}";
+    }
+
     private sealed class OppgaveRad
     {
         public int Id { get; set; }
@@ -437,7 +537,128 @@ else
 
     private string _visning = "dag";
     private int? _apenMenyId;
+    private int? _apenAktivitetMenyId;
     private List<OppgaveRad> _oppgaver = [];
+
+    private List<AktivitetRad> _aktiviteter = [];
+    private List<AktivitetRad> _ukeAktiviteter = [];
+
+    private bool _visAktivitetSkjema;
+    private int? _redigererAktivitetId;
+    private string _formTittel = "";
+    private string _formInfo = "";
+    private TimeOnly? _formFra = new(8, 0);
+    private TimeOnly? _formTil = new(9, 0);
+    private string? _formFeil;
+
+    private string? ValgtMontorNavn => _montorer.FirstOrDefault(m => m.Id == _valgtMontorId)?.Navn;
+
+    private void AapneNyAktivitet()
+    {
+        _redigererAktivitetId = null;
+        _formTittel = "";
+        _formInfo = "";
+        _formFra = new TimeOnly(8, 0);
+        _formTil = new TimeOnly(9, 0);
+        _formFeil = null;
+        _apenMenyId = null;
+        _apenAktivitetMenyId = null;
+        _visAktivitetSkjema = true;
+    }
+
+    private void AapneRedigerAktivitet(AktivitetRad akt)
+    {
+        _redigererAktivitetId = akt.Id;
+        _formTittel = akt.Tittel;
+        _formInfo = akt.Info ?? "";
+        _formFra = TimeOnly.FromDateTime(akt.Start);
+        _formTil = TimeOnly.FromDateTime(akt.Slutt);
+        _formFeil = null;
+        _apenAktivitetMenyId = null;
+        _visAktivitetSkjema = true;
+    }
+
+    private void LukkAktivitetSkjema()
+    {
+        _visAktivitetSkjema = false;
+        _formFeil = null;
+    }
+
+    private async Task LagreAktivitet()
+    {
+        if (_valgtMontorId is null)
+        {
+            _formFeil = "Velg en ansatt først.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_formTittel))
+        {
+            _formFeil = "Gi aktiviteten en tittel.";
+            return;
+        }
+
+        if (_formFra is null || _formTil is null)
+        {
+            _formFeil = "Fyll ut både fra- og til-klokkeslett.";
+            return;
+        }
+
+        if (_formTil.Value <= _formFra.Value)
+        {
+            _formFeil = "Til-klokkeslett må være etter fra-klokkeslett.";
+            return;
+        }
+
+        if (_redigererAktivitetId is null)
+        {
+            Db.Ressursplaner.Add(new Ressursplan
+            {
+                Dato = _valgtDato.ToDateTime(TimeOnly.MinValue),
+                MontorId = _valgtMontorId.Value,
+                Tittel = _formTittel.Trim(),
+                Info = _formInfo.Trim(),
+                Fra = _formFra.Value.ToTimeSpan(),
+                Til = _formTil.Value.ToTimeSpan(),
+                OpprettetAvBrukerId = _naverendeBrukerId
+            });
+        }
+        else
+        {
+            var eksisterende = await Db.Ressursplaner.FirstOrDefaultAsync(r => r.Id == _redigererAktivitetId.Value);
+            if (eksisterende is null)
+            {
+                // Noen andre har slettet den i mellomtiden - da er det ikke
+                // noe å lagre, bare å laste dagen på nytt.
+                LukkAktivitetSkjema();
+                await LastAsync();
+                return;
+            }
+
+            eksisterende.Tittel = _formTittel.Trim();
+            eksisterende.Info = _formInfo.Trim();
+            eksisterende.Fra = _formFra.Value.ToTimeSpan();
+            eksisterende.Til = _formTil.Value.ToTimeSpan();
+        }
+
+        await Db.SaveChangesAsync();
+        LukkAktivitetSkjema();
+        await LastAsync();
+    }
+
+    private async Task SlettAktivitet(int id)
+    {
+        var eksisterende = await Db.Ressursplaner.FirstOrDefaultAsync(r => r.Id == id);
+        if (eksisterende is not null)
+        {
+            Db.Ressursplaner.Remove(eksisterende);
+            await Db.SaveChangesAsync();
+        }
+
+        _apenAktivitetMenyId = null;
+        LukkAktivitetSkjema();
+        await LastAsync();
+    }
 
     private const int PxPerTime = 46;
 
@@ -447,7 +668,7 @@ else
     {
         get
         {
-            var tidligst = AktiveJobber.Count == 0 ? 7 : AktiveJobber.Min(j => j.Start!.Value.Hour);
+            var tidligst = AktiveTidsrom.Count == 0 ? 7 : AktiveTidsrom.Min(t => t.Start.Hour);
             return Math.Clamp(Math.Min(7, tidligst), 0, 12);
         }
     }
@@ -456,9 +677,9 @@ else
     {
         get
         {
-            var senest = AktiveJobber.Count == 0
+            var senest = AktiveTidsrom.Count == 0
                 ? 17
-                : (int)Math.Ceiling(AktiveJobber.Max(j => (j.Slutt ?? j.Start!.Value.AddHours(1)).TimeOfDay.TotalHours));
+                : (int)Math.Ceiling(AktiveTidsrom.Max(t => t.Slutt.TimeOfDay.TotalHours));
             return Math.Clamp(Math.Max(17, senest), StartTime + 4, 24);
         }
     }
@@ -466,6 +687,23 @@ else
     private List<JobbRad> AktiveJobber => _visning == "uke"
         ? _ukeJobber.Where(j => j.Start is not null).ToList()
         : _jobber.Where(j => j.Start is not null).ToList();
+
+    // Både arbeidsordre og de manuelle aktivitetene er med her, slik at aksen
+    // strekker seg også når det bare er en aktivitet som ligger utenfor 07-17.
+    private List<(DateTime Start, DateTime Slutt)> AktiveTidsrom
+    {
+        get
+        {
+            var rader = AktiveJobber
+                .Select(j => (Start: j.Start!.Value, Slutt: j.Slutt ?? j.Start!.Value.AddHours(1)))
+                .ToList();
+
+            rader.AddRange((_visning == "uke" ? _ukeAktiviteter : _aktiviteter)
+                .Select(a => (a.Start, a.Slutt)));
+
+            return rader;
+        }
+    }
 
     private double Topp(JobbRad jobb) =>
         Math.Max(0, (jobb.Start!.Value.TimeOfDay.TotalHours - StartTime) * PxPerTime);
@@ -480,11 +718,22 @@ else
     // steder - se Models/AktivitetFarge.cs.
     private static Fargepar FargeFor(int id) => AktivitetFarge.Velg(id);
 
+    private double ToppAkt(AktivitetRad akt) =>
+        Math.Max(0, (akt.Start.TimeOfDay.TotalHours - StartTime) * PxPerTime);
+
+    private double HoydeAkt(AktivitetRad akt) =>
+        Math.Max(34, (akt.Slutt - akt.Start).TotalHours * PxPerTime);
+
     private List<JobbRad> _ukeJobber = [];
 
     private List<JobbRad> UkeJobber(DateOnly dag) => _ukeJobber
         .Where(j => j.Start is not null && DateOnly.FromDateTime(j.Start.Value) == dag)
         .OrderBy(j => j.Start)
+        .ToList();
+
+    private List<AktivitetRad> UkeAktiviteter(DateOnly dag) => _ukeAktiviteter
+        .Where(a => DateOnly.FromDateTime(a.Start) == dag)
+        .OrderBy(a => a.Start)
         .ToList();
 
     private List<DateOnly> MinikalenderDager
@@ -641,6 +890,7 @@ else
     {
         _laster = true;
         _apenMenyId = null;
+        _apenAktivitetMenyId = null;
 
         await LastOppgaverAsync();
 
@@ -648,6 +898,8 @@ else
         {
             _jobber = [];
             _ukeJobber = [];
+            _aktiviteter = [];
+            _ukeAktiviteter = [];
             _laster = false;
             return;
         }
@@ -676,6 +928,31 @@ else
             Start = a.PlanlagtDato,
             Slutt = a.PlanlagtSlutt
         }).ToList();
+
+        // Aktivitetene for hele uken hentes i samme runde som ordrene.
+        // Sorteringen skjer i minnet: SQLite kan ikke ORDER BY en TimeSpan, og
+        // Fra/Til er nettopp det.
+        var ukeRessurs = await Db.Ressursplaner
+            .Where(r => r.MontorId == _valgtMontorId && r.Dato >= ukeStart && r.Dato < ukeSlutt)
+            .ToListAsync();
+
+        _ukeAktiviteter = ukeRessurs
+            .Select(r => new AktivitetRad
+            {
+                Id = r.Id,
+                Tittel = r.Tittel,
+                Info = string.IsNullOrWhiteSpace(r.Info) ? null : r.Info,
+                Start = r.Dato.Date + r.Fra,
+                Slutt = r.Dato.Date + r.Til
+            })
+            .OrderBy(a => a.Start)
+            .ToList();
+
+        // Den valgte dagen ligger alltid inne i uken over (UkeDager regnes ut
+        // fra den), så dagens aktiviteter kan plukkes ut uten et nytt spørsmål.
+        _aktiviteter = _ukeAktiviteter
+            .Where(a => DateOnly.FromDateTime(a.Start) == _valgtDato)
+            .ToList();
 
         var ordre = await Db.Arbeidsordre
             .Include(a => a.Prosjekt)

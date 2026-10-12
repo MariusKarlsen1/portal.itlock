@@ -60,7 +60,7 @@ public static class PortalModulRegister
     private static readonly List<Lenke> DriftUndermoduler =
     [
         new Lenke("Kart", "Se montørenes jobber geografisk for en valgt dag.", "kart", "map"),
-        new Lenke("Kalender", "Se planlagte arbeidsordre for alle montører i månedsvisning.", "kalender", "calendar"),
+        new Lenke("Kalender", "Se planlagte arbeidsordre for alle montører.", "kalender", "calendar"),
         new Lenke("Fravær", "Søknader, godkjenning og fraværskalender per person.", "fravar", "sun"),
         new Lenke("Forespørsler", "E-poster sendt til post@itlock.no.", "foresporsler", "mail"),
     ];
@@ -139,7 +139,7 @@ public static class PortalModulRegister
                     // ArbeidsordreKartvisning), så det var to veier til det
                     // samme. Siden ligger fortsatt under Drift.
                     // new Lenke("Kart", "Se dagens jobber geografisk", "kart", "map"),
-                    new Lenke("Kalender", "Se planlagte arbeidsordre i månedsvisning", "kalender", "calendar"),
+                    new Lenke("Kalender", "Se planlagte arbeidsordre", "kalender", "calendar"),
                 ]),
             ]),
         new Rolle(
