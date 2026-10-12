@@ -1,6 +1,33 @@
 ﻿namespace PortalItlock.Web.Models;
 
-public sealed record Lenke(string Tittel, string Beskrivelse, string Href, string IconNavn = "folder", List<Lenke>? Undermoduler = null);
+// Hvem som ser en modul. Verdiene er utledet fra de tre gamle seksjonene på
+// forsiden, slik at ingen mister eller får noe de ikke hadde: en modul som lå
+// under "For montører" ble vist til montør, prosjektleder og admin, en under
+// "For prosjektledere" til prosjektleder og admin, og en under "For admin"
+// bare til admin (se NavMenu/TopBar sin gamle nøkkel-liste).
+//
+// Dette styrer hva som VISES. Selve tilgangen ligger fortsatt på hver side,
+// i [Authorize(Roles = ...)], og den er ikke rørt.
+[Flags]
+public enum ModulTilgang
+{
+    Ingen = 0,
+    Montor = 1,
+    Prosjektleder = 2,
+    Admin = 4,
+    Alle = Montor | Prosjektleder | Admin,
+    FraProsjektleder = Prosjektleder | Admin,
+    KunAdmin = Admin
+}
+
+public sealed record Lenke(
+    string Tittel,
+    string Beskrivelse,
+    string Href,
+    string IconNavn = "folder",
+    List<Lenke>? Undermoduler = null,
+    ModulTilgang Tilgang = ModulTilgang.Alle);
+
 public sealed record LenkeGruppe(string Navn, List<Lenke> Lenker);
 public sealed record Rolle(string Nokkel, string Tittel, string Beskrivelse, List<LenkeGruppe> Grupper);
 
@@ -167,6 +194,128 @@ public static class PortalModulRegister
                 ]),
             ]),
     ];
+
+    // ---------- Kategoriene på den nye forsiden ----------
+    //
+    // Én felles liste for alle, i stedet for tre rolleknapper. Modulene er de
+    // samme som før, bare gruppert etter hva de brukes til; Tilgang på hver
+    // enkelt avgjør hvem som ser den. Administrasjon er sin egen kategori og
+    // blandes ikke inn i de andre.
+    public static readonly List<Rolle> Kategorier =
+    [
+        new Rolle(
+            "prosjekt",
+            "Prosjekt og tilbud",
+            "Prosjekter, arbeidsordre, dørpakker og CE",
+            [
+                new LenkeGruppe("Moduler", [
+                    new Lenke("Prosjekter", "Dører, plantegninger og montasjestatus per prosjekt.", "prosjekter", "folder"),
+                    new Lenke("Arbeidsordre", "Jobber med ansvarlig montør, varer og sjekkliste.", "arbeidsordre", "check-circle"),
+                    new Lenke("Finn dørpakke", "Huk av krav og finn riktig dørpakke til prosjektet.", "finn-dorpakke", "box", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Tilbud service", "Tilbud for serviceavtaler, med estimater fra arbeidsordre-minuttene.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("CE-godkjenninger", "CE-sertifiseringer for dører med automatikk, på tvers av prosjekter.", "ce-godkjenninger", "shield"),
+                ]),
+            ]),
+
+        new Rolle(
+            "montorverktoy",
+            "Montørverktøy",
+            "Befaring, utskiftning av lås og ABC-kalkulator",
+            [
+                new LenkeGruppe("Moduler", [
+                    new Lenke("Min dag", "Dagens jobber, adresse og varer å pakke, samlet.", "min-dag", "calendar"),
+                    new Lenke("Befaringsliste", "Sjekkliste og notater fra befaring.", "befaringsliste", "eye"),
+                    new Lenke("Utskiftning av lås", "Sjekkliste med mål på dør, karm og hengsling.", "lasutskifting", "tool"),
+                    new Lenke("Utskiftning av låskasse", "Søk opp gammel lås, se hva du trenger.", "lasekasse-utskiftning", "tool"),
+                    new Lenke("ABC-kalkulator", "Sylinderforlenger, skilt og skruer fra A/B/C-mål.", "abc-kalkulator", "tool"),
+                ]),
+            ]),
+
+        new Rolle(
+            "teknisk",
+            "Teknisk og ADK",
+            "Kobling, dørmiljø og oppsett av adgangskontroll",
+            [
+                new LenkeGruppe("Moduler", [
+                    new Lenke("Kobling", "Koblingsskjema per system.", "guide/kobling", "trend-up"),
+                    new Lenke("Dørmiljø", "Tegninger til bruk på befaring og i prosjektering.", "dormiljo", "box"),
+                    new Lenke("Oppsett adgangskontroll", "Guide for oppsett av adgangskontroll.", "guide/oppsett-adgangskontroll", "bell"),
+                    new Lenke("Systemregister", "Søk opp låssystem, kunde, adresse og rekvirenter.", "systemregister", "users", null, ModulTilgang.FraProsjektleder),
+                ]),
+            ]),
+
+        new Rolle(
+            "personell",
+            "Personell og planlegging",
+            "Kalender, timer, fravær og godkjenning",
+            [
+                new LenkeGruppe("Moduler", [
+                    new Lenke("Kalender", "Én rad per montør, med uke- og månedsvisning.", "kalender", "calendar"),
+                    new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock"),
+                    new Lenke("Fravær", "Søk om ferie eller meld fravær.", "fravar", "sun"),
+                    new Lenke("Godkjenninger", "Innsendte timer og fraværssøknader, med sammendrag og rapport.", "timegodkjenning", "check-circle", null, ModulTilgang.FraProsjektleder),
+                ]),
+            ]),
+
+        new Rolle(
+            "driftkunde",
+            "Kunder og drift",
+            "Kunderegister, service, tickets og forespørsler",
+            [
+                new LenkeGruppe("Moduler", [
+                    new Lenke("Kunderegister", "Opprett og vedlikehold kunder med kontaktinfo og adresse.", "kunder", "users", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Serviceavtaler", "Serviceavtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Tickets", "Samlet oversikt over alle henvendelser og saker.", "tickets", "tag", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Forespørsler", "E-poster sendt til post@itlock.no.", "foresporsler", "mail", null, ModulTilgang.FraProsjektleder),
+                ]),
+            ]),
+
+        new Rolle(
+            "administrasjon",
+            "Administrasjon",
+            "Oppsett, komponenter, brukere og rapporter",
+            [
+                new LenkeGruppe("Moduler", [
+                    new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings", OppsettUndermoduler, ModulTilgang.KunAdmin),
+                    new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler, ModulTilgang.KunAdmin),
+                    new Lenke("Brukere og kunder", "Brukere, kunder, kundetilgang og fravær samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler, ModulTilgang.KunAdmin),
+                    new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt", RapporterUndermoduler, ModulTilgang.KunAdmin),
+                ]),
+            ]),
+    ];
+
+    private static ModulTilgang TilgangFor(BrukerRolle? rolle) => rolle switch
+    {
+        BrukerRolle.Admin => ModulTilgang.Admin,
+        BrukerRolle.Prosjektleder => ModulTilgang.Prosjektleder,
+        BrukerRolle.Montor => ModulTilgang.Montor,
+        _ => ModulTilgang.Ingen
+    };
+
+    // Kategoriene brukeren faktisk ser, med bare de modulene de har tilgang
+    // til. En kategori uten synlige moduler faller bort av seg selv.
+    public static List<Rolle> KategorierFor(BrukerRolle? rolle)
+    {
+        var tilgang = TilgangFor(rolle);
+
+        return Kategorier
+            .Select(k => k with
+            {
+                Grupper = k.Grupper
+                    .Select(g => g with { Lenker = g.Lenker.Where(l => l.Tilgang.HasFlag(tilgang)).ToList() })
+                    .Where(g => g.Lenker.Count > 0)
+                    .ToList()
+            })
+            .Where(k => k.Grupper.Count > 0)
+            .ToList();
+    }
+
+    // Flat liste over modulene brukeren ser - til venstremenyen.
+    public static List<Lenke> ModulerFor(BrukerRolle? rolle) => KategorierFor(rolle)
+        .SelectMany(k => k.Grupper)
+        .SelectMany(g => g.Lenker)
+        .DistinctBy(l => l.Href)
+        .ToList();
 
     // Finner "ett steg tilbake"-målet for en gitt sluttside: hub-siden (med
     // eget navn/href) som lenker til denne siden i en av rollenes moduler.
