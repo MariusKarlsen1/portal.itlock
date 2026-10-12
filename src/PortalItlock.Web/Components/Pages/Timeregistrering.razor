@@ -1,4 +1,4 @@
-@page "/timeregistrering"
+﻿@page "/timeregistrering"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using System.Globalization
@@ -108,10 +108,8 @@
         <div class="tr-fanerad">
             <button type="button" class="tr-fane @(_fane == "registrer" ? "tr-fane-aktiv" : "")" @onclick='@(() => _fane = "registrer")'>Registrer timer</button>
             <button type="button" class="tr-fane @(_fane == "mine" ? "tr-fane-aktiv" : "")" @onclick='@(() => _fane = "mine")'>Mine timer</button>
-            <AuthorizeView Roles="Admin">
-                <a class="tr-fane" href="/timegodkjenning">Godkjenning</a>
-            </AuthorizeView>
-            <a class="tr-fane" href="/rapporter">Rapporter</a>
+            @* Godkjenning og rapporter hører hjemme hos prosjektlederen, ikke
+               her - de ligger samlet på /timegodkjenning. *@
         </div>
         <div class="tr-visningsbytte">
             <button type="button" class="@(_visning == "uke" ? "aktiv" : "")" @onclick='@(() => VelgVisning("uke"))'>Uke</button>
@@ -145,6 +143,36 @@
             </div>
         </div>
 
+        @* Søk og datoperiode over tabellen. Periodefeltene står tomme som
+           standard, så lista viser alt til man faktisk velger noe. *@
+        <div class="tr-minefilter">
+            <label class="tr-minesok">
+                <Icon Name="search" />
+                <input @bind="_mineSok" @bind:event="oninput" placeholder="Søk prosjekt, aktivitet eller beskrivelse …" />
+            </label>
+            <label class="tr-minefilter-felt">
+                <span>Fra</span>
+                <input type="date" @bind="_mineFra" />
+            </label>
+            <label class="tr-minefilter-felt">
+                <span>Til</span>
+                <input type="date" @bind="_mineTil" />
+            </label>
+            <select class="tr-minefilter-select" @bind="_mineStatus">
+                <option value="">Alle statuser</option>
+                <option value="@TimeregistreringStatus.Venter">Venter</option>
+                <option value="@TimeregistreringStatus.Godkjent">Godkjent</option>
+                <option value="@TimeregistreringStatus.Avslatt">Avslått</option>
+            </select>
+            @if (MineFilterAktivt)
+            {
+                <button type="button" class="tr-minefilter-nullstill" @onclick="NullstillMineFilter">
+                    <Icon Name="x" />Nullstill
+                </button>
+            }
+            <span class="tr-minefilter-sum">@MineFiltrerteRader.Count linjer · @MineFiltrerteRader.Sum(r => r.Timer).ToString("N1", Kultur) t</span>
+        </div>
+
         <div class="tr-panel">
             <table class="tr-tabell">
                 <thead>
@@ -154,6 +182,7 @@
                         <th class="tr-h">Timer</th>
                         <th class="tr-h">Fakturerbart</th>
                         <th class="tr-h">Linjer</th>
+                        <th>Godkjenning</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -165,13 +194,19 @@
                             <td class="tr-h tr-sterk">@u.Timer.ToString("N1", Kultur)</td>
                             <td class="tr-h">@u.Fakturerbart.ToString("N1", Kultur)</td>
                             <td class="tr-h">@u.Antall</td>
+                            <td>
+                                @foreach (var merke in u.Godkjenning)
+                                {
+                                    <span class="tr-statusmerke tr-statusmerke-@merke.Klasse">@merke.Tekst</span>
+                                }
+                            </td>
                         </tr>
                     }
                 </tbody>
             </table>
             @if (MineUker.Count == 0)
             {
-                <p class="tr-tom">Ingen timer registrert ennå.</p>
+                <p class="tr-tom">@(MineFilterAktivt ? "Ingen timer i det valgte utvalget." : "Ingen timer registrert ennå.")</p>
             }
         </div>
     }
@@ -553,7 +588,9 @@
 
     private sealed record ProsjektValg(int Nokkel, string Navn);
 
-    private sealed record UkeRad(int Ar, int Uke, string Periode, decimal Timer, decimal Fakturerbart, int Antall);
+    private sealed record StatusMerke(string Tekst, string Klasse);
+
+    private sealed record UkeRad(int Ar, int Uke, string Periode, decimal Timer, decimal Fakturerbart, int Antall, List<StatusMerke> Godkjenning);
 
     // ---------- tilstand ----------
 
@@ -620,7 +657,34 @@
         .Where(p => _prosjektSok.Length == 0 || p.Navn.Contains(_prosjektSok.Trim(), StringComparison.OrdinalIgnoreCase))
         .ToList();
 
-    private List<UkeRad> MineUker => MineRader
+    // Søket og datoperioden over "Mine timer"-tabellen.
+    private string _mineSok = "";
+    private DateTime? _mineFra;
+    private DateTime? _mineTil;
+    private string _mineStatus = "";
+
+    private bool MineFilterAktivt =>
+        _mineSok.Length > 0 || _mineFra is not null || _mineTil is not null || _mineStatus.Length > 0;
+
+    private void NullstillMineFilter()
+    {
+        _mineSok = "";
+        _mineFra = null;
+        _mineTil = null;
+        _mineStatus = "";
+    }
+
+    private List<Timerad> MineFiltrerteRader => MineRader
+        .Where(r => _mineFra is null || r.Dato.Date >= _mineFra.Value.Date)
+        .Where(r => _mineTil is null || r.Dato.Date <= _mineTil.Value.Date)
+        .Where(r => _mineStatus.Length == 0 || r.Status.ToString() == _mineStatus)
+        .Where(r => _mineSok.Length == 0
+            || r.ProsjektNavn.Contains(_mineSok, StringComparison.OrdinalIgnoreCase)
+            || r.Aktivitet.Visningsnavn().Contains(_mineSok, StringComparison.OrdinalIgnoreCase)
+            || (r.Beskrivelse?.Contains(_mineSok, StringComparison.OrdinalIgnoreCase) ?? false))
+        .ToList();
+
+    private List<UkeRad> MineUker => MineFiltrerteRader
         .GroupBy(r => (Ar: ISOWeek.GetYear(r.Dato), Uke: ISOWeek.GetWeekOfYear(r.Dato)))
         .OrderByDescending(g => g.Key.Ar).ThenByDescending(g => g.Key.Uke)
         .Select(g =>
@@ -632,9 +696,43 @@
                 $"{mandag:dd.MM} – {mandag.AddDays(6):dd.MM.yyyy}",
                 g.Sum(r => r.Timer),
                 g.Where(r => r.Fakturerbar).Sum(r => r.Timer),
-                g.Count());
+                g.Count(),
+                GodkjenningsMerker(g.ToList()));
         })
         .ToList();
+
+    // Én uke kan ha linjer i flere tilstander, så kolonnen viser et merke pr.
+    // tilstand som faktisk finnes - ikke bare den vanligste.
+    private static List<StatusMerke> GodkjenningsMerker(List<Timerad> rader)
+    {
+        var merker = new List<StatusMerke>();
+
+        var godkjent = rader.Count(r => r.Status == TimeregistreringStatus.Godkjent);
+        var venter = rader.Count(r => r.Status == TimeregistreringStatus.Venter);
+        var avslatt = rader.Count(r => r.Status == TimeregistreringStatus.Avslatt);
+
+        if (godkjent == rader.Count)
+        {
+            return [new StatusMerke("Godkjent", "godkjent")];
+        }
+
+        if (venter > 0)
+        {
+            merker.Add(new StatusMerke($"{venter} venter", "venter"));
+        }
+
+        if (avslatt > 0)
+        {
+            merker.Add(new StatusMerke($"{avslatt} avslått", "avslatt"));
+        }
+
+        if (godkjent > 0)
+        {
+            merker.Add(new StatusMerke($"{godkjent} godkjent", "godkjent"));
+        }
+
+        return merker;
+    }
 
     // Mandag-fredag som standard, men helgen tas med hvis det faktisk er ført
     // timer der - ellers ville de vært usynlige i kalenderen.

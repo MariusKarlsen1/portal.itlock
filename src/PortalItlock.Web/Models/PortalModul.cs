@@ -154,6 +154,9 @@ public static class PortalModulRegister
                     new Lenke("Forespørsler", "E-poster sendt til post@itlock.no", "foresporsler", "mail"),
                     new Lenke("Tickets", "Samlet oversikt over alle henvendelser og saker", "tickets", "tag"),
                     new Lenke("Service modul", "Serviceavtaler, serviceoppdrag og tilbud service samlet på ett sted", "servicemodul", "clock", ServiceUndermoduler),
+                    // Prosjektlederne godkjenner timene og fraværssøknadene til
+                    // montørene sine, og henter rapporten derfra.
+                    new Lenke("Godkjenninger", "Alle innsendte timer og fraværssøknader til godkjenning, med sammendrag og rapport", "timegodkjenning", "check-circle"),
                 ]),
             ]),
         new Rolle(
