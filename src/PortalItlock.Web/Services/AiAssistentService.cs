@@ -43,8 +43,8 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
         "moduler: Prosjekt (prosjekter, dører, plantegninger med posisjonerte dørmarkører, byggetrinn, CE-" +
         "godkjenning, garanti/reklamasjon knyttet til komponenter). Komponenter og priser (vareregister med " +
         "priser, rabattgrupper, prisimport, lagerstyring, montasjetider, garantitid per produkt). Tilbud " +
-        "(prisoverslag med varelinjer, DG/påslag-beregning, PDF-eksport). Ressursplanlegger (ukeplan som viser " +
-        "hvilken montør som er satt på hvilken jobb hvilken dag). Tickets (saksbehandling for henvendelser, " +
+        "(prisoverslag med varelinjer, DG/påslag-beregning, PDF-eksport). Kalender (ukeplan med én rad pr. " +
+        "montør som viser hvem som er satt på hvilken jobb hvilken dag). Tickets (saksbehandling for henvendelser, " +
         "reklamasjoner og driftsmeldinger, med SLA-frister). Service modul (serviceavtaler, serviceoppdrag, " +
         "planlagte servicerunder). Drift (kart over dagens jobber, kalender, fraværsregistrering). Arbeidsordre " +
         "(monteringsoppdrag knyttet til prosjekter). Kunder (kunderegister og oppfølging). " +

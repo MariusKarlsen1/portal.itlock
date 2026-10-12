@@ -151,7 +151,6 @@ public static class PortalModulRegister
                     new Lenke("Prosjekt modul", "Prosjekter, dørpakker og systemregister samlet på ett sted", "prosjekteringmodul", "folder", ProsjekteringUndermoduler),
                     new Lenke("Kunder", "Kunderegister, oppfølging, portaltilgang og tilvalg samlet på ett sted", "kundemodul", "users", KunderUndermoduler),
                     new Lenke("Drift", "Kart, kalender og fravær samlet på ett sted", "driftmodul", "map", DriftUndermoduler),
-                    new Lenke("Ressursplanlegger", "Sett av montører på dager fremover, vises i deres kalender", "ressursplanlegger", "calendar"),
                     new Lenke("Forespørsler", "E-poster sendt til post@itlock.no", "foresporsler", "mail"),
                     new Lenke("Tickets", "Samlet oversikt over alle henvendelser og saker", "tickets", "tag"),
                     new Lenke("Service modul", "Serviceavtaler, serviceoppdrag og tilbud service samlet på ett sted", "servicemodul", "clock", ServiceUndermoduler),

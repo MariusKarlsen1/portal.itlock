@@ -1,4 +1,4 @@
-@page "/kalender"
+﻿@page "/kalender"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using System.Globalization
@@ -17,13 +17,13 @@
 <div class="kal-side">
 
     <header class="kal-topp">
-        <div class="kal-topp-venstre">
-            <span class="kal-topp-ikon"><Icon Name="calendar" /></span>
-            <div class="kal-topp-tekst">
-                <h1>Kalender</h1>
-            </div>
+        <div class="kal-topp-tekst">
+            <h1>Kalender</h1>
+            <p>Oversikt over montører, oppdrag, fravær og viktige hendelser.</p>
         </div>
-        <a class="kal-ny-knapp" href="/arbeidsordre/ny"><Icon Name="plus" />Ny aktivitet<Icon Name="chevron-down" /></a>
+        <button type="button" class="kal-ny-knapp" @onclick="@(() => AapneNyHendelse(null, _valgtDato))">
+            <Icon Name="plus" />Ny hendelse
+        </button>
     </header>
 
     <div class="kal-verktoylinje">
@@ -88,10 +88,6 @@
                         </select>
                     </label>
                     <a class="kal-filter-lenke" href="/min-dag"><Icon Name="calendar" />Se min dag</a>
-                    @if (_naverendeRolle != BrukerRolle.Montor)
-                    {
-                        <a class="kal-filter-lenke" href="/ressursplanlegger"><Icon Name="users" />Ressursplanlegger</a>
-                    }
                 </div>
             }
         </div>
@@ -189,7 +185,9 @@
                                             <span class="kal-ansatt-rolle">@ansatt.Stilling</span>
                                         </span>
                                     </div>
-                                    <div class="kal-spor">
+                                    <div class="kal-spor"
+                                         @oncontextmenu="@(() => AapneNyHendelse(ansatt.Id, _valgtDato))"
+                                         @oncontextmenu:preventDefault="true">
                                         @for (var t = DagStartTime; t <= DagSluttTime; t++)
                                         {
                                             <span class="kal-sporlinje" style="left:@TimeProsent(t).ToString(Invariant)%"></span>
@@ -203,7 +201,10 @@
                                             <button type="button" @key="b.Nokkel"
                                                     class="kal-akt @(_valgtAktivitet?.Nokkel == b.Nokkel ? "valgt" : "")"
                                                     style="left:@TimeProsent(b.FraTimer).ToString(Invariant)%; width:@BreddeProsent(b).ToString(Invariant)%; background:@b.Farge.Flate; border-left-color:@b.Farge.Kant; color:@b.Farge.Blekk"
-                                                    @onclick="@(() => VelgAktivitet(b))">
+                                                    @onclick="@(() => VelgAktivitet(b))"
+                                                    @oncontextmenu="@(() => AapneRedigerHendelse(b))"
+                                                    @oncontextmenu:preventDefault="true"
+                                                    @oncontextmenu:stopPropagation="true">
                                                 <span class="kal-akt-ikon"><Icon Name="@b.Ikon" /></span>
                                                 <span class="kal-akt-tekst">
                                                     <span class="kal-akt-tittel">@b.Tittel</span>
@@ -227,90 +228,72 @@
                 }
                 else if (_visning == "uke")
                 {
-                    var synligeDager = UkensDager;
-                    <div class="kal-tidsgrid-wrap">
-                        <div class="kal-tidsgrid" style="grid-template-columns: 3.2rem repeat(@synligeDager.Count, 1fr);">
-                            <div class="kal-tidsgrid-hjorne"></div>
-                            @foreach (var dag in synligeDager)
-                            {
-                                <div class="kal-dagheader @(dag == DateTime.Today ? "idag" : "")">
-                                    <span class="kal-dagheader-navn">@dag.ToString("ddd", Kultur)</span>
-                                    <span class="kal-dagheader-tall">@dag.Day</span>
+                    @* Ukevisningen er det samme ressursrutenettet som dagvisningen,
+                       men med sju dagkolonner i stedet for en tidsakse: én rad pr.
+                       montør, én rute pr. dag. Høyreklikk i en rute legger inn en
+                       hendelse manuelt - arbeidsordrene legger seg selv inn ut fra
+                       planlagt dato og ansvarlig montør. *@
+                    <div class="kal-ukegrid-wrap">
+                        <div class="kal-ukegrid">
+                            <div class="kal-ukegrid-hode">
+                                <div class="kal-ukegrid-hjorne">
+                                    <span>Montører (@SynligeAnsatte.Count)</span>
+                                    <button type="button" class="kal-hjorne-ny" title="Ny hendelse" @onclick="@(() => AapneNyHendelse(null, _valgtDato))"><Icon Name="plus" /></button>
                                 </div>
-                            }
-
-                            <div class="kal-timeakse">
-                                @for (var t = KalStartTime; t <= KalSluttTime; t++)
+                                @foreach (var dag in UkensDager)
                                 {
-                                    <span class="kal-timeakse-rad">@t.ToString("00"):00</span>
+                                    <div class="kal-ukedag-hode @(dag.Date == DateTime.Today ? "idag" : "")">
+                                        <span class="kal-ukedag-navn">@StorForbokstav(dag.ToString("ddd", Kultur).TrimEnd('.'))</span>
+                                        <span class="kal-ukedag-dato">@dag.Day. @dag.ToString("MMM", Kultur).TrimEnd('.')</span>
+                                    </div>
                                 }
                             </div>
-                            @foreach (var dag in synligeDager)
+
+                            @foreach (var ansatt in SynligeAnsatte)
                             {
-                                <div class="kal-tidskolonne" style="height:@((KalSluttTime - KalStartTime) * KalPxPerTime)px;">
-                                    @foreach (var o in OrdreForDag(dag))
-                                    {
-                                        <a class="kal-blokk" href="@($"/arbeidsordre/{o.Id}")"
-                                           style="top:@(KalPosisjon(o.Start!.Value.TimeOfDay))px;height:@(KalHoyde(o.Start!.Value.TimeOfDay, o.Slutt?.TimeOfDay ?? o.Start.Value.TimeOfDay.Add(TimeSpan.FromHours(2))))px;background:@FargeHex(o.Status.PillFarge());">
-                                            <span class="kal-blokk-tid">@o.TidTekst</span>
-                                            <span class="kal-blokk-tittel">#@o.Id @o.Tittel</span>
-                                            @if (o.MontorNavn is not null)
-                                            {
-                                                <span class="kal-blokk-montor">@o.MontorNavn</span>
-                                            }
-                                        </a>
-                                    }
-                                    @foreach (var r in RessursForDag(dag))
-                                    {
-                                        <span class="kal-blokk kal-blokk-ressurs" style="top:@(KalPosisjon(r.Fra))px;height:@(KalHoyde(r.Fra, r.Til))px;border-color:@FargeForMontor(r.MontorId);">
-                                            <span class="kal-blokk-tid">@r.Fra.ToString(@"hh\:mm")&ndash;@r.Til.ToString(@"hh\:mm")</span>
-                                            <span class="kal-blokk-tittel">@r.Tittel</span>
-                                            <span class="kal-blokk-montor">@r.MontorNavn</span>
+                                <div class="kal-ukerad" @key="ansatt.Id">
+                                    <div class="kal-ansatt">
+                                        <span class="kal-avatar" style="background:@FargeForMontor(ansatt.Id)">@ansatt.Initialer</span>
+                                        <span class="kal-ansatt-tekst">
+                                            <span class="kal-ansatt-navn">@ansatt.Navn</span>
+                                            <span class="kal-ansatt-rolle">@ansatt.Stilling</span>
                                         </span>
+                                    </div>
+                                    @foreach (var dag in UkensDager)
+                                    {
+                                        <div class="kal-ukecelle @(dag.Date == DateTime.Today ? "idag" : "")"
+                                             @oncontextmenu="@(() => AapneNyHendelse(ansatt.Id, dag))"
+                                             @oncontextmenu:preventDefault="true">
+                                            @foreach (var b in BlokkerFor(ansatt.Id, dag))
+                                            {
+                                                <button type="button" @key="b.Nokkel"
+                                                        class="kal-ukeblokk @(_valgtAktivitet?.Nokkel == b.Nokkel ? "valgt" : "")"
+                                                        style="background:@b.Farge.Flate; border-left-color:@b.Farge.Kant; color:@b.Farge.Blekk"
+                                                        @onclick="@(() => VelgAktivitet(b))"
+                                                        @oncontextmenu="@(() => AapneRedigerHendelse(b))"
+                                                        @oncontextmenu:preventDefault="true"
+                                                        @oncontextmenu:stopPropagation="true">
+                                                    <span class="kal-ukeblokk-topp">
+                                                        <span class="kal-ukeblokk-ikon"><Icon Name="@b.Ikon" /></span>
+                                                        <span class="kal-ukeblokk-tid">@b.TidTekst</span>
+                                                    </span>
+                                                    <span class="kal-ukeblokk-tittel">@b.KortTittel</span>
+                                                    @if (b.KortUnder is not null)
+                                                    {
+                                                        <span class="kal-ukeblokk-sub">@b.KortUnder</span>
+                                                    }
+                                                </button>
+                                            }
+                                        </div>
                                     }
                                 </div>
                             }
-                        </div>
-                    </div>
 
-                    <div class="kort kal-tabellkort">
-                        <div class="kal-tabellheader">
-                            <h2>Arbeidsordre @(_visning == "dag" ? "i dag" : "denne uken") (@TabellRader.Count)</h2>
-                            <div class="kal-tabellfilter">
-                                <button type="button" class="@(_tabellStatusFilter == "alle" ? "aktiv" : "")" @onclick="@(() => _tabellStatusFilter = "alle")">Alle (@_alleArbeidsordreIPeriode.Count)</button>
-                                <button type="button" class="@(_tabellStatusFilter == "ikke-startet" ? "aktiv" : "")" @onclick="@(() => _tabellStatusFilter = "ikke-startet")">Ikke startet (@_alleArbeidsordreIPeriode.Count(a => a.Status is ArbeidsordreStatus.Ny or ArbeidsordreStatus.Klar))</button>
-                                <button type="button" class="@(_tabellStatusFilter == "pagar" ? "aktiv" : "")" @onclick="@(() => _tabellStatusFilter = "pagar")">Pågår (@_alleArbeidsordreIPeriode.Count(a => a.Status == ArbeidsordreStatus.Pagaende))</button>
-                                <button type="button" class="@(_tabellStatusFilter == "ferdig" ? "aktiv" : "")" @onclick="@(() => _tabellStatusFilter = "ferdig")">Ferdig (@_alleArbeidsordreIPeriode.Count(a => a.Status is ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert))</button>
-                            </div>
+                            @if (SynligeAnsatte.Count == 0)
+                            {
+                                <p class="list-empty">Ingen montører å vise.</p>
+                            }
                         </div>
-                        @if (TabellRader.Count == 0)
-                        {
-                            <p class="list-empty">Ingen arbeidsordre i denne perioden.</p>
-                        }
-                        else
-                        {
-                            <table class="kal-tabell">
-                                <thead>
-                                    <tr><th>#</th><th>Tittel</th><th>Kunde</th><th>Dato</th><th>Tid</th><th>Ansvarlig</th><th>Status</th><th>Type</th><th>Prosjekt</th></tr>
-                                </thead>
-                                <tbody>
-                                    @foreach (var o in TabellRader)
-                                    {
-                                        <tr @key="o.Id">
-                                            <td>#@o.Id</td>
-                                            <td><a href="@($"/arbeidsordre/{o.Id}")">@o.Tittel</a></td>
-                                            <td>@(o.KundeNavn ?? "-")</td>
-                                            <td>@o.Start?.ToString("dd.MM.yyyy")</td>
-                                            <td>@o.TidTekst</td>
-                                            <td>@(o.MontorNavn ?? "Ikke tildelt")</td>
-                                            <td><StatusPill Tekst="@o.Status.Visningsnavn()" Ikon="@o.Status.PillIkon()" Farge="@o.Status.PillFarge()" /></td>
-                                            <td>@(o.Type?.Visningsnavn() ?? "-")</td>
-                                            <td>@(o.ProsjektNavn ?? "-")</td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        }
                     </div>
                 }
                 else if (_visning == "liste")
@@ -508,34 +491,117 @@
                     </div>
                 </div>
 
-                @if (_visning != "dag")
-                {
-                <div class="kort kal-legend-kort">
-                    <h3>Kalendervisning</h3>
-                    <span class="kal-legend-rad"><span class="kal-legend-dott" style="background:@FargeHex("blaa")"></span>Ny</span>
-                    <span class="kal-legend-rad"><span class="kal-legend-dott" style="background:@FargeHex("lilla")"></span>Klar</span>
-                    <span class="kal-legend-rad"><span class="kal-legend-dott" style="background:@FargeHex("gul")"></span>Pågående</span>
-                    <span class="kal-legend-rad"><span class="kal-legend-dott" style="background:@FargeHex("gronn")"></span>Ferdig</span>
-                    <span class="kal-legend-rad"><span class="kal-legend-dott" style="background:@FargeHex("noytral")"></span>Fakturert</span>
-                    <span class="kal-legend-rad"><span class="kal-legend-dott kal-legend-dott-ressurs"></span>Ressursplan</span>
+                <div class="kort kal-hurtig-kort">
+                    <h3>Hurtighandlinger</h3>
+                    <div class="kal-hurtig-rutenett">
+                        <a class="kal-hurtig-knapp" href="/arbeidsordre/ny"><Icon Name="plus" />Ny arbeidsordre</a>
+                        <button type="button" class="kal-hurtig-knapp" @onclick="@(() => AapneNyHendelse(null, _valgtDato))"><Icon Name="calendar" />Ny hendelse</button>
+                        <a class="kal-hurtig-knapp" href="/fravar"><Icon Name="sun" />Søk om fravær</a>
+                        <a class="kal-hurtig-knapp" href="/fravar"><Icon Name="list" />Se fravær</a>
+                    </div>
                 </div>
 
-                @if (_naverendeRolle != BrukerRolle.Montor)
-                {
-                    <div class="kort kal-legend-kort">
-                        <h3>Ansatte</h3>
-                        @foreach (var m in _ansatte)
+                <div class="kort kal-filter-kort">
+                    <div class="kal-filter-kort-topp">
+                        <h3>Filter</h3>
+                        <button type="button" class="kal-filter-nullstill" @onclick="NullstillSidefilter">Nullstill</button>
+                    </div>
+
+                    <p class="kal-filter-gruppe">Vis i kalender</p>
+                    <label class="kal-filter-rad">
+                        <input type="checkbox" checked="@(!_skjulteTyper.Contains("arbeidsordre"))" @onchange="@(() => ToggleType("arbeidsordre"))" />
+                        <span class="kal-filter-dott" style="background:@FargeHex("blaa")"></span>Arbeidsordre
+                    </label>
+                    <label class="kal-filter-rad">
+                        <input type="checkbox" checked="@(!_skjulteTyper.Contains("hendelse"))" @onchange="@(() => ToggleType("hendelse"))" />
+                        <span class="kal-filter-dott" style="background:@FargeHex("lilla")"></span>Hendelser
+                    </label>
+
+                    <p class="kal-filter-gruppe">Vis montører</p>
+                    <label class="kal-filter-sok">
+                        <Icon Name="search" />
+                        <input @bind="_montorSok" @bind:event="oninput" placeholder="Søk montør …" />
+                    </label>
+                    <div class="kal-filter-montorliste">
+                        @foreach (var m in MontorerIFilter)
                         {
-                            <span class="kal-legend-rad"><span class="kal-legend-dott" style="background:@FargeForMontor(m.Id)"></span>@m.Navn</span>
+                            <label class="kal-filter-rad" @key="m.Id">
+                                <input type="checkbox" checked="@(!_skjulteMontorer.Contains(m.Id))" @onchange="@(() => ToggleMontor(m.Id))" />
+                                <span class="kal-filter-dott" style="background:@FargeForMontor(m.Id)"></span>@m.Navn
+                            </label>
+                        }
+                        @if (MontorerIFilter.Count == 0)
+                        {
+                            <p class="kal-filter-tom">Ingen treff.</p>
                         }
                     </div>
-                }
-                }
+                </div>
             </div>
         </div>
     }
 
 </div>
+
+@if (_visHendelseSkjema)
+{
+    <div class="kal-modal-overlay" @onclick="LukkHendelseSkjema">
+        <div class="kal-modal" @onclick:stopPropagation="true">
+            <h2>@(_hendelseId is null ? "Ny hendelse" : "Rediger hendelse")</h2>
+            <p class="kal-modal-hjelp">
+                Arbeidsordre legger seg selv inn i kalenderen ut fra planlagt dato og ansvarlig montør.
+                Her legger du inn alt det andre - møter, kjøring, opplæring og internt arbeid.
+            </p>
+
+            <label class="kal-modal-felt">
+                Tittel
+                <input @bind="_hendelseTittel" placeholder="F.eks. Opplæring – kontor" />
+            </label>
+
+            <div class="kal-modal-par">
+                <label class="kal-modal-felt">
+                    Montør
+                    <select @bind="_hendelseAnsattId">
+                        @foreach (var m in _ansatte)
+                        {
+                            <option value="@m.Id">@m.Navn</option>
+                        }
+                    </select>
+                </label>
+                <label class="kal-modal-felt">
+                    Dato
+                    <input type="date" @bind="_hendelseDato" />
+                </label>
+                <label class="kal-modal-felt">
+                    Fra
+                    <input type="time" @bind="_hendelseFra" />
+                </label>
+                <label class="kal-modal-felt">
+                    Til
+                    <input type="time" @bind="_hendelseTil" />
+                </label>
+            </div>
+
+            <label class="kal-modal-felt">
+                Beskrivelse
+                <textarea rows="3" @bind="_hendelseInfo" placeholder="Valgfritt"></textarea>
+            </label>
+
+            @if (_hendelseFeil is not null)
+            {
+                <p class="kal-modal-feil">@_hendelseFeil</p>
+            }
+
+            <div class="kal-modal-knapper">
+                <button type="button" class="kal-modal-avbryt" @onclick="LukkHendelseSkjema">Avbryt</button>
+                @if (_hendelseId is not null)
+                {
+                    <button type="button" class="kal-modal-slett" @onclick="SlettHendelse">Slett</button>
+                }
+                <button type="button" class="kal-ny-knapp" @onclick="LagreHendelse">Lagre</button>
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     private sealed class MontorOption
@@ -604,7 +670,13 @@
     {
         public required string Nokkel { get; init; }
         public int? ArbeidsordreId { get; init; }
+
+        // Satt på ressursplanlagte poster, slik at de kan redigeres og slettes
+        // der de står i rutenettet.
+        public int? RessursplanId { get; init; }
         public int AnsattId { get; init; }
+        public DateTime Dato { get; init; }
+        public string Slag { get; init; } = "arbeidsordre";
         public string Tittel { get; init; } = "";
         public string? Undertekst { get; init; }
         public string? ProsjektNavn { get; init; }
@@ -622,6 +694,12 @@
 
         public string TidTekst => $"{TimeTekst(FraTimer)} – {TimeTekst(TilTimer)}";
 
+        // Teksten i ukerutenettet: "#1045 – Montasje" med prosjektet under, slik
+        // at nummeret er synlig uten å åpne arbeidsordren.
+        public string KortTittel => ArbeidsordreId is null ? Tittel : $"#{ArbeidsordreId} – {Tittel}";
+
+        public string? KortUnder => ProsjektNavn ?? Undertekst;
+
         private static string TimeTekst(double timer) =>
             TimeSpan.FromHours(timer).ToString(@"hh\:mm");
     }
@@ -634,10 +712,6 @@
     // ukedagen skal ha stor forbokstav på norsk.
     private static string StorForbokstav(string tekst) =>
         tekst.Length == 0 ? tekst : char.ToUpper(tekst[0], Kultur) + tekst[1..];
-
-    private const int KalStartTime = 6;
-    private const int KalSluttTime = 18;
-    private const int KalPxPerTime = 52;
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -658,7 +732,7 @@
     private string _detaljFane = "detaljer";
     private AktivitetBlokk? _valgtAktivitet;
     private List<AnsattRad> _ansatte = [];
-    private List<AktivitetBlokk> _dagBlokker = [];
+    private List<AktivitetBlokk> _blokker = [];
 
     private List<ProsjektOption> _prosjekter = [];
     private Dictionary<int, string> _fargekart = [];
@@ -667,6 +741,23 @@
     private bool _laster = true;
     private int? _draggingOrdreId;
     private DateTime? _dragOverDato;
+
+    // Sidepanelets filtre. Lagres bare i minnet - de skal kunne skrus av og på
+    // mens man jobber, ikke følge brukeren mellom besøk.
+    private readonly HashSet<string> _skjulteTyper = [];
+    private readonly HashSet<int> _skjulteMontorer = [];
+    private string _montorSok = "";
+
+    // Skjema for hendelser lagt inn manuelt i rutenettet.
+    private bool _visHendelseSkjema;
+    private int? _hendelseId;
+    private int? _hendelseAnsattId;
+    private DateTime _hendelseDato = DateTime.Today;
+    private string _hendelseTittel = "";
+    private string _hendelseInfo = "";
+    private TimeOnly _hendelseFra = new(8, 0);
+    private TimeOnly _hendelseTil = new(16, 0);
+    private string? _hendelseFeil;
 
     private List<DateTime> UkensDager
     {
@@ -899,9 +990,11 @@
 
         _dager = dager;
 
-        if (_visning == "dag")
+        // Både dag- og ukevisningen er bygd av de samme blokkene - dagen viser
+        // dem langs en tidsakse, uken fordelt på sju dagkolonner.
+        if (_visning is "dag" or "uke")
         {
-            ByggDagBlokker(ordre, ressurser);
+            ByggBlokker(ordre, ressurser);
         }
 
         _laster = false;
@@ -911,12 +1004,11 @@
     // ansvarlig montør, pluss ressursplanlagte poster. Arbeidsordre uten
     // klokkeslett får et standard arbeidsvindu, ellers ville de vært umulige
     // å plassere på aksen.
-    private void ByggDagBlokker(List<Arbeidsordre> ordre, List<Ressursplan> ressurser)
+    private void ByggBlokker(List<Arbeidsordre> ordre, List<Ressursplan> ressurser)
     {
         var blokker = new List<AktivitetBlokk>();
-        var dato = _valgtDato.Date;
 
-        foreach (var a in ordre.Where(a => a.AnsvarligMontorId is not null && a.PlanlagtDato?.Date == dato))
+        foreach (var a in ordre.Where(a => a.AnsvarligMontorId is not null && a.PlanlagtDato is not null))
         {
             var fra = a.PlanlagtDato!.Value.TimeOfDay.TotalHours;
             if (fra <= 0)
@@ -943,6 +1035,7 @@
                 Nokkel = $"ao-{a.Id}",
                 ArbeidsordreId = a.Id,
                 AnsattId = a.AnsvarligMontorId!.Value,
+                Dato = a.PlanlagtDato!.Value.Date,
                 Tittel = a.Tittel,
                 Undertekst = $"AO-{a.Id}{(a.Prosjekt?.Navn is { } pn ? $" · {pn}" : "")}",
                 ProsjektNavn = a.Prosjekt?.Navn,
@@ -958,14 +1051,17 @@
             });
         }
 
-        foreach (var r in ressurser.Where(r => r.Dato.Date == dato))
+        foreach (var r in ressurser)
         {
             var deltaker = _ansatte.FirstOrDefault(x => x.Id == r.MontorId);
 
             blokker.Add(new AktivitetBlokk
             {
                 Nokkel = $"res-{r.Id}",
+                RessursplanId = r.Id,
+                Slag = "hendelse",
                 AnsattId = r.MontorId,
+                Dato = r.Dato.Date,
                 Tittel = r.Tittel,
                 Undertekst = string.IsNullOrWhiteSpace(r.Info) ? null : r.Info,
                 FraTimer = r.Fra.TotalHours,
@@ -978,7 +1074,7 @@
             });
         }
 
-        _dagBlokker = blokker;
+        _blokker = blokker;
 
         // Hold valget hvis blokken fortsatt finnes, ellers nullstill panelet.
         if (_valgtAktivitet is not null)
@@ -1006,7 +1102,154 @@
     private List<AnsattRad> SynligeAnsatte => _ansatte
         .Where(a => _avdelingFilter.Length == 0 || a.Stilling == _avdelingFilter)
         .Where(a => _valgtMontorId is null || a.Id == _valgtMontorId)
+        .Where(a => !_skjulteMontorer.Contains(a.Id))
         .ToList();
+
+    // Lista i "Vis montører" - søket filtrerer bare hvem som står i lista, ikke
+    // hvem som er huket av.
+    private List<AnsattRad> MontorerIFilter => _ansatte
+        .Where(a => _montorSok.Length == 0 || a.Navn.Contains(_montorSok, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    private void ToggleMontor(int id)
+    {
+        if (!_skjulteMontorer.Add(id))
+        {
+            _skjulteMontorer.Remove(id);
+        }
+    }
+
+    private void ToggleType(string slag)
+    {
+        if (!_skjulteTyper.Add(slag))
+        {
+            _skjulteTyper.Remove(slag);
+        }
+    }
+
+    private void NullstillSidefilter()
+    {
+        _skjulteTyper.Clear();
+        _skjulteMontorer.Clear();
+        _montorSok = "";
+    }
+
+    // ---------- Hendelser lagt inn manuelt (Ressursplan) ----------
+
+    private void AapneNyHendelse(int? ansattId, DateTime dag)
+    {
+        _hendelseId = null;
+        _hendelseAnsattId = ansattId ?? SynligeAnsatte.FirstOrDefault()?.Id ?? _ansatte.FirstOrDefault()?.Id;
+        _hendelseDato = dag.Date;
+        _hendelseTittel = "";
+        _hendelseInfo = "";
+        _hendelseFra = new TimeOnly(8, 0);
+        _hendelseTil = new TimeOnly(16, 0);
+        _hendelseFeil = null;
+        _visHendelseSkjema = true;
+    }
+
+    private void AapneRedigerHendelse(AktivitetBlokk blokk)
+    {
+        // Arbeidsordre redigeres på sin egen side - her er det bare de manuelt
+        // innlagte hendelsene som kan endres.
+        if (blokk.RessursplanId is null)
+        {
+            Nav.NavigateTo($"/arbeidsordre/{blokk.ArbeidsordreId}");
+            return;
+        }
+
+        _hendelseId = blokk.RessursplanId;
+        _hendelseAnsattId = blokk.AnsattId;
+        _hendelseDato = blokk.Dato;
+        _hendelseTittel = blokk.Tittel;
+        _hendelseInfo = blokk.Undertekst ?? "";
+        _hendelseFra = TimeOnly.FromTimeSpan(TimeSpan.FromHours(blokk.FraTimer));
+        _hendelseTil = TimeOnly.FromTimeSpan(TimeSpan.FromHours(blokk.TilTimer));
+        _hendelseFeil = null;
+        _visHendelseSkjema = true;
+    }
+
+    private void LukkHendelseSkjema()
+    {
+        _visHendelseSkjema = false;
+        _hendelseFeil = null;
+    }
+
+    private async Task LagreHendelse()
+    {
+        if (_hendelseAnsattId is null)
+        {
+            _hendelseFeil = "Velg hvem hendelsen gjelder.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_hendelseTittel))
+        {
+            _hendelseFeil = "Gi hendelsen en tittel.";
+            return;
+        }
+
+        if (_hendelseTil <= _hendelseFra)
+        {
+            _hendelseFeil = "Til-klokkeslett må være etter fra-klokkeslett.";
+            return;
+        }
+
+        if (_hendelseId is null)
+        {
+            Db.Ressursplaner.Add(new Ressursplan
+            {
+                Dato = _hendelseDato.Date,
+                MontorId = _hendelseAnsattId.Value,
+                Tittel = _hendelseTittel.Trim(),
+                Info = _hendelseInfo.Trim(),
+                Fra = _hendelseFra.ToTimeSpan(),
+                Til = _hendelseTil.ToTimeSpan(),
+                OpprettetAvBrukerId = _naverendeBrukerId
+            });
+        }
+        else
+        {
+            var eksisterende = await Db.Ressursplaner.FirstOrDefaultAsync(r => r.Id == _hendelseId.Value);
+            if (eksisterende is null)
+            {
+                // Noen andre har slettet den i mellomtiden.
+                LukkHendelseSkjema();
+                await LastAsync();
+                return;
+            }
+
+            eksisterende.Dato = _hendelseDato.Date;
+            eksisterende.MontorId = _hendelseAnsattId.Value;
+            eksisterende.Tittel = _hendelseTittel.Trim();
+            eksisterende.Info = _hendelseInfo.Trim();
+            eksisterende.Fra = _hendelseFra.ToTimeSpan();
+            eksisterende.Til = _hendelseTil.ToTimeSpan();
+        }
+
+        await Db.SaveChangesAsync();
+        LukkHendelseSkjema();
+        await LastAsync();
+    }
+
+    private async Task SlettHendelse()
+    {
+        if (_hendelseId is null)
+        {
+            return;
+        }
+
+        var eksisterende = await Db.Ressursplaner.FirstOrDefaultAsync(r => r.Id == _hendelseId.Value);
+        if (eksisterende is not null)
+        {
+            Db.Ressursplaner.Remove(eksisterende);
+            await Db.SaveChangesAsync();
+        }
+
+        LukkHendelseSkjema();
+        await LastAsync();
+    }
 
     private bool ErIDag => _valgtDato.Date == DateTime.Today;
 
@@ -1022,7 +1265,8 @@
     {
         get
         {
-            var tidligst = _dagBlokker.Count == 0 ? 7 : (int)Math.Floor(_dagBlokker.Min(b => b.FraTimer));
+            var dagens = DagensBlokker;
+            var tidligst = dagens.Count == 0 ? 7 : (int)Math.Floor(dagens.Min(b => b.FraTimer));
             return Math.Clamp(Math.Min(7, tidligst), 0, 12);
         }
     }
@@ -1031,7 +1275,8 @@
     {
         get
         {
-            var senest = _dagBlokker.Count == 0 ? 17 : (int)Math.Ceiling(_dagBlokker.Max(b => b.TilTimer));
+            var dagens = DagensBlokker;
+            var senest = dagens.Count == 0 ? 17 : (int)Math.Ceiling(dagens.Max(b => b.TilTimer));
             return Math.Clamp(Math.Max(17, senest), DagStartTime + 4, 24);
         }
     }
@@ -1046,8 +1291,20 @@
 
     private double NaProsent => TimeProsent(DateTime.Now.TimeOfDay.TotalHours);
 
-    private List<AktivitetBlokk> BlokkerFor(int ansattId) => _dagBlokker
+    // Dagvisningen tegner bare den valgte dagen; blokklista dekker hele
+    // perioden, så den må filtreres her.
+    private List<AktivitetBlokk> DagensBlokker => _blokker
+        .Where(b => b.Dato == _valgtDato.Date)
+        .ToList();
+
+    private List<AktivitetBlokk> BlokkerFor(int ansattId) => DagensBlokker
         .Where(b => b.AnsattId == ansattId)
+        .OrderBy(b => b.FraTimer)
+        .ToList();
+
+    private List<AktivitetBlokk> BlokkerFor(int ansattId, DateTime dag) => _blokker
+        .Where(b => b.AnsattId == ansattId && b.Dato == dag.Date)
+        .Where(b => _skjulteTyper.Count == 0 || !_skjulteTyper.Contains(b.Slag))
         .OrderBy(b => b.FraTimer)
         .ToList();
 
@@ -1092,12 +1349,6 @@
             blokk.AntallFiler = await Db.ArbeidsordreMedia.CountAsync(m => m.ArbeidsordreId == ordreId);
         }
     }
-
-    private List<OrdreRad> OrdreForDag(DateTime dag) => _dager.FirstOrDefault(d => d.Dato.Date == dag.Date)?.Ordre ?? [];
-    private List<RessursRad> RessursForDag(DateTime dag) => _dager.FirstOrDefault(d => d.Dato.Date == dag.Date)?.Ressurser ?? [];
-
-    private static double KalPosisjon(TimeSpan tid) => Math.Max(0, (tid.TotalHours - KalStartTime) * KalPxPerTime);
-    private static double KalHoyde(TimeSpan fra, TimeSpan til) => Math.Max(22, (til - fra).TotalHours * KalPxPerTime);
 
     private static string FargeHex(string farge) => farge switch
     {
