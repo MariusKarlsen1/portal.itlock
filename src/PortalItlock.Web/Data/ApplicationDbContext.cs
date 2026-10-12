@@ -962,17 +962,17 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         );
 
         modelBuilder.Entity<KoblingsKategori>().HasData(
-            new KoblingsKategori { Id = 1, Navn = "ARX", Beskrivelse = "Koblingsskjema og dokumentasjon for ARX.", Ikon = "krets-brikke", Farge = "oransje", Rekkefolge = 1 },
-            new KoblingsKategori { Id = 2, Navn = "Salto", Beskrivelse = "Koblingsskjema og dokumentasjon for Salto.", Ikon = "krets-modul", Farge = "gronn", Rekkefolge = 2 },
-            new KoblingsKategori { Id = 3, Navn = "Diverse", Beskrivelse = "Andre systemer og koblingsløsninger.", Ikon = "krets-bryter", Farge = "gul", Rekkefolge = 3 },
-            new KoblingsKategori { Id = 4, Navn = "Prinsippskisser", Beskrivelse = "Prinsippskisser og generelle koblingsskjema.", Ikon = "krets-dokument", Farge = "rosa", Rekkefolge = 4 }
+            new KoblingsKategori { Id = 1, Navn = "ARX", Beskrivelse = "Koblingsskjema og dokumentasjon for ARX.", Ikon = "krets-brikke", Farge = "oransje", Rekkefolge = 1, Gruppe = "Adgangskontroll", Produsent = "ARX" },
+            new KoblingsKategori { Id = 2, Navn = "Salto", Beskrivelse = "Koblingsskjema og dokumentasjon for Salto.", Ikon = "krets-modul", Farge = "gronn", Rekkefolge = 2, Gruppe = "Adgangskontroll", Produsent = "Salto" },
+            new KoblingsKategori { Id = 3, Navn = "Diverse", Beskrivelse = "Andre systemer og koblingsløsninger.", Ikon = "krets-bryter", Farge = "gul", Rekkefolge = 3, Gruppe = "Andre" },
+            new KoblingsKategori { Id = 4, Navn = "Prinsippskisser", Beskrivelse = "Prinsippskisser og generelle koblingsskjema.", Ikon = "krets-dokument", Farge = "rosa", Rekkefolge = 4, Gruppe = "Andre" }
         );
 
         modelBuilder.Entity<NedlastningsKategori>().HasData(
-            new NedlastningsKategori { Id = 1, Navn = "Salto Space", Beskrivelse = "Oppsett, dørmiljø, kortlesere og rettigheter.", Farge = "brun", Rekkefolge = 1 },
-            new NedlastningsKategori { Id = 2, Navn = "Salto KS", Beskrivelse = "Skybasert adgangskontroll og brukere.", Farge = "bla", Rekkefolge = 2 },
-            new NedlastningsKategori { Id = 3, Navn = "ARX", Beskrivelse = "Konfigurasjon av sentraler, dørkort og I/O.", Farge = "gronn", Rekkefolge = 3 },
-            new NedlastningsKategori { Id = 4, Navn = "iLOQ", Beskrivelse = "Digital sylinder, nøkler og administrasjon.", Farge = "gra", Rekkefolge = 4 }
+            new NedlastningsKategori { Id = 1, Navn = "Salto Space", Beskrivelse = "Oppsett, dørmiljø, kortlesere og rettigheter.", Farge = "brun", Rekkefolge = 1, Gruppe = "Adgangskontroll", Produsent = "Salto" },
+            new NedlastningsKategori { Id = 2, Navn = "Salto KS", Beskrivelse = "Skybasert adgangskontroll og brukere.", Farge = "bla", Rekkefolge = 2, Gruppe = "Adgangskontroll", Produsent = "Salto" },
+            new NedlastningsKategori { Id = 3, Navn = "ARX", Beskrivelse = "Konfigurasjon av sentraler, dørkort og I/O.", Farge = "gronn", Rekkefolge = 3, Gruppe = "Adgangskontroll", Produsent = "ARX" },
+            new NedlastningsKategori { Id = 4, Navn = "iLOQ", Beskrivelse = "Digital sylinder, nøkler og administrasjon.", Farge = "gra", Rekkefolge = 4, Gruppe = "Låssystem", Produsent = "iLOQ" }
         );
 
         modelBuilder.Entity<TicketKategori>().HasData(

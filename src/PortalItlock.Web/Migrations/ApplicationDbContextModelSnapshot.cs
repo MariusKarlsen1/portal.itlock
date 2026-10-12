@@ -2763,12 +2763,18 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Gruppe")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Ikon")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Navn")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Produsent")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Rekkefolge")
@@ -2784,8 +2790,10 @@ namespace PortalItlock.Web.Migrations
                             Id = 1,
                             Beskrivelse = "Koblingsskjema og dokumentasjon for ARX.",
                             Farge = "oransje",
+                            Gruppe = "Adgangskontroll",
                             Ikon = "krets-brikke",
                             Navn = "ARX",
+                            Produsent = "ARX",
                             Rekkefolge = 1
                         },
                         new
@@ -2793,8 +2801,10 @@ namespace PortalItlock.Web.Migrations
                             Id = 2,
                             Beskrivelse = "Koblingsskjema og dokumentasjon for Salto.",
                             Farge = "gronn",
+                            Gruppe = "Adgangskontroll",
                             Ikon = "krets-modul",
                             Navn = "Salto",
+                            Produsent = "Salto",
                             Rekkefolge = 2
                         },
                         new
@@ -2802,6 +2812,7 @@ namespace PortalItlock.Web.Migrations
                             Id = 3,
                             Beskrivelse = "Andre systemer og koblingsløsninger.",
                             Farge = "gul",
+                            Gruppe = "Andre",
                             Ikon = "krets-bryter",
                             Navn = "Diverse",
                             Rekkefolge = 3
@@ -2811,6 +2822,7 @@ namespace PortalItlock.Web.Migrations
                             Id = 4,
                             Beskrivelse = "Prinsippskisser og generelle koblingsskjema.",
                             Farge = "rosa",
+                            Gruppe = "Andre",
                             Ikon = "krets-dokument",
                             Navn = "Prinsippskisser",
                             Rekkefolge = 4
@@ -3658,8 +3670,14 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Gruppe")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Navn")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Produsent")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Rekkefolge")
@@ -3675,7 +3693,9 @@ namespace PortalItlock.Web.Migrations
                             Id = 1,
                             Beskrivelse = "Oppsett, dørmiljø, kortlesere og rettigheter.",
                             Farge = "brun",
+                            Gruppe = "Adgangskontroll",
                             Navn = "Salto Space",
+                            Produsent = "Salto",
                             Rekkefolge = 1
                         },
                         new
@@ -3683,7 +3703,9 @@ namespace PortalItlock.Web.Migrations
                             Id = 2,
                             Beskrivelse = "Skybasert adgangskontroll og brukere.",
                             Farge = "bla",
+                            Gruppe = "Adgangskontroll",
                             Navn = "Salto KS",
+                            Produsent = "Salto",
                             Rekkefolge = 2
                         },
                         new
@@ -3691,7 +3713,9 @@ namespace PortalItlock.Web.Migrations
                             Id = 3,
                             Beskrivelse = "Konfigurasjon av sentraler, dørkort og I/O.",
                             Farge = "gronn",
+                            Gruppe = "Adgangskontroll",
                             Navn = "ARX",
+                            Produsent = "ARX",
                             Rekkefolge = 3
                         },
                         new
@@ -3699,7 +3723,9 @@ namespace PortalItlock.Web.Migrations
                             Id = 4,
                             Beskrivelse = "Digital sylinder, nøkler og administrasjon.",
                             Farge = "gra",
+                            Gruppe = "Låssystem",
                             Navn = "iLOQ",
+                            Produsent = "iLOQ",
                             Rekkefolge = 4
                         });
                 });
