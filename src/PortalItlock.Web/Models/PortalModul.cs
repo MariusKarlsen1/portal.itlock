@@ -1,4 +1,4 @@
-namespace PortalItlock.Web.Models;
+﻿namespace PortalItlock.Web.Models;
 
 public sealed record Lenke(string Tittel, string Beskrivelse, string Href, string IconNavn = "folder", List<Lenke>? Undermoduler = null);
 public sealed record LenkeGruppe(string Navn, List<Lenke> Lenker);
@@ -52,14 +52,10 @@ public static class PortalModulRegister
     private static readonly List<Lenke> KunderUndermoduler =
     [
         new Lenke("Kunderegister", "Opprett og vedlikehold kunder med kontaktinfo og adresse.", "kunder", "users"),
-        new Lenke("Kundeoppfølging", "Kunder som bør følges opp, med logg og påminnelser.", "kundeoppfolging", "clock"),
-        new Lenke("Tilvalg", "Publiser tilvalg til kunder, og se svar med valg og signatur.", "tilvalg", "tag"),
-        new Lenke("Tilvalgsmaler", "Ferdige maler med alternativer, bilder og priser til gjenbruk.", "tilvalgmaler", "tag"),
     ];
 
     private static readonly List<Lenke> DriftUndermoduler =
     [
-        new Lenke("Kart", "Se montørenes jobber geografisk for en valgt dag.", "kart", "map"),
         new Lenke("Kalender", "Se planlagte arbeidsordre for alle montører.", "kalender", "calendar"),
         new Lenke("Fravær", "Søknader, godkjenning og fraværskalender per person.", "fravar", "sun"),
         new Lenke("Forespørsler", "E-poster sendt til post@itlock.no.", "foresporsler", "mail"),
@@ -102,7 +98,6 @@ public static class PortalModulRegister
     [
         new Lenke("Brukere", "Opprett brukere med e-post, stilling og tilgang til portalen.", "brukere", "users"),
         new Lenke("Kunder", "Opprett og vedlikehold kunderegisteret.", "kunder", "folder"),
-        new Lenke("Kundeoppfølging", "Kunder som bør følges opp, med logg og påminnelser.", "kundeoppfolging", "clock"),
         new Lenke("Kundetilganger", "Administrer innlogging til kundeportalen.", "kundetilganger", "bell"),
         new Lenke("Fravær", "Søknader, godkjenning og fraværskalender per person.", "fravar", "sun"),
         new Lenke("Driftslisenser", "Gi vaktmestere tilgang til å registrere driftsmeldinger på utvalgte prosjekter.", "driftslisenser", "tool"),
@@ -167,7 +162,7 @@ public static class PortalModulRegister
                 new LenkeGruppe("Moduler", [
                     new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings", OppsettUndermoduler),
                     new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler),
-                    new Lenke("Brukere og kunder", "Brukere, kunder, kundeoppfølging og fravær samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler),
+                    new Lenke("Brukere og kunder", "Brukere, kunder, kundetilgang og fravær samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler),
                     new Lenke("Tripletex", "Test tilkobling og kundeoppslag mot Tripletex-API-et (testmiljø)", "integrasjoner/tripletex", "box"),
                     new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt", RapporterUndermoduler),
                 ]),
