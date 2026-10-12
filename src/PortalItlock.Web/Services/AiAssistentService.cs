@@ -47,8 +47,8 @@ public class AiAssistentService(HttpClient http, IConfiguration config, Applicat
         "hvilken montør som er satt på hvilken jobb hvilken dag). Tickets (saksbehandling for henvendelser, " +
         "reklamasjoner og driftsmeldinger, med SLA-frister). Service modul (serviceavtaler, serviceoppdrag, " +
         "planlagte servicerunder). Drift (kart over dagens jobber, kalender, fraværsregistrering). Arbeidsordre " +
-        "(monteringsoppdrag knyttet til prosjekter). Kunder (kunderegister og oppfølging). Kontrolltårn " +
-        "(driftsdashboard for admin/prosjektleder). Når brukeren spør hvordan de gjør noe eller hva som er mulig, " +
+        "(monteringsoppdrag knyttet til prosjekter). Kunder (kunderegister og oppfølging). " +
+        "Når brukeren spør hvordan de gjør noe eller hva som er mulig, " +
         "svar konkret ut fra denne oversikten - du trenger ikke bruke noe verktøy for slike forklarende spørsmål. " +
         "Svar kort og konkret på norsk. " +
         "Viktig om skrivehandlinger: når brukeren ber om en konkret, entydig endring (f.eks. \"opprett en ticket " +

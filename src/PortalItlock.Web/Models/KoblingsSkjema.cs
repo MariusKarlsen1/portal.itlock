@@ -13,7 +13,10 @@ public class KoblingsSkjema
     // Visningsvalg for selve tegneflaten, satt i "Skjema-innstillinger" i
     // editoren. Lagres pr. skjema slik at de overlever at man lukker siden.
     public string Stil { get; set; } = "Standard";
-    public bool VisRutenett { get; set; } = true;
+
+    // Tegneflaten er hvit uten rutenett som standard. Rutenettet kan fortsatt
+    // slås på pr. skjema i "Rutenett"-menyen i editoren.
+    public bool VisRutenett { get; set; }
     public bool SnapTilRutenett { get; set; } = true;
     public bool VisKomponentnavn { get; set; } = true;
 
