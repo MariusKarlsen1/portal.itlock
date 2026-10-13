@@ -736,6 +736,27 @@ app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db
         new("EkteRolle", bruker.Rolle.ToString())
     };
 
+    // Kunde- og driftsportalen viser innholdet til ÉN konkret bruker, så uten
+    // et mål å se gjennom ville en admin bare fått "ikke koblet til en kunde".
+    // Her velges hvilken kunde/vaktmester som skal forhåndsvises; bare en
+    // aktiv bruker med nøyaktig den rollen godtas, og BrukerId forblir
+    // administratorens egen - det er bare LESINGEN i de to portalene som
+    // følger forhåndsvisningen (se ForhandsvisningHelper).
+    if (rolle is BrukerRolle.Kunde or BrukerRolle.Driftslisens)
+    {
+        var onsketId = form["forhandsvisBrukerId"].ToString();
+        var malBruker = int.TryParse(onsketId, out var malId)
+            ? await db.Brukere.FirstOrDefaultAsync(b => b.Id == malId && b.Aktiv && b.Rolle == rolle)
+            // Ingen valgt ennå: ta den første som finnes, slik at man ser noe
+            // med en gang og kan bytte i feltet øverst etterpå.
+            : await db.Brukere.Where(b => b.Aktiv && b.Rolle == rolle).OrderBy(b => b.Navn).FirstOrDefaultAsync();
+
+        if (malBruker is not null)
+        {
+            claims.Add(new Claim("ForhandsvisBrukerId", malBruker.Id.ToString()));
+        }
+    }
+
     var tenantIdClaim = http.User.FindFirst("TenantId")?.Value;
     if (tenantIdClaim is not null)
     {

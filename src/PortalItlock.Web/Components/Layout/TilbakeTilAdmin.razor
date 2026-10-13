@@ -3,19 +3,47 @@
    rollebryteren, så uten denne ville man blitt sittende fast i rollen til man
    logget ut og inn igjen.
 
+   Feltet lar deg også bytte hvem du ser portalen som, slik at du kan sjekke en
+   konkret kunde eller vaktmester - ikke bare rammeverket.
+
    Rollen leses fra EkteRolle-claimen, som settes av vis-som-endepunktet. En
    vanlig kunde eller vaktmester har den ikke, og ser derfor ingenting her. *@
+@rendermode InteractiveServer
 @using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
 
 @if (_erAdminSomSerSomAnnenRolle)
 {
-    <form class="tilbake-til-admin" method="post" action="/account/vis-som">
-        <input type="hidden" name="rolle" value="@nameof(BrukerRolle.Admin)" />
-        <input type="hidden" name="returUrl" value="/" />
+    <div class="tilbake-til-admin">
         <span class="tilbake-til-admin-tekst">Du ser portalen som @Rollenavn</span>
-        <button type="submit" class="tilbake-til-admin-knapp">Tilbake til admin</button>
-    </form>
+
+        @if (_kandidater.Count > 0)
+        {
+            @* Bytter hvem som forhåndsvises. Postes som et vanlig skjema, samme
+               som rollebryteren, slik at den nye cookien slår inn med en gang. *@
+            <form class="tilbake-til-admin-form" method="post" action="/account/vis-som">
+                <input type="hidden" name="rolle" value="@_naverendeRolle" />
+                <input type="hidden" name="returUrl" value="/" />
+                <select name="forhandsvisBrukerId" class="tilbake-til-admin-velg">
+                    @foreach (var k in _kandidater)
+                    {
+                        <option value="@k.Id" selected="@(k.Id == _forhandsvistId)">@k.Navn</option>
+                    }
+                </select>
+                <button type="submit" class="tilbake-til-admin-knapp">Vis denne</button>
+            </form>
+        }
+
+        <form method="post" action="/account/vis-som">
+            <input type="hidden" name="rolle" value="@nameof(BrukerRolle.Admin)" />
+            <input type="hidden" name="returUrl" value="/" />
+            <button type="submit" class="tilbake-til-admin-knapp tilbake-til-admin-knapp-primaer">Tilbake til admin</button>
+        </form>
+    </div>
 }
 
 <style>
@@ -30,6 +58,23 @@
         color: #6b4a0a;
         font-size: 0.82rem;
         font-weight: 600;
+    }
+
+    .tilbake-til-admin-form {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+
+    .tilbake-til-admin-velg {
+        border: 1px solid #c79a3a;
+        background: #fff;
+        color: #6b4a0a;
+        border-radius: 7px;
+        padding: 0.18rem 0.4rem;
+        font: inherit;
+        font-size: 0.78rem;
+        max-width: 220px;
     }
 
     .tilbake-til-admin-knapp {
@@ -47,12 +92,29 @@
         .tilbake-til-admin-knapp:hover {
             background: #fffaf0;
         }
+
+    .tilbake-til-admin-knapp-primaer {
+        background: #6b4a0a;
+        border-color: #6b4a0a;
+        color: #fff;
+    }
+
+        .tilbake-til-admin-knapp-primaer:hover {
+            background: #553a08;
+            color: #fff;
+        }
 </style>
 
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
+    private sealed record Kandidat(int Id, string Navn);
+
     private bool _erAdminSomSerSomAnnenRolle;
+    private string _naverendeRolle = "";
+    private int? _forhandsvistId;
+    private List<Kandidat> _kandidater = [];
+
     private string Rollenavn { get; set; } = "";
 
     protected override async Task OnInitializedAsync()
@@ -67,9 +129,29 @@
         var naa = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
 
         _erAdminSomSerSomAnnenRolle = ekte == nameof(BrukerRolle.Admin) && naa != ekte;
+        if (!_erAdminSomSerSomAnnenRolle || naa is null)
+        {
+            return;
+        }
 
-        Rollenavn = naa is not null && Enum.TryParse<BrukerRolle>(naa, out var rolle)
+        _naverendeRolle = naa;
+        _forhandsvistId = state.User.ForhandsvisBrukerId();
+
+        Rollenavn = Enum.TryParse<BrukerRolle>(naa, out var rolle)
             ? rolle.Visningsnavn().ToLowerInvariant()
             : "en annen rolle";
+
+        // Hvem man kan velge mellom: alle aktive brukere med nøyaktig denne
+        // rollen. Navnet holder - det er bare en velger for forhåndsvisning.
+        if (Enum.TryParse<BrukerRolle>(naa, out var valgtRolle)
+            && valgtRolle is BrukerRolle.Kunde or BrukerRolle.Driftslisens)
+        {
+            _kandidater = await Db.Brukere
+                .AsNoTracking()
+                .Where(b => b.Aktiv && b.Rolle == valgtRolle)
+                .OrderBy(b => b.Navn)
+                .Select(b => new Kandidat(b.Id, b.Navn))
+                .ToListAsync();
+        }
     }
 }
