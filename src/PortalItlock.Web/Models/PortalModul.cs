@@ -246,10 +246,10 @@ public static class PortalModulRegister
             "Kobling, dørmiljø og oppsett av adgangskontroll",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Kobling", "Koblingsskjema per system.", "guide/kobling", "trend-up"),
-                    new Lenke("Dørmiljø", "Tegninger til bruk på befaring og i prosjektering.", "dormiljo", "box"),
+                    new Lenke("Kobling", "Koblingsskjema", "guide/kobling", "trend-up"),
+                    new Lenke("Dørmiljø", "Prinsippskisser av dørmiljø", "dormiljo", "box"),
                     new Lenke("Oppsett adgangskontroll", "Guide for oppsett av adgangskontroll.", "guide/oppsett-adgangskontroll", "bell"),
-                    new Lenke("Systemregister", "Søk opp låssystem, kunde, adresse og rekvirenter.", "systemregister", "users", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Systemregister", "Søk opp låssystemer", "systemregister", "users", null, ModulTilgang.FraProsjektleder),
                 ]),
             ]),
 
