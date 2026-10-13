@@ -51,7 +51,9 @@ public class PortalModulRegisterTests
 
     // Moduler som bevisst er tatt HELT ut av portalen. Sidene lever videre på
     // sine adresser, men ligger ikke i menyen lenger.
-    private static readonly string[] BevisstFjernet = ["nyheter", "notater"];
+    // Merk at "fravar" IKKE staar her: den ble bare fjernet som duplikat under
+    // Brukere og kunder, og ligger fortsatt under Prosjekt, service og tilbud.
+    private static readonly string[] BevisstFjernet = ["nyheter", "notater", "hjemmesidetekster"];
 
     [Theory]
     [InlineData(BrukerRolle.Montor)]

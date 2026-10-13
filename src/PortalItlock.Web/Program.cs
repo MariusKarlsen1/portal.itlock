@@ -718,10 +718,12 @@ app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db
         return Results.Redirect(trygReturUrl);
     }
 
-    // Bare rollene som faktisk har en skrivebordsvisning kan velges. Kunde og
-    // Driftslisens har sine egne portaler og hører ikke hjemme her.
+    // Alle de fem rollene kan velges. Kunde og Driftslisens har sine egne
+    // portaler (/kunde og /drift), og tas med her slik at en admin kan se
+    // nøyaktig hva de to ser uten å logge inn som noen andre.
     if (!Enum.TryParse<BrukerRolle>(onsketRolle, out var rolle)
-        || rolle is not (BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor))
+        || rolle is not (BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor
+            or BrukerRolle.Kunde or BrukerRolle.Driftslisens))
     {
         return Results.Redirect(trygReturUrl);
     }
@@ -743,11 +745,20 @@ app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
 
-    // Går man ned til montør eller prosjektleder, kan siden man står på være
-    // stengt for den rollen - og AccessDeniedPath er /login, så man ville sett
-    // ut som utlogget. Da er hjem riktigere. Tilbake til Admin er alltid
+    // Går man ned til en lavere rolle, kan siden man står på være stengt for
+    // den rollen - og AccessDeniedPath er /login, så man ville sett ut som
+    // utlogget. Da er startsiden riktigere. Tilbake til Admin er alltid
     // trygt, og da lander man der man var.
-    return Results.Redirect(rolle == BrukerRolle.Admin ? trygReturUrl : "/");
+    //
+    // Kunde og Driftslisens har egne startsider; "/" sender dem dit uansett
+    // (se Home.razor), men vi hopper rett dit for å spare en omdirigering.
+    return rolle switch
+    {
+        BrukerRolle.Admin => Results.Redirect(trygReturUrl),
+        BrukerRolle.Kunde => Results.Redirect("/kunde"),
+        BrukerRolle.Driftslisens => Results.Redirect("/drift"),
+        _ => Results.Redirect("/")
+    };
 }).RequireAuthorization();
 
 // Plattform-innlogging: helt egen cookie ("Plattform"-schemaet) og helt egen

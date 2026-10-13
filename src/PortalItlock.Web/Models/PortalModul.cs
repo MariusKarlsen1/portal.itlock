@@ -109,12 +109,14 @@ public static class PortalModulRegister
         new Lenke("Tilvalgsmaler", "Ferdige maler med alternativer, bilder og priser til gjenbruk.", "tilvalgmaler", "receipt"),
         new Lenke("Forsider", "Lag forside-/forbeholdstekster til bruk på tilbud.", "forsider", "folder"),
         new Lenke("Godkjenninger", "Godkjenn innsendte timer og fraværssøknader, se sammendrag og eksporter til lønn.", "timegodkjenning", "check-circle"),
-        new Lenke("Hjemmesidetekster", "Rediger overskrift, ingress og rolle-tekstene på forsiden.", "hjemmesidetekster", "users"),
         new Lenke("CE-sertifisering", "Sett CE-kategori og standarddokument på beslagstyper, og grenseverdier for mål.", "ce-oppsett", "check-circle"),
-        // Nyheter og Notater er tatt ut av menyen/portalen på ønske
-        // 2026-10-13. Sidene lever videre på /nyheter og /notater slik at
-        // ingenting brekker og ingen data er rørt - legg linjene under tilbake
-        // her for å vise dem igjen:
+        // Hjemmesidetekster, Nyheter og Notater er tatt ut av menyen/portalen
+        // på ønske 2026-10-13. Hjemmesidetekster redigerte tittel/ingress og
+        // de tre rolle-tekstene på gamle forsiden - rollekortene er borte, så
+        // feltene var uten virkning. Sidene lever videre på
+        // /hjemmesidetekster, /nyheter og /notater, og ingen data er rørt.
+        // Legg linjene under tilbake her for å vise dem igjen:
+        // new Lenke("Hjemmesidetekster", "Rediger overskrift, ingress og rolle-tekstene på forsiden.", "hjemmesidetekster", "users"),
         // new Lenke("Nyheter", "Se automatisk genererte \"Hva er nytt\"-oppdateringer som vises på forsiden til alle brukere.", "nyheter", "bell"),
         // new Lenke("Notater", "Alle notater ansatte har skrevet i portalen, samlet på ett sted.", "notater", "file-text"),
     ];
@@ -134,7 +136,8 @@ public static class PortalModulRegister
         new Lenke("Brukere", "Opprett brukere med e-post, stilling og tilgang til portalen.", "brukere", "users"),
         new Lenke("Kunder", "Opprett og vedlikehold kunderegisteret.", "kunder", "folder"),
         new Lenke("Kundetilganger", "Administrer innlogging til kundeportalen.", "kundetilganger", "bell"),
-        new Lenke("Fravær", "Søknader, godkjenning og fraværskalender per person.", "fravar", "sun"),
+        // Fravær er tatt ut herfra 2026-10-13 - det hører under Ressurser og
+        // godkjenninger, der det allerede ligger, og trengs ikke to steder.
         new Lenke("Driftslisenser", "Gi vaktmestere tilgang til å registrere driftsmeldinger på utvalgte prosjekter.", "driftslisenser", "tool"),
     ];
 

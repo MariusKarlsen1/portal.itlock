@@ -6,6 +6,13 @@ window.kart = (function () {
     let dotNet = null;
     let klyngelag = null;
     let eierId = null;
+    let storrelsesvakt = null;
+
+    // Valg satt av den siden som eier kartet - se init. klyngeRadius styrer
+    // hvor naert to markorer ma ligge for de slas sammen til en klynge; et
+    // lite kart (f.eks. forside-widgeten) vil ha en liten radius, ellers
+    // havner alt i en eneste boble man ma zoome helt inn for a apne.
+    let valg = {};
 
     const flater = {
         kart: {
@@ -76,7 +83,7 @@ window.kart = (function () {
     // dotNetRef er valgfri - sendes inn av sider som vil få beskjed når en
     // markør klikkes (Arbeidsordre sin kartvisning åpner detaljlinja under
     // kartet i stedet for å nøye seg med popup-en).
-    function init(elementId, punkter, dotNetRef) {
+    function init(elementId, punkter, dotNetRef, opsjoner) {
         const el = document.getElementById(elementId);
         if (!el || typeof L === 'undefined') {
             return;
@@ -86,15 +93,46 @@ window.kart = (function () {
             map.remove();
             map = null;
         }
+        if (storrelsesvakt) {
+            storrelsesvakt.disconnect();
+            storrelsesvakt = null;
+        }
         markers = [];
         klyngelag = null;
         dotNet = dotNetRef || null;
         eierId = elementId;
+        valg = opsjoner || {};
 
         map = L.map(elementId, { zoomControl: false });
         settBakgrunn('kart');
 
         setPunkter(punkter);
+
+        // Leaflet regner ut sin egen storrelse en gang, ved init. Er ikke
+        // containeren ferdig lagt ut da - typisk i et rutenett eller en widget
+        // som vokser etterpa - blir kartflaten staende for liten og dekker
+        // ikke hele boksen sin. invalidateSize ber Leaflet male opp pa nytt,
+        // bade rett etter forste maling og hver gang boksen endrer storrelse.
+        oppfriskStorrelse();
+
+        if (typeof ResizeObserver === 'function') {
+            storrelsesvakt = new ResizeObserver(() => oppfriskStorrelse());
+            storrelsesvakt.observe(el);
+        }
+    }
+
+    // Kaller invalidateSize pa neste animasjonsramme, slik at CSS-en har rukket
+    // a legge ut boksen for Leaflet maler. Beholder utsnittet.
+    function oppfriskStorrelse() {
+        if (!map) {
+            return;
+        }
+
+        requestAnimationFrame(() => {
+            if (map) {
+                map.invalidateSize({ animate: false });
+            }
+        });
     }
 
     // Rydder opp når siden som eier kartet forlates. Tar elementId slik at
@@ -105,6 +143,11 @@ window.kart = (function () {
             return;
         }
 
+        if (storrelsesvakt) {
+            storrelsesvakt.disconnect();
+            storrelsesvakt = null;
+        }
+
         map.remove();
         map = null;
         klyngelag = null;
@@ -113,6 +156,7 @@ window.kart = (function () {
         flate = null;
         dotNet = null;
         eierId = null;
+        valg = {};
     }
 
     function settBakgrunn(type) {
@@ -215,8 +259,12 @@ window.kart = (function () {
             klyngelag = L.markerClusterGroup({
                 iconCreateFunction: lagKlyngeIkon,
                 showCoverageOnHover: false,
-                maxClusterRadius: 48,
-                spiderfyOnMaxZoom: true
+                maxClusterRadius: valg.klyngeRadius || 48,
+                // Klyngene slutter a sla seg sammen fra dette zoomnivaet, slik
+                // at punktene faktisk blir synlige uten a zoome helt inn.
+                disableClusteringAtZoom: valg.sluttKlyngeZoom || null,
+                spiderfyOnMaxZoom: true,
+                spiderfyDistanceMultiplier: 1.6
             });
         }
 
@@ -322,5 +370,5 @@ window.kart = (function () {
         tegnMarkorer(punkter);
     }
 
-    return { init, fjern, setPunkter, oppdaterPunkter, fremhev, settBakgrunn, zoom, finnMeg };
+    return { init, fjern, setPunkter, oppdaterPunkter, fremhev, settBakgrunn, zoom, finnMeg, oppfriskStorrelse };
 })();

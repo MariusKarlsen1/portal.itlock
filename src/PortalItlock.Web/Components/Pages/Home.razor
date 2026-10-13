@@ -95,10 +95,14 @@
             <section class="hd3-panel">
                 <div class="hd3-panel-topp">
                     <h2 class="hd3-panel-tittel">Mine hurtigvalg</h2>
-                    <button type="button" class="hd3-panel-knapp" @onclick="VekslTilpass">
-                        <Icon Name="@(_tilpasserHurtigvalg ? "check" : "settings")" />
-                        @(_tilpasserHurtigvalg ? "Ferdig" : "Tilpass")
-                    </button>
+                    @* Tilpassingen startes fra Tilpass meny under navnet ditt
+                       øverst - her står bare "Ferdig" for å komme ut igjen. *@
+                    @if (_tilpasserHurtigvalg)
+                    {
+                        <button type="button" class="hd3-panel-knapp" @onclick="VekslTilpass">
+                            <Icon Name="check" />Ferdig
+                        </button>
+                    }
                 </div>
 
                 @if (_tilpasserHurtigvalg)
@@ -205,8 +209,8 @@
                             }
                             @foreach (var h in d.Hendelser)
                             {
-                                <a href="@h.Href" class="hd3-kal-hendelse" title="@h.Tittel"
-                                   style="top:@h.Topp;height:@h.Hoyde;border-left-color:@h.Kant;background:@h.Flate;color:@h.Blekk">
+                                <a href="@h.Href" class="hd3-kal-hendelse" title="@($"{h.Tittel} · {h.TidTekst}")"
+                                   style="top:@h.Topp;height:@h.Hoyde;left:@h.Venstre;width:@h.Bredde;border-left-color:@h.Kant;background:@h.Flate;color:@h.Blekk">
                                     <span class="hd3-kal-h-tittel">@h.Tittel</span>
                                     <span class="hd3-kal-h-sted">@h.Sted</span>
                                     <span class="hd3-kal-h-tid">@h.TidTekst</span>
@@ -1011,6 +1015,17 @@
         .Where(href => BladLenker.Any(l => l.Href == href))
         .ToList();
 
+    // "Tilpass" i Tilpass meny (se TopBar) navigerer hit med dette flagget, så
+    // tilpassingen er slått på med én gang man lander på forsiden.
+    private void LesTilpassFlaggFraUrl()
+    {
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        if (query.TryGetValue("tilpassHurtigvalg", out var verdi) && verdi == "1")
+        {
+            _tilpasserHurtigvalg = true;
+        }
+    }
+
     private async Task LastHurtigvalg()
     {
         try
@@ -1031,7 +1046,11 @@
     // ---------- Kalender-widget med tidsakse ----------
     private sealed record KalHendelse(
         string Href, string Tittel, string Sted, string TidTekst,
-        string Topp, string Hoyde, string Kant, string Flate, string Blekk);
+        string Topp, string Hoyde, string Kant, string Flate, string Blekk,
+        // Venstrekant og bredde i prosent. Hendelser som overlapper i tid
+        // deler dagkolonnen mellom seg i stedet for å legge seg oppå
+        // hverandre - se FordelSideVedSide.
+        string Venstre, string Bredde);
 
     private sealed record KalDag(string Navn, string DatoTekst, bool ErIDag, List<KalHendelse> Hendelser);
 
@@ -1151,13 +1170,14 @@
                     var farge = AktivitetFarge.Velg(a.ProsjektId ?? a.Id);
                     var (topp, hoyde) = KalPlassering(fraTimer, tilTimer);
 
-                    return (Sortering: fraTimer, Hendelse: new KalHendelse(
+                    return new KalRaa(fraTimer, tilTimer, new KalHendelse(
                         $"/arbeidsordre/{a.Id}",
                         a.Tittel,
                         a.Prosjekt?.Navn ?? a.Sted ?? "",
                         $"{start:HH:mm}–{slutt:HH:mm}",
                         topp, hoyde,
-                        farge.Kant, farge.Flate, farge.Blekk));
+                        farge.Kant, farge.Flate, farge.Blekk,
+                        "0%", "100%"));
                 });
 
             var fraHendelser = hendelser
@@ -1170,21 +1190,99 @@
                     var tilTimer = r.Til.TotalHours > fraTimer ? r.Til.TotalHours : fraTimer + 1;
                     var (topp, hoyde) = KalPlassering(fraTimer, tilTimer);
 
-                    return (Sortering: fraTimer, Hendelse: new KalHendelse(
+                    return new KalRaa(fraTimer, tilTimer, new KalHendelse(
                         "/kalender?fra=hjem",
                         r.Tittel,
                         string.IsNullOrWhiteSpace(r.Info) ? KalenderKategori.Navn(kategori) : r.Info,
                         $"{r.Fra:hh\\:mm}–{r.Til:hh\\:mm}",
                         topp, hoyde,
-                        farge.Kant, farge.Flate, farge.Blekk));
+                        farge.Kant, farge.Flate, farge.Blekk,
+                        "0%", "100%"));
                 });
 
             return new KalDag(
                 KortDagsnavn(dato, kultur),
                 dato.ToString("d.M", kultur),
                 dato.Date == DateTime.Today,
-                fraOrdre.Concat(fraHendelser).OrderBy(x => x.Sortering).Select(x => x.Hendelse).ToList());
+                FordelSideVedSide(fraOrdre.Concat(fraHendelser).OrderBy(x => x.Fra).ThenBy(x => x.Til).ToList()));
         }).ToList();
+    }
+
+    // En hendelse med tidene sine beholdt, slik at overlapp kan regnes ut før
+    // den får sin endelige plassering.
+    private sealed record KalRaa(double Fra, double Til, KalHendelse Hendelse);
+
+    // Ligger det flere jobber på samme tid - typisk tre ulike montører samme
+    // formiddag - legger de seg oppå hverandre hvis alle får full bredde.
+    // Her deles dagkolonnen i stedet mellom dem som faktisk overlapper: to
+    // samtidige får halv bredde hver, tre får en tredjedel, og så videre.
+    // Hendelser som ikke overlapper med noe beholder full bredde, så en rolig
+    // dag ser like ren ut som før. Hver blokk får 1 % luft mot naboen.
+    private static List<KalHendelse> FordelSideVedSide(List<KalRaa> raa)
+    {
+        if (raa.Count <= 1)
+        {
+            return raa.Select(r => r.Hendelse).ToList();
+        }
+
+        var resultat = new List<KalHendelse>(raa.Count);
+
+        // Del dagen i klynger: en ny klynge begynner først når en hendelse
+        // starter etter at ALT i den forrige klyngen er ferdig.
+        var klyngeStart = 0;
+        var klyngeSlutt = raa[0].Til;
+
+        for (var i = 1; i <= raa.Count; i++)
+        {
+            if (i < raa.Count && raa[i].Fra < klyngeSlutt)
+            {
+                klyngeSlutt = Math.Max(klyngeSlutt, raa[i].Til);
+                continue;
+            }
+
+            // Klyngen [klyngeStart, i) er ferdig - gi hver hendelse sitt spor.
+            // Et spor gjenbrukes så snart det er ledig, slik at A og C kan
+            // dele spor når bare B overlapper dem begge.
+            var spor = new List<double>();
+            var sporFor = new int[i - klyngeStart];
+
+            for (var j = klyngeStart; j < i; j++)
+            {
+                var valgt = spor.FindIndex(sluttTid => raa[j].Fra >= sluttTid);
+                if (valgt < 0)
+                {
+                    spor.Add(raa[j].Til);
+                    valgt = spor.Count - 1;
+                }
+                else
+                {
+                    spor[valgt] = raa[j].Til;
+                }
+
+                sporFor[j - klyngeStart] = valgt;
+            }
+
+            var antallSpor = Math.Max(spor.Count, 1);
+            var bredde = 100.0 / antallSpor;
+
+            for (var j = klyngeStart; j < i; j++)
+            {
+                var kolonne = sporFor[j - klyngeStart];
+                resultat.Add(raa[j].Hendelse with
+                {
+                    Venstre = KalProsent(kolonne * bredde),
+                    Bredde = KalProsent(antallSpor == 1 ? 100 : bredde - 1)
+                });
+            }
+
+            if (i < raa.Count)
+            {
+                klyngeStart = i;
+                klyngeSlutt = raa[i].Til;
+            }
+        }
+
+        return resultat;
     }
 
     // ---------- Neste arbeidsordre ----------
@@ -1535,6 +1633,7 @@
         Verktoylinje.Endret += OnVerktoylinjeEndret;
 
         GjenopprettModulPanelFraUrl();
+        LesTilpassFlaggFraUrl();
 
         if (AuthStateTask is null)
         {
@@ -1859,7 +1958,12 @@
 
         if (!_hd3KartInitialisert)
         {
-            await JS.InvokeVoidAsync("kart.init", "hd3-kart", _hd3KartPunkter);
+            // Kartet på forsiden er lite, og med standard klyngeradius (48px)
+            // endte alle punktene i én eller to bobler man måtte zoome helt
+            // inn for å åpne. Liten radius + tidlig oppsplitting gjør at man
+            // ser de faktiske punktene med en gang.
+            await JS.InvokeVoidAsync("kart.init", "hd3-kart", _hd3KartPunkter, null,
+                new { klyngeRadius = 14, sluttKlyngeZoom = 10 });
             _hd3KartInitialisert = true;
             _hd3KartPunkterVedForrigeRender = _hd3KartPunkter.Count;
         }

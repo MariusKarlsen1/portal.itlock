@@ -110,6 +110,13 @@ public static class ModulRettigheter
     public static bool KanLeggeTilBilder(BrukerRolle? rolle) =>
         rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor;
 
+    // Ferdigmelde en arbeidsordre. Montøren er den som faktisk gjør jobben og
+    // lukker den ute i felt, så dette er et unntak fra lesetilgangen på
+    // arbeidsordre. Å markere som FAKTURERT er derimot ikke med - det er en
+    // økonomihandling og krever full tilgang.
+    public static bool KanFerdigmelde(BrukerRolle? rolle) =>
+        rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor;
+
     // Fanene på prosjektsiden en rolle ikke skal se i det hele tatt.
     public static IReadOnlySet<string> SkjulteProsjektFaner(BrukerRolle? rolle) =>
         rolle == BrukerRolle.Montor

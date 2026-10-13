@@ -236,6 +236,12 @@
                             <span class="innstillinger-lenke-navn">Dashboard-stil</span>
                             <button type="button" class="innstillinger-layout-knapp" @onclick="SyklHjemLayout">Layout @LayoutNummer(_hjemLayoutValg)</button>
                         </div>
+                        @* Hurtigvalgene stjernemerkes på forsiden, men man går inn
+                           dit herfra - det er her man gjør den typen oppsett. *@
+                        <div class="innstillinger-rad-knapp">
+                            <span class="innstillinger-lenke-navn">Mine hurtigvalg</span>
+                            <button type="button" class="innstillinger-layout-knapp" @onclick="TilpassHurtigvalg">Tilpass</button>
+                        </div>
 
                         <div class="innstillinger-kolonnetitler">
                             <span></span>
@@ -297,8 +303,9 @@
     private BrukerRolle? _ekteRolle;
     private BrukerRolle? _visningsRolle;
 
+    // Alle fem rollene, slik at admin kan se kunde- og driftsportalen også.
     private static readonly BrukerRolle[] VisSomRoller =
-        [BrukerRolle.Admin, BrukerRolle.Prosjektleder, BrukerRolle.Montor];
+        [BrukerRolle.Admin, BrukerRolle.Prosjektleder, BrukerRolle.Montor, BrukerRolle.Kunde, BrukerRolle.Driftslisens];
 
     private string NaverendeSti
     {
@@ -476,16 +483,76 @@
     {
         Presence.Fjern(_oktId);
         Verktoylinje.Endret -= OnVerktoylinjeEndret;
+        _selvRef?.Dispose();
     }
 
-    private void ToggleSok()
+    // ---------- Lukk nedtrekkene ved klikk utenfor ----------
+    //
+    // Nedtrekkene i toppfeltet krevde tidligere at man traff samme knapp en
+    // gang til. Nå lytter vi på klikk ellers på siden mens noe er åpent (se
+    // wwwroot/js/utenforklikk.js) og lukker alt. Lytteren legges bare på mens
+    // noe faktisk er åpent, så vi ikke sender et kall for hvert klikk.
+    private DotNetObjectReference<TopBar>? _selvRef;
+    private bool _lytterPaUtenforKlikk;
+
+    private bool NoeErApent => _visBrukerMeny || _visVarslerTopp || _visNotater || _visSok;
+
+    [JSInvokable]
+    public void LukkAlleNedtrekk()
+    {
+        if (!NoeErApent)
+        {
+            return;
+        }
+
+        _visBrukerMeny = false;
+        _visInnstillinger = false;
+        _visVarslerTopp = false;
+        _visNotater = false;
+        _visSok = false;
+        _visAktiveBrukere = false;
+        StateHasChanged();
+    }
+
+    // Kalles etter hver toggle. Starter eller stopper lytteren avhengig av om
+    // det er noe åpent å lukke.
+    private async Task OppdaterUtenforKlikk()
+    {
+        if (NoeErApent == _lytterPaUtenforKlikk)
+        {
+            return;
+        }
+
+        _lytterPaUtenforKlikk = NoeErApent;
+
+        try
+        {
+            if (_lytterPaUtenforKlikk)
+            {
+                _selvRef ??= DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("utenforKlikk.lytt", _selvRef);
+            }
+            else
+            {
+                await JS.InvokeVoidAsync("utenforKlikk.stopp");
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Kretsen er borte - ingenting å lukke.
+        }
+    }
+
+    private async Task ToggleSok()
     {
         _visSok = !_visSok;
+        await OppdaterUtenforKlikk();
     }
 
-    private void ToggleNotater()
+    private async Task ToggleNotater()
     {
         _visNotater = !_visNotater;
+        await OppdaterUtenforKlikk();
     }
 
     private async Task LeggTilNotat()
@@ -511,18 +578,21 @@
         _notater.Remove(notat);
     }
 
-    private void ToggleBrukerMeny()
+    private async Task ToggleBrukerMeny()
     {
         _visBrukerMeny = !_visBrukerMeny;
         if (!_visBrukerMeny)
         {
             _visInnstillinger = false;
         }
+
+        await OppdaterUtenforKlikk();
     }
 
-    private void ToggleVarslerTopp()
+    private async Task ToggleVarslerTopp()
     {
         _visVarslerTopp = !_visVarslerTopp;
+        await OppdaterUtenforKlikk();
     }
 
     private void ToggleInnstillinger()
@@ -644,6 +714,16 @@
         }
 
         Nav.NavigateTo("/", forceLoad: true);
+    }
+
+    // Selve stjernemerkingen skjer på forsiden, der flisene ligger. Herfra
+    // navigerer vi dit med tilpassingen allerede slått på, slik at man ikke må
+    // finne fram til knappen der også.
+    private void TilpassHurtigvalg()
+    {
+        _visInnstillinger = false;
+        _visBrukerMeny = false;
+        Nav.NavigateTo("/?tilpassHurtigvalg=1", forceLoad: true);
     }
 
     private static int LayoutNummer(HjemLayout layout) => layout switch
