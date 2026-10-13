@@ -210,15 +210,15 @@ public static class PortalModulRegister
         new Rolle(
             "prosjekt",
             "Prosjekt, service og tilbud",
-            "Prosjekter, arbeidsordre, dørpakker, service og CE",
+            "Prosjekter, jobber, tilbud og service samlet",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Prosjekter", "Dører, plantegninger og montasjestatus per prosjekt.", "prosjekter", "folder"),
-                    new Lenke("Arbeidsordre", "Jobber med ansvarlig montør, varer og sjekkliste.", "arbeidsordre", "check-circle"),
-                    new Lenke("Finn dørpakke", "Huk av krav og finn riktig dørpakke til prosjektet.", "finn-dorpakke", "box", null, ModulTilgang.FraProsjektleder),
-                    new Lenke("Serviceavtaler", "Serviceavtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
-                    new Lenke("Tilbud service", "Tilbud for serviceavtaler, med estimater fra arbeidsordre-minuttene.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
-                    new Lenke("CE-godkjenninger", "CE-sertifiseringer for dører med automatikk, på tvers av prosjekter.", "ce-godkjenninger", "shield"),
+                    new Lenke("Prosjekter", "Dører, tegninger og status per prosjekt.", "prosjekter", "folder"),
+                    new Lenke("Arbeidsordre", "Jobber, timer og status samlet.", "arbeidsordre", "check-circle"),
+                    new Lenke("Finn dørpakke", "Velg krav og få riktig dørpakke.", "finn-dorpakke", "box", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Tilbud service", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield"),
                     // Begge ligger i venstremenyen og vises derfor ikke som
                     // egne kort i kategorien.
                     new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock", null, ModulTilgang.Alle, KunIMeny: true),
