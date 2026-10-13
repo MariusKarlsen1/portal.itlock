@@ -350,6 +350,7 @@ using (var seedScope = app.Services.CreateScope())
             // Se tilsvarende kommentar ved platformDb over - samme idempotente WAL-aktivering per tenant-fil.
             seedDb.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
             PortalItlock.Web.Services.TenantSeedHelper.SeedNyheter(seedDb);
+            PortalItlock.Web.Services.TenantSeedHelper.SeedTestbrukere(seedDb);
 
             if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
             {

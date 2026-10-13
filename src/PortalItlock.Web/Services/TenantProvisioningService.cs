@@ -101,6 +101,10 @@ public class TenantProvisioningService(PlatformDbContext platformDb, IConfigurat
                 Rolle = BrukerRolle.Admin
             });
             nyDb.SaveChanges();
+
+            // Testkunde og testvaktmester, slik at "Vis som" i toppfeltet har
+            // noen å bytte til fra dag én også i en helt ny organisasjon.
+            TenantSeedHelper.SeedTestbrukere(nyDb);
         });
 
         var tenant = new Tenant
