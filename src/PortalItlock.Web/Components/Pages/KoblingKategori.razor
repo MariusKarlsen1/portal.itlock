@@ -4,6 +4,7 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using Microsoft.AspNetCore.Components.Authorization
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 
@@ -287,8 +288,27 @@ else if (_kategori is not null)
 
     private KoblingsSkjema? _valgt => _skjemaer.FirstOrDefault(s => s.Id == _valgtId);
 
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private BrukerRolle? _naverendeRolle;
+
+    // Kobling er det ene unntaket for montører: de kan lage NYE skjema, men
+    // ikke endre eller slette de som ligger der fra før. Begge sjekkene gjøres
+    // også i metodene, ikke bare på knappene.
+    private bool KanOppretteSkjema => ModulRettigheter.KanOpprette(_naverendeRolle, "guide/kobling");
+    private bool KanEndreSkjema => ModulRettigheter.KanRedigere(_naverendeRolle, "guide/kobling");
+
     protected override async Task OnParametersSetAsync()
     {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
+            }
+        }
+
         if (_loadetKategoriId == KategoriId)
         {
             return;
@@ -358,6 +378,11 @@ else if (_kategori is not null)
 
     private async Task OpprettSkjema()
     {
+        if (!KanOppretteSkjema)
+        {
+            return;
+        }
+
         var navn = _nyttNavn.Trim();
         if (navn.Length == 0)
         {
@@ -373,6 +398,11 @@ else if (_kategori is not null)
 
     private async Task SlettSkjema(KoblingsSkjema s)
     {
+        if (!KanEndreSkjema)
+        {
+            return;
+        }
+
         Db.KoblingsSkjemaer.Remove(s);
         await Db.SaveChangesAsync();
         _skjemaer.Remove(s);
@@ -387,7 +417,7 @@ else if (_kategori is not null)
 
     private async Task LagreInfo()
     {
-        if (_valgt is null)
+        if (!KanEndreSkjema || _valgt is null)
         {
             return;
         }
@@ -405,7 +435,7 @@ else if (_kategori is not null)
 
     private async Task LagreNotater()
     {
-        if (_valgt is null)
+        if (!KanEndreSkjema || _valgt is null)
         {
             return;
         }
@@ -422,7 +452,9 @@ else if (_kategori is not null)
 
     private async Task LeggTilKomponent()
     {
-        if (_valgt is null || string.IsNullOrWhiteSpace(_nyKomponentNavn))
+        // Komponentene hører til et EKSISTERENDE skjema, så dette er endring -
+        // ikke opprettelse av et nytt skjema.
+        if (!KanEndreSkjema || _valgt is null || string.IsNullOrWhiteSpace(_nyKomponentNavn))
         {
             return;
         }
@@ -445,6 +477,11 @@ else if (_kategori is not null)
 
     private async Task SlettKomponent(KoblingsSkjemaKomponent k)
     {
+        if (!KanEndreSkjema)
+        {
+            return;
+        }
+
         Db.KoblingsSkjemaKomponenter.Remove(k);
         await Db.SaveChangesAsync();
         await LastSkjemaer();

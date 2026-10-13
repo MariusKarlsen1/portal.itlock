@@ -465,7 +465,12 @@ else if (_ordre is not null)
         }
 
         <div class="form-actions">
-            <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
+            @* "Registrer timer" blir stående for alle - det er det ene en
+               montør skal kunne gjøre her. Lagre forsvinner for dem. *@
+            @if (KanEndreOrdre)
+            {
+                <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
+            }
             <a class="add-button" href="@($"/timeregistrering?arbeidsordreId={_ordre.Id}")">Registrer timer</a>
             <button type="button" class="cancel-button" @onclick="VisKart">Vis på kart</button>
             @if (!string.IsNullOrEmpty(_savedMessage))
@@ -673,8 +678,11 @@ else if (_ordre is not null)
         </div>
 
         <div class="form-actions">
-            <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
-            <button type="button" class="add-button" @onclick="VisRapportForhandsvisning">Generer rapport</button>
+            @if (KanEndreOrdre)
+            {
+                <button type="button" class="save-button" @onclick="Lagre">Lagre</button>
+                <button type="button" class="add-button" @onclick="VisRapportForhandsvisning">Generer rapport</button>
+            }
             @if (_ordre.Status == ArbeidsordreStatus.Fakturert)
             {
                 <span class="save-success">
@@ -688,9 +696,12 @@ else if (_ordre is not null)
                     Ferdigmeldt - klar for fakturering
                     @(_ordre.DokumentasjonEpostSendtDato.HasValue ? " - dokumentasjon sendt til kunde" : "")
                 </span>
-                <button type="button" class="fakturert-button" @onclick="MarkerFakturert">Fakturert</button>
+                @if (KanEndreOrdre)
+                {
+                    <button type="button" class="fakturert-button" @onclick="MarkerFakturert">Fakturert</button>
+                }
             }
-            else
+            else if (KanEndreOrdre)
             {
                 <button type="button" class="ferdigmeld-button" @onclick="VisFerdigmeldValg">Ferdigmeld</button>
             }
@@ -776,7 +787,11 @@ else if (_ordre is not null)
     </section>
 
     <section class="ordre-section mobil-slett-skjul">
-        @if (_confirmingDelete)
+        @if (!KanEndreOrdre)
+        {
+            @* Lesere sletter ingenting. *@
+        }
+        else if (_confirmingDelete)
         {
             <span class="delete-confirm">
                 Er du sikker? Dette sletter også registrerte timer på arbeidsordren.
@@ -812,7 +827,10 @@ else if (_ordre is not null)
 
     <div class="ordre-kort-sido">
         <h2>Handlinger</h2>
-        <button type="button" class="ordre-sido-knapp ordre-sido-knapp-primaer" @onclick="Lagre">Lagre</button>
+        @if (KanEndreOrdre)
+        {
+            <button type="button" class="ordre-sido-knapp ordre-sido-knapp-primaer" @onclick="Lagre">Lagre</button>
+        }
         <a class="ordre-sido-knapp" href="@($"/timeregistrering?arbeidsordreId={_ordre.Id}")">Registrer timer</a>
         <button type="button" class="ordre-sido-knapp" @onclick="@(async () => { _mobilFaneOrdre = "detaljer"; await VisKart(); })">Vis på kart</button>
         <button type="button" class="ordre-sido-knapp" @onclick="@(() => _mobilFaneOrdre = "sluttrapport")">Gå til sluttrapport</button>
@@ -917,6 +935,13 @@ else if (_ordre is not null)
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
     private Bruker? _naverendeBruker;
+    private BrukerRolle? _naverendeRolle;
+
+    // Montører har lesetilgang til arbeidsordren. Det eneste de gjør her er å
+    // føre timer, og det skjer på /timeregistrering - lenken dit står igjen.
+    // Alt annet (endre felter, varer, sjekkliste, bilder, ferdigmelding,
+    // fakturering, sletting) er sperret, både i markup og i metodene.
+    private bool KanEndreOrdre => ModulRettigheter.KanRedigere(_naverendeRolle, "arbeidsordre");
 
     // Ekte HTML disabled-attributt (satt her, ikke bare CSS pointer-events)
     // for oppsettfeltene på mobil - pålitelig uansett hvilken CSS-versjon
@@ -933,6 +958,12 @@ else if (_ordre is not null)
             {
                 _naverendeBrukerId = bid;
                 _naverendeBruker = await Db.Brukere.FindAsync(bid);
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
             }
         }
 
@@ -1057,6 +1088,11 @@ else if (_ordre is not null)
 
     private async Task LastOppBilder(InputFileChangeEventArgs e)
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         _bildeFeil = null;
 
         foreach (var file in e.GetMultipleFiles(10))
@@ -1089,6 +1125,11 @@ else if (_ordre is not null)
 
     private async Task SlettMedia(ArbeidsordreMedia media)
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         var entitet = await Db.ArbeidsordreMedia.FindAsync(media.Id);
         if (entitet is null)
         {
@@ -1100,7 +1141,17 @@ else if (_ordre is not null)
         _media.Remove(media);
     }
 
-    private async Task AutoLagre() => await Db.SaveChangesAsync();
+    // Alle felt-endringene på siden går gjennom denne. Avviser den, blir hele
+    // siden lesende uten at hvert enkelt felt må sjekkes for seg.
+    private async Task AutoLagre()
+    {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
+        await Db.SaveChangesAsync();
+    }
 
     private async Task SjekkDobbeltbooking()
     {
@@ -1147,6 +1198,11 @@ else if (_ordre is not null)
 
     private async Task LeggTilVare(Component c)
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         var erMontorTillegg = _naverendeBruker?.Rolle == BrukerRolle.Montor;
         _ordre!.Varer.Add(new ArbeidsordreVare
         {
@@ -1165,10 +1221,15 @@ else if (_ordre is not null)
         await Db.SaveChangesAsync();
     }
 
-    private async Task LagreVare(ArbeidsordreVare v) => await Db.SaveChangesAsync();
+    private async Task LagreVare(ArbeidsordreVare v) => await AutoLagre();
 
     private async Task LagreVarePlukket(ArbeidsordreVare v)
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         v.PlukketDato = v.Plukket ? DateTime.Now : null;
         v.PlukketAvBrukerId = v.Plukket ? _naverendeBrukerId : null;
         await Db.SaveChangesAsync();
@@ -1176,6 +1237,11 @@ else if (_ordre is not null)
 
     private async Task LagreTilbudLinjePlukket(TilbudLinje l)
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         l.PlukketDato = l.Plukket ? DateTime.Now : null;
         l.PlukketAvBrukerId = l.Plukket ? _naverendeBrukerId : null;
         await Db.SaveChangesAsync();
@@ -1240,6 +1306,11 @@ else if (_ordre is not null)
 
     private async Task FjernVare(ArbeidsordreVare v)
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         Db.ArbeidsordreVarer.Remove(v);
         _ordre!.Varer.Remove(v);
         await Db.SaveChangesAsync();
@@ -1257,6 +1328,11 @@ else if (_ordre is not null)
 
     private async Task KnyttTicket()
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         if (_valgtTicketId is null)
         {
             return;
@@ -1294,6 +1370,11 @@ else if (_ordre is not null)
 
     private async Task OpprettOgKnyttTicket()
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         var ticket = new Ticket
         {
             Tittel = _ordre!.Tittel,
@@ -1316,6 +1397,11 @@ else if (_ordre is not null)
 
     private async Task Lagre()
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         if (_planlagtDato.HasValue)
         {
             _ordre!.PlanlagtDato = _planlagtDato.Value.ToDateTime(_fraKlokkeslett ?? TimeOnly.MinValue);
@@ -1351,6 +1437,11 @@ else if (_ordre is not null)
 
     private async Task VarsleMontor(int montorId)
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         var montor = await Db.Brukere.FindAsync(montorId);
         if (montor is null || string.IsNullOrWhiteSpace(montor.Epost))
         {
@@ -1376,6 +1467,13 @@ else if (_ordre is not null)
 
     private async Task LagreRapportPdf()
     {
+        // Å se og laste ned rapporten er lesing, men å LAGRE den på ordren er
+        // en endring - den beholdes for de som kan endre ordren.
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         var bytes = await ArbeidsordrePdfService.GenerateAsync(Id);
         if (bytes is null || _ordre is null)
         {
@@ -1412,6 +1510,11 @@ else if (_ordre is not null)
 
     private async Task BekreftFerdigmeld()
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         _visFerdigmeldModal = false;
 
         if (_erRetryModus)
@@ -1481,6 +1584,11 @@ else if (_ordre is not null)
 
     private async Task MarkerFakturert()
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         _ordre!.Status = ArbeidsordreStatus.Fakturert;
         _ordre.FakturertDato = DateTime.Now;
         await Db.SaveChangesAsync();
@@ -1489,6 +1597,11 @@ else if (_ordre is not null)
 
     private async Task BrukMal()
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         if (_valgtMalId is null)
         {
             return;
@@ -1518,6 +1631,11 @@ else if (_ordre is not null)
 
     private async Task LagreSjekkpunkt(ArbeidsordreSjekkpunkt punkt)
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         var entitet = await Db.ArbeidsordreSjekkpunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
         if (entitet is null)
         {
@@ -1537,6 +1655,11 @@ else if (_ordre is not null)
 
     private async Task FjernSjekkliste()
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         var punkter = await Db.ArbeidsordreSjekkpunkter
             .Where(p => p.ArbeidsordreId == Id)
             .ToListAsync();
@@ -1556,6 +1679,11 @@ else if (_ordre is not null)
 
     private async Task LagreSjekklistePdf()
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         var bytes = await SjekklistePdfService.GenerateAsync(Id);
         if (bytes is null || _ordre is null)
         {
@@ -1671,6 +1799,11 @@ else if (_ordre is not null)
 
     private async Task SlettOrdre()
     {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
         Db.Arbeidsordre.Remove(_ordre!);
         await Db.SaveChangesAsync();
         Nav.NavigateTo("/arbeidsordre");

@@ -137,6 +137,22 @@ public class ModulRettigheterTests
         Assert.Empty(ModulRettigheter.SkjulteProsjektFaner(BrukerRolle.Prosjektleder));
     }
 
+    // Montorverktoyene er det eneste stedet montoeren har full tilgang - det
+    // skal ikke smitte over paa noe annet.
+    [Fact]
+    public void Montor_HarFullTilgangBareTilEgneVerktoyOgEgneTimer()
+    {
+        var medFullTilgang = PortalModulRegister.BladLenkerFor(BrukerRolle.Montor)
+            .Select(l => l.Href)
+            .Where(h => ModulRettigheter.KanRedigere(BrukerRolle.Montor, h))
+            .OrderBy(h => h)
+            .ToList();
+
+        Assert.Equal(
+            new[] { "abc-kalkulator", "befaringsliste", "fravar", "lasekasse-utskiftning", "lasutskifting", "min-dag", "timeregistrering" },
+            medFullTilgang);
+    }
+
     [Fact]
     public void UtenRolle_HarIngenting()
     {
