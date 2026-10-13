@@ -209,7 +209,7 @@ public static class PortalModulRegister
     [
         new Rolle(
             "prosjekt",
-            "Prosjekt og tilbud",
+            "Prosjekt, service og tilbud",
             "Prosjekter, arbeidsordre, dørpakker, service og CE",
             [
                 new LenkeGruppe("Moduler", [
@@ -229,7 +229,7 @@ public static class PortalModulRegister
         new Rolle(
             "montorverktoy",
             "Montørverktøy",
-            "Befaring, utskiftning av lås og ABC-kalkulator",
+            "Befaring, verktøy og oversikt",
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Min dag", "Dagens jobber, adresse og varer å pakke, samlet.", "min-dag", "calendar"),
