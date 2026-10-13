@@ -95,7 +95,7 @@ public static class PortalModulRegister
     private static readonly List<Lenke> ServiceUndermoduler =
     [
         new Lenke("Serviceavtaler", "Serviceavtaler og serviceoppdrag samlet, med servicehistorikk og rapporter.", "service", "clock"),
-        new Lenke("Tilbud service", "Opprett og se tilbud for serviceavtaler, med estimater fra arbeidsordre-minuttene.", "tilbud-service", "receipt"),
+        new Lenke("Tilbud", "Opprett og se tilbud for serviceavtaler, med estimater fra arbeidsordre-minuttene.", "tilbud-service", "receipt"),
     ];
 
     private static readonly List<Lenke> OppsettUndermoduler =
@@ -224,7 +224,7 @@ public static class PortalModulRegister
                     new Lenke("Arbeidsordre", "Jobber, timer og status samlet.", "arbeidsordre", "check-circle"),
                     new Lenke("Finn dørpakke", "Velg krav og få riktig dørpakke.", "finn-dorpakke", "box"),
                     new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
-                    new Lenke("Tilbud service", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Tilbud", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield"),
                     // Begge ligger i venstremenyen og vises derfor ikke som
                     // egne kort i kategorien.
