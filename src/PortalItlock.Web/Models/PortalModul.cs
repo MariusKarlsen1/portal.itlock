@@ -270,9 +270,9 @@ public static class PortalModulRegister
             "Kunderegister, tickets og forespørsler",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Kunderegister", "Opprett og vedlikehold kunder med kontaktinfo og adresse.", "kunder", "users", null, ModulTilgang.FraProsjektleder),
-                    new Lenke("Tickets", "Samlet oversikt over alle henvendelser og saker.", "tickets", "tag", null, ModulTilgang.FraProsjektleder),
-                    new Lenke("Forespørsler", "E-poster sendt til post@itlock.no.", "foresporsler", "mail", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Kunderegister", "Opprett og vedlikehold kunder", "kunder", "users", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Tickets", "Samlet kontroll og oversikt over henvendelser", "tickets", "tag", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Forespørsler", "Mottatte forespørsler", "foresporsler", "mail", null, ModulTilgang.FraProsjektleder),
                 ]),
             ]),
 
