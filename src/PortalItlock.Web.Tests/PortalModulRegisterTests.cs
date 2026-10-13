@@ -39,12 +39,12 @@ public class PortalModulRegisterTests
     // tilgang ved et uhell.
     //
     // Montørene fikk lesetilgang til disse 2026-10-13 på uttrykkelig ønske:
-    // hele Teknisk og ADK og hele Ressurser og godkjenninger skal de kunne se,
-    // og Finn dørpakke likeså. Hva de får GJØRE der styres av
-    // ModulRettigheter (se ModulRettigheterTests).
+    // hele Teknisk og ADK skal de kunne se, og Finn dørpakke likeså. Hva de
+    // får GJØRE der styres av ModulRettigheter (se ModulRettigheterTests).
+    // Godkjenninger er IKKE med - den skal de ikke se.
     private static readonly Dictionary<BrukerRolle, string[]> BevisstLagtTil = new()
     {
-        [BrukerRolle.Montor] = ["finn-dorpakke", "systemregister", "timegodkjenning"],
+        [BrukerRolle.Montor] = ["finn-dorpakke", "systemregister"],
         [BrukerRolle.Prosjektleder] = [],
         [BrukerRolle.Admin] = []
     };
@@ -76,10 +76,8 @@ public class PortalModulRegisterTests
     {
         var montor = PortalModulRegister.BladLenkerFor(BrukerRolle.Montor).Select(l => l.Href).ToHashSet();
 
-        // Moduler montører fortsatt ikke skal se i det hele tatt. Merk at
-        // timegodkjenning IKKE står her lenger - den ser de nå, men bare som
-        // lesetilgang (se ModulRettigheterTests).
-        foreach (var sperret in new[] { "tickets", "kunder", "service", "foresporsler", "tilbud-service", "brukere", "komponenter" })
+        // Moduler montører ikke skal se i det hele tatt.
+        foreach (var sperret in new[] { "tickets", "kunder", "service", "foresporsler", "tilbud-service", "timegodkjenning", "brukere", "komponenter" })
         {
             Assert.DoesNotContain(sperret, montor);
         }

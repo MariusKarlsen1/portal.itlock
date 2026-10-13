@@ -267,7 +267,7 @@ public static class PortalModulRegister
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Kalender", "Ressursplanlegging og oversikt", "kalender", "calendar"),
-                    new Lenke("Godkjenninger", "Godkjenning av timer og søknader", "timegodkjenning", "check-circle"),
+                    new Lenke("Godkjenninger", "Godkjenning av timer og søknader", "timegodkjenning", "check-circle", null, ModulTilgang.FraProsjektleder),
                 ]),
             ]),
 

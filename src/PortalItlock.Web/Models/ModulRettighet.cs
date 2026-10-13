@@ -36,9 +36,10 @@ public static class ModulRettigheter
     // hovedregelen over.
     private static readonly Dictionary<string, Rettighet> MontorRettigheter = new()
     {
-        // Ressurser og godkjenninger - bare se.
+        // Ressurser og godkjenninger - bare kalenderen, og bare se. Selve
+        // Godkjenninger er ikke med: montører skal ikke inn der i det hele
+        // tatt (uttrykkelig ønske 2026-10-13).
         ["kalender"] = Rettighet.Les,
-        ["timegodkjenning"] = Rettighet.Les,
 
         // Teknisk og ADK - bare se. Kobling er unntaket: der kan de lage nye
         // skjema, men ikke endre de som ligger der fra før.

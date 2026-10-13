@@ -39,9 +39,9 @@ public class ModulRettigheterTests
     // ---------- Montør ----------
 
     [Theory]
-    // Ressurser og godkjenninger: bare se.
+    // Ressurser og godkjenninger: bare kalenderen, og bare se.
     [InlineData("kalender", Rettighet.Les)]
-    [InlineData("timegodkjenning", Rettighet.Les)]
+    [InlineData("timegodkjenning", Rettighet.Ingen)]
     // Teknisk og ADK: bare se - bortsett fra Kobling, der de kan lage nytt.
     [InlineData("guide/kobling", Rettighet.Opprett)]
     [InlineData("dormiljo", Rettighet.Les)]
@@ -100,7 +100,7 @@ public class ModulRettigheterTests
     [Fact]
     public void Montor_KanBareSeIkkeRedigere_PaaLesemodulene()
     {
-        foreach (var modul in new[] { "kalender", "timegodkjenning", "dormiljo", "systemregister", "prosjekter", "arbeidsordre", "ce-godkjenninger", "finn-dorpakke" })
+        foreach (var modul in new[] { "kalender", "dormiljo", "systemregister", "prosjekter", "arbeidsordre", "ce-godkjenninger", "finn-dorpakke" })
         {
             Assert.True(ModulRettigheter.KanSe(BrukerRolle.Montor, modul), modul);
             Assert.False(ModulRettigheter.KanRedigere(BrukerRolle.Montor, modul), modul);
