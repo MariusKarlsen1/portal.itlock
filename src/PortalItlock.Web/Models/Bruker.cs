@@ -27,10 +27,15 @@ public class Bruker
     public string? VisningsPreferanser { get; set; }
 
     // Styrer hvilken av de tre Hjem-layoutene brukeren ser - velges via
-    // "Layout N"-knappen i Tilpass meny (se TopBar.razor). Bilde er standard
-    // (matcher tidligere HjemLayoutKlassisk=false), som bevart av migrasjonen
-    // som la til dette feltet.
-    public HjemLayout HjemLayoutValg { get; set; } = HjemLayout.Bilde;
+    // "Layout N"-knappen i Tilpass meny (se TopBar.razor). Dashboard3 er
+    // standard: det er forsiden nye organisasjoner og nye brukere møter ved
+    // første innlogging, og den eneste av de tre som er bygget etter det nye
+    // designet. Layout 1 (Klassisk) kan velges i Tilpass meny for den som vil.
+    //
+    // Gjelder bare NYE brukere - eksisterende rader beholder verdien de har
+    // lagret, så ingen får forsiden byttet under seg. Bilde-layouten er ikke
+    // lenger valgbar i bryteren, men rendres fortsatt for de som har den.
+    public HjemLayout HjemLayoutValg { get; set; } = HjemLayout.Dashboard3;
 
     public int? KundeId { get; set; }
     public Kunde? Kunde { get; set; }
