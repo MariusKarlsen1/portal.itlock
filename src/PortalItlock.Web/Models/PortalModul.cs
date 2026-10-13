@@ -206,12 +206,13 @@ public static class PortalModulRegister
         new Rolle(
             "prosjekt",
             "Prosjekt og tilbud",
-            "Prosjekter, arbeidsordre, dørpakker og CE",
+            "Prosjekter, arbeidsordre, dørpakker, service og CE",
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Prosjekter", "Dører, plantegninger og montasjestatus per prosjekt.", "prosjekter", "folder"),
                     new Lenke("Arbeidsordre", "Jobber med ansvarlig montør, varer og sjekkliste.", "arbeidsordre", "check-circle"),
                     new Lenke("Finn dørpakke", "Huk av krav og finn riktig dørpakke til prosjektet.", "finn-dorpakke", "box", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Serviceavtaler", "Serviceavtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tilbud service", "Tilbud for serviceavtaler, med estimater fra arbeidsordre-minuttene.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-sertifiseringer for dører med automatikk, på tvers av prosjekter.", "ce-godkjenninger", "shield"),
                 ]),
@@ -260,11 +261,10 @@ public static class PortalModulRegister
         new Rolle(
             "driftkunde",
             "Kunder og drift",
-            "Kunderegister, service, tickets og forespørsler",
+            "Kunderegister, tickets og forespørsler",
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Kunderegister", "Opprett og vedlikehold kunder med kontaktinfo og adresse.", "kunder", "users", null, ModulTilgang.FraProsjektleder),
-                    new Lenke("Serviceavtaler", "Serviceavtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tickets", "Samlet oversikt over alle henvendelser og saker.", "tickets", "tag", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Forespørsler", "E-poster sendt til post@itlock.no.", "foresporsler", "mail", null, ModulTilgang.FraProsjektleder),
                 ]),
