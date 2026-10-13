@@ -91,20 +91,82 @@
         tallvakt.observe(el);
     });
 
-    // ---------- Toppfeltet ----------
+    // ---------- Toppfeltet og fremdriftslinja ----------
+    //
+    // Begge henger paa samme rullelytter, og jobben gjoeres i en
+    // animasjonsramme - ikke paa hver eneste rullehendelse, som ellers kan
+    // komme titalls ganger i sekundet.
     const nav = document.getElementById('vk-nav');
-    if (nav) {
-        let sistRullet = -1;
+    const fremdrift = document.getElementById('vk-fremdrift');
 
-        const oppdaterNav = function () {
-            const rullet = window.scrollY > 24;
-            if (rullet !== sistRullet) {
-                sistRullet = rullet;
-                nav.classList.toggle('vk-nav-rullet', rullet);
+    if (nav || fremdrift) {
+        let sistRullet = -1;
+        let venter = false;
+
+        const oppdater = function () {
+            venter = false;
+
+            if (nav) {
+                const rullet = window.scrollY > 24;
+                if (rullet !== sistRullet) {
+                    sistRullet = rullet;
+                    nav.classList.toggle('vk-nav-rullet', rullet);
+                }
+            }
+
+            if (fremdrift) {
+                const maks = document.documentElement.scrollHeight - window.innerHeight;
+                const andel = maks > 0 ? Math.min(window.scrollY / maks, 1) : 0;
+                fremdrift.style.width = (andel * 100).toFixed(2) + '%';
             }
         };
 
-        oppdaterNav();
-        window.addEventListener('scroll', oppdaterNav, { passive: true });
+        const paaRull = function () {
+            if (!venter) {
+                venter = true;
+                requestAnimationFrame(oppdater);
+            }
+        };
+
+        oppdater();
+        window.addEventListener('scroll', paaRull, { passive: true });
+        window.addEventListener('resize', paaRull, { passive: true });
     }
+})();
+
+// ---------- Temabryter ----------
+//
+// Skriver til samme lagringsnoekkel som portalen bruker (itlock-theme, lest av
+// skriptet i App.razor), saa valget man gjoer her foelger med inn i portalen -
+// og omvendt. Ligger utenfor blokken over slik at den virker ogsaa naar
+// bevegelse er slaatt av.
+(function () {
+    const knapp = document.getElementById('vk-tema');
+    if (!knapp) {
+        return;
+    }
+
+    const NOKKEL = 'itlock-theme';
+
+    function naverendeTema() {
+        const satt = document.documentElement.getAttribute('data-theme');
+        if (satt === 'dark' || satt === 'light') {
+            return satt;
+        }
+
+        // Ingenting valgt ennaa - foelg systemet.
+        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+
+    knapp.addEventListener('click', function () {
+        const nytt = naverendeTema() === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', nytt);
+
+        try {
+            localStorage.setItem(NOKKEL, nytt);
+        } catch (e) {
+            // Privat vindu eller blokkert lagring - valget gjelder da bare
+            // denne fanen, og siden skal ikke feile paa det.
+        }
+    });
 })();
