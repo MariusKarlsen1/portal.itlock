@@ -36,51 +36,59 @@ public static class TenantSeedHelper
     public const string TestkundeEpost = "testkunde@test.invalid";
     public const string TestvaktmesterEpost = "testvaktmester@test.invalid";
 
-    // Oppretter én testkunde og én testvaktmester, slik at "Vis som Kunde" og
-    // "Vis som Driftslisens" i toppfeltet har noen å logge inn som. Uten en
-    // bruker med rollen har de to knappene ingenting å bytte til.
+    // Sørger for at "Vis som Kunde" og "Vis som Driftslisens" i toppfeltet har
+    // noen å logge inn som. Uten en AKTIV bruker med rollen finner
+    // /account/vis-som ingen å bytte til, og knappen gjør tilsynelatende
+    // ingenting.
     //
-    // Kjøres bare når det ikke finnes NOEN bruker med rollen fra før - har man
-    // ekte kunder eller vaktmestere i portalen, røres ingenting. Idempotent:
-    // finnes testbrukeren allerede, hoppes den over.
+    // Betingelsen må matche endepunktet nøyaktig: det krever en aktiv bruker.
+    // Sjekket vi bare på "finnes en bruker med rollen", holdt én gammel
+    // DEAKTIVERT kundebruker seeden tilbake samtidig som byttet fortsatt
+    // feilet - som var akkurat det som skjedde i produksjon 2026-10-13.
+    //
+    // Finnes ekte, aktive kunder eller vaktmestere, røres ingenting. Er vår
+    // egen testbruker der fra før men deaktivert, skrus den på igjen - det er
+    // det eneste den finnes for.
     //
     // Testbrukerne har ingen PasswordHash og kan derfor ikke logges inn på
-    // vanlig vis - de finnes bare for rollebytteren. De kan trygt slettes i
-    // Brukere; da lages de på nytt ved neste oppstart hvis det fortsatt ikke
-    // finnes noen ekte bruker med rollen.
+    // vanlig vis. De kan trygt slettes i Brukere/Kundetilganger; da lages de på
+    // nytt ved neste oppstart hvis det fortsatt ikke finnes noen aktiv ekte
+    // bruker med rollen.
     public static void SeedTestbrukere(ApplicationDbContext db)
     {
         var endret = false;
 
-        if (!db.Brukere.Any(b => b.Rolle == BrukerRolle.Kunde))
+        if (!db.Brukere.Any(b => b.Aktiv && b.Rolle == BrukerRolle.Kunde))
         {
             // Kobles til den første kunden som finnes, slik at kundeportalen
             // har noe å vise med en gang. Byttes i Kundetilganger.
             var forsteKunde = db.Kunder.OrderBy(k => k.Navn).FirstOrDefault();
+            var eksisterende = db.Brukere.FirstOrDefault(b => b.Epost == TestkundeEpost);
 
-            db.Brukere.Add(new Bruker
+            if (eksisterende is not null)
             {
-                Navn = "Testkunde",
-                Epost = TestkundeEpost,
-                Rolle = BrukerRolle.Kunde,
-                Stilling = "Testbruker for kundevisning",
-                Aktiv = true,
-                KundeId = forsteKunde?.Id
-            });
+                eksisterende.Aktiv = true;
+                eksisterende.Rolle = BrukerRolle.Kunde;
+                eksisterende.KundeId ??= forsteKunde?.Id;
+            }
+            else
+            {
+                db.Brukere.Add(new Bruker
+                {
+                    Navn = "Testkunde",
+                    Epost = TestkundeEpost,
+                    Rolle = BrukerRolle.Kunde,
+                    Stilling = "Testbruker for kundevisning",
+                    Aktiv = true,
+                    KundeId = forsteKunde?.Id
+                });
+            }
+
             endret = true;
         }
 
-        if (!db.Brukere.Any(b => b.Rolle == BrukerRolle.Driftslisens))
+        if (!db.Brukere.Any(b => b.Aktiv && b.Rolle == BrukerRolle.Driftslisens))
         {
-            var testvaktmester = new Bruker
-            {
-                Navn = "Testvaktmester",
-                Epost = TestvaktmesterEpost,
-                Rolle = BrukerRolle.Driftslisens,
-                Stilling = "Testbruker for driftsvisning",
-                Aktiv = true
-            };
-
             // Driftsportalen viser prosjektene vaktmesteren er satt på, så den
             // får det første aktive prosjektet for å ha noe å vise. Flere
             // legges til i Driftslisenser.
@@ -89,12 +97,32 @@ public static class TenantSeedHelper
                 .OrderBy(p => p.Navn)
                 .FirstOrDefault();
 
-            if (forsteProsjekt is not null)
+            var eksisterende = db.Brukere.FirstOrDefault(b => b.Epost == TestvaktmesterEpost);
+
+            if (eksisterende is not null)
             {
-                testvaktmester.Prosjekter.Add(forsteProsjekt);
+                eksisterende.Aktiv = true;
+                eksisterende.Rolle = BrukerRolle.Driftslisens;
+            }
+            else
+            {
+                var testvaktmester = new Bruker
+                {
+                    Navn = "Testvaktmester",
+                    Epost = TestvaktmesterEpost,
+                    Rolle = BrukerRolle.Driftslisens,
+                    Stilling = "Testbruker for driftsvisning",
+                    Aktiv = true
+                };
+
+                if (forsteProsjekt is not null)
+                {
+                    testvaktmester.Prosjekter.Add(forsteProsjekt);
+                }
+
+                db.Brukere.Add(testvaktmester);
             }
 
-            db.Brukere.Add(testvaktmester);
             endret = true;
         }
 
