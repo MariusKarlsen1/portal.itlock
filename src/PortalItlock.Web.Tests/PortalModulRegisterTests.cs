@@ -34,17 +34,36 @@ public class PortalModulRegisterTests
     private static IEnumerable<Lenke> BladeneI(Lenke lenke) =>
         lenke.Undermoduler is { Count: > 0 } under ? under : [lenke];
 
+    // Moduler en rolle BEVISST har fått i tillegg etter ombyggingen. Alt annet
+    // som dukker opp får testen under til å feile, slik at ingen får utvidet
+    // tilgang ved et uhell.
+    //
+    // Montørene fikk lesetilgang til disse 2026-10-13 på uttrykkelig ønske:
+    // hele Teknisk og ADK og hele Ressurser og godkjenninger skal de kunne se,
+    // og Finn dørpakke likeså. Hva de får GJØRE der styres av
+    // ModulRettigheter (se ModulRettigheterTests).
+    private static readonly Dictionary<BrukerRolle, string[]> BevisstLagtTil = new()
+    {
+        [BrukerRolle.Montor] = ["finn-dorpakke", "systemregister", "timegodkjenning"],
+        [BrukerRolle.Prosjektleder] = [],
+        [BrukerRolle.Admin] = []
+    };
+
+    // Moduler som bevisst er tatt HELT ut av portalen. Sidene lever videre på
+    // sine adresser, men ligger ikke i menyen lenger.
+    private static readonly string[] BevisstFjernet = ["nyheter", "notater"];
+
     [Theory]
     [InlineData(BrukerRolle.Montor)]
     [InlineData(BrukerRolle.Prosjektleder)]
     [InlineData(BrukerRolle.Admin)]
-    public void NyeKategorier_GirNoyaktigSammeModulerSomDeGamleRolleseksjonene(BrukerRolle rolle)
+    public void NyeKategorier_GirSammeModulerSomFor_UtenomDeBevisstEndrede(BrukerRolle rolle)
     {
         var gamle = GamleModulerFor(rolle);
         var nye = PortalModulRegister.BladLenkerFor(rolle).Select(l => l.Href).ToHashSet();
 
-        var mistet = gamle.Except(nye).OrderBy(h => h).ToList();
-        var nyeEkstra = nye.Except(gamle).OrderBy(h => h).ToList();
+        var mistet = gamle.Except(nye).Except(BevisstFjernet).OrderBy(h => h).ToList();
+        var nyeEkstra = nye.Except(gamle).Except(BevisstLagtTil[rolle]).OrderBy(h => h).ToList();
 
         Assert.True(mistet.Count == 0, $"{rolle} mistet tilgang til: {string.Join(", ", mistet)}");
         Assert.True(nyeEkstra.Count == 0, $"{rolle} fikk nye moduler den ikke hadde før: {string.Join(", ", nyeEkstra)}");
@@ -55,8 +74,10 @@ public class PortalModulRegisterTests
     {
         var montor = PortalModulRegister.BladLenkerFor(BrukerRolle.Montor).Select(l => l.Href).ToHashSet();
 
-        // Et utvalg moduler montører aldri har hatt i menyen.
-        foreach (var sperret in new[] { "tickets", "kunder", "service", "foresporsler", "timegodkjenning", "brukere", "komponenter" })
+        // Moduler montører fortsatt ikke skal se i det hele tatt. Merk at
+        // timegodkjenning IKKE står her lenger - den ser de nå, men bare som
+        // lesetilgang (se ModulRettigheterTests).
+        foreach (var sperret in new[] { "tickets", "kunder", "service", "foresporsler", "tilbud-service", "brukere", "komponenter" })
         {
             Assert.DoesNotContain(sperret, montor);
         }

@@ -219,7 +219,7 @@ public static class PortalModulRegister
                 new LenkeGruppe("Moduler", [
                     new Lenke("Prosjekter", "Dører, tegninger og status per prosjekt.", "prosjekter", "folder"),
                     new Lenke("Arbeidsordre", "Jobber, timer og status samlet.", "arbeidsordre", "check-circle"),
-                    new Lenke("Finn dørpakke", "Velg krav og få riktig dørpakke.", "finn-dorpakke", "box", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Finn dørpakke", "Velg krav og få riktig dørpakke.", "finn-dorpakke", "box"),
                     new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tilbud service", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield"),
@@ -253,7 +253,7 @@ public static class PortalModulRegister
                     new Lenke("Kobling", "Koblingsskjema", "guide/kobling", "trend-up"),
                     new Lenke("Dørmiljø", "Prinsippskisser av dørmiljø", "dormiljo", "box"),
                     new Lenke("Oppsett adgangskontroll", "Guide for oppsett av adgangskontroll.", "guide/oppsett-adgangskontroll", "bell"),
-                    new Lenke("Systemregister", "Søk opp låssystemer", "systemregister", "users", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Systemregister", "Søk opp låssystemer", "systemregister", "users"),
                 ]),
             ]),
 
@@ -264,7 +264,7 @@ public static class PortalModulRegister
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Kalender", "Ressursplanlegging og oversikt", "kalender", "calendar"),
-                    new Lenke("Godkjenninger", "Godkjenning av timer og søknader", "timegodkjenning", "check-circle", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Godkjenninger", "Godkjenning av timer og søknader", "timegodkjenning", "check-circle"),
                 ]),
             ]),
 

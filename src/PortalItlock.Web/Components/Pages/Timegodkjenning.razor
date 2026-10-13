@@ -2,7 +2,10 @@
 @rendermode InteractiveServer
 @* Prosjektledere godkjenner timene og fraværssøknadene til montørene sine,
    så siden er ikke lenger forbeholdt administratorer. *@
-@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@* Montører ser siden for å følge sine egne timer og søknader, men godkjenner
+   ingenting - knappene er skjult OG Behandle-metodene avviser dem (se
+   KanGodkjenne lenger ned). *@
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using System.Globalization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
@@ -123,10 +126,13 @@
                             </div>
                         }
 
-                        <div class="knapp-rad">
-                            <button type="button" class="knapp btn-godkjenn" @onclick="@(() => Behandle(_valgt.Id, TimeregistreringStatus.Godkjent))">Godkjenn</button>
-                            <button type="button" class="knapp btn-avsla" @onclick="@(() => Behandle(_valgt.Id, TimeregistreringStatus.Avslatt))">Avslå</button>
-                        </div>
+                        @if (KanGodkjenne)
+                        {
+                            <div class="knapp-rad">
+                                <button type="button" class="knapp btn-godkjenn" @onclick="@(() => Behandle(_valgt.Id, TimeregistreringStatus.Godkjent))">Godkjenn</button>
+                                <button type="button" class="knapp btn-avsla" @onclick="@(() => Behandle(_valgt.Id, TimeregistreringStatus.Avslatt))">Avslå</button>
+                            </div>
+                        }
                     </div>
                 }
             </div>
@@ -184,7 +190,11 @@
                             </div>
                         }
 
-                        @if (_avslarFravarId == _valgtFravar.Id)
+                        @if (!KanGodkjenne)
+                        {
+                            @* Montører ser søknaden, men behandler den ikke. *@
+                        }
+                        else if (_avslarFravarId == _valgtFravar.Id)
                         {
                             <div class="felt">
                                 <span class="felt-label">Begrunnelse (valgfritt)</span>
@@ -361,6 +371,12 @@ else
     private string _avslagsBegrunnelse = "";
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
+    private BrukerRolle? _naverendeRolle;
+
+    // Montører ser siden, men skal bare kunne lese - de godkjenner ikke timer
+    // eller fraværssøknader. Sjekken gjentas i Behandle/BehandleFravar, så det
+    // ikke hjelper å få fram en knapp som egentlig er skjult.
+    private bool KanGodkjenne => ModulRettigheter.KanRedigere(_naverendeRolle, "timegodkjenning");
 
     private Models.Timeregistrering? _valgt => _ko.FirstOrDefault(r => r.Id == _valgtId);
     private FravarSoknad? _valgtFravar => _koFravar.FirstOrDefault(f => f.Id == _valgtFravarId);
@@ -405,6 +421,12 @@ else
             if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
             {
                 _naverendeBrukerId = bid;
+            }
+
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var rolle))
+            {
+                _naverendeRolle = rolle;
             }
         }
 
@@ -530,6 +552,11 @@ else
 
     private async Task Behandle(int id, TimeregistreringStatus status)
     {
+        if (!KanGodkjenne)
+        {
+            return;
+        }
+
         var reg = await Db.Timeregistreringer.FirstOrDefaultAsync(t => t.Id == id);
         if (reg is null)
         {
@@ -547,6 +574,11 @@ else
 
     private async Task BehandleFravar(int id, FravarStatus status)
     {
+        if (!KanGodkjenne)
+        {
+            return;
+        }
+
         var soknad = await Db.FravarSoknader.FirstOrDefaultAsync(f => f.Id == id);
         if (soknad is null)
         {

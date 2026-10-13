@@ -67,12 +67,23 @@ else
             <button type="button" class="@TabClass("status")" @onclick="@(() => _activeTab = "status")">Dashbord</button>
             <button type="button" class="@TabClass("dorer")" @onclick="@(() => _activeTab = "dorer")">Dører</button>
             <button type="button" class="@TabClass("plantegninger")" @onclick="@(() => _activeTab = "plantegninger")">Plantegninger</button>
-            <button type="button" class="@TabClass("vedlegg") mobil-admin-fane" @onclick="@(() => _activeTab = "vedlegg")">Vedlegg</button>
-            <button type="button" class="@TabClass("tilbud") mobil-admin-fane" @onclick="@(() => _activeTab = "tilbud")">Tilbud</button>
-            <button type="button" class="@TabClass("montering") mobil-admin-fane" @onclick="@(() => _activeTab = "montering")">Montering</button>
+            @* Montører skal ikke se Tilbud, Vedlegg, Montering eller Personer -
+               hvilke faner som skjules står i ModulRettigheter, ett sted. *@
+            @if (!SkjulteFaner.Contains("vedlegg"))
+            {
+                <button type="button" class="@TabClass("vedlegg") mobil-admin-fane" @onclick="@(() => _activeTab = "vedlegg")">Vedlegg</button>
+            }
+            @if (!SkjulteFaner.Contains("tilbud"))
+            {
+                <button type="button" class="@TabClass("tilbud") mobil-admin-fane" @onclick="@(() => _activeTab = "tilbud")">Tilbud</button>
+            }
+            @if (!SkjulteFaner.Contains("montering"))
+            {
+                <button type="button" class="@TabClass("montering") mobil-admin-fane" @onclick="@(() => _activeTab = "montering")">Montering</button>
+            }
             <button type="button" class="@TabClass("fdv") mobil-admin-fane" @onclick="@(() => _activeTab = "fdv")">FDV</button>
             <button type="button" class="@TabClass("dorid") mobil-admin-fane" @onclick="@(() => _activeTab = "dorid")">Dør ID</button>
-            @if (_naverendeRolle != BrukerRolle.Montor)
+            @if (!SkjulteFaner.Contains("personer"))
             {
                 <button type="button" class="@TabClass("personer") mobil-admin-fane" @onclick="@(() => _activeTab = "personer")">Personer</button>
             }
@@ -197,7 +208,7 @@ else
                     <div class="field-grid">
                         <label class="span-2">
                             Interne notater
-                            <textarea rows="3" @bind="_form.Notater" @bind:after="AutoLagre" disabled="@_erMobilvisning"></textarea>
+                            <textarea rows="3" @bind="_form.Notater" @bind:after="AutoLagre" disabled="@(_erMobilvisning || !KanRedigereProsjekt)"></textarea>
                         </label>
                     </div>
                 </div>
@@ -214,11 +225,14 @@ else
             }
 
             <div class="form-actions">
-                <button type="button" class="save-button" @onclick="Lagre">
-                    @(Id.HasValue ? "Lagre endringer" : "Lagre prosjekt")
-                </button>
+                @if (KanRedigereProsjekt)
+                {
+                    <button type="button" class="save-button" @onclick="Lagre">
+                        @(Id.HasValue ? "Lagre endringer" : "Lagre prosjekt")
+                    </button>
+                }
 
-                @if (Id.HasValue && !_erMobilvisning)
+                @if (Id.HasValue && !_erMobilvisning && KanRedigereProsjekt)
                 {
                     @if (_confirmingDelete)
                     {
@@ -2130,6 +2144,15 @@ else
 
     private string TabClass(string tab) => _activeTab == tab ? "tab-button tab-button-active" : "tab-button";
 
+    // Fanene denne rollen ikke skal se. Montører får Tilbud, Vedlegg,
+    // Montering og Personer skjult - se ModulRettigheter.
+    private IReadOnlySet<string> SkjulteFaner => ModulRettigheter.SkjulteProsjektFaner(_naverendeRolle);
+
+    // Montører kan se prosjektet, men ikke endre selve prosjektopplysningene.
+    // Unntakene de HAR - huke av montert, melde avvik og legge inn bilder -
+    // er egne regler i ModulRettigheter og styres ikke av denne.
+    private bool KanRedigereProsjekt => ModulRettigheter.KanRedigere(_naverendeRolle, "prosjekter");
+
     private List<Bruker> TilgjengeligeBrukere =>
         _alleBrukere.Where(b => !_form.Medlemmer.Any(m => m.Id == b.Id)).ToList();
 
@@ -2203,6 +2226,14 @@ else
             {
                 _naverendeRolle = rolle;
             }
+        }
+
+        // Står man på en fane rollen ikke skal se - f.eks. fordi rollen er
+        // byttet med "Vis som" mens siden var åpen - faller man tilbake til
+        // Oversikt i stedet for å se innholdet i en skjult fane.
+        if (SkjulteFaner.Contains(_activeTab))
+        {
+            _activeTab = "oversikt";
         }
 
         if (_hasLoaded && _loadedId == Id)
@@ -2328,7 +2359,7 @@ else
 
     private async Task AutoLagre()
     {
-        if (Id.HasValue)
+        if (Id.HasValue && KanRedigereProsjekt)
         {
             await Db.SaveChangesAsync();
         }
@@ -2336,6 +2367,14 @@ else
 
     private async Task Lagre()
     {
+        // Serverside-sperre, ikke bare en skjult knapp: montører kan lese
+        // prosjektet, men ikke lagre endringer på det.
+        if (!KanRedigereProsjekt)
+        {
+            _error = "Du har ikke tilgang til å endre prosjektopplysningene.";
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(_form.Navn))
         {
             _error = "Prosjektet må ha et navn.";
