@@ -26,7 +26,11 @@ public sealed record Lenke(
     string Href,
     string IconNavn = "folder",
     List<Lenke>? Undermoduler = null,
-    ModulTilgang Tilgang = ModulTilgang.Alle);
+    ModulTilgang Tilgang = ModulTilgang.Alle,
+    // Modulen ligger i venstremenyen som vanlig, men vises ikke som kort i
+    // kategorien på forsiden - for moduler man uansett går rett til fra
+    // menyen, og som bare ville tatt plass i kategorioversikten.
+    bool KunIMeny = false);
 
 public sealed record LenkeGruppe(string Navn, List<Lenke> Lenker);
 public sealed record Rolle(string Nokkel, string Tittel, string Beskrivelse, List<LenkeGruppe> Grupper);
@@ -206,7 +210,7 @@ public static class PortalModulRegister
         new Rolle(
             "prosjekt",
             "Prosjekt og tilbud",
-            "Prosjekter, arbeidsordre, service, CE og timeføring",
+            "Prosjekter, arbeidsordre, dørpakker, service og CE",
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Prosjekter", "Dører, plantegninger og montasjestatus per prosjekt.", "prosjekter", "folder"),
@@ -215,8 +219,10 @@ public static class PortalModulRegister
                     new Lenke("Serviceavtaler", "Serviceavtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tilbud service", "Tilbud for serviceavtaler, med estimater fra arbeidsordre-minuttene.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-sertifiseringer for dører med automatikk, på tvers av prosjekter.", "ce-godkjenninger", "shield"),
-                    new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock"),
-                    new Lenke("Fravær", "Søk om ferie eller meld fravær.", "fravar", "sun"),
+                    // Begge ligger i venstremenyen og vises derfor ikke som
+                    // egne kort i kategorien.
+                    new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock", null, ModulTilgang.Alle, KunIMeny: true),
+                    new Lenke("Fravær", "Søk om ferie eller meld fravær.", "fravar", "sun", null, ModulTilgang.Alle, KunIMeny: true),
                 ]),
             ]),
 
@@ -292,9 +298,9 @@ public static class PortalModulRegister
         _ => ModulTilgang.Ingen
     };
 
-    // Kategoriene brukeren faktisk ser, med bare de modulene de har tilgang
-    // til. En kategori uten synlige moduler faller bort av seg selv.
-    public static List<Rolle> KategorierFor(BrukerRolle? rolle)
+    // Alle kategoriene filtrert på hva rollen har tilgang til - KunIMeny er
+    // ikke tatt hensyn til her. Grunnlaget for både menyen og forsidekortene.
+    private static List<Rolle> TilgangsfiltrerteKategorier(BrukerRolle? rolle)
     {
         var tilgang = TilgangFor(rolle);
 
@@ -310,8 +316,23 @@ public static class PortalModulRegister
             .ToList();
     }
 
-    // Flat liste over modulene brukeren ser - til venstremenyen.
-    public static List<Lenke> ModulerFor(BrukerRolle? rolle) => KategorierFor(rolle)
+    // Kategoriene slik de vises på forsiden: bare moduler rollen har tilgang
+    // til, og uten de som er merket KunIMeny. En kategori uten synlige moduler
+    // faller bort av seg selv.
+    public static List<Rolle> KategorierFor(BrukerRolle? rolle) => TilgangsfiltrerteKategorier(rolle)
+        .Select(k => k with
+        {
+            Grupper = k.Grupper
+                .Select(g => g with { Lenker = g.Lenker.Where(l => !l.KunIMeny).ToList() })
+                .Where(g => g.Lenker.Count > 0)
+                .ToList()
+        })
+        .Where(k => k.Grupper.Count > 0)
+        .ToList();
+
+    // Flat liste over modulene brukeren ser - til venstremenyen. Tar med
+    // KunIMeny-modulene, som er hele poenget med dem.
+    public static List<Lenke> ModulerFor(BrukerRolle? rolle) => TilgangsfiltrerteKategorier(rolle)
         .SelectMany(k => k.Grupper)
         .SelectMany(g => g.Lenker)
         .DistinctBy(l => l.Href)

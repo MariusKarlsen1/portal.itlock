@@ -77,6 +77,45 @@ public class PortalModulRegisterTests
         Assert.Contains(PortalModulRegister.KategorierFor(BrukerRolle.Admin), k => k.Nokkel == "administrasjon");
     }
 
+    // Moduler merket KunIMeny skal fortsatt ligge i venstremenyen - de er bare
+    // tatt ut av kategorikortene på forsiden. Blir de borte fra menyen også,
+    // har noen mistet en modul uten å mene det.
+    [Theory]
+    [InlineData(BrukerRolle.Montor)]
+    [InlineData(BrukerRolle.Prosjektleder)]
+    [InlineData(BrukerRolle.Admin)]
+    public void KunIMenyModuler_LiggerIMenyenMenIkkePaKategorikortene(BrukerRolle rolle)
+    {
+        var kunIMeny = PortalModulRegister.Kategorier
+            .SelectMany(k => k.Grupper)
+            .SelectMany(g => g.Lenker)
+            .Where(l => l.KunIMeny && l.Tilgang.HasFlag(TilgangFor(rolle)))
+            .Select(l => l.Href)
+            .ToList();
+
+        Assert.NotEmpty(kunIMeny);
+
+        var meny = PortalModulRegister.ModulerFor(rolle).Select(l => l.Href).ToHashSet();
+        var kort = PortalModulRegister.KategorierFor(rolle)
+            .SelectMany(k => k.Grupper)
+            .SelectMany(g => g.Lenker)
+            .Select(l => l.Href)
+            .ToHashSet();
+
+        foreach (var href in kunIMeny)
+        {
+            Assert.Contains(href, meny);
+            Assert.DoesNotContain(href, kort);
+        }
+    }
+
+    private static ModulTilgang TilgangFor(BrukerRolle rolle) => rolle switch
+    {
+        BrukerRolle.Admin => ModulTilgang.Admin,
+        BrukerRolle.Prosjektleder => ModulTilgang.Prosjektleder,
+        _ => ModulTilgang.Montor
+    };
+
     [Fact]
     public void IngenKategorilenke_PekerPaEnHubUtenUndermoduler()
     {
