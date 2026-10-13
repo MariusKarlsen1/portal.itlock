@@ -255,12 +255,12 @@ public static class PortalModulRegister
 
         new Rolle(
             "personell",
-            "Personell og planlegging",
+            "Ressurser og godkjenninger",
             "Kalender og godkjenning av timer og fravær",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Kalender", "Én rad per montør, med uke- og månedsvisning.", "kalender", "calendar"),
-                    new Lenke("Godkjenninger", "Innsendte timer og fraværssøknader, med sammendrag og rapport.", "timegodkjenning", "check-circle", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Kalender", "Ressursplanlegging og oversikt", "kalender", "calendar"),
+                    new Lenke("Godkjenninger", "Godkjenning av timer og søknader", "timegodkjenning", "check-circle", null, ModulTilgang.FraProsjektleder),
                 ]),
             ]),
 
