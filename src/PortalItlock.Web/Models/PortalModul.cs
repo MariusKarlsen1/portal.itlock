@@ -206,7 +206,7 @@ public static class PortalModulRegister
         new Rolle(
             "prosjekt",
             "Prosjekt og tilbud",
-            "Prosjekter, arbeidsordre, dørpakker, service og CE",
+            "Prosjekter, arbeidsordre, service, CE og timeføring",
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Prosjekter", "Dører, plantegninger og montasjestatus per prosjekt.", "prosjekter", "folder"),
@@ -215,6 +215,8 @@ public static class PortalModulRegister
                     new Lenke("Serviceavtaler", "Serviceavtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tilbud service", "Tilbud for serviceavtaler, med estimater fra arbeidsordre-minuttene.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-sertifiseringer for dører med automatikk, på tvers av prosjekter.", "ce-godkjenninger", "shield"),
+                    new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock"),
+                    new Lenke("Fravær", "Søk om ferie eller meld fravær.", "fravar", "sun"),
                 ]),
             ]),
 
@@ -248,12 +250,10 @@ public static class PortalModulRegister
         new Rolle(
             "personell",
             "Personell og planlegging",
-            "Kalender, timer, fravær og godkjenning",
+            "Kalender og godkjenning av timer og fravær",
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Kalender", "Én rad per montør, med uke- og månedsvisning.", "kalender", "calendar"),
-                    new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock"),
-                    new Lenke("Fravær", "Søk om ferie eller meld fravær.", "fravar", "sun"),
                     new Lenke("Godkjenninger", "Innsendte timer og fraværssøknader, med sammendrag og rapport.", "timegodkjenning", "check-circle", null, ModulTilgang.FraProsjektleder),
                 ]),
             ]),
