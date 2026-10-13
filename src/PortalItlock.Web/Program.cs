@@ -689,14 +689,23 @@ app.MapPost("/account/logout", async (HttpContext http) =>
     return Results.Redirect("/login");
 }).RequireAuthorization();
 
-// "Vis som" - bytter rollen i innloggingscookien slik at portalen ser ut som
-// den gjør for en montør eller prosjektleder, uten å logge inn som noen andre.
+// "Vis som" - logger administratoren inn SOM en ekte bruker med en valgt
+// rolle, slik at portalen oppfører seg nøyaktig som den gjør for den brukeren.
+// Brukes til utvikling og testing: Min dag viser den montørens jobber, timene
+// er den montørens timer, og kundeportalen viser den kundens prosjekter.
 //
-// Rollen det sjekkes mot er brukerens EKTE rolle, lest fra databasen - ikke
-// rollen som står i cookien. Hadde vi stolt på cookien, kunne en montør kalt
-// dette endepunktet én gang for å "vise som Admin", og dermed gitt seg selv
-// admin-tilgang for resten av økten. Bare en faktisk Admin kan bytte, og
-// Admin er høyeste rolle, så det er alltid et steg ned.
+// MERK at dette er ekte impersonering: alt man gjør mens man ser portalen som
+// en annen, lagres på DEN brukeren. En henvendelse opprettet mens man ser
+// portalen som en kunde, er kundens henvendelse. Banneret øverst (se
+// TilbakeTilAdmin) står derfor synlig hele tiden.
+//
+// Rollen det sjekkes mot er administratorens EKTE rolle, lest fra databasen -
+// ikke rollen som står i cookien. Hadde vi stolt på cookien, kunne en montør
+// kalt dette endepunktet én gang for å "vise som Admin", og dermed gitt seg
+// selv admin-tilgang for resten av økten. Bare en faktisk Admin kan bytte.
+// Når man allerede ser portalen som en annen, finnes administratorens egen id
+// i AdminBrukerId-claimen, og det er DEN som sjekkes - ellers ville man ikke
+// kommet tilbake.
 app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db) =>
 {
     var form = await http.Request.ReadFormAsync();
@@ -710,6 +719,15 @@ app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db
     if (!int.TryParse(brukerIdClaim, out var brukerId))
     {
         return Results.Redirect(trygReturUrl);
+    }
+
+    // Hvem er den EKTE administratoren? Når man allerede ser portalen som en
+    // annen bruker, er BrukerId-claimen den andre brukerens - da ligger
+    // administratorens egen id i AdminBrukerId, satt da byttet skjedde.
+    var adminIdClaim = http.User.FindFirst("AdminBrukerId")?.Value;
+    if (int.TryParse(adminIdClaim, out var fraTidligere))
+    {
+        brukerId = fraTidligere;
     }
 
     var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Id == brukerId && b.Aktiv);
@@ -728,33 +746,45 @@ app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db
         return Results.Redirect(trygReturUrl);
     }
 
+    // Velger man Admin, er man seg selv igjen - all impersonering opphører.
+    // Velger man en annen rolle, logges man inn SOM en ekte bruker med den
+    // rollen: hele portalen oppfører seg da som om den brukeren var innlogget,
+    // slik at man faktisk ser det de ser (Min dag, egne timer, kundeportalen
+    // med kundens prosjekter, og så videre).
+    //
+    // Hvilken bruker: den som er valgt i feltet øverst, ellers den første
+    // aktive med rollen. Finnes det ingen, blir man stående som admin - da er
+    // det ingenting å vise.
+    var målbruker = bruker;
+
+    if (rolle != BrukerRolle.Admin)
+    {
+        var onsketId = form["visSomBrukerId"].ToString();
+        var valgt = int.TryParse(onsketId, out var valgtId)
+            ? await db.Brukere.FirstOrDefaultAsync(b => b.Id == valgtId && b.Aktiv && b.Rolle == rolle)
+            : await db.Brukere.Where(b => b.Aktiv && b.Rolle == rolle).OrderBy(b => b.Navn).FirstOrDefaultAsync();
+
+        if (valgt is null)
+        {
+            return Results.Redirect(trygReturUrl);
+        }
+
+        målbruker = valgt;
+    }
+
     var claims = new List<Claim>
     {
-        new(ClaimTypes.Name, bruker.Navn),
-        new(ClaimTypes.Role, rolle.ToString()),
-        new("BrukerId", bruker.Id.ToString()),
+        new(ClaimTypes.Name, målbruker.Navn),
+        new(ClaimTypes.Role, målbruker.Rolle.ToString()),
+        new("BrukerId", målbruker.Id.ToString()),
         new("EkteRolle", bruker.Rolle.ToString())
     };
 
-    // Kunde- og driftsportalen viser innholdet til ÉN konkret bruker, så uten
-    // et mål å se gjennom ville en admin bare fått "ikke koblet til en kunde".
-    // Her velges hvilken kunde/vaktmester som skal forhåndsvises; bare en
-    // aktiv bruker med nøyaktig den rollen godtas, og BrukerId forblir
-    // administratorens egen - det er bare LESINGEN i de to portalene som
-    // følger forhåndsvisningen (se ForhandsvisningHelper).
-    if (rolle is BrukerRolle.Kunde or BrukerRolle.Driftslisens)
+    // Administratorens egen id tas vare på, slik at "Tilbake til admin" vet
+    // hvem den skal gå tilbake til - BrukerId over er nå målbrukerens.
+    if (målbruker.Id != bruker.Id)
     {
-        var onsketId = form["forhandsvisBrukerId"].ToString();
-        var malBruker = int.TryParse(onsketId, out var malId)
-            ? await db.Brukere.FirstOrDefaultAsync(b => b.Id == malId && b.Aktiv && b.Rolle == rolle)
-            // Ingen valgt ennå: ta den første som finnes, slik at man ser noe
-            // med en gang og kan bytte i feltet øverst etterpå.
-            : await db.Brukere.Where(b => b.Aktiv && b.Rolle == rolle).OrderBy(b => b.Navn).FirstOrDefaultAsync();
-
-        if (malBruker is not null)
-        {
-            claims.Add(new Claim("ForhandsvisBrukerId", malBruker.Id.ToString()));
-        }
+        claims.Add(new Claim("AdminBrukerId", bruker.Id.ToString()));
     }
 
     var tenantIdClaim = http.User.FindFirst("TenantId")?.Value;

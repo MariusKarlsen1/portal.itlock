@@ -3,49 +3,42 @@ using PortalItlock.Web.Models;
 
 namespace PortalItlock.Web.Services;
 
-// Hjelper for "Vis som Kunde / Driftslisens" i toppfeltet. En admin har ingen
-// kundekobling og ingen prosjekter som vaktmester, så uten dette ville de to
-// portalene bare vist "ikke koblet til en kunde" - man ser rammeverket, men
-// ikke hva kunden faktisk ser.
+// Hjelpere for "Vis som" i toppfeltet (se /account/vis-som og TilbakeTilAdmin).
 //
-// Løsningen er en ForhandsvisBrukerId-claim satt av /account/vis-som: den peker
-// på en ekte kunde- eller driftslisensbruker som portalen leser innholdet til.
+// "Vis som" er ekte impersonering: BrukerId-claimen er målbrukerens, så hele
+// portalen oppfører seg som om DEN brukeren var innlogget - Min dag viser
+// deres jobber, timene er deres timer, kundeportalen viser deres kunde. Det er
+// hele poenget: man skal se nøyaktig det de ser når man utvikler og tester.
 //
-// Viktig: BrukerId-claimen forblir administratorens egen. Vi later ikke som vi
-// ER den brukeren - vi leser bare det de ser. Alt som SKRIVER i de to
-// portalene sjekker ErForhandsvisning og avvises, slik at en admin som klikker
-// seg rundt ikke kan opprette en henvendelse eller godkjenne et tilvalg i
-// kundens navn.
+// Konsekvensen er at alt man gjør mens man ser portalen som en annen, lagres
+// på den brukeren. Derfor står banneret fra TilbakeTilAdmin synlig i alle
+// layoutene så lenge det varer.
 public static class ForhandsvisningHelper
 {
-    public const string ClaimNavn = "ForhandsvisBrukerId";
-
-    // Brukeren portalen skal vise innholdet til, hvis vi er i forhåndsvisning.
-    // Krever at den EKTE rollen er Admin - claimen alene er ikke nok.
-    public static int? ForhandsvisBrukerId(this ClaimsPrincipal bruker)
+    // Administratorens egen id, tatt vare på da byttet skjedde. Null når man
+    // er seg selv.
+    public static int? AdminBrukerId(this ClaimsPrincipal bruker)
     {
         if (bruker.FindFirst("EkteRolle")?.Value != nameof(BrukerRolle.Admin))
         {
             return null;
         }
 
-        var verdi = bruker.FindFirst(ClaimNavn)?.Value;
+        var verdi = bruker.FindFirst("AdminBrukerId")?.Value;
         return int.TryParse(verdi, out var id) ? id : null;
     }
 
-    public static bool ErForhandsvisning(this ClaimsPrincipal bruker) =>
-        bruker.ForhandsvisBrukerId() is not null;
+    // Ser man portalen som en annen bruker akkurat nå?
+    public static bool SerSomAnnenBruker(this ClaimsPrincipal bruker) =>
+        bruker.AdminBrukerId() is not null;
 
-    // Id-en portalsiden skal lese data for: forhåndsvisningsmålet når det
-    // finnes, ellers brukerens egen.
+    // Brukeren portalen skal vise data for. Dette er alltid BrukerId-claimen -
+    // ved impersonering ER den målbrukerens. Metoden finnes for at sidene skal
+    // slippe å gjenta claim-oppslaget, og for å gjøre det tydelig i koden at
+    // det er den VISTE brukeren det leses for.
     public static int? VisningsBrukerId(this ClaimsPrincipal bruker)
     {
-        if (bruker.ForhandsvisBrukerId() is { } forhandsvist)
-        {
-            return forhandsvist;
-        }
-
-        var egen = bruker.FindFirst("BrukerId")?.Value;
-        return int.TryParse(egen, out var id) ? id : null;
+        var verdi = bruker.FindFirst("BrukerId")?.Value;
+        return int.TryParse(verdi, out var id) ? id : null;
     }
 }
