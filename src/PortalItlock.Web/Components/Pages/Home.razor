@@ -36,39 +36,56 @@
                 <h1 class="hd3-greet-h1">@Hilsen</h1>
                 <p class="hd3-greet-sub">@HeroSetning</p>
             </div>
-        </div>
 
-        @* Samme nøkkeltall som den klassiske forsiden viser i den rullende
-           stripen - Fakturert siste 7 dager, lav lagerbeholdning og resten -
-           men her som faste kort man ser hele tiden. *@
-        @if (_alleStats.Count > 0)
-        {
-            <div class="hd3-statrow">
-                @foreach (var stat in _alleStats)
-                {
-                    @if (stat.Href is null)
+            @* Samme nøkkeltall som den klassiske forsiden - Fakturert siste 7
+               dager, lav lagerbeholdning og resten. Det er ikke plass til alle
+               på én rad, så de bytter seg selv ut hvert 30. sekund. Prikkene
+               under viser hvor mange sett det er, og kan klikkes. *@
+            @if (_alleStats.Count > 0)
+            {
+                <div class="hd3-statwrap">
+                    <div class="hd3-statrow">
+                        @foreach (var stat in SynligeStats)
+                        {
+                            @if (stat.Href is null)
+                            {
+                                <div class="hd3-statcard" @key="stat.Label">
+                                    <span class="hd3-statcard-ic @(stat.Varsel ? "hd3-ic-rod" : "hd3-ic-aksent")"><Icon Name="@stat.Ikon" /></span>
+                                    <span class="hd3-statcard-tekst">
+                                        <span class="hd3-statcard-num">@stat.Verdi</span>
+                                        <span class="hd3-statcard-lbl">@stat.Label</span>
+                                    </span>
+                                </div>
+                            }
+                            else
+                            {
+                                <a href="@($"{stat.Href}?fra=hjem")" class="hd3-statcard" @key="stat.Label">
+                                    <span class="hd3-statcard-ic @(stat.Varsel ? "hd3-ic-rod" : "hd3-ic-aksent")"><Icon Name="@stat.Ikon" /></span>
+                                    <span class="hd3-statcard-tekst">
+                                        <span class="hd3-statcard-num">@stat.Verdi</span>
+                                        <span class="hd3-statcard-lbl">@stat.Label</span>
+                                    </span>
+                                </a>
+                            }
+                        }
+                    </div>
+
+                    @if (AntallStatSider > 1)
                     {
-                        <div class="hd3-statcard">
-                            <span class="hd3-statcard-ic @(stat.Varsel ? "hd3-ic-rod" : "hd3-ic-aksent")"><Icon Name="@stat.Ikon" /></span>
-                            <span class="hd3-statcard-tekst">
-                                <span class="hd3-statcard-num">@stat.Verdi</span>
-                                <span class="hd3-statcard-lbl">@stat.Label</span>
-                            </span>
+                        <div class="hd3-statprikker">
+                            @for (var i = 0; i < AntallStatSider; i++)
+                            {
+                                var side = i;
+                                <button type="button"
+                                        class="hd3-statprikk @(side == _statSide ? "hd3-statprikk-aktiv" : "")"
+                                        aria-label="@($"Vis nøkkeltall {side + 1} av {AntallStatSider}")"
+                                        @onclick="@(() => _statSide = side)"></button>
+                            }
                         </div>
                     }
-                    else
-                    {
-                        <a href="@($"{stat.Href}?fra=hjem")" class="hd3-statcard">
-                            <span class="hd3-statcard-ic @(stat.Varsel ? "hd3-ic-rod" : "hd3-ic-aksent")"><Icon Name="@stat.Ikon" /></span>
-                            <span class="hd3-statcard-tekst">
-                                <span class="hd3-statcard-num">@stat.Verdi</span>
-                                <span class="hd3-statcard-lbl">@stat.Label</span>
-                            </span>
-                        </a>
-                    }
-                }
-            </div>
-        }
+                </div>
+            }
+        </div>
 
         @* Hurtigvalg + alle moduler, i stedet for de tre rolleknappene. Hvilke
            moduler som dukker opp her styres av tilgangen på hver enkelt modul
@@ -746,6 +763,37 @@
     private int _lisensVarsel;
 
     private List<HeroStat> _alleStats = [];
+
+    // Nøkkeltallene på Dashboard3 ligger ved siden av hilsenen, og det er bare
+    // plass til fire om gangen. Resten bytter seg inn hvert 30. sekund i
+    // stedet for å presse kortene sammen eller lage en ekstra rad.
+    private const int StatsPrSide = 4;
+    private int _statSide;
+
+    private int AntallStatSider =>
+        _alleStats.Count == 0 ? 1 : (int)Math.Ceiling(_alleStats.Count / (double)StatsPrSide);
+
+    private List<HeroStat> SynligeStats => _alleStats
+        .Skip(Math.Min(_statSide, AntallStatSider - 1) * StatsPrSide)
+        .Take(StatsPrSide)
+        .ToList();
+
+    private async Task RullerNokkeltallAsync(CancellationToken token)
+    {
+        try
+        {
+            using var klokke = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            while (await klokke.WaitForNextTickAsync(token))
+            {
+                _statSide = (_statSide + 1) % AntallStatSider;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Siden er forlatt - ingenting å rydde opp i.
+        }
+    }
     private NesteJobb? _nesteJobb;
 
     // ---------- Data til det nye, bilde-baserte dashboardet (kun Fullversjon) ----------
@@ -1631,6 +1679,12 @@
             _alleStats.Add(new("/arbeidsordre/fakturert", "receipt", _nyligFakturerteOrdre, "Fakturert siste 7 dager", false));
             _alleStats.Add(new("/lager", "box", _varerLavBeholdning, "Lav lagerbeholdning", _varerLavBeholdning > 0));
             _alleStats.Add(new("/lisenser", "clock", _lisensVarsel, "Lisenser går ut snart", _lisensVarsel > 0));
+        }
+
+        // Får alle plass på én rad, er det ingenting å rullere.
+        if (AktivLayout == HjemLayout.Dashboard3 && _alleStats.Count > StatsPrSide)
+        {
+            _ = RullerNokkeltallAsync(_disposedCts.Token);
         }
     }
 
