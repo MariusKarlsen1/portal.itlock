@@ -1436,7 +1436,7 @@ app.MapGet("/servicerunde/{id:int}/pdf", async (int id, HttpContext context, Ser
         return Results.NotFound();
     }
 
-    var filnavn = $"Servicerapport-{id}-itlock-AS.pdf";
+    var filnavn = $"Servicerapport-{id}.pdf";
     var disposisjon = new ContentDispositionHeaderValue("inline");
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
