@@ -25,4 +25,5 @@ public class Kunngjoring
 
     public List<KunngjoringLike> Likes { get; set; } = [];
     public List<KunngjoringKommentar> Kommentarer { get; set; } = [];
+    public List<KunngjoringPamelding> Pameldinger { get; set; } = [];
 }
