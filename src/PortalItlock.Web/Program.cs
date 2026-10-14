@@ -1570,7 +1570,7 @@ app.MapGet("/arbeidsordre/{id:int}/rapport/pdf", async (int id, HttpContext cont
         return Results.NotFound();
     }
 
-    var filnavn = $"Arbeidsordre-{id}-itlock-AS.pdf";
+    var filnavn = $"Arbeidsrapport-{id}.pdf";
     var disposisjon = new ContentDispositionHeaderValue("inline");
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
