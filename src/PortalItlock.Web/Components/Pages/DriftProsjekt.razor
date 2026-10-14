@@ -7,76 +7,128 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 
-<PageTitle>@(_prosjekt?.Navn ?? "Prosjekt") - Full Kontroll</PageTitle>
+<PageTitle>@(_prosjekt?.Navn ?? "Bygg") - Full Kontroll</PageTitle>
 
 @if (_ikkeTilgang)
 {
-    <p class="form-error">Du har ikke tilgang til dette prosjektet.</p>
-    <a class="back-link" href="/drift">&larr; Tilbake</a>
+    <p class="dp-feil">Du har ikke tilgang til dette bygget.</p>
+    <a class="dp-tilbake" href="/drift"><Icon Name="arrow-left" />Tilbake</a>
 }
 else if (_prosjekt is null)
 {
-    <p>Laster...</p>
+    <p class="dp-tom">Laster...</p>
 }
 else
 {
-    <a class="back-link" href="/drift">&larr; Tilbake til mine prosjekter</a>
-    <h1>@_prosjekt.Navn</h1>
+    <a class="dp-tilbake" href="/drift"><Icon Name="arrow-left" />Mine bygg</a>
+    <div class="dp-tittelrad">
+        <div class="dp-hei">
+            <h1>@_prosjekt.Navn</h1>
+            <p>@(string.IsNullOrWhiteSpace(_prosjekt.Adresse) ? "" : $"{_prosjekt.Adresse} · ")@_dorer.Count dører</p>
+        </div>
+        <a class="dp-knapp dp-knapp-p dp-kun-pc" href="@($"/drift/meld?bygg={Id}")"><Icon Name="plus" />Meld inn en feil</a>
+    </div>
 
-    @if (_plantegninger.Count == 0)
-    {
-        <p class="list-empty">Ingen plantegninger lagt til på dette prosjektet ennå.</p>
-    }
-    else
-    {
-        @foreach (var p in _plantegninger)
-        {
-            <section class="drift-plan-section" @key="p.Id">
-                <h2>@p.Navn</h2>
-                <div class="drift-plan-canvas">
-                    <img src="@($"/plantegningbilde/{p.Id}")" alt="@p.Navn" class="drift-plan-image" />
-                    @foreach (var d in p.Dorer.Where(d => d.PosX.HasValue && d.PosY.HasValue))
-                    {
-                        <a @key="d.Id" class="drift-dor-marker" href="@($"/drift/dor/{d.Id}")"
-                           style="left:@(d.PosX!.Value.ToString(CultureInfo.InvariantCulture))%; top:@(d.PosY!.Value.ToString(CultureInfo.InvariantCulture))%;">
-                            <span class="drift-dor-marker-label">@(string.IsNullOrWhiteSpace(d.Romnr) ? d.Dornummer : d.Romnr)</span>
-                        </a>
-                    }
-                </div>
-            </section>
-        }
-    }
+    <div class="dp-sok">
+        <Icon Name="search" />
+        <input @bind="_sok" @bind:event="oninput" @bind:after="SokEndret" placeholder="Søk dør, rom eller etasje..." />
+        <a href="/drift/meld?skann=1" title="Skann QR-kode"><Icon Name="qr" /></a>
+    </div>
 
-    <section class="drift-dor-section">
-        <h2>Dører</h2>
-        @if (_dorer.Count == 0)
+    <div class="dp-segment">
+        <button type="button" class="@(_visning == "plan" ? "aktiv" : "")" @onclick="@(() => _visning = "plan")">Plantegning</button>
+        <button type="button" class="@(_visning == "dorer" ? "aktiv" : "")" @onclick="@(() => _visning = "dorer")">Dørliste</button>
+        <button type="button" class="@(_visning == "meldinger" ? "aktiv" : "")" @onclick="@(() => _visning = "meldinger")">Meldinger<em hidden="@(AntallApne == 0)">@AntallApne</em></button>
+    </div>
+
+    @if (_visning == "plan")
+    {
+        @if (_plantegninger.Count == 0)
         {
-            <p class="list-empty">Ingen dører registrert på dette prosjektet ennå.</p>
+            <div class="dp-kort dp-tom">Ingen plantegninger lagt til på dette bygget ennå. Bruk dørlisten for å finne døren.</div>
         }
         else
         {
-            <ul class="drift-dor-liste">
-                @foreach (var d in _dorer)
+            @if (_plantegninger.Count > 1)
+            {
+                <div class="dp-chips">
+                    @foreach (var p in _plantegninger)
+                    {
+                        <button type="button" class="@(p.Id == _valgtPlanId ? "aktiv" : "")" @onclick="@(() => _valgtPlanId = p.Id)" @key="p.Id">@p.Navn</button>
+                    }
+                </div>
+            }
+            var plan = _plantegninger.First(p => p.Id == _valgtPlanId);
+            <div class="dp-plan-rull">
+            <div class="dp-plan">
+                <img src="@($"/plantegningbilde/{plan.Id}")" alt="@plan.Navn" />
+                @foreach (var d in plan.Dorer.Where(d => d.PosX.HasValue && d.PosY.HasValue))
                 {
-                    <li @key="d.Id">
-                        <a class="drift-dor-rad" href="@($"/drift/dor/{d.Id}")">
-                            <span class="drift-dor-nummer">@d.Dornummer</span>
-                            @if (!string.IsNullOrWhiteSpace(d.Romnr))
+                    <a @key="d.Id" class="dp-pin @PinKlasse(d.Id)" href="@($"/drift/dor/{d.Id}")" title="@DorNavn(d)"
+                       style="left:@(d.PosX!.Value.ToString(CultureInfo.InvariantCulture))%; top:@(d.PosY!.Value.ToString(CultureInfo.InvariantCulture))%;">@Etikett(d)</a>
+                }
+            </div>
+            </div>
+            <div class="dp-forkl">
+                <span><i style="background:var(--dp-gronn)"></i>I orden</span>
+                <span><i style="background:var(--dp-rust)"></i>Åpen melding</span>
+                <span><i style="background:var(--dp-gul)"></i>Montør planlagt</span>
+                <span class="dp-kun-pc">Trykk på en dør for å melde inn eller se historikk.</span>
+                <span class="dp-kun-mobil">Dra for å se hele tegningen, trykk på en dør.</span>
+            </div>
+        }
+    }
+    else if (_visning == "dorer")
+    {
+        var treff = FiltrerteDorer.ToList();
+        @if (treff.Count == 0)
+        {
+            <div class="dp-kort dp-tom">@(_dorer.Count == 0 ? "Ingen dører registrert på dette bygget ennå." : "Ingen dører passer søket.")</div>
+        }
+        else
+        {
+            @foreach (var gruppe in treff.GroupBy(d => string.IsNullOrWhiteSpace(d.Etasje) ? "Uten etasje" : int.TryParse(d.Etasje, out var etg) ? $"{etg}. etasje" : d.Etasje))
+            {
+                <div class="dp-seksjon-t"><h2>@gruppe.Key</h2><span>@gruppe.Count() dører</span></div>
+                <div class="dp-dorer">
+                    @foreach (var d in gruppe)
+                    {
+                        <a class="dp-dor" href="@($"/drift/dor/{d.Id}")" @key="d.Id">
+                            <span class="dp-nr">@Etikett(d)</span>
+                            <span><b>@DorNavn(d)</b><small>@DorUndertekst(d)</small></span>
+                            @if (DorStatus(d.Id) is { } s)
                             {
-                                <span class="drift-dor-meta">Rom @d.Romnr</span>
+                                <span class="dp-tag dp-t-@s.Farge">@s.Navn</span>
                             }
-                            @if (!string.IsNullOrWhiteSpace(d.Etasje))
+                            else
                             {
-                                <span class="drift-dor-meta">@d.Etasje</span>
+                                <Icon Name="chevron-right" />
                             }
                         </a>
-                    </li>
-                }
-            </ul>
+                    }
+                </div>
+            }
         }
-    </section>
+    }
+    else
+    {
+        @if (_meldinger.Count == 0)
+        {
+            <div class="dp-kort dp-tom">Ingen meldinger på dette bygget ennå.</div>
+        }
+        else
+        {
+            <div class="dp-meldinger">
+                @foreach (var s in _meldinger)
+                {
+                    <DriftMeldingRad Status="s" VisBygg="false" @key="s.Melding.Id" />
+                }
+            </div>
+        }
+    }
 }
 
 @code {
@@ -87,6 +139,51 @@ else
     private bool _ikkeTilgang;
     private List<Plantegning> _plantegninger = [];
     private List<Dor> _dorer = [];
+    private List<DriftHelper.MeldingStatus> _meldinger = [];
+    private int _valgtPlanId;
+    private string _visning = "plan";
+    private string _sok = "";
+
+    private int AntallApne => _meldinger.Count(m => m.ErApen);
+
+    private IEnumerable<Dor> FiltrerteDorer => string.IsNullOrWhiteSpace(_sok)
+        ? _dorer
+        : _dorer.Where(d => Inneholder(d.Dornummer) || Inneholder(d.Romnr) || Inneholder(d.DorTil) || Inneholder(d.Etasje) || Inneholder(d.Sone));
+
+    private bool Inneholder(string? s) => s?.Contains(_sok.Trim(), StringComparison.OrdinalIgnoreCase) == true;
+
+    private void SokEndret()
+    {
+        // Søk viser alltid treffene i dørlisten.
+        if (!string.IsNullOrWhiteSpace(_sok))
+        {
+            _visning = "dorer";
+        }
+    }
+
+    private static string Etikett(Dor d) => string.IsNullOrWhiteSpace(d.Romnr) ? d.Dornummer : d.Romnr;
+
+    private static string DorNavn(Dor d) => !string.IsNullOrWhiteSpace(d.DorTil) ? $"{d.Dornummer} – {d.DorTil}" : $"Dør {d.Dornummer}";
+
+    private static string DorUndertekst(Dor d) => string.Join(" · ", new[]
+    {
+        string.IsNullOrWhiteSpace(d.Romnr) ? null : $"Rom {d.Romnr}",
+        d.Dortype,
+        d.Sone
+    }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+    // Den mest alvorlige åpne meldingen på døren bestemmer fargen.
+    private DriftHelper.MeldingStatus? DorStatus(int dorId) => _meldinger
+        .Where(m => m.Melding.DorId == dorId && m.ErApen)
+        .OrderBy(m => m.Steg)
+        .FirstOrDefault();
+
+    private string PinKlasse(int dorId) => DorStatus(dorId) switch
+    {
+        null => "",
+        { Steg: DriftHelper.Steg.UnderArbeid } => "dp-pin-gul",
+        _ => "dp-pin-rod"
+    };
 
     protected override async Task OnParametersSetAsync()
     {
@@ -96,24 +193,13 @@ else
         }
 
         var state = await AuthStateTask;
-        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
-        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+        if (state.User.VisningsBrukerId() is not { } brukerId || !await DriftHelper.HarTilgangTilBygg(Db, brukerId, Id))
         {
             _ikkeTilgang = true;
             return;
         }
 
-        var harTilgang = await Db.Prosjekter
-            .Where(p => p.Id == Id)
-            .AnyAsync(p => p.Medlemmer.Any(m => m.Id == brukerId));
-
-        if (!harTilgang)
-        {
-            _ikkeTilgang = true;
-            return;
-        }
-
-        _prosjekt = await Db.Prosjekter.FirstOrDefaultAsync(p => p.Id == Id);
+        _prosjekt = await Db.Prosjekter.AsNoTracking().FirstOrDefaultAsync(p => p.Id == Id);
         if (_prosjekt is null)
         {
             _ikkeTilgang = true;
@@ -122,13 +208,23 @@ else
 
         _plantegninger = await Db.Plantegninger
             .Include(p => p.Dorer)
+            .AsNoTracking()
             .Where(p => p.ProsjektId == Id)
             .OrderBy(p => p.Navn)
             .ToListAsync();
+        _valgtPlanId = _plantegninger.FirstOrDefault()?.Id ?? 0;
 
         _dorer = await Db.Dorer
+            .AsNoTracking()
             .Where(d => d.ProsjektId == Id)
-            .OrderBy(d => d.Dornummer)
+            .OrderBy(d => d.Etasje).ThenBy(d => d.Dornummer)
             .ToListAsync();
+
+        _meldinger = await DriftHelper.HentMeldinger(Db, Db.Driftsmeldinger.Where(m => m.Dor!.ProsjektId == Id));
+
+        if (_plantegninger.Count == 0)
+        {
+            _visning = "dorer";
+        }
     }
 }

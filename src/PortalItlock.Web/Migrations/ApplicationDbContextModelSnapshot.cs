@@ -2358,11 +2358,20 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("DorId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("Haster")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("InnmeldtAvBrukerId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Kategori")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("LestAvAnsatt")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LestDato")
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime>("OpprettetDato")
                         .HasColumnType("TEXT");

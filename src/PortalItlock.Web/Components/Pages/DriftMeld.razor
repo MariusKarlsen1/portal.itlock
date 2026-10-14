@@ -1,0 +1,201 @@
+@page "/drift/meld"
+@layout PortalItlock.Web.Components.Layout.DriftLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Driftslisens")]
+@implements IAsyncDisposable
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Meld inn en feil - Full Kontroll</PageTitle>
+
+<a class="dp-tilbake" href="/drift"><Icon Name="arrow-left" />Tilbake</a>
+<div class="dp-hei">
+    <h1>Meld inn en feil</h1>
+    <p>Skann QR-merket på døren, eller finn døren i listen.</p>
+</div>
+
+@if (_skanner)
+{
+    <div class="dp-skanner">
+        <video id="dp-skanner-video" playsinline muted></video>
+        <div class="dp-ramme"></div>
+        <p>Hold QR-merket inne i rammen</p>
+    </div>
+    <button type="button" class="dp-knapp" @onclick="StoppSkanner"><Icon Name="x" />Avbryt skanning</button>
+}
+else
+{
+    <button type="button" class="dp-meldknapp" style="border:none;width:100%;text-align:left;cursor:pointer;font:inherit" @onclick="StartSkanner">
+        <span class="dp-ik"><Icon Name="qr" /></span>
+        <span><b>Skann QR-kode</b><small>QR-merket sitter på døren eller karmen</small></span>
+        <Icon Name="arrow-right" />
+    </button>
+}
+
+@if (!string.IsNullOrEmpty(_skannerBeskjed))
+{
+    <div class="dp-kort" style="padding:.85rem 1rem;font-size:.88rem">@_skannerBeskjed</div>
+}
+
+<div class="dp-sok">
+    <Icon Name="search" />
+    <input @bind="_sok" @bind:event="oninput" placeholder="Søk dør, rom eller etasje..." />
+</div>
+
+@if (_bygg.Count > 1)
+{
+    <div class="dp-chips">
+        <button type="button" class="@(_byggFilter is null ? "aktiv" : "")" @onclick="@(() => _byggFilter = null)">Alle bygg</button>
+        @foreach (var b in _bygg)
+        {
+            <button type="button" class="@(_byggFilter == b.Id ? "aktiv" : "")" @onclick="@(() => _byggFilter = b.Id)" @key="b.Id">@b.Navn</button>
+        }
+    </div>
+}
+
+@{ var treff = Treff.Take(60).ToList(); }
+@if (_lastet && treff.Count == 0)
+{
+    <div class="dp-kort dp-tom">@(_dorer.Count == 0 ? "Ingen dører registrert på byggene dine ennå." : "Ingen dører passer søket.")</div>
+}
+else
+{
+    <div class="dp-dorer">
+        @foreach (var d in treff)
+        {
+            <a class="dp-dor" href="@($"/drift/dor/{d.Id}")" @key="d.Id">
+                <span class="dp-nr">@(string.IsNullOrWhiteSpace(d.Romnr) ? d.Dornummer : d.Romnr)</span>
+                <span>
+                    <b>@(string.IsNullOrWhiteSpace(d.DorTil) ? $"Dør {d.Dornummer}" : $"{d.Dornummer} – {d.DorTil}")</b>
+                    <small>@d.Prosjekt?.Navn@(string.IsNullOrWhiteSpace(d.Etasje) ? "" : $" · {d.Etasje}")@(string.IsNullOrWhiteSpace(d.Romnr) ? "" : $" · Rom {d.Romnr}")</small>
+                </span>
+                <Icon Name="chevron-right" />
+            </a>
+        }
+    </div>
+    @if (Treff.Count() > treff.Count)
+    {
+        <p class="dp-tom">Viser de første @treff.Count – søk for å finne flere.</p>
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "bygg")] public int? ByggParam { get; set; }
+    [SupplyParameterFromQuery(Name = "skann")] public int? SkannParam { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private List<Prosjekt> _bygg = [];
+    private List<Dor> _dorer = [];
+    private int? _byggFilter;
+    private string _sok = "";
+    private bool _lastet;
+    private bool _skanner;
+    private string? _skannerBeskjed;
+    private DotNetObjectReference<DriftMeld>? _ref;
+
+    private IEnumerable<Dor> Treff => _dorer
+        .Where(d => _byggFilter is null || d.ProsjektId == _byggFilter)
+        .Where(d => string.IsNullOrWhiteSpace(_sok) || Inneholder(d.Dornummer) || Inneholder(d.Romnr) || Inneholder(d.DorTil) || Inneholder(d.Etasje));
+
+    private bool Inneholder(string? s) => s?.Contains(_sok.Trim(), StringComparison.OrdinalIgnoreCase) == true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+
+        var state = await AuthStateTask;
+        if (state.User.VisningsBrukerId() is not { } brukerId)
+        {
+            return;
+        }
+
+        var bygg = DriftHelper.MineBygg(Db, brukerId);
+        _bygg = await bygg.AsNoTracking().OrderBy(p => p.Navn).ToListAsync();
+        _dorer = await Db.Dorer
+            .Include(d => d.Prosjekt)
+            .AsNoTracking()
+            .Where(d => bygg.Any(p => p.Id == d.ProsjektId))
+            .OrderBy(d => d.Prosjekt!.Navn).ThenBy(d => d.Etasje).ThenBy(d => d.Dornummer)
+            .ToListAsync();
+
+        if (ByggParam is int b && _bygg.Any(p => p.Id == b))
+        {
+            _byggFilter = b;
+        }
+        _lastet = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && SkannParam == 1)
+        {
+            await StartSkanner();
+        }
+    }
+
+    private async Task StartSkanner()
+    {
+        _skannerBeskjed = null;
+        _skanner = true;
+        StateHasChanged();
+        await Task.Yield();
+
+        _ref ??= DotNetObjectReference.Create(this);
+        var resultat = await JS.InvokeAsync<string>("driftSkanner.start", "dp-skanner-video", _ref);
+        if (resultat != "ok")
+        {
+            _skanner = false;
+            _skannerBeskjed = resultat == "ingen-stotte"
+                ? "Denne nettleseren kan ikke skanne her. Åpne kameraet på telefonen og pek det mot QR-merket – da åpnes døren direkte."
+                : "Fikk ikke tilgang til kameraet. Gi nettsiden lov til å bruke kameraet, eller finn døren i listen under.";
+            StateHasChanged();
+        }
+    }
+
+    private async Task StoppSkanner()
+    {
+        _skanner = false;
+        await JS.InvokeVoidAsync("driftSkanner.stopp");
+    }
+
+    // Kalles fra driftSkanner (wwwroot/drift.js) når en QR-kode er lest.
+    [JSInvokable]
+    public async Task QrLest(string tekst)
+    {
+        // QR-merkene peker på /dor/{id} (se /dor/{id}/qr.png i Program.cs).
+        var treff = System.Text.RegularExpressions.Regex.Match(tekst, @"/dor/(\d+)");
+        if (treff.Success && int.TryParse(treff.Groups[1].Value, out var dorId) && _dorer.Any(d => d.Id == dorId))
+        {
+            await StoppSkanner();
+            Nav.NavigateTo($"/drift/dor/{dorId}");
+            return;
+        }
+
+        await StoppSkanner();
+        _skannerBeskjed = treff.Success
+            ? "Døren på QR-merket hører ikke til byggene dine."
+            : "Dette er ikke et dørmerke fra oss. Prøv igjen, eller finn døren i listen.";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("driftSkanner.stopp");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        _ref?.Dispose();
+    }
+}

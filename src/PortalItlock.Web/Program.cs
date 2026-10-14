@@ -475,6 +475,25 @@ app.Use(async (context, next) =>
     await next();
 });
 
+// QR-merkene på dørene peker på "/dor/{id}" (se /dor/{id}/qr.png). Skanner en
+// vaktmester med driftslisens merket med telefonkameraet, sendes de til
+// dørsiden i driftsportalen i stedet for den interne dørsiden de ikke har
+// tilgang til. Må ligge FØR UseAuthorization() - ellers avvises de på
+// rollekravet til /dor/{id} før omdirigeringen rekker å skje.
+app.Use(async (context, next) =>
+{
+    if (HttpMethods.IsGet(context.Request.Method)
+        && context.User.IsInRole("Driftslisens")
+        && context.Request.Path.StartsWithSegments("/dor", out var rest)
+        && int.TryParse(rest.Value?.Trim('/'), out var dorId))
+    {
+        context.Response.Redirect($"/drift/dor/{dorId}");
+        return;
+    }
+
+    await next();
+});
+
 app.UseAuthorization();
 
 // Mobil skal alltid starte på Oppgaver ("/min-dag"), ikke skrivebordets
