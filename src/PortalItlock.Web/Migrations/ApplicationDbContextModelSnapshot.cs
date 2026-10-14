@@ -5025,6 +5025,12 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("EpostSendtDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("Haster")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("InfoTilMontor")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("KundeId")
                         .HasColumnType("INTEGER");
 

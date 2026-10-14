@@ -6,58 +6,73 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 
 <PageTitle>@(_sak?.Tittel ?? "Sak") - Full Kontroll</PageTitle>
 
-<a class="back-link" href="/kunde/saker">&larr; Tilbake til mine saker</a>
+<a class="dp-tilbake" href="/kunde/saker"><Icon Name="arrow-left" />Mine saker</a>
 
 @if (_ikkeFunnet)
 {
-    <p class="form-error">Fant ikke saken. Den kan være slettet, eller tilhører ikke deg.</p>
+    <p class="dp-feil">Fant ikke saken. Den kan være slettet, eller tilhører ikke deg.</p>
 }
 else if (_sak is null)
 {
-    <p>Laster...</p>
+    <p class="dp-tom">Laster...</p>
 }
 else
 {
-    <div class="sak-detalj-header">
-        <h1>@_sak.Tittel</h1>
-        <span class="sak-status sak-status-@_sak.Status">@_sak.Status.Visningsnavn()</span>
-    </div>
-    <p class="sak-dato">Opprettet @_sak.OpprettetDato.ToString("dd.MM.yyyy")</p>
+    var steg = _sak.Status switch { TicketStatus.Ny => 1, TicketStatus.UnderBehandling => 2, _ => 3 };
 
-    @if (!string.IsNullOrWhiteSpace(_sak.Beskrivelse))
-    {
-        <p class="sak-beskrivelse">@_sak.Beskrivelse</p>
-    }
+    <div class="dp-to-kol">
+        <div class="dp-kol">
+            <div class="dp-kort dp-sak">
+                <div class="dp-sak-t">
+                    <div><b>@_sak.Tittel</b><small>Sak #@_sak.Id · opprettet @_sak.OpprettetDato.ToString("dd.MM.yyyy")</small></div>
+                    <span class="dp-tag dp-t-@KundeportalHelper.Farge(_sak.Status)">@KundeportalHelper.Navn(_sak.Status)</span>
+                </div>
+                <div class="dp-steg">
+                    <div class="dp-st ferdig"><span class="dp-p"><Icon Name="check" /></span><div><b>Mottatt</b><small>@_sak.OpprettetDato.ToString("dd.MM.yyyy")</small></div></div>
+                    <div class="dp-st @(steg >= 3 ? "ferdig" : "na")"><span class="dp-p">@if (steg >= 3) {<Icon Name="check" />}</span><div><b>Under behandling</b><small>@(steg >= 2 ? "Vi jobber med saken" : "Vi ser på den snart")</small></div></div>
+                    <div class="dp-st @(steg >= 3 ? "ferdig" : "")"><span class="dp-p">@if (steg >= 3) {<Icon Name="check" />}</span><div><b>Løst</b><small>@(_sak.LukketDato?.ToString("dd.MM.yyyy") ?? (steg >= 3 ? "Ferdig" : "Du ser det her når saken er ferdig"))</small></div></div>
+                </div>
 
-    @if (_sak.Status == TicketStatus.Lukket && !string.IsNullOrWhiteSpace(_sak.Sluttoppsummering))
-    {
-        <div class="sak-oppsummering">
-            <h2>Oppsummering</h2>
-            <p>@_sak.Sluttoppsummering</p>
-        </div>
-    }
+                @if (_sak.Status == TicketStatus.Lukket && !string.IsNullOrWhiteSpace(_sak.Sluttoppsummering))
+                {
+                    <div class="dp-svar"><div class="dp-svar-t">Oppsummering</div>@_sak.Sluttoppsummering</div>
+                }
+            </div>
 
-    <h2>Historikk</h2>
-    @if (_hendelser.Count == 0)
-    {
-        <p class="list-empty">Ingen oppdateringer registrert ennå.</p>
-    }
-    else
-    {
-        <ul class="hendelse-liste">
-            @foreach (var h in _hendelser)
+            @if (!string.IsNullOrWhiteSpace(_sak.Beskrivelse))
             {
-                <li @key="h.Id">
-                    <span class="hendelse-dato">@h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</span>
-                    <span>@h.Beskrivelse</span>
-                </li>
+                <div class="dp-kort dp-rapport">
+                    <span class="dp-lbl" style="margin:0">Beskrivelse</span>
+                    <p>@_sak.Beskrivelse</p>
+                </div>
             }
-        </ul>
-    }
+        </div>
+
+        <div class="dp-kol">
+            <div class="dp-seksjon-t"><h2>Historikk</h2><span>@_hendelser.Count</span></div>
+            @if (_hendelser.Count == 0)
+            {
+                <div class="dp-kort dp-tom">Ingen oppdateringer registrert ennå.</div>
+            }
+            else
+            {
+                <div class="dp-kort dp-sak">
+                    @foreach (var h in _hendelser)
+                    {
+                        <div class="dp-svar" @key="h.Id">
+                            <div class="dp-svar-t"><i>@KundeportalHelper.Initialer(h.UtfortAvBruker?.Navn ?? "?")</i>@(h.UtfortAvBruker?.Navn ?? "Oss")<span>· @h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</span></div>
+                            @h.Beskrivelse
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
 }
 
 @code {
@@ -77,8 +92,10 @@ else
         }
 
         var state = await AuthStateTask;
-        var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
-        if (brukerClaim is null || !int.TryParse(brukerClaim, out var brukerId))
+
+        // Ser man portalen som en annen bruker ("Vis som"), er dette den
+        // brukerens id - se ForhandsvisningHelper.
+        if (state.User.VisningsBrukerId() is not { } brukerId)
         {
             _ikkeFunnet = true;
             return;
@@ -100,8 +117,9 @@ else
 
         _sak = sak;
         _hendelser = await Db.TicketHendelser
+            .Include(h => h.UtfortAvBruker)
             .Where(h => h.TicketId == Id && h.ErKundeSynlig)
-            .OrderBy(h => h.Tidspunkt)
+            .OrderByDescending(h => h.Tidspunkt)
             .ToListAsync();
     }
 }
