@@ -454,8 +454,19 @@ app.Use(async (context, next) =>
             return;
         }
         if (string.Equals(host, "full-kontroll.no", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(host, "www.full-kontroll.no", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(host, "www.full-kontroll.no", StringComparison.OrdinalIgnoreCase)
+            || (app.Environment.IsDevelopment() && string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)))
         {
+            // Uinnloggede besøkende på produktdomenet får markedsføringssiden
+            // (wwwroot/nettside/index.html). "Logg inn" der går til /login.
+            var nettside = Path.Combine(app.Environment.WebRootPath, "nettside", "index.html");
+            if (File.Exists(nettside))
+            {
+                context.Response.ContentType = "text/html; charset=utf-8";
+                context.Response.Headers.CacheControl = "no-cache";
+                await context.Response.SendFileAsync(nettside);
+                return;
+            }
             context.Response.Redirect("/login");
             return;
         }
