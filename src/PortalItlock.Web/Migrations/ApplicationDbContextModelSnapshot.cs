@@ -6037,6 +6037,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("Fullfort")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("FullfortDato")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Gruppe")
                         .HasColumnType("TEXT");
 

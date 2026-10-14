@@ -10,6 +10,10 @@ public class ToDoOppgave
     public required string Tittel { get; set; }
     public string? Gruppe { get; set; }
     public bool Fullfort { get; set; }
+
+    // Når oppgaven ble huket av - brukes til Utført-arkivet (år, måned, uke).
+    // Er null for oppgaver som ble fullført før feltet fantes.
+    public DateTime? FullfortDato { get; set; }
     public ToDoPrioritet Prioritet { get; set; } = ToDoPrioritet.Normal;
     public DateTime? Frist { get; set; }
     public DateTime OpprettetDato { get; set; } = DateTime.Now;

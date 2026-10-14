@@ -1,6 +1,9 @@
 @page "/todo"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@implements IDisposable
+@using System.Globalization
+@using System.Text.RegularExpressions
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
@@ -11,116 +14,288 @@
 <PageTitle>To-do liste</PageTitle>
 
 <div class="td-side">
-
-    <div class="td-topbar">
-        <div class="td-topbar-tekst">
-            <h1>To-do liste</h1>
-            <p>Din private oppgaveliste - synlig kun for deg.</p>
+    <div class="td-topp">
+        <div>
+            <h1>To-do</h1>
+            <p>@Aktive.Count() igjen · @Seksjoner[0].Oppgaver.Count forfalt · @GjortIDag.Count gjort i dag</p>
         </div>
         <button type="button" class="td-knapp td-knapp-primaer" @onclick="ApneNyOppgave"><Icon Name="plus" />Ny oppgave</button>
     </div>
 
-    <div class="td-fanerad">
-        <button type="button" class="td-fane @(_visning == "liste" ? "aktiv" : "")" @onclick="@(() => VelgVisning("liste"))">Liste</button>
-        <button type="button" class="td-fane @(_visning == "grupper" ? "aktiv" : "")" @onclick="@(() => VelgVisning("grupper"))">Grupper</button>
-        <button type="button" class="td-fane @(_visning == "mine" ? "aktiv" : "")" @onclick="@(() => VelgVisning("mine"))">Flat liste</button>
-    </div>
+    <div class="td-grid">
+        <div class="td-kol">
+            <div class="td-faner">
+                <button type="button" class="@(_fane == "aktive" ? "pa" : "")" @onclick="@(() => VelgFane("aktive"))">Å gjøre <em>@Aktive.Count()</em></button>
+                <button type="button" class="td-fane-utfort @(_fane == "utfort" ? "pa" : "")" @onclick="@(() => VelgFane("utfort"))">✓ Utført <em>@_oppgaver.Count(o => o.Fullfort)</em></button>
+            </div>
 
-    <div class="td-verktoylinje">
-        <label class="td-sok">
-            <Icon Name="search" />
-            <input @bind="_sok" @bind:event="oninput" placeholder="Søk oppgaver..." />
-        </label>
-        <select class="td-filter-select" @bind="_gruppeFilter">
-            <option value="">Alle typer</option>
-            @foreach (var g in AlleGrupper)
+            @if (_fane == "aktive")
             {
-                <option value="@g">@g</option>
+                <div class="td-hurtig">
+                    <span class="td-hurtig-pluss">+</span>
+                    <input @bind="_hurtig" @bind:event="oninput" @onkeydown="HurtigTast" placeholder="Ny oppgave… f.eks. «Ring Per om fase 2 i morgen #Solsiden !»" />
+                    <span class="td-hurtig-tips"><b>i morgen</b> · <b>fredag</b> · <b>#gruppe</b> · <b>!</b> viktig</span>
+                    <button type="button" class="td-hurtig-send" @onclick="LeggTilHurtig">Legg til</button>
+                </div>
+
+                @if (_oppgaver.Count == 0)
+                {
+                    <div class="td-seksjon td-tom">Ingen oppgaver ennå. Skriv i feltet over for å legge til din første.</div>
+                }
+                else if (!Aktive.Any() && GjortIDag.Count == 0)
+                {
+                    <div class="td-seksjon td-tom">Alt er gjort 🎉 Skriv i feltet over for å legge til noe nytt.</div>
+                }
+
+                @foreach (var s in Seksjoner.Where(s => s.Oppgaver.Count > 0))
+                {
+                    <div class="td-seksjon" @key="s.Navn">
+                        <div class="td-seksjon-t"><span class="td-prikk" style="background:@s.Farge"></span><h2>@s.Navn</h2><em>@s.Oppgaver.Count</em></div>
+                        <div class="td-rader">
+                            @foreach (var o in s.Oppgaver)
+                            {
+                                @Rad(o)
+                            }
+                        </div>
+                    </div>
+                }
+
+                @if (GjortIDag.Count > 0)
+                {
+                    <div class="td-seksjon">
+                        <div class="td-seksjon-t"><span class="td-prikk" style="background:var(--td-gronn)"></span><h2 style="color:var(--td-gronn)">Gjort i dag</h2><em>@GjortIDag.Count</em><button type="button" class="td-lenke" @onclick="@(() => VelgFane("utfort"))">Se alle utførte →</button></div>
+                        <div class="td-rader">
+                            @foreach (var o in GjortIDag)
+                            {
+                                @Rad(o)
+                            }
+                        </div>
+                    </div>
+                }
             }
-        </select>
-        <select class="td-filter-select" @bind="_statusFilter">
-            <option value="alle">Alle status</option>
-            <option value="aktive">Ikke fullført</option>
-            <option value="fullfort">Fullført</option>
-        </select>
-        <button type="button" class="td-sorter-knapp" @onclick="BytSortering" title="Bytt sortering">
-            <Icon Name="filter" />@SorteringTekst
-        </button>
-    </div>
-
-    @if (_oppgaver.Count == 0)
-    {
-        <p class="td-tom">Ingen oppgaver ennå. Trykk "Ny oppgave" for å legge til din første.</p>
-    }
-    else if (_visning == "grupper")
-    {
-        <div class="td-gruppegrid">
-            @foreach (var g in GruppertVisning)
+            else
             {
-                <button type="button" class="td-gruppekort" @onclick="@(() => VelgGruppe(g.Navn))">
-                    <span class="td-gruppekort-navn">@g.Navn</span>
-                    <span class="td-gruppekort-frac">@g.Fullforte/@g.Totalt fullført</span>
-                    <span class="td-fremdrift"><span class="td-fremdrift-indre" style="width:@(g.Prosent)%"></span></span>
-                    <span class="td-gruppekort-prosent">@g.Prosent %</span>
-                </button>
+                <div class="td-u-verktoy">
+                    <label class="td-u-sok"><Icon Name="search" /><input @bind="_uSok" @bind:event="oninput" @bind:after="@(() => _uVisAntall = 40)" placeholder="Søk i utførte oppgaver…" /></label>
+                    <select @bind="_uGruppe">
+                        <option value="">Alle grupper</option>
+                        @foreach (var g in UtforteGrupper)
+                        {
+                            <option value="@g">@g</option>
+                        }
+                    </select>
+                    <button type="button" class="td-u-sorter" @onclick="@(() => _uNyestForst = !_uNyestForst)">@(_uNyestForst ? "Nyeste først ↓" : "Eldste først ↑")</button>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_uSok))
+                {
+                    var treff = SokTreff;
+                    <div class="td-seksjon td-arkiv"><div class="td-ar-topp"><b>@treff.Count treff på «@_uSok.Trim()»</b><span>i hele historikken</span></div></div>
+                    @if (treff.Count == 0)
+                    {
+                        <div class="td-seksjon td-tom">Ingen utførte oppgaver passer søket.</div>
+                    }
+                    @foreach (var gruppe in treff.Take(_uVisAntall).GroupBy(o => o.FullfortDato is { } d ? $"{MndLang[d.Month - 1]} {d.Year}" : "Uten dato"))
+                    {
+                        <div class="td-seksjon" @key="gruppe.Key">
+                            <div class="td-seksjon-t"><h2 style="text-transform:capitalize">@gruppe.Key</h2></div>
+                            <div class="td-rader">
+                                @foreach (var o in gruppe)
+                                {
+                                    @Rad(o, o.FullfortDato is { } d ? $"uke {ISOWeek.GetWeekOfYear(d)}" : null)
+                                }
+                            </div>
+                        </div>
+                    }
+                    @if (treff.Count > _uVisAntall)
+                    {
+                        <button type="button" class="td-knapp" style="justify-self:center" @onclick="@(() => _uVisAntall += 40)">Vis flere (@(treff.Count - _uVisAntall))</button>
+                    }
+                }
+                else
+                {
+                    <div class="td-seksjon td-arkiv">
+                        <div class="td-ar-topp">
+                            <div class="td-ar-faner">
+                                @foreach (var ar in Ar)
+                                {
+                                    <button type="button" class="@(ar == _uAr ? "pa" : "")" @onclick="@(() => VelgAr(ar))">@ar</button>
+                                }
+                                @if (UtenDato.Count > 0)
+                                {
+                                    <button type="button" class="@(_uAr == 0 ? "pa" : "")" @onclick="@(() => VelgAr(0))">Tidligere</button>
+                                }
+                            </div>
+                            @if (_uAr != 0)
+                            {
+                                var iAr = UtforteFiltrert.Where(o => o.FullfortDato!.Value.Year == _uAr).ToList();
+                                var ukerIAr = Math.Max(1, iAr.Select(o => Mandag(o.FullfortDato!.Value)).Distinct().Count());
+                                <div class="td-ar-tall"><span><b>@iAr.Count</b> utført i @_uAr</span><span><b>@((iAr.Count / (double)ukerIAr).ToString("0.0", NorskKultur))</b> i snitt per uke</span></div>
+                            }
+                        </div>
+                        @if (_uAr != 0)
+                        {
+                            <div class="td-ar-kart">
+                                @for (var m = 1; m <= 12; m++)
+                                {
+                                    var mnd = m;
+                                    var forste = new DateTime(_uAr, mnd, 1);
+                                    if (forste > DateTime.Today)
+                                    {
+                                        <div class="td-mnd fremtid"><div class="td-celler"></div><span>@MndKort[mnd - 1]</span><b></b></div>
+                                        continue;
+                                    }
+                                    var antMnd = UtforteFiltrert.Count(o => o.FullfortDato!.Value.Year == _uAr && o.FullfortDato.Value.Month == mnd);
+                                    <div class="td-mnd @(_uMnd == mnd && _uUke is null ? "valgt" : "")" @onclick="@(() => VelgMnd(mnd))">
+                                        <div class="td-celler">
+                                            @foreach (var man in UkerSomStarterI(_uAr, mnd))
+                                            {
+                                                var mandag = man;
+                                                var n = PerUke.GetValueOrDefault(mandag);
+                                                <i class="@(_uUke == mandag ? "valgt" : "")" title="Uke @ISOWeek.GetWeekOfYear(mandag): @n utført"
+                                                   style="--s:@((n == 0 ? 0 : .18 + .82 * n / (double)MaksPerUke).ToString(CultureInfo.InvariantCulture))"
+                                                   @onclick="@(() => VelgUke(mandag))" @onclick:stopPropagation="true"></i>
+                                            }
+                                        </div>
+                                        <span>@MndKort[mnd - 1]</span>
+                                        <b>@(antMnd > 0 ? antMnd : "")</b>
+                                    </div>
+                                }
+                            </div>
+                            <div class="td-ar-forkl">Hver rute er én uke – jo mørkere, jo mer utført. Trykk på en måned eller en uke.</div>
+                        }
+                        else
+                        {
+                            <div class="td-ar-forkl">Oppgaver som ble huket av før vi begynte å lagre når de ble utført.</div>
+                        }
+                    </div>
+
+                    @if (_uAr == 0)
+                    {
+                        <div class="td-seksjon">
+                            <div class="td-seksjon-t"><h2>Tidligere</h2><em>@UtenDato.Count</em></div>
+                            <div class="td-rader">
+                                @foreach (var o in UtenDato)
+                                {
+                                    @Rad(o)
+                                }
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        var uker = ValgteUker;
+                        var neste = new DateTime(_uAr, _uMnd, 1).AddMonths(1);
+                        <div class="td-mnd-hode">
+                            <button type="button" class="td-mnd-pil" @onclick="@(() => BlaMnd(-1))" title="Forrige måned">‹</button>
+                            <div>
+                                <h2>@(_uUke is { } uk ? $"Uke {ISOWeek.GetWeekOfYear(uk)} · {uk.Year}" : $"{Stor(MndLang[_uMnd - 1])} {_uAr}")</h2>
+                                <small>@uker.Sum(u => u.Oppgaver.Count) utført · @uker.Count @(uker.Count == 1 ? "uke" : "uker")</small>
+                            </div>
+                            @if (_uUke is not null)
+                            {
+                                <button type="button" class="td-lenke" @onclick="@(() => _uUke = null)">Vis hele måneden</button>
+                            }
+                            <button type="button" class="td-mnd-pil td-mnd-pil-neste" disabled="@(neste > DateTime.Today)" @onclick="@(() => BlaMnd(1))" title="Neste måned">›</button>
+                        </div>
+                        @if (uker.Count == 0)
+                        {
+                            <div class="td-seksjon td-tom">Ingen utførte oppgaver denne måneden.</div>
+                        }
+                        @foreach (var u in uker)
+                        {
+                            var apen = _uUke is not null || uker.Count == 1 || _apneUker.Contains(u.Mandag);
+                            var sondag = u.Mandag.AddDays(6);
+                            <div class="td-seksjon td-uke @(apen ? "" : "lukket")" @key="u.Mandag">
+                                <button type="button" class="td-uke-hode" @onclick="@(() => VeksleUke(u.Mandag))">
+                                    <span class="td-uke-nr">@ISOWeek.GetWeekOfYear(u.Mandag)</span>
+                                    <span class="td-uke-tekst">
+                                        <b>Uke @ISOWeek.GetWeekOfYear(u.Mandag)@if (u.Mandag == Mandag(DateTime.Today)) {<span class="td-chip td-chip-idag">denne uken</span>}</b>
+                                        <small>@u.Mandag.Day. @MndKort[u.Mandag.Month - 1] – @sondag.Day. @MndKort[sondag.Month - 1] · @u.Oppgaver.Count utført</small>
+                                    </span>
+                                    <span class="td-uke-grupper">
+                                        @foreach (var (g, n) in TopGrupper(u.Oppgaver))
+                                        {
+                                            <span class="td-chip">#@g @n</span>
+                                        }
+                                    </span>
+                                    <span class="td-pil">▾</span>
+                                </button>
+                                @if (apen)
+                                {
+                                    <div class="td-rader">
+                                        @foreach (var dag in u.Oppgaver.GroupBy(o => o.FullfortDato!.Value.Date))
+                                        {
+                                            <div class="td-dag-skille">@DagNavn(dag.Key)</div>
+                                            @foreach (var o in dag)
+                                            {
+                                                @Rad(o)
+                                            }
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                }
             }
         </div>
-    }
-    else if (_visning == "mine")
-    {
-        @if (FlatListe.Count == 0)
-        {
-            <p class="td-tom">Ingen oppgaver matcher filteret.</p>
-        }
-        else
-        {
-            <ul class="td-rader">
-                @foreach (var o in FlatListe)
-                {
-                    @RadMarkup(o)
-                }
-            </ul>
-        }
-    }
-    else
-    {
-        @if (GruppertVisning.Count == 0)
-        {
-            <p class="td-tom">Ingen oppgaver matcher filteret.</p>
-        }
-        else
-        {
-            @foreach (var g in GruppertVisning)
-            {
-                <div class="td-gruppe" @key="g.Navn">
-                    <button type="button" class="td-gruppe-header" @onclick="@(() => ToggleKollaps(g.Navn))">
-                        <span class="td-gruppe-chevron @(ErKollapset(g.Navn) ? "kollapset" : "")"><Icon Name="chevron-down" /></span>
-                        <span class="td-gruppe-navn">@g.Navn</span>
-                        <span class="td-gruppe-frac">@g.Fullforte/@g.Totalt fullført</span>
-                        <span class="td-fremdrift td-fremdrift-liten"><span class="td-fremdrift-indre" style="width:@(g.Prosent)%"></span></span>
-                        <span class="td-gruppe-prosent">@g.Prosent %</span>
-                    </button>
 
-                    @if (!ErKollapset(g.Navn))
-                    {
-                        <ul class="td-rader">
-                            @foreach (var o in g.Oppgaver)
-                            {
-                                @RadMarkup(o)
-                            }
-                        </ul>
-                    }
+        <aside class="td-sidepanel">
+            <div class="td-kort td-ring-kort">
+                <div class="td-ring">
+                    <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" fill="none" stroke="var(--td-spor)" stroke-width="12" /><circle cx="60" cy="60" r="50" fill="none" stroke="var(--td-gronn)" stroke-width="12" stroke-linecap="round" stroke-dasharray="@RingDash" style="transition:stroke-dasharray .5s" /></svg>
+                    <b>@DagensGjort/@DagensTotalt</b>
+                </div>
+                <p>@(DagensTotalt > 0 && DagensGjort == DagensTotalt ? "Alt for i dag er gjort! 🎉" : "av dagens oppgaver er gjort")</p>
+            </div>
+            @if (SisteGrupper.Count > 0)
+            {
+                <div class="td-kort">
+                    <div class="td-kort-t"><h2>Grupper</h2><small>siste 30 dager</small></div>
+                    <div class="td-grupper">
+                        @foreach (var g in SisteGrupper)
+                        {
+                            <div class="td-gruppe">
+                                <div class="td-gruppe-linje"><b>#@g.Navn</b><span>@g.Ferdig/@g.Totalt</span></div>
+                                <div class="td-bar"><i style="width:@(g.Totalt == 0 ? 0 : g.Ferdig * 100 / g.Totalt)%"></i></div>
+                            </div>
+                        }
+                    </div>
                 </div>
             }
-        }
-    }
+            <div class="td-kort td-streak-kort">
+                <b>Utført siste 7 dager</b>
+                <div class="td-streak">
+                    @for (var i = 6; i >= 0; i--)
+                    {
+                        var dag = DateTime.Today.AddDays(-i);
+                        var n = _oppgaver.Count(o => o.FullfortDato?.Date == dag);
+                        <i title="@n utført"><b style="height:@(Math.Min(100, n * 14))%"></b></i>
+                    }
+                </div>
+                <div class="td-streak-navn">
+                    @for (var i = 6; i >= 0; i--)
+                    {
+                        <span>@DateTime.Today.AddDays(-i).ToString("ddd", NorskKultur)[..2]</span>
+                    }
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+
+<div class="td-toast @(_toast is not null ? "vis" : "")">
+    <span class="td-toast-ok">✓</span>
+    <span>@_toast</span>
+    <button type="button" @onclick="AngreSiste">Angre</button>
 </div>
 
 @if (_visNyOppgave)
 {
     <div class="td-modal-overlay" @onclick="@(() => _visNyOppgave = false)">
         <div class="td-modal" @onclick:stopPropagation="true">
-            <h2>Ny oppgave</h2>
+            <h2>@(_nyDraft.Id is null ? "Ny oppgave" : "Rediger oppgave")</h2>
 
             <label class="td-felt">Tittel <input @bind="_nyDraft.Tittel" @bind:event="oninput" placeholder="Hva skal gjøres?" /></label>
             <label class="td-felt">
@@ -152,7 +327,7 @@
             }
 
             <div class="td-modal-actions">
-                <button type="button" class="td-knapp td-knapp-primaer" @onclick="LagreNyOppgave">Legg til</button>
+                <button type="button" class="td-knapp td-knapp-primaer" @onclick="LagreOppgave">@(_nyDraft.Id is null ? "Legg til" : "Lagre")</button>
                 <button type="button" class="td-knapp" @onclick="@(() => _visNyOppgave = false)">Avbryt</button>
             </div>
         </div>
@@ -162,38 +337,52 @@
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int? _naverendeBrukerId;
-    private string _naverendeInitialer = "?";
+    private static readonly CultureInfo NorskKultur = new("nb-NO");
+    private static readonly string[] MndKort = ["jan", "feb", "mar", "apr", "mai", "jun", "jul", "aug", "sep", "okt", "nov", "des"];
+    private static readonly string[] MndLang = ["januar", "februar", "mars", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "desember"];
 
+    private int? _naverendeBrukerId;
     private List<ToDoOppgave> _oppgaver = [];
-    private string _visning = "liste";
-    private string _sok = "";
-    private string _gruppeFilter = "";
-    private string _statusFilter = "alle";
-    private string _sortering = "frist";
-    private HashSet<string> _kollapsedeGrupper = [];
+    private string _fane = "aktive";
+    private string _hurtig = "";
+
+    // Oppgaver som akkurat er huket av og er i ferd med å gli ut av listen.
+    private readonly HashSet<int> _glirUt = [];
+    private string? _toast;
+    private int? _angreId;
+    private CancellationTokenSource? _toastCts;
+
+    // Utført-arkivet
+    private string _uSok = "";
+    private string _uGruppe = "";
+    private bool _uNyestForst = true;
+    private int _uAr = DateTime.Today.Year;
+    private int _uMnd = DateTime.Today.Month;
+    private DateTime? _uUke;
+    private int _uVisAntall = 40;
+    private readonly HashSet<DateTime> _apneUker = [Mandag(DateTime.Today)];
 
     private bool _visNyOppgave;
     private string? _nyFeil;
 
-    private sealed class NyOppgaveDraft
+    private sealed class OppgaveDraft
     {
+        public int? Id { get; set; }
         public string Tittel { get; set; } = "";
         public string Gruppe { get; set; } = "";
         public ToDoPrioritet Prioritet { get; set; } = ToDoPrioritet.Normal;
         public DateTime? Frist { get; set; }
     }
 
-    private NyOppgaveDraft _nyDraft = new();
+    private OppgaveDraft _nyDraft = new();
 
-    private sealed class GruppeVisning
-    {
-        public string Navn { get; set; } = "";
-        public List<ToDoOppgave> Oppgaver { get; set; } = [];
-        public int Totalt => Oppgaver.Count;
-        public int Fullforte => Oppgaver.Count(o => o.Fullfort);
-        public int Prosent => Totalt == 0 ? 0 : (int)Math.Round(Fullforte / (double)Totalt * 100);
-    }
+    private sealed record Seksjon(string Navn, string Farge, List<ToDoOppgave> Oppgaver);
+    private sealed record Uke(DateTime Mandag, List<ToDoOppgave> Oppgaver);
+    private sealed record GruppeFremdrift(string Navn, int Ferdig, int Totalt);
+
+    private static DateTime Mandag(DateTime d) => d.Date.AddDays(-(((int)d.DayOfWeek + 6) % 7));
+    private static string Gruppe(ToDoOppgave o) => string.IsNullOrWhiteSpace(o.Gruppe) ? "Annet" : o.Gruppe.Trim();
+    private static string Stor(string s) => char.ToUpper(s[0]) + s[1..];
 
     protected override async Task OnInitializedAsync()
     {
@@ -205,26 +394,12 @@
             {
                 _naverendeBrukerId = bid;
             }
-
-            var navn = state.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
-            if (!string.IsNullOrWhiteSpace(navn))
-            {
-                var deler = navn.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                _naverendeInitialer = deler.Length >= 2
-                    ? $"{deler[0][0]}{deler[^1][0]}".ToUpperInvariant()
-                    : navn.Length >= 2 ? navn[..2].ToUpperInvariant() : navn.ToUpperInvariant();
-            }
         }
 
-        _visning = await VisningPref.HentAsync("todo", _visning);
+        var fane = await VisningPref.HentAsync("todo", _fane);
+        _fane = fane == "utfort" ? "utfort" : "aktive";
 
         await LastDataAsync();
-    }
-
-    private async Task VelgVisning(string visning)
-    {
-        _visning = visning;
-        await VisningPref.SettAsync("todo", visning);
     }
 
     private async Task LastDataAsync()
@@ -239,103 +414,188 @@
             .ToListAsync();
     }
 
-    private List<string> AlleGrupper => _oppgaver
-        .Select(o => string.IsNullOrWhiteSpace(o.Gruppe) ? "Annet" : o.Gruppe!.Trim())
-        .Distinct()
-        .OrderBy(g => g)
+    private async Task VelgFane(string fane)
+    {
+        _fane = fane;
+        await VisningPref.SettAsync("todo", fane);
+    }
+
+    // ---------- Å gjøre ----------
+
+    // Oppgaver som er huket av, men fortsatt glir ut, regnes med her en liten stund.
+    private IEnumerable<ToDoOppgave> Aktive => _oppgaver.Where(o => !o.Fullfort || _glirUt.Contains(o.Id));
+
+    private List<ToDoOppgave> GjortIDag => _oppgaver
+        .Where(o => o.Fullfort && !_glirUt.Contains(o.Id) && o.FullfortDato?.Date == DateTime.Today)
+        .OrderByDescending(o => o.FullfortDato)
         .ToList();
 
-    private List<ToDoOppgave> Filtrert
+    private List<Seksjon> Seksjoner
     {
         get
         {
-            IEnumerable<ToDoOppgave> q = _oppgaver;
+            var idag = DateTime.Today;
+            List<ToDoOppgave> Sorter(IEnumerable<ToDoOppgave> l) => l.OrderBy(o => o.Frist ?? DateTime.MaxValue).ThenByDescending(o => o.Prioritet).ThenBy(o => o.OpprettetDato).ToList();
+            var aktive = Aktive.ToList();
+            return
+            [
+                new("Forfalt", "var(--td-rust)", Sorter(aktive.Where(o => o.Frist?.Date < idag))),
+                new("I dag", "var(--td-gul)", Sorter(aktive.Where(o => o.Frist?.Date == idag))),
+                new("Denne uken", "var(--td-bla)", Sorter(aktive.Where(o => o.Frist?.Date > idag && o.Frist.Value.Date <= idag.AddDays(6)))),
+                new("Senere", "var(--td-lilla)", Sorter(aktive.Where(o => o.Frist?.Date > idag.AddDays(6)))),
+                new("Uten frist", "var(--td-svak)", Sorter(aktive.Where(o => o.Frist is null)))
+            ];
+        }
+    }
 
-            if (!string.IsNullOrWhiteSpace(_sok))
+    private List<string> AlleGrupper => _oppgaver.Select(Gruppe).Distinct().OrderBy(g => g).ToList();
+
+    // Ringen: det som skulle vært gjort i dag (forfalt + i dag) og det som er gjort i dag.
+    private int DagensGjort => GjortIDag.Count;
+    private int DagensTotalt => Aktive.Count(o => o.Frist?.Date <= DateTime.Today) + DagensGjort;
+    private string RingDash => $"{(DagensTotalt == 0 ? 0 : DagensGjort * 314.0 / DagensTotalt).ToString("0.0", CultureInfo.InvariantCulture)} 314";
+
+    private List<GruppeFremdrift> SisteGrupper => _oppgaver
+        .Where(o => !o.Fullfort || o.FullfortDato >= DateTime.Today.AddDays(-30))
+        .Where(o => !string.IsNullOrWhiteSpace(o.Gruppe))
+        .GroupBy(Gruppe)
+        .Select(g => new GruppeFremdrift(g.Key, g.Count(o => o.Fullfort), g.Count()))
+        .OrderByDescending(g => g.Totalt - g.Ferdig).ThenBy(g => g.Navn)
+        .ToList();
+
+    private async Task HurtigTast(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await LeggTilHurtig();
+        }
+    }
+
+    // Forstår "i dag", "i morgen", ukedager, "#gruppe" og "!" (viktig) i teksten.
+    private async Task LeggTilHurtig()
+    {
+        if (_naverendeBrukerId is null || string.IsNullOrWhiteSpace(_hurtig))
+        {
+            return;
+        }
+
+        var tekst = _hurtig;
+        string? gruppe = null;
+        var prioritet = ToDoPrioritet.Normal;
+        DateTime? frist = null;
+
+        var g = Regex.Match(tekst, @"#(\S+)");
+        if (g.Success)
+        {
+            gruppe = g.Groups[1].Value;
+            tekst = tekst.Remove(g.Index, g.Length);
+        }
+        if (tekst.Contains('!'))
+        {
+            prioritet = ToDoPrioritet.Hoy;
+            tekst = tekst.Replace("!", "");
+        }
+
+        var idag = DateTime.Today;
+        if (Regex.IsMatch(tekst, @"\bi dag\b", RegexOptions.IgnoreCase))
+        {
+            frist = idag;
+            tekst = Regex.Replace(tekst, @"\bi dag\b", "", RegexOptions.IgnoreCase);
+        }
+        else if (Regex.IsMatch(tekst, @"\bi morgen\b", RegexOptions.IgnoreCase))
+        {
+            frist = idag.AddDays(1);
+            tekst = Regex.Replace(tekst, @"\bi morgen\b", "", RegexOptions.IgnoreCase);
+        }
+        else
+        {
+            string[] dager = ["søndag", "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag"];
+            for (var i = 0; i < dager.Length && frist is null; i++)
             {
-                var s = _sok.Trim();
-                q = q.Where(o => o.Tittel.Contains(s, StringComparison.OrdinalIgnoreCase));
+                var monster = $@"\b(på )?{dager[i]}\b";
+                if (Regex.IsMatch(tekst, monster, RegexOptions.IgnoreCase))
+                {
+                    var diff = (i - (int)idag.DayOfWeek + 7) % 7;
+                    frist = idag.AddDays(diff == 0 ? 7 : diff);
+                    tekst = Regex.Replace(tekst, monster, "", RegexOptions.IgnoreCase);
+                }
             }
-
-            if (!string.IsNullOrEmpty(_gruppeFilter))
-            {
-                q = q.Where(o => (string.IsNullOrWhiteSpace(o.Gruppe) ? "Annet" : o.Gruppe!.Trim()) == _gruppeFilter);
-            }
-
-            q = _statusFilter switch
-            {
-                "aktive" => q.Where(o => !o.Fullfort),
-                "fullfort" => q.Where(o => o.Fullfort),
-                _ => q
-            };
-
-            return q.ToList();
         }
-    }
 
-    private IEnumerable<ToDoOppgave> SorterOppgaver(IEnumerable<ToDoOppgave> rader) => _sortering switch
-    {
-        "prioritet" => rader.OrderBy(o => o.Fullfort).ThenByDescending(o => o.Prioritet).ThenBy(o => o.Frist ?? DateTime.MaxValue),
-        "nyeste" => rader.OrderBy(o => o.Fullfort).ThenByDescending(o => o.OpprettetDato),
-        _ => rader.OrderBy(o => o.Fullfort).ThenBy(o => o.Frist ?? DateTime.MaxValue).ThenByDescending(o => o.Prioritet)
-    };
-
-    private string SorteringTekst => _sortering switch
-    {
-        "prioritet" => "Prioritet",
-        "nyeste" => "Nyeste",
-        _ => "Frist"
-    };
-
-    private void BytSortering()
-    {
-        _sortering = _sortering switch
+        tekst = Regex.Replace(tekst, @"\s+", " ").Trim();
+        if (tekst.Length == 0)
         {
-            "frist" => "prioritet",
-            "prioritet" => "nyeste",
-            _ => "frist"
-        };
-    }
-
-    private List<GruppeVisning> GruppertVisning
-    {
-        get
-        {
-            var grupper = Filtrert
-                .GroupBy(o => string.IsNullOrWhiteSpace(o.Gruppe) ? "Annet" : o.Gruppe!.Trim())
-                .Select(g => new GruppeVisning { Navn = g.Key, Oppgaver = SorterOppgaver(g).ToList() })
-                .ToList();
-
-            return grupper
-                .OrderBy(g => g.Oppgaver.Where(o => !o.Fullfort).Select(o => (DateTime?)o.Frist).DefaultIfEmpty().Min() ?? DateTime.MaxValue)
-                .ThenBy(g => g.Navn)
-                .ToList();
+            return;
         }
-    }
 
-    private List<ToDoOppgave> FlatListe => SorterOppgaver(Filtrert).ToList();
-
-    private bool ErKollapset(string gruppe) => _kollapsedeGrupper.Contains(gruppe);
-
-    private void ToggleKollaps(string gruppe)
-    {
-        if (!_kollapsedeGrupper.Add(gruppe))
+        Db.ToDoOppgaver.Add(new ToDoOppgave
         {
-            _kollapsedeGrupper.Remove(gruppe);
-        }
-    }
-
-    private void VelgGruppe(string gruppe)
-    {
-        _gruppeFilter = gruppe;
-        _visning = "liste";
-        _kollapsedeGrupper.Remove(gruppe);
-    }
-
-    private async Task ToggleFullfort(ToDoOppgave o)
-    {
-        o.Fullfort = !o.Fullfort;
+            BrukerId = _naverendeBrukerId.Value,
+            Tittel = tekst,
+            Gruppe = gruppe,
+            Prioritet = prioritet,
+            Frist = frist
+        });
         await Db.SaveChangesAsync();
+        _hurtig = "";
+        await LastDataAsync();
+    }
+
+    // ---------- hake av / angre ----------
+
+    private async Task Hak(ToDoOppgave o)
+    {
+        if (o.Fullfort)
+        {
+            // Fra Utført: flyttes tilbake til Å gjøre.
+            o.Fullfort = false;
+            o.FullfortDato = null;
+            await Db.SaveChangesAsync();
+            return;
+        }
+
+        o.Fullfort = true;
+        o.FullfortDato = DateTime.Now;
+        await Db.SaveChangesAsync();
+
+        // Vis haken, la raden gli ut, og flytt den så til Utført.
+        _glirUt.Add(o.Id);
+        StateHasChanged();
+        await Task.Delay(750);
+        _glirUt.Remove(o.Id);
+        VisToast(o);
+    }
+
+    private void VisToast(ToDoOppgave o)
+    {
+        _angreId = o.Id;
+        var tittel = o.Tittel.Length > 34 ? o.Tittel[..34] + "…" : o.Tittel;
+        _toast = $"«{tittel}» flyttet til Utført";
+
+        _toastCts?.Cancel();
+        _toastCts = new CancellationTokenSource();
+        var token = _toastCts.Token;
+        _ = Task.Delay(5000, token).ContinueWith(t =>
+        {
+            if (!t.IsCanceled)
+            {
+                _toast = null;
+                _ = InvokeAsync(StateHasChanged);
+            }
+        }, TaskScheduler.Default);
+    }
+
+    private async Task AngreSiste()
+    {
+        var o = _oppgaver.FirstOrDefault(x => x.Id == _angreId);
+        _toast = null;
+        _toastCts?.Cancel();
+        if (o is { Fullfort: true })
+        {
+            o.Fullfort = false;
+            o.FullfortDato = null;
+            await Db.SaveChangesAsync();
+        }
     }
 
     private async Task SlettOppgave(ToDoOppgave o)
@@ -345,14 +605,23 @@
         await LastDataAsync();
     }
 
+    // ---------- ny / rediger ----------
+
     private void ApneNyOppgave()
     {
-        _nyDraft = new NyOppgaveDraft { Gruppe = string.IsNullOrEmpty(_gruppeFilter) ? "" : _gruppeFilter };
+        _nyDraft = new OppgaveDraft();
         _nyFeil = null;
         _visNyOppgave = true;
     }
 
-    private async Task LagreNyOppgave()
+    private void ApneRediger(ToDoOppgave o)
+    {
+        _nyDraft = new OppgaveDraft { Id = o.Id, Tittel = o.Tittel, Gruppe = o.Gruppe ?? "", Prioritet = o.Prioritet, Frist = o.Frist };
+        _nyFeil = null;
+        _visNyOppgave = true;
+    }
+
+    private async Task LagreOppgave()
     {
         if (_naverendeBrukerId is null)
         {
@@ -365,30 +634,215 @@
             return;
         }
 
-        Db.ToDoOppgaver.Add(new ToDoOppgave
+        var o = _nyDraft.Id is int id ? _oppgaver.FirstOrDefault(x => x.Id == id) : null;
+        if (o is null)
         {
-            BrukerId = _naverendeBrukerId.Value,
-            Tittel = _nyDraft.Tittel.Trim(),
-            Gruppe = string.IsNullOrWhiteSpace(_nyDraft.Gruppe) ? null : _nyDraft.Gruppe.Trim(),
-            Prioritet = _nyDraft.Prioritet,
-            Frist = _nyDraft.Frist
-        });
+            o = new ToDoOppgave { BrukerId = _naverendeBrukerId.Value, Tittel = "" };
+            Db.ToDoOppgaver.Add(o);
+        }
+
+        o.Tittel = _nyDraft.Tittel.Trim();
+        o.Gruppe = string.IsNullOrWhiteSpace(_nyDraft.Gruppe) ? null : _nyDraft.Gruppe.Trim();
+        o.Prioritet = _nyDraft.Prioritet;
+        o.Frist = _nyDraft.Frist;
 
         await Db.SaveChangesAsync();
         _visNyOppgave = false;
         await LastDataAsync();
     }
 
-    private RenderFragment RadMarkup(ToDoOppgave o) => @<li class="td-rad @(o.Fullfort ? "fullfort" : "")" @key="o.Id">
-        <input type="checkbox" checked="@o.Fullfort" @onchange="@(() => ToggleFullfort(o))" />
-        <span class="td-rad-tittel">@o.Tittel</span>
-        <span class="td-rad-avatar">@_naverendeInitialer</span>
-        @if (!string.IsNullOrWhiteSpace(o.Gruppe))
+    // ---------- Utført-arkivet: år -> måned -> uke ----------
+
+    private IEnumerable<ToDoOppgave> UtforteFiltrert => _oppgaver
+        .Where(o => o.Fullfort && o.FullfortDato is not null && !_glirUt.Contains(o.Id))
+        .Where(o => string.IsNullOrEmpty(_uGruppe) || Gruppe(o) == _uGruppe);
+
+    private List<ToDoOppgave> UtenDato => _oppgaver
+        .Where(o => o.Fullfort && o.FullfortDato is null)
+        .Where(o => string.IsNullOrEmpty(_uGruppe) || Gruppe(o) == _uGruppe)
+        .OrderByDescending(o => o.OpprettetDato)
+        .ToList();
+
+    private List<string> UtforteGrupper => _oppgaver.Where(o => o.Fullfort).Select(Gruppe).Distinct().OrderBy(g => g).ToList();
+
+    private List<int> Ar => _oppgaver
+        .Where(o => o.Fullfort && o.FullfortDato is not null)
+        .Select(o => o.FullfortDato!.Value.Year)
+        .Append(DateTime.Today.Year)
+        .Distinct()
+        .OrderByDescending(a => a)
+        .ToList();
+
+    private IEnumerable<ToDoOppgave> Sorter(IEnumerable<ToDoOppgave> l) => _uNyestForst
+        ? l.OrderByDescending(o => o.FullfortDato ?? o.OpprettetDato)
+        : l.OrderBy(o => o.FullfortDato ?? o.OpprettetDato);
+
+    private List<ToDoOppgave> SokTreff
+    {
+        get
         {
-            <span class="td-rad-gruppe">@o.Gruppe</span>
+            var s = _uSok.Trim();
+            return Sorter(_oppgaver
+                    .Where(o => o.Fullfort && !_glirUt.Contains(o.Id))
+                    .Where(o => string.IsNullOrEmpty(_uGruppe) || Gruppe(o) == _uGruppe)
+                    .Where(o => o.Tittel.Contains(s, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
         }
-        <span class="td-rad-frist">@(o.Frist?.ToString("dd.MM.yyyy") ?? "")</span>
-        <span class="td-prioritet-pill td-prioritet-@o.Prioritet.Farge()">@o.Prioritet.Visningsnavn()</span>
-        <button type="button" class="td-rad-slett" @onclick="@(() => SlettOppgave(o))" title="Slett oppgave"><Icon Name="trash" /></button>
-    </li>;
+    }
+
+    private Dictionary<DateTime, int> PerUke => UtforteFiltrert
+        .Where(o => o.FullfortDato!.Value.Year == _uAr || Mandag(o.FullfortDato.Value).Year == _uAr)
+        .GroupBy(o => Mandag(o.FullfortDato!.Value))
+        .ToDictionary(g => g.Key, g => g.Count());
+
+    private int MaksPerUke => Math.Max(1, PerUke.Values.DefaultIfEmpty(0).Max());
+
+    // Ukene i årskartet hører til måneden mandagen deres ligger i.
+    private static IEnumerable<DateTime> UkerSomStarterI(int ar, int mnd)
+    {
+        var forste = new DateTime(ar, mnd, 1);
+        var man = Mandag(forste);
+        if (man < forste)
+        {
+            man = man.AddDays(7);
+        }
+        for (; man.Month == mnd && man.Year == ar; man = man.AddDays(7))
+        {
+            yield return man;
+        }
+    }
+
+    private List<Uke> ValgteUker
+    {
+        get
+        {
+            IEnumerable<ToDoOppgave> l = _uUke is { } uke
+                ? UtforteFiltrert.Where(o => Mandag(o.FullfortDato!.Value) == uke)
+                : UtforteFiltrert.Where(o => o.FullfortDato!.Value.Year == _uAr && o.FullfortDato.Value.Month == _uMnd);
+            var uker = Sorter(l)
+                .GroupBy(o => Mandag(o.FullfortDato!.Value))
+                .Select(g => new Uke(g.Key, g.ToList()))
+                .ToList();
+            return uker;
+        }
+    }
+
+    private static IEnumerable<(string Gruppe, int Antall)> TopGrupper(List<ToDoOppgave> l) => l
+        .GroupBy(Gruppe)
+        .Select(g => (g.Key, g.Count()))
+        .OrderByDescending(g => g.Item2)
+        .Take(3);
+
+    private static string DagNavn(DateTime d) =>
+        d == DateTime.Today ? "I dag"
+        : d == DateTime.Today.AddDays(-1) ? "I går"
+        : $"{d.ToString("dddd", NorskKultur)} {d.Day}. {MndKort[d.Month - 1]}";
+
+    private void VelgAr(int ar)
+    {
+        _uAr = ar;
+        _uMnd = ar == DateTime.Today.Year ? DateTime.Today.Month : 12;
+        _uUke = null;
+    }
+
+    private void VelgMnd(int mnd)
+    {
+        _uMnd = mnd;
+        _uUke = null;
+    }
+
+    private void VelgUke(DateTime mandag)
+    {
+        _uUke = mandag;
+        _uMnd = mandag.Month;
+    }
+
+    private void BlaMnd(int retning)
+    {
+        var ny = new DateTime(_uAr, _uMnd, 1).AddMonths(retning);
+        if (ny > DateTime.Today)
+        {
+            return;
+        }
+        _uAr = ny.Year;
+        _uMnd = ny.Month;
+        _uUke = null;
+    }
+
+    private void VeksleUke(DateTime mandag)
+    {
+        if (_uUke is not null)
+        {
+            return;
+        }
+        if (!_apneUker.Add(mandag))
+        {
+            _apneUker.Remove(mandag);
+        }
+    }
+
+    // ---------- én rad ----------
+
+    private RenderFragment Rad(ToDoOppgave o, string? ekstra = null) => __builder =>
+    {
+        var ferdig = o.Fullfort;
+        var idag = DateTime.Today;
+        var fristKlasse = ferdig || o.Frist is null ? "" : o.Frist.Value.Date < idag ? "forfalt" : o.Frist.Value.Date == idag ? "idag" : "";
+        <div class="td-rad td-p-@o.Prioritet @(ferdig ? "ferdig" : "") @(_glirUt.Contains(o.Id) ? "ut" : "")" @key="o.Id">
+            <button type="button" class="td-hake" title="@(ferdig ? "Flytt tilbake til Å gjøre" : "Merk som utført")" @onclick="@(() => Hak(o))">
+                <svg viewBox="0 0 24 24"><path d="m5 12 5 5 9-10" /></svg>
+            </button>
+            <div class="td-rad-innhold">
+                <div class="td-tittel">@o.Tittel</div>
+                <div class="td-meta">
+                    @if (o.Frist is { } f)
+                    {
+                        <span class="td-chip @fristKlasse"><Icon Name="calendar" />@FristTekst(f)</span>
+                    }
+                    @if (o.Prioritet == ToDoPrioritet.Hoy)
+                    {
+                        <span class="td-chip hoy">Viktig</span>
+                    }
+                    else if (o.Prioritet == ToDoPrioritet.Lav)
+                    {
+                        <span class="td-chip">Lav</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(o.Gruppe))
+                    {
+                        <span class="td-chip">#@o.Gruppe</span>
+                    }
+                </div>
+            </div>
+            <div class="td-rad-hoyre">
+                @if (ekstra is not null)
+                {
+                    <span class="td-tid">@ekstra</span>
+                }
+                @if (ferdig && o.FullfortDato is { } fd && ekstra is null)
+                {
+                    <span class="td-tid">@fd.ToString("HH:mm")</span>
+                }
+                <span class="td-handl">
+                    @if (!ferdig)
+                    {
+                        <button type="button" title="Rediger" @onclick="@(() => ApneRediger(o))"><Icon Name="edit" /></button>
+                    }
+                    <button type="button" title="Slett" @onclick="@(() => SlettOppgave(o))"><Icon Name="trash" /></button>
+                </span>
+            </div>
+        </div>
+    };
+
+    private static string FristTekst(DateTime f)
+    {
+        var n = (f.Date - DateTime.Today).Days;
+        if (n == -1) return "i går";
+        if (n == 0) return "i dag";
+        if (n == 1) return "i morgen";
+        if (n < 0) return $"{-n} dager over";
+        if (n <= 6) return $"{f.ToString("ddd", NorskKultur).TrimEnd('.')} {f.Day}.{f.Month}";
+        return $"{f.Day}.{f.Month}" + (f.Year != DateTime.Today.Year ? $".{f.Year}" : "");
+    }
+
+    public void Dispose() => _toastCts?.Cancel();
 }
