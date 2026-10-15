@@ -1112,9 +1112,9 @@ app.MapGet("/prosjekt/{id:int}/plukkliste/pdf", async (int id, string? byggetrin
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
-app.MapGet("/prosjekt/{id:int}/produktsammendrag/pdf", async (int id, HttpContext context, ApplicationDbContext db, ProduktsammendragPdfService sammendragService) =>
+app.MapGet("/prosjekt/{id:int}/produktsammendrag/pdf", async (int id, string? byggetrinn, HttpContext context, ApplicationDbContext db, ProduktsammendragPdfService sammendragService) =>
 {
-    var pdf = await sammendragService.GenerateAsync(id);
+    var pdf = await sammendragService.GenerateAsync(id, byggetrinn);
     if (pdf is null)
     {
         return Results.NotFound();

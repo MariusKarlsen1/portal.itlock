@@ -9,7 +9,7 @@ namespace PortalItlock.Web.Services;
 
 public class ProduktsammendragPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
-    public async Task<byte[]?> GenerateAsync(int prosjektId)
+    public async Task<byte[]?> GenerateAsync(int prosjektId, string? byggetrinn = null)
     {
         var prosjekt = await db.Prosjekter.FindAsync(prosjektId);
         if (prosjekt is null)
@@ -17,8 +17,10 @@ public class ProduktsammendragPdfService(ApplicationDbContext db, PdfLogo pdfLog
             return null;
         }
 
+        var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
         var komponenter = await db.DorKomponenter
-            .Where(k => k.Dor!.ProsjektId == prosjektId && k.ComponentId != 0)
+            .Where(k => k.Dor!.ProsjektId == prosjektId && k.ComponentId != 0
+                && (valgteByggetrinn == null || (k.Dor!.Plantegning != null && valgteByggetrinn.Contains(k.Dor!.Plantegning!.Byggetrinn))))
             .Include(k => k.Component).ThenInclude(c => c!.Type)
             .ToListAsync();
 
