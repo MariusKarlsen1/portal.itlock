@@ -9,42 +9,82 @@ namespace PortalItlock.Web.Services;
 /// <summary>
 /// Delt oppsett for å rendre én "dørside" (infoboks + dørfunksjoner + beslagsliste),
 /// brukt både av den frittstående beslagslisten og av dør-seksjonen i tilbuds-PDFen.
-/// Alt for én dør sitter i én sammenhengende ramme (kort), slik Probe sin rapport viser det.
+/// Mal L14 (beslagsliste-pdf-forslag.html): fargestripe med dørnummer, dør til og
+/// status, infofelter i fire kolonner, dørfunksjoner som merker, beslagstabell og
+/// merknad - i organisasjonens farge (aksent/aksentLys), slik at malen passer for
+/// alle bedriftene i portalen.
 /// </summary>
 public static class DorPdfSeksjoner
 {
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly Color Linje = Color.FromHex("#ECE4D6");
 
-    public static void RenderDorSide(ColumnDescriptor col, Dor dor, bool visPris, Func<DorKomponent, decimal> hentUtpris)
+    public static void RenderDorSide(ColumnDescriptor col, Dor dor, bool visPris, Func<DorKomponent, decimal> hentUtpris,
+        Color? aksent = null, Color? aksentLys = null)
     {
+        var farge = aksent ?? PdfStil.Accent;
+        var lys = aksentLys ?? PdfStil.Sand;
         var komponenter = dor.Komponenter.Where(k => k.Component is not null).OrderBy(k => k.Component!.Type?.Navn).ThenBy(k => k.Component!.Navn).ToList();
 
-        col.Item().Background(PdfStil.Accent).Padding(7).Row(row =>
+        // Fargestripe: dørnummer og dør til til venstre, status til høyre.
+        col.Item().Background(farge).CornerRadiusTopLeft(4).CornerRadiusTopRight(4).PaddingVertical(7).PaddingHorizontal(10).Row(row =>
         {
-            row.RelativeItem().Text(dor.Dornummer).FontSize(13).Bold().FontColor(Colors.White);
-            if (!string.IsNullOrWhiteSpace(dor.DorTil))
+            row.RelativeItem().AlignMiddle().Text(t =>
             {
-                row.AutoItem().Background(Color.FromHex("#A5805F")).PaddingVertical(2).PaddingHorizontal(8).Text(dor.DorTil).FontSize(8).Bold().FontColor(Colors.White);
-            }
+                t.Span(dor.Dornummer).FontSize(14).Bold().FontColor(Colors.White);
+                if (!string.IsNullOrWhiteSpace(dor.DorTil))
+                {
+                    t.Span("   " + dor.DorTil).FontSize(9).FontColor(Color.FromHex("#E8FFFFFF"));
+                }
+            });
+            row.AutoItem().AlignMiddle().Background(Color.FromHex("#2EFFFFFF")).CornerRadius(8).PaddingVertical(2).PaddingHorizontal(8)
+                .Text(dor.Status.Visningsnavn()).FontSize(7.5f).Bold().FontColor(Colors.White);
         });
 
-        col.Item().Border(1).BorderColor(PdfStil.SandBorder).Padding(10).Column(inner =>
+        col.Item().Border(0.75f).BorderColor(PdfStil.SandBorder).CornerRadiusBottomLeft(4).CornerRadiusBottomRight(4).Padding(11).Column(inner =>
         {
-            RenderInfoGrid(inner, dor);
+            RenderInfoGrid(inner, dor, farge);
 
             if (dor.Funksjoner.Count > 0)
             {
-                RenderDorfunksjoner(inner, dor);
+                inner.Item().PaddingTop(9).Column(fc =>
+                {
+                    SeksjonTittel(fc, "Dørfunksjoner", farge, lys);
+                    fc.Item().PaddingTop(4).Inlined(il =>
+                    {
+                        il.Spacing(4);
+                        foreach (var f in dor.Funksjoner.OrderBy(f => f.Forkortelse ?? f.Navn))
+                        {
+                            il.Item().Background(lys).CornerRadius(8).PaddingVertical(2).PaddingHorizontal(7).Text(t =>
+                            {
+                                if (!string.IsNullOrWhiteSpace(f.Forkortelse))
+                                {
+                                    t.Span(f.Forkortelse + " ").FontSize(8).Bold().FontColor(farge);
+                                }
+                                t.Span(f.Navn).FontSize(8).SemiBold();
+                            });
+                        }
+                    });
+                });
             }
 
-            RenderBeslagsliste(inner, dor, komponenter, visPris, hentUtpris);
+            RenderBeslagsliste(inner, komponenter, visPris, hentUtpris, farge, lys);
 
-            inner.Item().PaddingTop(8);
-            PdfStil.NotatBoks(inner, "Merknad", string.IsNullOrWhiteSpace(dor.Notater) ? "–" : dor.Notater);
+            inner.Item().PaddingTop(10).Background(lys).CornerRadius(3).PaddingVertical(7).PaddingHorizontal(9).Column(m =>
+            {
+                m.Item().Text("MERKNAD").FontSize(6.8f).Bold().FontColor(farge).LetterSpacing(0.08f);
+                m.Item().PaddingTop(2).Text(string.IsNullOrWhiteSpace(dor.Notater) ? "–" : dor.Notater).FontSize(9);
+            });
         });
     }
 
-    private static void RenderInfoGrid(ColumnDescriptor inner, Dor dor)
+    private static void SeksjonTittel(ColumnDescriptor col, string tittel, Color farge, Color lys)
+    {
+        col.Item().BorderBottom(0.75f).BorderColor(lys).PaddingBottom(2)
+            .Text(tittel).FontSize(8.5f).Bold().FontColor(farge);
+    }
+
+    private static void RenderInfoGrid(ColumnDescriptor inner, Dor dor, Color farge)
     {
         inner.Item().Table(table =>
         {
@@ -53,13 +93,14 @@ public static class DorPdfSeksjoner
                 c.RelativeColumn();
                 c.RelativeColumn();
                 c.RelativeColumn();
+                c.RelativeColumn();
             });
 
             void Felt(string label, string? verdi)
             {
-                table.Cell().Padding(3).Column(fc =>
+                table.Cell().PaddingVertical(3).PaddingRight(6).Column(fc =>
                 {
-                    fc.Item().Text(label.ToUpperInvariant()).FontSize(6.8f).Bold().FontColor(PdfStil.Accent).LetterSpacing(0.03f);
+                    fc.Item().Text(label.ToUpperInvariant()).FontSize(6.6f).Bold().FontColor(farge).LetterSpacing(0.05f);
                     fc.Item().PaddingTop(1).Text(string.IsNullOrWhiteSpace(verdi) ? "-" : verdi).FontSize(9.3f).SemiBold();
                 });
             }
@@ -67,71 +108,46 @@ public static class DorPdfSeksjoner
             Felt("Dør til", dor.DorTil);
             Felt("Rom nr.", dor.Romnr);
             Felt("Etasje", dor.Etasje);
-
             Felt("Sone", dor.Sone);
             Felt("Dørtype", dor.Dortype);
             Felt("B x H", dor.BxH ?? (dor.Bredde is null && dor.Hoyde is null ? null : $"{dor.Bredde} x {dor.Hoyde} mm"));
-
             Felt("Slagretning", dor.Slagretning);
             Felt("Fri bredde 0,86", dor.FriBredde086 is null ? null : (dor.FriBredde086.Value ? "Ja" : "Nei"));
             Felt("Status", dor.Status.Visningsnavn());
-
             Felt("Brann", dor.Brann);
             Felt("Lyd", dor.Lyd);
             Felt("Montert dato", dor.MontertDato?.ToString("dd.MM.yyyy"));
         });
     }
 
-    private static void RenderDorfunksjoner(ColumnDescriptor inner, Dor dor)
-    {
-        inner.Item().PaddingTop(8).Column(dc =>
-        {
-            PdfStil.SeksjonTittel(dc, "Dørfunksjoner");
-            dc.Item().PaddingTop(3).Table(table =>
-            {
-                table.ColumnsDefinition(c =>
-                {
-                    c.ConstantColumn(60);
-                    c.RelativeColumn();
-                });
-
-                foreach (var f in dor.Funksjoner.OrderBy(f => f.Forkortelse ?? f.Navn))
-                {
-                    table.Cell().PaddingVertical(2).Text(f.Forkortelse ?? "").FontSize(8.5f).Bold().FontColor(PdfStil.Accent);
-                    table.Cell().PaddingVertical(2).Text(f.Navn).FontSize(8.5f);
-                }
-            });
-        });
-    }
-
-    private static void RenderBeslagsliste(ColumnDescriptor inner, Dor dor, List<DorKomponent> komponenter, bool visPris, Func<DorKomponent, decimal> hentUtpris)
+    private static void RenderBeslagsliste(ColumnDescriptor inner, List<DorKomponent> komponenter, bool visPris, Func<DorKomponent, decimal> hentUtpris, Color farge, Color lys)
     {
         inner.Item().PaddingTop(10).Column(bc =>
         {
-            PdfStil.SeksjonTittel(bc, "Beslagsliste");
+            SeksjonTittel(bc, "Beslag", farge, lys);
 
             if (komponenter.Count == 0)
             {
-                bc.Item().PaddingTop(3).Text("Ingen beslag registrert på denne døren.").FontSize(9).FontColor(Colors.Grey.Darken1);
+                bc.Item().PaddingTop(4).Text("Ingen beslag registrert på denne døren.").FontSize(9).FontColor(Colors.Grey.Darken1);
                 return;
             }
 
             var sumVarer = 0m;
             var visOverflate = komponenter.Any(k => !string.IsNullOrWhiteSpace(k.Component!.Overflate));
 
-            bc.Item().PaddingTop(3).Table(table =>
+            bc.Item().PaddingTop(5).Table(table =>
             {
                 table.ColumnsDefinition(columns =>
                 {
-                    columns.RelativeColumn(2.5f);
-                    columns.RelativeColumn(3.2f);
+                    columns.RelativeColumn(2.3f);
+                    columns.RelativeColumn(3.4f);
                     if (visOverflate)
                     {
                         columns.RelativeColumn(1.4f);
                     }
                     columns.RelativeColumn(1f);
                     columns.RelativeColumn(1f);
-                    columns.RelativeColumn(1.4f);
+                    columns.RelativeColumn(1.5f);
                     if (visPris)
                     {
                         columns.RelativeColumn(1.5f);
@@ -141,8 +157,7 @@ public static class DorPdfSeksjoner
 
                 table.Header(header =>
                 {
-                    IContainer Hode() => PdfStil.TabellHode(header.Cell());
-
+                    IContainer Hode() => header.Cell().Background(farge).PaddingVertical(5).PaddingHorizontal(6);
                     Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(Colors.White);
                     Hode().Text("Beskrivelse").FontSize(8).Bold().FontColor(Colors.White);
                     if (visOverflate)
@@ -150,33 +165,29 @@ public static class DorPdfSeksjoner
                         Hode().Text("Overflate").FontSize(8).Bold().FontColor(Colors.White);
                     }
                     Hode().Text("Enhet").FontSize(8).Bold().FontColor(Colors.White);
-                    Hode().Text("Antall").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().AlignRight().Text("Antall").FontSize(8).Bold().FontColor(Colors.White);
                     Hode().Text("Levering").FontSize(8).Bold().FontColor(Colors.White);
                     if (visPris)
                     {
-                        Hode().Text("Pris").FontSize(8).Bold().FontColor(Colors.White);
-                        Hode().Text("Totalt").FontSize(8).Bold().FontColor(Colors.White);
+                        Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(Colors.White);
+                        Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(Colors.White);
                     }
                 });
 
-                var i = 0;
                 foreach (var k in komponenter)
                 {
                     var visPrisPaLinje = visPris && k.LevertAv == LevertAv.F;
-                    var alt = i++ % 2 == 1;
-
-                    IContainer Rad() => PdfStil.TabellRad(table.Cell(), alt);
+                    IContainer Rad() => table.Cell().BorderBottom(0.5f).BorderColor(Linje).PaddingVertical(4).PaddingHorizontal(6);
 
                     Rad().Text(k.Component!.Type?.Navn ?? "").FontSize(8.5f);
-                    Rad().Text(k.Component.Navn).FontSize(8.5f);
+                    Rad().Text(k.Component.Navn).FontSize(8.5f).SemiBold();
                     if (visOverflate)
                     {
-                        Rad().Text(k.Component.Overflate ?? "").FontSize(8.5f);
+                        Rad().Text(k.Component.Overflate ?? "").FontSize(8.5f).FontColor(Colors.Grey.Darken2);
                     }
                     Rad().Text(k.Enhet ?? k.Component.Enhet ?? "Stk").FontSize(8.5f);
-                    Rad().Text(k.Antall.ToString()).FontSize(8.5f);
+                    Rad().AlignRight().Text(k.Antall.ToString()).FontSize(8.5f).Bold();
                     Rad().Text(k.LevertAv.Visningsnavn()).FontSize(8.5f);
-
                     if (visPris)
                     {
                         var utpris = visPrisPaLinje ? hentUtpris(k) : 0m;
@@ -184,17 +195,16 @@ public static class DorPdfSeksjoner
                         {
                             sumVarer += utpris * k.Antall;
                         }
-
-                        Rad().Text(visPrisPaLinje ? FormatKr(utpris) : "–").FontSize(8.5f);
-                        Rad().Text(visPrisPaLinje ? FormatKr(utpris * k.Antall) : "–").FontSize(8.5f);
+                        Rad().AlignRight().Text(visPrisPaLinje ? FormatKr(utpris) : "–").FontSize(8.5f);
+                        Rad().AlignRight().Text(visPrisPaLinje ? FormatKr(utpris * k.Antall) : "–").FontSize(8.5f);
                     }
                 }
             });
 
             if (visPris)
             {
-                bc.Item().AlignRight().PaddingTop(4).Background(PdfStil.Sand).PaddingVertical(4).PaddingHorizontal(8)
-                    .Text($"Sum varer: {FormatKr(sumVarer)}").Bold().FontSize(9.5f).FontColor(PdfStil.Accent);
+                bc.Item().AlignRight().PaddingTop(4).Background(lys).PaddingVertical(4).PaddingHorizontal(8)
+                    .Text($"Sum varer: {FormatKr(sumVarer)}").Bold().FontSize(9.5f).FontColor(farge);
             }
         });
     }

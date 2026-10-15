@@ -7,7 +7,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     public async Task<List<LagretPdfLinje>> GetSnapshotLinjerAsync(int prosjektId, string? byggetrinn = null)
     {
@@ -48,6 +48,9 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
         dorer = dorer.Where(d => d.Komponenter.Any(k => k.Component is not null)).ToList();
 
+        // Mal L14: avsenderen (logo, farge, bunntekst) er organisasjonen som er logget inn.
+        var org = RapportProfil.Fra(tenantContext.Current);
+
         var document = Document.Create(doc =>
         {
             doc.Page(page =>
@@ -57,7 +60,22 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
                 var undertittel = string.Join(" · ", new[] { prosjekt.Navn, valgteByggetrinn is not null ? $"Byggetrinn {string.Join(", ", valgteByggetrinn)}" : null }.Where(s => !string.IsNullOrWhiteSpace(s)));
-                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Beslagsliste", undertittel));
+                page.Header().Column(col =>
+                {
+                    col.Item().Row(row =>
+                    {
+                        row.RelativeItem().AlignBottom().Column(c =>
+                        {
+                            c.Item().Text("Beslagsliste").FontSize(18).Bold().FontColor(PdfStil.Ink);
+                            if (!string.IsNullOrWhiteSpace(undertittel))
+                            {
+                                c.Item().PaddingTop(2).Text(undertittel).FontSize(9).FontColor(Colors.Grey.Darken1);
+                            }
+                        });
+                        row.ConstantItem(150).AlignBottom().AlignRight().Element(e => org.TegnLogo(e, pdfLogo, 24));
+                    });
+                    col.Item().PaddingTop(6).BorderBottom(2).BorderColor(org.Aksent);
+                });
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
@@ -69,7 +87,7 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
                     for (var i = 0; i < dorer.Count; i++)
                     {
-                        DorPdfSeksjoner.RenderDorSide(col, dorer[i], visPris: false, hentUtpris: _ => 0m);
+                        DorPdfSeksjoner.RenderDorSide(col, dorer[i], visPris: false, hentUtpris: _ => 0m, org.Aksent, org.AksentLys);
                         if (i < dorer.Count - 1)
                         {
                             col.Item().PageBreak();
@@ -77,7 +95,17 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     }
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                page.Footer().PaddingTop(8).BorderTop(0.75f).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row =>
+                {
+                    row.RelativeItem().Text(org.Bunntekst).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
+                    row.AutoItem().AlignRight().Text(t =>
+                    {
+                        t.DefaultTextStyle(s => s.FontSize(7.5f).FontColor(Colors.Grey.Darken1));
+                        t.CurrentPageNumber();
+                        t.Span(" / ");
+                        t.TotalPages();
+                    });
+                });
             });
         });
 
