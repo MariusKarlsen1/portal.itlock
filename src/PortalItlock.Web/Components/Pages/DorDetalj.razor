@@ -14,7 +14,10 @@
 @inject AvvikPdfService AvvikPdfService
 @inject LagretPdfService LagretPdfService
 
-<PageTitle>Dør @(_dor?.Dornummer)</PageTitle>
+@if (!IModal)
+{
+    <PageTitle>Dør @(_dor?.Dornummer)</PageTitle>
+}
 
 @if (_notFound)
 {
@@ -26,486 +29,562 @@ else if (_dor is null)
 }
 else
 {
-    @if (!Embed)
-    {
-        <a class="back-link" href="@($"/prosjekter/{_dor.ProsjektId}")"><Icon Name="arrow-left" />Tilbake til prosjektet</a>
-    }
+    var montertAntall = _dor.Komponenter.Count(k => k.Montert);
+    var beslagAntall = _dor.Komponenter.Count;
+    var apneAvvik = _avvik.Count(a => a.Status == AvvikStatus.Apent);
+    var garantiLinjer = GarantiBeregning.Linjer(_dor, _dor.Prosjekt?.OverlevertDato);
+    var lengstGaranti = garantiLinjer.Where(l => l.UtlopsDato.HasValue).OrderByDescending(l => l.UtlopsDato).FirstOrDefault();
+    var historikk = HistorikkRader;
 
-    <div class="id-kort">
-        <div class="id-topprad">
-            <div class="id-navn">
-                <span class="id-ikon"><Icon Name="folder" /></span>
-                <div>
-                    <h1>Dør @_dor.Dornummer</h1>
-                    <p class="id-sub">@_dor.Prosjekt?.Navn@(string.IsNullOrWhiteSpace(_dor.DorTil) ? "" : $" · {_dor.DorTil}")</p>
+    <div class="ds-kort @(IModal ? "ds-kort-modal" : "")">
+        <div class="ds-topp">
+            <span class="ds-ikon"><Icon Name="door" /></span>
+            <div class="ds-tittel">
+                <div class="ds-smul">
+                    @if (IModal && OnTilbake.HasDelegate)
+                    {
+                        <button type="button" class="ds-tilbake" @onclick="@(() => OnTilbake.InvokeAsync())">‹ Tilbake til redigering</button>
+                        <span> · </span>
+                    }
+                    else if (!IModal && !Embed)
+                    {
+                        <a class="ds-tilbake" href="@($"/prosjekter/{_dor.ProsjektId}")">‹ Tilbake til prosjektet</a>
+                        <span> · </span>
+                    }
+                    <span>@_dor.Prosjekt?.Navn</span>
                 </div>
+                <h1>
+                    <span>Dørside @_dor.Dornummer</span>
+                    <StatusPill Tekst="@_dor.Status.Visningsnavn()" Ikon="@_dor.Status.PillIkon()" Farge="@_dor.Status.PillFarge()" />
+                </h1>
             </div>
-            <div class="id-status-wrap">
-                <StatusPill Tekst="@_dor.Status.Visningsnavn()" Ikon="@_dor.Status.PillIkon()" Farge="@_dor.Status.PillFarge()" />
-                @if (_dor.MontertDato.HasValue)
+            <div class="ds-handl">
+                @if (OnForrige.HasDelegate || OnNeste.HasDelegate)
                 {
-                    <span class="status-dato">
-                        @_dor.MontertDato.Value.ToString("dd.MM.yyyy HH:mm") @(_dor.MontertAvBruker is not null ? $"({_dor.MontertAvBruker.Initialer})" : "")
+                    <span class="ds-navpil">
+                        <button type="button" disabled="@(!OnForrige.HasDelegate)" @onclick="@(() => OnForrige.InvokeAsync())">‹ @ForrigeNavn</button>
+                        <button type="button" disabled="@(!OnNeste.HasDelegate)" @onclick="@(() => OnNeste.InvokeAsync())">@NesteNavn ›</button>
                     </span>
+                }
+                <button type="button" class="ds-kn" @onclick="@(() => _fane = "avvik")"><Icon Name="alert" />Meld avvik</button>
+                <button type="button" class="ds-kn" @onclick="@(() => _fane = "logg")"><Icon Name="camera" />Bilde</button>
+                @if (IModal && OnTilbake.HasDelegate)
+                {
+                    <button type="button" class="ds-kn ds-kn-p" @onclick="@(() => OnTilbake.InvokeAsync())">Rediger dør</button>
+                }
+                <button type="button" class="ds-qr-mini" title="QR-kode" @onclick="@(() => _fane = "qr")">
+                    <img src="@($"/dor/{_dor.Id}/qr.png")" alt="QR-kode for dør @_dor.Dornummer" />
+                </button>
+                @if (IModal && OnLukk.HasDelegate)
+                {
+                    <button type="button" class="ds-ikk" title="Lukk" @onclick="@(() => OnLukk.InvokeAsync())"><Icon Name="x" /></button>
                 }
             </div>
         </div>
-        <div class="id-specs">
-            <div><div class="id-spec-lbl">Romnr</div><div class="id-spec-val">@(_dor.Romnr ?? "-")</div></div>
-            <div><div class="id-spec-lbl">Etasje</div><div class="id-spec-val">@(_dor.Etasje ?? "-")</div></div>
-            <div><div class="id-spec-lbl">Sone</div><div class="id-spec-val">@(_dor.Sone ?? "-")</div></div>
-            <div><div class="id-spec-lbl">Dørtype</div><div class="id-spec-val">@(_dor.Dortype ?? "-")</div></div>
-            <div><div class="id-spec-lbl">B x H</div><div class="id-spec-val">@(_dor.BxH ?? "-")</div></div>
-            <div><div class="id-spec-lbl">Brann</div><div class="id-spec-val">@(_dor.Brann ?? "-")</div></div>
-            <div><div class="id-spec-lbl">Lyd</div><div class="id-spec-val">@(_dor.Lyd ?? "-")</div></div>
-            <div>
-                <div class="id-spec-lbl">Sist oppdatert</div>
-                <div class="id-spec-val id-spec-val-liten">
-                    @if (_dor.OppdatertDato.HasValue)
+
+        <div class="ds-info">
+            <span><Icon Name="map-pin" />Rom <b>@(_dor.Romnr ?? "-")</b>@if (!string.IsNullOrWhiteSpace(_dor.DorTil)) {<span> · til <b>@_dor.DorTil</b></span>}</span>
+            <span><Icon Name="building" /><b>@(_dor.Etasje ?? "-")</b> · sone <b>@(_dor.Sone ?? "-")</b></span>
+            <span><Icon Name="door" /><b>@(_dor.Dortype ?? "-")</b>@if (!string.IsNullOrWhiteSpace(_dor.BxH)) {<span> · @_dor.BxH</span>}</span>
+            <span><Icon Name="alert-triangle" />Brann <b>@(_dor.Brann ?? "-")</b></span>
+            @if (_dor.DorIdMal is not null)
+            {
+                <span><Icon Name="tag" />Dør-ID <b>@_dor.DorIdMal.Kode</b></span>
+            }
+            @if (lengstGaranti is not null)
+            {
+                <span><Icon Name="shield" />Garanti <b>til @lengstGaranti.UtlopsDato!.Value.Year</b></span>
+            }
+        </div>
+
+        <nav class="ds-faner">
+            <button type="button" class="@FaneKlasse("oversikt")" @onclick="@(() => _fane = "oversikt")"><Icon Name="grid" />Oversikt</button>
+            <button type="button" class="@FaneKlasse("beslag")" @onclick="@(() => _fane = "beslag")"><Icon Name="tool" />Beslag <em>@montertAntall/@beslagAntall</em></button>
+            <button type="button" class="@FaneKlasse("dok")" @onclick="@(() => _fane = "dok")"><Icon Name="file-text" />Dokumentasjon <em>@(_ceGodkjenninger.Count + _sylinderRader.Count + _prinsippskisser.Count)</em></button>
+            <button type="button" class="@FaneKlasse("logg")" @onclick="@(() => _fane = "logg")"><Icon Name="image" />Bilder og historikk <em>@(_media.Count + historikk.Count)</em></button>
+            <button type="button" class="@FaneKlasse("avvik")" @onclick="@(() => _fane = "avvik")"><Icon Name="alert" />Avvik og drift <em class="@(apneAvvik > 0 ? "ds-em-rod" : "")">@(apneAvvik > 0 ? apneAvvik : _avvik.Count + _driftsmeldinger.Count)</em></button>
+            <button type="button" class="@FaneKlasse("qr")" @onclick="@(() => _fane = "qr")"><Icon Name="qr" />QR-kode</button>
+        </nav>
+
+        <div class="ds-kropp">
+            @switch (_fane)
+            {
+                case "beslag":
+                    <div class="ds-rad">
+                        <span class="ds-hint ds-flex">Beslag legges til og endres i dørvinduet. Her ser du hva som er montert, og kan fjerne beslag.</span>
+                        @if (IModal && OnTilbake.HasDelegate)
+                        {
+                            <button type="button" class="ds-kn" @onclick="@(() => OnTilbake.InvokeAsync())"><Icon Name="edit" />Rediger beslag</button>
+                        }
+                    </div>
+                    @if (beslagAntall == 0)
                     {
-                        @_dor.OppdatertDato.Value.ToString("dd.MM.yyyy HH:mm")
-                        @(_dor.OppdatertAvBruker is not null ? $" ({_dor.OppdatertAvBruker.Initialer})" : "")
+                        <p class="list-empty">Ingen beslag registrert.</p>
                     }
                     else
                     {
-                        <text>-</text>
+                        <div class="ds-tab-wrap">
+                            <table class="ds-tab">
+                                <thead>
+                                    <tr><th>Vare</th><th class="ds-c">Antall</th><th>Enhet</th><th>Plass.</th><th>Levert av</th><th>Status</th><th></th></tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var dk in _dor.Komponenter.ToList())
+                                    {
+                                        <tr @key="dk.ComponentId">
+                                            <td><b>@dk.Component?.Navn</b>@if (!string.IsNullOrWhiteSpace(dk.Component?.Produktkode)) {<small>@dk.Component!.Produktkode</small>}</td>
+                                            <td class="ds-c">@dk.Antall</td>
+                                            <td>@(dk.Enhet ?? "-")</td>
+                                            <td>@(dk.Plassering switch { DorKomponentPlassering.Hengselside => "H", DorKomponentPlassering.Karmside => "K", _ => "-" })</td>
+                                            <td>@dk.LevertAv</td>
+                                            <td>
+                                                @if (dk.Montert)
+                                                {
+                                                    <span class="ds-pill ds-ok">✓ Montert @(dk.MontertDato?.ToString("dd.MM")) @(dk.MontertAvBruker is not null ? $"({dk.MontertAvBruker.Initialer})" : "")</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="ds-pill ds-gra">Ikke montert</span>
+                                                }
+                                            </td>
+                                            <td><button type="button" class="ds-ikk ds-ikk-liten" title="Fjern beslag" @onclick="@(() => FjernBeslag(dk))"><Icon Name="x" /></button></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <span class="ds-sm">@montertAntall av @beslagAntall montert</span>
                     }
-                </div>
-            </div>
-        </div>
-        @if (_dor.Funksjoner.Count > 0)
-        {
-            <div class="funksjon-chips">
-                @foreach (var f in _dor.Funksjoner)
-                {
-                    <span class="funksjon-chip">@f.Navn</span>
-                }
-            </div>
-        }
-    </div>
+                    break;
 
-    <div class="dor-panel">
-        <div class="dor-panel-header">
-            <span class="dor-panel-ikon"><Icon Name="shield" /></span>
-            <h2>Garanti</h2>
-        </div>
-        @{
-            var garantiLinjer = GarantiBeregning.Linjer(_dor, _dor.Prosjekt?.OverlevertDato);
-        }
-        <div class="garanti-boks">
-            <Icon Name="clock" />
-            @if (_dor.Prosjekt?.OverlevertDato is null)
-            {
-                <span class="garanti-info">Nedtelling starter når prosjektet settes til "Overlevert"</span>
-            }
-            else if (garantiLinjer.Count == 0)
-            {
-                <span class="garanti-info">Ingen beslag med registrert garantitid på produktet</span>
-            }
-            else
-            {
-                <ul class="garanti-liste">
-                    @foreach (var linje in garantiLinjer)
-                    {
-                        <li>
-                            @linje.ComponentNavn
-                            @if (linje.UtlopsDato.HasValue)
+                case "dok":
+                    <div class="ds-seksjon">
+                        <h4>CE-godkjenning</h4>
+                        @if (_apenCeId is not null)
+                        {
+                            <div class="ce-modal-overlay">
+                                <div class="ce-modal">
+                                    <CeGodkjenningPanel Id="_apenCeId.Value" OnClose="LukkCePanel" StartRedigerbar="_apenCeRedigerbar" />
+                                </div>
+                            </div>
+                        }
+                        @if (_ceGodkjenninger.Count > 0)
+                        {
+                            <div class="ds-tab-wrap">
+                                <table class="ds-tab">
+                                    <thead>
+                                        <tr><th>Nummer</th><th>Status</th><th>Vilkår</th><th>Gyldig til</th><th></th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var ce in _ceGodkjenninger)
+                                        {
+                                            <tr @key="ce.Id">
+                                                <td><b>@ce.Sertifiseringsnummer</b></td>
+                                                <td>@ce.Status.Visningsnavn()</td>
+                                                <td>
+                                                    @if (CeValideringsService.ErGodkjent(ce, _dor.Komponenter))
+                                                    {
+                                                        <span class="ds-pill ds-ok">Oppfylt</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="ds-pill ds-gul">Ikke oppfylt</span>
+                                                    }
+                                                </td>
+                                                <td>@ce.GyldigTil.ToString("dd.MM.yyyy")</td>
+                                                <td><button type="button" class="ds-kn ds-kn-s" @onclick="@(() => { _apenCeId = ce.Id; _apenCeRedigerbar = false; })">Åpne</button></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="list-empty">Ingen CE-godkjenning startet på denne døren.</p>
+                        }
+                        @if (_harAutomatikk)
+                        {
+                            <div class="ds-rad"><button type="button" class="ds-kn ds-kn-p ds-kn-s" @onclick="StartCeGodkjenning"><Icon Name="plus" />Start CE-godkjenning</button></div>
+                        }
+                        else
+                        {
+                            <span class="ds-hint">CE-godkjenning kan startes når døren har dørautomatikk under Beslag.</span>
+                        }
+                    </div>
+
+                    <div class="ds-seksjon">
+                        <h4>Låsplan <a href="@($"/prosjekt/{_dor.ProsjektId}/lasplan")">Åpne full låsplan →</a></h4>
+                        @if (_sylinderRader.Count == 0)
+                        {
+                            <p class="list-empty">Ingen sylindere registrert på denne døren.</p>
+                        }
+                        else
+                        {
+                            <div class="ds-liste">
+                                @foreach (var rad in _sylinderRader)
+                                {
+                                    <div @key="rad.ComponentId" class="ds-lr">
+                                        <span class="ds-ik"><Icon Name="lock" /></span>
+                                        <div><b>Syl.mrk @rad.SylMrk · @rad.Navn</b><small>Nøkler: @(rad.Nokler.Count > 0 ? string.Join(", ", rad.Nokler) : "ingen registrert")</small></div>
+                                        <span></span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <div class="ds-seksjon">
+                        <h4>Prinsippskisse</h4>
+                        @if (_prinsippskisser.Count == 0)
+                        {
+                            <p class="list-empty">Ingen prinsippskisse laget ennå. Trykk "Ny prinsippskisse" for å generere en basert på beslaget på denne døren.</p>
+                        }
+                        else
+                        {
+                            <div class="ds-liste">
+                                @foreach (var s in _prinsippskisser)
+                                {
+                                    <div @key="s.Id" class="ds-lr">
+                                        <span class="prinsippskisse-forhandsvisning"><KoblingsSkjemaMiniPreview Symboler="s.Symboler" Streker="s.Streker" /></span>
+                                        <div><b>@s.Navn</b><small>@(s.OppdatertDato is null ? $"Opprettet {s.OpprettetDato:dd.MM.yyyy}" : $"Oppdatert {s.OppdatertDato:dd.MM.yyyy}")</small></div>
+                                        <a class="ds-kn ds-kn-s" href="@($"/koblingsskjema/{s.Id}")"><Icon Name="maximize" />Åpne</a>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        <AuthorizeView Roles="Admin,Prosjektleder">
+                            <div class="ds-rad">
+                                <input class="ds-inp ds-flex" @bind="_nyPrinsippskisseNavn" @bind:event="oninput" placeholder="@($"Prinsippskisse - dør {_dor.Dornummer}")" />
+                                <button type="button" class="ds-kn ds-kn-p ds-kn-s" @onclick="OpprettPrinsippskisse"><Icon Name="plus" />Ny prinsippskisse</button>
+                            </div>
+                        </AuthorizeView>
+                    </div>
+                    break;
+
+                case "logg":
+                    <div class="ds-to">
+                        <div class="ds-seksjon">
+                            <h4>Historikk</h4>
+                            @if (historikk.Count == 0)
                             {
-                                <span class="@(linje.UtlopsDato.Value.Date < DateTime.Today ? "garanti-utlopt" : "garanti-ok")">
-                                    @(linje.UtlopsDato.Value.Date < DateTime.Today ? $"Utløp {linje.UtlopsDato.Value:dd.MM.yyyy}" : $"Til {linje.UtlopsDato.Value:dd.MM.yyyy}")
-                                </span>
+                                <p class="list-empty">Ingen historikk registrert ennå.</p>
                             }
                             else
                             {
-                                <span class="garanti-info">Ingen garantitid satt på produktet</span>
+                                <div>
+                                    @foreach (var h in historikk)
+                                    {
+                                        @HistorikkLinje(h)
+                                    }
+                                </div>
                             }
-                        </li>
-                    }
-                </ul>
-            }
-        </div>
-        <p class="id-opprettet">Opprettet @_dor.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</p>
-    </div>
-
-    <div class="dor-panel">
-        <div class="dor-panel-header">
-            <span class="dor-panel-ikon"><Icon Name="clock" /></span>
-            <h2>Historikk</h2>
-        </div>
-        <p class="section-hint">Endringer, avvik og driftsmeldinger på denne døren, nyest først.</p>
-
-        @if (HistorikkRader.Count == 0)
-        {
-            <p class="list-empty">Ingen historikk registrert ennå.</p>
-        }
-        else
-        {
-            <ul class="historikk-liste">
-                @foreach (var h in HistorikkRader)
-                {
-                    <li @key="@($"{h.Type}-{h.Id}")" class="historikk-rad">
-                        <span class="historikk-type historikk-type-@h.Type">@h.Type</span>
-                        <div class="historikk-tekst-wrap">
-                            <span class="historikk-tekst">@h.Tekst</span>
-                            <span class="historikk-tidspunkt">@h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</span>
                         </div>
-                    </li>
-                }
-            </ul>
-        }
-    </div>
-
-    <div class="dor-panel">
-        <div class="dor-panel-header">
-            <span class="dor-panel-ikon"><Icon Name="tool" /></span>
-            <h2>Beslag</h2>
-        </div>
-        @if (_dor.Komponenter.Count == 0)
-        {
-            <p class="list-empty">Ingen beslag registrert.</p>
-        }
-        else
-        {
-            <div class="tabell-kort">
-            <table class="dor-table">
-                <thead>
-                    <tr><th>Navn</th><th>Antall</th><th>Status</th><th></th></tr>
-                </thead>
-                <tbody>
-                    @foreach (var dk in _dor.Komponenter.ToList())
-                    {
-                        <tr @key="dk.ComponentId">
-                            <td>@dk.Component?.Navn</td>
-                            <td>@dk.Antall @dk.Enhet</td>
-                            <td>
-                                @if (dk.Montert)
-                                {
-                                    <span class="beslag-status-pill beslag-status-montert">Montert @(dk.MontertDato?.ToString("dd.MM.yyyy HH:mm")) @(dk.MontertAvBruker is not null ? $"({dk.MontertAvBruker.Initialer})" : "")</span>
-                                }
-                                else
-                                {
-                                    <span class="beslag-status-pill beslag-status-ikke">Ikke montert</span>
-                                }
-                            </td>
-                            <td><button type="button" class="ikon-btn" title="Fjern beslag" @onclick="@(() => FjernBeslag(dk))"><Icon Name="x" /></button></td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-            </div>
-        }
-    </div>
-
-    <div class="dor-panel">
-        <div class="dor-panel-header">
-            <span class="dor-panel-ikon"><Icon Name="grip" /></span>
-            <h2>Prinsippskisse</h2>
-        </div>
-        <p class="section-hint">Visualisering av dørmiljøet - produkter, funksjoner og grensesnitt satt sammen, til bruk mot RIE/elektro og montør. Genereres automatisk ut fra beslaget under, og kan redigeres fritt videre.</p>
-
-        @if (_prinsippskisser.Count == 0)
-        {
-            <p class="list-empty">Ingen prinsippskisse laget ennå. Trykk "Ny prinsippskisse" for å generere en basert på beslaget på denne døren.</p>
-        }
-        else
-        {
-            <div class="prinsippskisse-liste">
-                @foreach (var s in _prinsippskisser)
-                {
-                    <div @key="s.Id" class="prinsippskisse-rad">
-                        <span class="prinsippskisse-forhandsvisning"><KoblingsSkjemaMiniPreview Symboler="s.Symboler" Streker="s.Streker" /></span>
-                        <div class="prinsippskisse-tekst">
-                            <span class="prinsippskisse-navn">@s.Navn</span>
-                            <span class="prinsippskisse-meta">@(s.OppdatertDato is null ? $"Opprettet {s.OpprettetDato:dd.MM.yyyy}" : $"Oppdatert {s.OppdatertDato:dd.MM.yyyy}")</span>
-                        </div>
-                        <a class="edit-button" href="@($"/koblingsskjema/{s.Id}")"><Icon Name="maximize" />Åpne</a>
-                    </div>
-                }
-            </div>
-        }
-
-        <AuthorizeView Roles="Admin,Prosjektleder">
-            <div class="prinsippskisse-ny">
-                <input @bind="_nyPrinsippskisseNavn" @bind:event="oninput" placeholder="@($"Prinsippskisse - dør {_dor.Dornummer}")" />
-                <button type="button" class="add-button" @onclick="OpprettPrinsippskisse"><Icon Name="plus" />Ny prinsippskisse</button>
-            </div>
-        </AuthorizeView>
-    </div>
-
-    @if (_harAutomatikk)
-    {
-        <div class="dor-panel">
-            <div class="dor-panel-header">
-                <span class="dor-panel-ikon"><Icon Name="check-circle" /></span>
-                <h2>CE-godkjenning</h2>
-            </div>
-            @if (_apenCeId is not null)
-            {
-                <div class="ce-modal-overlay">
-                    <div class="ce-modal">
-                        <CeGodkjenningPanel Id="_apenCeId.Value" OnClose="LukkCePanel" StartRedigerbar="_apenCeRedigerbar" />
-                    </div>
-                </div>
-            }
-            else
-            {
-                @if (_ceGodkjenninger.Count > 0)
-                {
-                    <div class="tabell-kort">
-                    <table class="dor-table">
-                        <thead>
-                            <tr><th>Nummer</th><th>Status</th><th>Vilkår</th><th>Gyldig til</th><th></th></tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var ce in _ceGodkjenninger)
+                        <div class="ds-seksjon">
+                            <h4>Bilder og video</h4>
+                            <label class="dropzone">
+                                <span class="dropzone-ikon"><Icon Name="upload" /></span>
+                                <span class="dropzone-tekst">
+                                    <strong>Last opp bilde eller video</strong>
+                                    <span>Velg om det er «Før» eller «Etter»</span>
+                                </span>
+                                <select @bind="_nyMediaTidspunkt">
+                                    <option value="@DorMediaTidspunkt.For">Før</option>
+                                    <option value="@DorMediaTidspunkt.Etter">Etter</option>
+                                </select>
+                                <InputFile OnChange="LastOppMedia" accept="image/*,video/*" />
+                            </label>
+                            @if (!string.IsNullOrEmpty(_mediaFeil))
                             {
-                                <tr @key="ce.Id">
-                                    <td>@ce.Sertifiseringsnummer</td>
-                                    <td>@ce.Status.Visningsnavn()</td>
-                                    <td>
-                                        @if (CeValideringsService.ErGodkjent(ce, _dor.Komponenter))
+                                <p class="form-error">@_mediaFeil</p>
+                            }
+                            @if (_media.Count == 0)
+                            {
+                                <p class="list-empty">Ingen filer lagt til.</p>
+                            }
+                            else
+                            {
+                                <div class="ds-bilder">
+                                    @foreach (var m in _media)
+                                    {
+                                        @MediaFlis(m)
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                    break;
+
+                case "avvik":
+                    <div class="ds-seksjon">
+                        <h4>Avvik</h4>
+                        <div class="ds-rad">
+                            <textarea class="ds-inp ds-flex" @bind="_nyAvvikBeskrivelse" placeholder="Beskriv avviket..."></textarea>
+                            <button type="button" class="ds-kn ds-kn-p" @onclick="MeldAvvik"><Icon Name="plus" />Meld avvik</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_avvikFeil))
+                        {
+                            <p class="form-error">@_avvikFeil</p>
+                        }
+                        @if (_avvik.Count == 0)
+                        {
+                            <p class="list-empty">Ingen avvik registrert på denne døren.</p>
+                        }
+                        @foreach (var a in _avvik)
+                        {
+                            <div @key="a.Id" class="ds-avv">
+                                <div class="ds-rad ds-mellom">
+                                    <span class="avvik-status avvik-status-@a.Status">@a.Status.Visningsnavn()</span>
+                                    <span class="ds-sm">@a.OpprettetDato.ToString("dd.MM.yyyy HH:mm") @(a.OpprettetAvBruker is not null ? $"· {a.OpprettetAvBruker.Navn}" : "")</span>
+                                </div>
+                                <span>@a.Beskrivelse</span>
+
+                                <AuthorizeView Roles="Admin,Prosjektleder">
+                                    <Authorized>
+                                        @if (a.Status == AvvikStatus.Apent)
                                         {
-                                            <span class="beslag-status-pill beslag-status-montert">Oppfylt</span>
+                                            <div class="avvik-prisform">
+                                                <textarea @bind="a.UtbedringBeskrivelse" placeholder="Foreslått utbedring (valgfritt)"></textarea>
+                                                <input @bind="a.Pris" placeholder="Pris eks. mva" class="price-input" />
+                                                <button type="button" class="save-button" @onclick="@(() => LagreAvvikPris(a))">Lagre</button>
+                                                <button type="button" class="edit-button" @onclick="@(() => VisAvvikPdf(a.Id))">Forhåndsvis PDF</button>
+                                                <button type="button" class="edit-button" disabled="@(!a.Pris.HasValue)" @onclick="@(() => SendTilKunde(a))">Send til kunde</button>
+                                            </div>
                                         }
                                         else
                                         {
-                                            <span class="beslag-status-pill beslag-status-ikke">Ikke oppfylt</span>
+                                            @if (a.Pris.HasValue)
+                                            {
+                                                <p><strong>Pris for utbedring:</strong> @a.Pris.Value.ToString("N2", Kultur) kr eks. mva</p>
+                                            }
+                                            <button type="button" class="edit-button" @onclick="@(() => VisAvvikPdf(a.Id))">Vis PDF</button>
                                         }
-                                    </td>
-                                    <td>@ce.GyldigTil.ToString("dd.MM.yyyy")</td>
-                                    <td><button type="button" class="edit-button" @onclick="@(() => { _apenCeId = ce.Id; _apenCeRedigerbar = false; })">Åpne</button></td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
+                                    </Authorized>
+                                </AuthorizeView>
+
+                                @if (a.Status == AvvikStatus.Godkjent)
+                                {
+                                    <p class="save-success">Godkjent av @a.SignertAvNavn - @a.SignertDato?.ToString("dd.MM.yyyy HH:mm")</p>
+                                }
+
+                                <AuthorizeView Roles="Admin,Prosjektleder">
+                                    <Authorized>
+                                        <div class="avvik-pdfliste">
+                                            <LagredePdfListe Pdfer="@_lagredePdfer.GetValueOrDefault(a.Id, [])" />
+                                        </div>
+                                    </Authorized>
+                                </AuthorizeView>
+                            </div>
+                        }
                     </div>
-                }
-                else
-                {
-                    <p class="list-empty">Ingen CE-godkjenning startet på denne døren.</p>
-                }
-                <button type="button" class="add-button" @onclick="StartCeGodkjenning"><Icon Name="plus" />Start CE-godkjenning</button>
-            }
-        </div>
-    }
 
-    <div class="dor-panel">
-        <div class="dor-panel-header">
-            <span class="dor-panel-ikon"><Icon Name="lock" /></span>
-            <h2>Låsplan for denne døren</h2>
-        </div>
-        @if (_sylinderRader.Count == 0)
-        {
-            <p class="list-empty">Ingen sylindere registrert på denne døren.</p>
-        }
-        else
-        {
-            <div class="tabell-kort">
-            <table class="dor-table">
-                <thead>
-                    <tr><th>Syl.mrk</th><th>Sylinder</th><th>Nøkler som åpner</th></tr>
-                </thead>
-                <tbody>
-                    @foreach (var rad in _sylinderRader)
-                    {
-                        <tr @key="rad.ComponentId">
-                            <td>@rad.SylMrk</td>
-                            <td>@rad.Navn</td>
-                            <td>@(rad.Nokler.Count > 0 ? string.Join(", ", rad.Nokler) : "Ingen registrert")</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-            </div>
-        }
-        <a class="lasplan-lenke" href="@($"/prosjekt/{_dor.ProsjektId}/lasplan")">Åpne full låsplan for prosjektet<Icon Name="arrow-left" /></a>
-    </div>
+                    <div class="ds-seksjon">
+                        <h4>Driftsmeldinger</h4>
+                        @if (_driftsmeldinger.Count == 0)
+                        {
+                            <span class="ds-hint">Ingen driftsmeldinger på denne døren.</span>
+                        }
+                        @foreach (var m in _driftsmeldinger)
+                        {
+                            <div @key="m.Id" class="ds-avv">
+                                <span class="ds-sm">@m.OpprettetDato.ToString("dd.MM.yyyy HH:mm") @(m.InnmeldtAvBruker is not null ? $"· {m.InnmeldtAvBruker.Navn}" : "")</span>
+                                <span>@m.Tekst</span>
+                                @if (m.Media.Count > 0)
+                                {
+                                    <div class="drift-melding-media">
+                                        @foreach (var media in m.Media)
+                                        {
+                                            @if (media.ContentType.StartsWith("video/"))
+                                            {
+                                                <video controls class="drift-melding-video" src="@($"/driftsmeldingmedia/{media.Id}/fil")"></video>
+                                            }
+                                            else
+                                            {
+                                                <a href="@($"/driftsmeldingmedia/{media.Id}/fil")" target="_blank">
+                                                    <img src="@($"/driftsmeldingmedia/{media.Id}/fil")" alt="@media.Filnavn" class="drift-melding-bilde" />
+                                                </a>
+                                            }
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                    break;
 
-    <div class="dor-panel">
-        <div class="dor-panel-header">
-            <span class="dor-panel-ikon"><Icon Name="image" /></span>
-            <h2>Bilder og video</h2>
-        </div>
-        <p class="section-hint">Dokumenter tilstand før og etter arbeid på døren.</p>
+                case "qr":
+                    <div class="ds-boks ds-qr-boks">
+                        <div class="ds-qr"><img src="@($"/dor/{_dor.Id}/qr.png")" alt="QR-kode for dør @_dor.Dornummer" /></div>
+                        <div class="ds-qr-tekst">
+                            <b>QR-kode for @_dor.Dornummer</b>
+                            <span class="ds-sm">Skriv ut og fest på dørkarmen. Skanning åpner denne dørsiden direkte.</span>
+                            <div class="ds-rad">
+                                <a href="@($"/dor/{_dor.Id}/qr.png")" download="@($"qr-dor-{_dor.Dornummer}.png")" class="ds-kn ds-kn-p ds-kn-s"><Icon Name="download" />Last ned PNG</a>
+                            </div>
+                        </div>
+                    </div>
+                    break;
 
-        <label class="dropzone">
-            <span class="dropzone-ikon"><Icon Name="upload" /></span>
-            <span class="dropzone-tekst">
-                <strong>Last opp bilde eller video</strong>
-                <span>Velg om det er «Før» eller «Etter»</span>
-            </span>
-            <select @bind="_nyMediaTidspunkt">
-                <option value="@DorMediaTidspunkt.For">Før</option>
-                <option value="@DorMediaTidspunkt.Etter">Etter</option>
-            </select>
-            <InputFile OnChange="LastOppMedia" accept="image/*,video/*" />
-        </label>
-        @if (!string.IsNullOrEmpty(_mediaFeil))
-        {
-            <p class="form-error">@_mediaFeil</p>
-        }
-
-        @foreach (var gruppe in new[] { DorMediaTidspunkt.For, DorMediaTidspunkt.Etter })
-        {
-            var bilder = _media.Where(m => m.Tidspunkt == gruppe).ToList();
-            <p class="media-gruppe-tittel">@gruppe.Visningsnavn()</p>
-            @if (bilder.Count == 0)
-            {
-                <p class="list-empty">Ingen filer lagt til.</p>
-            }
-            else
-            {
-                <div class="media-grid">
-                    @foreach (var m in bilder)
-                    {
-                        <div @key="m.Id" class="media-item">
-                            @if (m.ContentType.StartsWith("video/"))
+                default:
+                    <div class="ds-tall4">
+                        <div>
+                            <span class="ds-lbl">Beslag montert</span>
+                            <b>@montertAntall / @beslagAntall</b>
+                            <span class="ds-bar"><i style="width:@(beslagAntall == 0 ? 0 : montertAntall * 100 / beslagAntall)%"></i></span>
+                        </div>
+                        <div>
+                            <span class="ds-lbl">Garanti</span>
+                            @if (_dor.Prosjekt?.OverlevertDato is null)
                             {
-                                <video controls src="@($"/dormedia/{m.Id}")"></video>
+                                <b>Ikke startet</b><small>starter ved overlevering</small>
+                            }
+                            else if (lengstGaranti is null)
+                            {
+                                <b>-</b><small>ingen garantitid på beslag</small>
                             }
                             else
                             {
-                                <img src="@($"/dormedia/{m.Id}")" alt="@m.Filnavn" />
+                                <b>til @lengstGaranti.UtlopsDato!.Value.Year</b><small>@lengstGaranti.ComponentNavn</small>
                             }
-                            <button type="button" class="media-fjern-btn" title="Slett" @onclick="@(() => SlettMedia(m))"><Icon Name="x" /></button>
                         </div>
-                    }
-                </div>
-            }
-        }
-    </div>
+                        <div>
+                            <span class="ds-lbl">Åpne avvik</span>
+                            <b class="@(apneAvvik > 0 ? "ds-rod" : "")">@apneAvvik</b>
+                            <small>@(_avvik.FirstOrDefault(a => a.Status == AvvikStatus.Apent)?.Beskrivelse ?? "ingen åpne")</small>
+                        </div>
+                        <div>
+                            <span class="ds-lbl">Sist oppdatert</span>
+                            <b>@((_dor.OppdatertDato ?? _dor.OpprettetDato).ToString("dd.MM"))</b>
+                            <small>@(_dor.OppdatertAvBruker?.Navn ?? $"opprettet {_dor.OpprettetDato:dd.MM.yyyy}")</small>
+                        </div>
+                    </div>
 
-    <div class="dor-panel">
-        <div class="dor-panel-header">
-            <span class="dor-panel-ikon"><Icon Name="bell" /></span>
-            <h2>Driftsmeldinger</h2>
-        </div>
-
-        @if (_driftsmeldinger.Count == 0)
-        {
-            <p class="list-empty">Ingen driftsmeldinger registrert på denne døren.</p>
-        }
-        else
-        {
-            @foreach (var m in _driftsmeldinger)
-            {
-                <div @key="m.Id" class="drift-melding-kort">
-                    <p class="drift-melding-meta">@m.OpprettetDato.ToString("dd.MM.yyyy HH:mm") @(m.InnmeldtAvBruker is not null ? $"- {m.InnmeldtAvBruker.Navn}" : "")</p>
-                    <p class="drift-melding-tekst">@m.Tekst</p>
-                    @if (m.Media.Count > 0)
-                    {
-                        <div class="drift-melding-media">
-                            @foreach (var media in m.Media)
-                            {
-                                @if (media.ContentType.StartsWith("video/"))
+                    <div class="ds-to">
+                        <div class="ds-kol">
+                            <div class="ds-seksjon">
+                                <h4>Spesifikasjon</h4>
+                                <div class="ds-info2">
+                                    <div><small>Romnr</small><b>@(_dor.Romnr ?? "-")</b></div>
+                                    <div><small>Etasje / sone</small><b>@(_dor.Etasje ?? "-") · @(_dor.Sone ?? "-")</b></div>
+                                    <div><small>Dørtype</small><b>@(_dor.Dortype ?? "-")</b></div>
+                                    <div><small>B x H</small><b>@(_dor.BxH ?? "-")</b></div>
+                                    <div><small>Brann</small><b>@(_dor.Brann ?? "-")</b></div>
+                                    <div><small>Lyd</small><b>@(_dor.Lyd ?? "-")</b></div>
+                                </div>
+                            </div>
+                            <div class="ds-seksjon">
+                                <h4>Dørfunksjoner</h4>
+                                @if (_dor.Funksjoner.Count == 0)
                                 {
-                                    <video controls class="drift-melding-video" src="@($"/driftsmeldingmedia/{media.Id}/fil")"></video>
+                                    <span class="ds-hint">Ingen dørfunksjoner registrert.</span>
                                 }
                                 else
                                 {
-                                    <a href="@($"/driftsmeldingmedia/{media.Id}/fil")" target="_blank">
-                                        <img src="@($"/driftsmeldingmedia/{media.Id}/fil")" alt="@media.Filnavn" class="drift-melding-bilde" />
-                                    </a>
-                                }
-                            }
-                        </div>
-                    }
-                </div>
-            }
-        }
-    </div>
-
-    <div class="dor-panel">
-        <div class="dor-panel-header">
-            <span class="dor-panel-ikon"><Icon Name="alert" /></span>
-            <h2>Avvik</h2>
-        </div>
-
-        @if (_avvik.Count == 0)
-        {
-            <p class="list-empty">Ingen avvik registrert på denne døren.</p>
-        }
-        else
-        {
-            <div class="avvik-liste">
-                @foreach (var a in _avvik)
-                {
-                    <div @key="a.Id" class="avvik-kort">
-                        <div class="avvik-header">
-                            <span class="avvik-status avvik-status-@a.Status">@a.Status.Visningsnavn()</span>
-                            <span class="avvik-dato">@a.OpprettetDato.ToString("dd.MM.yyyy HH:mm") @(a.OpprettetAvBruker is not null ? $"({a.OpprettetAvBruker.Initialer})" : "")</span>
-                        </div>
-                        <p>@a.Beskrivelse</p>
-
-                        <AuthorizeView Roles="Admin,Prosjektleder">
-                            <Authorized>
-                                @if (a.Status == AvvikStatus.Apent)
-                                {
-                                    <div class="avvik-prisform">
-                                        <textarea @bind="a.UtbedringBeskrivelse" placeholder="Foreslått utbedring (valgfritt)"></textarea>
-                                        <input @bind="a.Pris" placeholder="Pris eks. mva" class="price-input" />
-                                        <button type="button" class="save-button" @onclick="@(() => LagreAvvikPris(a))">Lagre</button>
-                                        <button type="button" class="edit-button" @onclick="@(() => VisAvvikPdf(a.Id))">Forhåndsvis PDF</button>
-                                        <button type="button" class="edit-button" disabled="@(!a.Pris.HasValue)" @onclick="@(() => SendTilKunde(a))">Send til kunde</button>
+                                    <div class="ds-chips">
+                                        @foreach (var f in _dor.Funksjoner)
+                                        {
+                                            <span class="ds-fchip">@f.Navn</span>
+                                        }
                                     </div>
                                 }
+                            </div>
+                            <div class="ds-seksjon">
+                                <h4>Beslag <button type="button" @onclick="@(() => _fane = "beslag")">Alle →</button></h4>
+                                @if (beslagAntall == 0)
+                                {
+                                    <p class="list-empty">Ingen beslag registrert.</p>
+                                }
                                 else
                                 {
-                                    @if (a.Pris.HasValue)
-                                    {
-                                        <p><strong>Pris for utbedring:</strong> @a.Pris.Value.ToString("N2", Kultur) kr eks. mva</p>
-                                    }
-                                    <button type="button" class="edit-button" @onclick="@(() => VisAvvikPdf(a.Id))">Vis PDF</button>
+                                    <div class="ds-liste">
+                                        @foreach (var dk in _dor.Komponenter.ToList())
+                                        {
+                                            <div @key="dk.ComponentId" class="ds-lr">
+                                                <span class="ds-ik"><Icon Name="tool" /></span>
+                                                <div><b>@dk.Component?.Navn</b><small>@(string.IsNullOrWhiteSpace(dk.Component?.Produktkode) ? "" : dk.Component!.Produktkode + " · ")@dk.Antall @dk.Enhet</small></div>
+                                                @if (dk.Montert)
+                                                {
+                                                    <span class="ds-pill ds-ok">Montert @(dk.MontertAvBruker?.Initialer) @(dk.MontertDato?.ToString("dd.MM"))</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="ds-sm">Ikke montert</span>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
                                 }
-                            </Authorized>
-                        </AuthorizeView>
-
-                        @if (a.Status == AvvikStatus.Godkjent)
-                        {
-                            <p class="save-success">Godkjent av @a.SignertAvNavn - @a.SignertDato?.ToString("dd.MM.yyyy HH:mm")</p>
-                        }
-
-                        <AuthorizeView Roles="Admin,Prosjektleder">
-                            <Authorized>
-                                <div class="avvik-pdfliste">
-                                    <LagredePdfListe Pdfer="@_lagredePdfer.GetValueOrDefault(a.Id, [])" />
+                            </div>
+                        </div>
+                        <div class="ds-kol">
+                            <div class="ds-seksjon">
+                                <h4>Siste hendelser <button type="button" @onclick="@(() => _fane = "logg")">Alle →</button></h4>
+                                @if (historikk.Count == 0)
+                                {
+                                    <p class="list-empty">Ingen historikk registrert ennå.</p>
+                                }
+                                else
+                                {
+                                    <div>
+                                        @foreach (var h in historikk.Take(5))
+                                        {
+                                            @HistorikkLinje(h)
+                                        }
+                                    </div>
+                                }
+                            </div>
+                            <div class="ds-seksjon">
+                                <h4>Bilder <button type="button" @onclick="@(() => _fane = "logg")">Alle →</button></h4>
+                                <div class="ds-bilder">
+                                    @foreach (var m in _media.Take(4))
+                                    {
+                                        @MediaFlis(m)
+                                    }
+                                    <button type="button" class="ds-bilde ds-bilde-ny" @onclick="@(() => _fane = "logg")">+ Last opp</button>
                                 </div>
-                            </Authorized>
-                        </AuthorizeView>
+                            </div>
+                            <div class="ds-seksjon">
+                                <h4>Garanti</h4>
+                                @if (_dor.Prosjekt?.OverlevertDato is null)
+                                {
+                                    <span class="ds-hint">Nedtelling starter når prosjektet settes til "Overlevert".</span>
+                                }
+                                else if (garantiLinjer.Count == 0)
+                                {
+                                    <span class="ds-hint">Ingen beslag med registrert garantitid på produktet.</span>
+                                }
+                                else
+                                {
+                                    <div class="ds-liste">
+                                        @foreach (var linje in garantiLinjer)
+                                        {
+                                            <div class="ds-lr">
+                                                <span class="ds-ik"><Icon Name="shield" /></span>
+                                                <div><b>@linje.ComponentNavn</b></div>
+                                                @if (linje.UtlopsDato.HasValue)
+                                                {
+                                                    var utlopt = linje.UtlopsDato.Value.Date < DateTime.Today;
+                                                    <span class="ds-pill @(utlopt ? "ds-rod-pill" : "ds-ok")">@(utlopt ? $"Utløp {linje.UtlopsDato.Value:dd.MM.yyyy}" : $"Til {linje.UtlopsDato.Value:dd.MM.yyyy}")</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="ds-pill ds-gra">Ingen garantitid</span>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                                <span class="ds-sm">Opprettet @_dor.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
+                            </div>
+                        </div>
                     </div>
-                }
-            </div>
-        }
-
-        <div class="nytt-avvik-form">
-            <textarea @bind="_nyAvvikBeskrivelse" placeholder="Beskriv avviket..."></textarea>
-            <button type="button" class="add-button" @onclick="MeldAvvik"><Icon Name="plus" />Meld avvik</button>
-        </div>
-        @if (!string.IsNullOrEmpty(_avvikFeil))
-        {
-            <p class="form-error">@_avvikFeil</p>
-        }
-
-        <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Avvik" SaveMessage="@_pdfSavedMessage"
-                          OnSave="LagreAvvikPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
-    </div>
-
-    <div class="dor-panel">
-        <div class="dor-panel-header">
-            <span class="dor-panel-ikon"><Icon Name="settings" /></span>
-            <h2>QR-kode</h2>
-        </div>
-        <p class="section-hint">Skriv ut og fest på dørkarmen. Skanning åpner denne siden direkte.</p>
-        <div class="qr-kort">
-            <div class="qr-bilde-wrap">
-                <img class="qr-bilde" src="@($"/dor/{_dor.Id}/qr.png")" alt="QR-kode for dør @_dor.Dornummer" />
-            </div>
-            <div class="qr-tekst">
-                <p>Denne QR-koden peker direkte til denne dørsiden.</p>
-                <a href="@($"/dor/{_dor.Id}/qr.png")" download="@($"qr-dor-{_dor.Dornummer}.png")" class="add-button">Last ned QR-kode</a>
-            </div>
+                    break;
+            }
         </div>
     </div>
+
+    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Avvik" SaveMessage="@_pdfSavedMessage"
+                      OnSave="LagreAvvikPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
 }
 
 @code {
@@ -514,6 +593,41 @@ else
     [SupplyParameterFromQuery(Name = "ce")] public int? ApneCeId { get; set; }
     [SupplyParameterFromQuery(Name = "rediger")] public bool? ApneCeRedigerbar { get; set; }
     [SupplyParameterFromQuery(Name = "ny")] public bool? StartNyCe { get; set; }
+
+    // Brukes når dørsiden vises i samme vindu som døren (prosjekt/plantegning)
+    // i stedet for som egen side.
+    [Parameter] public bool IModal { get; set; }
+    [Parameter] public EventCallback OnTilbake { get; set; }
+    [Parameter] public EventCallback OnLukk { get; set; }
+    [Parameter] public EventCallback OnForrige { get; set; }
+    [Parameter] public EventCallback OnNeste { get; set; }
+    [Parameter] public string? ForrigeNavn { get; set; }
+    [Parameter] public string? NesteNavn { get; set; }
+
+    private string _fane = "oversikt";
+    private int? _lastetId;
+
+    private string FaneKlasse(string fane) => _fane == fane ? "ds-fane ds-fane-aktiv" : "ds-fane";
+
+    private RenderFragment HistorikkLinje(HistorikkRad h) =>
+        @<div class="ds-tli">
+            <span class="ds-tli-ik ds-tli-@h.Type"><Icon Name="@(h.Type switch { "Avvik" => "alert", "Driftsmelding" => "bell", _ => "edit" })" /></span>
+            <div><b>@h.Tekst</b><small>@h.Type · @h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</small></div>
+        </div>;
+
+    private RenderFragment MediaFlis(DorMedia m) =>
+        @<div @key="m.Id" class="ds-bilde">
+            @if (m.ContentType.StartsWith("video/"))
+            {
+                <video controls src="@($"/dormedia/{m.Id}")"></video>
+            }
+            else
+            {
+                <img src="@($"/dormedia/{m.Id}")" alt="@m.Filnavn" />
+            }
+            <span class="ds-bilde-merke">@m.Tidspunkt.Visningsnavn()</span>
+            <button type="button" class="ds-bilde-fjern" title="Slett" @onclick="@(() => SlettMedia(m))"><Icon Name="x" /></button>
+        </div>;
     private bool _apenCeIdInitFraQuery;
     private bool _apenCeRedigerbar;
     private bool _startNyCeInitFraQuery;
@@ -569,6 +683,20 @@ else
     private int? _naverendeBrukerId;
 
     protected override async Task OnParametersSetAsync()
+    {
+        // I vinduet rendres siden på nytt hver gang forelderen gjør det - last
+        // bare inn på nytt når det er en annen dør.
+        if (_lastetId == Id)
+        {
+            return;
+        }
+
+        _lastetId = Id;
+        _fane = "oversikt";
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
     {
         if (AuthStateTask is not null)
         {
@@ -834,7 +962,7 @@ else
         Db.NokkelSylindere.RemoveRange(krysser);
 
         await Db.SaveChangesAsync();
-        await OnParametersSetAsync();
+        await LastAsync();
     }
 
     private async Task LastOppMedia(InputFileChangeEventArgs e)
