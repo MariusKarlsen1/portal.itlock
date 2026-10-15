@@ -23,7 +23,26 @@ public class Kunngjoring
     public string? BildeContentType { get; set; }
     public string? BildeFilnavn { get; set; }
 
+    // Fellesskap og innleggstype (oktober 2026, se Fellesskap.cs / InnleggType.cs).
+    public int? FellesskapId { get; set; }
+    public Fellesskap? Fellesskap { get; set; }
+    public InnleggType Type { get; set; } = InnleggType.Kunngjoring;
+
+    // Fargebakgrunn for korte innlegg (InnleggBakgrunn) - bilde bruker BildeData.
+    public string? Bakgrunn { get; set; }
+    public bool KreverBekreftelse { get; set; }
+
+    public int? RosTilBrukerId { get; set; }
+    public Bruker? RosTilBruker { get; set; }
+    public string? RosMerke { get; set; }
+
+    // Spørsmål: kommentaren som er merket som beste svar (= løst).
+    public int? BesteSvarKommentarId { get; set; }
+
     public List<KunngjoringLike> Likes { get; set; } = [];
+    public List<KunngjoringBekreftelse> Bekreftelser { get; set; } = [];
+    public List<KunngjoringVisning> Visninger { get; set; } = [];
+    public List<AvstemningValg> Valg { get; set; } = [];
     public List<KunngjoringKommentar> Kommentarer { get; set; } = [];
     public List<KunngjoringPamelding> Pameldinger { get; set; } = [];
 }

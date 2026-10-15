@@ -341,6 +341,57 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ArbeidsordreVarer");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.AvstemningStemme", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Dato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("KunngjoringId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ValgId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ValgId");
+
+                    b.HasIndex("KunngjoringId", "BrukerId")
+                        .IsUnique();
+
+                    b.ToTable("AvstemningStemmer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.AvstemningValg", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("KunngjoringId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Tekst")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KunngjoringId");
+
+                    b.ToTable("AvstemningValg");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Avvik", b =>
                 {
                     b.Property<int>("Id")
@@ -2455,6 +2506,80 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("FdvVedlegg");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.Fellesskap", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Beskrivelse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("ErObligatorisk")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Farge")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OmslagContentType")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("OmslagData")
+                        .HasColumnType("BLOB");
+
+                    b.Property<int?>("OpprettetAvBrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("OpprettetDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Tema")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OpprettetAvBrukerId");
+
+                    b.ToTable("Fellesskap");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.FellesskapMedlem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("BleMedDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ErAdmin")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ErFavoritt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("FellesskapId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BrukerId");
+
+                    b.HasIndex("FellesskapId", "BrukerId")
+                        .IsUnique();
+
+                    b.ToTable("FellesskapMedlemmer");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Foresporsel", b =>
                 {
                     b.Property<int>("Id")
@@ -3292,6 +3417,12 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Bakgrunn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("BesteSvarKommentarId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("BildeContentType")
                         .HasColumnType("TEXT");
 
@@ -3307,6 +3438,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("EventDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("FellesskapId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("Festet")
                         .HasColumnType("INTEGER");
 
@@ -3320,11 +3454,20 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("Kategori")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("KreverBekreftelse")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("OpprettetAvBrukerId")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("OpprettetDato")
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("RosMerke")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("RosTilBrukerId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Sted")
                         .HasColumnType("TEXT");
@@ -3333,11 +3476,43 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("FellesskapId");
 
                     b.HasIndex("OpprettetAvBrukerId");
 
+                    b.HasIndex("RosTilBrukerId");
+
                     b.ToTable("Kunngjoringer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KunngjoringBekreftelse", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Dato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("KunngjoringId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BrukerId");
+
+                    b.HasIndex("KunngjoringId", "BrukerId")
+                        .IsUnique();
+
+                    b.ToTable("KunngjoringBekreftelser");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KunngjoringKommentar", b =>
@@ -3423,6 +3598,29 @@ namespace PortalItlock.Web.Migrations
                         .IsUnique();
 
                     b.ToTable("KunngjoringPameldinger");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KunngjoringVisning", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Dato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("KunngjoringId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KunngjoringId", "BrukerId")
+                        .IsUnique();
+
+                    b.ToTable("KunngjoringVisninger");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LagretPdf", b =>
@@ -6298,6 +6496,28 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("PlukketAvBruker");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.AvstemningStemme", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.AvstemningValg", "Valg")
+                        .WithMany("Stemmer")
+                        .HasForeignKey("ValgId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Valg");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.AvstemningValg", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Kunngjoring", "Kunngjoring")
+                        .WithMany("Valg")
+                        .HasForeignKey("KunngjoringId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Kunngjoring");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Avvik", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Dor", "Dor")
@@ -6638,6 +6858,34 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Prosjekt");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.Fellesskap", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Bruker", "OpprettetAvBruker")
+                        .WithMany()
+                        .HasForeignKey("OpprettetAvBrukerId");
+
+                    b.Navigation("OpprettetAvBruker");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.FellesskapMedlem", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Bruker", "Bruker")
+                        .WithMany()
+                        .HasForeignKey("BrukerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Fellesskap", "Fellesskap")
+                        .WithMany("Medlemmer")
+                        .HasForeignKey("FellesskapId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Bruker");
+
+                    b.Navigation("Fellesskap");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ForesporselMedia", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Foresporsel", "Foresporsel")
@@ -6863,11 +7111,44 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Kunngjoring", b =>
                 {
+                    b.HasOne("PortalItlock.Web.Models.Fellesskap", "Fellesskap")
+                        .WithMany("Innlegg")
+                        .HasForeignKey("FellesskapId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("PortalItlock.Web.Models.Bruker", "OpprettetAvBruker")
                         .WithMany()
                         .HasForeignKey("OpprettetAvBrukerId");
 
+                    b.HasOne("PortalItlock.Web.Models.Bruker", "RosTilBruker")
+                        .WithMany()
+                        .HasForeignKey("RosTilBrukerId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Fellesskap");
+
                     b.Navigation("OpprettetAvBruker");
+
+                    b.Navigation("RosTilBruker");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KunngjoringBekreftelse", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Bruker", "Bruker")
+                        .WithMany()
+                        .HasForeignKey("BrukerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Kunngjoring", "Kunngjoring")
+                        .WithMany("Bekreftelser")
+                        .HasForeignKey("KunngjoringId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Bruker");
+
+                    b.Navigation("Kunngjoring");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KunngjoringKommentar", b =>
@@ -6921,6 +7202,17 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Bruker");
+
+                    b.Navigation("Kunngjoring");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KunngjoringVisning", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Kunngjoring", "Kunngjoring")
+                        .WithMany("Visninger")
+                        .HasForeignKey("KunngjoringId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("Kunngjoring");
                 });
@@ -7669,6 +7961,11 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Varer");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.AvstemningValg", b =>
+                {
+                    b.Navigation("Stemmer");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Befaring", b =>
                 {
                     b.Navigation("Dorfelt");
@@ -7730,6 +8027,13 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Media");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.Fellesskap", b =>
+                {
+                    b.Navigation("Innlegg");
+
+                    b.Navigation("Medlemmer");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Foresporsel", b =>
                 {
                     b.Navigation("Media");
@@ -7768,11 +8072,17 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Kunngjoring", b =>
                 {
+                    b.Navigation("Bekreftelser");
+
                     b.Navigation("Kommentarer");
 
                     b.Navigation("Likes");
 
                     b.Navigation("Pameldinger");
+
+                    b.Navigation("Valg");
+
+                    b.Navigation("Visninger");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Leverandor", b =>

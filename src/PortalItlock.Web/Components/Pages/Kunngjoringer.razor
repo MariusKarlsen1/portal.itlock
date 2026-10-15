@@ -1,4 +1,6 @@
 @page "/kunngjoringer"
+@page "/kunngjoringer/fellesskap"
+@page "/kunngjoringer/fellesskap/{FellesskapId:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @using Microsoft.AspNetCore.Components.Authorization
@@ -6,277 +8,1152 @@
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject NavigationManager Nav
 
-<PageTitle>Kunngjøringer - Full Kontroll</PageTitle>
+<PageTitle>@SideTittel - Full Kontroll</PageTitle>
 
-@* Oppsett "Sosial" (oktober 2026): kategorimeny til venstre, feed i midten
-   med reaksjoner, kommentarer og påmelding på arrangementer, og et
-   sidepanel med neste arrangement og nye kolleger. *@
+@* Kunngjøringer som fellesskap (oktober 2026, etter Viva Engage):
+   1) /kunngjoringer/fellesskap - mine fellesskap og "Oppdag fellesskap",
+   2) /kunngjoringer/fellesskap/{id} - omslag, skrivefelt med innleggstyper
+      (Diskusjon, Spørsmål, Ros, Avstemning, Kunngjøring, Arrangement),
+      feed og sidepanel med medlemmer, kommende og festede innlegg,
+   3) /kunngjoringer - hjem-feed med alt fra fellesskapene mine.
+   Innlegg kan ha bakgrunnsbilde eller fargebakgrunn. *@
 <div class="kunngjoringer-side">
-
-<div class="kg-topp">
-    <div>
-        <h1>Kunngjøringer</h1>
-        <p>Informasjon og oppdateringer for hele teamet</p>
-    </div>
-    @if (ErAdminEllerPl)
-    {
-        <button type="button" class="kg-knapp kg-knapp-p" @onclick="@(() => _visNyForm = !_visNyForm)"><Icon Name="plus" />Ny kunngjøring</button>
-    }
-</div>
-
-<div class="kg-sos">
+<div class="kg-eng">
     <nav class="kg-meny">
-        <button type="button" class="@(_filter == "" ? "aktiv" : "")" @onclick="@(() => _filter = "")"><Icon Name="home" />Alt<em>@_kunngjoringer.Count</em></button>
-        @foreach (var kat in Enum.GetValues<KunngjoringKategori>())
+        @if (KanOppretteFellesskap)
         {
-            var verdi = kat.ToString();
-            <button type="button" class="@(_filter == verdi ? "aktiv" : "")" @onclick="@(() => _filter = verdi)"><Icon Name="@kat.PillIkon()" />@kat.Visningsnavn()<em>@_kunngjoringer.Count(k => k.Kategori == kat)</em></button>
+            <div class="kg-opprett">
+                <button type="button" class="kg-ny-knapp" @onclick="@(() => _visOpprettMeny = !_visOpprettMeny)"><Icon Name="plus" />Opprett nytt</button>
+                @if (_visOpprettMeny)
+                {
+                    <div class="kg-opprett-meny">
+                        <button type="button" @onclick="NyttInnleggFraMeny"><Icon Name="edit" />Nytt innlegg</button>
+                        <button type="button" @onclick="@(() => { _visOpprettMeny = false; ApneFellesskapSkjema(null); })"><Icon Name="users" />Nytt fellesskap</button>
+                    </div>
+                }
+            </div>
         }
-        <button type="button" class="@(_filter == "festet" ? "aktiv" : "")" @onclick="@(() => _filter = "festet")"><Icon Name="star" />Festet<em>@_kunngjoringer.Count(k => k.Festet)</em></button>
+        <a href="/kunngjoringer" class="@(_visning == Visning.Hjem ? "pa" : "")"><Icon Name="home" /><span>Hjem</span>@if (UlesteTotalt > 0) {<span class="kg-ul">@UlesteTotalt</span>}</a>
+        <a href="/kunngjoringer/fellesskap" class="@(_visning == Visning.Oversikt ? "pa" : "")"><Icon Name="users" />Fellesskap</a>
+
+        @if (Favoritter.Count > 0)
+        {
+            <h5>Favoritter</h5>
+            @foreach (var f in Favoritter)
+            {
+                @MenyLenke(f)
+            }
+        }
+        <h5>Mine fellesskap</h5>
+        @foreach (var f in MineFellesskap)
+        {
+            @MenyLenke(f)
+        }
+        <a href="/kunngjoringer/fellesskap" class="kg-oppdag"><Icon Name="search" />Oppdag fellesskap</a>
     </nav>
 
-    <div class="kg-feed">
-        @if (ErAdminEllerPl && !_visNyForm)
+    <div class="kg-innhold">
+        @if (_visning == Visning.Oversikt)
         {
-            <button type="button" class="kg-komponer" @onclick="@(() => _visNyForm = true)">
-                <span class="kg-av kg-av-l" style="background:@AvatarFarge(_naverendeBruker?.Navn ?? "?");">@Initialer(_naverendeBruker?.Navn ?? "?")</span>
-                <span class="kg-komponer-felt">Hva vil du dele@(_naverendeBruker is null ? "" : $", {Fornavn(_naverendeBruker.Navn)}")?</span>
-            </button>
-        }
+            @* ---------- 1 · Fellesskap ---------- *@
+            <div class="kg-ptittel">
+                <div><h1>Fellesskap</h1><p>Se hva som er nytt i fellesskapene dine, og finn flere i organisasjonen</p></div>
+            </div>
 
-        @if (_visNyForm)
-        {
-            <div class="kg-form">
-                <h3>Ny kunngjøring</h3>
-                <span class="kg-form-lbl">Kategori</span>
-                <div class="kg-katvalg">
-                    @foreach (var kat in Enum.GetValues<KunngjoringKategori>())
+            <section class="kg-seksjon">
+                <div class="kg-shode"><h2>Mine fellesskap</h2></div>
+                <div class="kg-mine">
+                    @foreach (var f in MineFellesskap)
                     {
-                        var valgt = kat;
-                        <button type="button" class="kg-kat kg-kat-@kat.PillFarge() @(_nyKategori == kat ? "valgt" : "")" @onclick="@(() => _nyKategori = valgt)"><Icon Name="@kat.PillIkon()" />@kat.Visningsnavn()</button>
+                        var nye = UlesteI(f.Id);
+                        <a class="kg-mk" href="@($"/kunngjoringer/fellesskap/{f.Id}")" @key="f.Id">
+                            @Omslag(f, "kg-oms-liten")
+                            <span class="kg-mk-kr">
+                                <span class="kg-flogo" style="background:@f.Farge">@Forkortelse(f.Navn)</span>
+                                <b>@f.Navn</b>
+                                <small>@AntallMedlemmer(f) <span>medlemmer</span>@if (nye > 0) {<text> · <span class="kg-nyp">@nye nye</span></text>}</small>
+                            </span>
+                        </a>
                     }
                 </div>
-                <label>Tittel<input @bind="_nyTittel" placeholder="F.eks. Sommerfest 2026" /></label>
-                <label>Innhold<textarea rows="4" @bind="_nyInnhold" placeholder="Skriv kunngjøringen her..."></textarea></label>
-                <label>
-                    Bilde (valgfritt)
-                    <InputFile OnChange="LastOppBilde" accept="image/*" />
-                </label>
-                @if (_nyBildeData is not null)
-                {
-                    <p class="kg-bilde-valgt">Bilde valgt: @_nyBildeFilnavn <button type="button" class="kg-lenke" @onclick="FjernValgtBilde">Fjern</button></p>
-                }
-                <span class="kg-form-lbl">Arrangement (valgfritt – gir påmelding)</span>
-                <div class="kg-form-rad">
-                    <label>Dato<input type="date" @bind="_nyEventDato" /></label>
-                    <label>Sted<input @bind="_nySted" placeholder="F.eks. Sjøsiden Selskapslokaler" /></label>
-                    <label>Detaljer<input @bind="_nyDetaljer" placeholder="F.eks. kl. 19:00 · 3-retters middag" /></label>
+            </section>
+
+            <div class="kg-linje"></div>
+
+            <section class="kg-seksjon">
+                <div class="kg-shode"><div><h2>Oppdag fellesskap</h2><small>Alle fellesskap i organisasjonen</small></div></div>
+                <div class="kg-sokrad">
+                    <label class="kg-sokfelt"><Icon Name="search" /><input placeholder="Søk i fellesskap ..." @bind="_sok" @bind:event="oninput" /></label>
+                    <button type="button" class="kg-chip @(!_bareIkkeMedlem ? "pa" : "")" @onclick="@(() => _bareIkkeMedlem = false)">Alle</button>
+                    <button type="button" class="kg-chip @(_bareIkkeMedlem ? "pa" : "")" @onclick="@(() => _bareIkkeMedlem = true)">Ikke medlem</button>
                 </div>
-                <label>Uthevet info<input @bind="_nyInfoTekst" placeholder="F.eks. Påmelding til Kari innen 10. oktober." /></label>
-                <label class="kg-sjekk"><input type="checkbox" @bind="_nyFestet" />Fest øverst</label>
-                @if (!string.IsNullOrEmpty(_feil))
+                @if (OppdagListe.Count == 0)
                 {
-                    <p class="form-error">@_feil</p>
+                    <p class="list-empty">Ingen fellesskap passer søket.</p>
                 }
-                <div class="kg-form-knapper">
-                    <button type="button" class="kg-knapp" @onclick="@(() => _visNyForm = false)">Avbryt</button>
-                    <button type="button" class="kg-knapp kg-knapp-p" @onclick="Opprett"><Icon Name="send" />Publiser</button>
+                <div class="kg-fgrid">
+                    @foreach (var f in OppdagListe)
+                    {
+                        <div class="kg-fk" @key="f.Id" @onclick="@(() => Nav.NavigateTo($"/kunngjoringer/fellesskap/{f.Id}"))">
+                            @Omslag(f, "")
+                            <div class="kg-fk-kropp">
+                                <div class="kg-fk-topp"><span class="kg-flogo kg-flogo-m" style="background:@f.Farge">@Forkortelse(f.Navn)</span>@Stabel(MedlemmerAv(f).Take(4))</div>
+                                <h3>@f.Navn @if (f.ErObligatorisk) {<span class="kg-obl">Obligatorisk</span>}</h3>
+                                <p>@(f.Beskrivelse ?? "")</p>
+                                <div class="kg-fk-fot">
+                                    <span><Icon Name="users" />@AntallMedlemmer(f) medlemmer</span>
+                                    @MedlemKnapp(f)
+                                </div>
+                            </div>
+                        </div>
+                    }
                 </div>
+            </section>
+        }
+        else if (_visning == Visning.Fellesskap && _aktivt is { } akt)
+        {
+            @* ---------- 2 · Inne i et fellesskap ---------- *@
+            <div class="kg-fs">
+                <div class="kg-kol">
+                    <div class="kg-fhode">
+                        @Omslag(akt, "kg-oms-stor")
+                        <div class="kg-fi">
+                            <span class="kg-flogo kg-flogo-l" style="background:@akt.Farge">@Forkortelse(akt.Navn)</span>
+                            <div class="kg-fi-rad">
+                                <div>
+                                    <h2>@akt.Navn @if (akt.ErObligatorisk) {<span class="kg-obl">Obligatorisk</span>}</h2>
+                                    @if (!string.IsNullOrWhiteSpace(akt.Beskrivelse)) {<p>@akt.Beskrivelse</p>}
+                                </div>
+                                <div class="kg-ikk">
+                                    @if (ErMedlem(akt))
+                                    {
+                                        <button type="button" class="@(ErFavoritt(akt) ? "pa" : "")" title="@(ErFavoritt(akt) ? "Fjern fra favoritter" : "Legg til i favoritter")" @onclick="@(() => VekslFavoritt(akt))"><Icon Name="@(ErFavoritt(akt) ? "star" : "star-tom")" /></button>
+                                    }
+                                    @if (KanRedigere(akt))
+                                    {
+                                        <button type="button" title="Rediger fellesskap" @onclick="@(() => ApneFellesskapSkjema(akt))"><Icon Name="settings" /></button>
+                                    }
+                                    @MedlemKnapp(akt)
+                                </div>
+                            </div>
+                        </div>
+                        <div class="kg-ffaner">
+                            @foreach (var (id, navn) in Faner)
+                            {
+                                var fid = id;
+                                <button type="button" class="@(_fane == fid ? "pa" : "")" @onclick="@(() => _fane = fid)">@navn</button>
+                            }
+                        </div>
+                    </div>
+
+                    @if (_fane == "om")
+                    {
+                        <div class="kg-wid kg-om">
+                            <h4>Om @akt.Navn</h4>
+                            <p>@(akt.Beskrivelse ?? "Ingen beskrivelse.")</p>
+                            <div class="kg-egen"><span>Opprettet</span><span>@akt.OpprettetDato.ToString("d. MMMM yyyy", _kultur)@(akt.OpprettetAvBruker is null ? "" : $" av {akt.OpprettetAvBruker.Navn}")</span></div>
+                            <div class="kg-egen"><span>Medlemmer</span><span>@AntallMedlemmer(akt)@(akt.ErObligatorisk ? " (alle i organisasjonen)" : "")</span></div>
+                            <div class="kg-egen"><span>Administratorer</span><span>@string.Join(", ", akt.Medlemmer.Where(m => m.ErAdmin).Select(m => m.Bruker?.Navn))</span></div>
+                            <h4 style="margin-top:10px">Medlemmer</h4>
+                            <div class="kg-medliste">
+                                @foreach (var b in MedlemmerAv(akt))
+                                {
+                                    <span class="kg-medrad">@Avatar(b.Navn, "")<span><b>@b.Navn</b><small>@(b.Stilling ?? b.Rolle.Visningsnavn())@(ErFellesskapAdmin(akt, b.Id) ? " · administrator" : "")</small></span></span>
+                                }
+                            </div>
+                        </div>
+                    }
+                    else if (_fane == "bilder")
+                    {
+                        var medBilde = _innlegg.Where(k => k.BildeData is not null).ToList();
+                        @if (medBilde.Count == 0)
+                        {
+                            <p class="list-empty">Ingen bilder i dette fellesskapet ennå.</p>
+                        }
+                        <div class="kg-bildegrid">
+                            @foreach (var k in medBilde)
+                            {
+                                <a href="@($"/kunngjoring/{k.Id}")" style="background-image:url('@($"/kunngjoringbilde/{k.Id}")');" title="@k.Tittel"></a>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        @if (ErMedlem(akt))
+                        {
+                            @Komponer(akt)
+                        }
+                        else
+                        {
+                            <div class="kg-blimed-boks"><span>Bli med i <b>@akt.Navn</b> for å skrive innlegg og få varsler.</span>@MedlemKnapp(akt)</div>
+                        }
+                        <div class="kg-sortrad">
+                            <span class="kg-antall">@FilterteInnlegg.Count innlegg</span>
+                            <select @bind="_sortering" class="kg-dd">
+                                <option value="nyeste">Nyeste innlegg</option>
+                                <option value="aktivitet">Siste aktivitet</option>
+                            </select>
+                        </div>
+                        @Feed(FilterteInnlegg)
+                    }
+                </div>
+
+                <aside class="kg-hp">
+                    <div class="kg-wid">
+                        <h4>Medlemmer (@AntallMedlemmer(akt))</h4>
+                        <div class="kg-avgrid">
+                            @foreach (var b in MedlemmerAv(akt).Take(14))
+                            {
+                                <span class="kg-av @(ErFellesskapAdmin(akt, b.Id) ? "adm" : "")" style="background:@AvatarFarge(b.Navn);" title="@b.Navn">@Initialer(b.Navn)</span>
+                            }
+                            @if (AntallMedlemmer(akt) > 14)
+                            {
+                                <span class="kg-av kg-av-mer">+@(AntallMedlemmer(akt) - 14)</span>
+                            }
+                        </div>
+                        @if (akt.Medlemmer.Any(m => m.ErAdmin))
+                        {
+                            <small class="kg-u">★ = administrator</small>
+                        }
+                    </div>
+                    @KommendeWidget(_innlegg)
+                    @{ var festede = _innlegg.Where(k => k.Festet).Take(4).ToList(); }
+                    @if (festede.Count > 0)
+                    {
+                        <div class="kg-wid">
+                            <h4>Festet</h4>
+                            @foreach (var k in festede)
+                            {
+                                <a class="kg-wrad" href="@($"/kunngjoring/{k.Id}")"><span class="kg-wik">@k.Type.Emoji()</span><span><b>@Kort(k.Tittel, 48)</b><small>@Naar(k.OpprettetDato)</small></span></a>
+                            }
+                        </div>
+                    }
+                    <div class="kg-wid">
+                        <h4>Aktivitet siste 30 dager</h4>
+                        @{ var fra = DateTime.Today.AddDays(-30); }
+                        <div class="kg-statrad">
+                            <div><b>@_innlegg.Count(k => k.OpprettetDato >= fra)</b><small>innlegg</small></div>
+                            <div><b>@_innlegg.Sum(k => k.Kommentarer.Count(c => c.OpprettetDato >= fra))</b><small>svar</small></div>
+                            <div><b>@_innlegg.Sum(k => k.Likes.Count(l => l.OpprettetDato >= fra))</b><small>reaksjoner</small></div>
+                        </div>
+                    </div>
+                </aside>
             </div>
         }
-
-        @if (Synlige.Count == 0)
+        else if (_visning == Visning.Fellesskap)
         {
-            <p class="list-empty">@(_kunngjoringer.Count == 0 ? "Ingen kunngjøringer ennå." : "Ingen kunngjøringer i denne kategorien.")</p>
+            <p class="list-empty">Fant ikke fellesskapet. <a href="/kunngjoringer/fellesskap">Se alle fellesskap</a></p>
         }
-
-        @foreach (var k in Synlige)
+        else
         {
-            var ny = k.Id > _sistSettId && k.OpprettetAvBrukerId != _naverendeBrukerId;
-            <article class="kg-post @(ny ? "ny" : "")" @key="k.Id">
-                <div class="kg-pb">
-                    <div class="kg-forf">
-                        <span class="kg-av kg-av-l" style="background:@AvatarFarge(k.OpprettetAvBruker?.Navn ?? "?");">@Initialer(k.OpprettetAvBruker?.Navn ?? "?")</span>
-                        <div>
-                            <b>@(k.OpprettetAvBruker?.Navn ?? "Ukjent")</b>
-                            <small>@Naar(k.OpprettetDato) · <span class="kg-katnavn kg-katnavn-@k.Kategori.PillFarge()">@k.Kategori.Visningsnavn()</span></small>
+            @* ---------- 3 · Hjem ---------- *@
+            <div class="kg-fs">
+                <div class="kg-kol">
+                    <div class="kg-ptittel"><div><h1>@Hilsen@(_naverendeBruker is null ? "" : $", {Fornavn(_naverendeBruker.Navn)}")</h1><p>Alt nytt fra fellesskapene dine samlet på ett sted</p></div></div>
+
+                    @if (VenterPaBekreftelse.Count > 0)
+                    {
+                        var forste = VenterPaBekreftelse[0];
+                        <div class="kg-viktig">
+                            <span class="kg-viktig-ik">📣</span>
+                            <div><b>@VenterPaBekreftelse.Count @(VenterPaBekreftelse.Count == 1 ? "kunngjøring venter" : "kunngjøringer venter") på «Lest og forstått»</b><small>@Kort(forste.Tittel, 70) · fra @(forste.OpprettetAvBruker?.Navn ?? "ukjent")</small></div>
+                            <button type="button" class="kg-knapp kg-knapp-p" @onclick="@(() => _filter = "bekreft")">Les nå</button>
                         </div>
-                        <span class="kg-forf-hoyre">
-                            @if (ny)
-                            {
-                                <span class="kg-nytt">Ny</span>
-                            }
-                            @if (k.Festet)
-                            {
-                                <span class="kg-festet"><Icon Name="star" />Festet</span>
-                            }
-                            @if (ErAdminEllerPl)
-                            {
-                                <button type="button" class="kg-slett" title="Slett kunngjøring" @onclick="@(() => Slett(k))"><Icon Name="trash" /></button>
-                            }
-                        </span>
+                    }
+
+                    @if (KanSkriveNoeSted)
+                    {
+                        @Komponer(null)
+                    }
+
+                    <div class="kg-sokrad">
+                        @foreach (var (id, navn) in HjemFilter)
+                        {
+                            var fid = id;
+                            <button type="button" class="kg-chip @(_filter == fid ? "pa" : "")" @onclick="@(() => _filter = fid)">@navn</button>
+                        }
                     </div>
-                    <h2><a href="@($"/kunngjoring/{k.Id}")">@k.Tittel</a></h2>
-                    <p class="kg-tekst">@k.Innhold</p>
+                    @Feed(FilterteInnlegg)
                 </div>
 
-                @if (k.BildeData is not null)
-                {
-                    <a href="@($"/kunngjoring/{k.Id}")" class="kg-bilde" style="background-image:url('@($"/kunngjoringbilde/{k.Id}")');" aria-label="@k.Tittel"></a>
-                }
-
-                <div class="kg-pb">
-                    @if (k.EventDato is not null || !string.IsNullOrWhiteSpace(k.Sted))
+                <aside class="kg-hp">
+                    @if (_naverendeBruker is { } meg)
                     {
-                        <div class="kg-event">
-                            @if (k.EventDato is { } dato)
+                        var mine = _innlegg.Count(k => k.OpprettetAvBrukerId == meg.Id && k.OpprettetDato >= DateTime.Today.AddDays(-30));
+                        <div class="kg-wid"><h4>Deg</h4><div class="kg-wrad">@Avatar(meg.Navn, "kg-av-l")<span><b>@meg.Navn</b><small>@(meg.Stilling ?? meg.Rolle.Visningsnavn()) · @mine @(mine == 1 ? "innlegg" : "innlegg") siste 30 dager</small></span></div></div>
+                    }
+                    @if (RosDenneManeden.Count > 0)
+                    {
+                        <div class="kg-wid">
+                            <h4>Ros denne måneden 🏅</h4>
+                            @foreach (var (bruker, antall, merke) in RosDenneManeden)
                             {
-                                <span class="kg-kal"><small>@dato.ToString("MMM", _kultur).TrimEnd('.')</small><b>@dato.Day</b><span>@dato.ToString("dddd", _kultur)</span></span>
+                                <div class="kg-wrad">@Avatar(bruker.Navn, "")<span><b>@bruker.Navn</b><small>@antall × @merke</small></span></div>
                             }
-                            <div>
-                                <div class="kg-event-t1">@(string.IsNullOrWhiteSpace(k.Sted) ? k.EventDato?.ToString("dddd d. MMMM", _kultur) : k.Sted)</div>
-                                @if (!string.IsNullOrWhiteSpace(k.Detaljer))
-                                {
-                                    <div class="kg-event-t2">@k.Detaljer</div>
-                                }
-                            </div>
                         </div>
-                        @if (KanMeldePa(k))
-                        {
-                            <div class="kg-rsvp">
-                                @foreach (var (svar, tekst) in PameldingValg)
-                                {
-                                    var s = svar;
-                                    <button type="button" class="@(MittSvar(k) == s ? "valgt" : "")" @onclick="@(() => MeldPa(k, s))">@(MittSvar(k) == s && s == PameldingSvar.Kommer ? "✓ " : "")@tekst</button>
-                                }
-                            </div>
-                            <div class="kg-deltar">@DeltarTekst(k)</div>
-                        }
                     }
-
-                    @if (!string.IsNullOrWhiteSpace(k.InfoTekst))
+                    @KommendeWidget(_innlegg)
+                    @{ var foreslatte = _fellesskap.Where(f => !ErMedlem(f)).Take(3).ToList(); }
+                    @if (foreslatte.Count > 0)
                     {
-                        <div class="kg-info">@k.InfoTekst</div>
+                        <div class="kg-wid">
+                            <h4>Foreslåtte fellesskap <a href="/kunngjoringer/fellesskap">Se alle</a></h4>
+                            @foreach (var f in foreslatte)
+                            {
+                                <div class="kg-wrad">
+                                    <span class="kg-flogo kg-flogo-s" style="background:@f.Farge">@Forkortelse(f.Navn)</span>
+                                    <a href="@($"/kunngjoringer/fellesskap/{f.Id}")" class="kg-wrad-tekst"><b>@f.Navn</b><small>@AntallMedlemmer(f) medlemmer</small></a>
+                                    @MedlemKnapp(f)
+                                </div>
+                            }
+                        </div>
                     }
-
-                    <div class="kg-reak">
-                        @foreach (var (id, emoji, navn) in KunngjoringReaksjon.Alle)
-                        {
-                            var r = id;
-                            var antall = k.Likes.Count(l => l.Reaksjon == r);
-                            <button type="button" class="@(MinReaksjon(k) == r ? "valgt" : "")" title="@navn" @onclick="@(() => Reager(k, r))">@emoji @(antall > 0 ? antall : "")</button>
-                        }
-                        <span class="kg-reak-komm">💬 @k.Kommentarer.Count @(k.Kommentarer.Count == 1 ? "kommentar" : "kommentarer")</span>
-                    </div>
-
-                    @if (k.Kommentarer.Count > 0)
-                    {
-                        var visAlle = _visteKommentarer.Contains(k.Id) || k.Kommentarer.Count <= 2;
-                        var kommentarer = k.Kommentarer.OrderBy(c => c.OpprettetDato).ToList();
-                        @if (!visAlle)
-                        {
-                            <button type="button" class="kg-vis-komm" @onclick="@(() => _visteKommentarer.Add(k.Id))">Vis alle @k.Kommentarer.Count kommentarer</button>
-                        }
-                        @foreach (var kom in visAlle ? kommentarer : kommentarer.TakeLast(1).ToList())
-                        {
-                            <div class="kg-komm" @key="kom.Id">
-                                <span class="kg-av" style="background:@AvatarFarge(kom.Bruker?.Navn ?? "?");">@Initialer(kom.Bruker?.Navn ?? "?")</span>
-                                <div class="kg-komm-boble"><b>@(kom.Bruker?.Navn ?? "Ukjent")</b><small>@Naar(kom.OpprettetDato)</small><p>@kom.Tekst</p></div>
-                            </div>
-                        }
-                    }
-
-                    <div class="kg-skriv">
-                        <span class="kg-av" style="background:@AvatarFarge(_naverendeBruker?.Navn ?? "?");">@Initialer(_naverendeBruker?.Navn ?? "?")</span>
-                        <input placeholder="Skriv en kommentar..." value="@GetUtkast(k.Id)"
-                               @oninput="@(e => _kommentarUtkast[k.Id] = e.Value?.ToString() ?? "")"
-                               @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilKommentar(k); } })" />
-                        <button type="button" class="kg-knapp kg-knapp-p kg-knapp-liten" @onclick="@(() => LeggTilKommentar(k))">Send</button>
-                    </div>
-                </div>
-            </article>
+                </aside>
+            </div>
         }
     </div>
-
-    <aside class="kg-side">
-        @if (NesteArrangement is { } neste)
-        {
-            <div class="kg-widget">
-                <h3><Icon Name="calendar" />@neste.Tittel</h3>
-                <small class="kg-widget-under">@neste.EventDato!.Value.ToString("dddd d. MMMM", _kultur)@(string.IsNullOrWhiteSpace(neste.Sted) ? "" : $" · {neste.Sted}")</small>
-                <div class="kg-rsvp">
-                    @foreach (var (svar, tekst) in PameldingValg)
-                    {
-                        var s = svar;
-                        <button type="button" class="@(MittSvar(neste) == s ? "valgt" : "")" @onclick="@(() => MeldPa(neste, s))">@tekst</button>
-                    }
-                </div>
-                <div class="kg-deltar">
-                    <span class="kg-stabel">
-                        @foreach (var p in neste.Pameldinger.Where(p => p.Svar == PameldingSvar.Kommer).Take(5))
-                        {
-                            <span class="kg-av" style="background:@AvatarFarge(p.Bruker?.Navn ?? "?");" title="@p.Bruker?.Navn">@Initialer(p.Bruker?.Navn ?? "?")</span>
-                        }
-                    </span>
-                    @DeltarTekst(neste)
-                </div>
-            </div>
-        }
-
-        @if (NyeKolleger.Count > 0)
-        {
-            <div class="kg-widget">
-                <h3><Icon Name="users" />Nye kolleger</h3>
-                @foreach (var n in NyeKolleger)
-                {
-                    <a class="kg-wrad" href="@($"/kunngjoring/{n.Id}")">
-                        <span class="kg-av" style="background:#a1690a;"><Icon Name="users" /></span>
-                        <span><b>@n.Tittel</b><small>@Naar(n.OpprettetDato)</small></span>
-                    </a>
-                }
-            </div>
-        }
-
-        @if (Kommende.Count > 1)
-        {
-            <div class="kg-widget">
-                <h3><Icon Name="calendar" />Kommende</h3>
-                @foreach (var a in Kommende)
-                {
-                    <a class="kg-wrad" href="@($"/kunngjoring/{a.Id}")">
-                        <span class="kg-kal kg-kal-liten"><small>@a.EventDato!.Value.ToString("MMM", _kultur).TrimEnd('.')</small><b>@a.EventDato.Value.Day</b></span>
-                        <span><b>@a.Tittel</b><small>@(a.Sted ?? a.EventDato.Value.ToString("dddd", _kultur))</small></span>
-                    </a>
-                }
-            </div>
-        }
-    </aside>
 </div>
 
+@if (_visFellesskapSkjema)
+{
+    <div class="kg-modal-bg" @onclick="@(() => _visFellesskapSkjema = false)">
+        <div class="kg-modal" @onclick:stopPropagation="true">
+            <h3>@(_redigerer is null ? "Nytt fellesskap" : $"Rediger {_redigerer.Navn}")</h3>
+            <label>Navn<input @bind="_fNavn" placeholder="F.eks. Montører" /></label>
+            <label>Beskrivelse<textarea rows="3" @bind="_fBeskrivelse" placeholder="Hva handler fellesskapet om?"></textarea></label>
+            <span class="kg-lbl">Omslag</span>
+            <div class="kg-temavalg">
+                @foreach (var t in FellesskapTema.Liste)
+                {
+                    var tid = t.Id;
+                    <button type="button" class="@(_fTema == tid ? "pa" : "")" style="background:linear-gradient(135deg,@t.Fra,@t.Til);" title="@t.Navn" @onclick="@(() => _fTema = tid)">@t.Emoji[0]</button>
+                }
+            </div>
+            <label>Eget omslagsbilde (valgfritt)<InputFile OnChange="LastOppOmslag" accept="image/*" /></label>
+            @if (_fOmslagData is not null || _redigerer?.OmslagData is not null)
+            {
+                <p class="kg-bilde-valgt">Omslagsbilde valgt <button type="button" class="kg-lenke" @onclick="@(() => { _fOmslagData = null; _fFjernOmslag = true; })">Fjern</button></p>
+            }
+            @if (ErAdminEllerPl)
+            {
+                <label class="kg-sjekk"><input type="checkbox" @bind="_fObligatorisk" />Obligatorisk – alle i organisasjonen er medlemmer</label>
+            }
+            @if (!string.IsNullOrEmpty(_fFeil))
+            {
+                <p class="form-error">@_fFeil</p>
+            }
+            <div class="kg-form-knapper">
+                @if (_redigerer is not null && ErAdminEllerPl)
+                {
+                    <button type="button" class="kg-knapp kg-knapp-fare" @onclick="SlettFellesskap" style="margin-right:auto">@(_bekreftSlettFellesskap ? "Bekreft sletting" : "Slett")</button>
+                }
+                <button type="button" class="kg-knapp" @onclick="@(() => _visFellesskapSkjema = false)">Avbryt</button>
+                <button type="button" class="kg-knapp kg-knapp-p" @onclick="LagreFellesskap">Lagre</button>
+            </div>
+        </div>
+    </div>
+}
 </div>
 
 @code {
     private static readonly System.Globalization.CultureInfo _kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+    private enum Visning { Hjem, Oversikt, Fellesskap }
 
-    private List<Kunngjoring> _kunngjoringer = [];
-    private bool _visNyForm;
+    [Parameter] public int? FellesskapId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Visning _visning;
+    private int? _naverendeBrukerId;
+    private Bruker? _naverendeBruker;
+    private bool ErAdminEllerPl;
+
+    private List<Fellesskap> _fellesskap = [];
+    private List<Bruker> _interneBrukere = [];
+    private Fellesskap? _aktivt;
+    private List<Kunngjoring> _innlegg = [];
+    // (innleggId, fellesskapId) for alle innlegg - til ulest-tellere i menyen.
+    private List<(int Id, int? FellesskapId)> _alleInnleggIder = [];
+    private HashSet<int> _settAvMeg = [];
+    // Uleste da siden ble åpnet - beholdes for "Ny"-merket selv etter at de er markert som sett.
+    private HashSet<int> _ulesteVedApning = [];
+
+    private string _filter = "";
+    private string _fane = "samtaler";
+    private string _sortering = "nyeste";
+    private string _sok = "";
+    private bool _bareIkkeMedlem;
+    private bool _visOpprettMeny;
+    private readonly HashSet<int> _visteKommentarer = [];
+    private readonly HashSet<int> _utvidet = [];
+    private readonly HashSet<int> _visManglerBekreftelse = [];
+    private readonly Dictionary<int, string> _kommentarUtkast = [];
+
+    private string SideTittel => _visning switch
+    {
+        Visning.Oversikt => "Fellesskap",
+        Visning.Fellesskap => _aktivt?.Navn ?? "Fellesskap",
+        _ => "Kunngjøringer"
+    };
+
+    private static readonly (string Id, string Navn)[] Faner =
+        [("samtaler", "Samtaler"), ("kunngjoringer", "Kunngjøringer"), ("sporsmal", "Spørsmål"), ("arrangement", "Arrangement"), ("bilder", "Bilder"), ("om", "Om")];
+
+    private static readonly (string Id, string Navn)[] HjemFilter =
+        [("", "Alt"), ("kunngjoringer", "📣 Kunngjøringer"), ("sporsmal", "❓ Spørsmål"), ("ros", "🏅 Ros"), ("arrangement", "📅 Arrangement"), ("avstemning", "📊 Avstemning"), ("ulest", "Ulest")];
+
+    private static readonly (PameldingSvar Svar, string Tekst)[] PameldingValg =
+        [(PameldingSvar.Kommer, "Kommer"), (PameldingSvar.Kanskje, "Kanskje"), (PameldingSvar.KanIkke, "Kan ikke")];
+
+    // ---------- lasting ----------
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            ErAdminEllerPl = rolleClaim is "Admin" or "Prosjektleder";
+            if (int.TryParse(state.User.FindFirst("BrukerId")?.Value, out var bid))
+            {
+                _naverendeBrukerId = bid;
+                _naverendeBruker = await Db.Brukere.FindAsync(bid);
+            }
+        }
+
+        await SikreStandardFellesskapAsync();
+        _interneBrukere = await Db.Brukere
+            .Where(b => b.Aktiv && b.KundeId == null && b.Rolle != BrukerRolle.Kunde)
+            .OrderBy(b => b.Navn)
+            .ToListAsync();
+        await LastFellesskapAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var sti = Nav.ToBaseRelativePath(Nav.Uri).Split('?')[0].TrimEnd('/');
+        _visning = FellesskapId is not null ? Visning.Fellesskap
+            : sti.EndsWith("fellesskap", StringComparison.OrdinalIgnoreCase) ? Visning.Oversikt
+            : Visning.Hjem;
+        _filter = "";
+        _fane = "samtaler";
+        _visOpprettMeny = false;
+        _aktivt = FellesskapId is { } id ? _fellesskap.FirstOrDefault(f => f.Id == id) : null;
+        await LastInnleggAsync();
+    }
+
+    // Første gang: opprett "Hele firmaet" og flytt eldre kunngjøringer dit.
+    private async Task SikreStandardFellesskapAsync()
+    {
+        if (!await Db.Fellesskap.AnyAsync())
+        {
+            Db.Fellesskap.Add(new Fellesskap
+            {
+                Navn = "Hele firmaet",
+                Beskrivelse = "Fellesskapet for alle i organisasjonen. Viktige kunngjøringer fra ledelsen havner her.",
+                Tema = "alle",
+                Farge = FellesskapTema.Hent("alle").Til,
+                ErObligatorisk = true,
+                OpprettetAvBrukerId = _naverendeBrukerId
+            });
+            await Db.SaveChangesAsync();
+        }
+
+        if (await Db.Kunngjoringer.AnyAsync(k => k.FellesskapId == null))
+        {
+            var standard = await Db.Fellesskap.Where(f => f.ErObligatorisk).OrderBy(f => f.Id).FirstOrDefaultAsync()
+                ?? await Db.Fellesskap.OrderBy(f => f.Id).FirstAsync();
+            await Db.Kunngjoringer.Where(k => k.FellesskapId == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(k => k.FellesskapId, standard.Id));
+        }
+    }
+
+    private async Task LastFellesskapAsync()
+    {
+        _fellesskap = await Db.Fellesskap
+            .Include(f => f.Medlemmer).ThenInclude(m => m.Bruker)
+            .Include(f => f.OpprettetAvBruker)
+            .OrderByDescending(f => f.ErObligatorisk).ThenBy(f => f.Navn)
+            .ToListAsync();
+        _alleInnleggIder = (await Db.Kunngjoringer.Select(k => new { k.Id, k.FellesskapId }).ToListAsync())
+            .Select(x => (x.Id, x.FellesskapId)).ToList();
+        _settAvMeg = _naverendeBrukerId is { } b
+            ? (await Db.KunngjoringVisninger.Where(v => v.BrukerId == b).Select(v => v.KunngjoringId).ToListAsync()).ToHashSet()
+            : [];
+    }
+
+    private async Task LastInnleggAsync()
+    {
+        IQueryable<Kunngjoring> q = Db.Kunngjoringer;
+        if (_visning == Visning.Fellesskap)
+        {
+            var fid = _aktivt?.Id ?? -1;
+            q = q.Where(k => k.FellesskapId == fid);
+        }
+        else if (_visning == Visning.Hjem)
+        {
+            var mine = MineFellesskap.Select(f => f.Id).ToList();
+            q = q.Where(k => k.FellesskapId != null && mine.Contains(k.FellesskapId.Value));
+        }
+        else
+        {
+            _innlegg = [];
+            return;
+        }
+
+        _innlegg = await q
+            .Include(k => k.OpprettetAvBruker)
+            .Include(k => k.RosTilBruker)
+            .Include(k => k.Fellesskap)
+            .Include(k => k.Likes)
+            .Include(k => k.Kommentarer).ThenInclude(c => c.Bruker)
+            .Include(k => k.Pameldinger).ThenInclude(p => p.Bruker)
+            .Include(k => k.Bekreftelser).ThenInclude(b => b.Bruker)
+            .Include(k => k.Visninger)
+            .Include(k => k.Valg).ThenInclude(v => v.Stemmer)
+            .AsSplitQuery()
+            .OrderByDescending(k => k.Festet).ThenByDescending(k => k.OpprettetDato)
+            .Take(150)
+            .ToListAsync();
+
+        _ulesteVedApning = _innlegg.Where(k => !_settAvMeg.Contains(k.Id) && k.OpprettetAvBrukerId != _naverendeBrukerId).Select(k => k.Id).ToHashSet();
+        await MarkerSomSettAsync();
+    }
+
+    // "Sett av" + uleste: registrer visning for innleggene som nå vises.
+    private async Task MarkerSomSettAsync()
+    {
+        if (_naverendeBrukerId is not { } bid || _innlegg.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var k in _innlegg.Where(k => !_settAvMeg.Contains(k.Id)))
+        {
+            var v = new KunngjoringVisning { KunngjoringId = k.Id, BrukerId = bid };
+            Db.KunngjoringVisninger.Add(v);
+            if (!k.Visninger.Contains(v)) { k.Visninger.Add(v); }
+            _settAvMeg.Add(k.Id);
+        }
+
+        if (_naverendeBruker is { } bruker)
+        {
+            var nyeste = _alleInnleggIder.Count == 0 ? 0 : _alleInnleggIder.Max(x => x.Id);
+            if (_visning == Visning.Hjem && (bruker.SisteKunngjoringSettId ?? 0) < nyeste)
+            {
+                bruker.SisteKunngjoringSettId = nyeste;
+            }
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    // ---------- medlemskap ----------
+
+    private bool ErMedlem(Fellesskap f) => f.ErObligatorisk || f.Medlemmer.Any(m => m.BrukerId == _naverendeBrukerId);
+    private bool ErFavoritt(Fellesskap f) => f.Medlemmer.Any(m => m.BrukerId == _naverendeBrukerId && m.ErFavoritt);
+    private static bool ErFellesskapAdmin(Fellesskap f, int brukerId) => f.Medlemmer.Any(m => m.BrukerId == brukerId && m.ErAdmin);
+    private bool KanRedigere(Fellesskap f) => ErAdminEllerPl || (_naverendeBrukerId is { } b && ErFellesskapAdmin(f, b));
+    private bool KanOppretteFellesskap => ErAdminEllerPl;
+    // Kunngjøring/arrangement (med "Fest øverst" og "Lest og forstått") er for ledelsen og fellesskapsadministratorer.
+    private bool KanKunngjore(Fellesskap? f) => ErAdminEllerPl || (f is not null && _naverendeBrukerId is { } b && ErFellesskapAdmin(f, b));
+    private bool KanSkriveNoeSted => MineFellesskap.Count > 0 && _naverendeBrukerId is not null;
+
+    private List<Fellesskap> MineFellesskap => _fellesskap.Where(ErMedlem).ToList();
+    private List<Fellesskap> Favoritter => _fellesskap.Where(ErFavoritt).ToList();
+
+    private List<Bruker> MedlemmerAv(Fellesskap f) => f.ErObligatorisk
+        ? _interneBrukere
+        : f.Medlemmer.Where(m => m.Bruker is not null).Select(m => m.Bruker!).OrderByDescending(b => ErFellesskapAdmin(f, b.Id)).ThenBy(b => b.Navn).ToList();
+
+    private int AntallMedlemmer(Fellesskap f) => f.ErObligatorisk ? _interneBrukere.Count : f.Medlemmer.Count;
+
+    private List<Fellesskap> OppdagListe => _fellesskap
+        .Where(f => !_bareIkkeMedlem || !ErMedlem(f))
+        .Where(f => string.IsNullOrWhiteSpace(_sok) || f.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase) || (f.Beskrivelse ?? "").Contains(_sok, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    private int UlesteI(int fellesskapId) => _alleInnleggIder.Count(x => x.FellesskapId == fellesskapId && !_settAvMeg.Contains(x.Id));
+    private int UlesteTotalt => MineFellesskap.Sum(f => UlesteI(f.Id));
+
+    private async Task BliMed(Fellesskap f)
+    {
+        if (_naverendeBrukerId is not { } bid || f.ErObligatorisk)
+        {
+            return;
+        }
+
+        var eksisterende = f.Medlemmer.FirstOrDefault(m => m.BrukerId == bid);
+        if (eksisterende is null)
+        {
+            var ny = new FellesskapMedlem { FellesskapId = f.Id, BrukerId = bid, Bruker = _naverendeBruker };
+            Db.FellesskapMedlemmer.Add(ny);
+            if (!f.Medlemmer.Contains(ny)) { f.Medlemmer.Add(ny); }
+        }
+        else
+        {
+            Db.FellesskapMedlemmer.Remove(eksisterende);
+            f.Medlemmer.Remove(eksisterende);
+        }
+
+        await Db.SaveChangesAsync();
+        if (_visning == Visning.Hjem)
+        {
+            await LastInnleggAsync();
+        }
+    }
+
+    private async Task VekslFavoritt(Fellesskap f)
+    {
+        if (_naverendeBrukerId is not { } bid)
+        {
+            return;
+        }
+
+        var rad = f.Medlemmer.FirstOrDefault(m => m.BrukerId == bid);
+        if (rad is null)
+        {
+            // Obligatorisk fellesskap uten egen rad - opprett en for favoritten.
+            rad = new FellesskapMedlem { FellesskapId = f.Id, BrukerId = bid, Bruker = _naverendeBruker, ErFavoritt = true };
+            Db.FellesskapMedlemmer.Add(rad);
+            if (!f.Medlemmer.Contains(rad)) { f.Medlemmer.Add(rad); }
+        }
+        else
+        {
+            rad.ErFavoritt = !rad.ErFavoritt;
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    // ---------- fellesskap-skjema ----------
+
+    private bool _visFellesskapSkjema;
+    private Fellesskap? _redigerer;
+    private string _fNavn = "";
+    private string? _fBeskrivelse;
+    private string _fTema = "alle";
+    private bool _fObligatorisk;
+    private byte[]? _fOmslagData;
+    private string? _fOmslagType;
+    private bool _fFjernOmslag;
+    private string? _fFeil;
+    private bool _bekreftSlettFellesskap;
+
+    private void ApneFellesskapSkjema(Fellesskap? f)
+    {
+        _redigerer = f;
+        _fNavn = f?.Navn ?? "";
+        _fBeskrivelse = f?.Beskrivelse;
+        _fTema = f?.Tema ?? "montor";
+        _fObligatorisk = f?.ErObligatorisk ?? false;
+        _fOmslagData = null;
+        _fOmslagType = null;
+        _fFjernOmslag = false;
+        _fFeil = null;
+        _bekreftSlettFellesskap = false;
+        _visFellesskapSkjema = true;
+    }
+
+    private async Task LastOppOmslag(InputFileChangeEventArgs e)
+    {
+        var (data, type, feil) = await LesBilde(e);
+        _fFeil = feil;
+        if (data is not null)
+        {
+            _fOmslagData = data;
+            _fOmslagType = type;
+            _fFjernOmslag = false;
+        }
+    }
+
+    private async Task LagreFellesskap()
+    {
+        if (string.IsNullOrWhiteSpace(_fNavn))
+        {
+            _fFeil = "Fellesskapet må ha et navn.";
+            return;
+        }
+
+        var f = _redigerer;
+        if (f is null)
+        {
+            f = new Fellesskap { Navn = _fNavn.Trim(), OpprettetAvBrukerId = _naverendeBrukerId };
+            Db.Fellesskap.Add(f);
+            if (_naverendeBrukerId is { } bid)
+            {
+                f.Medlemmer.Add(new FellesskapMedlem { BrukerId = bid, ErAdmin = true });
+            }
+        }
+
+        f.Navn = _fNavn.Trim();
+        f.Beskrivelse = string.IsNullOrWhiteSpace(_fBeskrivelse) ? null : _fBeskrivelse.Trim();
+        f.Tema = _fTema;
+        f.Farge = FellesskapTema.Hent(_fTema).Til;
+        if (ErAdminEllerPl) { f.ErObligatorisk = _fObligatorisk; }
+        if (_fOmslagData is not null)
+        {
+            f.OmslagData = _fOmslagData;
+            f.OmslagContentType = _fOmslagType;
+        }
+        else if (_fFjernOmslag)
+        {
+            f.OmslagData = null;
+            f.OmslagContentType = null;
+        }
+
+        await Db.SaveChangesAsync();
+        _visFellesskapSkjema = false;
+        await LastFellesskapAsync();
+        Nav.NavigateTo($"/kunngjoringer/fellesskap/{f.Id}");
+        if (FellesskapId == f.Id)
+        {
+            _aktivt = _fellesskap.FirstOrDefault(x => x.Id == f.Id);
+        }
+    }
+
+    private async Task SlettFellesskap()
+    {
+        if (_redigerer is null)
+        {
+            return;
+        }
+        if (!_bekreftSlettFellesskap)
+        {
+            _bekreftSlettFellesskap = true;
+            return;
+        }
+
+        Db.Fellesskap.Remove(_redigerer);
+        await Db.SaveChangesAsync();
+        _visFellesskapSkjema = false;
+        await SikreStandardFellesskapAsync();
+        await LastFellesskapAsync();
+        Nav.NavigateTo("/kunngjoringer/fellesskap");
+    }
+
+    // ---------- skrivefelt ----------
+
+    private InnleggType? _nyType;
+    private int? _nyFellesskapId;
     private string _nyTittel = "";
     private string _nyInnhold = "";
-    private KunngjoringKategori _nyKategori = KunngjoringKategori.Info;
-    private bool _nyFestet;
-    private DateTime? _nyEventDato;
-    private string? _nySted;
-    private string? _nyDetaljer;
-    private string? _nyInfoTekst;
+    private string? _nyBakgrunn;
     private byte[]? _nyBildeData;
     private string? _nyBildeContentType;
     private string? _nyBildeFilnavn;
+    private bool _nyFestet;
+    private bool _nyKrevBekreftelse;
+    private int? _nyRosTil;
+    private string _nyRosMerke = "godt";
+    private List<string> _nyValg = ["", ""];
+    private DateTime? _nyEventDato;
+    private string? _nySted;
+    private string? _nyDetaljer;
     private string? _feil;
 
-    private static readonly string[] _avatarPaletten = ["#835e41", "#2054a3", "#a1690a", "#2b7a4b", "#7a2b96", "#a32020"];
+    private void NyttInnleggFraMeny()
+    {
+        _visOpprettMeny = false;
+        if (_visning == Visning.Oversikt)
+        {
+            Nav.NavigateTo("/kunngjoringer");
+        }
+        _nyType = InnleggType.Diskusjon;
+    }
 
-    private static string AvatarFarge(string navn) => _avatarPaletten[Math.Abs(navn.GetHashCode()) % _avatarPaletten.Length];
+    private void VelgType(InnleggType type)
+    {
+        _nyType = _nyType == type ? null : type;
+        _feil = null;
+        if (type is InnleggType.Ros or InnleggType.Avstemning)
+        {
+            _nyBakgrunn = null;
+        }
+    }
+
+    private IEnumerable<InnleggType> TilgjengeligeTyper(Fellesskap? f)
+    {
+        yield return InnleggType.Diskusjon;
+        yield return InnleggType.Sporsmal;
+        yield return InnleggType.Ros;
+        yield return InnleggType.Avstemning;
+        if (KanKunngjore(f ?? _fellesskap.FirstOrDefault(x => x.Id == _nyFellesskapId)))
+        {
+            yield return InnleggType.Kunngjoring;
+            yield return InnleggType.Arrangement;
+        }
+    }
+
+    private async Task LastOppInnleggBilde(InputFileChangeEventArgs e)
+    {
+        var (data, type, feil) = await LesBilde(e);
+        _feil = feil;
+        if (data is not null)
+        {
+            _nyBildeData = data;
+            _nyBildeContentType = type;
+            _nyBildeFilnavn = e.File.Name;
+            _nyBakgrunn = null;
+        }
+    }
+
+    private void VelgBakgrunn(string? bg)
+    {
+        _nyBakgrunn = bg;
+        if (bg is not null)
+        {
+            _nyBildeData = null;
+            _nyBildeContentType = null;
+            _nyBildeFilnavn = null;
+        }
+    }
+
+    private static async Task<(byte[]? Data, string? Type, string? Feil)> LesBilde(InputFileChangeEventArgs e)
+    {
+        var fil = e.File;
+        if (fil.Size > 8_000_000)
+        {
+            return (null, null, $"\"{fil.Name}\" er for stort (maks 8 MB).");
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = fil.OpenReadStream(maxAllowedSize: 8_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+        return (buffer.ToArray(), string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType, null);
+    }
+
+    private async Task Publiser(Fellesskap? fast)
+    {
+        if (_nyType is not { } type || _naverendeBrukerId is not { } bid)
+        {
+            return;
+        }
+
+        var fellesskapId = fast?.Id ?? _nyFellesskapId ?? MineFellesskap.FirstOrDefault()?.Id;
+        var f = _fellesskap.FirstOrDefault(x => x.Id == fellesskapId);
+        if (f is null)
+        {
+            _feil = "Velg hvilket fellesskap innlegget skal deles i.";
+            return;
+        }
+        if (type is InnleggType.Kunngjoring or InnleggType.Arrangement && !KanKunngjore(f))
+        {
+            _feil = "Bare ledelsen og administratorer i fellesskapet kan publisere kunngjøringer.";
+            return;
+        }
+
+        var tittel = _nyTittel.Trim();
+        var innhold = _nyInnhold.Trim();
+        var valg = _nyValg.Select(v => v.Trim()).Where(v => v.Length > 0).ToList();
+
+        _feil = type switch
+        {
+            _ when type.HarTittel() && tittel.Length == 0 => type == InnleggType.Avstemning ? "Skriv spørsmålet i avstemningen." : "Skriv en tittel.",
+            InnleggType.Avstemning when valg.Count < 2 => "En avstemning trenger minst to alternativer.",
+            InnleggType.Ros when _nyRosTil is null => "Velg hvem som skal få ros.",
+            InnleggType.Arrangement when _nyEventDato is null => "Velg dato for arrangementet.",
+            InnleggType.Diskusjon or InnleggType.Ros when innhold.Length == 0 => "Skriv noe først.",
+            _ => null
+        };
+        if (_feil is not null)
+        {
+            return;
+        }
+
+        var k = new Kunngjoring
+        {
+            Tittel = type.HarTittel() ? tittel : Kort(innhold.Length > 0 ? innhold : type.Visningsnavn(), 80),
+            Innhold = innhold,
+            Type = type,
+            FellesskapId = f.Id,
+            OpprettetAvBrukerId = bid,
+            Festet = KanKunngjore(f) && _nyFestet,
+            KreverBekreftelse = type == InnleggType.Kunngjoring && _nyKrevBekreftelse,
+            Bakgrunn = type is InnleggType.Diskusjon or InnleggType.Kunngjoring && InnleggBakgrunn.ErGyldig(_nyBakgrunn) ? _nyBakgrunn : null,
+            BildeData = _nyBildeData,
+            BildeContentType = _nyBildeContentType,
+            BildeFilnavn = _nyBildeFilnavn,
+            RosTilBrukerId = type == InnleggType.Ros ? _nyRosTil : null,
+            RosMerke = type == InnleggType.Ros ? _nyRosMerke : null,
+            EventDato = type == InnleggType.Arrangement ? _nyEventDato : null,
+            Sted = type == InnleggType.Arrangement && !string.IsNullOrWhiteSpace(_nySted) ? _nySted.Trim() : null,
+            Detaljer = type == InnleggType.Arrangement && !string.IsNullOrWhiteSpace(_nyDetaljer) ? _nyDetaljer.Trim() : null
+        };
+        if (type == InnleggType.Avstemning)
+        {
+            for (var i = 0; i < valg.Count; i++)
+            {
+                k.Valg.Add(new AvstemningValg { Tekst = valg[i], Rekkefolge = i });
+            }
+        }
+
+        Db.Kunngjoringer.Add(k);
+        await Db.SaveChangesAsync();
+
+        NullstillSkjema();
+        await LastFellesskapAsync();
+        await LastInnleggAsync();
+    }
+
+    private void NullstillSkjema()
+    {
+        _nyType = null;
+        _nyTittel = "";
+        _nyInnhold = "";
+        _nyBakgrunn = null;
+        _nyBildeData = null;
+        _nyBildeContentType = null;
+        _nyBildeFilnavn = null;
+        _nyFestet = false;
+        _nyKrevBekreftelse = false;
+        _nyRosTil = null;
+        _nyRosMerke = "godt";
+        _nyValg = ["", ""];
+        _nyEventDato = null;
+        _nySted = null;
+        _nyDetaljer = null;
+        _feil = null;
+    }
+
+    // ---------- handlinger på innlegg ----------
+
+    private string? MinReaksjon(Kunngjoring k) => k.Likes.FirstOrDefault(l => l.BrukerId == _naverendeBrukerId)?.Reaksjon;
+    private PameldingSvar? MittSvar(Kunngjoring k) => k.Pameldinger.FirstOrDefault(p => p.BrukerId == _naverendeBrukerId)?.Svar;
+    private bool HarBekreftet(Kunngjoring k) => k.Bekreftelser.Any(b => b.BrukerId == _naverendeBrukerId);
+    private int? MinStemme(Kunngjoring k) => k.Valg.SelectMany(v => v.Stemmer).FirstOrDefault(s => s.BrukerId == _naverendeBrukerId)?.ValgId;
+    private bool KanSlette(Kunngjoring k) => ErAdminEllerPl || k.OpprettetAvBrukerId == _naverendeBrukerId;
+    private bool KanVelgeBesteSvar(Kunngjoring k) => k.Type == InnleggType.Sporsmal && (ErAdminEllerPl || k.OpprettetAvBrukerId == _naverendeBrukerId);
+
+    // Én reaksjon per bruker: samme reaksjon igjen fjerner den, en annen bytter.
+    private async Task Reager(Kunngjoring k, string reaksjon)
+    {
+        if (_naverendeBrukerId is not { } bid)
+        {
+            return;
+        }
+
+        var eksisterende = k.Likes.FirstOrDefault(l => l.BrukerId == bid);
+        if (eksisterende is null)
+        {
+            var ny = new KunngjoringLike { KunngjoringId = k.Id, BrukerId = bid, Reaksjon = reaksjon };
+            Db.KunngjoringLikes.Add(ny);
+            if (!k.Likes.Contains(ny)) { k.Likes.Add(ny); }
+        }
+        else if (eksisterende.Reaksjon == reaksjon)
+        {
+            Db.KunngjoringLikes.Remove(eksisterende);
+            k.Likes.Remove(eksisterende);
+        }
+        else
+        {
+            eksisterende.Reaksjon = reaksjon;
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    // Påmelding på arrangement: samme svar igjen trekker svaret.
+    private async Task MeldPa(Kunngjoring k, PameldingSvar svar)
+    {
+        if (_naverendeBrukerId is not { } bid)
+        {
+            return;
+        }
+
+        var eksisterende = k.Pameldinger.FirstOrDefault(p => p.BrukerId == bid);
+        if (eksisterende is null)
+        {
+            var ny = new KunngjoringPamelding { KunngjoringId = k.Id, BrukerId = bid, Svar = svar, Bruker = _naverendeBruker };
+            Db.KunngjoringPameldinger.Add(ny);
+            if (!k.Pameldinger.Contains(ny)) { k.Pameldinger.Add(ny); }
+        }
+        else if (eksisterende.Svar == svar)
+        {
+            Db.KunngjoringPameldinger.Remove(eksisterende);
+            k.Pameldinger.Remove(eksisterende);
+        }
+        else
+        {
+            eksisterende.Svar = svar;
+            eksisterende.OppdatertDato = DateTime.Now;
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task Bekreft(Kunngjoring k)
+    {
+        if (_naverendeBrukerId is not { } bid || HarBekreftet(k))
+        {
+            return;
+        }
+
+        var b = new KunngjoringBekreftelse { KunngjoringId = k.Id, BrukerId = bid, Bruker = _naverendeBruker };
+        Db.KunngjoringBekreftelser.Add(b);
+        if (!k.Bekreftelser.Contains(b)) { k.Bekreftelser.Add(b); }
+        await Db.SaveChangesAsync();
+        if (_filter == "bekreft" && VenterPaBekreftelse.Count == 0)
+        {
+            _filter = "";
+        }
+    }
+
+    // Stem, eller bytt stemme. Samme valg igjen trekker stemmen.
+    private async Task Stem(Kunngjoring k, AvstemningValg valg)
+    {
+        if (_naverendeBrukerId is not { } bid)
+        {
+            return;
+        }
+
+        var eksisterende = k.Valg.SelectMany(v => v.Stemmer).FirstOrDefault(s => s.BrukerId == bid);
+        if (eksisterende is not null)
+        {
+            Db.AvstemningStemmer.Remove(eksisterende);
+            k.Valg.First(v => v.Id == eksisterende.ValgId).Stemmer.Remove(eksisterende);
+            if (eksisterende.ValgId == valg.Id)
+            {
+                await Db.SaveChangesAsync();
+                return;
+            }
+            await Db.SaveChangesAsync();
+        }
+
+        var ny = new AvstemningStemme { ValgId = valg.Id, KunngjoringId = k.Id, BrukerId = bid };
+        Db.AvstemningStemmer.Add(ny);
+        if (!valg.Stemmer.Contains(ny)) { valg.Stemmer.Add(ny); }
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task VelgBesteSvar(Kunngjoring k, KunngjoringKommentar kom)
+    {
+        k.BesteSvarKommentarId = k.BesteSvarKommentarId == kom.Id ? null : kom.Id;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LeggTilKommentar(Kunngjoring k)
+    {
+        var tekst = _kommentarUtkast.GetValueOrDefault(k.Id, "").Trim();
+        if (tekst.Length == 0)
+        {
+            return;
+        }
+
+        var kommentar = new KunngjoringKommentar { KunngjoringId = k.Id, Tekst = tekst, BrukerId = _naverendeBrukerId };
+        Db.KunngjoringKommentarer.Add(kommentar);
+        await Db.SaveChangesAsync();
+        kommentar.Bruker = _naverendeBruker;
+        // EF legger den nye kommentaren inn i k.Kommentarer selv (fix-up) - ikke legg til to ganger.
+        if (!k.Kommentarer.Contains(kommentar)) { k.Kommentarer.Add(kommentar); }
+        _kommentarUtkast[k.Id] = "";
+        _visteKommentarer.Add(k.Id);
+    }
+
+    private int? _bekreftSlettId;
+
+    private async Task Slett(Kunngjoring k)
+    {
+        if (_bekreftSlettId != k.Id)
+        {
+            _bekreftSlettId = k.Id;
+            return;
+        }
+
+        Db.Kunngjoringer.Remove(k);
+        await Db.SaveChangesAsync();
+        _innlegg.Remove(k);
+        _alleInnleggIder.RemoveAll(x => x.Id == k.Id);
+        _bekreftSlettId = null;
+    }
+
+    private async Task VekslFestet(Kunngjoring k)
+    {
+        k.Festet = !k.Festet;
+        await Db.SaveChangesAsync();
+    }
+
+    // ---------- utvalg ----------
+
+    private List<Kunngjoring> FilterteInnlegg
+    {
+        get
+        {
+            IEnumerable<Kunngjoring> liste = _innlegg;
+            var filter = _visning == Visning.Fellesskap ? _fane : _filter;
+            liste = filter switch
+            {
+                "kunngjoringer" => liste.Where(k => k.Type == InnleggType.Kunngjoring),
+                "sporsmal" => liste.Where(k => k.Type == InnleggType.Sporsmal),
+                "ros" => liste.Where(k => k.Type == InnleggType.Ros),
+                "arrangement" => liste.Where(k => k.Type == InnleggType.Arrangement || k.EventDato is not null),
+                "avstemning" => liste.Where(k => k.Type == InnleggType.Avstemning),
+                "ulest" => liste.Where(k => _ulesteVedApning.Contains(k.Id)),
+                "bekreft" => VenterPaBekreftelse,
+                _ => liste
+            };
+            if (_sortering == "aktivitet")
+            {
+                liste = liste.OrderByDescending(k => k.Festet).ThenByDescending(SisteAktivitet);
+            }
+            return liste.ToList();
+        }
+    }
+
+    private static DateTime SisteAktivitet(Kunngjoring k) =>
+        new[] { k.OpprettetDato, k.Kommentarer.Count > 0 ? k.Kommentarer.Max(c => c.OpprettetDato) : DateTime.MinValue }.Max();
+
+    private List<Kunngjoring> VenterPaBekreftelse => _innlegg
+        .Where(k => k.KreverBekreftelse && !HarBekreftet(k) && k.OpprettetAvBrukerId != _naverendeBrukerId)
+        .ToList();
+
+    private List<(Bruker Bruker, int Antall, string Merke)> RosDenneManeden => _innlegg
+        .Where(k => k.Type == InnleggType.Ros && k.RosTilBruker is not null && k.OpprettetDato >= new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1))
+        .GroupBy(k => k.RosTilBrukerId)
+        .Select(g => (g.First().RosTilBruker!, g.Count(), RosMerke.Hent(g.GroupBy(x => x.RosMerke).OrderByDescending(x => x.Count()).First().Key).Navn))
+        .OrderByDescending(x => x.Item2)
+        .Take(4)
+        .ToList();
+
+    private int MottakereAv(Kunngjoring k)
+    {
+        var f = _fellesskap.FirstOrDefault(x => x.Id == k.FellesskapId);
+        var antall = f is null ? _interneBrukere.Count : AntallMedlemmer(f);
+        return Math.Max(1, antall - (k.OpprettetAvBrukerId is null ? 0 : 1));
+    }
+
+    private List<Bruker> ManglerBekreftelse(Kunngjoring k)
+    {
+        var f = _fellesskap.FirstOrDefault(x => x.Id == k.FellesskapId);
+        var medlemmer = f is null ? _interneBrukere : MedlemmerAv(f);
+        return medlemmer.Where(b => b.Id != k.OpprettetAvBrukerId && !k.Bekreftelser.Any(x => x.BrukerId == b.Id)).ToList();
+    }
+
+    // ---------- hjelpere ----------
+
+    private string Hilsen => DateTime.Now.Hour switch
+    {
+        var t when 10 > t => "God morgen",
+        var t when 17 > t => "Hei",
+        _ => "God kveld"
+    };
+
+    private static readonly string[] _avatarPaletten = ["#835e41", "#2054a3", "#a1690a", "#2b7a4b", "#7a2b96", "#a32020"];
+    private static string AvatarFarge(string navn) => _avatarPaletten[Math.Abs(StabilHash(navn)) % _avatarPaletten.Length];
+
+    // string.GetHashCode varierer mellom prosesser - denne gir samme farge hver gang.
+    private static int StabilHash(string s)
+    {
+        unchecked
+        {
+            var h = 17;
+            foreach (var c in s) { h = h * 31 + c; }
+            return h == int.MinValue ? 0 : h;
+        }
+    }
 
     private static string Initialer(string navn)
     {
@@ -289,62 +1166,27 @@
         };
     }
 
-    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
-    private int? _naverendeBrukerId;
-    private Bruker? _naverendeBruker;
-    private bool ErAdminEllerPl;
-    private readonly Dictionary<int, string> _kommentarUtkast = [];
-
-    private string GetUtkast(int kunngjoringId) => _kommentarUtkast.GetValueOrDefault(kunngjoringId, "");
-
-    // "" = alle, ellers en KunngjoringKategori eller "festet".
-    private string _filter = "";
-    // Siste kunngjøring brukeren hadde sett før siden ble åpnet - nyere får "Ny".
-    private int _sistSettId = int.MaxValue;
-    private readonly HashSet<int> _visteKommentarer = [];
-
-    private static readonly (PameldingSvar Svar, string Tekst)[] PameldingValg =
-    [
-        (PameldingSvar.Kommer, "Jeg kommer"),
-        (PameldingSvar.Kanskje, "Kanskje"),
-        (PameldingSvar.KanIkke, "Kan ikke")
-    ];
-
-    private List<Kunngjoring> Synlige => _filter switch
+    private static string Forkortelse(string navn)
     {
-        "" => _kunngjoringer,
-        "festet" => _kunngjoringer.Where(k => k.Festet).ToList(),
-        _ => _kunngjoringer.Where(k => k.Kategori.ToString() == _filter).ToList()
-    };
-
-    private List<Kunngjoring> Kommende => _kunngjoringer
-        .Where(k => k.EventDato is { } d && d.Date >= DateTime.Today)
-        .OrderBy(k => k.EventDato)
-        .Take(4)
-        .ToList();
-
-    private Kunngjoring? NesteArrangement => Kommende.FirstOrDefault();
-
-    private List<Kunngjoring> NyeKolleger => _kunngjoringer
-        .Where(k => k.Kategori == KunngjoringKategori.Nyansatt && k.OpprettetDato >= DateTime.Today.AddDays(-60))
-        .OrderByDescending(k => k.OpprettetDato)
-        .Take(3)
-        .ToList();
+        var deler = navn.Split([' ', '-'], StringSplitOptions.RemoveEmptyEntries).Where(d => d.Length > 0 && char.IsLetterOrDigit(d[0])).ToList();
+        return deler.Count switch
+        {
+            0 => "?",
+            1 => deler[0][..Math.Min(2, deler[0].Length)].ToUpperInvariant(),
+            _ => string.Concat(deler[0][0], deler[^1][0]).ToUpperInvariant()
+        };
+    }
 
     private static string Fornavn(string navn) => navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? navn;
+    private static string Kort(string tekst, int maks) => maks >= tekst.Length ? tekst : tekst[..(maks - 1)].TrimEnd() + "…";
 
     private static string Naar(DateTime t)
     {
         if (t.Date == DateTime.Today) { return $"i dag {t:HH:mm}"; }
         if (t.Date == DateTime.Today.AddDays(-1)) { return $"i går {t:HH:mm}"; }
+        if (t.Date > DateTime.Today.AddDays(-7)) { return t.ToString("dddd HH:mm", _kultur); }
         return t.Year == DateTime.Today.Year ? t.ToString("d. MMM", _kultur) : t.ToString("d. MMM yyyy", _kultur);
     }
-
-    private string? MinReaksjon(Kunngjoring k) => k.Likes.FirstOrDefault(l => l.BrukerId == _naverendeBrukerId)?.Reaksjon;
-
-    private PameldingSvar? MittSvar(Kunngjoring k) => k.Pameldinger.FirstOrDefault(p => p.BrukerId == _naverendeBrukerId)?.Svar;
-
-    private bool KanMeldePa(Kunngjoring k) => _naverendeBrukerId is not null && k.EventDato is { } d && d.Date >= DateTime.Today;
 
     private static string DeltarTekst(Kunngjoring k)
     {
@@ -353,221 +1195,465 @@
         return kommer + kanskje == 0 ? "Ingen har svart ennå" : $"{kommer} kommer · {kanskje} kanskje";
     }
 
-    protected override async Task OnInitializedAsync()
-    {
-        if (AuthStateTask is not null)
-        {
-            var state = await AuthStateTask;
-            var rolleClaim = state.User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
-            ErAdminEllerPl = rolleClaim is "Admin" or "Prosjektleder";
+    // Korte innlegg (diskusjon/kunngjøring) med fargebakgrunn vises som stor tekst.
+    private static bool VisSomFargepost(Kunngjoring k) => InnleggBakgrunn.ErGyldig(k.Bakgrunn) && k.BildeData is null && 220 >= k.Innhold.Length;
 
-            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
-            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
+    // ---------- byggeklosser ----------
+
+    private RenderFragment Avatar(string navn, string klasse) => __builder =>
+    {
+        <span class="kg-av @klasse" style="background:@AvatarFarge(navn);" title="@navn">@Initialer(navn)</span>
+    };
+
+    private RenderFragment Stabel(IEnumerable<Bruker> brukere) => __builder =>
+    {
+        <span class="kg-stabel">
+            @foreach (var b in brukere)
             {
-                _naverendeBrukerId = bid;
-                _naverendeBruker = await Db.Brukere.FindAsync(bid);
-                _sistSettId = _naverendeBruker?.SisteKunngjoringSettId ?? 0;
+                <span class="kg-av" style="background:@AvatarFarge(b.Navn);" title="@b.Navn">@Initialer(b.Navn)</span>
             }
-        }
+        </span>
+    };
 
-        await LastAsync();
-        await MarkerSomLestAsync();
-    }
-
-    private async Task LastAsync()
+    private RenderFragment Omslag(Fellesskap f, string klasse) => __builder =>
     {
-        _kunngjoringer = await Db.Kunngjoringer
-            .Include(k => k.OpprettetAvBruker)
-            .Include(k => k.Likes)
-            .Include(k => k.Kommentarer).ThenInclude(kom => kom.Bruker)
-            .Include(k => k.Pameldinger).ThenInclude(p => p.Bruker)
-            .AsSplitQuery()
-            .OrderByDescending(k => k.Festet)
-            .ThenByDescending(k => k.OpprettetDato)
-            .ToListAsync();
-    }
-
-    // Én reaksjon per bruker: samme reaksjon igjen fjerner den, en annen bytter.
-    private async Task Reager(Kunngjoring k, string reaksjon)
-    {
-        if (_naverendeBrukerId is null)
+        var tema = FellesskapTema.Hent(f.Tema);
+        @if (f.OmslagData is not null)
         {
-            return;
-        }
-
-        var eksisterende = await Db.KunngjoringLikes
-            .FirstOrDefaultAsync(l => l.KunngjoringId == k.Id && l.BrukerId == _naverendeBrukerId);
-
-        if (eksisterende is null)
-        {
-            var ny = new KunngjoringLike { KunngjoringId = k.Id, BrukerId = _naverendeBrukerId.Value, Reaksjon = reaksjon };
-            Db.KunngjoringLikes.Add(ny);
-            if (!k.Likes.Contains(ny)) { k.Likes.Add(ny); }
-        }
-        else if (eksisterende.Reaksjon == reaksjon)
-        {
-            Db.KunngjoringLikes.Remove(eksisterende);
-            k.Likes.RemoveAll(l => l.BrukerId == _naverendeBrukerId);
+            <span class="kg-oms kg-oms-bilde @klasse" style="background-image:url('/fellesskapbilde/@f.Id');"></span>
         }
         else
         {
-            eksisterende.Reaksjon = reaksjon;
-            k.Likes.RemoveAll(l => l.BrukerId == _naverendeBrukerId);
-            k.Likes.Add(eksisterende);
+            <span class="kg-oms @klasse" style="background:linear-gradient(135deg,@tema.Fra,@tema.Til);">
+                @for (var i = 0; i < tema.Emoji.Length; i++)
+                {
+                    <span class="kg-em kg-em-@i">@tema.Emoji[i]</span>
+                }
+            </span>
         }
+    };
 
-        await Db.SaveChangesAsync();
-    }
-
-    // Påmelding på arrangement: samme svar igjen trekker svaret.
-    private async Task MeldPa(Kunngjoring k, PameldingSvar svar)
+    private RenderFragment MedlemKnapp(Fellesskap f) => __builder =>
     {
-        if (_naverendeBrukerId is null)
+        @if (f.ErObligatorisk)
         {
-            return;
+            <span class="kg-bli med" title="Alle i organisasjonen er medlemmer"><Icon Name="check" />Medlem</span>
         }
-
-        var eksisterende = await Db.KunngjoringPameldinger
-            .FirstOrDefaultAsync(p => p.KunngjoringId == k.Id && p.BrukerId == _naverendeBrukerId);
-
-        if (eksisterende is null)
+        else if (ErMedlem(f))
         {
-            var ny = new KunngjoringPamelding { KunngjoringId = k.Id, BrukerId = _naverendeBrukerId.Value, Svar = svar, Bruker = _naverendeBruker };
-            Db.KunngjoringPameldinger.Add(ny);
-            if (!k.Pameldinger.Contains(ny)) { k.Pameldinger.Add(ny); }
-        }
-        else if (eksisterende.Svar == svar)
-        {
-            Db.KunngjoringPameldinger.Remove(eksisterende);
-            k.Pameldinger.RemoveAll(p => p.BrukerId == _naverendeBrukerId);
+            <button type="button" class="kg-bli med" title="Forlat fellesskapet" @onclick="@(() => BliMed(f))" @onclick:stopPropagation="true"><Icon Name="check" />Medlem</button>
         }
         else
         {
-            eksisterende.Svar = svar;
-            eksisterende.OppdatertDato = DateTime.Now;
-            k.Pameldinger.RemoveAll(p => p.BrukerId == _naverendeBrukerId);
-            k.Pameldinger.Add(eksisterende);
+            <button type="button" class="kg-bli" @onclick="@(() => BliMed(f))" @onclick:stopPropagation="true"><Icon Name="plus" />Bli med</button>
         }
+    };
 
-        await Db.SaveChangesAsync();
-    }
-
-    private async Task LeggTilKommentar(Kunngjoring k)
+    private RenderFragment MenyLenke(Fellesskap f) => __builder =>
     {
-        var tekst = GetUtkast(k.Id).Trim();
-        if (string.IsNullOrWhiteSpace(tekst))
-        {
-            return;
-        }
+        var nye = UlesteI(f.Id);
+        <a href="@($"/kunngjoringer/fellesskap/{f.Id}")" class="@(_visning == Visning.Fellesskap && _aktivt?.Id == f.Id ? "pa" : "")">
+            <span class="kg-flogo kg-flogo-xs" style="background:@f.Farge">@Forkortelse(f.Navn)</span><span class="kg-meny-navn">@f.Navn</span>
+            @if (nye > 0)
+            {
+                <span class="kg-ul">@nye</span>
+            }
+        </a>
+    };
 
-        var kommentar = new KunngjoringKommentar
-        {
-            KunngjoringId = k.Id,
-            Tekst = tekst,
-            BrukerId = _naverendeBrukerId
-        };
-        Db.KunngjoringKommentarer.Add(kommentar);
-        await Db.SaveChangesAsync();
-
-        kommentar.Bruker = _naverendeBruker;
-        // EF legger den nye kommentaren inn i k.Kommentarer selv (fix-up) - ikke legg til to ganger.
-        if (!k.Kommentarer.Contains(kommentar)) { k.Kommentarer.Add(kommentar); }
-        _kommentarUtkast[k.Id] = "";
-    }
-
-    private async Task MarkerSomLestAsync()
+    private RenderFragment KommendeWidget(List<Kunngjoring> innlegg) => __builder =>
     {
-        if (_naverendeBrukerId is null || _kunngjoringer.Count == 0)
+        var kommende = innlegg.Where(k => k.EventDato is { } d && d.Date >= DateTime.Today).OrderBy(k => k.EventDato).Take(4).ToList();
+        @if (kommende.Count > 0)
         {
-            return;
+            <div class="kg-wid">
+                <h4>Kommende</h4>
+                @foreach (var a in kommende)
+                {
+                    <a class="kg-wrad" href="@($"/kunngjoring/{a.Id}")">
+                        <span class="kg-kal kg-kal-liten"><small>@a.EventDato!.Value.ToString("MMM", _kultur).TrimEnd('.')</small><b>@a.EventDato.Value.Day</b></span>
+                        <span><b>@Kort(a.Tittel, 40)</b><small>@(a.Sted ?? a.EventDato.Value.ToString("dddd", _kultur)) · @a.Pameldinger.Count(p => p.Svar == PameldingSvar.Kommer) kommer</small></span>
+                    </a>
+                }
+            </div>
         }
+    };
 
-        var bruker = await Db.Brukere.FindAsync(_naverendeBrukerId.Value);
-        if (bruker is null)
-        {
-            return;
-        }
-
-        var nyesteId = _kunngjoringer.Max(k => k.Id);
-        if ((bruker.SisteKunngjoringSettId ?? 0) < nyesteId)
-        {
-            bruker.SisteKunngjoringSettId = nyesteId;
-            await Db.SaveChangesAsync();
-        }
-    }
-
-    private async Task LastOppBilde(InputFileChangeEventArgs e)
+    private RenderFragment Komponer(Fellesskap? fast) => __builder =>
     {
-        _feil = null;
-        var fil = e.File;
-        if (fil.Size > 8_000_000)
-        {
-            _feil = $"\"{fil.Name}\" er for stort (maks 8 MB).";
-            return;
-        }
+        var malFellesskap = fast ?? _fellesskap.FirstOrDefault(x => x.Id == _nyFellesskapId) ?? MineFellesskap.FirstOrDefault();
+        <div class="kg-komp">
+            <div class="kg-komp-r1">
+                @Avatar(_naverendeBruker?.Navn ?? "?", "kg-av-l")
+                <button type="button" class="kg-komp-felt" @onclick="@(() => { if (_nyType is null) { _nyType = InnleggType.Diskusjon; } })">
+                    @(fast is null ? "Del tanker, ideer eller oppdateringer …" : $"Del noe med {fast.Navn} …")
+                </button>
+            </div>
+            <div class="kg-typer">
+                @foreach (var t in TilgjengeligeTyper(malFellesskap))
+                {
+                    var type = t;
+                    <button type="button" class="@(_nyType == type ? "pa" : "")" @onclick="@(() => VelgType(type))"><em>@type.Emoji()</em>@type.Visningsnavn()</button>
+                }
+            </div>
 
-        using var buffer = new MemoryStream();
-        await using (var stream = fil.OpenReadStream(maxAllowedSize: 8_000_000))
-        {
-            await stream.CopyToAsync(buffer);
-        }
+            @if (_nyType is { } valgt)
+            {
+                <div class="kg-kform">
+                    @if (fast is null)
+                    {
+                        <label class="kg-delI">Del i
+                            <select @bind="_nyFellesskapId">
+                                @foreach (var f in MineFellesskap)
+                                {
+                                    <option value="@f.Id">@f.Navn</option>
+                                }
+                            </select>
+                        </label>
+                    }
 
-        _nyBildeData = buffer.ToArray();
-        _nyBildeContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType;
-        _nyBildeFilnavn = fil.Name;
-    }
+                    @if (valgt == InnleggType.Ros)
+                    {
+                        <label>Hvem vil du gi ros?
+                            <select @bind="_nyRosTil">
+                                <option value="">Velg person …</option>
+                                @foreach (var b in _interneBrukere.Where(b => b.Id != _naverendeBrukerId))
+                                {
+                                    <option value="@b.Id">@b.Navn</option>
+                                }
+                            </select>
+                        </label>
+                        <div class="kg-merker">
+                            @foreach (var (id, emoji, navn) in RosMerke.Alle)
+                            {
+                                var mid = id;
+                                <button type="button" class="@(_nyRosMerke == mid ? "pa" : "")" @onclick="@(() => _nyRosMerke = mid)">@emoji @navn</button>
+                            }
+                        </div>
+                    }
 
-    private void FjernValgtBilde()
+                    @if (valgt.HarTittel())
+                    {
+                        <input class="kg-inn" @bind="_nyTittel" placeholder="@(valgt switch { InnleggType.Sporsmal => "Hva lurer du på?", InnleggType.Avstemning => "Spørsmålet i avstemningen", InnleggType.Arrangement => "Navn på arrangementet", _ => "Tittel" })" />
+                    }
+
+                    @if (valgt == InnleggType.Avstemning)
+                    {
+                        @for (var i = 0; i < _nyValg.Count; i++)
+                        {
+                            var idx = i;
+                            <div class="kg-valgrad">
+                                <input class="kg-inn" value="@_nyValg[idx]" @onchange="@(e => _nyValg[idx] = e.Value?.ToString() ?? "")" placeholder="Alternativ @(idx + 1)" />
+                                @if (_nyValg.Count > 2)
+                                {
+                                    <button type="button" class="kg-x" title="Fjern" @onclick="@(() => _nyValg.RemoveAt(idx))"><Icon Name="x" /></button>
+                                }
+                            </div>
+                        }
+                        @if (_nyValg.Count < 8)
+                        {
+                            <button type="button" class="kg-lenke" @onclick="@(() => _nyValg.Add(""))">+ Legg til alternativ</button>
+                        }
+                    }
+
+                    @if (valgt == InnleggType.Arrangement)
+                    {
+                        <div class="kg-form-rad">
+                            <label>Dato<input type="date" @bind="_nyEventDato" /></label>
+                            <label>Sted<input @bind="_nySted" placeholder="F.eks. Verkstedet" /></label>
+                            <label>Tid og detaljer<input @bind="_nyDetaljer" placeholder="F.eks. kl. 17:00 · pizza" /></label>
+                        </div>
+                    }
+
+                    @if (valgt != InnleggType.Avstemning)
+                    {
+                        <textarea class="kg-inn" rows="@(valgt == InnleggType.Diskusjon ? 3 : 4)" @bind="_nyInnhold" @bind:event="oninput"
+                                  placeholder="@(valgt switch { InnleggType.Ros => "Hva gjorde de bra?", InnleggType.Sporsmal => "Legg til detaljer (valgfritt)", InnleggType.Kunngjoring => "Skriv kunngjøringen …", InnleggType.Arrangement => "Beskrivelse (valgfritt)", _ => "Hva vil du dele?" })"></textarea>
+                    }
+
+                    @if (valgt is InnleggType.Diskusjon or InnleggType.Kunngjoring or InnleggType.Arrangement or InnleggType.Sporsmal)
+                    {
+                        <div class="kg-bgvalg">
+                            <span>Bakgrunn</span>
+                            <button type="button" class="kg-bg-ingen @(_nyBakgrunn is null && _nyBildeData is null ? "pa" : "")" title="Ingen" @onclick="@(() => VelgBakgrunn(null))">∅</button>
+                            <label class="kg-bg-last @(_nyBildeData is not null ? "pa" : "")"><Icon Name="camera" />@(_nyBildeData is null ? "Bilde" : Kort(_nyBildeFilnavn ?? "Bilde", 18))<InputFile OnChange="LastOppInnleggBilde" accept="image/*" /></label>
+                            @if (valgt is InnleggType.Diskusjon or InnleggType.Kunngjoring)
+                            {
+                                @foreach (var bg in InnleggBakgrunn.Alle)
+                                {
+                                    var b = bg;
+                                    <button type="button" class="kg-bg-@b @(_nyBakgrunn == b ? "pa" : "")" title="Fargebakgrunn" @onclick="@(() => VelgBakgrunn(b))"></button>
+                                }
+                            }
+                        </div>
+                        @if (_nyBildeData is not null)
+                        {
+                            <div class="kg-forhand"><small>Forhåndsvisning</small><img src="@($"data:{_nyBildeContentType};base64,{Convert.ToBase64String(_nyBildeData)}")" alt="" /></div>
+                        }
+                        else if (_nyBakgrunn is not null)
+                        {
+                            <div class="kg-forhand"><small>Forhåndsvisning@(_nyInnhold.Length > 220 ? " – teksten er for lang for fargebakgrunn og vises vanlig" : "")</small><div class="kg-fargepost kg-bg-@_nyBakgrunn">@(string.IsNullOrWhiteSpace(_nyInnhold) ? "Skriv noe kort …" : _nyInnhold)</div></div>
+                        }
+                    }
+
+                    @if (!string.IsNullOrEmpty(_feil))
+                    {
+                        <p class="form-error">@_feil</p>
+                    }
+                    <div class="kg-kform-bunn">
+                        <div class="kg-brytere">
+                            @if (KanKunngjore(malFellesskap) && valgt is InnleggType.Kunngjoring or InnleggType.Arrangement)
+                            {
+                                <label class="kg-sjekk"><input type="checkbox" @bind="_nyFestet" />Fest øverst</label>
+                            }
+                            @if (valgt == InnleggType.Kunngjoring)
+                            {
+                                <label class="kg-sjekk"><input type="checkbox" @bind="_nyKrevBekreftelse" />Krev «Lest og forstått»</label>
+                            }
+                        </div>
+                        <div class="kg-form-knapper">
+                            <button type="button" class="kg-knapp" @onclick="NullstillSkjema">Avbryt</button>
+                            <button type="button" class="kg-knapp kg-knapp-p" @onclick="@(() => Publiser(fast))"><Icon Name="send" />@(valgt switch { InnleggType.Sporsmal => "Still spørsmål", InnleggType.Ros => "Gi ros", InnleggType.Avstemning => "Publiser avstemning", InnleggType.Arrangement => "Opprett arrangement", _ => "Publiser" })</button>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    };
+
+    private RenderFragment Feed(List<Kunngjoring> liste) => __builder =>
     {
-        _nyBildeData = null;
-        _nyBildeContentType = null;
-        _nyBildeFilnavn = null;
-    }
-
-    private async Task Opprett()
-    {
-        if (string.IsNullOrWhiteSpace(_nyTittel) || string.IsNullOrWhiteSpace(_nyInnhold))
+        @if (liste.Count == 0)
         {
-            _feil = "Tittel og innhold må fylles ut.";
-            return;
+            <p class="list-empty">@(_filter == "ulest" ? "Du har lest alt. 🎉" : "Ingen innlegg her ennå – bli den første!")</p>
         }
-
-        Db.Kunngjoringer.Add(new Kunngjoring
+        var nye = _visning == Visning.Hjem && _filter == "" ? liste.Count(k => _ulesteVedApning.Contains(k.Id)) : 0;
+        var tidligereVist = false;
+        @if (nye > 0)
         {
-            Tittel = _nyTittel.Trim(),
-            Innhold = _nyInnhold.Trim(),
-            Kategori = _nyKategori,
-            Festet = _nyFestet,
-            EventDato = _nyEventDato,
-            Sted = string.IsNullOrWhiteSpace(_nySted) ? null : _nySted.Trim(),
-            Detaljer = string.IsNullOrWhiteSpace(_nyDetaljer) ? null : _nyDetaljer.Trim(),
-            InfoTekst = string.IsNullOrWhiteSpace(_nyInfoTekst) ? null : _nyInfoTekst.Trim(),
-            OpprettetAvBrukerId = _naverendeBrukerId,
-            BildeData = _nyBildeData,
-            BildeContentType = _nyBildeContentType,
-            BildeFilnavn = _nyBildeFilnavn
-        });
-        await Db.SaveChangesAsync();
+            <div class="kg-skille">@nye @(nye == 1 ? "nytt" : "nye") siden sist</div>
+        }
+        @foreach (var k in liste)
+        {
+            @if (nye > 0 && !tidligereVist && !_ulesteVedApning.Contains(k.Id) && !k.Festet)
+            {
+                tidligereVist = true;
+                <div class="kg-skille kg-skille-svak">Tidligere</div>
+            }
+            @Innlegg(k)
+        }
+    };
 
-        _feil = null;
-        _nyTittel = "";
-        _nyInnhold = "";
-        _nyKategori = KunngjoringKategori.Info;
-        _nyFestet = false;
-        _nyEventDato = null;
-        _nySted = null;
-        _nyDetaljer = null;
-        _nyInfoTekst = null;
-        FjernValgtBilde();
-        _visNyForm = false;
-        await LastAsync();
-        await MarkerSomLestAsync();
-    }
-
-    private async Task Slett(Kunngjoring k)
+    private RenderFragment Innlegg(Kunngjoring k) => __builder =>
     {
-        Db.Kunngjoringer.Remove(k);
-        await Db.SaveChangesAsync();
-        _kunngjoringer.Remove(k);
-    }
+        var ny = _ulesteVedApning.Contains(k.Id);
+        var forfatter = k.OpprettetAvBruker?.Navn ?? "Ukjent";
+        <article class="kg-post @(k.Type == InnleggType.Kunngjoring ? "kunngj" : "") @(ny ? "ny" : "")" @key="k.Id">
+            <div class="kg-ph">
+                @Avatar(forfatter, "kg-av-l")
+                <div>
+                    <b>@forfatter</b>
+                    <small>@(k.OpprettetAvBruker?.Stilling ?? k.OpprettetAvBruker?.Rolle.Visningsnavn()) · @Naar(k.OpprettetDato)</small>
+                </div>
+                <div class="kg-ph-hoyre">
+                    @if (ny) {<span class="kg-nytt">Ny</span>}
+                    @if (k.Festet) {<span class="kg-tag kg-t-fest"><Icon Name="star" />Festet</span>}
+                    @if (k.Type == InnleggType.Sporsmal && k.BesteSvarKommentarId is not null) {<span class="kg-tag kg-t-lost"><Icon Name="check" />Løst</span>}
+                    @if (KanKunngjore(k.Fellesskap))
+                    {
+                        <button type="button" class="kg-mer" title="@(k.Festet ? "Løsne" : "Fest øverst")" @onclick="@(() => VekslFestet(k))"><Icon Name="@(k.Festet ? "star" : "star-tom")" /></button>
+                    }
+                    @if (KanSlette(k))
+                    {
+                        <button type="button" class="kg-mer @(_bekreftSlettId == k.Id ? "fare" : "")" title="Slett innlegget" @onclick="@(() => Slett(k))">@if (_bekreftSlettId == k.Id) {<text>Slett?</text>} else {<Icon Name="trash" />}</button>
+                    }
+                </div>
+            </div>
+
+            <div class="kg-merkerad">
+                @if (_visning != Visning.Fellesskap && k.Fellesskap is { } f)
+                {
+                    <a class="kg-fra" href="@($"/kunngjoringer/fellesskap/{f.Id}")"><span class="kg-flogo kg-flogo-xxs" style="background:@f.Farge">@Forkortelse(f.Navn)</span>@f.Navn</a>
+                }
+                @if (k.Type != InnleggType.Diskusjon)
+                {
+                    <span class="kg-tag kg-t-@k.Type.ToString().ToLowerInvariant()">@k.Type.Emoji() @k.Type.Visningsnavn()</span>
+                }
+            </div>
+
+            @if (k.BildeData is not null)
+            {
+                <a href="@($"/kunngjoring/{k.Id}")" class="kg-pbg" style="background-image:url('@($"/kunngjoringbilde/{k.Id}")');" aria-label="@k.Tittel">
+                    @if (!string.IsNullOrWhiteSpace(k.Sted)) {<span class="kg-pbg-over"><Icon Name="map-pin" />@k.Sted</span>}
+                </a>
+            }
+
+            @if (k.Type.HarTittel())
+            {
+                <h3><a href="@($"/kunngjoring/{k.Id}")">@k.Tittel</a></h3>
+            }
+
+            @if (k.Type == InnleggType.Ros)
+            {
+                var merke = RosMerke.Hent(k.RosMerke);
+                <div class="kg-roskort">
+                    <span class="kg-medalje">@merke.Emoji</span>
+                    <div>
+                        <b>@(merke.Navn)!</b>
+                        @if (!string.IsNullOrWhiteSpace(k.Innhold)) {<small>@k.Innhold</small>}
+                        @if (k.RosTilBruker is { } til)
+                        {
+                            <div class="kg-ros-til">Til @Avatar(til.Navn, "") @til.Navn</div>
+                        }
+                    </div>
+                </div>
+            }
+            else if (VisSomFargepost(k))
+            {
+                <div class="kg-fargepost kg-bg-@k.Bakgrunn">@k.Innhold</div>
+            }
+            else if (!string.IsNullOrWhiteSpace(k.Innhold))
+            {
+                var lang = k.Innhold.Length > 320;
+                var utvidet = _utvidet.Contains(k.Id);
+                <p class="kg-tx @(lang && !utvidet ? "kort" : "")">@k.Innhold</p>
+                @if (lang)
+                {
+                    <button type="button" class="kg-semer" @onclick="@(() => { if (!_utvidet.Remove(k.Id)) { _utvidet.Add(k.Id); } })">@(utvidet ? "vis mindre" : "se mer")</button>
+                }
+            }
+
+            @if (!string.IsNullOrWhiteSpace(k.InfoTekst))
+            {
+                <div class="kg-info">@k.InfoTekst</div>
+            }
+
+            @if (k.Type == InnleggType.Avstemning && k.Valg.Count > 0)
+            {
+                var totalt = k.Valg.Sum(v => v.Stemmer.Count);
+                var minStemme = MinStemme(k);
+                <div class="kg-poll">
+                    @foreach (var v in k.Valg.OrderBy(v => v.Rekkefolge))
+                    {
+                        var valg = v;
+                        var prosent = totalt == 0 ? 0 : (int)Math.Round(v.Stemmer.Count * 100.0 / totalt);
+                        <button type="button" class="kg-valg @(minStemme == v.Id ? "min" : "")" @onclick="@(() => Stem(k, valg))">
+                            <i style="width:@(prosent)%"></i><span>@(minStemme == v.Id ? "✓ " : "")@v.Tekst</span><b>@prosent%</b>
+                        </button>
+                    }
+                    <small>@totalt @(totalt == 1 ? "stemme" : "stemmer")@(minStemme is null ? " · klikk for å stemme" : " · du har stemt – klikk igjen for å angre")</small>
+                </div>
+            }
+
+            @if (k.EventDato is not null || !string.IsNullOrWhiteSpace(k.Sted) && k.BildeData is null)
+            {
+                <div class="kg-event">
+                    @if (k.EventDato is { } dato)
+                    {
+                        <span class="kg-kal"><small>@dato.ToString("MMM", _kultur).TrimEnd('.')</small><b>@dato.Day</b></span>
+                    }
+                    <div>
+                        <div class="kg-event-t1">@(k.EventDato?.ToString("dddd d. MMMM", _kultur))@(string.IsNullOrWhiteSpace(k.Sted) ? "" : $" · {k.Sted}")</div>
+                        @if (!string.IsNullOrWhiteSpace(k.Detaljer)) {<div class="kg-event-t2">@k.Detaljer</div>}
+                        <div class="kg-event-t2">@DeltarTekst(k)</div>
+                    </div>
+                    @if (_naverendeBrukerId is not null && k.EventDato is { } d && d.Date >= DateTime.Today)
+                    {
+                        <div class="kg-rsvp">
+                            @foreach (var (svar, tekst) in PameldingValg)
+                            {
+                                var s = svar;
+                                <button type="button" class="@(MittSvar(k) == s ? "valgt" : "")" @onclick="@(() => MeldPa(k, s))">@(MittSvar(k) == s && s == PameldingSvar.Kommer ? "✓ " : "")@tekst</button>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (k.KreverBekreftelse)
+            {
+                var mottakere = MottakereAv(k);
+                var bekreftet = k.Bekreftelser.Count;
+                <div class="kg-bekreft">
+                    <span class="kg-bekreft-tall"><span class="kg-lestbar"><i style="width:@(Math.Min(100, bekreftet * 100 / mottakere))%"></i></span>@bekreftet av @mottakere har bekreftet</span>
+                    @if (KanKunngjore(k.Fellesskap) && bekreftet < mottakere)
+                    {
+                        <button type="button" class="kg-lenke" @onclick="@(() => { if (!_visManglerBekreftelse.Remove(k.Id)) { _visManglerBekreftelse.Add(k.Id); } })">@(_visManglerBekreftelse.Contains(k.Id) ? "Skjul" : "Hvem mangler?")</button>
+                    }
+                    @if (k.OpprettetAvBrukerId != _naverendeBrukerId)
+                    {
+                        @if (HarBekreftet(k))
+                        {
+                            <span class="kg-bekreftet"><Icon Name="check" />Du har bekreftet</span>
+                        }
+                        else
+                        {
+                            <button type="button" class="kg-knapp kg-knapp-p" @onclick="@(() => Bekreft(k))"><Icon Name="check" />Lest og forstått</button>
+                        }
+                    }
+                </div>
+                @if (_visManglerBekreftelse.Contains(k.Id))
+                {
+                    <div class="kg-mangler">Mangler: @string.Join(", ", ManglerBekreftelse(k).Select(b => b.Navn))</div>
+                }
+            }
+
+            @{ var reaksjoner = k.Likes.GroupBy(l => l.Reaksjon).OrderByDescending(g => g.Count()).Select(g => KunngjoringReaksjon.Hent(g.Key).Emoji).Take(3).ToList(); }
+            <div class="kg-preak">
+                <span class="kg-emo">@foreach (var e in reaksjoner) {<em>@e</em>}@if (k.Likes.Count > 0) {<text>&nbsp;@k.Likes.Count</text>}</span>
+                <span>@k.Kommentarer.Count @(k.Kommentarer.Count == 1 ? "kommentar" : "kommentarer") · Sett av @k.Visninger.Count</span>
+            </div>
+            @{ var min = MinReaksjon(k); var minR = min is null ? default : KunngjoringReaksjon.Hent(min); }
+            <div class="kg-handl">
+                <span class="kg-handl-reager">
+                    <button type="button" class="@(min is not null ? "pa" : "")" @onclick="@(() => Reager(k, min ?? KunngjoringReaksjon.Tommel))">@(min is null ? "👍 Liker" : $"{minR.Emoji} {minR.Navn}")</button>
+                    <span class="kg-reagvelger">
+                        @foreach (var (id, emoji, navn) in KunngjoringReaksjon.Alle)
+                        {
+                            var r = id;
+                            <button type="button" title="@navn" @onclick="@(() => Reager(k, r))">@emoji</button>
+                        }
+                    </span>
+                </span>
+                <button type="button" @onclick="@(() => _visteKommentarer.Add(k.Id))"><Icon Name="mail" />@(k.Type == InnleggType.Sporsmal ? "Svar" : "Kommenter")</button>
+            </div>
+
+            @if (k.Kommentarer.Count > 0 || _visteKommentarer.Contains(k.Id))
+            {
+                var kommentarer = k.Kommentarer.OrderBy(c => c.OpprettetDato).ToList();
+                var beste = kommentarer.FirstOrDefault(c => c.Id == k.BesteSvarKommentarId);
+                var visAlle = _visteKommentarer.Contains(k.Id) || kommentarer.Count <= 2;
+                @if (beste is not null)
+                {
+                    <div class="kg-svar"><span class="kg-svar-h"><Icon Name="check" />Beste svar · @(beste.Bruker?.Navn ?? "Ukjent")</span>@beste.Tekst</div>
+                }
+                @if (!visAlle)
+                {
+                    <button type="button" class="kg-vis-komm" @onclick="@(() => _visteKommentarer.Add(k.Id))">Vis alle @kommentarer.Count kommentarer</button>
+                }
+                @foreach (var kom in visAlle ? kommentarer : kommentarer.TakeLast(2).ToList())
+                {
+                    var komm = kom;
+                    <div class="kg-komm" @key="kom.Id">
+                        @Avatar(kom.Bruker?.Navn ?? "?", "")
+                        <div class="kg-komm-boble @(kom.Id == k.BesteSvarKommentarId ? "beste" : "")">
+                            <b>@(kom.Bruker?.Navn ?? "Ukjent")</b><small>@Naar(kom.OpprettetDato)</small>
+                            <p>@kom.Tekst</p>
+                            @if (KanVelgeBesteSvar(k) && kom.BrukerId != k.OpprettetAvBrukerId)
+                            {
+                                <button type="button" class="kg-beste-knapp" @onclick="@(() => VelgBesteSvar(k, komm))">@(kom.Id == k.BesteSvarKommentarId ? "✓ Beste svar" : "Merk som beste svar")</button>
+                            }
+                        </div>
+                    </div>
+                }
+                <div class="kg-skriv">
+                    @Avatar(_naverendeBruker?.Navn ?? "?", "")
+                    <input placeholder="@(k.Type == InnleggType.Sporsmal ? "Skriv et svar …" : "Skriv en kommentar …")" value="@_kommentarUtkast.GetValueOrDefault(k.Id, "")"
+                           @oninput="@(e => _kommentarUtkast[k.Id] = e.Value?.ToString() ?? "")"
+                           @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilKommentar(k); } })" />
+                    <button type="button" class="kg-knapp kg-knapp-p kg-knapp-liten" @onclick="@(() => LeggTilKommentar(k))">Send</button>
+                </div>
+            }
+        </article>
+    };
 }

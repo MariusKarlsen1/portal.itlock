@@ -19,11 +19,20 @@ public static class KunngjoringReaksjon
     public const string Tommel = "tommel";
     public const string Feiring = "feiring";
     public const string Hjerte = "hjerte";
+    public const string Ler = "ler";
+    public const string Wow = "wow";
+    public const string Takk = "takk";
 
     public static readonly (string Id, string Emoji, string Navn)[] Alle =
     [
         (Tommel, "👍", "Liker"),
+        (Hjerte, "❤️", "Elsker"),
         (Feiring, "🎉", "Gratulerer"),
-        (Hjerte, "❤️", "Elsker")
+        (Ler, "😂", "Morsomt"),
+        (Wow, "😮", "Wow"),
+        (Takk, "🙏", "Takk")
     ];
+
+    public static (string Id, string Emoji, string Navn) Hent(string? id) =>
+        Alle.FirstOrDefault(r => r.Id == id) is { Id: not null } r ? r : Alle[0];
 }

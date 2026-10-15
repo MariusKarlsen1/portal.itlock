@@ -1514,6 +1514,14 @@ app.MapGet("/kunngjoringbilde/{id:int}", async (int id, ApplicationDbContext db)
         : Results.File(kunngjoring.BildeData, FilSikkerhet.TryggContentType(kunngjoring.BildeContentType ?? "application/octet-stream"), kunngjoring.BildeFilnavn);
 }).RequireAuthorization();
 
+app.MapGet("/fellesskapbilde/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var fellesskap = await db.Fellesskap.FindAsync(id);
+    return fellesskap?.OmslagData is null
+        ? Results.NotFound()
+        : Results.File(fellesskap.OmslagData, FilSikkerhet.TryggContentType(fellesskap.OmslagContentType ?? "application/octet-stream"));
+}).RequireAuthorization();
+
 app.MapGet("/leverandorlogo/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var leverandor = await db.Leverandorer.FindAsync(id);

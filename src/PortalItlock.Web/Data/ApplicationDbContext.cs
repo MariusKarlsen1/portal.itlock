@@ -61,6 +61,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<KunngjoringLike> KunngjoringLikes => Set<KunngjoringLike>();
     public DbSet<KunngjoringKommentar> KunngjoringKommentarer => Set<KunngjoringKommentar>();
     public DbSet<KunngjoringPamelding> KunngjoringPameldinger => Set<KunngjoringPamelding>();
+    public DbSet<Fellesskap> Fellesskap => Set<Fellesskap>();
+    public DbSet<FellesskapMedlem> FellesskapMedlemmer => Set<FellesskapMedlem>();
+    public DbSet<KunngjoringBekreftelse> KunngjoringBekreftelser => Set<KunngjoringBekreftelse>();
+    public DbSet<KunngjoringVisning> KunngjoringVisninger => Set<KunngjoringVisning>();
+    public DbSet<AvstemningValg> AvstemningValg => Set<AvstemningValg>();
+    public DbSet<AvstemningStemme> AvstemningStemmer => Set<AvstemningStemme>();
     public DbSet<ServiceVarselSendt> ServiceVarselSendt => Set<ServiceVarselSendt>();
     public DbSet<Foresporsel> Foresporsler => Set<Foresporsel>();
     public DbSet<ForesporselMedia> ForesporselMedia => Set<ForesporselMedia>();
@@ -328,6 +334,36 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         modelBuilder.Entity<KunngjoringLike>()
             .HasIndex(l => new { l.KunngjoringId, l.BrukerId })
+            .IsUnique();
+
+        // Fellesskap: sletting av et fellesskap flytter innleggene tilbake til
+        // standardfellesskapet (FellesskapId null fylles ut ved neste lasting).
+        modelBuilder.Entity<Kunngjoring>()
+            .HasOne(k => k.Fellesskap)
+            .WithMany(f => f.Innlegg)
+            .HasForeignKey(k => k.FellesskapId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Kunngjoring>()
+            .HasOne(k => k.RosTilBruker)
+            .WithMany()
+            .HasForeignKey(k => k.RosTilBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<FellesskapMedlem>()
+            .HasIndex(m => new { m.FellesskapId, m.BrukerId })
+            .IsUnique();
+
+        modelBuilder.Entity<KunngjoringBekreftelse>()
+            .HasIndex(b => new { b.KunngjoringId, b.BrukerId })
+            .IsUnique();
+
+        modelBuilder.Entity<KunngjoringVisning>()
+            .HasIndex(v => new { v.KunngjoringId, v.BrukerId })
+            .IsUnique();
+
+        modelBuilder.Entity<AvstemningStemme>()
+            .HasIndex(s => new { s.KunngjoringId, s.BrukerId })
             .IsUnique();
 
         modelBuilder.Entity<NokkelSylinder>(entity =>
