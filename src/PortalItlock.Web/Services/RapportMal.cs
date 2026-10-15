@@ -328,6 +328,14 @@ public sealed class RapportProfil
     public required string Bunntekst { get; init; }
     public required Color Aksent { get; init; }
     public required Color AksentLys { get; init; }
+
+    // Avsenderens kontaktdetaljer hver for seg (null når de ikke er registrert) -
+    // brukt der malen viser dem i egne felt, f.eks. forsiden på tilbud.
+    public string? Adresse { get; init; }
+    public string? Telefon { get; init; }
+    public string? Epost { get; init; }
+    public string? OrgNr { get; init; }
+    public bool ErStandard { get; init; }
     private Tenant? Tenant { get; init; }
 
     public static RapportProfil Fra(Tenant? t)
@@ -356,15 +364,20 @@ public sealed class RapportProfil
             Bunntekst = bunntekst,
             Aksent = Color.FromHex(tema.Primaer),
             AksentLys = Color.FromHex(tema.PrimaerLys),
-            Tenant = t
+            Tenant = t,
+            Adresse = adresse,
+            Telefon = telefon,
+            Epost = epost,
+            OrgNr = orgNr,
+            ErStandard = brukFirmaInfo
         };
     }
 
-    public void TegnLogo(IContainer container, PdfLogo standardLogo)
+    public void TegnLogo(IContainer container, PdfLogo standardLogo, float hoyde = 30)
     {
         if (Tenant?.LogoData is { Length: > 0 } data)
         {
-            var boks = container.Height(30).AlignLeft();
+            var boks = container.Height(hoyde).AlignLeft();
             if ((Tenant.LogoContentType ?? "").Contains("svg", StringComparison.OrdinalIgnoreCase))
             {
                 boks.Svg(System.Text.Encoding.UTF8.GetString(data)).FitHeight();
@@ -378,11 +391,11 @@ public sealed class RapportProfil
 
         if (Tenant is null || Tenant.ErStandard)
         {
-            container.AlignLeft().Element(e => standardLogo.Render(e, 24));
+            container.AlignLeft().Element(e => standardLogo.Render(e, hoyde * 0.8f));
             return;
         }
 
         // Ingen opplastet logo: firmanavnet i organisasjonens farge.
-        container.Text(Navn).FontSize(14).Bold().FontColor(Aksent);
+        container.Text(Navn).FontSize(hoyde * 0.47f).Bold().FontColor(Aksent);
     }
 }

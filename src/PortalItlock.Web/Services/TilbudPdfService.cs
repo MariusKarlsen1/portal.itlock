@@ -8,7 +8,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
     private static readonly Color Sand = Color.FromHex("#F2EBE1");
@@ -85,7 +85,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     public async Task<byte[]?> GenerateAsync(int tilbudId)
     {
         var tilbud = await db.Tilbud
-            .Include(t => t.Prosjekt)
+            .Include(t => t.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Include(t => t.Prosjekt).ThenInclude(p => p!.Prosjektleder)
             .Include(t => t.Linjer).ThenInclude(l => l.Component).ThenInclude(c => c!.Type)
             .FirstOrDefaultAsync(t => t.Id == tilbudId);
 
@@ -129,8 +130,22 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 .ToListAsync();
         }
 
-        var overskrift = tilbud.Prosjekt is not null ? $"{tilbud.Prosjekt.Navn} - {tilbud.Tittel}" : tilbud.Tittel;
+        // Mal M7 (tilbudpdf-forslag.html): forsiden med fargekolonne til venstre
+        // (logo, kontaktperson, firma) og tittel/kunde/datoer/pris til høyre,
+        // deretter forbehold, produktsammendrag med montering som egen linje og
+        // totalsum. Avsenderen er organisasjonen som er logget inn.
+        var org = RapportProfil.Fra(tenantContext.Current);
         var dokumentTittel = tilbud.Type == Models.TilbudType.Endringsmelding ? "Endringsmelding" : "Tilbud";
+        var tilbudsnummer = $"T-{tilbud.OpprettetDato.Year}-{tilbud.Id:000}";
+        var prosjektleder = tilbud.Prosjekt?.Prosjektleder;
+        var kontaktNavn = prosjektleder?.Navn ?? (org.ErStandard ? FirmaInfo.Kontaktperson : null);
+        var kontaktEpost = prosjektleder?.Epost ?? org.Epost;
+        var kunde = tilbud.Prosjekt?.Kunde;
+        var kundeAdresse = kunde is null ? null : string.Join(", ", new[] { kunde.Adresse, string.Join(" ", new[] { kunde.Postnr, kunde.Sted }.Where(s => !string.IsNullOrWhiteSpace(s))) }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        var bunnLinje = string.Join(" · ", new[] { org.Navn, org.Adresse, org.OrgNr is null ? null : $"Org.nr {org.OrgNr}" }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+        static void Etikett(ColumnDescriptor c, string tekst, Color farge) =>
+            c.Item().Text(tekst.ToUpperInvariant()).FontSize(7f).Bold().FontColor(farge).LetterSpacing(0.08f);
 
         var document = Document.Create(doc =>
         {
@@ -141,44 +156,100 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 page.Margin(0);
                 page.DefaultTextStyle(x => x.FontSize(10).FontColor(Ink));
 
-                page.Content().Column(col =>
+                page.Content().Row(row =>
                 {
-                    col.Item().Height(6).Background(Accent);
-
-                    col.Item().Padding(2, Unit.Centimetre).Column(inner =>
+                    // Fargekolonnen til venstre
+                    row.ConstantItem(160).Background(org.AksentLys).PaddingVertical(42).PaddingHorizontal(20).Column(kol =>
                     {
-                        inner.Item().Row(row =>
+                        kol.Item().Element(e => org.TegnLogo(e, pdfLogo, 26));
+                        kol.Item().ExtendVertical().AlignBottom().Column(bunn =>
                         {
-                            row.RelativeItem();
-                            row.ConstantItem(150).AlignRight().Element(e => pdfLogo.Render(e, 30));
+                        if (!string.IsNullOrWhiteSpace(kontaktNavn))
+                        {
+                            Etikett(bunn, "Kontaktperson", org.Aksent);
+                            bunn.Item().PaddingTop(2).Text(kontaktNavn).FontSize(9.5f).SemiBold();
+                            if (!string.IsNullOrWhiteSpace(org.Telefon))
+                            {
+                                bunn.Item().Text(org.Telefon).FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                            }
+                            if (!string.IsNullOrWhiteSpace(kontaktEpost))
+                            {
+                                bunn.Item().Text(kontaktEpost).FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                            }
+                            bunn.Item().Height(12);
+                        }
+                        Etikett(bunn, "Firma", org.Aksent);
+                        bunn.Item().PaddingTop(2).Text(org.Navn).FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                        if (!string.IsNullOrWhiteSpace(org.Adresse))
+                        {
+                            bunn.Item().Text(org.Adresse).FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                        }
+                        if (!string.IsNullOrWhiteSpace(org.OrgNr))
+                        {
+                            bunn.Item().Text($"Org.nr {org.OrgNr}").FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                        }
                         });
+                    });
 
-                        inner.Item().PaddingTop(120).Text(dokumentTittel.ToUpperInvariant()).FontSize(11).Bold().FontColor(Accent).LetterSpacing(0.1f);
-                        inner.Item().PaddingTop(6).Text(overskrift).FontSize(30).Bold();
+                    // Tittel, kunde, datoer og pris
+                    row.RelativeItem().PaddingVertical(42).PaddingHorizontal(40).Column(kol =>
+                    {
+                        kol.Item().Height(150);
+                        Etikett(kol, $"{dokumentTittel} {tilbudsnummer}", org.Aksent);
+                        kol.Item().PaddingTop(6).Text(tilbud.Tittel).FontSize(28).Bold().LineHeight(1.15f);
                         if (tilbud.Prosjekt is not null)
                         {
-                            inner.Item().PaddingTop(4).Text(tilbud.Prosjekt.Navn).FontSize(13).FontColor(Colors.Grey.Darken2);
+                            kol.Item().PaddingTop(4).Text(tilbud.Prosjekt.Navn).FontSize(12).FontColor(Colors.Grey.Darken2);
                         }
 
-                        inner.Item().PaddingTop(190).BorderTop(1).BorderColor(SandBorder).PaddingTop(14).Row(row =>
+                        if (kunde is not null || !string.IsNullOrWhiteSpace(tilbud.KontaktpersonNavn))
                         {
-                            row.RelativeItem().Column(c =>
+                            kol.Item().PaddingTop(56).Column(til =>
                             {
-                                c.Item().Text("KONTAKTPERSON").FontSize(7.5f).Bold().FontColor(Accent).LetterSpacing(0.05f);
-                                c.Item().PaddingTop(2).Text(FirmaInfo.Kontaktperson).FontSize(9.5f).SemiBold();
-                                c.Item().Text($"{FirmaInfo.Telefon} · {FirmaInfo.Epost}").FontSize(8.5f).FontColor(Colors.Grey.Darken1);
+                                Etikett(til, "Til", org.Aksent);
+                                if (kunde is not null)
+                                {
+                                    til.Item().PaddingTop(2).Text(kunde.Navn).FontSize(12).SemiBold();
+                                    if (!string.IsNullOrWhiteSpace(kundeAdresse))
+                                    {
+                                        til.Item().Text(kundeAdresse).FontSize(9).FontColor(Colors.Grey.Darken2);
+                                    }
+                                }
+                                if (!string.IsNullOrWhiteSpace(tilbud.KontaktpersonNavn))
+                                {
+                                    var kontakt = string.Join(" · ", new[] { $"Att: {tilbud.KontaktpersonNavn}", tilbud.KontaktpersonTelefon }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                                    til.Item().Text(kontakt).FontSize(9).FontColor(Colors.Grey.Darken2);
+                                }
                             });
-                            row.RelativeItem().Column(c =>
+                        }
+
+                        kol.Item().PaddingTop(22).Table(t =>
+                        {
+                            t.ColumnsDefinition(c =>
                             {
-                                c.Item().Text("DATO").FontSize(7.5f).Bold().FontColor(Accent).LetterSpacing(0.05f);
-                                c.Item().PaddingTop(2).Text(tilbud.OpprettetDato.ToString("dd.MM.yyyy")).FontSize(9.5f).SemiBold();
+                                c.RelativeColumn();
+                                c.RelativeColumn();
                             });
-                            row.RelativeItem().AlignRight().Column(c =>
+
+                            void Felt(string etikett, string verdi) => t.Cell().PaddingBottom(10).Column(c =>
                             {
-                                c.Item().AlignRight().Text(FirmaInfo.Navn).FontSize(9.5f).SemiBold();
-                                c.Item().AlignRight().Text(FirmaInfo.AdresseFull).FontSize(8.5f).FontColor(Colors.Grey.Darken1);
-                                c.Item().AlignRight().Text($"Tlf {FirmaInfo.Telefon} · {FirmaInfo.Epost}").FontSize(8.5f).FontColor(Colors.Grey.Darken1);
+                                Etikett(c, etikett, org.Aksent);
+                                c.Item().PaddingTop(1).Text(verdi).FontSize(10).SemiBold();
                             });
+
+                            Felt("Dato", tilbud.OpprettetDato.ToString("dd.MM.yyyy"));
+                            Felt("Gyldig til", tilbud.GyldigTil?.ToString("dd.MM.yyyy") ?? "-");
+                            Felt("Levering", string.IsNullOrWhiteSpace(tilbud.Leveringstid) ? "-" : tilbud.Leveringstid);
+                        });
+
+                        kol.Item().ExtendVertical().AlignBottom().BorderTop(1.5f).BorderColor(org.Aksent).PaddingTop(10).Row(sum =>
+                        {
+                            sum.RelativeItem().Column(c =>
+                            {
+                                c.Item().Text("Totalt eks. mva").FontSize(9).FontColor(Colors.Grey.Darken2);
+                                c.Item().Text($"{FormatKrHel(totaltUtenMva * (1 + MvaSats))} inkl. mva").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
+                            });
+                            sum.AutoItem().AlignBottom().Text(FormatKrHel(totaltUtenMva)).FontSize(24).Bold();
                         });
                     });
                 });
@@ -189,20 +260,20 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             {
                 page.Size(PageSizes.A4);
                 page.Margin(2, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(10));
+                page.DefaultTextStyle(x => x.FontSize(10).FontColor(Ink));
 
                 page.Header().Column(col =>
                 {
                     col.Item().Row(row =>
                     {
-                        row.RelativeItem().Element(e => pdfLogo.Render(e, 20));
-                        row.RelativeItem().AlignRight().Column(c =>
+                        row.RelativeItem().AlignBottom().Element(e => org.TegnLogo(e, pdfLogo, 20));
+                        row.RelativeItem().AlignRight().AlignBottom().Column(c =>
                         {
-                            c.Item().AlignRight().Text(overskrift).FontSize(9).SemiBold();
-                            c.Item().AlignRight().Text(dokumentTittel).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
+                            c.Item().AlignRight().Text(tilbud.Tittel).FontSize(9).SemiBold();
+                            c.Item().AlignRight().Text($"{dokumentTittel} {tilbudsnummer} · {tilbud.OpprettetDato:dd.MM.yyyy}").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
                         });
                     });
-                    col.Item().PaddingTop(6).BorderBottom(2).BorderColor(Accent);
+                    col.Item().PaddingTop(6).BorderBottom(2).BorderColor(org.Aksent);
                 });
 
                 page.Content().PaddingTop(14).Column(col =>
@@ -210,7 +281,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     if (!string.IsNullOrWhiteSpace(tilbud.Forside))
                     {
                         ForsideRenderer.Render(col, tilbud.Forside);
-                        col.Item().PageBreak();
+                        col.Item().Height(14);
                     }
 
                     var visSammendrag = tilbud.SummerAlleBeslag && linjer.Count > 0;
@@ -218,7 +289,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
                     if (visSammendrag)
                     {
-                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt);
+                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, arbeidstidTimer, montasjekost, org.Aksent);
                     }
 
                     if (visDorer)
@@ -231,14 +302,20 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                         RenderDorer(col, tilbud, dorer, utprisPerComponent);
                     }
 
-                    col.Item().PaddingTop(20).AlignRight().Width(260).Element(container => RenderTotalsBox(container, totaltUtenMva));
+                    col.Item().PaddingTop(20).AlignRight().Width(260).Element(container => RenderTotalsBox(container, utprisVarer, montasjekost, totaltUtenMva, org.Aksent));
                 });
 
-                page.Footer().AlignCenter().Text(x =>
+                page.Footer().BorderTop(0.5f).BorderColor(SandBorder).PaddingTop(5).Row(row =>
                 {
-                    x.CurrentPageNumber();
-                    x.Span(" / ");
-                    x.TotalPages();
+                    row.RelativeItem().Text(bunnLinje).FontSize(7).FontColor(Colors.Grey.Darken1);
+                    row.AutoItem().Text(x =>
+                    {
+                        x.DefaultTextStyle(s => s.FontSize(7).FontColor(Colors.Grey.Darken1));
+                        x.Span($"{dokumentTittel} {tilbudsnummer} · side ");
+                        x.CurrentPageNumber();
+                        x.Span(" / ");
+                        x.TotalPages();
+                    });
                 });
             });
         });
@@ -246,7 +323,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         return document.GeneratePdf();
     }
 
-    private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt)
+    private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, decimal monteringTimer, decimal montasjekost, Color aksent)
     {
         var visVarenummer = !tilbud.SkjulVarenummerISammendrag;
         var visLevering = linjer.Any(l => l.LevertAv != LevertAv.F);
@@ -288,7 +365,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
             table.Header(header =>
             {
-                IContainer Hode() => header.Cell().Background(Accent).PaddingVertical(5).PaddingHorizontal(6);
+                IContainer Hode() => header.Cell().Background(aksent).PaddingVertical(5).PaddingHorizontal(6);
 
                 if (visVarenummer)
                 {
@@ -311,8 +388,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     {
                         Hode().Text("Rabatt").FontSize(8).Bold().FontColor(Colors.White);
                     }
-                    Hode().Text("Pris").FontSize(8).Bold().FontColor(Colors.White);
-                    Hode().Text("Totalt").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(Colors.White);
                 }
             });
 
@@ -327,7 +404,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                         {
                             if (!string.IsNullOrWhiteSpace(l.Navn))
                             {
-                                inner.Item().Text(l.Navn).Bold().FontColor(Accent);
+                                inner.Item().Text(l.Navn).Bold().FontColor(aksent);
                             }
                             if (!string.IsNullOrWhiteSpace(l.Beskrivelse))
                             {
@@ -337,9 +414,9 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     continue;
                 }
 
-                radIndeks++;
-                var radBakgrunn = radIndeks % 2 == 0 ? Sand : Colors.White;
-                IContainer Rad() => table.Cell().Background(radBakgrunn).BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(4).PaddingHorizontal(6);
+                IContainer Rad() => table.Cell().BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(4).PaddingHorizontal(6);
+
+
 
                 if (visVarenummer)
                 {
@@ -363,8 +440,32 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     {
                         Rad().Text(l.RabattProsent > 0 ? $"{l.RabattProsent.ToString("N0", Kultur)} %" : "-");
                     }
-                    Rad().Text(visPrisPaLinje ? FormatKr(l.Utpris) : "–");
-                    Rad().Text(visPrisPaLinje ? FormatKr(l.Utpris * l.Antall) : "–");
+                    Rad().AlignRight().Text(visPrisPaLinje ? FormatKr(l.Utpris) : "–");
+                    Rad().AlignRight().Text(visPrisPaLinje ? FormatKr(l.Utpris * l.Antall) : "–");
+                }
+            }
+
+            // Montering som egen linje nederst i sammendraget.
+            if (montasjekost > 0)
+            {
+                var tekst = monteringTimer > 0
+                    ? $"Montering og igangsetting ({monteringTimer.ToString("0.#", Kultur)} t)"
+                    : "Montering og igangsetting";
+                IContainer Mont(uint span = 1) => table.Cell().ColumnSpan(span).Background(Color.FromHex("#FBF8F3"))
+                    .BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(5).PaddingHorizontal(6);
+
+                if (tilbud.VisEnhetspris)
+                {
+                    Mont((uint)(totaltAntallKolonner - 1)).Text(tekst).Italic();
+                    Mont().AlignRight().Text(FormatKr(montasjekost)).Italic();
+                }
+                else
+                {
+                    Mont((uint)totaltAntallKolonner).Row(r =>
+                    {
+                        r.RelativeItem().Text(tekst).Italic();
+                        r.AutoItem().Text(FormatKr(montasjekost)).Italic();
+                    });
                 }
             }
         });
@@ -385,7 +486,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         }
     }
 
-    private void RenderTotalsBox(IContainer container, decimal totaltUtenMva)
+    private static void RenderTotalsBox(IContainer container, decimal utprisVarer, decimal montasjekost, decimal totaltUtenMva, Color aksent)
     {
         var mva = Math.Round(totaltUtenMva * MvaSats, 2);
         var totaltInklMva = totaltUtenMva + mva;
@@ -401,10 +502,15 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 });
             }
 
+            if (montasjekost > 0)
+            {
+                Rad("Varer", utprisVarer);
+                Rad("Montering", montasjekost);
+            }
             Rad("Totalt uten MVA", totaltUtenMva);
-            Rad("MVA (25%)", mva);
+            Rad("MVA (25 %)", mva);
 
-            col.Item().Background(Accent).Padding(9).Row(row =>
+            col.Item().Background(aksent).Padding(9).Row(row =>
             {
                 row.RelativeItem().Text("Totalt inkl. MVA").FontSize(11).Bold().FontColor(Colors.White);
                 row.AutoItem().Text(FormatKr(totaltInklMva)).FontSize(12).Bold().FontColor(Colors.White);
@@ -413,4 +519,6 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     }
 
     private static string FormatKr(decimal value) => value.ToString("N2", Kultur) + " kr";
+
+    private static string FormatKrHel(decimal value) => value.ToString("N0", Kultur) + " kr";
 }
