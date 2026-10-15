@@ -10,13 +10,13 @@ using SkiaSharp;
 
 namespace PortalItlock.Web.Services;
 
-public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
 
     public async Task<byte[]?> GenerateAsync(int plantegningId)
     {
         var plantegning = await db.Plantegninger
-            .Include(p => p.Prosjekt)
+            .Include(p => p.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(p => p.Fil)
             .FirstOrDefaultAsync(p => p.Id == plantegningId);
 
@@ -42,69 +42,53 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         var bildeHoyde = bitmap?.Height ?? 700;
 
         var svg = BuildSvg(plantegning, utstyr, forbindelser, utstyrById, bildeBredde, bildeHoyde);
-        var svgHoyde = 380f;
-        var svgBredde = svgHoyde * bildeBredde / bildeHoyde;
-
-        var brukteTyper = utstyr.Select(u => u.Type).Distinct().OrderBy(t => t.Visningsnavn()).ToList();
+        var brukteTyper = utstyr.GroupBy(u => u.Type).OrderBy(g => g.Key.Visningsnavn()).ToList();
         var brukteKabler = forbindelser.Select(f => f.Type).Distinct().OrderBy(t => t.Visningsnavn()).ToList();
+
+        // Mal U1: se PlantegningPdfMal. Forklaringen viser utstyret som er brukt
+        // (med antall) og kabeltypene med samme strek som på tegningen.
+        var org = RapportProfil.Fra(tenantContext.Current);
+        const string tittel = "Utstyr og kabeltrekk";
 
         var document = Document.Create(doc =>
         {
             doc.Page(page =>
             {
-                page.Size(PageSizes.A4.Landscape());
-                page.Margin(1.5f, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
-
-                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Utstyr og kabeltrekk", plantegning.Navn));
-
-                page.Content().PaddingTop(10).Column(col =>
+                PlantegningPdfMal.Side(page);
+                page.Header().Element(e => PlantegningPdfMal.Topp(e, org, pdfLogo, tittel, plantegning));
+                page.Content().Element(e => PlantegningPdfMal.Tegning(e, svg));
+                page.Footer().Element(e => PlantegningPdfMal.Bunn(e, org, tittel, plantegning, col =>
                 {
-                    col.Spacing(8);
-
-                    PdfStil.InfoBoks(col, 2, ("Prosjekt", plantegning.Prosjekt?.Navn), ("Dato", DateTime.Now.ToString("dd.MM.yyyy")));
-
-                    col.Item().AlignCenter().Width(svgBredde).Height(svgHoyde).Svg(svg).FitArea();
-
-                    col.Item().Row(row =>
+                    if (brukteTyper.Count == 0)
                     {
-                        row.RelativeItem().Column(legendCol =>
+                        col.Item().Text("Ingen utstyr plassert.").FontSize(7.5f).FontColor(PlantegningPdfMal.Dempet);
+                    }
+                    else
+                    {
+                        PlantegningPdfMal.ForklaringRad(col, brukteTyper.Select(g => (Action<IContainer>)(c => c.Row(r =>
                         {
-                            PdfStil.SeksjonTittel(legendCol, "Utstyr");
-                            if (brukteTyper.Count == 0)
+                            r.AutoItem().AlignMiddle().MinWidth(15).Height(9).CornerRadius(2).Background(Color.FromHex(g.Key.Farge()))
+                                .PaddingHorizontal(2).AlignCenter().AlignMiddle().Text(g.Key.Kode()).FontSize(5).Bold().FontColor(Colors.White);
+                            r.AutoItem().PaddingLeft(4).Text(t =>
                             {
-                                legendCol.Item().PaddingTop(3).Text("Ingen utstyr plassert.").FontSize(9).FontColor(Colors.Grey.Darken1);
-                            }
-                            foreach (var type in brukteTyper)
-                            {
-                                legendCol.Item().PaddingTop(4).Row(r =>
-                                {
-                                    r.ConstantItem(10).Height(10).Background(Color.FromHex(type.Farge()));
-                                    r.RelativeItem().PaddingLeft(6).Text($"{type.Kode()} - {type.Visningsnavn()}").FontSize(9);
-                                });
-                            }
-                        });
+                                t.Span(g.Key.Visningsnavn()).FontSize(7.5f);
+                                t.Span($"  {g.Count()}").FontSize(7.5f).Bold();
+                            });
+                        }))));
+                    }
 
-                        row.RelativeItem().Column(legendCol =>
+                    if (brukteKabler.Count > 0)
+                    {
+                        col.Item().PaddingTop(3).Column(kabelCol => PlantegningPdfMal.ForklaringRad(kabelCol, brukteKabler.Select(kt => (Action<IContainer>)(c => c.Row(r =>
                         {
-                            PdfStil.SeksjonTittel(legendCol, "Kabling");
-                            if (brukteKabler.Count == 0)
-                            {
-                                legendCol.Item().PaddingTop(3).Text("Ingen forbindelser tegnet.").FontSize(9).FontColor(Colors.Grey.Darken1);
-                            }
-                            foreach (var kt in brukteKabler)
-                            {
-                                legendCol.Item().PaddingTop(4).Row(r =>
-                                {
-                                    r.ConstantItem(10).Height(10).Background(Color.FromHex(kt.Farge()));
-                                    r.RelativeItem().PaddingLeft(6).Text(kt.Visningsnavn()).FontSize(9);
-                                });
-                            }
-                        });
-                    });
-                });
-
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                            var strek = kt.StrekMonster();
+                            var dash = string.IsNullOrEmpty(strek) ? "" : $" stroke-dasharray='{strek}'";
+                            r.AutoItem().AlignMiddle().Width(20).Height(6)
+                                .Svg($"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 6'><line x1='0' y1='3' x2='20' y2='3' stroke='{kt.Farge()}' stroke-width='1.6'{dash} /></svg>");
+                            r.AutoItem().PaddingLeft(4).Text(kt.Visningsnavn()).FontSize(7.5f);
+                        })))));
+                    }
+                }));
             });
         });
 

@@ -10,7 +10,7 @@ using SkiaSharp;
 
 namespace PortalItlock.Web.Services;
 
-public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     private const string ItlockAksent = "#835e41";
 
@@ -24,7 +24,7 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     public async Task<byte[]?> GenerateAsync(int plantegningId)
     {
         var plantegning = await db.Plantegninger
-            .Include(p => p.Prosjekt)
+            .Include(p => p.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(p => p.Fil)
             .FirstOrDefaultAsync(p => p.Id == plantegningId);
 
@@ -43,41 +43,44 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         var bildeHoyde = bitmap?.Height ?? 700;
 
         var svg = BuildSvg(plantegning, dorer, bildeBredde, bildeHoyde);
-        var svgHoyde = 380f;
-        var svgBredde = svgHoyde * bildeBredde / bildeHoyde;
+
+        // Mal D1: se PlantegningPdfMal. Forklaringen viser antall dører per status
+        // og hva funksjonsforkortelsene på tegningen betyr.
+        var org = RapportProfil.Fra(tenantContext.Current);
+        const string tittel = "Dørplantegning";
+        var funksjoner = dorer.SelectMany(d => d.Funksjoner)
+            .Where(f => !string.IsNullOrWhiteSpace(f.Forkortelse))
+            .DistinctBy(f => f.Forkortelse)
+            .OrderBy(f => f.Forkortelse)
+            .ToList();
 
         var document = Document.Create(doc =>
         {
             doc.Page(page =>
             {
-                page.Size(PageSizes.A4.Landscape());
-                page.Margin(1.5f, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
-
-                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Dørplantegning", plantegning.Navn));
-
-                page.Content().PaddingTop(10).Column(col =>
+                PlantegningPdfMal.Side(page);
+                page.Header().Element(e => PlantegningPdfMal.Topp(e, org, pdfLogo, tittel, plantegning));
+                page.Content().Element(e => PlantegningPdfMal.Tegning(e, svg));
+                page.Footer().Element(e => PlantegningPdfMal.Bunn(e, org, tittel, plantegning, col =>
                 {
-                    col.Spacing(8);
-
-                    PdfStil.InfoBoks(col, 2, ("Prosjekt", plantegning.Prosjekt?.Navn), ("Dato", DateTime.Now.ToString("dd.MM.yyyy")));
-
-                    col.Item().AlignCenter().Width(svgBredde).Height(svgHoyde).Svg(svg).FitArea();
-
-                    col.Item().Row(row =>
-                    {
-                        foreach (var status in new[] { MontasjeStatus.FerdigMontert, MontasjeStatus.Montert, MontasjeStatus.IkkeStartet })
-                        {
-                            row.AutoItem().PaddingRight(16).Row(r =>
+                    PlantegningPdfMal.ForklaringRad(col,
+                        new[] { MontasjeStatus.FerdigMontert, MontasjeStatus.Montert, MontasjeStatus.IkkeStartet }
+                            .Select(status => (Action<IContainer>)(c => c.Row(r =>
                             {
-                                r.ConstantItem(10).Height(10).Background(Color.FromHex(StatusFarge[status]));
-                                r.AutoItem().PaddingLeft(6).Text(status.Visningsnavn()).FontSize(9).SemiBold();
-                            });
-                        }
-                    });
-                });
+                                r.AutoItem().AlignMiddle().Width(7).Height(7).CornerRadius(3.5f).Background(Color.FromHex(StatusFarge[status]));
+                                r.AutoItem().PaddingLeft(4).Text(t =>
+                                {
+                                    t.Span(status.Visningsnavn()).FontSize(7.5f);
+                                    t.Span($"  {dorer.Count(d => d.Status == status)}").FontSize(7.5f).Bold();
+                                });
+                            }))));
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                    if (funksjoner.Count > 0)
+                    {
+                        col.Item().PaddingTop(3).Text($"Funksjoner: {string.Join(" · ", funksjoner.Select(f => $"{f.Forkortelse} {f.Navn.ToLowerInvariant()}"))}")
+                            .FontSize(7).FontColor(PlantegningPdfMal.Dempet);
+                    }
+                }));
             });
         });
 
