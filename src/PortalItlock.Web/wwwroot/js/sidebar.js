@@ -56,6 +56,30 @@ window.sidebarMeny = (function () {
     return { isCollapsed, apply, toggle, toggleMeny };
 })();
 
+// Sidebredde (brukermenyen): "standard" holder de faste maks-breddene,
+// "full" lar innholdet fylle vinduet på store skjermer. Lagres per nettleser
+// og settes på <html> allerede i <head> (se App.razor), som data-sidebar.
+window.sidebredde = (function () {
+    const storageKey = 'itlock-bredde';
+
+    function erFull() {
+        return document.documentElement.getAttribute('data-bredde') === 'full';
+    }
+
+    function sett(full) {
+        if (full) {
+            document.documentElement.setAttribute('data-bredde', 'full');
+            localStorage.setItem(storageKey, 'full');
+        } else {
+            document.documentElement.removeAttribute('data-bredde');
+            localStorage.setItem(storageKey, 'standard');
+        }
+        return erFull();
+    }
+
+    return { erFull, sett };
+})();
+
 // Speiler <title> i en synlig tekst i mobil-toppfeltet, siden Blazors <PageTitle>
 // bare setter document.title og ikke er lett tilgjengelig fra et layout-komponent.
 // Blazors "enhanced navigation" bytter ut hele <head>/<title>-elementet ved
