@@ -68,9 +68,10 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
 
     // Som i Radata Probus: tegningen ligger fritt inni rammen. Ved start er
     // hele tegningen synlig og sentrert. Musehjulet zoomer mot markøren (også
-    // ut, så tegningen blir mindre enn rammen), høyre museknapp holdt inne +
+    // ut, så tegningen blir mindre enn rammen), venstre museknapp holdt inne +
     // dra flytter tegningen hvor man vil innenfor rammen, og dørprikkene har
-    // samme størrelse på skjermen uansett zoom.
+    // samme størrelse på skjermen uansett zoom. Rammen fyller resten av
+    // vinduet, og en flytende verktøylinje øverst holdes fri ved sentrering.
     const minZoom = 0.2;
     const maxZoom = 16;
     const wheelFactor = 1.15;
@@ -98,9 +99,31 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
 
     // Bredden tegningen har ved 100 %: så stor som mulig uten å gå utenfor
     // rammen, verken i bredden eller høyden.
+    // Plassen verktøylinjen (og hjelpeteksten nederst) tar over tegningen.
+    function innfelt() {
+        const ramme = wrapEl.parentElement;
+        const bar = ramme ? ramme.querySelector('.plan-toolbar-flytende') : null;
+        const hint = ramme ? ramme.querySelector('.plan-hint-flytende') : null;
+        return { topp: bar ? bar.offsetHeight + 20 : 0, bunn: hint ? hint.offsetHeight + 12 : 0 };
+    }
+
+    // Rammen fyller vinduet fra der den starter og ned til bunnen (ikke på
+    // mobil, der CSS-en allerede gir den nesten hele skjermen).
+    function tilpassHoyde() {
+        if (wrapEl.classList.contains('mobil-plan-canvas-wrap')) {
+            return;
+        }
+        const topp = wrapEl.getBoundingClientRect().top + window.scrollY;
+        const h = Math.max(420, Math.floor(window.innerHeight - topp - 16));
+        if (wrapEl.style.height !== h + 'px') {
+            wrapEl.style.height = h + 'px';
+        }
+    }
+
     function baseWidth() {
+        const inn = innfelt();
         const w = wrapEl.clientWidth;
-        const h = wrapEl.clientHeight;
+        const h = wrapEl.clientHeight - inn.topp - inn.bunn;
         const a = aspect();
         return a && h ? Math.min(w, h * a) : w;
     }
@@ -131,12 +154,19 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
 
     function sentrer() {
         zoom = 1;
+        const inn = innfelt();
         tx = (wrapEl.clientWidth - bredde()) / 2;
-        ty = (wrapEl.clientHeight - hoyde()) / 2;
+        ty = inn.topp + (wrapEl.clientHeight - inn.topp - inn.bunn - hoyde()) / 2;
         tegn();
     }
 
+    tilpassHoyde();
     sentrer();
+    window.addEventListener('resize', tilpassHoyde);
+    if (window.ResizeObserver) {
+        // Paneler over rammen (dørvelger, filter, meldinger) flytter toppen.
+        new ResizeObserver(() => tilpassHoyde()).observe(document.body);
+    }
     if (img && !img.complete) {
         img.addEventListener('load', () => { if (!beruort) { sentrer(); } }, { once: true });
     }
@@ -167,27 +197,29 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
         applyZoom(e.deltaY < 0 ? zoom * wheelFactor : zoom / wheelFactor, e.clientX, e.clientY);
     }, { passive: false });
 
-    // Høyre museknapp brukes til å dra tegningen rundt - nettleserens egen
-    // høyreklikkmeny skal aldri komme opp over tegningen. Et høyreklikk UTEN
-    // å dra åpner dørvelgeren på stedet (se endPointer).
+    // Høyreklikk (trenger ikke holdes) åpner dørvelgeren på stedet - men ikke
+    // på en dørprikk eller i et panel.
     wrapEl.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        if (!dotNetRef || e.target.closest('.dor-marker, .utstyr-marker, .dor-velger-panel, .plan-zoom-controls')) {
+            return;
+        }
+        const p = getClickPercent(canvasEl, e.clientX, e.clientY);
+        dotNetRef.invokeMethodAsync('OnCanvasRightClicked', p.x, p.y);
     });
 
-    // Dra (høyre eller venstre museknapp, eller én finger) på tomt område
-    // flytter tegningen. Markører håndterer selv venstreknapp-dra (flytting)
-    // og stopper den hendelsen før den når hit. Terskelen er romslig fordi et
+    // Dra med venstre museknapp (eller én finger) på tomt område flytter
+    // tegningen. Markører håndterer selv venstreknapp-dra (flytting) og
+    // stopper den hendelsen før den når hit. Terskelen er romslig fordi et
     // ekte klikk nesten alltid har litt skjelving mellom trykk og slipp.
     const dragThreshold = 8;
     let panning = false;
-    let panButton = -1;
     let moved = false;
     let startX = 0;
     let startY = 0;
     let startTx = 0;
     let startTy = 0;
     let suppressClick = false;
-    let rightTarget = null;
 
     // Multi-touch tracking for pinch-zoom. Keyed by pointerId -> {x, y}.
     const activePointers = new Map();
@@ -221,11 +253,12 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     }, true);
 
     wrapEl.addEventListener('pointerdown', (e) => {
-        const erHoyre = e.pointerType === 'mouse' && e.button === 2;
-
-        // Venstreklikk mens man plasserer noe nytt skal alltid nå tegningen.
-        // Høyre-dra flytter likevel.
-        if (canvasEl.dataset.placing === '1' && !erHoyre) {
+        // Bare venstre museknapp (og fingre) flytter. Klikk mens man plasserer
+        // noe nytt skal alltid nå tegningen, og knapper/felt i paneler inni
+        // rammen (dørvelgeren, zoomknappene) skal fungere som vanlig.
+        if ((e.pointerType === 'mouse' && e.button !== 0)
+            || canvasEl.dataset.placing === '1'
+            || e.target.closest('button, a, input, select, textarea, label, .dor-velger-panel, .plan-zoom-controls')) {
             return;
         }
 
@@ -245,14 +278,9 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
             return;
         }
 
-        if (activePointers.size === 1 && (e.pointerType !== 'mouse' || e.button === 0 || e.button === 2)) {
-            if (erHoyre) {
-                e.preventDefault();
-            }
+        if (activePointers.size === 1) {
             panning = true;
-            panButton = e.pointerType === 'mouse' ? e.button : 0;
             moved = false;
-            rightTarget = erHoyre ? e.target : null;
             startX = e.clientX;
             startY = e.clientY;
             startTx = tx;
@@ -313,15 +341,8 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
             panning = false;
             wrapEl.style.cursor = '';
             if (moved) {
-                suppressClick = panButton === 0;
-            } else if (panButton === 2 && e.type === 'pointerup' && dotNetRef
-                && !(rightTarget && rightTarget.closest && rightTarget.closest('.dor-marker, .utstyr-marker'))) {
-                // Høyreklikk uten å dra: åpne dørvelgeren der man klikket.
-                const p = getClickPercent(canvasEl, e.clientX, e.clientY);
-                dotNetRef.invokeMethodAsync('OnCanvasRightClicked', p.x, p.y);
+                suppressClick = true;
             }
-            panButton = -1;
-            rightTarget = null;
         }
     }
 
