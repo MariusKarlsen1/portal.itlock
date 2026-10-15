@@ -5035,6 +5035,29 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ServiceVarselSendt");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ServiceavtaleSjekkpunkt", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Tekst")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProsjektId");
+
+                    b.ToTable("ServiceavtaleSjekkpunkter");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Servicehenvendelse", b =>
                 {
                     b.Property<int>("Id")
@@ -7276,6 +7299,17 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Component");
+
+                    b.Navigation("Prosjekt");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ServiceavtaleSjekkpunkt", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
+                        .WithMany()
+                        .HasForeignKey("ProsjektId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("Prosjekt");
                 });

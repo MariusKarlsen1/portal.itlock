@@ -113,6 +113,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Servicerunde> Servicerunder => Set<Servicerunde>();
     public DbSet<ServicerundeDel> ServicerundeDeler => Set<ServicerundeDel>();
     public DbSet<ServicerundeSjekklistepunkt> ServicerundeSjekklistepunkter => Set<ServicerundeSjekklistepunkt>();
+    public DbSet<ServiceavtaleSjekkpunkt> ServiceavtaleSjekkpunkter => Set<ServiceavtaleSjekkpunkt>();
     public DbSet<ServicerundeSjekkpunkt> ServicerundeSjekkpunkter => Set<ServicerundeSjekkpunkt>();
     public DbSet<ServicerundeMedia> ServicerundeMedia => Set<ServicerundeMedia>();
     public DbSet<ArbeidsordreMedia> ArbeidsordreMedia => Set<ArbeidsordreMedia>();
