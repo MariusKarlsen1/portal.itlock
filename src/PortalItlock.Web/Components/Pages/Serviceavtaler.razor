@@ -1,14 +1,11 @@
 @page "/serviceavtaler"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
-@implements IDisposable
+@using System.Globalization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
-@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
-@inject GeocodingService Geokoding
-@inject IJSRuntime JS
 
 <PageTitle>Serviceavtaler</PageTitle>
 
@@ -57,33 +54,49 @@
         <button type="button" class="pill @(_hurtigfilter == "alle" ? "aktiv" : "")" @onclick='@(() => SettHurtigfilter("alle"))'>
             <span class="pill-dot"></span>Alle @_avtaler.Count
         </button>
-        <button type="button" class="pill pill-gronn @(_hurtigfilter == "aktiv" ? "aktiv-gronn" : "")" @onclick='@(() => SettHurtigfilter("aktiv"))'>
-            <span class="pill-dot"></span>Aktive @_avtaler.Count(a => a.ErAktiv)
+        <button type="button" class="pill pill-rod @(_hurtigfilter == "forfalt" ? "aktiv-rod" : "")" @onclick='@(() => SettHurtigfilter("forfalt"))'>
+            <span class="pill-dot"></span>Forfalt @_avtaler.Count(a => a.ErForfalt)
         </button>
         <button type="button" class="pill pill-gul @(_hurtigfilter == "snart" ? "aktiv-gul" : "")" @onclick='@(() => SettHurtigfilter("snart"))'>
             <span class="pill-dot"></span>Nærmer seg @_avtaler.Count(a => a.ErSnartForfalt)
         </button>
-        <button type="button" class="pill pill-rod @(_hurtigfilter == "forfalt" ? "aktiv-rod" : "")" @onclick='@(() => SettHurtigfilter("forfalt"))'>
-            <span class="pill-dot"></span>Forfalt @_avtaler.Count(a => a.ErForfalt)
+        <button type="button" class="pill pill-gronn @(_hurtigfilter == "aktiv" ? "aktiv-gronn" : "")" @onclick='@(() => SettHurtigfilter("aktiv"))'>
+            <span class="pill-dot"></span>Aktive @_avtaler.Count(a => a.ErAktiv)
         </button>
         <button type="button" class="pill pill-noytral @(_hurtigfilter == "utendato" ? "aktiv-noytral" : "")" @onclick='@(() => SettHurtigfilter("utendato"))'>
             <span class="pill-dot"></span>Uten dato @_avtaler.Count(a => !a.NesteServiceDato.HasValue)
+        </button>
+        <button type="button" class="pill @(_hurtigfilter == "avvik" ? "aktiv" : "")" @onclick='@(() => SettHurtigfilter("avvik"))'>
+            <Icon Name="alert" />Med avvik @_avtaler.Count(a => a.Avvik.Count > 0)
         </button>
     </div>
 
     <div class="toolbar">
         <label class="sok-felt">
             <Icon Name="search" />
-            <input @bind="_search" @bind:event="oninput" @bind:after="GaTilSide1" placeholder="Søk på kunde, adresse eller avtale..." />
+            <input @bind="_search" @bind:event="oninput" placeholder="Søk på kunde, adresse eller avtale..." />
         </label>
         <label class="dd">
             Sorter:
-            <select @bind="_sortering" @bind:after="GaTilSide1">
+            <select @bind="_sortering">
                 <option value="neste-service">Neste service</option>
                 <option value="navn">Navn</option>
                 <option value="kunde">Kunde</option>
             </select>
         </label>
+        @if (Montorer.Count > 0)
+        {
+            <label class="dd">
+                Montør:
+                <select @bind="_montorFilter">
+                    <option value="">Alle</option>
+                    @foreach (var m in Montorer)
+                    {
+                        <option value="@m">@m</option>
+                    }
+                </select>
+            </label>
+        }
     </div>
 }
 
@@ -93,62 +106,172 @@
 }
 else
 {
-    <div class="body2col">
-        <div>
-            <div class="tablewrap">
-                <table>
-                    <thead>
-                        <tr><th></th><th>Navn / Kunde</th><th>Adresse</th><th>Neste service</th><th>Status</th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var a in _sideRader)
-                        {
-                            var (statusTekst, statusKlasse) = StatusVisning(a);
-                            <tr @key="a.ProsjektId" class="avtale-tr" @onclick="@(() => Nav.NavigateTo($"serviceavtaler/{a.ProsjektId}"))">
-                                <td><span class="avatar" style="background:@PersonFarge(a.KundeNavn ?? a.ProsjektNavn)">@PersonInitialer(a.KundeNavn ?? a.ProsjektNavn)</span></td>
-                                <td>
-                                    <div class="navn-txt">@a.ProsjektNavn</div>
-                                    <div class="kunde-txt">@(a.KundeNavn ?? "Ingen kunde satt")</div>
-                                </td>
-                                <td>@(string.IsNullOrWhiteSpace(a.Adresse) ? "–" : a.Adresse)</td>
-                                <td>@(a.NesteServiceDato?.ToString("dd.MM.yyyy") ?? "Uten dato")</td>
-                                <td><span class="statuspill @statusKlasse">@statusTekst</span></td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-            <div class="fotrad">
-                <span class="sideantall">Viser @(_forsteRadNr)-@(_sisteRadNr) av @_filtrert.Count</span>
-                <div class="sidevelger">
-                    @for (var s = 1; s <= _antallSider; s++)
+    @* Oppsett "N+ gruppert" (oktober 2026): avtalene gruppert etter hva som
+       haster, med årets runder, neste service og en tydelig handling på
+       hver rad. Klikk en rad for å folde ut historikk, siste runde, avvik og
+       kunde - uten å forlate listen. Kartet er tatt bort. *@
+    <div class="sv-liste">
+        @foreach (var (gruppe, tittel, undertekst) in Grupper)
+        {
+            var rader = _filtrert.Where(a => a.Gruppe == gruppe).ToList();
+            if (rader.Count == 0)
+            {
+                continue;
+            }
+
+            <div class="sv-grp"><span class="sv-dot sv-@gruppe"></span>@tittel · @rader.Count<span class="sv-grp-under">@undertekst</span></div>
+
+            @foreach (var a in rader)
+            {
+                var apen = _apne.Contains(a.ProsjektId);
+                <div class="sv-blokk @(apen ? "apen" : "")" @key="a.ProsjektId">
+                    <div class="sv-rad" role="button" tabindex="0" @onclick="@(() => Veksl(a.ProsjektId))" @onkeydown="@(e => { if (e.Key is "Enter" or " ") { Veksl(a.ProsjektId); } })">
+                        <span class="sv-kant sv-@a.Gruppe"></span>
+                        <span class="sv-logo" style="background:@Farge(a.KundeNavn ?? a.ProsjektNavn)">@Initialer(a.KundeNavn ?? a.ProsjektNavn)</span>
+                        <div class="sv-navn">
+                            <b>@a.ProsjektNavn</b>
+                            <small>@(a.KundeNavn ?? "Ingen kunde satt")@(string.IsNullOrWhiteSpace(a.StedTekst) ? "" : $" · {a.StedTekst}")</small>
+                            <div class="sv-ikoner">
+                                <span><Icon Name="door" />@a.Dorer @(a.Dorer == 1 ? "dør" : "dører")</span>
+                                @if (a.IntervallMnd is { } mnd)
+                                {
+                                    <span><Icon Name="calendar" />@IntervallTekst(mnd)</span>
+                                }
+                                @if (a.MinutterPerBesok > 0)
+                                {
+                                    <span><Icon Name="clock" />@Varighet(a.MinutterPerBesok)</span>
+                                }
+                                @if (a.Montor is not null)
+                                {
+                                    <span><Icon Name="users" />@a.Montor</span>
+                                }
+                                else
+                                {
+                                    <span class="sv-mangler"><Icon Name="users" />Ingen montør</span>
+                                }
+                                @if (a.Avvik.Count > 0)
+                                {
+                                    <span class="sv-avvik"><Icon Name="alert" />@a.Avvik.Count avvik</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="sv-runder">
+                            <span class="sv-lbl">Runder @Ar</span>
+                            <span class="sv-strek">
+                                @if (a.RunderIAr.Count == 0)
+                                {
+                                    <span class="sv-smule">–</span>
+                                }
+                                @foreach (var r in a.RunderIAr)
+                                {
+                                    <i class="sv-r-@r" title="@RundeTittel(r)"></i>
+                                }
+                            </span>
+                            <span class="sv-smule">@(a.RunderIAr.Count == 0 ? "ingen i år" : $"{a.RunderIAr.Count(r => r == "u")} av {a.RunderIAr.Count} utført")</span>
+                        </div>
+                        <div class="sv-neste">
+                            <span class="sv-lbl">Neste service</span>
+                            <b>@(a.NesteServiceDato?.ToString("dd.MM.yyyy") ?? "Ikke satt")</b>
+                            <small class="sv-t-@a.Gruppe">@Naar(a.NesteServiceDato)</small>
+                        </div>
+                        <div class="sv-handl">
+                            @if (a.Gruppe == "forfalt")
+                            {
+                                <a class="sv-knapp sv-knapp-r" href="@($"/serviceavtaler/{a.ProsjektId}?fane=service")" @onclick:stopPropagation="true"><Icon Name="calendar" />Planlegg nå</a>
+                            }
+                            else if (a.Gruppe == "utendato")
+                            {
+                                <a class="sv-knapp sv-knapp-p" href="@($"/serviceavtaler/{a.ProsjektId}?fane=service")" @onclick:stopPropagation="true">Sett dato</a>
+                            }
+                            else
+                            {
+                                <span class="sv-pill sv-p-@a.Gruppe">@(a.Gruppe == "snart" ? "Nærmer seg" : "Aktiv")</span>
+                            }
+                            <span class="sv-pil">▶</span>
+                        </div>
+                    </div>
+
+                    @if (apen)
                     {
-                        var side = s;
-                        <span class="pagebtn @(side == _sideNr ? "aktiv" : "")" @onclick="@(() => _sideNr = side)">@side</span>
+                        <div class="sv-utv">
+                            <div class="sv-boks">
+                                <h4>Servicehistorikk</h4>
+                                <div class="sv-tlinje" style="grid-template-columns:repeat(@Tidslinje(a).Count, minmax(0, 1fr))">
+                                    @foreach (var p in Tidslinje(a))
+                                    {
+                                        <div><i class="sv-tp-@p.Type"></i><b>@p.Tittel</b><small class="@(p.Type is "forfalt" or "neste" ? $"sv-t-{a.Gruppe}" : "")">@p.Under</small></div>
+                                    }
+                                </div>
+                            </div>
+                            <div class="sv-g4">
+                                <div class="sv-boks">
+                                    <h4>Siste runde</h4>
+                                    @if (a.SisteRunde is { } sr)
+                                    {
+                                        <div class="sv-l">Dato<b>@sr.Dato.ToString("dd.MM.yyyy")</b></div>
+                                        <div class="sv-l">Utført av<b>@(sr.UtfortAv ?? "–")</b></div>
+                                        <div class="sv-l">Deler byttet<b>@sr.Deler</b></div>
+                                        <a class="sv-lenke" href="@($"/servicerunde/{sr.Id}/pdf")" target="_blank" rel="noopener">Åpne rapport →</a>
+                                    }
+                                    else
+                                    {
+                                        <span class="sv-smule">Ingen runder registrert ennå.</span>
+                                    }
+                                </div>
+                                <div class="sv-boks">
+                                    <h4>Åpne avvik @if (a.Avvik.Count > 0) {<span class="sv-pill sv-p-forfalt">@a.Avvik.Count</span>}</h4>
+                                    @if (a.Avvik.Count == 0)
+                                    {
+                                        <span class="sv-smule">Ingen åpne avvik 👍</span>
+                                    }
+                                    @foreach (var av in a.Avvik.Take(3))
+                                    {
+                                        <div class="sv-l"><span class="sv-dot sv-forfalt"></span><span class="sv-avvik-tekst">Dør @av.Dornummer – @av.Beskrivelse</span><b>@av.StatusTekst</b></div>
+                                    }
+                                    @if (a.Avvik.Count > 0)
+                                    {
+                                        <a class="sv-lenke" href="@($"/serviceavtaler/{a.ProsjektId}?fane=avvik")">Se alle avvik →</a>
+                                    }
+                                </div>
+                                <div class="sv-boks">
+                                    <h4>Kunde og avtale</h4>
+                                    <div class="sv-l">Kontakt<b>@(a.Kontakt ?? "–")</b></div>
+                                    <div class="sv-l">Telefon<b>@if (!string.IsNullOrWhiteSpace(a.Telefon)) {<a href="@($"tel:{a.Telefon}")">@a.Telefon</a>} else {<text>–</text>}</b></div>
+                                    <div class="sv-l">Tid per besøk<b>@(a.MinutterPerBesok > 0 ? Varighet(a.MinutterPerBesok) : "–")</b></div>
+                                    <div class="sv-l">Adresse<b>@(string.IsNullOrWhiteSpace(a.Adresse) ? "–" : a.Adresse)</b></div>
+                                </div>
+                                <div class="sv-knapper">
+                                    <a class="sv-knapp sv-knapp-p" href="@($"/serviceavtaler/{a.ProsjektId}?fane=service")"><Icon Name="calendar" />Planlegg runde</a>
+                                    <a class="sv-knapp" href="@($"/serviceavtaler/{a.ProsjektId}")">Åpne avtale</a>
+                                    @if (a.SisteRunde is { } s2)
+                                    {
+                                        <a class="sv-knapp" href="@($"/servicerunde/{s2.Id}/pdf")" target="_blank" rel="noopener"><Icon Name="file-text" />Siste rapport</a>
+                                    }
+                                    <a class="sv-knapp" href="@($"/serviceavtaler/{a.ProsjektId}?fane=dorer")"><Icon Name="door" />Dører</a>
+                                </div>
+                            </div>
+                        </div>
                     }
                 </div>
-            </div>
-        </div>
-
-        <div class="mapwrap">
-            <div id="avtale-kart" class="mapkart"></div>
-            @if (_filtrert.Count(a => a.Latitude is not null) == 0)
-            {
-                <div class="mapkart-tom">
-                    <Icon Name="map" />
-                    <span>Ingen av avtalene har registrert adresse med posisjon ennå.</span>
-                </div>
             }
-        </div>
+        }
     </div>
+    <p class="sv-fot">Viser @_filtrert.Count av @_avtaler.Count serviceavtaler · sortert etter hva som haster</p>
 }
 
 @code {
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static int Ar => DateTime.Today.Year;
+
     private sealed class KundeOption
     {
         public int Id { get; set; }
         public string Navn { get; set; } = "";
     }
+
+    private sealed record AvvikInfo(string Dornummer, string Beskrivelse, string StatusTekst);
+    private sealed record RundeInfo(int Id, DateTime Dato, string? UtfortAv, int Deler);
+    private sealed record TidsPunkt(string Type, string Tittel, string Under);
 
     private sealed class AvtaleRad
     {
@@ -156,19 +279,38 @@ else
         public string ProsjektNavn { get; set; } = "";
         public string? KundeNavn { get; set; }
         public string? Adresse { get; set; }
-        public string? Postnr { get; set; }
         public string? Sted { get; set; }
-        public double? Latitude { get; set; }
-        public double? Longitude { get; set; }
-        public DateTime? SisteServiceDato { get; set; }
+        public string? StedTekst => !string.IsNullOrWhiteSpace(Sted) ? Sted : Adresse;
+        public string? Kontakt { get; set; }
+        public string? Telefon { get; set; }
+        public string? Montor { get; set; }
+        public int Dorer { get; set; }
+        public int MinutterPerBesok { get; set; }
+        public int? IntervallMnd { get; set; }
         public DateTime? NesteServiceDato { get; set; }
+        public RundeInfo? SisteRunde { get; set; }
+        public List<RundeInfo> Utforte { get; set; } = [];
+        public List<AvvikInfo> Avvik { get; set; } = [];
+        // Årets runder i rekkefølge: "u" utført, "p" planlagt/gjenstår, "f" forfalt.
+        public List<string> RunderIAr { get; set; } = [];
+
         public bool ErForfalt => NesteServiceDato.HasValue && NesteServiceDato.Value.Date < DateTime.Today;
         public bool ErSnartForfalt => NesteServiceDato.HasValue && !ErForfalt && NesteServiceDato.Value.Date <= DateTime.Today.AddDays(14);
 
         // "Aktiv" = har en registrert neste-service-dato som verken er forfalt
         // eller nærmer seg forfall ennå (mer enn 14 dager frem i tid).
         public bool ErAktiv => NesteServiceDato.HasValue && !ErForfalt && !ErSnartForfalt;
+
+        public string Gruppe => ErForfalt ? "forfalt" : ErSnartForfalt ? "snart" : !NesteServiceDato.HasValue ? "utendato" : "aktiv";
     }
+
+    private static readonly (string Gruppe, string Tittel, string Under)[] Grupper =
+    [
+        ("forfalt", "Forfalt", "planlegg disse først"),
+        ("snart", "Nærmer seg", "neste 14 dager"),
+        ("utendato", "Uten dato", "mangler neste service"),
+        ("aktiv", "Aktive", "i rute")
+    ];
 
     private List<AvtaleRad> _avtaler = [];
     private List<KundeOption> _kunder = [];
@@ -178,48 +320,45 @@ else
     private string _search = "";
     private string _hurtigfilter = "alle";
     private string _sortering = "neste-service";
+    private string _montorFilter = "";
     private bool _visNyPanel;
-    private int _sideNr = 1;
-    private const int SideStorrelse = 10;
+    private readonly HashSet<int> _apne = [];
 
-    private static readonly string[] PersonPaletten = ["#3B82F6", "#10B981", "#F59E0B", "#06B6D4", "#A855F7", "#EC4899", "#6366F1"];
+    private static readonly string[] Paletten = ["#835e41", "#2054a3", "#a1690a", "#2b7a4b", "#7a2b96", "#b5502d", "#3a6fb5"];
 
     [Inject] private NavigationManager Nav { get; set; } = default!;
 
-    private List<AvtaleRad> _filtrertUsortert => _avtaler
-        .Where(a => _hurtigfilter switch
+    private List<string> Montorer => _avtaler.Where(a => a.Montor is not null).Select(a => a.Montor!).Distinct().OrderBy(m => m).ToList();
+
+    private List<AvtaleRad> _filtrert
+    {
+        get
         {
-            "aktiv" => a.ErAktiv,
-            "forfalt" => a.ErForfalt,
-            "snart" => a.ErSnartForfalt,
-            "utendato" => !a.NesteServiceDato.HasValue,
-            _ => true
-        })
-        .Where(a => string.IsNullOrWhiteSpace(_search)
-            || a.ProsjektNavn.Contains(_search, StringComparison.OrdinalIgnoreCase)
-            || (a.KundeNavn?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
-            || (a.Adresse?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false))
-        .ToList();
+            var liste = _avtaler
+                .Where(a => _hurtigfilter switch
+                {
+                    "aktiv" => a.ErAktiv,
+                    "forfalt" => a.ErForfalt,
+                    "snart" => a.ErSnartForfalt,
+                    "utendato" => !a.NesteServiceDato.HasValue,
+                    "avvik" => a.Avvik.Count > 0,
+                    _ => true
+                })
+                .Where(a => string.IsNullOrEmpty(_montorFilter) || a.Montor == _montorFilter)
+                .Where(a => string.IsNullOrWhiteSpace(_search)
+                    || a.ProsjektNavn.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                    || (a.KundeNavn?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (a.Adresse?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (a.Sted?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
 
-    private List<AvtaleRad> _filtrert => _sortering switch
-    {
-        "navn" => _filtrertUsortert.OrderBy(a => a.ProsjektNavn).ToList(),
-        "kunde" => _filtrertUsortert.OrderBy(a => a.KundeNavn ?? "").ToList(),
-        _ => _filtrertUsortert.OrderBy(a => a.NesteServiceDato ?? DateTime.MaxValue).ToList()
-    };
-
-    private int _antallSider => Math.Max(1, (int)Math.Ceiling(_filtrert.Count / (double)SideStorrelse));
-    private int _forsteRadNr => _filtrert.Count == 0 ? 0 : (_sideNr - 1) * SideStorrelse + 1;
-    private int _sisteRadNr => Math.Min(_sideNr * SideStorrelse, _filtrert.Count);
-    private List<AvtaleRad> _sideRader => _filtrert.Skip((_sideNr - 1) * SideStorrelse).Take(SideStorrelse).ToList();
-
-    private static (string Tekst, string Klasse) StatusVisning(AvtaleRad a) => a switch
-    {
-        { ErForfalt: true } => ("Forfalt", "sp-forfalt"),
-        { ErSnartForfalt: true } => ("Nærmer seg", "sp-naermer"),
-        { ErAktiv: true } => ("Aktiv", "sp-aktiv"),
-        _ => ("Uten dato", "sp-utendato")
-    };
+            return _sortering switch
+            {
+                "navn" => liste.OrderBy(a => a.ProsjektNavn).ToList(),
+                "kunde" => liste.OrderBy(a => a.KundeNavn ?? "").ToList(),
+                _ => liste.OrderBy(a => a.NesteServiceDato ?? DateTime.MaxValue).ToList()
+            };
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -231,147 +370,170 @@ else
         var prosjekter = await Db.Prosjekter
             .Where(p => p.Status == ProsjektStatus.Serviceavtale)
             .Include(p => p.Kunde)
+            .Include(p => p.AnsvarligMontor)
             .OrderBy(p => p.Navn)
             .ToListAsync();
 
-        var prosjektIder = prosjekter.Select(p => p.Id).ToList();
+        var ider = prosjekter.Select(p => p.Id).ToList();
 
         var runder = await Db.Servicerunder
-            .Where(s => prosjektIder.Contains(s.ProsjektId))
+            .Where(s => ider.Contains(s.ProsjektId))
+            .Select(s => new { s.Id, s.ProsjektId, s.Dato, s.NesteServiceDato, s.ErPlanlagt, UtfortAv = s.UtfortAvBruker != null ? s.UtfortAvBruker.Navn : null, Deler = s.Deler.Count })
+            .ToListAsync();
+
+        var dorer = await Db.Dorer
+            .Where(d => ider.Contains(d.ProsjektId))
+            .GroupBy(d => d.ProsjektId)
+            .Select(g => new { ProsjektId = g.Key, Antall = g.Count() })
+            .ToDictionaryAsync(x => x.ProsjektId, x => x.Antall);
+
+        var minutter = (await Db.ServiceMinuttLinjer
+            .Where(l => ider.Contains(l.ProsjektId))
+            .Select(l => new { l.ProsjektId, l.Minutter, l.Antall })
+            .ToListAsync())
+            .GroupBy(l => l.ProsjektId)
+            .ToDictionary(g => g.Key, g => g.Sum(l => (l.Minutter ?? 0) * l.Antall));
+
+        var avvik = await Db.Avvik
+            .Where(a => a.Status != AvvikStatus.Godkjent && a.Dor != null && ider.Contains(a.Dor.ProsjektId))
+            .OrderByDescending(a => a.OpprettetDato)
+            .Select(a => new { a.Dor!.ProsjektId, a.Dor.Dornummer, a.Beskrivelse, a.Status })
             .ToListAsync();
 
         _avtaler = prosjekter.Select(p =>
         {
             var proRunder = runder.Where(r => r.ProsjektId == p.Id).OrderByDescending(r => r.Dato).ToList();
-            return new AvtaleRad
+            var utforte = proRunder.Where(r => !r.ErPlanlagt).ToList();
+            var siste = utforte.FirstOrDefault();
+            var neste = proRunder.FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato;
+
+            // Intervallet leses fra siste runde: tiden mellom runden og
+            // neste planlagte service, rundet til hele måneder.
+            int? intervall = null;
+            var medNeste = utforte.FirstOrDefault(r => r.NesteServiceDato.HasValue);
+            if (medNeste is not null)
+            {
+                var mnd = (int)Math.Round((medNeste.NesteServiceDato!.Value - medNeste.Dato).TotalDays / 30.4);
+                intervall = mnd is > 0 and <= 36 ? mnd : null;
+            }
+
+            var rad = new AvtaleRad
             {
                 ProsjektId = p.Id,
                 ProsjektNavn = p.Navn,
                 KundeNavn = p.Kunde?.Navn,
                 Adresse = p.Adresse,
-                Postnr = p.Postnr,
                 Sted = p.Sted,
-                Latitude = p.Latitude,
-                Longitude = p.Longitude,
-                SisteServiceDato = proRunder.FirstOrDefault()?.Dato,
-                NesteServiceDato = proRunder.FirstOrDefault(r => r.NesteServiceDato.HasValue)?.NesteServiceDato
+                Kontakt = !string.IsNullOrWhiteSpace(p.Kontaktperson) ? p.Kontaktperson : p.Kunde?.Kontaktperson,
+                Telefon = !string.IsNullOrWhiteSpace(p.Telefon) ? p.Telefon : p.Kunde?.Telefon,
+                Montor = p.AnsvarligMontor?.Navn ?? siste?.UtfortAv,
+                Dorer = dorer.GetValueOrDefault(p.Id),
+                MinutterPerBesok = minutter.GetValueOrDefault(p.Id),
+                IntervallMnd = intervall,
+                NesteServiceDato = neste,
+                SisteRunde = siste is null ? null : new RundeInfo(siste.Id, siste.Dato, siste.UtfortAv, siste.Deler),
+                Utforte = utforte.Select(r => new RundeInfo(r.Id, r.Dato, r.UtfortAv, r.Deler)).ToList(),
+                Avvik = avvik.Where(a => a.ProsjektId == p.Id)
+                    .Select(a => new AvvikInfo(a.Dornummer, a.Beskrivelse, a.Status == AvvikStatus.SendtTilKunde ? "sendt kunde" : "åpent"))
+                    .ToList()
             };
+
+            // Årets runder: utførte, planlagte runder fram i tid, og neste
+            // service dersom den faller i år og ikke allerede er planlagt.
+            var aretsRunder = new List<(DateTime Dato, string Type)>();
+            aretsRunder.AddRange(utforte.Where(r => r.Dato.Year == Ar).Select(r => (r.Dato, "u")));
+            aretsRunder.AddRange(proRunder.Where(r => r.ErPlanlagt && r.Dato.Year == Ar).Select(r => (r.Dato, r.Dato.Date < DateTime.Today ? "f" : "p")));
+            if (neste is { } n && n.Year == Ar && !proRunder.Any(r => r.ErPlanlagt && Math.Abs((r.Dato - n).TotalDays) < 20))
+            {
+                aretsRunder.Add((n, rad.ErForfalt ? "f" : "p"));
+            }
+            rad.RunderIAr = aretsRunder.OrderBy(x => x.Dato).Select(x => x.Type).ToList();
+            return rad;
         }).ToList();
-
-        // Geokoding skjer nå i bakgrunnen ETTER at siden vises, i stedet for
-        // å blokkere hele sidevisningen mens manglende adresser slås opp mot
-        // en ekstern tjeneste (kunne tidligere ta flere sekunder per avtale,
-        // se CODE_REVIEW.md 2026-10-08). Tabellvisningen trenger ikke
-        // lat/lng i det hele tatt (kun kartvisningen), så dette endrer ikke
-        // hva som vises i tabellen - kun når kart-pinnene dukker opp.
-        // Resultatet lagres fortsatt til databasen akkurat som før.
-        _ = GeokodManglendeIBakgrunnenAsync(prosjekter, _disposedCts.Token);
     }
 
-    private readonly CancellationTokenSource _disposedCts = new();
-
-    // Henter posisjon for avtaler som har adresse men ikke lagret lat/lng ennå
-    // (samme mønster som Kart.razor) - lagrer resultatet på selve Prosjektet
-    // slik at det ikke må geokodes på nytt neste gang siden lastes. Kjøres nå
-    // som en IKKE-blokkerende bakgrunnsoppgave (se OnInitializedAsync).
-    private async Task GeokodManglendeIBakgrunnenAsync(List<Prosjekt> prosjekter, CancellationToken ct)
+    private void Veksl(int id)
     {
-        var endret = false;
-        var forste = true;
-
-        foreach (var a in _avtaler.Where(a => a.Latitude is null && !string.IsNullOrWhiteSpace(a.Adresse)))
+        if (!_apne.Remove(id))
         {
-            if (ct.IsCancellationRequested)
-            {
-                break;
-            }
-
-            // Nominatim (geokodingstjenesten) sine bruksvilkår tillater maks
-            // 1 forespørsel/sekund - overholdes eksplisitt her siden kallene
-            // kjører sekvensielt i bakgrunnen uten at brukeren venter på dem.
-            if (!forste)
-            {
-                try
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(1100), ct);
-                }
-                catch (TaskCanceledException)
-                {
-                    break;
-                }
-            }
-            forste = false;
-
-            (double Latitude, double Longitude)? treff;
-            try
-            {
-                treff = await Geokoding.GeocodeAsync(a.Adresse!, a.Postnr, a.Sted);
-            }
-            catch
-            {
-                // Best-effort bakgrunnsoppgave - en feilet oppslag skal ikke
-                // stoppe resten av listen, bare hoppes over denne gangen.
-                continue;
-            }
-
-            if (treff is null || ct.IsCancellationRequested)
-            {
-                continue;
-            }
-
-            a.Latitude = treff.Value.Latitude;
-            a.Longitude = treff.Value.Longitude;
-
-            var prosjekt = prosjekter.First(p => p.Id == a.ProsjektId);
-            prosjekt.Latitude = treff.Value.Latitude;
-            prosjekt.Longitude = treff.Value.Longitude;
-            endret = true;
-
-            try
-            {
-                await InvokeAsync(StateHasChanged);
-            }
-            catch (ObjectDisposedException)
-            {
-                break;
-            }
+            _apne.Add(id);
         }
-
-        if (endret && !ct.IsCancellationRequested)
-        {
-            try
-            {
-                await Db.SaveChangesAsync();
-            }
-            catch
-            {
-                // Best-effort - siden kan ha blitt forlatt/disposed underveis.
-            }
-        }
-    }
-
-    public void Dispose()
-    {
-        _disposedCts.Cancel();
-        _disposedCts.Dispose();
     }
 
     private void SettHurtigfilter(string filter)
     {
         _hurtigfilter = _hurtigfilter == filter ? "alle" : filter;
-        _sideNr = 1;
     }
 
-    private void GaTilSide1()
+    // Tidslinje i utfoldingen: inntil tre siste runder, neste service og deretter.
+    private static List<TidsPunkt> Tidslinje(AvtaleRad a)
     {
-        _sideNr = 1;
+        var punkter = a.Utforte.Take(3).Reverse()
+            .Select(r => new TidsPunkt("u", r.Dato.ToString("MMM yyyy", Kultur), $"{r.UtfortAv ?? "–"}{(r.Deler > 0 ? $" · {r.Deler} deler" : "")}"))
+            .ToList();
+
+        if (a.NesteServiceDato is { } n)
+        {
+            punkter.Add(new TidsPunkt(a.ErForfalt ? "forfalt" : "neste", n.ToString("dd.MM.yyyy"), Naar(n)));
+            if (a.IntervallMnd is { } mnd)
+            {
+                punkter.Add(new TidsPunkt("senere", n.AddMonths(mnd).ToString("MMM yyyy", Kultur), "deretter"));
+            }
+        }
+        else
+        {
+            punkter.Add(new TidsPunkt("senere", "Ikke satt", "neste service"));
+        }
+
+        return punkter;
     }
 
-    private static string PersonFarge(string navn) => PersonPaletten[Math.Abs(navn.GetHashCode()) % PersonPaletten.Length];
-
-    private static string PersonInitialer(string navn)
+    private static string Naar(DateTime? dato)
     {
-        var deler = navn.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (dato is not { } d)
+        {
+            return "ingen dato satt";
+        }
+
+        var dager = (d.Date - DateTime.Today).Days;
+        return dager switch
+        {
+            0 => "i dag",
+            1 => "i morgen",
+            -1 => "1 dag over",
+            var x when 0 > x => $"{-x} dager over",
+            _ => $"om {dager} dager"
+        };
+    }
+
+    private static string IntervallTekst(int mnd) => mnd switch
+    {
+        12 => "Årlig",
+        6 => "Halvårlig",
+        3 => "Kvartalsvis",
+        1 => "Månedlig",
+        _ => $"Hver {mnd}. mnd"
+    };
+
+    private static string Varighet(int minutter) => minutter >= 60
+        ? (minutter % 60 == 0 ? $"{minutter / 60} t" : $"{minutter / 60} t {minutter % 60} min")
+        : $"{minutter} min";
+
+    private static string RundeTittel(string r) => r switch { "u" => "Utført", "f" => "Forfalt", _ => "Planlagt" };
+
+    private static string Farge(string navn)
+    {
+        unchecked
+        {
+            var h = 17;
+            foreach (var c in navn) { h = h * 31 + c; }
+            return Paletten[(h & int.MaxValue) % Paletten.Length];
+        }
+    }
+
+    private static string Initialer(string navn)
+    {
+        var deler = navn.Split([' ', '-', '–'], StringSplitOptions.RemoveEmptyEntries);
         return deler.Length > 1
             ? $"{deler[0][0]}{deler[^1][0]}".ToUpperInvariant()
             : navn.Length >= 2 ? navn[..2].ToUpperInvariant() : navn.ToUpperInvariant();
@@ -398,61 +560,4 @@ else
 
         Nav.NavigateTo($"/serviceavtaler/{prosjekt.Id}");
     }
-
-    // ---------- Kart ----------
-
-    private bool _kartInitialisert;
-    private string? _sisteKartSignatur;
-
-    // Kalles på hver render (billig - maks 15 punkter) og tegner kartet på
-    // nytt kun når det faktisk initialiseres første gang eller når settet av
-    // synlige punkter (filter/søk) har endret seg siden sist - unngår unødig
-    // JS-kall på hver eneste re-render.
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (_avtaler.Count == 0)
-        {
-            return;
-        }
-
-        var data = KartData();
-        var signatur = string.Join("|", data.Select(d => d.ToString()));
-
-        if (!_kartInitialisert)
-        {
-            await JS.InvokeVoidAsync("kart.init", "avtale-kart", data);
-            _kartInitialisert = true;
-            _sisteKartSignatur = signatur;
-        }
-        else if (signatur != _sisteKartSignatur)
-        {
-            await JS.InvokeVoidAsync("kart.setPunkter", data);
-            _sisteKartSignatur = signatur;
-        }
-    }
-
-    private List<object> KartData() => _filtrert
-        .Where(a => a.Latitude is not null && a.Longitude is not null)
-        .Select(a =>
-        {
-            var (statusTekst, _) = StatusVisning(a);
-            return (object)new
-            {
-                lat = a.Latitude!.Value,
-                lng = a.Longitude!.Value,
-                tittel = a.ProsjektNavn,
-                undertekst = a.KundeNavn ?? "",
-                status = statusTekst,
-                farge = KartFarge(a)
-            };
-        })
-        .ToList();
-
-    private static string KartFarge(AvtaleRad a) => a switch
-    {
-        { ErForfalt: true } => "#D94848",
-        { ErSnartForfalt: true } => "#C2862E",
-        { ErAktiv: true } => "#189A5C",
-        _ => "#9a9a9e"
-    };
 }
