@@ -8,7 +8,8 @@ namespace PortalItlock.Web.Services;
 // utseende som arbeidsrapporten: status og utført arbeid, anbefalinger, neste
 // planlagte service, byttede deler per dør, sjekkliste, bilder og
 // signaturlinjer, med organisasjonens egen logo, kontaktinfo og farge.
-// En eventuell forside (Servicerunde.Forside) legges først, som før.
+// Rapporten starter alltid med en egen forside (RapportMal.Forside) med
+// forsideteksten fra runden (Servicerunde.Forside) når den er valgt.
 public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     public async Task<byte[]?> GenerateAsync(int servicerundeId)
@@ -45,16 +46,18 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
 
         var document = Document.Create(doc =>
         {
-            if (!string.IsNullOrWhiteSpace(runde.Forside))
-            {
-                doc.Page(page =>
-                {
-                    RapportMal.Side(page);
-                    Topp(page.Header());
-                    page.Content().PaddingTop(14).Column(col => ForsideRenderer.Render(col, runde.Forside));
-                    RapportMal.Bunn(page.Footer(), org);
-                });
-            }
+            // Mal "Klassisk med forside": alltid en forside, med forsideteksten
+            // fra runden (hvis valgt) under tittelen.
+            var kundeLinje = string.Join(" · ", new[] { kunde?.Navn, adresse }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            doc.Page(page => RapportMal.Forside(page, org, pdfLogo,
+                $"Servicerapport · {runde.Dato:dd.MM.yyyy}",
+                prosjekt?.Navn ?? "Servicerapport",
+                kundeLinje,
+                $"Nr. {runde.Id}",
+                runde.Forside,
+                (erUtfort ? "Utført" : "Planlagt", runde.Dato.ToString("dd.MM.yyyy")),
+                ("Utført av", utfortAv),
+                ("Neste service", runde.NesteServiceDato?.ToString("dd.MM.yyyy"))));
 
             doc.Page(page =>
             {

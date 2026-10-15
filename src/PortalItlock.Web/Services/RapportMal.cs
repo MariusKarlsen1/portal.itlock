@@ -248,6 +248,61 @@ public static class RapportMal
         });
     }
 
+    // Egen forside (mal "Klassisk med forside"): logo og nummer øverst, liten
+    // overlinje, stor tittel, kunde/adresse og forsideteksten fra editoren
+    // (med skriftstørrelse, fet, lister, linjeavstand osv.), og en faktarad
+    // nederst over bunnteksten. Detaljene kommer på neste side.
+    public static void Forside(PageDescriptor page, RapportProfil org, PdfLogo pdfLogo, string overlinje, string tittel,
+        string? undertittel, string nummer, string? forsideHtml, params (string Label, string? Verdi)[] fakta)
+    {
+        Side(page);
+        page.Background().Column(bg => bg.Item().Height(298).Background(org.AksentLys));
+
+        page.Content().Column(col =>
+        {
+            col.Item().Row(row =>
+            {
+                row.RelativeItem().Element(e => org.TegnLogo(e, pdfLogo));
+                row.AutoItem().AlignMiddle()
+                    .Background(Colors.White).Border(0.75f).BorderColor(Linje).PaddingVertical(3).PaddingHorizontal(9)
+                    .Text(nummer).FontSize(8.5f).Bold().FontColor(org.Aksent);
+            });
+
+            col.Item().PaddingTop(130).Text(overlinje.ToUpperInvariant()).FontSize(9).Bold().FontColor(org.Aksent).LetterSpacing(0.14f);
+            col.Item().PaddingTop(8).Text(tittel).FontSize(28).Bold().FontColor(PdfStil.Ink).LineHeight(1.1f);
+            if (!string.IsNullOrWhiteSpace(undertittel))
+            {
+                col.Item().PaddingTop(8).Text(undertittel).FontSize(11).FontColor(Dempet);
+            }
+
+            if (!string.IsNullOrWhiteSpace(forsideHtml))
+            {
+                col.Item().PaddingTop(26).PaddingRight(70).DefaultTextStyle(x => x.FontSize(10.5f))
+                    .Column(tekst => ForsideRenderer.Render(tekst, forsideHtml));
+            }
+        });
+
+        page.Footer().Column(f =>
+        {
+            var utfylte = fakta.Where(x => !string.IsNullOrWhiteSpace(x.Verdi)).ToList();
+            if (utfylte.Count > 0)
+            {
+                f.Item().PaddingBottom(18).BorderTop(2).BorderColor(org.Aksent).PaddingTop(10).Row(row =>
+                {
+                    foreach (var (label, verdi) in utfylte)
+                    {
+                        row.RelativeItem().Column(c =>
+                        {
+                            c.Item().Text(label.ToUpperInvariant()).FontSize(6.8f).SemiBold().FontColor(Svak).LetterSpacing(0.05f);
+                            c.Item().PaddingTop(2).Text(verdi).FontSize(10.5f).Bold();
+                        });
+                    }
+                });
+            }
+            f.Item().Element(e => Bunn(e, org));
+        });
+    }
+
     public static void Bunn(IContainer footer, RapportProfil org)
     {
         footer.PaddingTop(8).BorderTop(0.75f).BorderColor(Linje).PaddingTop(6).Row(row =>

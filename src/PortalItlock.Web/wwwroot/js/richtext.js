@@ -70,6 +70,66 @@ window.richtext = (function () {
         });
     }
 
+    // Linjeavstand gjelder hele avsnitt: finn blokkene (p/h1-h3/ul/ol/div) direkte
+    // under redigeringsfeltet som markeringen (eller markøren) berører.
+    function applyLineHeight(id, verdi) {
+        const el = document.getElementById(id);
+        const range = savedRanges[id];
+        if (!el) {
+            return;
+        }
+
+        // Løs tekst rett i feltet pakkes inn i <p> først, så den kan få stil.
+        if (Array.from(el.childNodes).some(n => n.nodeType === 3 && n.textContent.trim())) {
+            const p = document.createElement('p');
+            while (el.firstChild) { p.appendChild(el.firstChild); }
+            el.appendChild(p);
+        }
+
+        let blokker = Array.from(el.children);
+        if (range && el.contains(range.commonAncestorContainer)) {
+            const treff = blokker.filter(b => range.intersectsNode(b));
+            if (treff.length) { blokker = treff; }
+        }
+        blokker.forEach(b => { b.style.lineHeight = verdi; });
+
+        const ref = editors[id];
+        if (ref) {
+            ref.invokeMethodAsync('OnHtmlChanged', el.innerHTML);
+        }
+    }
+
+    // Som saveRangeFor, men tar også vare på en kollapset markør (for linjeavstand).
+    function saveAnyRangeFor(id) {
+        const sel = window.getSelection();
+        const el = document.getElementById(id);
+        if (sel && sel.rangeCount > 0 && el && el.contains(sel.anchorNode)) {
+            savedRanges[id] = sel.getRangeAt(0).cloneRange();
+        }
+    }
+
+    function wireLineHeightSelect(selectEl, id) {
+        selectEl.addEventListener('mousedown', () => saveAnyRangeFor(id));
+        selectEl.addEventListener('change', (e) => {
+            if (e.target.value) {
+                applyLineHeight(id, e.target.value);
+            }
+            e.target.value = '';
+        });
+    }
+
+    function wireColorSelect(selectEl, id) {
+        selectEl.addEventListener('mousedown', () => saveRangeFor(id));
+        selectEl.addEventListener('change', (e) => {
+            const farge = e.target.value;
+            if (farge && savedRanges[id]) {
+                restoreSelectionAndFocus(id);
+                exec(id, 'foreColor', farge);
+            }
+            e.target.value = '';
+        });
+    }
+
     function ensureFloatingBar() {
         if (floatingBar) {
             return floatingBar;
@@ -179,6 +239,14 @@ window.richtext = (function () {
         const toolbarSizeSelect = document.getElementById(id + '-size');
         if (toolbarSizeSelect) {
             wireSizeSelect(toolbarSizeSelect, id);
+        }
+        const lhSelect = document.getElementById(id + '-lh');
+        if (lhSelect) {
+            wireLineHeightSelect(lhSelect, id);
+        }
+        const colorSelect = document.getElementById(id + '-color');
+        if (colorSelect) {
+            wireColorSelect(colorSelect, id);
         }
     }
 
