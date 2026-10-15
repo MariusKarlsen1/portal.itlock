@@ -11,4 +11,8 @@ public class PlukklisteLinje
 
     public int AntallPlukket { get; set; }
     public int VarerBestilt { get; set; }
+
+    // Når bestilte varer ventes inn - plukklisten varsler hvis det er etter
+    // første planlagte montasje på prosjektet.
+    public DateTime? ForventetLevert { get; set; }
 }

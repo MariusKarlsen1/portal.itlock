@@ -9,6 +9,7 @@
 @inject ApplicationDbContext Db
 @inject PlukklistePdfService PdfService
 @inject LagretPdfService LagretPdfService
+@inject IJSRuntime JS
 
 <PageTitle>Plukkliste - @(_prosjekt?.Navn)</PageTitle>
 
@@ -22,78 +23,184 @@ else if (_prosjekt is null)
 }
 else
 {
-    <a class="back-link" href="@($"/prosjekter/{Id}")">&larr; Tilbake til prosjektet</a>
-    <h1>Plukkliste - @_prosjekt.Navn</h1>
-    <p class="section-hint">Alt beslag vi leverer på prosjektet, summert på tvers av dørene. Fyll inn hvor mye som er plukket og bestilt for å holde kontroll.</p>
+    @* Plukkliste PL18 (plukkliste-forslag.html): som før, med sumlinje, filter,
+       leverandør, forventet levert, status, sumrad og "Må bestilles" per leverandør. *@
+    var maBestilles = _rader.Where(r => r.MaBestilles > 0).ToList();
 
-    @if (_byggetrinnListe.Count > 1)
-    {
-        <div class="byggetrinn-velger">
-            <span>Byggetrinn</span>
-            <label class="checkbox-row">
-                <input type="checkbox" checked="@(_valgteByggetrinn.Count == 0)" @onchange="@(e => VelgAlleByggetrinn((bool)e.Value!))" /> Alle
-            </label>
-            @foreach (var b in _byggetrinnListe)
+    <div class="pl-kort">
+        <div class="pl-topp">
+            <div>
+                <a class="pl-tilbake" href="@($"/prosjekter/{Id}")">&larr; Tilbake til prosjektet</a>
+                <h1>Plukkliste – @_prosjekt.Navn</h1>
+            </div>
+            @if (_rader.Count > 0)
             {
-                <label class="checkbox-row">
-                    <input type="checkbox" checked="@_valgteByggetrinn.Contains(b)" @onchange="@(e => ToggleByggetrinn(b, (bool)e.Value!))" /> @b
-                </label>
+                <button type="button" class="pl-kn pl-kn-p" @onclick="GenererPdf"><Icon Name="file-text" />Last ned PDF</button>
             }
         </div>
-    }
+        <p class="pl-hint">Alt beslag vi leverer på prosjektet, summert på tvers av dørene. Fyll inn hvor mye som er plukket og bestilt for å holde kontroll.</p>
 
-    @if (_rader.Count > 0)
-    {
-        <button type="button" class="add-button" @onclick="GenererPdf">Last ned PDF</button>
-        <PdfPreviewModal Url="@_pdfUrl" Tittel="Plukkliste" SaveMessage="@_pdfSavedMessage"
-                          OnSave="LagrePlukklistePdf" OnClose="@(() => _pdfUrl = null)" />
-
-        <h2>Lagrede PDF-er</h2>
-        <LagredePdfListe Pdfer="_lagredePdfer" TillatSammenligning="true" />
-    }
-
-    @if (_rader.Count == 0)
-    {
-        <p class="list-empty">Ingen beslag levert av oss er registrert på prosjektets dører ennå.</p>
-    }
-    else
-    {
-        <table class="plukk-table">
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Beslagstype</th>
-                    <th>Varenummer</th>
-                    <th>Varenavn</th>
-                    <th>Overflate</th>
-                    <th>Enhet</th>
-                    <th>Antall</th>
-                    <th>Antall plukket</th>
-                    <th>Varer bestilt</th>
-                    <th>Må bestilles</th>
-                </tr>
-            </thead>
-            <tbody>
-                @{ var i = 0; }
-                @foreach (var rad in _rader)
+        @if (_byggetrinnListe.Count > 1)
+        {
+            <div class="pl-rad">
+                <span class="pl-lbl">Byggetrinn</span>
+                <button type="button" class="pl-chip @(_valgteByggetrinn.Count == 0 ? "pa" : "")" @onclick="@(() => VelgAlleByggetrinn(true))">Alle</button>
+                @foreach (var b in _byggetrinnListe)
                 {
-                    i++;
-                    <tr @key="rad.Linje.Id">
-                        <td>@i</td>
-                        <td>@rad.Component.Type?.Navn</td>
-                        <td>@rad.Component.Produktkode</td>
-                        <td>@rad.Component.Navn</td>
-                        <td>@rad.Component.Overflate</td>
-                        <td>@(rad.Component.Enhet ?? "Stk")</td>
-                        <td>@rad.AntallTrengs</td>
-                        <td><input class="plukk-input" type="number" min="0" @bind="rad.Linje.AntallPlukket" @bind:after="@(() => LagreLinje(rad.Linje))" /></td>
-                        <td><input class="plukk-input" type="number" min="0" @bind="rad.Linje.VarerBestilt" @bind:after="@(() => LagreLinje(rad.Linje))" /></td>
-                        <td class="@(rad.MaBestilles > 0 ? "ma-bestilles" : "")">@rad.MaBestilles</td>
-                    </tr>
+                    <button type="button" class="pl-chip @(_valgteByggetrinn.Contains(b) ? "pa" : "")" @onclick="@(() => ToggleByggetrinn(b, !_valgteByggetrinn.Contains(b)))">@b</button>
                 }
-            </tbody>
-        </table>
-    }
+            </div>
+        }
+
+        @if (_rader.Count == 0)
+        {
+            <p class="list-empty">Ingen beslag levert av oss er registrert på prosjektets dører ennå.</p>
+        }
+        else
+        {
+            <div class="pl-rad">
+                <span class="pl-sum"><b>@_rader.Count</b> varer · <b>@_rader.Sum(r => r.AntallTrengs)</b> stk</span>
+                <span class="pl-sum"><b>@_rader.Sum(r => r.Linje.AntallPlukket)</b> plukket</span>
+                <span class="pl-sum"><b class="pl-rod">@maBestilles.Sum(r => r.MaBestilles)</b> stk må bestilles</span>
+                @if (_forsteMontasje is { } fm)
+                {
+                    <span class="pl-sum">Første montasje <b>@fm.ToString("dd.MM.yyyy")</b></span>
+                }
+                <span class="pl-hoyre">
+                    @foreach (var (verdi, tekst) in Filtre)
+                    {
+                        <button type="button" class="pl-chip @(_filter == verdi ? "pa" : "")" @onclick="@(() => _filter = verdi)">@tekst</button>
+                    }
+                </span>
+            </div>
+
+            <div class="pl-tabwrap">
+                <table class="pl-tab">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Beslagstype</th>
+                            <th>Varenummer</th>
+                            <th>Varenavn</th>
+                            <th>Leverandør</th>
+                            <th>Overflate</th>
+                            <th>Enhet</th>
+                            <th class="pl-h">Antall</th>
+                            <th class="pl-c">Antall plukket</th>
+                            <th class="pl-c">Varer bestilt</th>
+                            <th>Forventet levert</th>
+                            <th class="pl-h">Må bestilles</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var i = 0; }
+                        @foreach (var rad in _rader)
+                        {
+                            i++;
+                            if (!VisRad(rad))
+                            {
+                                continue;
+                            }
+                            var sen = rad.Linje.ForventetLevert is { } fl && _forsteMontasje is { } m && fl.Date > m.Date && rad.Linje.AntallPlukket < rad.AntallTrengs;
+                            <tr @key="rad.Linje.Id" class="@(rad.Linje.AntallPlukket >= rad.AntallTrengs ? "pl-ferdig" : "")">
+                                <td class="pl-mut">@i</td>
+                                <td>@rad.Component.Type?.Navn</td>
+                                <td class="pl-mut">@rad.Component.Produktkode</td>
+                                <td><b>@rad.Component.Navn</b></td>
+                                <td class="pl-mut">@rad.Component.Leverandor</td>
+                                <td class="pl-mut">@rad.Component.Overflate</td>
+                                <td>@(rad.Component.Enhet ?? "Stk")</td>
+                                <td class="pl-h"><b>@rad.AntallTrengs</b></td>
+                                <td class="pl-c"><input class="pl-input" type="number" min="0" @bind="rad.Linje.AntallPlukket" @bind:after="@(() => LagreLinje(rad.Linje))" /></td>
+                                <td class="pl-c"><input class="pl-input" type="number" min="0" @bind="rad.Linje.VarerBestilt" @bind:after="@(() => LagreLinje(rad.Linje))" /></td>
+                                <td>
+                                    @if (rad.Linje.VarerBestilt > 0)
+                                    {
+                                        <input class="pl-input pl-dato @(sen ? "pl-sen" : "")" type="date"
+                                               value="@(rad.Linje.ForventetLevert?.ToString("yyyy-MM-dd"))"
+                                               @onchange="@(e => SettForventet(rad.Linje, e))" />
+                                        @if (sen)
+                                        {
+                                            <small class="pl-rod">etter første montasje</small>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="pl-mut">–</span>
+                                    }
+                                </td>
+                                <td class="pl-h"><b class="@(rad.MaBestilles > 0 ? "pl-rod" : "pl-mut")">@rad.MaBestilles</b></td>
+                                <td>
+                                    @if (rad.Linje.AntallPlukket >= rad.AntallTrengs)
+                                    {
+                                        <span class="pl-pill pl-ok">✓ Plukket</span>
+                                    }
+                                    else if (rad.MaBestilles > 0)
+                                    {
+                                        <span class="pl-pill pl-rodp">Må bestille @rad.MaBestilles</span>
+                                    }
+                                    else if (rad.Linje.VarerBestilt > 0)
+                                    {
+                                        <span class="pl-pill pl-bla">Bestilt</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="pl-pill pl-gul">Klar til plukk</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        <tr class="pl-sumrad">
+                            <td></td>
+                            <td colspan="6"><b>Totalt</b></td>
+                            <td class="pl-h"><b>@_rader.Sum(r => r.AntallTrengs)</b></td>
+                            <td class="pl-c"><b>@_rader.Sum(r => r.Linje.AntallPlukket)</b></td>
+                            <td class="pl-c"><b>@_rader.Sum(r => r.Linje.VarerBestilt)</b></td>
+                            <td></td>
+                            <td class="pl-h"><b class="pl-rod">@maBestilles.Sum(r => r.MaBestilles)</b></td>
+                            <td></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            @if (maBestilles.Count > 0)
+            {
+                <div class="pl-bestill">
+                    <h3>Må bestilles <span class="pl-pill pl-rodp">@maBestilles.Count varer · @maBestilles.Sum(r => r.MaBestilles) stk</span></h3>
+                    <div class="pl-bestill-grid">
+                        @foreach (var gruppe in maBestilles.GroupBy(r => string.IsNullOrWhiteSpace(r.Component.Leverandor) ? "Uten leverandør" : r.Component.Leverandor!))
+                        {
+                            <div class="pl-boks">
+                                <span class="pl-lbl">@gruppe.Key</span>
+                                @foreach (var r in gruppe)
+                                {
+                                    <div class="pl-linje"><span>@(string.IsNullOrWhiteSpace(r.Component.Produktkode) ? "" : r.Component.Produktkode + " · ")@r.Component.Navn</span><b>@r.MaBestilles stk</b></div>
+                                }
+                                <div class="pl-rad">
+                                    <button type="button" class="pl-kn" @onclick="@(() => KopierBestilling(gruppe.Key, gruppe.ToList()))">Kopier bestilling</button>
+                                    <button type="button" class="pl-kn" @onclick="@(() => MerkSomBestilt(gruppe.ToList()))">Merk som bestilt</button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    @if (!string.IsNullOrEmpty(_bestillMelding))
+                    {
+                        <span class="pl-melding">@_bestillMelding</span>
+                    }
+                </div>
+            }
+
+            <div class="pl-seksjon">
+                <h4>Lagrede PDF-er</h4>
+                <LagredePdfListe Pdfer="_lagredePdfer" TillatSammenligning="true" />
+            </div>
+
+            <PdfPreviewModal Url="@_pdfUrl" Tittel="Plukkliste" SaveMessage="@_pdfSavedMessage"
+                              OnSave="LagrePlukklistePdf" OnClose="@(() => _pdfUrl = null)" />
+        }
+    </div>
 }
 
 @code {
@@ -107,6 +214,58 @@ else
     private HashSet<string> _valgteByggetrinn = [];
     private List<LagretPdf> _lagredePdfer = [];
     private string? _pdfSavedMessage;
+
+    // Første planlagte montasje (tidligste arbeidsordre på prosjektet som ikke
+    // er ferdig) - brukt til å varsle om varer som kommer for sent.
+    private DateTime? _forsteMontasje;
+    private string _filter = "alle";
+    private string? _bestillMelding;
+
+    private static readonly (string Verdi, string Tekst)[] Filtre =
+    [
+        ("alle", "Alle"), ("ikkeplukket", "Ikke plukket"), ("mabestilles", "Må bestilles"), ("bestilt", "Bestilt")
+    ];
+
+    private bool VisRad(PlukklisteRad rad) => _filter switch
+    {
+        "ikkeplukket" => rad.Linje.AntallPlukket < rad.AntallTrengs,
+        "mabestilles" => rad.MaBestilles > 0,
+        "bestilt" => rad.Linje.VarerBestilt > 0,
+        _ => true
+    };
+
+    private async Task SettForventet(PlukklisteLinje linje, ChangeEventArgs e)
+    {
+        linje.ForventetLevert = DateTime.TryParse(e.Value?.ToString(), out var d) ? d : null;
+        await Db.SaveChangesAsync();
+    }
+
+    // Kopierer "Må bestilles" for én leverandør som ren tekst (til e-post e.l.).
+    private async Task KopierBestilling(string leverandor, List<PlukklisteRad> rader)
+    {
+        var linjer = rader.Select(r => $"{r.MaBestilles} stk  {(string.IsNullOrWhiteSpace(r.Component.Produktkode) ? "" : r.Component.Produktkode + "  ")}{r.Component.Navn}");
+        var tekst = $"Bestilling – {_prosjekt?.Navn}\nLeverandør: {leverandor}\n\n{string.Join("\n", linjer)}";
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", tekst);
+            _bestillMelding = $"Bestillingen til {leverandor} er kopiert.";
+        }
+        catch (JSException)
+        {
+            _bestillMelding = "Kunne ikke kopiere - nettleseren tillot det ikke.";
+        }
+    }
+
+    // Fyller inn "Varer bestilt" slik at "Må bestilles" blir 0 for linjene.
+    private async Task MerkSomBestilt(List<PlukklisteRad> rader)
+    {
+        foreach (var r in rader)
+        {
+            r.Linje.VarerBestilt += r.MaBestilles;
+        }
+        await Db.SaveChangesAsync();
+        _bestillMelding = $"{rader.Count} varer er merket som bestilt.";
+    }
 
     private void GenererPdf()
     {
@@ -207,6 +366,10 @@ else
             .ToListAsync();
         _byggetrinnListe = ByggetrinnHelper.Sorter(byggetrinnFraPlantegninger).ToList();
         _lagredePdfer = await LagretPdfService.HentAsync("Plukkliste", Id);
+        _forsteMontasje = await Db.Arbeidsordre
+            .Where(a => a.ProsjektId == Id && a.PlanlagtDato != null
+                && a.Status != ArbeidsordreStatus.Ferdig && a.Status != ArbeidsordreStatus.Fakturert)
+            .MinAsync(a => a.PlanlagtDato);
 
         await LastRader();
     }

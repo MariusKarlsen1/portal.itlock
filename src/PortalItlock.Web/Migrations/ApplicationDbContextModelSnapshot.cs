@@ -4512,6 +4512,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("ComponentId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("ForventetLevert")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("ProsjektId")
                         .HasColumnType("INTEGER");
 
