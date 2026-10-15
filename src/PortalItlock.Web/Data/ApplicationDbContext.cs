@@ -152,6 +152,34 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ComponentMontasjebladDokument> ComponentMontasjebladDokumenter => Set<ComponentMontasjebladDokument>();
     public DbSet<ComponentDatabladDokument> ComponentDatabladDokumenter => Set<ComponentDatabladDokument>();
 
+    // Plantegningsfilen (PlantegningFil) deler rad med plantegningen og er
+    // påkrevd - EF krever at den også er lastet når en plantegning slettes
+    // (direkte eller via et prosjekt som slettes). Den lastes derfor her rett
+    // før lagring, slik at sletting virker uansett hvor den gjøres fra.
+    private void LastFilerForSlettedePlantegninger()
+    {
+        foreach (var entry in ChangeTracker.Entries<Plantegning>().Where(e => e.State == EntityState.Deleted && e.Entity.Fil is null).ToList())
+        {
+            entry.Reference(p => p.Fil).Load();
+            if (entry.Entity.Fil is not null)
+            {
+                Entry(entry.Entity.Fil).State = EntityState.Deleted;
+            }
+        }
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        LastFilerForSlettedePlantegninger();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        LastFilerForSlettedePlantegninger();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDbFunction(typeof(ApplicationDbContext).GetMethod(nameof(InneholderUavhengigAvStorForbokstav))!)
@@ -230,6 +258,28 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasMany(c => c.Produktgrupper)
             .WithMany(p => p.Komponenter)
             .UsingEntity(j => j.ToTable("ComponentProduktgrupper"));
+
+        // Table splitting: filene til varer og plantegninger ligger i samme
+        // tabell/kolonner som før, men som egne entiteter slik at de bare
+        // lastes med Include(... .Filer / .Fil) - se Component.Filer og
+        // Plantegning.Fil. Kolonnenavnene er uendret.
+        modelBuilder.Entity<Component>().Ignore(c => c.FdvData).Ignore(c => c.MontasjebladData)
+            .Ignore(c => c.DatabladData).Ignore(c => c.BildeData);
+        modelBuilder.Entity<Component>()
+            .HasOne(c => c.Filer)
+            .WithOne()
+            .HasForeignKey<ComponentFiler>(f => f.Id);
+        modelBuilder.Entity<ComponentFiler>().ToTable("Components");
+        modelBuilder.Entity<Component>().ToTable("Components");
+
+        modelBuilder.Entity<Plantegning>().Ignore(p => p.Data);
+        modelBuilder.Entity<Plantegning>()
+            .HasOne(p => p.Fil)
+            .WithOne()
+            .HasForeignKey<PlantegningFil>(f => f.Id);
+        modelBuilder.Entity<Plantegning>().Navigation(p => p.Fil).IsRequired();
+        modelBuilder.Entity<PlantegningFil>().ToTable("Plantegninger");
+        modelBuilder.Entity<Plantegning>().ToTable("Plantegninger");
 
         modelBuilder.Entity<RequirementValue>()
             .HasOne(rv => rv.Dimensjon)

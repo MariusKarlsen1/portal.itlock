@@ -17,6 +17,7 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     {
         var plantegning = await db.Plantegninger
             .Include(p => p.Prosjekt)
+            .Include(p => p.Fil)
             .FirstOrDefaultAsync(p => p.Id == plantegningId);
 
         if (plantegning is null)

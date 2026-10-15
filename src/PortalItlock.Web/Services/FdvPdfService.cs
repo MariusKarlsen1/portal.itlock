@@ -15,7 +15,7 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
 
         var komponentIder = await db.DorKomponenter
-            .Where(dk => dk.Dor!.ProsjektId == prosjektId && dk.Component!.FdvData != null
+            .Where(dk => dk.Dor!.ProsjektId == prosjektId && dk.Component!.Filer!.FdvData != null
                 && (valgteByggetrinn == null || (dk.Dor!.Plantegning != null && valgteByggetrinn.Contains(dk.Dor!.Plantegning!.Byggetrinn))))
             .Select(dk => dk.ComponentId)
             .Distinct()
@@ -24,6 +24,7 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         return await db.Components
             .Where(c => komponentIder.Contains(c.Id))
             .Include(c => c.FdvDokumenter)
+            .Include(c => c.Filer)
             .OrderBy(c => c.Navn)
             .ToListAsync();
     }

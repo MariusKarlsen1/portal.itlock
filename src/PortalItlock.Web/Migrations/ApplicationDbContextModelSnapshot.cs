@@ -1226,9 +1226,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("BildeContentType")
                         .HasColumnType("TEXT");
 
-                    b.Property<byte[]>("BildeData")
-                        .HasColumnType("BLOB");
-
                     b.Property<string>("BildeFilnavn")
                         .HasColumnType("TEXT");
 
@@ -1240,9 +1237,6 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<string>("DatabladContentType")
                         .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("DatabladData")
-                        .HasColumnType("BLOB");
 
                     b.Property<string>("DatabladFilnavn")
                         .HasColumnType("TEXT");
@@ -1258,9 +1252,6 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<string>("FdvContentType")
                         .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("FdvData")
-                        .HasColumnType("BLOB");
 
                     b.Property<string>("FdvFilnavn")
                         .HasColumnType("TEXT");
@@ -1306,9 +1297,6 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<string>("MontasjebladContentType")
                         .HasColumnType("TEXT");
-
-                    b.Property<byte[]>("MontasjebladData")
-                        .HasColumnType("BLOB");
 
                     b.Property<string>("MontasjebladFilnavn")
                         .HasColumnType("TEXT");
@@ -1370,7 +1358,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("RabattgruppeId");
 
-                    b.ToTable("Components");
+                    b.ToTable("Components", (string)null);
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ComponentDatabladDokument", b =>
@@ -1433,6 +1421,28 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ComponentId");
 
                     b.ToTable("ComponentFdvDokumenter");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ComponentFiler", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<byte[]>("BildeData")
+                        .HasColumnType("BLOB");
+
+                    b.Property<byte[]>("DatabladData")
+                        .HasColumnType("BLOB");
+
+                    b.Property<byte[]>("FdvData")
+                        .HasColumnType("BLOB");
+
+                    b.Property<byte[]>("MontasjebladData")
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Components", (string)null);
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ComponentLeverandor", b =>
@@ -4455,10 +4465,6 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<byte[]>("Data")
-                        .IsRequired()
-                        .HasColumnType("BLOB");
-
                     b.Property<string>("Filnavn")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -4477,7 +4483,21 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("ProsjektId");
 
-                    b.ToTable("Plantegninger");
+                    b.ToTable("Plantegninger", (string)null);
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PlantegningFil", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Plantegninger", (string)null);
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PlukklisteLinje", b =>
@@ -6757,6 +6777,15 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Component");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ComponentFiler", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Component", null)
+                        .WithOne("Filer")
+                        .HasForeignKey("PortalItlock.Web.Models.ComponentFiler", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ComponentLeverandor", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Component", "Component")
@@ -7531,6 +7560,15 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Prosjekt");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.PlantegningFil", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Plantegning", null)
+                        .WithOne("Fil")
+                        .HasForeignKey("PortalItlock.Web.Models.PlantegningFil", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.PlukklisteLinje", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Component", "Component")
@@ -8097,6 +8135,8 @@ namespace PortalItlock.Web.Migrations
 
                     b.Navigation("FdvDokumenter");
 
+                    b.Navigation("Filer");
+
                     b.Navigation("Leverandorer");
 
                     b.Navigation("MontasjebladDokumenter");
@@ -8213,6 +8253,9 @@ namespace PortalItlock.Web.Migrations
             modelBuilder.Entity("PortalItlock.Web.Models.Plantegning", b =>
                 {
                     b.Navigation("Dorer");
+
+                    b.Navigation("Fil")
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Prisoverslag", b =>

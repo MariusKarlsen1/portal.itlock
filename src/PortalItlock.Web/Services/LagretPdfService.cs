@@ -15,11 +15,27 @@ public record LagretPdfNokkeltallEndring(string Navn, string GammelVerdi, string
 
 public class LagretPdfService(ApplicationDbContext db)
 {
+    // Listene over lagrede PDF-er trenger bare navn/dato/nøkkeltall - selve
+    // PDF-en hentes via egne adresser. Å laste alle PDF-ene her gjorde mange
+    // sider trege å åpne.
+    private static readonly System.Linq.Expressions.Expression<Func<LagretPdf, LagretPdf>> UtenFilinnhold = p => new LagretPdf
+    {
+        Id = p.Id,
+        EntityType = p.EntityType,
+        EntityId = p.EntityId,
+        Navn = p.Navn,
+        Data = Array.Empty<byte>(),
+        DataJson = p.DataJson,
+        NokkeltallJson = p.NokkeltallJson,
+        OpprettetDato = p.OpprettetDato
+    };
+
     public async Task<List<LagretPdf>> HentAsync(string entityType, int entityId)
     {
         return await db.LagredePdfer
             .Where(p => p.EntityType == entityType && p.EntityId == entityId)
             .OrderByDescending(p => p.OpprettetDato)
+            .Select(UtenFilinnhold)
             .ToListAsync();
     }
 
@@ -37,6 +53,7 @@ public class LagretPdfService(ApplicationDbContext db)
         var alle = await db.LagredePdfer
             .Where(p => p.EntityType == entityType && entityIder.Contains(p.EntityId))
             .OrderByDescending(p => p.OpprettetDato)
+            .Select(UtenFilinnhold)
             .ToListAsync();
 
         return alle.GroupBy(p => p.EntityId).ToDictionary(g => g.Key, g => g.ToList());

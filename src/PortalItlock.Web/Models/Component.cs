@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace PortalItlock.Web.Models;
 
 public class Component
@@ -58,7 +60,17 @@ public class Component
     public int Lagerantall { get; set; }
     public int? Minimumsbeholdning { get; set; }
 
-    public byte[]? FdvData { get; set; }
+    // Selve filene (FDV, montasjeblad, datablad og bilde) ligger i samme tabell,
+    // men er skilt ut i ComponentFiler slik at de IKKE lastes hver gang en vare
+    // hentes (dører, beslagslister, tilbud osv. - det gjorde sidene trege).
+    // Der filene faktisk trengs må spørringen ha .Include(c => c.Filer), ellers
+    // er egenskapene under null. Endres de uten at Filer er lastet, nullstilles
+    // de andre filene på varen - så Include(c => c.Filer) også ved lagring.
+    public ComponentFiler? Filer { get; set; }
+
+    private ComponentFiler SikreFiler() => Filer ??= new ComponentFiler { Id = Id };
+
+    [NotMapped] public byte[]? FdvData { get => Filer?.FdvData; set => SikreFiler().FdvData = value; }
     public string? FdvFilnavn { get; set; }
     public string? FdvContentType { get; set; }
 
@@ -66,7 +78,7 @@ public class Component
     // Models/ComponentFdvDokument.cs.
     public List<ComponentFdvDokument> FdvDokumenter { get; set; } = [];
 
-    public byte[]? MontasjebladData { get; set; }
+    [NotMapped] public byte[]? MontasjebladData { get => Filer?.MontasjebladData; set => SikreFiler().MontasjebladData = value; }
     public string? MontasjebladFilnavn { get; set; }
     public string? MontasjebladContentType { get; set; }
 
@@ -74,7 +86,7 @@ public class Component
     // Models/ComponentMontasjebladDokument.cs.
     public List<ComponentMontasjebladDokument> MontasjebladDokumenter { get; set; } = [];
 
-    public byte[]? DatabladData { get; set; }
+    [NotMapped] public byte[]? DatabladData { get => Filer?.DatabladData; set => SikreFiler().DatabladData = value; }
     public string? DatabladFilnavn { get; set; }
     public string? DatabladContentType { get; set; }
 
@@ -86,7 +98,7 @@ public class Component
     // /komponent/{id}/bilde. BildeStorrelse er brukerens ønskede
     // visningsstørrelse i piksler (høyeste/breddeste kant) - null gir
     // standardstørrelsen definert i CSS.
-    public byte[]? BildeData { get; set; }
+    [NotMapped] public byte[]? BildeData { get => Filer?.BildeData; set => SikreFiler().BildeData = value; }
     public string? BildeFilnavn { get; set; }
     public string? BildeContentType { get; set; }
     public int? BildeStorrelse { get; set; }

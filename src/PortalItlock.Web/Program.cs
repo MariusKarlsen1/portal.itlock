@@ -979,7 +979,7 @@ app.MapGet("/nokkelsystem/{id:int}/bilde", async (int id, ApplicationDbContext d
 
 app.MapGet("/plantegningbilde/{id:int}", async (int id, ApplicationDbContext db) =>
 {
-    var plantegning = await db.Plantegninger.FindAsync(id);
+    var plantegning = await db.Plantegninger.Include(p => p.Fil).FirstOrDefaultAsync(p => p.Id == id);
     return plantegning is null
         ? Results.NotFound()
         : Results.File(plantegning.Data, FilSikkerhet.TryggContentType(plantegning.ContentType));
@@ -1233,7 +1233,7 @@ app.MapGet("/foresporselmedia/{id:int}/fil", async (int id, ApplicationDbContext
 
 app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
 {
-    var komponent = await db.Components.FindAsync(id);
+    var komponent = await db.Components.Include(c => c.Filer).FirstOrDefaultAsync(c => c.Id == id);
     return komponent?.FdvData is null
         ? Results.NotFound()
         : Results.File(komponent.FdvData, FilSikkerhet.TryggContentType(komponent.FdvContentType ?? "application/pdf"), komponent.FdvFilnavn);
@@ -1249,7 +1249,7 @@ app.MapGet("/komponent/fdvdokument/{id:int}", async (int id, ApplicationDbContex
 
 app.MapGet("/komponent/{id:int}/montasjeblad", async (int id, ApplicationDbContext db) =>
 {
-    var komponent = await db.Components.FindAsync(id);
+    var komponent = await db.Components.Include(c => c.Filer).FirstOrDefaultAsync(c => c.Id == id);
     return komponent?.MontasjebladData is null
         ? Results.NotFound()
         : Results.File(komponent.MontasjebladData, FilSikkerhet.TryggContentType(komponent.MontasjebladContentType ?? "application/pdf"), komponent.MontasjebladFilnavn);
@@ -1265,7 +1265,7 @@ app.MapGet("/komponent/montasjebladdokument/{id:int}", async (int id, Applicatio
 
 app.MapGet("/komponent/{id:int}/datablad", async (int id, ApplicationDbContext db) =>
 {
-    var komponent = await db.Components.FindAsync(id);
+    var komponent = await db.Components.Include(c => c.Filer).FirstOrDefaultAsync(c => c.Id == id);
     return komponent?.DatabladData is null
         ? Results.NotFound()
         : Results.File(komponent.DatabladData, FilSikkerhet.TryggContentType(komponent.DatabladContentType ?? "application/pdf"), komponent.DatabladFilnavn);
@@ -1281,7 +1281,7 @@ app.MapGet("/komponent/databladdokument/{id:int}", async (int id, ApplicationDbC
 
 app.MapGet("/komponent/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
 {
-    var komponent = await db.Components.FindAsync(id);
+    var komponent = await db.Components.Include(c => c.Filer).FirstOrDefaultAsync(c => c.Id == id);
     return komponent?.BildeData is null
         ? Results.NotFound()
         : Results.File(komponent.BildeData, FilSikkerhet.TryggContentType(komponent.BildeContentType ?? "image/jpeg"), komponent.BildeFilnavn);
