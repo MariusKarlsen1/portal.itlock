@@ -130,6 +130,8 @@ builder.Services.AddScoped<ServiceVarselService>();
 builder.Services.AddHostedService<ServiceVarselBackgroundService>();
 builder.Services.AddScoped<LisensVarselService>();
 builder.Services.AddHostedService<LisensVarselBackgroundService>();
+builder.Services.AddScoped<KundeOppfolgingVarselService>();
+builder.Services.AddHostedService<KundeOppfolgingVarselBackgroundService>();
 builder.Services.AddScoped<TicketEskaleringService>();
 builder.Services.AddScoped<VarselTellerService>();
 builder.Services.AddHostedService<TicketEskaleringBackgroundService>();

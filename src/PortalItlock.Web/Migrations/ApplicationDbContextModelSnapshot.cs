@@ -3359,6 +3359,78 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("KundeLisenser");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.KundeOppfolging", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AnsvarligBrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("EpostVarselSendt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Frist")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Gjenta")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Kontaktperson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("KundeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Notat")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("OpprettetDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Tittel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Utfort")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("UtfortAvBrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("UtfortDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UtfortKommentar")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VarselDagerFor")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("VarselEpost")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("VarselPortal")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("VarselSms")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AnsvarligBrukerId");
+
+                    b.HasIndex("UtfortAvBrukerId");
+
+                    b.HasIndex("KundeId", "Utfort", "Frist");
+
+                    b.ToTable("KundeOppfolginger");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.KundeOppfolgingNotat", b =>
                 {
                     b.Property<int>("Id")
@@ -7070,6 +7142,31 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Kunde");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KundeOppfolging", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Bruker", "AnsvarligBruker")
+                        .WithMany()
+                        .HasForeignKey("AnsvarligBrukerId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("PortalItlock.Web.Models.Kunde", "Kunde")
+                        .WithMany()
+                        .HasForeignKey("KundeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Bruker", "UtfortAvBruker")
+                        .WithMany()
+                        .HasForeignKey("UtfortAvBrukerId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("AnsvarligBruker");
+
+                    b.Navigation("Kunde");
+
+                    b.Navigation("UtfortAvBruker");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KundeOppfolgingNotat", b =>

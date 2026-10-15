@@ -126,6 +126,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ArbeidsordreVare> ArbeidsordreVarer => Set<ArbeidsordreVare>();
     public DbSet<SjekklistePdf> SjekklistePdfer => Set<SjekklistePdf>();
     public DbSet<KundeOppfolgingNotat> KundeOppfolgingNotater => Set<KundeOppfolgingNotat>();
+    public DbSet<KundeOppfolging> KundeOppfolginger => Set<KundeOppfolging>();
     public DbSet<FravarSoknad> FravarSoknader => Set<FravarSoknad>();
     public DbSet<HjemmesideTekst> HjemmesideTekster => Set<HjemmesideTekst>();
     public DbSet<KoblingsKategori> KoblingsKategorier => Set<KoblingsKategori>();
@@ -646,6 +647,27 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(n => n.OpprettetAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<KundeOppfolging>()
+            .HasOne(o => o.Kunde)
+            .WithMany()
+            .HasForeignKey(o => o.KundeId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<KundeOppfolging>()
+            .HasOne(o => o.AnsvarligBruker)
+            .WithMany()
+            .HasForeignKey(o => o.AnsvarligBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<KundeOppfolging>()
+            .HasOne(o => o.UtfortAvBruker)
+            .WithMany()
+            .HasForeignKey(o => o.UtfortAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<KundeOppfolging>()
+            .HasIndex(o => new { o.KundeId, o.Utfort, o.Frist });
 
         modelBuilder.Entity<ForesporselNotat>()
             .HasOne(n => n.Foresporsel)
