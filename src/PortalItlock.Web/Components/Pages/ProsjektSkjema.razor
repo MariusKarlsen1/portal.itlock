@@ -828,14 +828,14 @@ else
                     <div class="bytt-komponent-panel @(_visByttKomponent ? "apen" : "")">
                         <button type="button" class="bytt-komponent-toggle" @onclick="@(() => _visByttKomponent = !_visByttKomponent)">
                             <span class="bytt-komponent-toggle-ikon"><Icon Name="tool" /></span>
-                            <strong>Bytt komponent på alle dører</strong>
-                            <small class="pv-utvid-under">· f.eks. bytt sylinder på alle dører samtidig</small>
+                            <strong>Bytt komponent på dører</strong>
+                            <small class="pv-utvid-under">· f.eks. bytt sylinder på flere dører samtidig</small>
                             <span class="bytt-komponent-chevron"><Icon Name="chevron-down" /></span>
                         </button>
                         <div class="bytt-komponent-body">
                         <p class="section-hint">
-                            Velg en komponent som er i bruk i prosjektet og en erstatning. Alle dører med den gamle
-                            komponenten oppdateres til den nye, og monteringsstatus nullstilles siden det er en ny fysisk del.
+                            Velg en komponent som er i bruk i prosjektet, hvilke dører den skal byttes på, og søk opp
+                            erstatningen i komponentregisteret. Monteringsstatus nullstilles siden det er en ny fysisk del.
                         </p>
 
                         <div class="bytt-komponent-felt">
@@ -849,7 +849,7 @@ else
 
                             <div class="bytt-sok-wrap">
                                 <input @bind="_byttSok" @bind:event="oninput" @bind:after="OnByttSokChanged"
-                                       placeholder="Søk ny komponent..." disabled="@(_byttGammelComponentId is null)" />
+                                       placeholder="Bytt med – søk i komponentregisteret (navn, leverandør, produktkode)..." disabled="@(_byttGammelComponentId is null)" />
                                 @if (_byttSearchResults.Count > 0)
                                 {
                                     <ul class="search-results">
@@ -864,8 +864,39 @@ else
                                         }
                                     </ul>
                                 }
+                                else if (_byttSok.Trim().Length >= 2)
+                                {
+                                    <span class="bytt-ingen-treff">Ingen treff i komponentregisteret.</span>
+                                }
                             </div>
                         </div>
+
+                        @if (_byttGammelComponentId is not null)
+                        {
+                            var dorerMedGammel = _dorer.Where(d => d.Komponenter.Any(dk => dk.ComponentId == _byttGammelComponentId)).OrderBy(d => d.Dornummer).ToList();
+                            <div class="bytt-dorvalg">
+                                <div class="bytt-dorvalg-topp">
+                                    <strong>Velg dører</strong>
+                                    <span class="bytt-dorvalg-antall">@_byttValgteDorer.Count av @dorerMedGammel.Count valgt</span>
+                                    <button type="button" class="bytt-dorvalg-lenke" @onclick="@(() => { _byttValgteDorer = dorerMedGammel.Select(d => d.Id).ToHashSet(); _confirmingBytte = false; })">Alle</button>
+                                    <button type="button" class="bytt-dorvalg-lenke" @onclick="@(() => { _byttValgteDorer.Clear(); _confirmingBytte = false; })">Ingen</button>
+                                </div>
+                                <div class="bytt-dorvalg-liste">
+                                    @foreach (var d in dorerMedGammel)
+                                    {
+                                        var valgt = _byttValgteDorer.Contains(d.Id);
+                                        <label @key="d.Id" class="bytt-dor @(valgt ? "valgt" : "")">
+                                            <input type="checkbox" checked="@valgt" @onchange="@(() => { if (!_byttValgteDorer.Remove(d.Id)) _byttValgteDorer.Add(d.Id); _confirmingBytte = false; })" />
+                                            <b>@d.Dornummer</b>
+                                            @if (!string.IsNullOrWhiteSpace(d.DorTil))
+                                            {
+                                                <span>@d.DorTil</span>
+                                            }
+                                        </label>
+                                    }
+                                </div>
+                            </div>
+                        }
 
                         @if (_byttNyKomponentNavn is not null)
                         {
@@ -873,7 +904,7 @@ else
 
                             @if (!_confirmingBytte)
                             {
-                                <button type="button" class="save-button" @onclick="@(() => _confirmingBytte = true)">
+                                <button type="button" class="save-button" disabled="@(AntallDorerMedValgtKomponent == 0)" @onclick="@(() => _confirmingBytte = true)">
                                     Bytt ut på @AntallDorerMedValgtKomponent dør(er)
                                 </button>
                             }
@@ -1979,12 +2010,18 @@ else
         .OrderBy(k => k.Navn)
         .ToList();
 
+    // Dørene komponenten skal byttes på - alle med komponenten er valgt fra start.
+    private HashSet<int> _byttValgteDorer = [];
+
     private int AntallDorerMedValgtKomponent => _byttGammelComponentId is null
         ? 0
-        : _dorer.Count(d => d.Komponenter.Any(dk => dk.ComponentId == _byttGammelComponentId));
+        : _dorer.Count(d => _byttValgteDorer.Contains(d.Id) && d.Komponenter.Any(dk => dk.ComponentId == _byttGammelComponentId));
 
     private void OnByttGammelChanged()
     {
+        _byttValgteDorer = _byttGammelComponentId is null
+            ? []
+            : _dorer.Where(d => d.Komponenter.Any(dk => dk.ComponentId == _byttGammelComponentId)).Select(d => d.Id).ToHashSet();
         _byttNyKomponentId = null;
         _byttNyKomponentNavn = null;
         _byttSok = "";
@@ -2038,7 +2075,7 @@ else
         var nyComponent = await Db.Components.FindAsync(nyId);
         var antallOppdatert = 0;
 
-        foreach (var dor in _dorer)
+        foreach (var dor in _dorer.Where(d => _byttValgteDorer.Contains(d.Id)))
         {
             var gammel = dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == gammelId);
             if (gammel is null)
@@ -2077,6 +2114,7 @@ else
             await TilbudSync.SyncSylinderAsync(Id!.Value, nyId);
         }
         _byttMelding = $"Byttet ut komponent på {antallOppdatert} dør(er).";
+        _byttValgteDorer = [];
         _byttGammelComponentId = null;
         _byttNyKomponentId = null;
         _byttNyKomponentNavn = null;
