@@ -66,70 +66,128 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     }
     wrapEl.dataset.zoomPanBound = '1';
 
-    const minZoom = 0.4;
-    // Ingen reell øvre grense i praksis - montører må kunne zoome helt inn på
-    // små tekstetiketter/hotspots på tegningen.
-    const maxZoom = 12;
-    // Pinch-zoom med fingre skal bare kunne zoome INN, ikke ut forbi normal
-    // visning - man skal ikke kunne klype tegningen mindre enn 100%.
-    const minPinchZoom = 1;
-    const step = 0.12;
-    // Litt større steg per trykk på +/- -knappene enn per hakk på musehjulet,
-    // slik at et enkelt trykk faktisk oppleves som en synlig endring.
-    const buttonStep = 0.4;
-    let zoom = 1;
+    // Som i Radata Probus: tegningen ligger fritt inni rammen. Ved start er
+    // hele tegningen synlig og sentrert. Musehjulet zoomer mot markøren (også
+    // ut, så tegningen blir mindre enn rammen), høyre museknapp holdt inne +
+    // dra flytter tegningen hvor man vil innenfor rammen, og dørprikkene har
+    // samme størrelse på skjermen uansett zoom.
+    const minZoom = 0.2;
+    const maxZoom = 16;
+    const wheelFactor = 1.15;
+    // Litt større steg per trykk på +/- -knappene enn per hakk på musehjulet.
+    const buttonFactor = 1.5;
+    // Så mye av tegningen må alltid være synlig i rammen, så den ikke kan
+    // dras helt bort.
+    const minSynlig = 80;
 
-    canvasEl.style.width = '100%';
-    canvasEl.style.setProperty('--plan-zoom', zoom);
+    let zoom = 1;
+    let tx = 0;
+    let ty = 0;
+    let beruort = false;
+
+    const img = canvasEl.querySelector('img');
+
+    // Dørprikkene skal ikke vokse med zoomen - CSS-en ganger størrelsene med
+    // --plan-zoom, så den holdes fast på 1.
+    canvasEl.style.setProperty('--plan-zoom', 1);
+    wrapEl.classList.add('plan-fri');
+
+    function aspect() {
+        return img && img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 0;
+    }
+
+    // Bredden tegningen har ved 100 %: så stor som mulig uten å gå utenfor
+    // rammen, verken i bredden eller høyden.
+    function baseWidth() {
+        const w = wrapEl.clientWidth;
+        const h = wrapEl.clientHeight;
+        const a = aspect();
+        return a && h ? Math.min(w, h * a) : w;
+    }
+
+    function bredde() {
+        return Math.max(1, baseWidth() * zoom);
+    }
+
+    function hoyde() {
+        const a = aspect();
+        return a ? bredde() / a : canvasEl.offsetHeight;
+    }
+
+    function clamp() {
+        const W = wrapEl.clientWidth;
+        const H = wrapEl.clientHeight;
+        const w = bredde();
+        const h = hoyde();
+        tx = Math.min(W - minSynlig, Math.max(minSynlig - w, tx));
+        ty = Math.min(H - minSynlig, Math.max(minSynlig - h, ty));
+    }
+
+    function tegn() {
+        clamp();
+        canvasEl.style.width = bredde() + 'px';
+        canvasEl.style.transform = `translate(${tx}px, ${ty}px)`;
+    }
+
+    function sentrer() {
+        zoom = 1;
+        tx = (wrapEl.clientWidth - bredde()) / 2;
+        ty = (wrapEl.clientHeight - hoyde()) / 2;
+        tegn();
+    }
+
+    sentrer();
+    if (img && !img.complete) {
+        img.addEventListener('load', () => { if (!beruort) { sentrer(); } }, { once: true });
+    }
+    if (window.ResizeObserver) {
+        new ResizeObserver(() => { if (beruort) { tegn(); } else { sentrer(); } }).observe(wrapEl);
+    }
 
     function applyZoom(nextZoom, anchorClientX, anchorClientY) {
-        const prevZoom = zoom;
-        zoom = nextZoom;
-        if (zoom === prevZoom) {
+        nextZoom = Math.min(maxZoom, Math.max(minZoom, nextZoom));
+        if (nextZoom === zoom) {
             return;
         }
+        beruort = true;
 
+        // Punktet på tegningen under musepekeren skal bli liggende under den.
         const rect = wrapEl.getBoundingClientRect();
-        const anchorX = anchorClientX - rect.left;
-        const anchorY = anchorClientY - rect.top;
-        const ratio = zoom / prevZoom;
-
-        canvasEl.style.width = (zoom * 100) + '%';
-        canvasEl.style.setProperty('--plan-zoom', zoom);
-
-        wrapEl.scrollLeft = (wrapEl.scrollLeft + anchorX) * ratio - anchorX;
-        wrapEl.scrollTop = (wrapEl.scrollTop + anchorY) * ratio - anchorY;
+        const ax = anchorClientX - rect.left;
+        const ay = anchorClientY - rect.top;
+        const ratio = nextZoom / zoom;
+        tx = ax - (ax - tx) * ratio;
+        ty = ay - (ay - ty) * ratio;
+        zoom = nextZoom;
+        tegn();
     }
 
     wrapEl.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const next = Math.min(maxZoom, Math.max(minZoom, zoom + (e.deltaY < 0 ? step : -step)));
-        applyZoom(next, e.clientX, e.clientY);
+        applyZoom(e.deltaY < 0 ? zoom * wheelFactor : zoom / wheelFactor, e.clientX, e.clientY);
     }, { passive: false });
 
-    // Right-click (no need to hold) opens the door picker at that spot.
+    // Høyre museknapp brukes til å dra tegningen rundt - nettleserens egen
+    // høyreklikkmeny skal aldri komme opp over tegningen. Et høyreklikk UTEN
+    // å dra åpner dørvelgeren på stedet (se endPointer).
     wrapEl.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        const p = getClickPercent(canvasEl, e.clientX, e.clientY);
-        dotNetRef.invokeMethodAsync('OnCanvasRightClicked', p.x, p.y);
     });
 
-    // Left-button hold + drag on empty canvas pans the drawing (mouse or
-    // single-finger touch). A second finger touching down switches to
-    // pinch-zoom instead - see the activePointers tracking below. Markers
-    // handle their own left-button drag (to reposition) and stop the
-    // event from reaching here, so this only fires for background drags.
-    // Threshold is generous because a real click (e.g. placing new utstyr/dør)
-    // almost always has a few px of hand jitter between press and release -
-    // too low a threshold misclassifies that as a pan and silently eats the click.
-    const dragThreshold = 12;
+    // Dra (høyre eller venstre museknapp, eller én finger) på tomt område
+    // flytter tegningen. Markører håndterer selv venstreknapp-dra (flytting)
+    // og stopper den hendelsen før den når hit. Terskelen er romslig fordi et
+    // ekte klikk nesten alltid har litt skjelving mellom trykk og slipp.
+    const dragThreshold = 8;
     let panning = false;
+    let panButton = -1;
     let moved = false;
     let startX = 0;
     let startY = 0;
-    let startScrollLeft = 0;
-    let startScrollTop = 0;
+    let startTx = 0;
+    let startTy = 0;
     let suppressClick = false;
+    let rightTarget = null;
 
     // Multi-touch tracking for pinch-zoom. Keyed by pointerId -> {x, y}.
     const activePointers = new Map();
@@ -163,15 +221,20 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     }, true);
 
     wrapEl.addEventListener('pointerdown', (e) => {
-        // Don't engage pan/pinch-detection at all while placing - there is
-        // nothing to pan-vs-click disambiguate here, and doing so only
-        // risks losing the click.
-        if (canvasEl.dataset.placing === '1') {
+        const erHoyre = e.pointerType === 'mouse' && e.button === 2;
+
+        // Venstreklikk mens man plasserer noe nytt skal alltid nå tegningen.
+        // Høyre-dra flytter likevel.
+        if (canvasEl.dataset.placing === '1' && !erHoyre) {
             return;
         }
 
         activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        wrapEl.setPointerCapture(e.pointerId);
+        try {
+            wrapEl.setPointerCapture(e.pointerId);
+        } catch {
+            // Kan feile for pekere nettleseren ikke kjenner - dra virker likevel.
+        }
 
         if (activePointers.size === 2) {
             // A second finger just landed - switch from panning to pinching.
@@ -182,16 +245,18 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
             return;
         }
 
-        // Single-finger touch is left alone entirely so the browser's native
-        // scrolling takes over (and chains to the page once the drawing can't
-        // scroll further) - only mouse drag uses the custom pan logic below.
-        if (activePointers.size === 1 && e.button === 0 && e.pointerType === 'mouse') {
+        if (activePointers.size === 1 && (e.pointerType !== 'mouse' || e.button === 0 || e.button === 2)) {
+            if (erHoyre) {
+                e.preventDefault();
+            }
             panning = true;
+            panButton = e.pointerType === 'mouse' ? e.button : 0;
             moved = false;
+            rightTarget = erHoyre ? e.target : null;
             startX = e.clientX;
             startY = e.clientY;
-            startScrollLeft = wrapEl.scrollLeft;
-            startScrollTop = wrapEl.scrollTop;
+            startTx = tx;
+            startTy = ty;
         }
     });
 
@@ -204,9 +269,8 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
         if (pinching && activePointers.size >= 2) {
             const dist = pinchDistance();
             if (pinchStartDist > 0) {
-                const next = Math.min(maxZoom, Math.max(minPinchZoom, pinchStartZoom * (dist / pinchStartDist)));
                 const mid = pinchMidpoint();
-                applyZoom(next, mid.x, mid.y);
+                applyZoom(pinchStartZoom * (dist / pinchStartDist), mid.x, mid.y);
             }
             return;
         }
@@ -221,10 +285,12 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
                 return;
             }
             moved = true;
+            beruort = true;
             wrapEl.style.cursor = 'grabbing';
         }
-        wrapEl.scrollLeft = startScrollLeft - dx;
-        wrapEl.scrollTop = startScrollTop - dy;
+        tx = startTx + dx;
+        ty = startTy + dy;
+        tegn();
     });
 
     function endPointer(e) {
@@ -247,34 +313,35 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
             panning = false;
             wrapEl.style.cursor = '';
             if (moved) {
-                suppressClick = true;
+                suppressClick = panButton === 0;
+            } else if (panButton === 2 && e.type === 'pointerup' && dotNetRef
+                && !(rightTarget && rightTarget.closest && rightTarget.closest('.dor-marker, .utstyr-marker'))) {
+                // Høyreklikk uten å dra: åpne dørvelgeren der man klikket.
+                const p = getClickPercent(canvasEl, e.clientX, e.clientY);
+                dotNetRef.invokeMethodAsync('OnCanvasRightClicked', p.x, p.y);
             }
+            panButton = -1;
+            rightTarget = null;
         }
     }
 
     wrapEl.addEventListener('pointerup', endPointer);
     wrapEl.addEventListener('pointercancel', endPointer);
 
-    // API for de flytende +/- og tilbakestill-knappene på mobil (se
-    // planZoomIn/planZoomOut/planResetZoom under) - knappene har ingen
-    // musepeker-posisjon å zoome mot, så de anker mot midten av det synlige
-    // utsnittet i stedet.
+    // API for +/- og tilbakestill-knappene - de anker mot midten av rammen.
     function zoomByButton(direction) {
         const rect = wrapEl.getBoundingClientRect();
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
-        const next = Math.min(maxZoom, Math.max(minZoom, zoom + direction * buttonStep));
-        applyZoom(next, cx, cy);
+        applyZoom(direction > 0 ? zoom * buttonFactor : zoom / buttonFactor, cx, cy);
     }
 
     wrapEl.__planZoomApi = {
         zoomIn: () => zoomByButton(1),
         zoomOut: () => zoomByButton(-1),
         reset: () => {
-            const rect = wrapEl.getBoundingClientRect();
-            applyZoom(1, rect.left, rect.top);
-            wrapEl.scrollLeft = 0;
-            wrapEl.scrollTop = 0;
+            beruort = false;
+            sentrer();
         }
     };
 }
