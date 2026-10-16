@@ -1361,6 +1361,53 @@ app.MapGet("/ce/{id:int}/pdf", async (int id, HttpContext context, CeGodkjenning
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
+// "Last ned PDF-er" for valgte rader på /ce-godkjenninger: én PDF per
+// CE-godkjenning, samlet i en zip-fil (navngitt etter sertifikatnummeret).
+app.MapGet("/ce/pdf-samlet", async (string? ider, ApplicationDbContext db, CeGodkjenningPdfService service) =>
+{
+    var idListe = (ider ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries)
+        .Select(s => int.TryParse(s, out var n) ? n : 0)
+        .Where(n => n > 0)
+        .Distinct()
+        .Take(200)
+        .ToList();
+    if (idListe.Count == 0)
+    {
+        return Results.BadRequest();
+    }
+
+    var numre = await db.CeGodkjenninger
+        .Where(c => idListe.Contains(c.Id))
+        .ToDictionaryAsync(c => c.Id, c => c.Sertifiseringsnummer);
+
+    using var minne = new MemoryStream();
+    using (var zip = new System.IO.Compression.ZipArchive(minne, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+    {
+        var brukteNavn = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in idListe.Where(numre.ContainsKey))
+        {
+            var pdf = await service.GenerateAsync(id);
+            if (pdf is null)
+            {
+                continue;
+            }
+
+            var navn = string.Concat(numre[id].Select(t => Path.GetInvalidFileNameChars().Contains(t) ? '-' : t));
+            if (string.IsNullOrWhiteSpace(navn) || !brukteNavn.Add(navn))
+            {
+                navn = $"{navn}-{id}";
+                brukteNavn.Add(navn);
+            }
+
+            var oppforing = zip.CreateEntry($"CE-{navn}.pdf", System.IO.Compression.CompressionLevel.Fastest);
+            await using var strom = oppforing.Open();
+            await strom.WriteAsync(pdf);
+        }
+    }
+
+    return Results.File(minne.ToArray(), "application/zip", $"CE-godkjenninger-{DateTime.Today:yyyy-MM-dd}.zip");
+}).RequireAuthorization();
+
 app.MapGet("/cegodkjenningmedia/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var media = await db.CeGodkjenningMedia.FindAsync(id);
