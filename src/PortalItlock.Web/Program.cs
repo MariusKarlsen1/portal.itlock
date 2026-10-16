@@ -157,6 +157,13 @@ builder.Services.AddHttpClient<GeocodingService>(client =>
     client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");
     client.Timeout = TimeSpan.FromSeconds(5);
 });
+// Været på forsiden (Meteorologisk institutt). MET krever en User-Agent som sier hvem som spør.
+builder.Services.AddHttpClient<VaerService>(client =>
+{
+    client.BaseAddress = new Uri("https://api.met.no/");
+    client.Timeout = TimeSpan.FromSeconds(5);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("FullKontroll/1.0 (+https://full-kontroll.no)");
+});
 builder.Services.AddHttpClient<BronnoysundClient>(client =>
 {
     client.BaseAddress = new Uri("https://data.brreg.no/enhetsregisteret/api/");
