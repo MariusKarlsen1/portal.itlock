@@ -4716,6 +4716,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Risikoklasse")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ServiceGangerPerAr")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal?>("ServiceTimepris")
                         .HasColumnType("TEXT");
 

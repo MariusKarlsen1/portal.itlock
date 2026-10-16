@@ -44,6 +44,10 @@ public class Prosjekt
     public List<Tilbud> Tilbud { get; set; } = [];
     public List<MonteringLinje> MonteringLinjer { get; set; } = [];
     public decimal? ServiceTimepris { get; set; }
+
+    // Hvor mange servicerunder avtalen skal ha i året (1 = årlig, 2 = halvårlig
+    // osv.). Null = ikke satt; da leses intervallet fra rundene i stedet.
+    public int? ServiceGangerPerAr { get; set; }
     public List<ServiceMinuttLinje> ServiceMinuttLinjer { get; set; } = [];
     public List<ServiceKategoriPris> ServiceKategoriPriser { get; set; } = [];
     public List<Arbeidsordre> Arbeidsordre { get; set; } = [];

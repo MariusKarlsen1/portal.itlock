@@ -52,7 +52,20 @@ window.minikart = (function () {
     // punkter: [{ lat, lng, farge, nr (null = ingen nummer), tittel, href }]
     function visAvtaler(elementId, punkter) {
         const el = document.getElementById(elementId);
-        if (!el || typeof L === 'undefined' || !punkter || punkter.length === 0) {
+        if (!el || typeof L === 'undefined' || !punkter) {
+            return;
+        }
+
+        // Filteret ga ingen treff: behold kartutsnittet, men fjern pinnene.
+        if (punkter.length === 0) {
+            const eksisterende = kart[elementId];
+            if (eksisterende) {
+                eksisterende.eachLayer(function (lag) {
+                    if (lag instanceof L.Marker) {
+                        eksisterende.removeLayer(lag);
+                    }
+                });
+            }
             return;
         }
 

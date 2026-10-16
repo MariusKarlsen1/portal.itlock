@@ -59,6 +59,16 @@ else if (_prosjekt is not null)
                         }
                     </select>
                 </label>
+                <label class="sa-ansvarlig sa-frekvens" title="Hvor mange servicerunder avtalen skal ha i året.">
+                    <Icon Name="calendar" />Service
+                    <select value="@(_prosjekt.ServiceGangerPerAr?.ToString() ?? "")" @onchange="EndreServiceGangerPerAr">
+                        <option value="">Ikke satt</option>
+                        @foreach (var g in GangerPerArValg)
+                        {
+                            <option value="@g">@GangerPerArTekst(g)</option>
+                        }
+                    </select>
+                </label>
             }
         </div>
 
@@ -180,6 +190,7 @@ else if (_prosjekt is not null)
                             <div class="sa-egen"><span>Kontaktperson</span><span>@_prosjekt.Kontaktperson@(string.IsNullOrWhiteSpace(_prosjekt.Telefon) ? "" : $" · {_prosjekt.Telefon}")</span></div>
                         }
                         <div class="sa-egen"><span>Dører</span><span>@_dorer.Count</span></div>
+                        <div class="sa-egen"><span>Service per år</span><span>@(_prosjekt.ServiceGangerPerAr is { } gpa ? GangerPerArTekst(gpa) : "Ikke satt")</span></div>
                         <div class="sa-egen"><span>Første servicerunde</span><span>@(_runder.LastOrDefault()?.Dato.ToString("dd.MM.yyyy") ?? "–")</span></div>
                         <div class="sa-egen"><span>Ansvarlig</span><span>@(AnsvarligNavn ?? "Ikke satt")</span></div>
                     </section>
@@ -198,8 +209,13 @@ else if (_prosjekt is not null)
                         {
                             <div class="sa-steg-inn">
                                 <div class="sa-to">
-                                    <label class="sa-felt">Dato<input type="date" @bind="_nyDato" /></label>
-                                    <label class="sa-felt">Neste planlagte service (valgfritt)<input type="date" @bind="_nyNesteServiceDato" /></label>
+                                    <label class="sa-felt">Dato<input type="date" @bind="_nyDato" @bind:after="ForeslaNesteDato" /></label>
+                                    <label class="sa-felt">Neste planlagte service (valgfritt)<input type="date" @bind="_nyNesteServiceDato" @bind:after="@(() => _nesteForeslatt = false)" />
+                                        @if (_nesteForeslatt && _nyNesteServiceDato is not null)
+                                        {
+                                            <small class="sa-foreslatt">Foreslått: service @_prosjekt.ServiceGangerPerAr @(_prosjekt.ServiceGangerPerAr == 1 ? "gang" : "ganger") i året</small>
+                                        }
+                                    </label>
                                 </div>
                                 <label class="sa-felt">Status og utført arbeid<textarea rows="4" @bind="_nyStatusBeskrivelse" @bind:event="oninput" placeholder="Hva ble sjekket/gjort på denne servicerunden?"></textarea></label>
                                 <label class="sa-felt">Anbefalinger (valgfritt)<textarea rows="3" @bind="_nyAnbefalinger" placeholder="Eventuelle anbefalinger dersom noe ble oppdaget"></textarea></label>
@@ -672,6 +688,8 @@ else if (_prosjekt is not null)
             return;
         }
 
+        ForeslaNesteDato();
+
         _montorer = await Db.Brukere
             .Where(b => b.Rolle == BrukerRolle.Montor && b.Aktiv)
             .OrderBy(b => b.Navn)
@@ -716,6 +734,8 @@ else if (_prosjekt is not null)
         _nyStatusBeskrivelse = "";
         _nyAnbefalinger = null;
         _nyNesteServiceDato = null;
+        _nesteForeslatt = false;
+        ForeslaNesteDato();
         _nyForside = null;
         _valgtForsideMalId = null;
         _nyeDeler = [];
@@ -736,6 +756,54 @@ else if (_prosjekt is not null)
         var verdi = e.Value as string;
         _prosjekt.AnsvarligMontorId = string.IsNullOrEmpty(verdi) ? null : int.Parse(verdi);
         await Db.SaveChangesAsync();
+    }
+
+    private static readonly int[] GangerPerArValg = [1, 2, 3, 4, 6, 12];
+
+    private static string GangerPerArTekst(int ganger) => ganger switch
+    {
+        1 => "1 gang i året (årlig)",
+        2 => "2 ganger i året (halvårlig)",
+        4 => "4 ganger i året (kvartalsvis)",
+        12 => "12 ganger i året (månedlig)",
+        _ => $"{ganger} ganger i året"
+    };
+
+    private async Task EndreServiceGangerPerAr(ChangeEventArgs e)
+    {
+        if (_prosjekt is null)
+        {
+            return;
+        }
+
+        var verdi = e.Value as string;
+        _prosjekt.ServiceGangerPerAr = int.TryParse(verdi, out var g) && g is > 0 and <= 12 ? g : null;
+        await Db.SaveChangesAsync();
+        ForeslaNesteDato();
+    }
+
+    // Neste service foreslås ut fra hvor mange ganger i året avtalen har
+    // (dato + 12/ganger måneder). Bare så lenge brukeren ikke har skrevet inn
+    // en egen dato - da blir den stående.
+    private bool _nesteForeslatt;
+
+    private void ForeslaNesteDato()
+    {
+        if (_prosjekt?.ServiceGangerPerAr is not { } ganger || ganger <= 0)
+        {
+            if (_nesteForeslatt)
+            {
+                _nyNesteServiceDato = null;
+                _nesteForeslatt = false;
+            }
+            return;
+        }
+
+        if (_nyNesteServiceDato is null || _nesteForeslatt)
+        {
+            _nyNesteServiceDato = _nyDato.AddMonths(12 / ganger);
+            _nesteForeslatt = true;
+        }
     }
 
     private void BrukForsideMal()
