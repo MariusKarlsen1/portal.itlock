@@ -1693,7 +1693,9 @@ app.MapGet("/timeoversikt/eksport-pdf", async (DateTime fra, DateTime til, int? 
     var montorNavn = montorId.HasValue
         ? (await db.Brukere.FindAsync(montorId.Value))?.Navn
         : null;
-    var pdf = service.GenererPdf(registreringer, fra, til, montorNavn);
+    var fravar = await service.HentFravarAsync(fra, til, montorId);
+    var venterTimer = await service.HentVenterTimerAsync(fra, til, montorId);
+    var pdf = service.GenererPdf(registreringer, fravar, venterTimer, fra, til, montorNavn);
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
