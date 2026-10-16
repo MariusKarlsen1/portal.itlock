@@ -8,6 +8,9 @@
 @inject NavigationManager Nav
 @inject PortalItlock.Web.Services.VaerService VaerSvc
 @inject PortalItlock.Web.Services.ITenantContext TenantCtx
+@inject PortalItlock.Web.Services.GeocodingService Geokoding
+@inject IJSRuntime JS
+@implements IDisposable
 
 <PageTitle>Hjem</PageTitle>
 
@@ -138,10 +141,12 @@
             }
         </section>
 
+        @* Ett rutenett: moduler | oppgaver | kart øverst, forespørsler +
+           snarveier | kunngjøringer | (kart) under. Kartet spenner over begge
+           radene; på smalere skjermer flytter det ned under resten (se CSS). *@
         <div class="fh-rutenett">
-            <div class="fh-venstre">
                 @* Mine moduler *@
-                <section class="fh-kort" id="fh-moduler">
+                <section class="fh-kort fh-a-mod" id="fh-moduler">
                     <div class="fh-kh">
                         <h2><Icon Name="box" />Mine moduler</h2>
                     </div>
@@ -169,7 +174,7 @@
                     </div>
                 </section>
 
-                <div class="fh-to">
+                <div class="fh-to fh-a-bunn">
                     @* Forespørsler, drift og ferdigmeldt *@
                     <section class="fh-kort">
                         <div class="fh-kh">
@@ -214,11 +219,9 @@
                         </div>
                     </section>
                 </div>
-            </div>
 
-            <div class="fh-hoyre">
                 @* Mine oppgaver *@
-                <section class="fh-kort">
+                <section class="fh-kort fh-a-opp">
                     <div class="fh-kh">
                         <h2><span class="fh-sjekkboks"><Icon Name="check-circle" /></span>Mine oppgaver</h2>
                         <a class="fh-lenke fh-lenke-bla" href="/todo">Se alle →</a>
@@ -246,7 +249,7 @@
                 </section>
 
                 @* Kunngjøringer *@
-                <section class="fh-kort">
+                <section class="fh-kort fh-a-kun">
                     <div class="fh-kh">
                         <h2><Icon Name="bell" />Kunngjøringer</h2>
                         <a class="fh-lenke fh-lenke-bla" href="/kunngjoringer">Se alle →</a>
@@ -278,7 +281,23 @@
                         </div>
                     }
                 </section>
-            </div>
+
+                @* Kartet - samme punkter og flater som i Layout 2. *@
+                <section class="fh-kort fh-a-kart">
+                    <div class="fh-kh">
+                        <h2><Icon Name="map" />Aktivitet på kart</h2>
+                        <span class="fh-kartflater">
+                            <button type="button" class="@(_kartFlate == "kart" ? "aktiv" : "")" @onclick="@(() => ByttKartflate("kart"))">Kart</button>
+                            <button type="button" class="@(_kartFlate == "satellitt" ? "aktiv" : "")" @onclick="@(() => ByttKartflate("satellitt"))">Satellitt</button>
+                        </span>
+                    </div>
+                    <div class="fh-kartramme"><div id="fh-kart" class="fh-kart"></div></div>
+                    <div class="fh-kartlegende">
+                        <span><i style="background:#9A4E24"></i>Service</span>
+                        <span><i style="background:#0b66e6"></i>Prosjekt</span>
+                        <span><i style="background:#0c9c5c"></i>Arbeidsordre</span>
+                    </div>
+                </section>
         </div>
     </div>
 </div>
@@ -675,7 +694,7 @@
         {
             _oppgaver = (await Db.ToDoOppgaver.Where(o => o.BrukerId == _bruker.Id && !o.Fullfort).ToListAsync())
                 .OrderBy(o => o.Frist ?? DateTime.MaxValue).ThenByDescending(o => o.OpprettetDato)
-                .Take(4)
+                .Take(6)
                 .Select(o => new OppgaveRad(o.Tittel, o.Frist))
                 .ToList();
         }
@@ -688,12 +707,226 @@
             .Take(3)
             .Select(k => new KunngjoringRad(k.Id, k.Tittel, k.OpprettetDato, k.BildeData != null))
             .ToListAsync();
+
+        await LastInnKartAsync();
+    }
+
+    // ---------- Kartet (samme punkter som i Layout 2, se Home.razor) ----------
+
+    private static readonly ArbeidsordreStatus[] ApneOrdreStatuser =
+        [ArbeidsordreStatus.Ny, ArbeidsordreStatus.Klar, ArbeidsordreStatus.Pagaende];
+
+    private readonly CancellationTokenSource _disposedCts = new();
+    private List<object> _kartPunkter = [];
+    private bool _kartInitialisert;
+    private bool _kartLastet;
+    private int _kartPunkterVedForrigeRender;
+    private string _kartFlate = "kart";
+
+    private async Task LastInnKartAsync()
+    {
+        var serviceProsjekter = await Db.Prosjekter
+            .Where(p => p.Status == ProsjektStatus.Serviceavtale)
+            .ToListAsync();
+        var aktiveProsjekter = await Db.Prosjekter
+            .Where(p => p.Status == ProsjektStatus.Aktiv || p.Status == ProsjektStatus.UnderArbeid)
+            .ToListAsync();
+        var planlagteOrdre = await Db.Arbeidsordre
+            .Include(a => a.Prosjekt)
+            .Where(a => ApneOrdreStatuser.Contains(a.Status) && a.PlanlagtDato != null)
+            .ToListAsync();
+
+        // Viser med en gang det som har lagret posisjon; manglende adresser
+        // slås opp i bakgrunnen, så forsiden aldri venter på geokodingen.
+        SettKartPunkter(serviceProsjekter, aktiveProsjekter, planlagteOrdre);
+        _kartLastet = true;
+        _ = GeokodIBakgrunnenAsync(serviceProsjekter, aktiveProsjekter, planlagteOrdre, _disposedCts.Token);
+    }
+
+    private async Task GeokodIBakgrunnenAsync(List<Prosjekt> service, List<Prosjekt> aktive, List<Arbeidsordre> ordre, CancellationToken ct)
+    {
+        var endret = false;
+        var forste = true;
+
+        foreach (var p in service.Concat(aktive).Where(p => p.Latitude is null && !string.IsNullOrWhiteSpace(p.Adresse)))
+        {
+            if (ct.IsCancellationRequested)
+            {
+                break;
+            }
+
+            // Nominatim tillater maks én forespørsel i sekundet.
+            if (!forste)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(1100), ct);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+            }
+            forste = false;
+
+            (double Latitude, double Longitude)? treff;
+            try
+            {
+                treff = await Geokoding.GeocodeAsync(p.Adresse!, p.Postnr, p.Sted);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (treff is null || ct.IsCancellationRequested)
+            {
+                continue;
+            }
+
+            p.Latitude = treff.Value.Latitude;
+            p.Longitude = treff.Value.Longitude;
+            endret = true;
+
+            SettKartPunkter(service, aktive, ordre);
+            try
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
+        }
+
+        if (endret && !ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Db.SaveChangesAsync();
+            }
+            catch
+            {
+                // Best-effort - siden kan være forlatt underveis.
+            }
+        }
+    }
+
+    private void SettKartPunkter(List<Prosjekt> service, List<Prosjekt> aktive, List<Arbeidsordre> ordre)
+    {
+        var punkter = new List<object>();
+
+        punkter.AddRange(service
+            .Where(p => p.Latitude is not null && p.Longitude is not null)
+            .Select(p => (object)new
+            {
+                id = $"service-{p.Id}",
+                lat = p.Latitude!.Value,
+                lng = p.Longitude!.Value,
+                tittel = p.Navn,
+                undertekst = ProsjektSted(p),
+                farge = "#9A4E24",
+                pin = true,
+                rikPopup = true,
+                statusTekst = "Serviceavtale",
+                statusBg = "#F3E9DC",
+                href = $"/serviceavtaler/{p.Id}"
+            }));
+
+        punkter.AddRange(aktive
+            .Where(p => p.Latitude is not null && p.Longitude is not null)
+            .Select(p => (object)new
+            {
+                id = $"prosjekt-{p.Id}",
+                lat = p.Latitude!.Value,
+                lng = p.Longitude!.Value,
+                tittel = p.Navn,
+                undertekst = ProsjektSted(p),
+                farge = "#0b66e6",
+                pin = true,
+                rikPopup = true,
+                statusTekst = p.Status?.Visningsnavn(),
+                statusBg = "#dbe7f7",
+                href = $"/prosjekter/{p.Id}"
+            }));
+
+        punkter.AddRange(ordre
+            .Where(a => (a.Latitude ?? a.Prosjekt?.Latitude) is not null && (a.Longitude ?? a.Prosjekt?.Longitude) is not null)
+            .Select(a => (object)new
+            {
+                id = $"ao-{a.Id}",
+                lat = a.Latitude ?? a.Prosjekt!.Latitude!.Value,
+                lng = a.Longitude ?? a.Prosjekt!.Longitude!.Value,
+                tittel = a.Tittel,
+                undertekst = a.Prosjekt?.Navn ?? "",
+                farge = "#0c9c5c",
+                pin = true,
+                rikPopup = true,
+                statusTekst = a.Status.Visningsnavn(),
+                statusBg = "#d3ecdb",
+                href = $"/arbeidsordre/{a.Id}"
+            }));
+
+        _kartPunkter = punkter;
+    }
+
+    private static string ProsjektSted(Prosjekt p) => string.IsNullOrWhiteSpace(p.Sted) ? "Flere lokasjoner" : p.Sted;
+
+    private async Task ByttKartflate(string flate)
+    {
+        if (_kartFlate == flate)
+        {
+            return;
+        }
+
+        _kartFlate = flate;
+        if (_kartInitialisert)
+        {
+            await JS.InvokeVoidAsync("kart.settBakgrunn", flate);
+        }
+    }
+
+    private async Task OppdaterKartAsync()
+    {
+        try
+        {
+            // Vent til punktene er hentet - ellers zoomer kartet aldri inn på dem.
+            if (!_kartLastet)
+            {
+                return;
+            }
+
+            if (!_kartInitialisert)
+            {
+                // Liten klyngeradius som i Layout 2, så punktene vises med en gang.
+                await JS.InvokeVoidAsync("kart.init", "fh-kart", _kartPunkter, null,
+                    new { klyngeRadius = 14, sluttKlyngeZoom = 10 });
+                _kartInitialisert = true;
+                _kartPunkterVedForrigeRender = _kartPunkter.Count;
+            }
+            else if (_kartPunkter.Count != _kartPunkterVedForrigeRender)
+            {
+                await JS.InvokeVoidAsync("kart.oppdaterPunkter", _kartPunkter);
+                _kartPunkterVedForrigeRender = _kartPunkter.Count;
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposedCts.Cancel();
+        _disposedCts.Dispose();
     }
 
     // Hurtigvalgene ligger i nettleseren (samme nøkkel som dagens forside), så de
     // kan først leses etter første render.
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        await OppdaterKartAsync();
+
         if (!firstRender)
         {
             return;
