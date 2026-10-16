@@ -185,27 +185,150 @@ export function initZoomPan(wrapEl, canvasEl) {
     wrapEl.addEventListener('pointerup', endPointer);
     wrapEl.addEventListener('pointercancel', endPointer);
 }
+// ===================================================================
+// Felles geometri for streker og tilkoblingspunkter. Alle punkter er i
+// prosent av lerretet (samme som PunkterJson), slik at skjemaet skalerer.
+// ===================================================================
 
-let currentStrekTegning = null;
-
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const EPS = 0.05;
+const PORT_TREFF_PCT = 0.35;
 const SNAP_RADIUS_PX = 14;
+const STREK_HIT_PX = 8;
+const UI_FARGE = '#835e41';
+const PORT_FARGE = '#2457c5';
+const GUIDE_FARGE = '#e0458b';
 
-function findPunktNaer(canvasEl, clientX, clientY) {
-    const punkter = canvasEl.querySelectorAll('.kobling-symbol-marker[data-elementtype="Punkt"]');
-    const rect = canvasEl.getBoundingClientRect();
-    let best = null;
-    let bestDist = SNAP_RADIUS_PX;
+function lesPunkter(pl) {
+    return (pl.getAttribute('points') || '').trim().split(/\s+/).filter(Boolean).map(par => {
+        const [x, y] = par.split(',').map(Number);
+        return { x, y };
+    });
+}
 
-    punkter.forEach(m => {
-        const px = rect.left + (parseFloat(m.dataset.x) / 100) * rect.width;
-        const py = rect.top + (parseFloat(m.dataset.y) / 100) * rect.height;
-        const dist = Math.hypot(clientX - px, clientY - py);
-        if (dist <= bestDist) {
-            bestDist = dist;
-            best = { x: parseFloat(m.dataset.x), y: parseFloat(m.dataset.y) };
+function punkterTilStr(pts) {
+    return pts.map(p => `${+p.x.toFixed(3)},${+p.y.toFixed(3)}`).join(' ');
+}
+
+function punkterTilJson(pts) {
+    return JSON.stringify(pts.map(p => ({ X: +p.x.toFixed(3), Y: +p.y.toFixed(3) })));
+}
+
+function lik(a, b) {
+    return Math.abs(a - b) < EPS;
+}
+
+// Fjerner like punkter etter hverandre og midtpunkter på en rett linje,
+// slik at en strek aldri får "usynlige" knekkpunkter.
+function rens(pts) {
+    const r = [];
+    for (const p of pts) {
+        const l = r[r.length - 1];
+        if (l && lik(l.x, p.x) && lik(l.y, p.y)) {
+            continue;
+        }
+        r.push({ x: p.x, y: p.y });
+    }
+    for (let i = r.length - 2; i > 0; i--) {
+        const a = r[i - 1], b = r[i], c = r[i + 1];
+        if ((lik(a.x, b.x) && lik(b.x, c.x)) || (lik(a.y, b.y) && lik(b.y, c.y))) {
+            r.splice(i, 1);
+        }
+    }
+    return r;
+}
+
+// Setter inn et hjørne i alle skrå strekbiter, slik at streken bare går
+// vannrett og loddrett.
+function rettOpp(pts) {
+    const r = [];
+    pts.forEach((p, i) => {
+        const forrige = r[r.length - 1];
+        if (i > 0 && forrige && !lik(forrige.x, p.x) && !lik(forrige.y, p.y)) {
+            r.push({ x: p.x, y: forrige.y });
+        }
+        r.push({ x: p.x, y: p.y });
+    });
+    return rens(r);
+}
+
+function canvasRect(canvasEl) {
+    return canvasEl.getBoundingClientRect();
+}
+
+function tilPx(rect, p) {
+    return { x: (p.x / 100) * rect.width, y: (p.y / 100) * rect.height };
+}
+
+function fraEvent(canvasEl, e) {
+    return getClickPercent(canvasEl, e.clientX, e.clientY);
+}
+
+function snapPct(canvasEl, v) {
+    return canvasEl.dataset.snap === '1' ? Math.round(v * 2) / 2 : v;
+}
+
+function markerBoks(m) {
+    return {
+        x: parseFloat(m.style.left) || 0,
+        y: parseFloat(m.style.top) || 0,
+        w: parseFloat(m.style.width) || 0,
+        h: parseFloat(m.style.height) || 0
+    };
+}
+
+// Fire tilkoblingspunkter (midt på hver kant) per komponent. Punkt-figurer
+// har bare ett - i midten.
+function porterForBoks(b, erPunkt) {
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    if (erPunkt) {
+        return [{ side: 'c', x: cx, y: cy }];
+    }
+    return [
+        { side: 't', x: cx, y: b.y },
+        { side: 'r', x: b.x + b.w, y: cy },
+        { side: 'b', x: cx, y: b.y + b.h },
+        { side: 'l', x: b.x, y: cy }
+    ];
+}
+
+function porterForMarker(m) {
+    if (m.dataset.elementtype === 'Tekstboks') {
+        return [];
+    }
+    return porterForBoks(markerBoks(m), m.dataset.elementtype === 'Punkt');
+}
+
+function allePorter(canvasEl) {
+    const porter = [];
+    canvasEl.querySelectorAll('.kobling-symbol-marker[data-symbolid]').forEach(m => {
+        porterForMarker(m).forEach(p => porter.push(p));
+    });
+    // Endene på andre streker kan også kobles til (forgreninger).
+    canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]').forEach(pl => {
+        const pts = lesPunkter(pl);
+        if (pts.length > 1) {
+            porter.push({ side: 'c', x: pts[0].x, y: pts[0].y });
+            porter.push({ side: 'c', x: pts[pts.length - 1].x, y: pts[pts.length - 1].y });
         }
     });
+    return porter;
+}
 
+function finnPortNaer(canvasEl, clientX, clientY) {
+    const rect = canvasRect(canvasEl);
+    let best = null;
+    let bestDist = SNAP_RADIUS_PX;
+    for (const p of allePorter(canvasEl)) {
+        const px = rect.left + (p.x / 100) * rect.width;
+        const py = rect.top + (p.y / 100) * rect.height;
+        const d = Math.hypot(clientX - px, clientY - py);
+        if (d <= bestDist) {
+            bestDist = d;
+            best = p;
+        }
+    }
     return best;
 }
 
@@ -221,95 +344,159 @@ function avstandTilLinjestykke(p, a, b) {
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-const STREK_HIT_PX = 8;
-
 function finnStrekNaer(canvasEl, clientX, clientY) {
-    const rect = canvasEl.getBoundingClientRect();
-    const polylines = canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]');
+    const rect = canvasRect(canvasEl);
     let best = null;
     let bestDist = STREK_HIT_PX;
-
-    polylines.forEach(pl => {
-        const raw = pl.getAttribute('points') || '';
-        const pts = raw.trim().split(/\s+/).filter(Boolean).map(par => {
-            const [px, py] = par.split(',').map(Number);
-            return {
-                x: rect.left + (px / 100) * rect.width,
-                y: rect.top + (py / 100) * rect.height
-            };
-        });
+    canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]').forEach(pl => {
+        const pts = lesPunkter(pl).map(p => ({
+            x: rect.left + (p.x / 100) * rect.width,
+            y: rect.top + (p.y / 100) * rect.height
+        }));
         for (let i = 0; i < pts.length - 1; i++) {
-            const dist = avstandTilLinjestykke({ x: clientX, y: clientY }, pts[i], pts[i + 1]);
-            if (dist <= bestDist) {
-                bestDist = dist;
+            const d = avstandTilLinjestykke({ x: clientX, y: clientY }, pts[i], pts[i + 1]);
+            if (d <= bestDist) {
+                bestDist = d;
                 best = parseInt(pl.dataset.strekid, 10);
             }
         }
     });
-
     return best;
 }
 
-const MIN_TURN_PX = 10;
+function strekPolyline(canvasEl, id) {
+    return canvasEl.querySelector(`.kobling-strek-svg-overlay polyline[data-strekid="${id}"]`);
+}
 
-// Tegn strek = trykk ned, dra i den retningen streken skal gå, slipp.
-// Snur du retning underveis (uten å slippe museknappen) settes det automatisk et
-// hjørne der du snur, slik at hele streken blir én sammenhengende, vinkelrett linje.
-export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse) {
+// ---------- UI-laget (knekkpunkter, tilkoblingspunkter, hjelpelinjer) ----------
+// Et tomt <svg class="ks-ui-lag"> rendres av Blazor; innholdet eies av JS.
+
+function uiLag(canvasEl) {
+    return canvasEl.querySelector('.ks-ui-lag');
+}
+
+function tomUi(canvasEl) {
+    const ui = uiLag(canvasEl);
+    if (ui) {
+        ui.replaceChildren();
+    }
+    return ui;
+}
+
+function svgEl(navn, attr, forelder) {
+    const el = document.createElementNS(SVG_NS, navn);
+    for (const k in attr) {
+        el.setAttribute(k, attr[k]);
+    }
+    if (forelder) {
+        forelder.appendChild(el);
+    }
+    return el;
+}
+
+function tegnPorter(ui, rect, porter, aktiv) {
+    for (const p of porter) {
+        const q = tilPx(rect, p);
+        const erAktiv = aktiv && lik(aktiv.x, p.x) && lik(aktiv.y, p.y);
+        svgEl('circle', {
+            cx: q.x, cy: q.y, r: erAktiv ? 7 : 4.5,
+            fill: erAktiv ? PORT_FARGE : '#fff', stroke: PORT_FARGE, 'stroke-width': 1.5,
+            opacity: erAktiv ? 1 : 0.85
+        }, ui);
+    }
+}
+
+function tegnPolyline(ui, rect, pts, farge, tykkelse, stiplet) {
+    if (pts.length < 2) {
+        return;
+    }
+    svgEl('polyline', {
+        points: pts.map(p => { const q = tilPx(rect, p); return `${q.x},${q.y}`; }).join(' '),
+        fill: 'none', stroke: farge, 'stroke-width': tykkelse,
+        'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+        'stroke-dasharray': stiplet ? '6,4' : 'none'
+    }, ui);
+}
+
+// ===================================================================
+// Tegn strek: klikk for å starte (gjerne på et blått tilkoblingspunkt),
+// klikk der streken skal svinge, og klikk på et tilkoblingspunkt for å
+// koble. Dobbeltklikk eller Enter stopper streken der du er. Streken går
+// alltid vannrett/loddrett - hold Shift for fri vinkel.
+// ===================================================================
+
+let currentStrekTegning = null;
+
+export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet) {
     stopStrekTegning();
 
-    const svgOverlay = canvasEl.querySelector('.kobling-strek-svg-overlay');
-    let previewLine = null;
-    let dragging = false;
-    let mode = null; // 'draw' | 'move'
-    let vertices = [];
-    let currentAxis = null;
-    let moveStrekId = null;
-    let moveOrigPunkter = null;
-    let moveStartRaw = null;
-    let moveMoved = false;
+    let pts = [];
+    let mus = null;
+    let fri = false;
+    let malPort = null;
 
-    function ensurePreview() {
-        if (!previewLine) {
-            previewLine = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-            previewLine.setAttribute('fill', 'none');
-            previewLine.setAttribute('stroke', farge);
-            previewLine.setAttribute('stroke-width', tykkelse);
-            previewLine.setAttribute('vector-effect', 'non-scaling-stroke');
-            previewLine.setAttribute('stroke-dasharray', '3,2');
-            previewLine.style.pointerEvents = 'none';
-            svgOverlay.appendChild(previewLine);
-        }
-        return previewLine;
+    function aksePunkt(sist, raw) {
+        const rect = canvasRect(canvasEl);
+        const dx = ((raw.x - sist.x) / 100) * rect.width;
+        const dy = ((raw.y - sist.y) / 100) * rect.height;
+        return Math.abs(dx) >= Math.abs(dy) ? { x: raw.x, y: sist.y } : { x: sist.x, y: raw.y };
     }
 
-    function pointsToStr(pts) {
-        return pts.map(p => `${p.x},${p.y}`).join(' ');
+    // Siste bit inn til et tilkoblingspunkt: kommer inn vinkelrett på
+    // kanten (vannrett inn på venstre/høyre side, loddrett inn på topp/bunn).
+    function veiTilPort(sist, port) {
+        if (lik(sist.x, port.x) || lik(sist.y, port.y)) {
+            return [{ x: port.x, y: port.y }];
+        }
+        const hjorne = port.side === 'l' || port.side === 'r'
+            ? { x: sist.x, y: port.y }
+            : { x: port.x, y: sist.y };
+        return [hjorne, { x: port.x, y: port.y }];
     }
 
-    function parsePointsAttr(str) {
-        return (str || '').trim().split(/\s+/).filter(Boolean).map(par => {
-            const [x, y] = par.split(',').map(Number);
-            return { x, y };
-        });
+    function forhand() {
+        if (!pts.length || !mus) {
+            return [];
+        }
+        const sist = pts[pts.length - 1];
+        if (malPort) {
+            return fri ? [{ x: malPort.x, y: malPort.y }] : veiTilPort(sist, malPort);
+        }
+        return [fri ? mus : aksePunkt(sist, mus)];
     }
 
-    function fjernPreview() {
-        if (previewLine) {
-            previewLine.remove();
-            previewLine = null;
+    function tegnUi() {
+        const ui = tomUi(canvasEl);
+        if (!ui) {
+            return;
+        }
+        const rect = canvasRect(canvasEl);
+        tegnPorter(ui, rect, allePorter(canvasEl), malPort);
+        if (pts.length) {
+            tegnPolyline(ui, rect, pts, farge, tykkelse, stiplet);
+            const f = forhand();
+            if (f.length) {
+                tegnPolyline(ui, rect, [pts[pts.length - 1], ...f], farge, tykkelse, true);
+            }
+            pts.forEach(p => {
+                const q = tilPx(rect, p);
+                svgEl('circle', { cx: q.x, cy: q.y, r: 3.5, fill: '#fff', stroke: farge, 'stroke-width': 1.5 }, ui);
+            });
         }
     }
 
-    function tentativeEnd(raw) {
-        const last = vertices[vertices.length - 1];
-        if (currentAxis === 'y') {
-            return { x: last.x, y: raw.y };
+    function ferdig() {
+        const r = rens(pts);
+        pts = [];
+        tegnUi();
+        if (r.length >= 2) {
+            dotNetRef.invokeMethodAsync('OnStrekFerdig', punkterTilJson(r));
         }
-        if (currentAxis === 'x') {
-            return { x: raw.x, y: last.y };
-        }
-        return last;
+    }
+
+    function rawFra(e) {
+        const p = fraEvent(canvasEl, e);
+        return { x: snapPct(canvasEl, p.x), y: snapPct(canvasEl, p.y) };
     }
 
     function onPointerDown(e) {
@@ -319,157 +506,84 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse) {
         e.preventDefault();
         e.stopPropagation();
 
-        const strekId = finnStrekNaer(canvasEl, e.clientX, e.clientY);
-        if (strekId !== null) {
-            const polyEl = canvasEl.querySelector(`.kobling-strek-svg-overlay polyline[data-strekid="${strekId}"]`);
-            if (polyEl) {
-                mode = 'move';
-                moveStrekId = strekId;
-                moveOrigPunkter = parsePointsAttr(polyEl.getAttribute('points'));
-                moveStartRaw = getClickPercent(canvasEl, e.clientX, e.clientY);
-                moveMoved = false;
-                dragging = true;
-                safeCapture(canvasEl, e.pointerId);
-                return;
-            }
+        malPort = finnPortNaer(canvasEl, e.clientX, e.clientY);
+        fri = e.shiftKey;
+        mus = malPort ? { x: malPort.x, y: malPort.y } : rawFra(e);
+
+        if (!pts.length) {
+            pts = [{ x: mus.x, y: mus.y }];
+            malPort = null;
+            tegnUi();
+            return;
         }
 
-        mode = 'draw';
-        const snap = findPunktNaer(canvasEl, e.clientX, e.clientY);
-        vertices = [snap ?? getClickPercent(canvasEl, e.clientX, e.clientY)];
-        currentAxis = null;
-        dragging = true;
-        safeCapture(canvasEl, e.pointerId);
+        const kobletTilPort = !!malPort && pts.length > 0;
+        pts = rens([...pts, ...forhand()]);
+        if (kobletTilPort && pts.length >= 2) {
+            ferdig();
+            return;
+        }
+        tegnUi();
     }
 
     function onPointerMove(e) {
-        if (!dragging) {
-            return;
+        malPort = finnPortNaer(canvasEl, e.clientX, e.clientY);
+        // Ikke snap til punktet streken akkurat startet i.
+        if (malPort && pts.length && lik(malPort.x, pts[0].x) && lik(malPort.y, pts[0].y) && pts.length < 2) {
+            malPort = null;
         }
-
-        if (mode === 'move') {
-            const raw = getClickPercent(canvasEl, e.clientX, e.clientY);
-            const dx = raw.x - moveStartRaw.x;
-            const dy = raw.y - moveStartRaw.y;
-            const rectPx = canvasEl.getBoundingClientRect();
-            if (!moveMoved) {
-                const movedPx = Math.hypot((dx / 100) * rectPx.width, (dy / 100) * rectPx.height);
-                if (movedPx > 4) {
-                    moveMoved = true;
-                }
-            }
-            const polyEl = canvasEl.querySelector(`.kobling-strek-svg-overlay polyline[data-strekid="${moveStrekId}"]`);
-            if (polyEl) {
-                polyEl.setAttribute('points', pointsToStr(moveOrigPunkter.map(p => ({ x: p.x + dx, y: p.y + dy }))));
-            }
-            return;
-        }
-
-        const snap = findPunktNaer(canvasEl, e.clientX, e.clientY);
-        const raw = snap ?? getClickPercent(canvasEl, e.clientX, e.clientY);
-        const last = vertices[vertices.length - 1];
-        const dx = raw.x - last.x;
-        const dy = raw.y - last.y;
-        const rectPx = canvasEl.getBoundingClientRect();
-
-        if (currentAxis === null) {
-            const movedPx = Math.hypot((dx / 100) * rectPx.width, (dy / 100) * rectPx.height);
-            if (movedPx > 4) {
-                currentAxis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
-            }
-        } else {
-            const annenDeltaPct = currentAxis === 'x' ? dy : dx;
-            const annenPx = currentAxis === 'x'
-                ? (Math.abs(annenDeltaPct) / 100) * rectPx.height
-                : (Math.abs(annenDeltaPct) / 100) * rectPx.width;
-            if (annenPx > MIN_TURN_PX) {
-                vertices.push(tentativeEnd(raw));
-                currentAxis = currentAxis === 'x' ? 'y' : 'x';
-            }
-        }
-
-        ensurePreview().setAttribute('points', pointsToStr([...vertices, tentativeEnd(raw)]));
+        fri = e.shiftKey;
+        mus = rawFra(e);
+        tegnUi();
     }
 
-    function onPointerUp(e) {
-        if (!dragging) {
-            return;
+    function onDblClick(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (pts.length >= 2) {
+            ferdig();
         }
-        dragging = false;
-        safeRelease(canvasEl, e.pointerId);
-
-        if (mode === 'move') {
-            const strekId = moveStrekId;
-            const origPunkter = moveOrigPunkter;
-            const flyttet = moveMoved;
-            const raw = getClickPercent(canvasEl, e.clientX, e.clientY);
-            const dx = raw.x - moveStartRaw.x;
-            const dy = raw.y - moveStartRaw.y;
-            mode = null;
-            moveStrekId = null;
-            moveOrigPunkter = null;
-
-            if (!flyttet) {
-                // Klikk uten drag - slett streken.
-                dotNetRef.invokeMethodAsync('OnStrekKlikkSlett', strekId);
-                return;
-            }
-
-            const nyePunkter = origPunkter.map(p => ({ X: p.x + dx, Y: p.y + dy }));
-            dotNetRef.invokeMethodAsync('OnStrekFlyttet', strekId, JSON.stringify(nyePunkter));
-            return;
-        }
-
-        fjernPreview();
-
-        if (currentAxis === null) {
-            vertices = [];
-            return;
-        }
-
-        const snap = findPunktNaer(canvasEl, e.clientX, e.clientY);
-        const raw = snap ?? getClickPercent(canvasEl, e.clientX, e.clientY);
-        const last = vertices[vertices.length - 1];
-        const slutt = tentativeEnd(raw);
-        const dist = Math.hypot(slutt.x - last.x, slutt.y - last.y);
-        const alle = dist < 1 ? vertices : [...vertices, slutt];
-
-        vertices = [];
-        currentAxis = null;
-
-        if (alle.length < 2) {
-            return;
-        }
-
-        const result = JSON.stringify(alle.map(p => ({ X: p.x, Y: p.y })));
-        dotNetRef.invokeMethodAsync('OnStrekFerdig', result);
     }
 
     function onKeyDown(e) {
-        if (e.key === 'Escape' && dragging) {
-            dragging = false;
-            if (mode === 'move') {
-                const polyEl = canvasEl.querySelector(`.kobling-strek-svg-overlay polyline[data-strekid="${moveStrekId}"]`);
-                if (polyEl && moveOrigPunkter) {
-                    polyEl.setAttribute('points', pointsToStr(moveOrigPunkter));
-                }
-            } else {
-                fjernPreview();
-            }
-            mode = null;
-            moveStrekId = null;
-            moveOrigPunkter = null;
-            vertices = [];
-            currentAxis = null;
+        const tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+            return;
         }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            if (pts.length) {
+                pts = [];
+                tegnUi();
+            } else {
+                dotNetRef.invokeMethodAsync('OnSnarvei', 'velg');
+            }
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (pts.length >= 2) {
+                ferdig();
+            }
+        } else if (e.key === 'Backspace' && pts.length) {
+            e.preventDefault();
+            pts.pop();
+            tegnUi();
+        }
+    }
+
+    function onLeave() {
+        mus = null;
+        malPort = null;
+        tegnUi();
     }
 
     function cleanup() {
         canvasEl.removeEventListener('pointerdown', onPointerDown);
         canvasEl.removeEventListener('pointermove', onPointerMove);
-        canvasEl.removeEventListener('pointerup', onPointerUp);
+        canvasEl.removeEventListener('pointerleave', onLeave);
+        canvasEl.removeEventListener('dblclick', onDblClick);
         document.removeEventListener('keydown', onKeyDown);
-        fjernPreview();
+
+        tomUi(canvasEl);
         if (currentStrekTegning === api) {
             currentStrekTegning = null;
         }
@@ -477,11 +591,14 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse) {
 
     canvasEl.addEventListener('pointerdown', onPointerDown);
     canvasEl.addEventListener('pointermove', onPointerMove);
-    canvasEl.addEventListener('pointerup', onPointerUp);
+    canvasEl.addEventListener('pointerleave', onLeave);
+    canvasEl.addEventListener('dblclick', onDblClick);
     document.addEventListener('keydown', onKeyDown);
 
-    const api = { cleanup };
+
+    const api = { cleanup, ferdig: () => { if (pts.length >= 2) { ferdig(); } } };
     currentStrekTegning = api;
+    tegnUi();
 }
 
 export function stopStrekTegning() {
@@ -491,14 +608,428 @@ export function stopStrekTegning() {
     }
 }
 
+export function fullforStrek() {
+    if (currentStrekTegning) {
+        currentStrekTegning.ferdig();
+    }
+}
+
+// ===================================================================
+// Redigere en valgt strek: dra knekkpunktene for å flytte svingene, dra
+// den lille prikken midt på en strekbit for å flytte biten parallelt, og
+// dobbeltklikk et knekkpunkt for å fjerne svingen. Endene kan dras til et
+// annet tilkoblingspunkt.
+// ===================================================================
+
+function tegnStrekHandtak(canvasEl) {
+    if (currentStrekTegning) {
+        return;
+    }
+    const ui = tomUi(canvasEl);
+    const id = parseInt(canvasEl.dataset.valgtstrek || '0', 10);
+    if (!ui || !id || canvasEl.dataset.locked === '1') {
+        return;
+    }
+    const pl = strekPolyline(canvasEl, id);
+    if (!pl) {
+        return;
+    }
+    const rect = canvasRect(canvasEl);
+    const pts = lesPunkter(pl);
+
+    // Hver strekbit kan gripes hvor som helst langs biten (bred, usynlig
+    // treffsone), og flyttes da parallelt. Prikken midt på viser at det går.
+    for (let i = 0; i < pts.length - 1; i++) {
+        const a = tilPx(rect, pts[i]);
+        const b = tilPx(rect, pts[i + 1]);
+        const treff = svgEl('line', {
+            x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+            stroke: 'transparent', 'stroke-width': 16, 'stroke-linecap': 'round', 'data-h': 'm', 'data-i': i
+        }, ui);
+        treff.style.pointerEvents = 'stroke';
+        treff.style.cursor = lik(pts[i].y, pts[i + 1].y) ? 'ns-resize' : lik(pts[i].x, pts[i + 1].x) ? 'ew-resize' : 'move';
+        svgEl('title', {}, treff).textContent = 'Dra for å flytte denne biten';
+        if (Math.hypot(b.x - a.x, b.y - a.y) >= 26) {
+            svgEl('circle', { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, r: 4, fill: UI_FARGE, opacity: 0.6 }, ui);
+        }
+    }
+
+    pts.forEach((p, i) => {
+        const q = tilPx(rect, p);
+        const ende = i === 0 || i === pts.length - 1;
+        if (ende) {
+            svgEl('rect', { x: q.x - 5, y: q.y - 5, width: 10, height: 10, rx: 2, fill: '#fff', stroke: UI_FARGE, 'stroke-width': 2 }, ui);
+        } else {
+            svgEl('circle', { cx: q.x, cy: q.y, r: 6, fill: '#fff', stroke: UI_FARGE, 'stroke-width': 2 }, ui);
+        }
+        const treff = svgEl('circle', { cx: q.x, cy: q.y, r: 11, fill: 'transparent', 'data-h': 'v', 'data-i': i }, ui);
+        treff.style.pointerEvents = 'all';
+        treff.style.cursor = 'move';
+        svgEl('title', {}, treff).textContent = ende ? 'Dra enden til et tilkoblingspunkt' : 'Dra for å flytte svingen · dobbeltklikk for å fjerne den';
+    });
+}
+
+export function oppdaterEditorUi(canvasEl, valgtStrekId, snap) {
+    canvasEl.dataset.valgtstrek = String(valgtStrekId || 0);
+    canvasEl.dataset.snap = snap ? '1' : '0';
+    if (!currentStrekTegning) {
+        tegnStrekHandtak(canvasEl);
+    }
+}
+
+export function initStrekRedigering(canvasEl, dotNetRef) {
+    if (canvasEl.dataset.strekRedBound === '1') {
+        return;
+    }
+    canvasEl.dataset.strekRedBound = '1';
+
+    let drag = null;
+
+    function flyttKnekk(orig, i, q) {
+        const arr = orig.map(p => ({ ...p }));
+        const siste = arr.length - 1;
+        arr[i] = { x: q.x, y: q.y };
+        for (const n of [i - 1, i + 1]) {
+            if (n < 0 || n > siste) {
+                continue;
+            }
+            const erEnde = n === 0 || n === siste;
+            if (erEnde) {
+                continue;
+            }
+            if (lik(orig[n].x, orig[i].x)) {
+                arr[n].x = q.x;
+            } else if (lik(orig[n].y, orig[i].y)) {
+                arr[n].y = q.y;
+            }
+        }
+        return drag.fri ? arr : rettOpp(arr);
+    }
+
+    function flyttBit(orig, i, q) {
+        const arr = orig.map(p => ({ ...p }));
+        let s = i;
+        let e = i + 1;
+        const vannrett = lik(arr[s].y, arr[e].y);
+        const loddrett = lik(arr[s].x, arr[e].x);
+        if (!vannrett && !loddrett) {
+            const dx = q.x - drag.start.x;
+            const dy = q.y - drag.start.y;
+            arr[s] = { x: orig[s].x + dx, y: orig[s].y + dy };
+            arr[e] = { x: orig[e].x + dx, y: orig[e].y + dy };
+            return arr;
+        }
+        // Endene skal bli stående der de er koblet - legg inn en ekstra
+        // sving i stedet for å dra endepunktet med.
+        if (s === 0) {
+            arr.unshift({ ...arr[0] });
+            s++;
+            e++;
+        }
+        if (e === arr.length - 1) {
+            arr.push({ ...arr[arr.length - 1] });
+        }
+        if (vannrett) {
+            arr[s].y = q.y;
+            arr[e].y = q.y;
+        } else {
+            arr[s].x = q.x;
+            arr[e].x = q.x;
+        }
+        return arr;
+    }
+
+    canvasEl.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || canvasEl.dataset.locked === '1' || currentStrekTegning) {
+            return;
+        }
+        const valgtId = parseInt(canvasEl.dataset.valgtstrek || '0', 10);
+        const h = e.target.closest && e.target.closest('[data-h]');
+
+        if (h && valgtId) {
+            const pl = strekPolyline(canvasEl, valgtId);
+            if (!pl) {
+                return;
+            }
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            const p = fraEvent(canvasEl, e);
+            drag = {
+                type: h.dataset.h, i: parseInt(h.dataset.i, 10), pl, id: valgtId,
+                orig: lesPunkter(pl), start: p, flyttet: false, fri: e.shiftKey, resultat: null
+            };
+            safeCapture(canvasEl, e.pointerId);
+            return;
+        }
+
+        if (e.target.closest && e.target.closest('.kobling-symbol-marker')) {
+            return;
+        }
+
+        const strekId = finnStrekNaer(canvasEl, e.clientX, e.clientY);
+        if (strekId !== null) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (strekId !== valgtId) {
+                canvasEl.dataset.valgtstrek = String(strekId);
+                tegnStrekHandtak(canvasEl);
+                dotNetRef.invokeMethodAsync('OnStrekValgt', strekId);
+            }
+            // Man kan gripe streken og dra biten med en gang.
+            const pl = strekPolyline(canvasEl, strekId);
+            const orig = lesPunkter(pl);
+            const rect = canvasRect(canvasEl);
+            const m = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+            let bestI = 0;
+            let bestD = Infinity;
+            for (let i = 0; i < orig.length - 1; i++) {
+                const d = avstandTilLinjestykke(m, tilPx(rect, orig[i]), tilPx(rect, orig[i + 1]));
+                if (d < bestD) {
+                    bestD = d;
+                    bestI = i;
+                }
+            }
+            drag = {
+                type: 'm', i: bestI, pl, id: strekId, orig,
+                start: fraEvent(canvasEl, e), flyttet: false, fri: e.shiftKey, resultat: null
+            };
+            safeCapture(canvasEl, e.pointerId);
+            return;
+        }
+
+        if (valgtId) {
+            canvasEl.dataset.valgtstrek = '0';
+            tomUi(canvasEl);
+            dotNetRef.invokeMethodAsync('OnStrekValgt', 0);
+        }
+    }, true);
+
+    canvasEl.addEventListener('pointermove', (e) => {
+        if (!drag) {
+            return;
+        }
+        const raw = fraEvent(canvasEl, e);
+        if (!drag.flyttet && Math.hypot(raw.x - drag.start.x, raw.y - drag.start.y) < 0.3) {
+            return;
+        }
+        drag.flyttet = true;
+        drag.fri = e.shiftKey;
+        let q = { x: snapPct(canvasEl, raw.x), y: snapPct(canvasEl, raw.y) };
+        const siste = drag.orig.length - 1;
+        let arr;
+        if (drag.type === 'v') {
+            if (drag.i === 0 || drag.i === siste) {
+                const port = finnPortNaer(canvasEl, e.clientX, e.clientY);
+                if (port) {
+                    q = { x: port.x, y: port.y };
+                }
+            }
+            arr = flyttKnekk(drag.orig, drag.i, q);
+        } else {
+            arr = flyttBit(drag.orig, drag.i, q);
+        }
+        drag.resultat = rens(arr);
+        drag.pl.setAttribute('points', punkterTilStr(drag.resultat));
+        tegnStrekHandtak(canvasEl);
+    });
+
+    function slutt(e) {
+        if (!drag) {
+            return;
+        }
+        safeRelease(canvasEl, e.pointerId);
+        const d = drag;
+        drag = null;
+        if (d.flyttet && d.resultat && d.resultat.length >= 2) {
+            dotNetRef.invokeMethodAsync('OnStrekFlyttet', d.id, punkterTilJson(d.resultat));
+        }
+    }
+
+    canvasEl.addEventListener('pointerup', slutt);
+    canvasEl.addEventListener('pointercancel', slutt);
+
+    canvasEl.addEventListener('dblclick', (e) => {
+        if (canvasEl.dataset.locked === '1' || currentStrekTegning) {
+            return;
+        }
+        const h = e.target.closest && e.target.closest('[data-h="v"]');
+        const valgtId = parseInt(canvasEl.dataset.valgtstrek || '0', 10);
+        if (!h || !valgtId) {
+            return;
+        }
+        const pl = strekPolyline(canvasEl, valgtId);
+        const pts = lesPunkter(pl);
+        const i = parseInt(h.dataset.i, 10);
+        if (i === 0 || i === pts.length - 1 || pts.length <= 2) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        pts.splice(i, 1);
+        const ny = rettOpp(pts);
+        pl.setAttribute('points', punkterTilStr(ny));
+        tegnStrekHandtak(canvasEl);
+        dotNetRef.invokeMethodAsync('OnStrekFlyttet', valgtId, punkterTilJson(ny));
+    });
+
+    // Tegn håndtakene på nytt når lerretet endrer størrelse (zoom/vindu).
+    if (window.ResizeObserver) {
+        new ResizeObserver(() => tegnStrekHandtak(canvasEl)).observe(canvasEl);
+    }
+}
+
+// ===================================================================
+// Streker som følger med komponentene. Når en komponent flyttes eller
+// endrer størrelse, flyttes strek-ender som sitter på et av komponentens
+// tilkoblingspunkter med, og nabopunktet justeres så streken holder seg rett.
+// ===================================================================
+
+function finnTilkoblinger(canvasEl, grupper) {
+    const res = [];
+    canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]').forEach(pl => {
+        const orig = lesPunkter(pl);
+        if (orig.length < 2) {
+            return;
+        }
+        const ender = [];
+        for (const idx of [0, orig.length - 1]) {
+            for (const g of grupper) {
+                const port = porterForBoks(g.startBoks, g.el.dataset.elementtype === 'Punkt')
+                    .find(p => Math.abs(p.x - orig[idx].x) < PORT_TREFF_PCT && Math.abs(p.y - orig[idx].y) < PORT_TREFF_PCT);
+                if (port) {
+                    ender.push({ idx, g, side: port.side });
+                    break;
+                }
+            }
+        }
+        if (ender.length) {
+            res.push({ pl, id: parseInt(pl.dataset.strekid, 10), orig, ender });
+        }
+    });
+    return res;
+}
+
+function nyPortPos(g, side) {
+    const b = markerBoks(g.el);
+    return porterForBoks(b, g.el.dataset.elementtype === 'Punkt').find(p => p.side === side) ?? porterForBoks(b, true)[0];
+}
+
+function oppdaterTilkobledeStreker(tilkoblinger) {
+    for (const t of tilkoblinger) {
+        const siste = t.orig.length - 1;
+        // Begge endene på samme flytting: flytt hele streken like mye.
+        if (t.ender.length === 2) {
+            const a = nyPortPos(t.ender[0].g, t.ender[0].side);
+            const b = nyPortPos(t.ender[1].g, t.ender[1].side);
+            const da = { x: a.x - t.orig[t.ender[0].idx].x, y: a.y - t.orig[t.ender[0].idx].y };
+            const db = { x: b.x - t.orig[t.ender[1].idx].x, y: b.y - t.orig[t.ender[1].idx].y };
+            if (lik(da.x, db.x) && lik(da.y, db.y)) {
+                t.resultat = t.orig.map(p => ({ x: p.x + da.x, y: p.y + da.y }));
+                t.pl.setAttribute('points', punkterTilStr(t.resultat));
+                continue;
+            }
+        }
+        const arr = t.orig.map(p => ({ ...p }));
+        for (const ende of t.ender) {
+            const ny = nyPortPos(ende.g, ende.side);
+            const gml = t.orig[ende.idx];
+            arr[ende.idx] = { x: ny.x, y: ny.y };
+            const n = ende.idx === 0 ? 1 : siste - 1;
+            if (arr.length > 2 && n > 0 && n < siste) {
+                if (lik(t.orig[n].x, gml.x)) {
+                    arr[n].x = ny.x;
+                } else if (lik(t.orig[n].y, gml.y)) {
+                    arr[n].y = ny.y;
+                }
+            }
+        }
+        t.resultat = rettOpp(arr);
+        t.pl.setAttribute('points', punkterTilStr(t.resultat));
+    }
+}
+
+function tilkoblingerTilJson(tilkoblinger) {
+    return JSON.stringify(tilkoblinger
+        .filter(t => t.resultat && t.resultat.length >= 2)
+        .map(t => ({ Id: t.id, PunkterJson: punkterTilJson(rens(t.resultat)) })));
+}
+
+// Rosa hjelpelinjer + smart snapping når en komponent står på linje med en annen.
+function justerMotAndre(canvasEl, el) {
+    const ui = uiLag(canvasEl);
+    if (!ui) {
+        return;
+    }
+    ui.querySelectorAll('.ks-guide').forEach(g => g.remove());
+    const rect = canvasRect(canvasEl);
+    const b = markerBoks(el);
+    let cx = b.x + b.w / 2;
+    let cy = b.y + b.h / 2;
+    const terskelX = (6 / rect.width) * 100;
+    const terskelY = (6 / rect.height) * 100;
+    let snapX = null;
+    let snapY = null;
+
+    canvasEl.querySelectorAll('.kobling-symbol-marker[data-symbolid]').forEach(o => {
+        if (o === el) {
+            return;
+        }
+        const ob = markerBoks(o);
+        const ox = ob.x + ob.w / 2;
+        const oy = ob.y + ob.h / 2;
+        if (snapX === null && Math.abs(ox - cx) < terskelX) {
+            snapX = { v: ox, o: ob };
+        }
+        if (snapY === null && Math.abs(oy - cy) < terskelY) {
+            snapY = { v: oy, o: ob };
+        }
+    });
+
+    if (snapX) {
+        b.x = snapX.v - b.w / 2;
+        el.style.left = b.x + '%';
+        cx = snapX.v;
+        const y1 = Math.min(snapX.o.y, b.y) - 2;
+        const y2 = Math.max(snapX.o.y + snapX.o.h, b.y + b.h) + 2;
+        const a = tilPx(rect, { x: cx, y: y1 });
+        const c = tilPx(rect, { x: cx, y: y2 });
+        svgEl('line', { x1: a.x, y1: a.y, x2: c.x, y2: c.y, stroke: GUIDE_FARGE, 'stroke-width': 1, 'stroke-dasharray': '4 3', class: 'ks-guide' }, ui);
+    }
+    if (snapY) {
+        b.y = snapY.v - b.h / 2;
+        el.style.top = b.y + '%';
+        cy = snapY.v;
+        const x1 = Math.min(snapY.o.x, b.x) - 2;
+        const x2 = Math.max(snapY.o.x + snapY.o.w, b.x + b.w) + 2;
+        const a = tilPx(rect, { x: x1, y: cy });
+        const c = tilPx(rect, { x: x2, y: cy });
+        svgEl('line', { x1: a.x, y1: a.y, x2: c.x, y2: c.y, stroke: GUIDE_FARGE, 'stroke-width': 1, 'stroke-dasharray': '4 3', class: 'ks-guide' }, ui);
+    }
+    el.dataset.x = cx;
+    el.dataset.y = cy;
+}
+
+function fjernGuider(canvasEl) {
+    const ui = uiLag(canvasEl);
+    if (ui) {
+        ui.querySelectorAll('.ks-guide').forEach(g => g.remove());
+    }
+}
+
 const GRID_STEP = 2;
 
-function snapToGrid(value) {
+function snapToGrid(containerEl, value) {
+    if (containerEl.dataset.snap === '0') {
+        return Math.round(value * 10) / 10;
+    }
     return Math.round(value / GRID_STEP) * GRID_STEP;
 }
 
 export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
     containerEl.dataset.locked = locked ? '1' : '0';
+    if (locked && !currentStrekTegning) {
+        tomUi(containerEl);
+    }
 
     const markers = containerEl.querySelectorAll('.kobling-symbol-marker[data-symbolid]');
 
@@ -515,6 +1046,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
             let startX = 0;
             let startY = 0;
             let groupMarkers = [];
+            let tilkoblinger = [];
 
             markerEl.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -542,11 +1074,13 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                         .map(el => ({
                             el,
                             startLeft: parseFloat(el.style.left) || 0,
-                            startTop: parseFloat(el.style.top) || 0
+                            startTop: parseFloat(el.style.top) || 0,
+                            startBoks: markerBoks(el)
                         }));
                 } else {
                     groupMarkers = [];
                 }
+                tilkoblinger = [];
 
                 safeCapture(markerEl, e.pointerId);
             });
@@ -562,14 +1096,15 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                         return;
                     }
                     moved = true;
+                    tilkoblinger = finnTilkoblinger(containerEl, groupMarkers);
                 }
                 const rect = containerEl.getBoundingClientRect();
                 const pdx = (dx / rect.width) * 100;
                 const pdy = (dy / rect.height) * 100;
 
                 groupMarkers.forEach(g => {
-                    const nx = snapToGrid(Math.max(0, g.startLeft + pdx));
-                    const ny = snapToGrid(Math.max(0, g.startTop + pdy));
+                    const nx = snapToGrid(containerEl, Math.max(0, g.startLeft + pdx));
+                    const ny = snapToGrid(containerEl, Math.max(0, g.startTop + pdy));
                     g.el.style.left = nx + '%';
                     g.el.style.top = ny + '%';
                     const w = parseFloat(g.el.style.width) || 0;
@@ -577,6 +1112,11 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                     g.el.dataset.x = nx + w / 2;
                     g.el.dataset.y = ny + h / 2;
                 });
+
+                if (groupMarkers.length === 1) {
+                    justerMotAndre(containerEl, groupMarkers[0].el);
+                }
+                oppdaterTilkobledeStreker(tilkoblinger);
             });
 
             markerEl.addEventListener('pointerup', (e) => {
@@ -585,6 +1125,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                 }
                 dragging = false;
                 safeRelease(markerEl, e.pointerId);
+                fjernGuider(containerEl);
 
                 if (moved) {
                     const payload = groupMarkers.map(g => ({
@@ -592,15 +1133,12 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                         X: parseFloat(g.el.style.left),
                         Y: parseFloat(g.el.style.top)
                     }));
-                    if (payload.length === 1) {
-                        dotNetRef.invokeMethodAsync('OnSymbolMoved', payload[0].Id, payload[0].X, payload[0].Y);
-                    } else {
-                        dotNetRef.invokeMethodAsync('OnSymbolsMoved', JSON.stringify(payload));
-                    }
+                    dotNetRef.invokeMethodAsync('OnSymbolerFlyttet', JSON.stringify(payload), tilkoblingerTilJson(tilkoblinger));
                 } else {
                     dotNetRef.invokeMethodAsync('OnSymbolClicked', symbolId, e.shiftKey);
                 }
                 groupMarkers = [];
+                tilkoblinger = [];
             });
         }
 
@@ -613,6 +1151,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
             let startHeightPct = 0;
             let startClientX = 0;
             let startClientY = 0;
+            let tilkoblinger = [];
 
             handleEl.addEventListener('pointerdown', (e) => {
                 if (e.button !== 0 || containerEl.dataset.locked === '1') {
@@ -625,6 +1164,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                 startClientY = e.clientY;
                 startWidthPct = parseFloat(markerEl.style.width) || 10;
                 startHeightPct = parseFloat(markerEl.style.height) || 10;
+                tilkoblinger = finnTilkoblinger(containerEl, [{ el: markerEl, startBoks: markerBoks(markerEl) }]);
                 safeCapture(handleEl, e.pointerId);
             });
 
@@ -635,8 +1175,8 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                 const rect = containerEl.getBoundingClientRect();
                 const dw = ((e.clientX - startClientX) / rect.width) * 100;
                 const dh = ((e.clientY - startClientY) / rect.height) * 100;
-                const newWidth = snapToGrid(Math.max(2, startWidthPct + dw));
-                const newHeight = snapToGrid(Math.max(2, startHeightPct + dh));
+                const newWidth = snapToGrid(containerEl, Math.max(2, startWidthPct + dw));
+                const newHeight = snapToGrid(containerEl, Math.max(2, startHeightPct + dh));
                 markerEl.style.width = newWidth + '%';
                 markerEl.style.height = newHeight + '%';
                 markerEl.dataset.w = newWidth;
@@ -645,6 +1185,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                 const top = parseFloat(markerEl.style.top) || 0;
                 markerEl.dataset.x = left + newWidth / 2;
                 markerEl.dataset.y = top + newHeight / 2;
+                oppdaterTilkobledeStreker(tilkoblinger);
             });
 
             handleEl.addEventListener('pointerup', (e) => {
@@ -655,10 +1196,60 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                 safeRelease(handleEl, e.pointerId);
                 const w = parseFloat(markerEl.dataset.w) || startWidthPct;
                 const h = parseFloat(markerEl.dataset.h) || startHeightPct;
-                dotNetRef.invokeMethodAsync('OnSymbolResized', symbolId, w, h);
+                dotNetRef.invokeMethodAsync('OnSymbolResized', symbolId, w, h, tilkoblingerTilJson(tilkoblinger));
+                tilkoblinger = [];
             });
         }
     });
+}
+
+// Hurtigtaster for selve editoren: S = tegn strek, V = velg/flytt,
+// T = tekst, Ctrl+Z / Ctrl+Y = angre / gjør om, Esc = fjern markering.
+export function enableEditorSnarveier(containerEl, dotNetRef) {
+    if (containerEl._editorSnarveier) {
+        return;
+    }
+    const handler = (e) => {
+        if (containerEl.dataset.rediger !== '1') {
+            return;
+        }
+        const tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) {
+            return;
+        }
+        const ctrl = e.ctrlKey || e.metaKey;
+        const tast = e.key.toLowerCase();
+        let kommando = null;
+        if (ctrl && tast === 'z') {
+            kommando = e.shiftKey ? 'gjorom' : 'angre';
+        } else if (ctrl && tast === 'y') {
+            kommando = 'gjorom';
+        } else if (!ctrl && !e.altKey) {
+            if (tast === 's') {
+                kommando = 'strek';
+            } else if (tast === 'v') {
+                kommando = 'velg';
+            } else if (tast === 't') {
+                kommando = 'tekst';
+            } else if (e.key === 'Escape' && !currentStrekTegning) {
+                kommando = 'avvelg';
+            }
+        }
+        if (kommando) {
+            e.preventDefault();
+            dotNetRef.invokeMethodAsync('OnSnarvei', kommando);
+        }
+    };
+    containerEl._editorSnarveier = handler;
+    document.addEventListener('keydown', handler);
+}
+
+export function disableEditorSnarveier(containerEl) {
+    if (containerEl._editorSnarveier) {
+        document.removeEventListener('keydown', containerEl._editorSnarveier);
+        containerEl._editorSnarveier = null;
+    }
+    stopStrekTegning();
 }
 
 const NUDGE_STEP = 1;
