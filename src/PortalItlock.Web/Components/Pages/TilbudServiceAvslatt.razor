@@ -4,61 +4,180 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject VisningPreferanseService VisningPref
+@inject NavigationManager Nav
 
 <PageTitle>Avslåtte tilbud service</PageTitle>
 
-<a class="back-link" href="/tilbud-service">&larr; Tilbake til tilbud service</a>
+@* A1 (tilbud-service-arkiv-forslag.html): samme kort som tilbudslisten (L1-G),
+   i rødt. Nøkkeltall for tapt verdi og vinnerrate, og en tabell med sendt og
+   avslått dato, hvor lenge kunden hadde tilbudet, sum og "Prøv igjen" (kopi
+   av tilbudet som nytt utkast). *@
+<div class="ts-kort @(_full ? "ts-full" : "")">
+    <button type="button" class="ts-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+        <Icon Name="@(_full ? "minimize" : "maximize")" />
+    </button>
 
-<div class="side-header">
-    <span class="side-header-ikon side-header-ikon-rod"><Icon Name="x" /></span>
-    <div>
-        <h1>Avslåtte tilbud</h1>
-        <p class="section-hint">Tilbud som kunden har avslått, og som har ligget avslått i mer enn 7 dager (nylig avslåtte vises fortsatt i Avslått-kolonnen på tavlen).</p>
+    <a class="ts-tilbake" href="/tilbud-service">&larr; Tilbud service</a>
+
+    <div class="ts-topp">
+        <div>
+            <h1><span class="ts-hik ts-hik-rod"><Icon Name="x" /></span>Avslåtte tilbud</h1>
+            <p>Tilbud kunden har sagt nei til. Avslått de siste 7 dagene vises fortsatt på tavlen.</p>
+        </div>
+        <div class="ts-handl">
+            <a class="ts-kn" href="/tilbud-service/godkjent"><Icon Name="check-circle" />Godkjente</a>
+            <a class="ts-kn" href="/tilbud-service">&larr; Til tilbudene</a>
+        </div>
     </div>
-</div>
 
-<input class="sok-felt" @bind="_sok" @bind:event="oninput" placeholder="Søk på navn eller kunde..." />
+    @if (!_lastet)
+    {
+        <p class="list-empty">Laster...</p>
+    }
+    else if (_tilbud.Count == 0)
+    {
+        <p class="list-empty">Ingen avslåtte tilbud.</p>
+    }
+    else
+    {
+        var iAr = IAr;
+        var tapt = iAr.Sum(t => t.Sum);
+        var (godkjent, besvart) = TilbudServiceSvar.Vinnerrate(_svar, _ar);
+        <div class="ts-kpi ts-kpi-2">
+            <div class="ts-kpi-rod">
+                <span class="ts-lbl">@(_ar is int ar ? $"Tapt i {ar}" : "Tapt totalt")</span>
+                <b>@Kr(tapt)</b>
+                <small>
+                    @iAr.Count tilbud
+                    @if (_ar is int a && _tilbud.Any(t => t.Avslatt.Year == a - 1))
+                    {
+                        var ifjor = _tilbud.Where(t => t.Avslatt.Year == a - 1).Sum(t => t.Sum);
+                        var endring = ifjor == 0 ? 0 : (int)Math.Round((tapt - ifjor) / ifjor * 100);
+                        @* Mindre tapt enn i fjor er bra (grønt). *@
+                        <span class="ts-delta @(endring <= 0 ? "opp" : "ned")">· @(endring <= 0 ? "▼" : "▲") @Math.Abs(endring) % mot @(a - 1)</span>
+                    }
+                </small>
+            </div>
+            <div>
+                <span class="ts-lbl">Vinnerrate</span>
+                <b>@(besvart == 0 ? "–" : $"{Math.Round(godkjent * 100m / besvart)} %")</b>
+                <small>@(besvart - godkjent) av @besvart besvarte tilbud ble avslått</small>
+            </div>
+        </div>
 
-@if (_tilbud.Count == 0)
-{
-    <p class="list-empty">Ingen avslåtte tilbud.</p>
-}
-else if (_synlige.Count == 0)
-{
-    <p class="list-empty">Ingen treff.</p>
-}
-else
-{
-    <div class="avtale-liste">
-        @foreach (var t in _synlige)
-        {
-            <div class="avtale-rad" @key="t.TilbudId">
-                <a class="avtale-lenke" href="@($"/tilbud/{t.TilbudId}")"></a>
-                <span class="avtale-ikon"><Icon Name="file-text" /></span>
-                <div class="avtale-info">
-                    <div class="avtale-navn">@t.Tittel</div>
-                    <div class="avtale-meta">
-                        @if (string.IsNullOrWhiteSpace(t.KundeNavn))
-                        {
-                            <span class="ingen-kunde">Ingen kunde satt</span>
-                        }
-                        else
-                        {
-                            @t.KundeNavn
-                        }
-                        &middot; Opprettet @t.OpprettetDato.ToString("dd.MM.yyyy")
-                    </div>
-                </div>
-                @if (t.SendtSum is { } sum)
+        <div class="ts-verktoy">
+            <label class="ts-sok">
+                <Icon Name="search" />
+                <input @bind="_sok" @bind:event="oninput" @bind:after="TilForsteSide" placeholder="Søk på tilbud eller kunde..." />
+            </label>
+            <select class="ts-velg" title="År" value="@(_ar?.ToString() ?? "")" @onchange="VelgAr">
+                <option value="">Alle år</option>
+                @foreach (var aar in Ar)
                 {
-                    <span class="avtale-sum">@sum.ToString("N0", Kultur) kr</span>
+                    <option value="@aar">@aar</option>
                 }
-                <span class="apne-pil"><Icon Name="arrow-left" /></span>
+            </select>
+            <select class="ts-velg" title="Sortering" value="@(_nyeste ? "nyeste" : "eldste")" @onchange="@(e => { _nyeste = (string?)e.Value == "nyeste"; _side = 1; })">
+                <option value="nyeste">Nyeste først</option>
+                <option value="eldste">Eldste først</option>
+            </select>
+        </div>
+
+        var liste = Filtrert;
+        if (liste.Count == 0)
+        {
+            <p class="list-empty">@(string.IsNullOrWhiteSpace(_sok) ? "Ingen avslåtte tilbud i valgt år." : "Ingen avslåtte tilbud som passer søket.")</p>
+        }
+        else
+        {
+            <div class="ts-tabwrap">
+                <table class="ts-tab">
+                    <thead>
+                        <tr>
+                            <th>Tilbud</th>
+                            <th>Sendt</th>
+                            <th>Avslått</th>
+                            <th class="ts-hos">Tid hos kunden</th>
+                            <th class="ts-h">Sum eks. mva</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in liste.Skip((GjeldendeSide - 1) * _perSide).Take(_perSide))
+                        {
+                            <tr @key="t.TilbudId" @onclick="@(() => Nav.NavigateTo($"/tilbud/{t.TilbudId}"))">
+                                <td>
+                                    <span class="ts-tilbud">
+                                        <span class="ts-av" style="background:@Farge(t.KundeNavn ?? t.Tittel)">@Initialer(t.KundeNavn ?? t.Tittel)</span>
+                                        <span class="ts-tilbud-tekst">
+                                            <b>@t.Tittel</b>
+                                            <small>@(t.KundeNavn ?? "Ingen kunde satt") · #@t.TilbudId</small>
+                                        </span>
+                                    </span>
+                                </td>
+                                <td class="ts-mut">@(t.SendtDato?.ToString("dd.MM.yyyy") ?? "–")</td>
+                                <td>@t.Avslatt.ToString("dd.MM.yyyy")</td>
+                                <td class="ts-hos">
+                                    @if (t.TidHosKunden is int dager)
+                                    {
+                                        <span class="ts-vent ts-vent-rod">
+                                            <span class="ts-vent-linje"><i style="width:@Math.Min(100, dager * 100 / 30)%"></i></span>
+                                            <b>@dager d</b>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="ts-mut">–</span>
+                                    }
+                                </td>
+                                <td class="ts-h"><b>@(t.Sum > 0 ? Kr(t.Sum) : "–")</b></td>
+                                <td class="ts-h">
+                                    <button type="button" class="ts-kn ts-kn-s" title="Lag en kopi av tilbudet som nytt utkast" disabled="@(_kopiererId is not null)"
+                                            @onclick="@(() => ProvIgjen(t.TilbudId))" @onclick:stopPropagation="true">
+                                        @(_kopiererId == t.TilbudId ? "Kopierer..." : "↻ Prøv igjen")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="4">Tapt &ndash; @liste.Count avslåtte tilbud</td>
+                            <td class="ts-h">@Kr(liste.Sum(t => t.Sum))</td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <div class="ts-bunn">
+                <span>Viser @((GjeldendeSide - 1) * _perSide + 1)–@Math.Min(GjeldendeSide * _perSide, liste.Count) av @liste.Count</span>
+                <div class="ts-bunn-hoyre">
+                    <select class="ts-velg ts-velg-s" title="Antall per side" value="@_perSide" @onchange="@(e => { _perSide = int.Parse((string)e.Value!); _side = 1; })">
+                        <option value="10">10 per side</option>
+                        <option value="15">15 per side</option>
+                        <option value="20">20 per side</option>
+                    </select>
+                    @if (AntallSider > 1)
+                    {
+                        <div class="ts-sideknapper">
+                            <button type="button" disabled="@(GjeldendeSide == 1)" @onclick="@(() => _side = GjeldendeSide - 1)">&lsaquo;</button>
+                            @for (var i = 1; i <= AntallSider; i++)
+                            {
+                                var nr = i;
+                                <button type="button" class="@(nr == GjeldendeSide ? "aktiv" : "")" @onclick="@(() => _side = nr)">@nr</button>
+                            }
+                            <button type="button" disabled="@(GjeldendeSide == AntallSider)" @onclick="@(() => _side = GjeldendeSide + 1)">&rsaquo;</button>
+                        </div>
+                    }
+                </div>
             </div>
         }
-    </div>
-}
+    }
+</div>
 
 @code {
     private sealed class TilbudRad
@@ -66,22 +185,121 @@ else
         public int TilbudId { get; set; }
         public string Tittel { get; set; } = "";
         public string? KundeNavn { get; set; }
-        public DateTime OpprettetDato { get; set; }
+        public DateTime? SendtDato { get; set; }
         public decimal? SendtSum { get; set; }
+        public DateTime Avslatt { get; set; }
+        public decimal Sum { get; set; }
+
+        // Hvor lenge kunden hadde tilbudet før det ble avslått.
+        public int? TidHosKunden => SendtDato is { } s ? Math.Max(0, (Avslatt.Date - s.Date).Days) : null;
     }
 
     private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
-    private List<TilbudRad> _tilbud = [];
-    private string _sok = "";
+    private static readonly string[] Paletten = ["#835e41", "#2054a3", "#a1690a", "#2b7a4b", "#7a2b96", "#b5502d", "#3a6fb5"];
 
-    private List<TilbudRad> _synlige => string.IsNullOrWhiteSpace(_sok)
-        ? _tilbud
-        : _tilbud.Where(t => t.Tittel.Contains(_sok, StringComparison.OrdinalIgnoreCase)
-            || (t.KundeNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false))
-          .ToList();
+    private List<TilbudRad> _tilbud = [];
+    private List<TilbudServiceSvar.Svar> _svar = [];
+    private bool _lastet;
+    private bool _full;
+    private string _sok = "";
+    private int? _ar;
+    private bool _nyeste = true;
+    private int _perSide = 10;
+    private int _side = 1;
+    private int? _kopiererId;
+
+    private List<int> Ar => _tilbud.Select(t => t.Avslatt.Year).Distinct().OrderByDescending(a => a).ToList();
+
+    private List<TilbudRad> IAr => _tilbud.Where(t => _ar is null || t.Avslatt.Year == _ar).ToList();
+
+    private List<TilbudRad> Filtrert
+    {
+        get
+        {
+            var rader = IAr.Where(t => string.IsNullOrWhiteSpace(_sok)
+                || t.Tittel.Contains(_sok, StringComparison.OrdinalIgnoreCase)
+                || (t.KundeNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false));
+            return (_nyeste ? rader.OrderByDescending(t => t.Avslatt) : rader.OrderBy(t => t.Avslatt)).ToList();
+        }
+    }
+
+    private int AntallSider => Math.Max(1, (int)Math.Ceiling(Filtrert.Count / (double)_perSide));
+    private int GjeldendeSide => Math.Clamp(_side, 1, AntallSider);
+
+    private static string Kr(decimal v) => v.ToString("N0", Kultur) + " kr";
+
+    private static string Initialer(string navn) => string.Concat(
+        navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(d => char.ToUpperInvariant(d[0])));
+
+    private static string Farge(string navn)
+    {
+        unchecked
+        {
+            var h = 17;
+            foreach (var c in navn) { h = h * 31 + c; }
+            return Paletten[(h & int.MaxValue) % Paletten.Length];
+        }
+    }
+
+    private void TilForsteSide() => _side = 1;
+
+    private void VelgAr(ChangeEventArgs e)
+    {
+        _ar = int.TryParse((string?)e.Value, out var ar) ? ar : null;
+        _side = 1;
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("avslatte-tilbud-bredde", _full ? "full" : "normal");
+    }
+
+    // "Prøv igjen": kopierer tilbudet med alle linjer til et nytt utkast på
+    // samme serviceprosjekt, og åpner det. Det avslåtte tilbudet blir liggende.
+    private async Task ProvIgjen(int tilbudId)
+    {
+        _kopiererId = tilbudId;
+        var gammelt = await Db.Tilbud.AsNoTracking().Include(t => t.Linjer).FirstOrDefaultAsync(t => t.Id == tilbudId);
+        if (gammelt is null)
+        {
+            _kopiererId = null;
+            return;
+        }
+
+        var nytt = (Tilbud)Db.Entry(gammelt).CurrentValues.ToObject();
+        nytt.Id = 0;
+        nytt.Status = EndringsmeldingStatus.Utkast;
+        nytt.OpprettetDato = DateTime.UtcNow;
+        nytt.OppdatertDato = null;
+        nytt.SendtDato = null;
+        nytt.SendtSum = null;
+        nytt.AvslattDato = null;
+        nytt.GyldigTil = null;
+        nytt.Linjer = gammelt.Linjer.Select(l =>
+        {
+            var kopi = (TilbudLinje)Db.Entry(l).CurrentValues.ToObject();
+            kopi.Id = 0;
+            kopi.TilbudId = 0;
+            kopi.Plukket = false;
+            kopi.PlukketDato = null;
+            kopi.PlukketAvBrukerId = null;
+            return kopi;
+        }).ToList();
+        nytt.Hendelser =
+        [
+            new TilbudHendelse { Beskrivelse = $"Tilbudet ble opprettet som kopi av avslått tilbud #{tilbudId}" }
+        ];
+
+        Db.Tilbud.Add(nytt);
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo($"/tilbud/{nytt.Id}");
+    }
 
     protected override async Task OnInitializedAsync()
     {
+        _full = await VisningPref.HentAsync("avslatte-tilbud-bredde", "normal") == "full";
+
         // Nylig avslåtte (innenfor 7 dager) vises fortsatt i Avslått-kolonnen
         // på selve tavlen (se TilbudServiceListe.razor/ErNyligAvslatt) - denne
         // arkivsiden viser derfor kun de som enten mangler AvslattDato (avslått
@@ -92,16 +310,27 @@ else
             .Where(t => t.Prosjekt!.Status == ProsjektStatus.Serviceavtale
                 && t.Status == EndringsmeldingStatus.Avslatt
                 && (t.AvslattDato == null || t.AvslattDato < grense))
-            .Include(t => t.Prosjekt).ThenInclude(p => p!.Kunde)
-            .OrderByDescending(t => t.OppdatertDato ?? t.OpprettetDato)
             .Select(t => new TilbudRad
             {
                 TilbudId = t.Id,
                 Tittel = t.Tittel,
                 KundeNavn = t.Prosjekt!.Kunde != null ? t.Prosjekt.Kunde.Navn : null,
-                OpprettetDato = t.OpprettetDato,
+                SendtDato = t.SendtDato,
                 SendtSum = t.SendtSum
             })
             .ToListAsync();
+
+        _svar = await TilbudServiceSvar.HentAsync(Db);
+        var svarDato = _svar.ToDictionary(s => s.TilbudId, s => s.Dato);
+        var beregnet = await TilbudServiceSvar.BeregnSummerAsync(Db, _tilbud.Where(t => t.SendtSum is null).Select(t => t.TilbudId));
+
+        foreach (var t in _tilbud)
+        {
+            t.Avslatt = svarDato.GetValueOrDefault(t.TilbudId, DateTime.Today);
+            t.Sum = t.SendtSum ?? beregnet.GetValueOrDefault(t.TilbudId);
+        }
+
+        _ar = Ar.Contains(DateTime.Today.Year) ? DateTime.Today.Year : null;
+        _lastet = true;
     }
 }
