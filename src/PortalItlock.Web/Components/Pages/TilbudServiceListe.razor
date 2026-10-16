@@ -4,11 +4,17 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject PortalItlock.Web.Services.VisningPreferanseService VisningPref
 
-<PageTitle>Tilbud</PageTitle>
+<PageTitle>Tilbud service</PageTitle>
 
+@* Kanban-visningen er som før. Listevisningen er L1-G (tilbud-service-liste-forslag.html):
+   ett kort med nøkkeltall i én ramme og tabell over utkast og tilbud sendt til kunde,
+   med sum og "hos kunden" som en linje som fylles opp mot 30 dager. *@
+@if (_visning == Visning.Kanban)
+{
 <div class="tilbud-service-side">
 <div class="side-header">
     <span class="side-header-ikon"><Icon Name="file-text" /></span>
@@ -103,34 +109,6 @@ else if (_synlige.Count == 0)
 {
     <p class="list-empty">Ingen treff.</p>
 }
-else if (_visning == Visning.Liste)
-{
-    <div class="avtale-liste">
-        @foreach (var t in _synlige)
-        {
-            <div class="avtale-rad" @key="t.TilbudId">
-                <a class="avtale-lenke" href="@($"/tilbud/{t.TilbudId}")"></a>
-                <span class="avtale-ikon"><Icon Name="file-text" /></span>
-                <div class="avtale-info">
-                    <div class="avtale-navn">@t.Tittel</div>
-                    <div class="avtale-meta">
-                        @if (string.IsNullOrWhiteSpace(t.KundeNavn))
-                        {
-                            <span class="ingen-kunde">Ingen kunde satt</span>
-                        }
-                        else
-                        {
-                            @t.KundeNavn
-                        }
-                        &middot; Opprettet @t.OpprettetDato.ToString("dd.MM.yyyy")
-                    </div>
-                </div>
-                <StatusPill Tekst="@t.Status.Visningsnavn()" Ikon="@t.Status.PillIkon()" Farge="@t.Status.PillFarge()" />
-                <span class="apne-pil"><Icon Name="arrow-left" /></span>
-            </div>
-        }
-    </div>
-}
 else
 {
     <div class="tilbud-tavle">
@@ -187,6 +165,166 @@ else
     </div>
 }
 </div>
+}
+else
+{
+<div class="tilbud-service-side ts-kort @(_full ? "ts-full" : "")">
+    <button type="button" class="ts-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+        <Icon Name="@(_full ? "minimize" : "maximize")" />
+    </button>
+
+    <div class="ts-topp">
+        <div>
+            <h1>Tilbud service</h1>
+            <p>Tilbud for serviceavtaler. Montasje-minuttene hentes fra arbeidsordre-minuttene i komponentregisteret, siden det ikke finnes dører å beregne fra.</p>
+        </div>
+        <div class="ts-handl">
+            <a class="ts-kn" href="/tilbud-service/godkjent"><Icon Name="check-circle" />Godkjente</a>
+            <a class="ts-kn" href="/tilbud-service/avslatt"><Icon Name="x" />Avslåtte</a>
+            <button type="button" class="ts-kn ts-kn-p" @onclick="@(() => _visNytt = !_visNytt)"><Icon Name="plus" />Nytt tilbud</button>
+        </div>
+    </div>
+
+    @if (_visNytt)
+    {
+        <div class="ts-ny">
+            <b>Nytt tilbud service</b>
+            <div class="ts-ny-felt">
+                <input @bind="_nyttNavn" @bind:event="oninput" placeholder="Navn, f.eks. Storgata 5 - service" />
+                <select @bind="_valgtKundeId">
+                    <option value="">Ingen kunde satt</option>
+                    @foreach (var k in _kunder)
+                    {
+                        <option value="@k.Id">@k.Navn</option>
+                    }
+                </select>
+                <input @bind="_nyAdresse" @bind:event="oninput" placeholder="Adresse (valgfritt)" />
+                <button type="button" class="ts-kn ts-kn-p" @onclick="OpprettTilbudService" disabled="@string.IsNullOrWhiteSpace(_nyttNavn)">Opprett</button>
+            </div>
+        </div>
+    }
+
+    @if (_tilbud.Count > 0)
+    {
+        var sendt = Aktive.Where(t => t.Status == EndringsmeldingStatus.SendtTilKunde).ToList();
+        var utkast = Aktive.Where(t => t.Status == EndringsmeldingStatus.Utkast).ToList();
+        var lenge = sendt.Where(t => t.DagerHosKunden > 14).OrderByDescending(t => t.DagerHosKunden).ToList();
+        <div class="ts-kpi">
+            <div class="ts-kpi-hoved">
+                <span class="ts-lbl">Til oppfølging</span>
+                <b>@Kr(sendt.Sum(t => t.Sum))</b>
+                <small>@sendt.Count @(sendt.Count == 1 ? "tilbud" : "tilbud") sendt til kunde</small>
+            </div>
+            <div class="@(lenge.Count > 0 ? "rod" : "")">
+                <span class="ts-lbl">Venter over 14 dager</span>
+                <b>@lenge.Count</b>
+                <small>@(lenge.FirstOrDefault() is { } eldst ? $"{eldst.Tittel} – {eldst.DagerHosKunden} dager" : "ingen venter lenge")</small>
+            </div>
+            <div>
+                <span class="ts-lbl">Utkast</span>
+                <b>@utkast.Count</b>
+                <small>@Kr(utkast.Sum(t => t.Sum)) · ikke sendt ennå</small>
+            </div>
+            <div>
+                <span class="ts-lbl">Snitt tid hos kunden</span>
+                <b>@(sendt.Count == 0 ? "–" : $"{Math.Round(sendt.Average(t => t.DagerHosKunden ?? 0))} dager")</b>
+                <small>for tilbud som venter på svar</small>
+            </div>
+        </div>
+
+        <div class="ts-verktoy">
+            <label class="ts-sok">
+                <Icon Name="search" />
+                <input @bind="_sok" @bind:event="oninput" placeholder="Søk på tilbud eller kunde..." />
+            </label>
+            @if (_visning == Visning.Liste)
+            {
+                <button type="button" class="ts-chip @(_filter == "alle" ? "pa" : "")" @onclick='@(() => _filter = "alle")'>Alle <i>@Aktive.Count</i></button>
+                <button type="button" class="ts-chip @(_filter == "utkast" ? "pa" : "")" @onclick='@(() => _filter = "utkast")'>Utkast <i>@utkast.Count</i></button>
+                <button type="button" class="ts-chip @(_filter == "sendt" ? "pa" : "")" @onclick='@(() => _filter = "sendt")'>Sendt til kunde <i>@sendt.Count</i></button>
+            }
+            <div class="ts-seg">
+                <button type="button" class="@(_visning == Visning.Kanban ? "aktiv" : "")" @onclick="@(() => VelgVisning(Visning.Kanban))"><Icon Name="box" />Kanban</button>
+                <button type="button" class="@(_visning == Visning.Liste ? "aktiv" : "")" @onclick="@(() => VelgVisning(Visning.Liste))"><Icon Name="file-text" />Liste</button>
+            </div>
+        </div>
+    }
+
+@if (_tilbud.Count == 0)
+{
+    <p class="list-empty">Ingen tilbud service opprettet ennå.</p>
+}
+else
+{
+    var liste = Listerader;
+    if (liste.Count == 0)
+    {
+        <p class="list-empty">@(string.IsNullOrWhiteSpace(_sok) ? "Ingen utkast eller tilbud sendt til kunde." : "Ingen utkast eller tilbud sendt til kunde som passer søket.")</p>
+    }
+    else
+    {
+        <div class="ts-tabwrap">
+            <table class="ts-tab">
+                <thead>
+                    <tr>
+                        <th>Tilbud</th>
+                        <th>Status</th>
+                        <th>Sendt</th>
+                        <th class="ts-hos">Hos kunden</th>
+                        <th class="ts-h">Sum eks. mva</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in liste)
+                    {
+                        <tr @key="t.TilbudId" @onclick="@(() => Nav.NavigateTo($"/tilbud/{t.TilbudId}"))">
+                            <td>
+                                <span class="ts-tilbud">
+                                    <span class="ts-av" style="background:@Farge(t.KundeNavn ?? t.Tittel)">@Initialer(t.KundeNavn ?? t.Tittel)</span>
+                                    <span class="ts-tilbud-tekst">
+                                        <b>@t.Tittel</b>
+                                        <small>@(t.KundeNavn ?? "Ingen kunde satt") · #@t.TilbudId</small>
+                                    </span>
+                                </span>
+                            </td>
+                            <td><StatusPill Tekst="@t.Status.Visningsnavn()" Ikon="@t.Status.PillIkon()" Farge="@t.Status.PillFarge()" /></td>
+                            <td>@(t.SendtDato?.ToLocalTime().ToString("dd.MM.yyyy") ?? "ikke sendt")</td>
+                            <td class="ts-hos">
+                                @if (t.DagerHosKunden is int dager)
+                                {
+                                    <span class="ts-vent ts-vent-@VentKlasse(dager)">
+                                        <span class="ts-vent-linje"><i style="width:@Math.Min(100, dager * 100 / 30)%"></i></span>
+                                        <b>@dager d</b>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="ts-mut">–</span>
+                                }
+                            </td>
+                            <td class="ts-h"><b>@(t.Sum > 0 ? Kr(t.Sum) : "–")</b></td>
+                            <td class="ts-h">
+                                <a class="ts-kn ts-kn-s @(t.Status == EndringsmeldingStatus.Utkast || t.DagerHosKunden > 14 ? "ts-kn-p" : "")" href="@($"/tilbud/{t.TilbudId}")" @onclick:stopPropagation="true">
+                                    @(t.Status == EndringsmeldingStatus.Utkast ? "Send til kunde" : "Følg opp")
+                                </a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="4">Sum &ndash; @liste.Count tilbud</td>
+                        <td class="ts-h">@Kr(liste.Sum(t => t.Sum))</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    }
+}
+</div>
+}
 
 @code {
     private sealed class KundeOption
@@ -205,6 +343,15 @@ else
         public decimal? SendtSum { get; set; }
         public string? ProsjektlederNavn { get; set; }
         public DateTime? AvslattDato { get; set; }
+        public DateTime? SendtDato { get; set; }
+
+        // Summen kunden fikk, eller for utkast det tilbudet står på nå.
+        public decimal Sum { get; set; }
+
+        // Hvor lenge tilbudet har ligget hos kunden (bare for sendte tilbud).
+        public int? DagerHosKunden => Status == EndringsmeldingStatus.SendtTilKunde && SendtDato is { } d
+            ? Math.Max(0, (DateTime.Today - d.ToLocalTime().Date).Days)
+            : null;
 
         // Godkjent tilbud forsvinner fra denne siden og over til "Godkjente
         // tilbud" (/tilbud-service/godkjent) først når arbeidsordren som ble
@@ -254,6 +401,55 @@ else
     // Hovedsiden viser kun tilbud som fortsatt er "i arbeid": aldri avslåtte
     // (de ligger på egen side), og godkjente kun frem til arbeidsordren er
     // ferdigmeldt (deretter flyttes de til /tilbud-service/godkjent).
+
+    // ---------- L1-G: listevisning med utkast og sendt til kunde ----------
+    private bool _full;
+    private bool _visNytt;
+    private string _filter = "alle";
+
+    private static readonly string[] Paletten = ["#835e41", "#2054a3", "#a1690a", "#2b7a4b", "#7a2b96", "#b5502d", "#3a6fb5"];
+
+    // Utkast og tilbud sendt til kunde (etter søk). Godkjente og avslåtte har egne sider.
+    private List<TilbudRad> Aktive => _tilbud
+        .Where(t => t.Status is EndringsmeldingStatus.Utkast or EndringsmeldingStatus.SendtTilKunde)
+        .Where(t => string.IsNullOrWhiteSpace(_sok)
+            || t.Tittel.Contains(_sok, StringComparison.OrdinalIgnoreCase)
+            || (t.KundeNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false))
+        .ToList();
+
+    // Sendte først, det som har ligget lengst hos kunden øverst - så utkastene, nyeste først.
+    private List<TilbudRad> Listerader => Aktive
+        .Where(t => _filter switch
+        {
+            "utkast" => t.Status == EndringsmeldingStatus.Utkast,
+            "sendt" => t.Status == EndringsmeldingStatus.SendtTilKunde,
+            _ => true
+        })
+        .OrderBy(t => t.Status == EndringsmeldingStatus.SendtTilKunde ? 0 : 1)
+        .ThenByDescending(t => t.DagerHosKunden ?? -1)
+        .ThenByDescending(t => t.OpprettetDato)
+        .ToList();
+
+    private static string VentKlasse(int dager) => dager > 14 ? "rod" : dager > 7 ? "gul" : "gronn";
+
+    private static string Kr(decimal v) => v.ToString("N0", Kultur) + " kr";
+
+    private static string Farge(string navn)
+    {
+        unchecked
+        {
+            var h = 17;
+            foreach (var c in navn) { h = h * 31 + c; }
+            return Paletten[(h & int.MaxValue) % Paletten.Length];
+        }
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("tilbud-service-bredde", _full ? "full" : "normal");
+    }
+
     private int AntallMedStatus(EndringsmeldingStatus status) => _tilbud.Count(t => t.Status == status);
 
     private decimal VerdiSendtTilKunde => _tilbud
@@ -278,6 +474,8 @@ else
         _nyttNavn = NavnFraQuery ?? "";
         _valgtKundeId = KundeIdFraQuery;
         _nyAdresse = AdresseFraQuery;
+        _visNytt = !string.IsNullOrWhiteSpace(NavnFraQuery);
+        _full = await VisningPref.HentAsync("tilbud-service-bredde", "normal") == "full";
 
         var lagretVisning = await VisningPref.HentAsync("tilbud-service", _visning.ToString());
         if (Enum.TryParse<Visning>(lagretVisning, out var visning))
@@ -305,10 +503,22 @@ else
                 SendtSum = t.SendtSum,
                 AvslattDato = t.AvslattDato,
                 ProsjektlederNavn = t.Prosjekt.Prosjektleder != null ? t.Prosjekt.Prosjektleder.Navn : null,
+                SendtDato = t.SendtDato,
                 ArbeidsordreFerdig = Db.Arbeidsordre.Any(a => a.TilbudId == t.Id
                     && (a.Status == ArbeidsordreStatus.Ferdig || a.Status == ArbeidsordreStatus.Fakturert))
             })
             .ToListAsync();
+
+        // Summen: det kunden fikk (SendtSum), ellers regnet som på tilbudssiden.
+        var utenSum = _tilbud.Where(t => t.SendtSum is null).Select(t => t.TilbudId).ToList();
+        var beregnet = utenSum.Count == 0
+            ? []
+            : (await Db.Tilbud.Where(t => utenSum.Contains(t.Id)).Include(t => t.Linjer).ToListAsync())
+                .ToDictionary(t => t.Id, TilbudBeregningHelper.BeregnTotaltUtenMva);
+        foreach (var rad in _tilbud)
+        {
+            rad.Sum = rad.SendtSum ?? beregnet.GetValueOrDefault(rad.TilbudId);
+        }
     }
 
     private async Task VelgVisning(Visning visning)
