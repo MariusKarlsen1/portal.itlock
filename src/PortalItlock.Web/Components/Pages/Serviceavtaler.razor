@@ -6,6 +6,7 @@
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>Serviceavtaler</PageTitle>
 
@@ -50,6 +51,55 @@
 
 @if (_avtaler.Count > 0)
 {
+    @* S9-I (service-forslag.html): tallene i en smal stripe, kart med gjøremålene
+       nummerert, og "Trenger handling" med én knapp per gjøremål. Nummeret på
+       kartet og i lista er det samme, så man kobler "hva" og "hvor". *@
+    var gjoremal = Gjoremal;
+    var runderTotalt = _avtaler.Sum(a => a.RunderIAr.Count);
+    <div class="sv9-tall">
+        <span><b>@_avtaler.Count</b> avtaler · @_avtaler.Sum(a => a.Dorer) dører</span>
+        <span class="@(gjoremal.Count > 0 ? "rod" : "gronn")"><b>@gjoremal.Count</b> trenger handling</span>
+        <span class="gul"><b>@_avtaler.Count(a => a.ErSnartForfalt)</b> nærmer seg (14 dager)</span>
+        <span><b>@_avtaler.Sum(a => a.RunderIAr.Count(r => r == "u")) av @runderTotalt</b> runder utført i @Ar</span>
+    </div>
+
+    @if (_avtaler.Any(a => a.Lat.HasValue && a.Lng.HasValue))
+    {
+        <div class="sv9-kart-wrap">
+            <div id="sv9-kart" class="sv9-kart"></div>
+            <div class="sv9-kart-leg">
+                <span><i style="background:#b23b22"></i>Forfalt</span>
+                <span><i style="background:#d9a520"></i>Nærmer seg</span>
+                <span><i style="background:#2e7d4f"></i>I rute</span>
+                <span><i style="background:#9c958a"></i>Uten dato</span>
+            </div>
+        </div>
+    }
+
+    <div class="sv9-gj">
+        <div class="sv9-gj-topp">
+            <b>Trenger handling · @gjoremal.Count</b>
+            <span>det som haster står øverst</span>
+        </div>
+        @if (gjoremal.Count == 0)
+        {
+            <div class="sv9-iorden"><Icon Name="check-circle" />Alt er i rute – ingen forfalte runder, avvik eller avtaler uten dato.</div>
+        }
+        @foreach (var g in gjoremal)
+        {
+            <div class="sv9-rad">
+                <span class="sv9-nr" style="background:@g.Farge">@g.Nr</span>
+                <span class="sv9-tekst">
+                    <b>@g.Tittel</b>
+                    <small>@(string.IsNullOrWhiteSpace(g.Avtale.StedTekst) ? "" : $"📍 {g.Avtale.StedTekst} · ")@g.Tekst</small>
+                </span>
+                <a class="sv-knapp @(g.Primaer ? "sv-knapp-p" : "")" href="@g.Href">@g.Knapp</a>
+            </div>
+        }
+    </div>
+
+    <h3 class="sv9-alle">Alle avtaler</h3>
+
     <div class="pillrow">
         <button type="button" class="pill @(_hurtigfilter == "alle" ? "aktiv" : "")" @onclick='@(() => SettHurtigfilter("alle"))'>
             <span class="pill-dot"></span>Alle @_avtaler.Count
@@ -284,6 +334,8 @@ else
         public string? Kontakt { get; set; }
         public string? Telefon { get; set; }
         public string? Montor { get; set; }
+        public double? Lat { get; set; }
+        public double? Lng { get; set; }
         public int Dorer { get; set; }
         public int MinutterPerBesok { get; set; }
         public int? IntervallMnd { get; set; }
@@ -427,6 +479,8 @@ else
                 Kontakt = !string.IsNullOrWhiteSpace(p.Kontaktperson) ? p.Kontaktperson : p.Kunde?.Kontaktperson,
                 Telefon = !string.IsNullOrWhiteSpace(p.Telefon) ? p.Telefon : p.Kunde?.Telefon,
                 Montor = p.AnsvarligMontor?.Navn ?? siste?.UtfortAv,
+                Lat = p.Latitude,
+                Lng = p.Longitude,
                 Dorer = dorer.GetValueOrDefault(p.Id),
                 MinutterPerBesok = minutter.GetValueOrDefault(p.Id),
                 IntervallMnd = intervall,
@@ -450,6 +504,87 @@ else
             rad.RunderIAr = aretsRunder.OrderBy(x => x.Dato).Select(x => x.Type).ToList();
             return rad;
         }).ToList();
+        _lastet = true;
+    }
+
+    // ---------- S9-I: "Trenger handling" og kart ----------
+    private sealed record GjoremalRad(int Nr, string Farge, string Tittel, string Tekst, string Knapp, string Href, bool Primaer, AvtaleRad Avtale);
+
+    private bool _kartTegnet;
+    private bool _lastet;
+
+    private static string StatusFarge(AvtaleRad a) => a.Gruppe switch
+    {
+        "forfalt" => "#b23b22",
+        "snart" => "#d9a520",
+        "utendato" => "#9c958a",
+        _ => "#2e7d4f"
+    };
+
+    private static string MontorDorerTid(AvtaleRad a) => string.Join(" · ", new[]
+    {
+        a.Montor ?? "Ingen montør",
+        $"{a.Dorer} {(a.Dorer == 1 ? "dør" : "dører")}",
+        a.MinutterPerBesok > 0 ? $"ca. {Varighet(a.MinutterPerBesok)}" : null
+    }.Where(s => s is not null));
+
+    // Rekkefølge: forfalt (eldst først), åpne avvik, nærmer seg, uten dato.
+    private List<GjoremalRad> Gjoremal
+    {
+        get
+        {
+            var liste = new List<(string Farge, string Tittel, string Tekst, string Knapp, string Href, bool Primaer, AvtaleRad Avtale)>();
+            foreach (var a in _avtaler.Where(a => a.ErForfalt).OrderBy(a => a.NesteServiceDato))
+            {
+                liste.Add(("#b23b22", $"{a.ProsjektNavn} er {Naar(a.NesteServiceDato)}", MontorDorerTid(a), "Planlegg", $"/serviceavtaler/{a.ProsjektId}?fane=service", true, a));
+            }
+            foreach (var a in _avtaler.Where(a => a.Avvik.Count > 0).OrderByDescending(a => a.Avvik.Count))
+            {
+                var forste = a.Avvik[0];
+                liste.Add(("#b23b22", $"{a.Avvik.Count} {(a.Avvik.Count == 1 ? "åpent avvik" : "åpne avvik")} – {a.ProsjektNavn}", $"Dør {forste.Dornummer}: {forste.Beskrivelse}", "Følg opp", $"/serviceavtaler/{a.ProsjektId}?fane=avvik", false, a));
+            }
+            foreach (var a in _avtaler.Where(a => a.ErSnartForfalt).OrderBy(a => a.NesteServiceDato))
+            {
+                liste.Add(("#d9a520", $"{a.ProsjektNavn} – service {Naar(a.NesteServiceDato)}", MontorDorerTid(a), "Planlegg", $"/serviceavtaler/{a.ProsjektId}?fane=service", false, a));
+            }
+            foreach (var a in _avtaler.Where(a => !a.NesteServiceDato.HasValue).OrderBy(a => a.ProsjektNavn))
+            {
+                liste.Add(("#9c958a", $"{a.ProsjektNavn} mangler neste service", a.Montor is null ? "Ingen dato og ingen montør" : $"Ingen dato satt · {a.Montor}", "Sett dato", $"/serviceavtaler/{a.ProsjektId}?fane=service", true, a));
+            }
+            return liste.Select((g, i) => new GjoremalRad(i + 1, g.Farge, g.Tittel, g.Tekst, g.Knapp, g.Href, g.Primaer, g.Avtale)).ToList();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_lastet || _kartTegnet || !_avtaler.Any(a => a.Lat.HasValue && a.Lng.HasValue))
+        {
+            return;
+        }
+        _kartTegnet = true;
+
+        // Hver avtale får nummeret til sitt første gjøremål, de andre vises som prikker.
+        var nummer = Gjoremal.GroupBy(g => g.Avtale.ProsjektId).ToDictionary(g => g.Key, g => g.First().Nr);
+        var punkter = _avtaler
+            .Where(a => a.Lat.HasValue && a.Lng.HasValue)
+            .Select(a => new
+            {
+                lat = a.Lat!.Value,
+                lng = a.Lng!.Value,
+                farge = nummer.ContainsKey(a.ProsjektId) ? Gjoremal.First(g => g.Avtale.ProsjektId == a.ProsjektId).Farge : StatusFarge(a),
+                nr = nummer.TryGetValue(a.ProsjektId, out var nr) ? nr : (int?)null,
+                tittel = $"{a.ProsjektNavn} – {(a.NesteServiceDato.HasValue ? $"neste service {a.NesteServiceDato:dd.MM.yyyy}" : "ingen dato")}",
+                href = $"/serviceavtaler/{a.ProsjektId}"
+            })
+            .ToList();
+
+        try
+        {
+            await JS.InvokeVoidAsync("minikart.visAvtaler", "sv9-kart", punkter);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
     }
 
     private void Veksl(int id)

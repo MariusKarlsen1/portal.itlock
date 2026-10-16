@@ -47,6 +47,57 @@ window.minikart = (function () {
         kart[elementId] = map;
     }
 
+    // Serviceavtaler (S9-I): gjøremålene som nummererte runder i statusfarge,
+    // de andre avtalene som små prikker. Kartet zoomes til alle punktene.
+    // punkter: [{ lat, lng, farge, nr (null = ingen nummer), tittel, href }]
+    function visAvtaler(elementId, punkter) {
+        const el = document.getElementById(elementId);
+        if (!el || typeof L === 'undefined' || !punkter || punkter.length === 0) {
+            return;
+        }
+
+        if (kart[elementId]) {
+            kart[elementId].remove();
+            delete kart[elementId];
+        }
+
+        const map = L.map(elementId, {
+            zoomControl: true,
+            attributionControl: false,
+            scrollWheelZoom: false
+        });
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+        // Prikkene først, så de nummererte ligger øverst.
+        const sortert = punkter.slice().sort((a, b) => (a.nr ? 1 : 0) - (b.nr ? 1 : 0));
+        sortert.forEach(function (p) {
+            const html = p.nr
+                ? `<span style="display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:${p.farge};color:#fff;font:800 12px Inter,Arial,sans-serif;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35)">${p.nr}</span>`
+                : `<span style="display:block;width:12px;height:12px;border-radius:50%;background:${p.farge};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)"></span>`;
+            const storrelse = p.nr ? 24 : 12;
+            const m = L.marker([p.lat, p.lng], {
+                icon: L.divIcon({ className: 'minikart-pin', html: html, iconSize: [storrelse, storrelse], iconAnchor: [storrelse / 2, storrelse / 2] }),
+                zIndexOffset: p.nr ? 1000 : 0
+            }).addTo(map);
+            if (p.tittel) {
+                m.bindTooltip(p.tittel, { direction: 'top', offset: [0, -storrelse / 2] });
+            }
+            if (p.href) {
+                m.on('click', function () { window.location.href = p.href; });
+            }
+        });
+
+        const grenser = L.latLngBounds(punkter.map(function (p) { return [p.lat, p.lng]; }));
+        if (punkter.length === 1) {
+            map.setView(grenser.getCenter(), 12);
+        } else {
+            map.fitBounds(grenser, { padding: [28, 28], maxZoom: 13 });
+        }
+
+        setTimeout(function () { map.invalidateSize(); }, 60);
+        kart[elementId] = map;
+    }
+
     function fjern(elementId) {
         if (kart[elementId]) {
             kart[elementId].remove();
@@ -54,5 +105,5 @@ window.minikart = (function () {
         }
     }
 
-    return { vis, fjern };
+    return { vis, visAvtaler, fjern };
 })();
