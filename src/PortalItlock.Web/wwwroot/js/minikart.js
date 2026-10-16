@@ -88,13 +88,34 @@ window.minikart = (function () {
         });
 
         const grenser = L.latLngBounds(punkter.map(function (p) { return [p.lat, p.lng]; }));
-        if (punkter.length === 1) {
-            map.setView(grenser.getCenter(), 12);
-        } else {
-            map.fitBounds(grenser, { padding: [28, 28], maxZoom: 13 });
+        function tilpass() {
+            if (punkter.length === 1) {
+                map.setView(grenser.getCenter(), 12);
+            } else {
+                map.fitBounds(grenser, { padding: [28, 28], maxZoom: 13 });
+            }
         }
+        tilpass();
 
         setTimeout(function () { map.invalidateSize(); }, 60);
+
+        // Når kortet endrer bredde (f.eks. utvid-knappen) må Leaflet måle
+        // kartet på nytt og zoome til punktene igjen, ellers blir det grått.
+        if (typeof ResizeObserver !== 'undefined') {
+            let bredde = el.clientWidth;
+            let ventende = null;
+            const obs = new ResizeObserver(function () {
+                if (el.clientWidth === bredde) {
+                    return;
+                }
+                bredde = el.clientWidth;
+                clearTimeout(ventende);
+                ventende = setTimeout(function () { map.invalidateSize(); tilpass(); }, 80);
+            });
+            obs.observe(el);
+            map.on('unload', function () { obs.disconnect(); clearTimeout(ventende); });
+        }
+
         kart[elementId] = map;
     }
 
