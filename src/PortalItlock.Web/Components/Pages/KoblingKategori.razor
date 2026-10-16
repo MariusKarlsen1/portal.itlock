@@ -26,20 +26,35 @@ else if (_kategori is not null)
                 <p class="section-hint">Velg et koblingsskjema i listen for å se det, eller velg komponenter for å bygge eget skjema.</p>
             </div>
         </div>
-        <AuthorizeView Roles="Admin">
-            <button type="button" class="knapp @(_redigerModus ? "knapp-aktiv" : "knapp-ghost")" @onclick="ToggleRedigerModus">
-                <Icon Name="edit" />
-                @(_redigerModus ? "Ferdig" : "Rediger")
-            </button>
-        </AuthorizeView>
+        <div class="kk-hodeknapper">
+            <AuthorizeView Roles="Admin">
+                <button type="button" class="knapp @(_redigerModus ? "knapp-aktiv" : "knapp-ghost")" @onclick="ToggleRedigerModus">
+                    <Icon Name="edit" />
+                    @(_redigerModus ? "Ferdig" : "Rediger")
+                </button>
+            </AuthorizeView>
+            @if (KanOppretteSkjema)
+            {
+                <button type="button" class="knapp knapp-primaer" @onclick="@(() => _visNytt = !_visNytt)"><Icon Name="plus" />Nytt skjema</button>
+            }
+        </div>
     </div>
 
-    @if (_skjemaer.Count == 0 && !_redigerModus)
+    @if (_skjemaer.Count == 0 && !_redigerModus && !_visNytt)
     {
         <p class="list-empty">Ingen koblingsskjema laget ennå.</p>
     }
     else
     {
+        @* I4 (kobling-system-forslag.html): alt i ett stort kort som dashbordet,
+           med faner for alle skjemaer, de som er koblet til et prosjekt, og
+           maler (uten prosjekt). Lista og skjemaet ligger som bokser inni. *@
+        <div class="kk-stort">
+        <div class="kk-faner">
+            <button type="button" class="@(_visning == "alle" ? "aktiv" : "")" @onclick='@(() => VelgVisning("alle"))'>Alle skjemaer <em>@_skjemaer.Count</em></button>
+            <button type="button" class="@(_visning == "prosjekt" ? "aktiv" : "")" @onclick='@(() => VelgVisning("prosjekt"))'>På prosjekter <em>@_skjemaer.Count(s => s.ProsjektId != null)</em></button>
+            <button type="button" class="@(_visning == "mal" ? "aktiv" : "")" @onclick='@(() => VelgVisning("mal"))'>Maler <em>@_skjemaer.Count(s => s.ProsjektId == null)</em></button>
+        </div>
         <div class="master-detail">
             <div class="master-panel">
                 <div class="search-box">
@@ -61,7 +76,7 @@ else if (_kategori is not null)
                 {
                     <p class="list-empty master-tomt-sok">Ingen treff.</p>
                 }
-                @if (_redigerModus)
+                @if ((_redigerModus || _visNytt) && KanOppretteSkjema)
                 {
                     <div class="master-nytt">
                         <input @bind="_nyttNavn" @bind:event="oninput"
@@ -90,7 +105,18 @@ else if (_kategori is not null)
                                     <h2>@_valgt.Navn</h2>
                                     <div class="skjema-tags">
                                         <span class="skjema-tag"><Icon Name="@_kategori.Ikon" />@_kategori.Navn</span>
-                                        <span class="skjema-tag"><Icon Name="file-text" />Systemskjema</span>
+                                        @if (_valgt.Prosjekt is not null)
+                                        {
+                                            <span class="skjema-tag"><Icon Name="folder" />@_valgt.Prosjekt.Navn@(_valgt.Dor is null ? "" : $" · dør {_valgt.Dor.Dornummer}")</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="skjema-tag"><Icon Name="file-text" />Mal</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(_valgt.Versjon))
+                                        {
+                                            <span class="skjema-tag">v@(_valgt.Versjon)</span>
+                                        }
                                         <span class="skjema-tag-dato">Oppdatert @DatoTekst(_valgt)</span>
                                     </div>
                                 </div>
@@ -253,6 +279,7 @@ else if (_kategori is not null)
                 }
             </div>
         </div>
+        </div>
     }
 }
 
@@ -282,9 +309,34 @@ else if (_kategori is not null)
     private string _nyKomponentType = "";
     private string _nyKomponentIkon = "box";
 
-    private List<KoblingsSkjema> _filtrerte => string.IsNullOrWhiteSpace(_sok)
-        ? _skjemaer
-        : _skjemaer.Where(s => s.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase)).ToList();
+    // Fanene i kortet: alle, de som er koblet til et prosjekt, og maler (uten prosjekt).
+    private string _visning = "alle";
+    private bool _visNytt;
+
+    private List<KoblingsSkjema> _filtrerte => _skjemaer
+        .Where(s => _visning switch
+        {
+            "prosjekt" => s.ProsjektId != null,
+            "mal" => s.ProsjektId == null,
+            _ => true
+        })
+        .Where(s => string.IsNullOrWhiteSpace(_sok)
+            || s.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase)
+            || (s.Prosjekt?.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false))
+        .ToList();
+
+    private void VelgVisning(string visning)
+    {
+        _visning = visning;
+        if (_valgtId is null || !_filtrerte.Any(s => s.Id == _valgtId))
+        {
+            var forste = _filtrerte.FirstOrDefault();
+            if (forste is not null)
+            {
+                VelgSkjema(forste.Id);
+            }
+        }
+    }
 
     private KoblingsSkjema? _valgt => _skjemaer.FirstOrDefault(s => s.Id == _valgtId);
 
@@ -337,6 +389,7 @@ else if (_kategori is not null)
             .Include(s => s.Symboler)
             .Include(s => s.Streker)
             .Include(s => s.Prosjekt)
+            .Include(s => s.Dor)
             .Include(s => s.Komponenter)
             .OrderByDescending(s => s.OppdatertDato ?? s.OpprettetDato)
             .ToListAsync();
