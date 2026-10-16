@@ -117,6 +117,7 @@ builder.Services.AddScoped<PrisendringUtforerService>();
 builder.Services.AddHostedService<PrisendringBackgroundService>();
 builder.Services.AddScoped<AvvikPdfService>();
 builder.Services.AddScoped<PlanUtstyrPdfService>();
+builder.Services.AddScoped<EtikettPdfService>();
 builder.Services.AddScoped<KoblingsSkjemaPdfService>();
 builder.Services.AddScoped<PlantegningDorPdfService>();
 builder.Services.AddScoped<ServicerapportPdfService>();
@@ -1474,6 +1475,43 @@ app.MapGet("/koblingsskjema/{id:int}/pdf", async (int id, HttpContext context, K
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
+
+// Etiketter for valgte varer i komponentregisteret (som "Lag etikett" i Tripletex).
+app.MapGet("/komponenter/etiketter/pdf", async (HttpContext context, EtikettPdfService service) =>
+{
+    var q = context.Request.Query;
+    var ider = q["ider"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries)
+        .Select(s => int.TryParse(s, out var id) ? id : 0).Where(id => id > 0).Take(1000).ToList();
+    if (ider.Count == 0)
+    {
+        return Results.BadRequest();
+    }
+
+    bool Flagg(string navn, bool standard) => q.ContainsKey(navn) ? q[navn] == "1" : standard;
+    var valg = new EtikettPdfService.Valg
+    {
+        Format = q["format"].ToString(),
+        Navn = Flagg("navn", true),
+        Produktkode = Flagg("kode", true),
+        Leverandor = Flagg("lev", false),
+        PrisInklMva = Flagg("inkl", true),
+        PrisEksMva = Flagg("eks", false),
+        Strekkode = Flagg("strek", true),
+        AntallPerVare = int.TryParse(q["antall"], out var antall) ? antall : 1,
+        Start = int.TryParse(q["start"], out var start) ? start : 1
+    };
+
+    var pdf = await service.GenerateAsync(ider, valg);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName($"Etiketter-{DateTime.Now:yyyy-MM-dd}.pdf");
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization(new AuthorizeAttribute { Roles = "Admin" });
 
 app.MapGet("/plantegning/{id:int}/pdf", async (int id, HttpContext context, PlantegningDorPdfService service) =>
 {
