@@ -4,132 +4,152 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject VisningPreferanseService VisningPref
 
-<PageTitle>Fakturerte ordre</PageTitle>
+<PageTitle>Fakturerte ordrer</PageTitle>
 
-<a class="tilbake-link" href="/arbeidsordre"><Icon Name="arrow-left" />Tilbake til arbeidsordre</a>
-
-<div class="fakturert-header">
-    <div class="fakturert-header-tittel">
-        <span class="fakturert-header-ikon"><Icon Name="receipt" /></span>
-        <h1>Fakturerte ordre</h1>
+@* K2 (fakturering-forslag.html): ett kort med nøkkeltall i én ramme, søylediagram
+   per måned som filter, nedtrekk for år og antall per side, tabell med sumrad
+   og utvid-knapp som på tilbud og ferdigmeldte ordrer. *@
+<div class="fm-kort @(_full ? "fm-full" : "")">
+    <button type="button" class="fm-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+        <Icon Name="@(_full ? "minimize" : "maximize")" />
+    </button>
+    <div class="fm-topp">
+        <a class="fm-tilbake" href="/arbeidsordre">&larr; Tilbake til arbeidsordre</a>
+        <h1>Fakturerte ordrer</h1>
+        <p>Arkiv over fakturerte arbeidsordrer &ndash; beløp, timer og hvem som gjorde jobben.</p>
     </div>
-    <p>Arkiv over fakturerte arbeidsordre &ndash; full oversikt over beløp, timer og hvem som gjorde jobben.</p>
-</div>
 
-@if (_rader.Count > 0)
-{
-    <div class="nokkeltall">
-        <div class="nokkel-kort">
-            <span class="nokkel-etikett">Fakturert i år</span>
-            <span class="nokkel-verdi stor">@FormatKr(FakturertIAr)</span>
-            <span class="nokkel-under">@AntallIAr ordre</span>
+    @if (_rader.Count > 0)
+    {
+        <div class="fm-kpi">
+            <div class="fm-kpi-hoved">
+                <span class="fm-lbl">Fakturert i år</span>
+                <b>@FormatKr(FakturertIAr)</b>
+                <small>@AntallIAr @(AntallIAr == 1 ? "ordre" : "ordrer")</small>
+            </div>
+            <div>
+                <span class="fm-lbl">Denne måneden</span>
+                <b>@FormatKr(DenneManeden)</b>
+                <small class="@(TrendProsent < 0 ? "fm-ned" : "fm-opp")">@(TrendProsent < 0 ? "▼" : "▲") @Math.Abs(TrendProsent).ToString("0") % mot forrige måned</small>
+            </div>
+            <div>
+                <span class="fm-lbl">Snitt per ordre i år</span>
+                <b>@FormatKr(SnittBelopIAr)</b>
+                <small>@SnittTimerIAr.ToString("N1", Kultur) t i snitt</small>
+            </div>
+            <div>
+                <span class="fm-lbl">Timer fakturert i år</span>
+                <b>@TimerIAr.ToString("N1", Kultur) t</b>
+                <small>på @AntallIAr @(AntallIAr == 1 ? "ordre" : "ordrer")</small>
+            </div>
         </div>
-        <div class="nokkel-kort">
-            <span class="nokkel-etikett">Denne måneden</span>
-            <span class="nokkel-verdi">@FormatKr(DenneManeden)</span>
-            <span class="trend @(TrendProsent < 0 ? "ned" : "")">
-                <Icon Name="trend-up" />@(Math.Abs(TrendProsent).ToString("0")) % vs forrige måned
-            </span>
-        </div>
-        <div class="nokkel-kort">
-            <span class="nokkel-etikett">Antall ordre i år</span>
-            <span class="nokkel-verdi">@AntallIAr</span>
-            <span class="nokkel-under">av @_rader.Count totalt</span>
-        </div>
-        <div class="nokkel-kort">
-            <span class="nokkel-etikett">Snitt pr. ordre i år</span>
-            <span class="nokkel-verdi">@FormatKr(SnittBelopIAr)</span>
-            <span class="nokkel-under">@SnittTimerIAr.ToString("N1", Kultur) t i snitt</span>
-        </div>
-    </div>
-}
 
-<div class="fakturert-toolbar">
-    <label class="sok-felt">
-        <Icon Name="search" />
-        <input @bind="_sok" @bind:event="oninput" @bind:after="@(() => _side = 1)" placeholder="Søk på kunde, prosjekt eller tittel..." />
-    </label>
-    <div class="toolbar-hoyre">
-        <select class="periode-velger" value="@_periode" @onchange="@(e => { _periode = (string)e.Value!; _side = 1; })">
-            <option value="alle">Alle</option>
-            <option value="maned">Denne måneden</option>
-            <option value="3maneder">Siste 3 måneder</option>
-            <option value="ar">I år</option>
+        <div class="fm-graf-boks">
+            <span class="fm-lbl">Fakturert per måned · @(_ar is int a ? a.ToString() : "siste 12 måneder")</span>
+            <div class="fm-graf">
+                @{ var maks = Maneder.Max(m => m.Sum); }
+                @foreach (var m in Maneder)
+                {
+                    var valgt = _maned == m.Nokkel;
+                    <button type="button" class="fm-soyle @(valgt ? "valgt" : "") @(m.ErNa ? "na" : "")" title="@m.Navn: @FormatKr(m.Sum) · @m.Antall @(m.Antall == 1 ? "ordre" : "ordrer")"
+                            @onclick="@(() => { _maned = valgt ? null : m.Nokkel; _side = 1; })">
+                        <span class="fm-soyle-tall">@(m.Sum == 0 ? "" : KortKr(m.Sum))</span>
+                        <i style="height:@(maks == 0 ? 0 : Math.Max(2, (int)Math.Round(m.Sum / maks * 90)))px"></i>
+                        <span class="fm-soyle-mnd">@m.Kort</span>
+                    </button>
+                }
+            </div>
+        </div>
+    }
+
+    <div class="fm-verktoy">
+        <label class="fm-sok">
+            <Icon Name="search" />
+            <input @bind="_sok" @bind:event="oninput" @bind:after="@(() => _side = 1)" placeholder="Søk på ordre, kunde, prosjekt eller montør..." />
+        </label>
+        @if (_maned is not null)
+        {
+            <button type="button" class="fm-chip" @onclick="@(() => { _maned = null; _side = 1; })">@ManedNavn(_maned) &times;</button>
+        }
+        <select class="fm-velg" title="Velg år" value="@(_ar?.ToString() ?? "alle")" @onchange="VelgAr">
+            <option value="alle">Alle år</option>
+            @foreach (var ar in Ar)
+            {
+                <option value="@ar">@ar</option>
+            }
         </select>
-        <select class="periode-velger" title="Antall ordre per side" value="@_perSide" @onchange="@(e => { _perSide = int.Parse((string)e.Value!); _side = 1; })">
+        <select class="fm-velg" title="Antall ordrer per side" value="@_perSide" @onchange="@(e => { _perSide = int.Parse((string)e.Value!); _side = 1; })">
             <option value="10">10 per side</option>
             <option value="15">15 per side</option>
             <option value="20">20 per side</option>
         </select>
     </div>
-</div>
 
-@if (_rader.Count > 0)
-{
-    <p class="result-count">@_filtrerte.Count av @_rader.Count fakturerte ordre</p>
-}
-
-@if (_filtrerte.Count == 0)
-{
-    <p class="list-empty">Ingen fakturerte ordre funnet.</p>
-}
-else
-{
-    <div class="ordre-tabell-kort">
-        <table class="ordre-table">
-            <thead>
-                <tr>
-                    <th @onclick='@(() => SorterPa("Tittel"))'>Tittel@(SortPil("Tittel"))</th>
-                    <th @onclick='@(() => SorterPa("Prosjekt"))'>Prosjekt@(SortPil("Prosjekt"))</th>
-                    <th @onclick='@(() => SorterPa("Kunde"))'>Kunde@(SortPil("Kunde"))</th>
-                    <th @onclick='@(() => SorterPa("Montor"))'>Ansvarlig montør@(SortPil("Montor"))</th>
-                    <th @onclick='@(() => SorterPa("Dato"))'>Fakturert dato@(SortPil("Dato"))</th>
-                    <th @onclick='@(() => SorterPa("Timer"))' class="tall-kolonne">Timer@(SortPil("Timer"))</th>
-                    <th @onclick='@(() => SorterPa("Belop"))' class="tall-kolonne">Beløp@(SortPil("Belop"))</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var r in _filtrerte.Skip((GjeldendeSide - 1) * _perSide).Take(_perSide))
-                {
-                    <tr @key="r.Id">
-                        <td>@r.Tittel</td>
-                        <td>@(r.ProsjektNavn ?? "-")</td>
-                        <td>@(r.KundeNavn ?? "-")</td>
-                        <td>
-                            @if (!string.IsNullOrWhiteSpace(r.AnsvarligMontorNavn))
-                            {
-                                <span class="montor-rad">
-                                    <span class="montor-avatar" style="background:@MontorFarge(r.AnsvarligMontorNavn)">@MontorInitialer(r.AnsvarligMontorNavn)</span>
-                                    @r.AnsvarligMontorNavn
-                                </span>
-                            }
-                            else
-                            {
-                                <text>-</text>
-                            }
-                        </td>
-                        <td>@(r.FakturertDato?.ToString("dd.MM.yyyy") ?? "-")</td>
-                        <td class="tall-kolonne timer-cell">@r.SumTimer.ToString("N1", Kultur) t</td>
-                        <td class="tall-kolonne belop-cell">@FormatKr(r.Belop)</td>
-                        <td><a class="edit-link" href="@($"/arbeidsordre/{r.Id}")">Åpne</a></td>
+    @if (_filtrerte.Count == 0)
+    {
+        <p class="list-empty">Ingen fakturerte ordrer funnet.</p>
+    }
+    else
+    {
+        <div class="fm-tabwrap">
+            <table class="fm-tab">
+                <thead>
+                    <tr>
+                        <th @onclick='@(() => SorterPa("Tittel"))'>Ordre@(SortPil("Tittel"))</th>
+                        <th @onclick='@(() => SorterPa("Kunde"))'>Kunde@(SortPil("Kunde"))</th>
+                        <th @onclick='@(() => SorterPa("Montor"))'>Montør@(SortPil("Montor"))</th>
+                        <th @onclick='@(() => SorterPa("Dato"))'>Fakturert@(SortPil("Dato"))</th>
+                        <th @onclick='@(() => SorterPa("Timer"))' class="fm-h">Timer@(SortPil("Timer"))</th>
+                        <th @onclick='@(() => SorterPa("Belop"))' class="fm-h">Beløp@(SortPil("Belop"))</th>
+                        <th></th>
                     </tr>
-                }
-            </tbody>
-            <tfoot>
-                <tr>
-                    <td colspan="4">Sum &ndash; @_filtrerte.Count fakturerte ordre (filtrert)</td>
-                    <td class="tall-kolonne">@_filtrerte.Sum(r => r.SumTimer).ToString("N1", Kultur) t</td>
-                    <td class="tall-kolonne">@FormatKr(_filtrerte.Sum(r => r.Belop))</td>
-                    <td></td>
-                </tr>
-            </tfoot>
-        </table>
-    </div>
-    @Sidevelger()
-}
+                </thead>
+                <tbody>
+                    @foreach (var r in _filtrerte.Skip((GjeldendeSide - 1) * _perSide).Take(_perSide))
+                    {
+                        <tr @key="r.Id">
+                            <td>
+                                <b>@r.Tittel</b>
+                                <span class="fm-sub">@(r.ProsjektNavn ?? "Uten prosjekt")</span>
+                            </td>
+                            <td>@(r.KundeNavn ?? "–")</td>
+                            <td>
+                                @if (!string.IsNullOrWhiteSpace(r.AnsvarligMontorNavn))
+                                {
+                                    <span class="fm-montor">
+                                        <span class="fm-avatar" style="background:@MontorFarge(r.AnsvarligMontorNavn)">@MontorInitialer(r.AnsvarligMontorNavn)</span>
+                                        @r.AnsvarligMontorNavn
+                                    </span>
+                                }
+                                else
+                                {
+                                    <text>–</text>
+                                }
+                            </td>
+                            <td>@(r.FakturertDato?.ToString("dd.MM.yyyy") ?? "–")</td>
+                            <td class="fm-h">@r.SumTimer.ToString("N1", Kultur) t</td>
+                            <td class="fm-h"><b>@FormatKr(r.Belop)</b></td>
+                            <td class="fm-h"><a class="fm-kn fm-kn-s" href="@($"/arbeidsordre/{r.Id}")">Åpne</a></td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="4">Sum &ndash; @_filtrerte.Count @(_filtrerte.Count == 1 ? "ordre" : "ordrer")@(_maned is not null ? $" i {ManedNavn(_maned).ToLowerInvariant()}" : _ar is int valgtAr ? $" i {valgtAr}" : "")</td>
+                        <td class="fm-h">@_filtrerte.Sum(r => r.SumTimer).ToString("N1", Kultur) t</td>
+                        <td class="fm-h">@FormatKr(_filtrerte.Sum(r => r.Belop))</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        @Sidevelger()
+    }
+</div>
 
 @code {
     private sealed class OrdreRad
@@ -144,16 +164,20 @@ else
         public decimal Belop { get; set; }
     }
 
+    private sealed record Maned(string Nokkel, string Navn, string Kort, decimal Sum, int Antall, bool ErNa);
+
     private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
     private static readonly string[] MontorPaletten = ["#835e41", "#2054a3", "#a1690a", "#2b7a4b", "#7a2b96", "#a32020"];
 
     private List<OrdreRad> _rader = [];
     private string _sok = "";
-    private string _periode = "alle";
+    private int? _ar = DateTime.Today.Year;
+    private string? _maned;
     private string _sortFelt = "Dato";
     private bool _sortSynkende = true;
     private int _perSide = 10;
     private int _side = 1;
+    private bool _full;
 
     private int AntallSider => Math.Max(1, (int)Math.Ceiling(_filtrerte.Count / (double)_perSide));
     private int GjeldendeSide => Math.Clamp(_side, 1, AntallSider);
@@ -179,29 +203,63 @@ else
     private int AntallIAr { get; set; }
     private decimal SnittBelopIAr { get; set; }
     private decimal SnittTimerIAr { get; set; }
+    private decimal TimerIAr { get; set; }
     private decimal DenneManeden { get; set; }
     private decimal ForrigeManeden { get; set; }
     private double TrendProsent { get; set; }
+
+    // Årene det finnes fakturerte ordrer i, nyeste først (alltid med inneværende år).
+    private List<int> Ar => _rader.Where(r => r.FakturertDato.HasValue).Select(r => r.FakturertDato!.Value.Year)
+        .Append(DateTime.Today.Year).Distinct().OrderByDescending(a => a).ToList();
+
+    private static string ManedNokkel(DateTime d) => $"{d.Year}-{d.Month:00}";
+
+    private static string ManedNavn(string nokkel)
+    {
+        var d = DateTime.ParseExact(nokkel + "-01", "yyyy-MM-dd", Kultur);
+        var navn = d.ToString("MMMM yyyy", Kultur);
+        return char.ToUpper(navn[0]) + navn[1..];
+    }
+
+    // Søylene: alle månedene i valgt år, eller de siste 12 månedene når "Alle år" er valgt.
+    private List<Maned> Maneder
+    {
+        get
+        {
+            var na = DateTime.Today;
+            var start = _ar is int a ? new DateTime(a, 1, 1) : new DateTime(na.Year, na.Month, 1).AddMonths(-11);
+            return Enumerable.Range(0, 12).Select(i =>
+            {
+                var d = start.AddMonths(i);
+                var nokkel = ManedNokkel(d);
+                var iManed = _rader.Where(r => r.FakturertDato.HasValue && ManedNokkel(r.FakturertDato.Value) == nokkel).ToList();
+                return new Maned(nokkel, d.ToString("MMMM yyyy", Kultur), d.ToString("MMM", Kultur).TrimEnd('.'),
+                    iManed.Sum(r => r.Belop), iManed.Count, d.Year == na.Year && d.Month == na.Month);
+            }).ToList();
+        }
+    }
 
     private List<OrdreRad> _filtrerte
     {
         get
         {
-            var naDato = DateTime.Today;
-            IEnumerable<OrdreRad> rader = _periode switch
+            IEnumerable<OrdreRad> rader = _rader;
+            if (_maned is not null)
             {
-                "maned" => _rader.Where(r => r.FakturertDato.HasValue && r.FakturertDato.Value.Year == naDato.Year && r.FakturertDato.Value.Month == naDato.Month),
-                "3maneder" => _rader.Where(r => r.FakturertDato.HasValue && r.FakturertDato.Value >= naDato.AddMonths(-3)),
-                "ar" => _rader.Where(r => r.FakturertDato.HasValue && r.FakturertDato.Value.Year == naDato.Year),
-                _ => _rader
-            };
+                rader = rader.Where(r => r.FakturertDato.HasValue && ManedNokkel(r.FakturertDato.Value) == _maned);
+            }
+            else if (_ar is int ar)
+            {
+                rader = rader.Where(r => r.FakturertDato.HasValue && r.FakturertDato.Value.Year == ar);
+            }
 
             if (!string.IsNullOrWhiteSpace(_sok))
             {
                 rader = rader.Where(r =>
                     r.Tittel.Contains(_sok, StringComparison.OrdinalIgnoreCase) ||
                     (r.ProsjektNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                    (r.KundeNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false));
+                    (r.KundeNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (r.AnsvarligMontorNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false));
             }
 
             IEnumerable<OrdreRad> sortert = _sortFelt switch
@@ -217,6 +275,14 @@ else
 
             return (_sortSynkende ? sortert.Reverse() : sortert).ToList();
         }
+    }
+
+    private void VelgAr(ChangeEventArgs e)
+    {
+        var verdi = (string)e.Value!;
+        _ar = verdi == "alle" ? null : int.Parse(verdi);
+        _maned = null;
+        _side = 1;
     }
 
     private void SorterPa(string felt)
@@ -237,6 +303,11 @@ else
 
     private static string FormatKr(decimal verdi) => verdi.ToString("N0", Kultur) + " kr";
 
+    // Kort beløp over søylene: 12 400 kr -> 12k, 1 250 000 kr -> 1,3 mill.
+    private static string KortKr(decimal verdi) => verdi >= 1_000_000m
+        ? (verdi / 1_000_000m).ToString("0.#", Kultur) + " mill"
+        : verdi >= 1000m ? (verdi / 1000m).ToString("0", Kultur) + "k" : verdi.ToString("0", Kultur);
+
     private static string MontorFarge(string navn) => MontorPaletten[Math.Abs(navn.GetHashCode()) % MontorPaletten.Length];
 
     private static string MontorInitialer(string navn)
@@ -247,8 +318,17 @@ else
             : navn.Length >= 2 ? navn[..2].ToUpperInvariant() : navn.ToUpperInvariant();
     }
 
+    // "Utvid"-knappen øverst i kortet - samme som på tilbud og ferdigmeldte, lagres per bruker.
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("fakturerte-bredde", _full ? "full" : "normal");
+    }
+
     protected override async Task OnInitializedAsync()
     {
+        _full = await VisningPref.HentAsync("fakturerte-bredde", "normal") == "full";
+
         var ordre = await Db.Arbeidsordre
             .Where(a => a.Status == ArbeidsordreStatus.Fakturert)
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
@@ -268,15 +348,16 @@ else
             AnsvarligMontorNavn = a.AnsvarligMontor?.Navn,
             FakturertDato = a.FakturertDato,
             SumTimer = a.Timeregistreringer.Sum(t => t.TotalTimer),
-            Belop = PortalItlock.Web.Services.ArbeidsordreBeregningHelper.BeregnVareSum(a)
+            Belop = ArbeidsordreBeregningHelper.BeregnVareSum(a)
         }).ToList();
 
         var naDato = DateTime.Today;
         var iAr = _rader.Where(r => r.FakturertDato.HasValue && r.FakturertDato.Value.Year == naDato.Year).ToList();
         FakturertIAr = iAr.Sum(r => r.Belop);
         AntallIAr = iAr.Count;
+        TimerIAr = iAr.Sum(r => r.SumTimer);
         SnittBelopIAr = AntallIAr > 0 ? FakturertIAr / AntallIAr : 0;
-        SnittTimerIAr = AntallIAr > 0 ? iAr.Sum(r => r.SumTimer) / AntallIAr : 0;
+        SnittTimerIAr = AntallIAr > 0 ? TimerIAr / AntallIAr : 0;
 
         DenneManeden = _rader.Where(r => r.FakturertDato.HasValue && r.FakturertDato.Value.Year == naDato.Year && r.FakturertDato.Value.Month == naDato.Month).Sum(r => r.Belop);
         var forrigeManedDato = naDato.AddMonths(-1);
