@@ -122,6 +122,15 @@
             }
             else
             {
+                @* Kort oppsummering av dagen over tidslinjen. *@
+                @if (DagensTidsrom.Count > 0)
+                {
+                    <div class="md-oppsum">
+                        <span><b>@_jobber.Count</b> @(_jobber.Count == 1 ? "jobb" : "jobber") @(_valgtDato == IDag ? "i dag" : "denne dagen")</span>
+                        <span><b>@VarighetTekst(PlanlagtTid)</b> planlagt</span>
+                        <span>Første <b>@DagensTidsrom.Min(t => t.Start).ToString("HH:mm")</b> · siste ferdig <b>@DagensTidsrom.Max(t => t.Slutt).ToString("HH:mm")</b></span>
+                    </div>
+                }
                 <div class="md-tidslinje" style="height:@(((SluttTime - StartTime) * PxPerTime) + 1)px">
                     <div class="md-tidakse">
                         @for (var t = StartTime; t <= SluttTime; t++)
@@ -135,6 +144,12 @@
                             <span class="md-timelinje" style="top:@((t - StartTime) * PxPerTime)px"></span>
                         }
 
+                        @* Rød strek for "nå" - bare i dag og innenfor tidsaksen. *@
+                        @if (NaTopp is { } naTopp)
+                        {
+                            <span class="md-na" style="top:@(naTopp.ToString(CultureInfo.InvariantCulture))px" data-tid="@DateTime.Now.ToString("HH:mm")"></span>
+                        }
+
                         @foreach (var jobb in _jobber.Where(j => j.Start is not null))
                         {
                             var farge = FargeFor(jobb.Id);
@@ -142,7 +157,19 @@
                                  style="top:@Topp(jobb)px; height:@Hoyde(jobb)px; background:@farge.Flate; border-left-color:@farge.Kant; color:@farge.Blekk">
                                 <div class="md-blokk-tekst">
                                     <a class="md-blokk-tittel" href="@($"/arbeidsordre/{jobb.Id}")">@jobb.Tittel</a>
-                                    <span class="md-blokk-meta">AO-@jobb.Id@(jobb.ProsjektNavn is null ? "" : $" · {jobb.ProsjektNavn}")</span>
+                                    <span class="md-blokk-meta">@string.Join(" · ", new[] { jobb.TidTekst, jobb.Adresse ?? jobb.ProsjektNavn }.Where(s => !string.IsNullOrWhiteSpace(s)))</span>
+                                </div>
+                                @* Kart, ring og før timer rett på blokken; resten under "Flere valg". *@
+                                <div class="md-blokk-ikoner">
+                                    @if (jobb.Adresse is not null)
+                                    {
+                                        <a href="@($"https://www.google.com/maps/search/?api=1&query={Uri.EscapeDataString(jobb.Adresse)}")" target="_blank" rel="noopener" title="Vis på kart"><Icon Name="map-pin" /></a>
+                                    }
+                                    @if (jobb.Telefon is not null)
+                                    {
+                                        <a href="@($"tel:{jobb.Telefon}")" title="@($"Ring {jobb.Kontaktperson}")"><Icon Name="phone" /></a>
+                                    }
+                                    <a href="@($"/timeregistrering?arbeidsordreid={jobb.Id}")" title="Før timer"><Icon Name="clock" /></a>
                                 </div>
                                 <div class="md-blokk-meny-wrap">
                                     <button type="button" class="md-blokk-meny-knapp" title="Flere valg" @onclick="@(() => _apenMenyId = _apenMenyId == jobb.Id ? null : jobb.Id)">
@@ -215,6 +242,26 @@
         </div>
 
         <aside class="md-sidekolonne">
+            @* Dagens jobber og aktiviteter på ett blikk, med status. *@
+            @if (_valgtMontorId is not null && !_laster && (_jobber.Count > 0 || _aktiviteter.Count > 0))
+            {
+                <div class="md-kort md-dagensjobber">
+                    <h2>@(_valgtDato == IDag ? "Dagens jobber" : "Jobber denne dagen") (@(_jobber.Count + _aktiviteter.Count))</h2>
+                    <ul>
+                        @foreach (var r in DagensRader)
+                        {
+                            <li @key="r.Nokkel">
+                                <a href="@r.Href" class="md-dj-rad" @onclick="@(() => { if (r.Aktivitet is { } a) { AapneRedigerAktivitet(a); } })" @onclick:preventDefault="@(r.Aktivitet is not null)">
+                                    <b class="md-dj-tid">@r.Tid</b>
+                                    <span class="md-dj-tekst"><span>@r.Tittel</span><small>@r.Under</small></span>
+                                    <span class="md-dj-status md-dj-@r.StatusKlasse">@r.StatusTekst</span>
+                                </a>
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+
             <div class="md-kort md-minikal">
                 <div class="md-minikal-topp">
                     <span>@Kultur.TextInfo.ToTitleCase(_valgtDato.ToString("MMMM yyyy", Kultur))</span>
@@ -230,7 +277,7 @@
                     @foreach (var dag in MinikalenderDager)
                     {
                         <button type="button" @key="dag"
-                                class="md-minikal-dag @(dag.Month == _valgtDato.Month ? "" : "utenfor") @(dag == _valgtDato ? "valgt" : "") @(dag == IDag && dag != _valgtDato ? "idag" : "")"
+                                class="md-minikal-dag @(dag.Month == _valgtDato.Month ? "" : "utenfor") @(dag == _valgtDato ? "valgt" : "") @(dag == IDag && dag != _valgtDato ? "idag" : "") @(_dagerMedJobb.Contains(dag) ? "harjobb" : "")"
                                 @onclick="@(() => VelgDag(dag))">@dag.Day</button>
                     }
                 </div>
@@ -724,6 +771,71 @@ else
     private double HoydeAkt(AktivitetRad akt) =>
         Math.Max(34, (akt.Slutt - akt.Start).TotalHours * PxPerTime);
 
+    // ---------- D2: oppsummering, nå-strek, dagens jobber og prikker i kalenderen ----------
+
+    // Jobbene med klokkeslett og aktivitetene på den valgte dagen.
+    private List<(DateTime Start, DateTime Slutt)> DagensTidsrom =>
+        _jobber.Where(j => j.Start is not null)
+            .Select(j => (Start: j.Start!.Value, Slutt: j.Slutt ?? j.Start!.Value.AddHours(1)))
+            .Concat(_aktiviteter.Select(a => (a.Start, a.Slutt)))
+            .ToList();
+
+    private TimeSpan PlanlagtTid => DagensTidsrom.Aggregate(TimeSpan.Zero, (sum, t) => sum + (t.Slutt - t.Start));
+
+    private static string VarighetTekst(TimeSpan tid)
+    {
+        var timer = (int)tid.TotalHours;
+        return tid.Minutes == 0 ? $"{timer} t" : timer == 0 ? $"{tid.Minutes} min" : $"{timer} t {tid.Minutes} min";
+    }
+
+    private double? NaTopp
+    {
+        get
+        {
+            if (_valgtDato != IDag)
+            {
+                return null;
+            }
+
+            var timer = DateTime.Now.TimeOfDay.TotalHours;
+            return timer < StartTime || timer > SluttTime ? null : (timer - StartTime) * PxPerTime;
+        }
+    }
+
+    private sealed record DagRad(string Nokkel, DateTime? Sortering, string Tid, string Tittel, string Under, string StatusTekst, string StatusKlasse, string Href, AktivitetRad? Aktivitet);
+
+    private List<DagRad> DagensRader
+    {
+        get
+        {
+            var na = DateTime.Now;
+            var nesteId = _valgtDato == IDag
+                ? _jobber.Where(j => j.Start > na && j.Status is not (ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert))
+                    .OrderBy(j => j.Start).FirstOrDefault()?.Id
+                : null;
+
+            var rader = _jobber.Select(j =>
+            {
+                var (tekst, klasse) = j.Status switch
+                {
+                    ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert => ("✓ Ferdig", "ferdig"),
+                    ArbeidsordreStatus.Pagaende => ("Pågår", "pagar"),
+                    _ when j.Id == nesteId => ("Neste", "neste"),
+                    _ => (j.Status.Visningsnavn(), "planlagt")
+                };
+                return new DagRad($"j-{j.Id}", j.Start, j.Start?.ToString("HH:mm") ?? "–", j.Tittel,
+                    j.ProsjektNavn ?? j.Adresse ?? $"AO-{j.Id}", tekst, klasse, $"/arbeidsordre/{j.Id}", null);
+            });
+
+            var akt = _aktiviteter.Select(a => new DagRad($"a-{a.Id}", a.Start, a.Start.ToString("HH:mm"), a.Tittel,
+                a.Info ?? "Egen aktivitet", "Aktivitet", "aktivitet", "", a));
+
+            return rader.Concat(akt).OrderBy(r => r.Sortering ?? DateTime.MaxValue).ToList();
+        }
+    }
+
+    private HashSet<DateOnly> _dagerMedJobb = [];
+
     private List<JobbRad> _ukeJobber = [];
 
     private List<JobbRad> UkeJobber(DateOnly dag) => _ukeJobber
@@ -901,9 +1013,23 @@ else
             _ukeJobber = [];
             _aktiviteter = [];
             _ukeAktiviteter = [];
+            _dagerMedJobb = [];
             _laster = false;
             return;
         }
+
+        // Prikker i minikalenderen: dager i den viste måneden med jobb eller aktivitet.
+        var kalStart = MinikalenderDager[0].ToDateTime(TimeOnly.MinValue);
+        var kalSlutt = MinikalenderDager[^1].ToDateTime(TimeOnly.MinValue).AddDays(1);
+        var jobbDatoer = await Db.Arbeidsordre
+            .Where(a => a.AnsvarligMontorId == _valgtMontorId && a.PlanlagtDato != null && a.PlanlagtDato >= kalStart && a.PlanlagtDato < kalSlutt)
+            .Select(a => a.PlanlagtDato!.Value)
+            .ToListAsync();
+        var aktDatoer = await Db.Ressursplaner
+            .Where(r => r.MontorId == _valgtMontorId && r.Dato >= kalStart && r.Dato < kalSlutt)
+            .Select(r => r.Dato)
+            .ToListAsync();
+        _dagerMedJobb = jobbDatoer.Concat(aktDatoer).Select(DateOnly.FromDateTime).ToHashSet();
 
         var dagStart = _valgtDato.ToDateTime(TimeOnly.MinValue);
         var dagSlutt = dagStart.AddDays(1);
