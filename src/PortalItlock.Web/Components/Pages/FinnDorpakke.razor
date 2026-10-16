@@ -3,79 +3,263 @@
 @* Montører kan se og bruke kravvelgeren, men ikke endre dørpakkene selv -
    det gjøres under Oppsett og maler (se ModulRettigheter). *@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
 @using Microsoft.EntityFrameworkCore
-@using PortalItlock.Web.Components.DoorFinder
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject PackageMatchingService Matcher
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>Finn dørpakke</PageTitle>
 
-<div class="dp-header">
-    <div class="dp-header-tittel">
-        <span class="dp-header-ikon"><Icon Name="box" /></span>
+@* D2 (finn-dorpakke-forslag.html): ett kort med krav som segmentknapper, treff
+   delt i "Passer alle krav" og "Nesten" (mangler ett krav, med hva som mangler),
+   pris og antall komponenter per pakke, og detaljer for valgt pakke. *@
+<div class="fd-kort @(_full ? "fd-full" : "")">
+    <button type="button" class="fd-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+        <Icon Name="@(_full ? "minimize" : "maximize")" />
+    </button>
+    <div class="fd-topp">
         <h1>Finn dørpakke</h1>
-    </div>
-    <p class="intro">Huk av krav for å se hvilke dørpakker som passer.</p>
-</div>
-
-<div class="finn-dorpakke-layout">
-    <div class="finn-dorpakke-krav">
-        <RequirementSelector Dimensions="_dimensions"
-                              SelectedValueIds="_selectedValueIds"
-                              SelectedValueIdsChanged="OnSelectionChanged" />
+        <p>Velg kravene til døren &ndash; du ser med en gang hvilke dørpakker som passer, og hvilke som nesten gjør det.</p>
     </div>
 
-    <div class="finn-dorpakke-resultat">
-        <PackageResultList Packages="_matches"
-                            SelectedPackageId="_selectedPackage?.Id"
-                            OnSelect="OnPackageSelected" />
-    </div>
+    <div class="fd-layout">
+        @* Krav *@
+        <div class="fd-panel fd-krav">
+            <div class="fd-panel-topp">
+                <h2>Krav</h2>
+                @if (_valgte.Count > 0)
+                {
+                    <button type="button" class="fd-lenke" @onclick="NullstillAlle">Nullstill</button>
+                }
+            </div>
+            @foreach (var dimensjon in _dimensjoner)
+            {
+                var antallValgt = dimensjon.Verdier.Count(v => _valgte.Contains(v.Id));
+                <div class="fd-gruppe">
+                    <span class="fd-gruppe-navn">
+                        @dimensjon.Navn
+                        @if (antallValgt > 0)
+                        {
+                            <small>@antallValgt valgt</small>
+                        }
+                    </span>
+                    <div class="fd-seg">
+                        @foreach (var verdi in dimensjon.Verdier.OrderBy(v => v.Rekkefolge))
+                        {
+                            var erValgt = _valgte.Contains(verdi.Id);
+                            <button type="button" class="@(erValgt ? "valgt" : "")" @onclick="@(() => Veksle(verdi.Id))">@verdi.Verdi</button>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
 
-    <div class="finn-dorpakke-detalj">
-        <PackageDetail Package="_selectedPackage" />
+        @* Treff *@
+        <div class="fd-panel">
+            @if (_valgte.Count == 0)
+            {
+                <div class="fd-tom">
+                    <Icon Name="box" />
+                    <span>Velg krav til venstre for å finne dørpakker.</span>
+                </div>
+            }
+            else
+            {
+                <div class="fd-panel-topp">
+                    <h2>Passer alle krav</h2>
+                    <small>@_treff.Count pakke@(_treff.Count == 1 ? "" : "r")</small>
+                </div>
+                @if (_treff.Count == 0)
+                {
+                    <p class="fd-ingen">Ingen pakke oppfyller alle valgte krav@(_nesten.Count > 0 ? " – se de som nesten passer under." : ".")</p>
+                }
+                @foreach (var p in _treff)
+                {
+                    @PakkeKort(p, null)
+                }
+
+                @if (_nesten.Count > 0)
+                {
+                    <div class="fd-panel-topp fd-nesten-topp">
+                        <h2>Nesten</h2>
+                        <small>mangler ett krav</small>
+                    </div>
+                    @foreach (var n in _nesten)
+                    {
+                        @PakkeKort(n.Pakke, n)
+                    }
+                }
+            }
+        </div>
+
+        @* Detaljer *@
+        <div class="fd-panel">
+            @if (_valgtPakke is null)
+            {
+                <div class="fd-tom">
+                    <Icon Name="box" />
+                    <span>Velg en pakke for å se komponentene.</span>
+                </div>
+            }
+            else
+            {
+                <div class="fd-detalj-topp">
+                    <div>
+                        <span class="fd-lbl">Valgt pakke</span>
+                        <h3>@_valgtPakke.Navn</h3>
+                        @if (!string.IsNullOrWhiteSpace(_valgtPakke.Beskrivelse))
+                        {
+                            <p>@_valgtPakke.Beskrivelse</p>
+                        }
+                    </div>
+                    <a class="fd-kn" href="@($"rediger-pakke/{_valgtPakke.Id}")"><Icon Name="edit" />Rediger</a>
+                </div>
+                <div class="fd-tags">
+                    @foreach (var krav in _valgtPakke.Krav.Where(k => k.RequirementValue is not null).OrderBy(k => k.RequirementValue!.Dimensjon?.Rekkefolge))
+                    {
+                        <span class="fd-tag ok" title="@krav.RequirementValue!.Dimensjon?.Navn"><Icon Name="check" />@krav.RequirementValue.Verdi</span>
+                    }
+                </div>
+                <div class="fd-tabwrap">
+                    <table class="fd-tab">
+                        <thead>
+                            <tr>
+                                <th>Type</th>
+                                <th>Komponent</th>
+                                <th class="fd-h">Ant.</th>
+                                <th class="fd-h">Netto</th>
+                                <th class="fd-h">Veil.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var pc in _valgtPakke.Komponenter)
+                            {
+                                <tr>
+                                    <td class="fd-mut">@pc.Component?.Type?.Navn</td>
+                                    <td><b>@pc.Component?.Navn</b></td>
+                                    <td class="fd-h">@pc.Antall</td>
+                                    <td class="fd-h">@FormatKr(pc.Component?.PrisNetto * pc.Antall)</td>
+                                    <td class="fd-h">@FormatKr(pc.Component?.PrisVeiledende * pc.Antall)</td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="3">Sum &ndash; @_valgtPakke.Komponenter.Count komponent@(_valgtPakke.Komponenter.Count == 1 ? "" : "er")@(ManglerPris > 0 ? $" ({ManglerPris} uten pris)" : "")</td>
+                                <td class="fd-h">@FormatKr(Sum(pc => pc.Component?.PrisNetto))</td>
+                                <td class="fd-h">@FormatKr(Sum(pc => pc.Component?.PrisVeiledende))</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            }
+        </div>
     </div>
 </div>
 
 @code {
-    private List<RequirementDimension> _dimensions = [];
-    private HashSet<int> _selectedValueIds = [];
-    private List<Package> _matches = [];
-    private Package? _selectedPackage;
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private List<RequirementDimension> _dimensjoner = [];
+    private readonly HashSet<int> _valgte = [];
+    private List<Package> _treff = [];
+    private List<PackageMatchingService.NestenTreff> _nesten = [];
+    private Dictionary<int, (int Antall, decimal Sum)> _sammendrag = [];
+    private Package? _valgtPakke;
+    private bool _full;
+
+    private RenderFragment PakkeKort(Package p, PackageMatchingService.NestenTreff? nesten) => __builder =>
+    {
+        var (antall, sum) = _sammendrag.GetValueOrDefault(p.Id);
+        <button type="button" class="fd-pakke @(_valgtPakke?.Id == p.Id ? "valgt" : "")" @onclick="@(() => VelgPakke(p.Id))">
+            <span class="fd-pakke-topp">
+                <span class="fd-pakke-navn">
+                    <b>@p.Navn</b>
+                    @if (!string.IsNullOrWhiteSpace(p.Beskrivelse))
+                    {
+                        <small>@p.Beskrivelse</small>
+                    }
+                </span>
+                <span class="fd-pakke-pris">
+                    <b>@(sum > 0 ? sum.ToString("N0", Kultur) + " kr" : "–")</b>
+                    <small>@antall komponent@(antall == 1 ? "" : "er")</small>
+                </span>
+            </span>
+            <span class="fd-tags">
+                @if (nesten is null)
+                {
+                    <span class="fd-tag ok"><Icon Name="check" />Oppfyller alle krav</span>
+                }
+                else
+                {
+                    <span class="fd-tag">@nesten.Oppfylt av @nesten.Totalt krav</span>
+                    <span class="fd-tag mangler">Mangler: @nesten.ManglerDimensjon</span>
+                }
+            </span>
+        </button>
+    };
 
     protected override async Task OnInitializedAsync()
     {
-        _dimensions = await Db.RequirementDimensions
+        _full = await VisningPref.HentAsync("finn-dorpakke-bredde", "normal") == "full";
+        _dimensjoner = await Db.RequirementDimensions
             .AsNoTracking()
             .Include(d => d.Verdier)
             .OrderBy(d => d.Rekkefolge)
             .ToListAsync();
-
-        await UpdateMatches();
     }
 
-    private async Task OnSelectionChanged(HashSet<int> selected)
+    private async Task VekslFull()
     {
-        _selectedValueIds = selected;
-        await UpdateMatches();
+        _full = !_full;
+        await VisningPref.SettAsync("finn-dorpakke-bredde", _full ? "full" : "normal");
     }
 
-    private async Task UpdateMatches()
+    private async Task Veksle(int verdiId)
     {
-        _matches = await Matcher.FindMatchingPackagesAsync(_selectedValueIds);
-
-        if (_selectedPackage is not null && _matches.All(p => p.Id != _selectedPackage.Id))
+        if (!_valgte.Remove(verdiId))
         {
-            _selectedPackage = null;
+            _valgte.Add(verdiId);
+        }
+        await OppdaterTreff();
+    }
+
+    private async Task NullstillAlle()
+    {
+        _valgte.Clear();
+        await OppdaterTreff();
+    }
+
+    private async Task OppdaterTreff()
+    {
+        _treff = await Matcher.FindMatchingPackagesAsync(_valgte);
+        _nesten = await Matcher.FinnNestenTreffAsync(_valgte);
+        _sammendrag = await Matcher.HentSammendragAsync(_treff.Select(p => p.Id).Concat(_nesten.Select(n => n.Pakke.Id)).ToList());
+
+        if (_valgtPakke is not null && _treff.All(p => p.Id != _valgtPakke.Id) && _nesten.All(n => n.Pakke.Id != _valgtPakke.Id))
+        {
+            _valgtPakke = null;
         }
     }
 
     // Resultatlista er lastet uten komponenter - de hentes her, for den ene
     // pakken man faktisk åpner.
-    private async Task OnPackageSelected(int packageId)
+    private async Task VelgPakke(int pakkeId)
     {
-        _selectedPackage = await Matcher.HentPakkeMedKomponenterAsync(packageId);
+        _valgtPakke = await Matcher.HentPakkeMedKomponenterAsync(pakkeId);
     }
+
+    private decimal? Sum(Func<PackageComponent, decimal?> pris)
+    {
+        var medPris = _valgtPakke?.Komponenter.Where(pc => pris(pc).HasValue).ToList();
+        return medPris is null or { Count: 0 } ? null : medPris.Sum(pc => pris(pc)!.Value * pc.Antall);
+    }
+
+    private int ManglerPris => _valgtPakke?.Komponenter.Count(pc => pc.Component?.PrisNetto is null) ?? 0;
+
+    private static string FormatKr(decimal? v) => v.HasValue ? v.Value.ToString("N0", Kultur) + " kr" : "–";
 }
