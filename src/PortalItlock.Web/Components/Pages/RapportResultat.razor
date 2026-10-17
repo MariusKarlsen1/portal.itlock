@@ -1,119 +1,238 @@
 @page "/rapporter/resultat"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
-@using Microsoft.EntityFrameworkCore
+@using System.Globalization
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>Resultatrapport - Full Kontroll</PageTitle>
 
-<div class="side-header">
-    <span class="side-header-ikon"><Icon Name="file-text" /></span>
-    <div>
-        <h1>Resultatrapport</h1>
-        <p class="section-hint">
-            Omsetning pr. inntektskonto for valgt periode, beregnet fra ferdigmeldte
-            arbeidsordre i portalen (samme oppsett som Tripletex sin resultatrapport,
-            men uavhengig av om ordren er fakturert i Tripletex ennå) - inntektskontoene
-            som er satt på varer i komponentregisteret dukker opp her.
-        </p>
-    </div>
-</div>
+<RapportRamme Tittel="Resultatrapport" Undertittel="Omsetning per inntektskonto. Kontoene settes på varene i komponentregisteret." Ikon="file-text" Kilde="portal"
+              Periode="_periode" OnPeriodeEndret="HentRapport" VisSammenlign="true" Laster="_laster"
+              OnEksporter="Eksporter">
+    <Handlinger>
+        <a class="rr-knapp" href="/rapporter/kontoplan"><Icon Name="settings" />Kontoplan</a>
+    </Handlinger>
+    <ChildContent>
+        @if (_harHentet && _rader.Count == 0)
+        {
+            <p class="rr-tom">Ingen ferdigmeldt omsetning i denne perioden.</p>
+        }
+        else if (_harHentet)
+        {
+            var total = _rader.Sum(r => r.Sum);
+            var totalFor = _forrige.Values.Sum();
+            var maksStolpe = Math.Max(1, _maaneder.Max(m => Math.Max(m.Naa, Sml ? m.For : 0)));
 
-<div class="kort filter-kort">
-    <label class="felt">
-        <span class="felt-label">Fra</span>
-        <input type="date" @bind="_fraDato" />
-    </label>
-    <label class="felt">
-        <span class="felt-label">Til</span>
-        <input type="date" @bind="_tilDato" />
-    </label>
-    <button type="button" class="knapp-primaer" @onclick="HentRapport" disabled="@_lasterNa">
-        @(_lasterNa ? "Henter..." : "Vis rapport")
-    </button>
-</div>
-
-@if (_harHentet)
-{
-    @if (_rader.Count == 0)
-    {
-        <p class="list-empty">Ingen ferdigmeldt omsetning i denne perioden.</p>
-    }
-    else
-    {
-        <div class="kort stat-kort">
-            <span class="stat-label">Total omsetning</span>
-            <span class="stat-verdi">@_rader.Sum(r => r.Sum).ToString("N0", Kultur) kr</span>
-        </div>
-
-        <div class="kort tabell-kort">
-            <table class="rapport-table">
-                <thead>
-                    <tr>
-                        <th class="konto-kolonne">Konto</th>
-                        <th>Navn</th>
-                        <th class="tall-cell">Omsetning</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var r in _rader)
+            <div class="rr-tile">
+                <div class="rr-tile-t">
+                    <h2>Omsetning per @(_perAr ? "år" : "måned")</h2>
+                    <span class="rr-farge">
+                        <span><i style="background:var(--itlock-accent)"></i>Valgt periode</span>
+                        @if (Sml)
+                        {
+                            <span><i style="background:color-mix(in srgb, var(--itlock-accent) 14%, var(--itlock-surface))"></i>@(char.ToUpper(_periode.SmlTekst[0]) + _periode.SmlTekst[1..])</span>
+                        }
+                    </span>
+                </div>
+                <div class="rr-graf">
+                    @foreach (var m in _maaneder)
                     {
-                        <tr>
-                            <td class="konto-tag">@(r.Nummer?.ToString() ?? "-")</td>
-                            <td>@r.Navn</td>
-                            <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
-                        </tr>
+                        <div title="@($"{m.Navn}: {RapportPeriode.Kr(m.Naa)}{(Sml ? $" (mot {RapportPeriode.Kr(m.For)})" : "")}")">
+                            <i class="naa" style="height:@Pst(m.Naa, maksStolpe)"></i>
+                            @if (Sml)
+                            {
+                                <i class="for" style="height:@Pst(m.For, maksStolpe)"></i>
+                            }
+                        </div>
                     }
-                </tbody>
-                <tfoot>
-                    <tr>
-                        <td colspan="2">Totalt</td>
-                        <td class="tall-cell">@_rader.Sum(r => r.Sum).ToString("N0", Kultur) kr</td>
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
-    }
-}
+                </div>
+                <div class="rr-mnd">
+                    @foreach (var m in _maaneder)
+                    {
+                        <span>@m.Navn</span>
+                    }
+                </div>
+            </div>
+
+            <div class="rr-tile">
+                <div class="rr-tile-t"><h2>Per inntektskonto</h2>@if (Sml){<small>@_periode.Tekst mot @_periode.SmlTekst</small>}</div>
+                <div class="rr-tabwrap">
+                    <table class="rr-tab">
+                        <thead>
+                            <tr>
+                                <th>Konto</th>
+                                <th>Navn</th>
+                                <th>Andel</th>
+                                <th class="n">Omsetning</th>
+                                @if (Sml)
+                                {
+                                    <th class="n">@(char.ToUpper(_periode.SmlTekst[0]) + _periode.SmlTekst[1..])</th>
+                                    <th class="n">Endring</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in _rader)
+                            {
+                                <tr class="@(r.Nokkel == "uten" ? "merket" : "")">
+                                    <td>
+                                        @if (r.Nummer is int nr)
+                                        {
+                                            <span class="rr-konto">@nr</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="rr-pille @(r.Nokkel == "uten" ? "rr-p-gul" : "rr-p-blaa")">@(r.Nokkel == "uten" ? "Mangler" : "Arbeid")</span>
+                                        }
+                                    </td>
+                                    <td>@r.Navn</td>
+                                    <td><span class="rr-andel"><span class="rr-bar"><i style="width:@Pst(r.Sum, total)"></i></span><span>@RapportPeriode.Prosent(r.Sum, total)</span></span></td>
+                                    <td class="n">@RapportPeriode.Kr(r.Sum)</td>
+                                    @if (Sml)
+                                    {
+                                        var f = _forrige.GetValueOrDefault(r.Nokkel);
+                                        <td class="n dempet">@(f == 0 ? "–" : RapportPeriode.Kr(f))</td>
+                                        <td class="n"><RapportDelta Naa="r.Sum" For="f" /></td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="3">Sum omsetning</td>
+                                <td class="n">@RapportPeriode.Kr(total)</td>
+                                @if (Sml)
+                                {
+                                    <td class="n dempet">@RapportPeriode.Kr(totalFor)</td>
+                                    <td class="n"><RapportDelta Naa="total" For="totalFor" /></td>
+                                }
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+
+            @if (_utenKontoSum != 0)
+            {
+                <div class="rr-merk">
+                    <span>⚠️</span>
+                    <span>
+                        <b>@RapportPeriode.Kr(_utenKontoSum) er solgt på @_utenKontoAntall @(_utenKontoAntall == 1 ? "vare" : "varer") uten inntektskonto.</b>
+                        De står som «Varer uten inntektskonto» over. Sett konto på varene i komponentregisteret, så havner beløpet på riktig konto.
+                        <a href="/komponenter">Gå til komponentregisteret →</a>
+                    </span>
+                </div>
+            }
+        }
+    </ChildContent>
+</RapportRamme>
 
 @code {
-    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
-
-    private DateTime _fraDato = new(DateTime.Today.Year, 1, 1);
-    private DateTime _tilDato = DateTime.Today;
-    private bool _lasterNa;
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private readonly RapportPeriode _periode = new();
+    private bool _laster;
     private bool _harHentet;
 
-    private sealed record KontoRad(int? Nummer, string Navn, decimal Sum);
+    private sealed record KontoRad(string Nokkel, int? Nummer, string Navn, decimal Sum);
+    private sealed record Stolpe(string Navn, decimal Naa, decimal For);
+
     private List<KontoRad> _rader = [];
+    private Dictionary<string, decimal> _forrige = [];
+    private List<Stolpe> _maaneder = [];
+    private bool _perAr;
+    private decimal _utenKontoSum;
+    private int _utenKontoAntall;
+
+    private bool Sml => _periode.Sammenlign;
+
+    private static string Pst(decimal del, decimal total) =>
+        (total == 0 ? 0 : Math.Max(0, del) / total * 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+
+    // Montasje/arbeid har aldri konto (ingen vare), mens varer uten konto er
+    // noe som bør rettes - derfor to egne rader i stedet for én «Ikke satt».
+    private static string Nokkel(ArbeidsordreOkonomiBeregner.OkonomiLinje l) =>
+        l.KontoNummer is int nr ? nr.ToString(CultureInfo.InvariantCulture) : l.ComponentId is null ? "arbeid" : "uten";
+
+    private static List<KontoRad> Grupper(List<RapportData.OrdreLinjer> ordrer) => ordrer
+        .SelectMany(o => o.Linjer)
+        .GroupBy(Nokkel)
+        .Select(g => new KontoRad(
+            g.Key,
+            g.First().KontoNummer,
+            g.Key switch
+            {
+                "arbeid" => "Montasje og arbeid",
+                "uten" => "Varer uten inntektskonto",
+                _ => g.First().KontoNavn ?? ""
+            },
+            g.Sum(l => l.Belop)))
+        .OrderBy(r => r.Nummer ?? (r.Nokkel == "arbeid" ? int.MaxValue - 1 : int.MaxValue))
+        .ToList();
 
     protected override async Task OnInitializedAsync() => await HentRapport();
 
     private async Task HentRapport()
     {
-        _lasterNa = true;
+        _laster = true;
         try
         {
-            var tilEksklusiv = _tilDato.Date.AddDays(1);
-            var ordrer = await Db.Arbeidsordre
-                .Where(a => a.FullfortDato != null && a.FullfortDato >= _fraDato.Date && a.FullfortDato < tilEksklusiv)
-                .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer).ThenInclude(l => l.Component).ThenInclude(c => c!.Inntektskonto)
-                .Include(a => a.Varer).ThenInclude(v => v.Component).ThenInclude(c => c!.Inntektskonto)
-                .ToListAsync();
+            var naa = await RapportData.HentAsync(Db, _periode.Fra, _periode.Til);
+            _rader = Grupper(naa);
 
-            _rader = ordrer
-                .SelectMany(ArbeidsordreOkonomiBeregner.BeregnLinjer)
-                .GroupBy(l => (l.KontoNummer, KontoNavn: l.KontoNavn ?? "Ikke satt inntektskonto"))
-                .Select(g => new KontoRad(g.Key.KontoNummer, g.Key.KontoNavn, g.Sum(l => l.Belop)))
-                .OrderBy(r => r.Nummer ?? int.MaxValue)
-                .ToList();
+            var uten = naa.SelectMany(o => o.Linjer).Where(l => l.KontoNummer is null && l.ComponentId is not null).ToList();
+            _utenKontoSum = uten.Sum(l => l.Belop);
+            _utenKontoAntall = uten.Select(l => l.ComponentId).Distinct().Count();
+
+            var forrige = Sml
+                ? await RapportData.HentAsync(Db, _periode.SmlFra, _periode.SmlTil)
+                : new List<RapportData.OrdreLinjer>();
+            _forrige = Grupper(forrige).ToDictionary(r => r.Nokkel, r => r.Sum);
+
+            LagStolper(naa, forrige);
             _harHentet = true;
         }
         finally
         {
-            _lasterNa = false;
+            _laster = false;
         }
+    }
+
+    // Én stolpe per måned i perioden (eller per år hvis perioden er over to år).
+    private void LagStolper(List<RapportData.OrdreLinjer> naa, List<RapportData.OrdreLinjer> forrige)
+    {
+        var start = new DateTime(_periode.Fra.Year, _periode.Fra.Month, 1);
+        var slutt = new DateTime(_periode.Til.Year, _periode.Til.Month, 1);
+        var antallMnd = (slutt.Year - start.Year) * 12 + slutt.Month - start.Month + 1;
+        _perAr = antallMnd > 24;
+
+        if (_perAr)
+        {
+            _maaneder = Enumerable.Range(_periode.Fra.Year, _periode.Til.Year - _periode.Fra.Year + 1)
+                .Select(ar => new Stolpe(
+                    ar.ToString(Kultur),
+                    naa.Where(o => o.Fullfort.Year == ar).Sum(o => o.Sum),
+                    forrige.Where(o => o.Fullfort.Year == ar - 1).Sum(o => o.Sum)))
+                .ToList();
+            return;
+        }
+
+        _maaneder = Enumerable.Range(0, Math.Max(1, antallMnd))
+            .Select(i => start.AddMonths(i))
+            .Select(m => new Stolpe(
+                m.ToString(antallMnd > 12 ? "MMM yy" : "MMM", Kultur).TrimEnd('.'),
+                naa.Where(o => o.Fullfort.Year == m.Year && o.Fullfort.Month == m.Month).Sum(o => o.Sum),
+                forrige.Where(o => o.Fullfort.Year == m.Year - 1 && o.Fullfort.Month == m.Month).Sum(o => o.Sum)))
+            .ToList();
+    }
+
+    private async Task Eksporter()
+    {
+        var rader = new List<object?[]> { new object?[] { "Konto", "Navn", "Omsetning", Sml ? $"Sammenligning ({_periode.SmlTekst})" : null } };
+        rader.AddRange(_rader.Select(r => new object?[] { r.Nummer, r.Navn, r.Sum, Sml ? _forrige.GetValueOrDefault(r.Nokkel) : null }));
+        rader.Add(new object?[] { null, "Sum omsetning", _rader.Sum(r => r.Sum), Sml ? _forrige.Values.Sum() : null });
+        await JS.InvokeVoidAsync("rapport.lastNedCsv", $"Resultatrapport {_periode.Tekst}.csv", RapportData.Csv(rader));
     }
 }

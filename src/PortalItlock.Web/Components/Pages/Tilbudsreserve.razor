@@ -1,67 +1,114 @@
 @page "/rapporter/tilbudsreserve"
 @rendermode InteractiveServer
-@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>Tilbudsreserve - Full Kontroll</PageTitle>
 
-<div class="side-header">
-    <span class="side-header-ikon"><Icon Name="receipt" /></span>
-    <div>
-        <h1>Tilbudsreserve</h1>
-        <p class="section-hint">
-            Alle tilbud som er sendt til kunde, med dato sendt og sum på sendetidspunktet
-            (endres ikke selv om linjene på tilbudet redigeres i etterkant). Merkes som sendt
-            ved å sette Status til "Sendt til kunde" på tilbudet.
-        </p>
-    </div>
-</div>
+<RapportRamme Tittel="Tilbudsreserve" Undertittel="Tilbud sendt til kunde. Summen er låst slik den var da tilbudet ble sendt." Ikon="receipt" Kilde="portal"
+              KildeTekst="Fra portalen – tilbud sendt til kunde" Periode="_periode" VisAlleValg="true" OnPeriodeEndret="Oppdater"
+              OnEksporter="Eksporter">
+    <Faner>
+        <div class="rr-faner">
+            @foreach (var (key, navn, css) in Faner)
+            {
+                var k = key;
+                var liste = IFane(k);
+                <button type="button" class="rr-fane @(_fane == k ? "pa" : "")" @onclick="@(() => _fane = k)">@navn <em class="@css">@liste.Count</em></button>
+            }
+        </div>
+    </Faner>
+    <ChildContent>
+        @if (_rader.Count == 0)
+        {
+            <p class="rr-tom">Ingen tilbud er sendt til kunde ennå.</p>
+        }
+        else
+        {
+            var venter = IFane("venter");
+            var besvart = IPerioden.Count(r => r.Status is EndringsmeldingStatus.Godkjent or EndringsmeldingStatus.Avslatt);
+            var godkjent = IPerioden.Count(r => r.Status == EndringsmeldingStatus.Godkjent);
+            var gamle = venter.Count(r => Dager(r) > 30);
+            <div class="rr-kpis">
+                <div class="rr-kpi"><small>Tilbudsreserve</small><b>@RapportPeriode.Kr(venter.Sum(r => r.Sum))</b><span>venter på svar fra kunde</span></div>
+                <div class="rr-kpi"><small>Tilbud som venter</small><b>@venter.Count</b><span>@(venter.Count == 0 ? "–" : $"snitt {RapportPeriode.Kr(venter.Average(r => r.Sum))}")</span></div>
+                <div class="rr-kpi @(gamle > 0 ? "varsel" : "")"><small>Eldste venter</small><b>@(venter.Count == 0 ? "–" : $"{venter.Max(Dager)} dager")</b><span>@(gamle == 0 ? "ingen over 30 dager" : $"{gamle} over 30 dager")</span></div>
+                <div class="rr-kpi"><small>Vinnerandel</small><b>@(besvart == 0 ? "–" : RapportPeriode.Prosent(godkjent, besvart))</b><span>@godkjent av @besvart besvarte tilbud</span></div>
+            </div>
 
-@if (_rader.Count == 0)
-{
-    <p class="list-empty">Ingen tilbud er sendt til kunde ennå.</p>
-}
-else
-{
-    <div class="kort stat-kort">
-        <span class="stat-label">Tilbudsreserve (venter på svar fra kunde)</span>
-        <span class="stat-verdi">@TilbudsreserveSum.ToString("N0", Kultur) kr</span>
-    </div>
-
-    <div class="kort tabell-kort">
-        <table class="rapport-table">
-            <thead>
-                <tr>
-                    <th>Dato sendt</th>
-                    <th>Kunde</th>
-                    <th>Prosjekt</th>
-                    <th>Tilbud</th>
-                    <th>Status</th>
-                    <th class="tall-cell">Sum eks. mva</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var r in _rader)
+            <div class="rr-tile">
+                <div class="rr-tile-t">
+                    <h2>@Faner.First(f => f.Key == _fane).Navn</h2>
+                    <div class="rr-tile-verktoy">
+                        <div class="rr-minseg">
+                            <button type="button" class="@(_sorter == "eldst" ? "pa" : "")" @onclick='@(() => _sorter = "eldst")'>Eldst først</button>
+                            <button type="button" class="@(_sorter == "sum" ? "pa" : "")" @onclick='@(() => _sorter = "sum")'>Størst sum</button>
+                            <button type="button" class="@(_sorter == "nyest" ? "pa" : "")" @onclick='@(() => _sorter = "nyest")'>Nyest</button>
+                        </div>
+                        <label class="rr-sok"><Icon Name="search" /><input type="search" placeholder="Søk kunde, prosjekt eller tilbud …" @bind="_sok" @bind:event="oninput" /></label>
+                    </div>
+                </div>
+                @{ var liste = Synlige; }
+                @if (liste.Count == 0)
                 {
-                    <tr>
-                        <td>@r.SendtDato.ToString("dd.MM.yyyy")</td>
-                        <td>@(r.KundeNavn ?? "-")</td>
-                        <td><a href="@($"/prosjekter/{r.ProsjektId}")">@r.ProsjektNavn</a></td>
-                        <td><a href="@($"/tilbud/{r.TilbudId}")">@r.Tittel</a></td>
-                        <td><span class="status-pille @StatusCss(r.Status)">@r.Status.Visningsnavn()</span></td>
-                        <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
-                    </tr>
+                    <p class="rr-tom">Ingen tilbud her.</p>
                 }
-            </tbody>
-        </table>
-    </div>
-}
+                else
+                {
+                    <div class="rr-tabwrap">
+                        <table class="rr-tab">
+                            <thead>
+                                <tr>
+                                    <th>Sendt</th>
+                                    <th>Kunde</th>
+                                    <th>Tilbud / prosjekt</th>
+                                    <th>Status</th>
+                                    <th class="n">@(_fane == "venter" ? "Har ventet" : "Sendt for")</th>
+                                    <th class="n">Sum eks. mva</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in liste)
+                                {
+                                    var dager = Dager(r);
+                                    var folgOpp = r.Status == EndringsmeldingStatus.SendtTilKunde && dager > 30;
+                                    <tr>
+                                        <td>@r.SendtDato.ToString("dd.MM.yyyy")</td>
+                                        <td>@(r.KundeNavn ?? "-")</td>
+                                        <td><a href="@($"/tilbud/{r.TilbudId}")">@r.Tittel</a><small><a href="@($"/prosjekter/{r.ProsjektId}")">@r.ProsjektNavn</a></small></td>
+                                        <td><span class="rr-pille @StatusCss(r.Status)">@r.Status.Visningsnavn()</span></td>
+                                        <td class="n">@if (folgOpp){<span class="rr-pille rr-p-rod">@dager dager</span>}else{<span class="dempet">@dager dager</span>}</td>
+                                        <td class="n"><b>@RapportPeriode.Kr(r.Sum)</b></td>
+                                        <td class="n">@if (folgOpp){<a class="rr-knapp liten" href="@($"/tilbud/{r.TilbudId}")">Følg opp</a>}</td>
+                                    </tr>
+                                }
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="5">Sum (@liste.Count tilbud)</td>
+                                    <td class="n">@RapportPeriode.Kr(liste.Sum(r => r.Sum))</td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                }
+            </div>
+        }
+    </ChildContent>
+</RapportRamme>
 
 @code {
-    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+    private readonly RapportPeriode _periode = new(RapportPeriodeValg.Alle);
+    private string _fane = "venter";
+    private string _sorter = "eldst";
+    private string _sok = "";
 
     private sealed record Rad(
         int TilbudId, string Tittel, DateTime SendtDato, decimal Sum, EndringsmeldingStatus Status,
@@ -69,18 +116,51 @@ else
 
     private List<Rad> _rader = [];
 
+    private static readonly (string Key, string Navn, string Css)[] Faner =
+    [
+        ("venter", "Venter på svar", "g"),
+        ("godkjent", "Godkjent", ""),
+        ("avslatt", "Avslått", ""),
+        ("alle", "Alle", "")
+    ];
+
+    private static int Dager(Rad r) => (DateTime.Today - r.SendtDato.Date).Days;
+
+    private IEnumerable<Rad> IPerioden => _rader.Where(r => _periode.Inneholder(r.SendtDato));
+
+    private List<Rad> IFane(string fane) => IPerioden.Where(r => fane switch
+    {
+        "venter" => r.Status == EndringsmeldingStatus.SendtTilKunde,
+        "godkjent" => r.Status == EndringsmeldingStatus.Godkjent,
+        "avslatt" => r.Status == EndringsmeldingStatus.Avslatt,
+        _ => true
+    }).ToList();
+
+    private List<Rad> Synlige
+    {
+        get
+        {
+            var s = _sok.Trim();
+            var liste = IFane(_fane).Where(r => s.Length == 0
+                || (r.KundeNavn?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+                || r.ProsjektNavn.Contains(s, StringComparison.OrdinalIgnoreCase)
+                || r.Tittel.Contains(s, StringComparison.OrdinalIgnoreCase));
+            return (_sorter switch
+            {
+                "sum" => liste.OrderByDescending(r => r.Sum),
+                "nyest" => liste.OrderByDescending(r => r.SendtDato),
+                _ => liste.OrderBy(r => r.SendtDato)
+            }).ToList();
+        }
+    }
+
     private static string StatusCss(EndringsmeldingStatus s) => s switch
     {
-        EndringsmeldingStatus.Utkast => "status-utkast",
-        EndringsmeldingStatus.SendtTilKunde => "status-sendt",
-        EndringsmeldingStatus.Godkjent => "status-godkjent",
-        EndringsmeldingStatus.Avslatt => "status-avslatt",
-        _ => "status-utkast"
+        EndringsmeldingStatus.SendtTilKunde => "rr-p-gul",
+        EndringsmeldingStatus.Godkjent => "rr-p-gronn",
+        EndringsmeldingStatus.Avslatt => "rr-p-rod",
+        _ => "rr-p-gra"
     };
-
-    private decimal TilbudsreserveSum => _rader
-        .Where(r => r.Status == EndringsmeldingStatus.SendtTilKunde)
-        .Sum(r => r.Sum);
 
     protected override async Task OnInitializedAsync()
     {
@@ -92,5 +172,18 @@ else
                 t.Id, t.Tittel, t.SendtDato!.Value, t.SendtSum ?? 0, t.Status,
                 t.ProsjektId, t.Prosjekt!.Navn, t.Prosjekt!.Kunde == null ? null : t.Prosjekt!.Kunde!.Navn))
             .ToListAsync();
+    }
+
+    // Tilbudene er allerede lastet; periodevalget filtrerer bare på sendt-dato.
+    private Task Oppdater() => Task.CompletedTask;
+
+    private async Task Eksporter()
+    {
+        var rader = new List<object?[]> { new object?[] { "Sendt", "Kunde", "Prosjekt", "Tilbud", "Status", "Dager siden sendt", "Sum eks. mva" } };
+        rader.AddRange(Synlige.Select(r => new object?[]
+        {
+            r.SendtDato, r.KundeNavn, r.ProsjektNavn, r.Tittel, r.Status.Visningsnavn(), Dager(r), r.Sum
+        }));
+        await JS.InvokeVoidAsync("rapport.lastNedCsv", "Tilbudsreserve.csv", RapportData.Csv(rader));
     }
 }

@@ -1,186 +1,228 @@
 @page "/rapporter/kunde"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
-@using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
+@inject NavigationManager Nav
 
 <PageTitle>Kunderapport - Full Kontroll</PageTitle>
 
-<div class="side-header">
-    <span class="side-header-ikon"><Icon Name="users" /></span>
-    <div>
-        <h1>Topp 20 kunder</h1>
-        <p class="section-hint">
-            Omsetning pr. kunde for valgt periode, beregnet fra ferdigmeldte
-            arbeidsordre i portalen (samme oppsett som Tripletex sin kunderapport,
-            men uavhengig av om ordren er fakturert i Tripletex ennå).
-        </p>
-    </div>
-</div>
-
-<div class="kort filter-kort">
-    <label class="felt">
-        <span class="felt-label">Fra</span>
-        <input type="date" @bind="_fraDato" />
-    </label>
-    <label class="felt">
-        <span class="felt-label">Til</span>
-        <input type="date" @bind="_tilDato" />
-    </label>
-    <label class="felt">
-        <span class="felt-label">Kundetype</span>
-        <select @bind="_typeFilter">
-            <option value="">Alle</option>
-            <option value="IkkeSatt">Ikke satt</option>
-            @foreach (var t in Enum.GetValues<KundeType>())
-            {
-                <option value="@t">@t.Visningsnavn()</option>
-            }
-        </select>
-    </label>
-    <button type="button" class="knapp-primaer" @onclick="HentRapport" disabled="@_lasterNa">
-        @(_lasterNa ? "Henter..." : "Vis rapport")
-    </button>
-</div>
-
-@if (_harHentet)
-{
-    @if (_alleRader.Count == 0)
+<RapportRamme Tittel="Kunderapport" Undertittel="Topp 20 kunder etter omsetning." Ikon="users" Kilde="portal"
+              Periode="_periode" OnPeriodeEndret="HentRapport" VisSammenlign="true" Laster="_laster"
+              OnEksporter="Eksporter">
+    @if (_harHentet && _rader.Count == 0)
     {
-        <p class="list-empty">Ingen ferdigmeldte arbeidsordre med omsetning i denne perioden.</p>
+        <p class="rr-tom">Ingen ferdigmeldte arbeidsordre med omsetning i denne perioden.</p>
     }
-    else
+    else if (_harHentet)
     {
-        <div class="stat-rad">
-            <div class="kort stat-kort">
-                <span class="stat-label">Total omsetning</span>
-                <span class="stat-verdi">@_alleRader.Sum(r => r.Sum).ToString("N0", Kultur) kr</span>
-            </div>
-            <div class="kort stat-kort">
-                <span class="stat-label">Antall kunder</span>
-                <span class="stat-verdi">@_alleRader.Count</span>
-            </div>
-            <div class="kort stat-kort">
-                <span class="stat-label">Størst enkeltkunde</span>
-                <span class="stat-verdi">@(_alleRader.Count == 0 ? "0" : _alleRader.Max(r => r.Sum).ToString("N0", Kultur)) kr</span>
-            </div>
+        var total = _rader.Sum(r => r.Sum);
+        decimal? totalFor = Sml ? _forrige.Values.Sum() : null;
+        var snitt = _rader.Count == 0 ? 0 : total / _rader.Count;
+        decimal? snittFor = Sml && _forrige.Count > 0 ? _forrige.Values.Sum() / _forrige.Count : null;
+        var topp5 = _rader.OrderByDescending(r => r.Sum).Take(5).Sum(r => r.Sum);
+        <div class="rr-kpis">
+            <div class="rr-kpi"><small>Omsetning</small><b>@RapportPeriode.Kr(total)</b><span><RapportDelta Naa="total" For="totalFor" /> @(Sml ? $"mot {_periode.SmlTekst}" : "i perioden")</span></div>
+            <div class="rr-kpi"><small>Kunder med salg</small><b>@_rader.Count</b><span>@(Sml ? $"{_forrige.Count} i sammenligningsperioden" : "i perioden")</span></div>
+            <div class="rr-kpi"><small>Snitt per kunde</small><b>@RapportPeriode.Kr(snitt)</b><span><RapportDelta Naa="snitt" For="snittFor" /></span></div>
+            <div class="rr-kpi"><small>Topp 5 sin andel</small><b>@RapportPeriode.Prosent(topp5, total)</b><span>av all omsetning</span></div>
         </div>
 
-        <h2>Omsetning pr. kundetype</h2>
-        <div class="kort tabell-kort">
-            <table class="rapport-table">
-                <thead>
-                    <tr>
-                        <th>Kundetype</th>
-                        <th class="tall-cell">Omsetning</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var (typeNavn, sum) in SumPrType)
-                    {
-                        <tr>
-                            <td>@typeNavn</td>
-                            <td class="tall-cell">@sum.ToString("N0", Kultur) kr</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
+        <div class="rr-g2">
+            <div class="rr-tile">
+                <div class="rr-tile-t">
+                    <h2>Topp 20 kunder@(_typeFilter is null ? "" : $" – {TypeNavn(_typeFilter)}")</h2>
+                    <label class="rr-sok"><Icon Name="search" /><input type="search" placeholder="Finn kunde …" @bind="_sok" @bind:event="oninput" /></label>
+                </div>
+                @if (Topp20.Count == 0)
+                {
+                    <p class="rr-tom">Ingen kunder passer filteret.</p>
+                }
+                else
+                {
+                    var maks = Topp20.Max(r => r.Sum);
+                    <div class="rr-tabwrap">
+                        <table class="rr-tab">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Kunde</th>
+                                    <th>Andel</th>
+                                    <th class="n">Omsetning</th>
+                                    @if (Sml)
+                                    {
+                                        <th class="n">Endring</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var (r, i) in Topp20.Select((r, i) => (r, i)))
+                                {
+                                    var id = r.Id;
+                                    <tr class="klikk" title="Åpne kunden" @onclick="@(() => Nav.NavigateTo($"/kunder/{id}"))">
+                                        <td class="plass">@(i + 1)</td>
+                                        <td><span class="rr-navn"><span class="rr-av">@RapportData.Initialer(r.Navn)</span><span>@r.Navn<small>@TypeNavn(r.Type)</small></span></span></td>
+                                        <td><span class="rr-andel"><span class="rr-bar"><i style="width:@Pst(r.Sum, maks)"></i></span><span>@RapportPeriode.Prosent(r.Sum, total)</span></span></td>
+                                        <td class="n">@RapportPeriode.Kr(r.Sum)</td>
+                                        @if (Sml)
+                                        {
+                                            <td class="n"><RapportDelta Naa="r.Sum" For="_forrige.GetValueOrDefault(r.Id)" /></td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
 
-        <h2>Topp 20 kunder@(string.IsNullOrEmpty(_typeFilter) ? "" : $" - {TypeFilterNavn}")</h2>
-        @if (FiltrerteRader.Count == 0)
-        {
-            <p class="list-empty">Ingen kunder med omsetning i denne perioden for valgt kundetype.</p>
-        }
-        else
-        {
-            <div class="kort tabell-kort">
-                <table class="rapport-table">
-                    <thead>
-                        <tr>
-                            <th class="plass-cell">#</th>
-                            <th>Kunde</th>
-                            <th>Kundetype</th>
-                            <th class="tall-cell">Omsetning</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @{ var plass = 0; }
-                        @foreach (var r in FiltrerteRader)
+            <div class="rr-stabel-kol">
+                <div class="rr-tile">
+                    <div class="rr-tile-t"><h2>Fordeling på kundetype</h2><small>klikk for å filtrere</small></div>
+                    <div class="rr-stabel">
+                        @foreach (var x in PerType)
                         {
-                            plass++;
-                            <tr>
-                                <td class="plass-cell">@plass</td>
-                                <td>@r.Navn</td>
-                                <td>@(r.Type?.Visningsnavn() ?? "Ikke satt")</td>
-                                <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
-                            </tr>
+                            <i style="width:@Pst(x.Sum, total);background:@x.Farge"></i>
                         }
-                    </tbody>
-                </table>
+                    </div>
+                    <div class="rr-forkl">
+                        @foreach (var x in PerType)
+                        {
+                            var type = x.Type;
+                            <button type="button" class="@(_typeFilter == TypeKey(type) ? "pa" : "")" @onclick="@(() => VelgType(type))">
+                                <i style="background:@x.Farge"></i><span>@TypeNavn(type)</span><b>@RapportPeriode.Kr(x.Sum)</b><small>@RapportPeriode.Prosent(x.Sum, total)</small>
+                            </button>
+                        }
+                    </div>
+                    @if (_typeFilter is not null)
+                    {
+                        <div class="rr-mer"><button type="button" class="rr-knapp liten" @onclick="@(() => _typeFilter = null)">Vis alle kundetyper</button></div>
+                    }
+                </div>
+
+                @if (Sml && StorsteEndringer.Count > 0)
+                {
+                    <div class="rr-tile">
+                        <div class="rr-tile-t"><h2>Største endringer</h2><small>mot @_periode.SmlTekst</small></div>
+                        <table class="rr-tab">
+                            <tbody>
+                                @foreach (var x in StorsteEndringer)
+                                {
+                                    <tr><td>@x.Navn</td><td class="n"><RapportDelta Naa="x.Diff" For="0" IKroner="true" /></td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
             </div>
-        }
+        </div>
     }
-}
+</RapportRamme>
 
 @code {
-    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
-
-    private DateTime _fraDato = new(DateTime.Today.Year, 1, 1);
-    private DateTime _tilDato = DateTime.Today;
-    private string _typeFilter = "";
-    private bool _lasterNa;
+    private readonly RapportPeriode _periode = new();
+    private bool _laster;
     private bool _harHentet;
+    private string _sok = "";
+    private string? _typeFilter; // null = alle, "" = ikke satt, ellers enum-navn
 
-    private sealed record KundeRad(string Navn, KundeType? Type, decimal Sum);
-    private List<KundeRad> _alleRader = [];
+    private sealed record KundeRad(int Id, string Navn, KundeType? Type, decimal Sum);
+    private List<KundeRad> _rader = [];
+    private Dictionary<int, decimal> _forrige = [];
+    private Dictionary<int, string> _forrigeNavn = [];
 
-    private string TypeFilterNavn => _typeFilter == "IkkeSatt"
-        ? "Ikke satt"
-        : Enum.TryParse<KundeType>(_typeFilter, out var t) ? t.Visningsnavn() : "";
+    private bool Sml => _periode.Sammenlign;
 
-    private List<KundeRad> FiltrerteRader => _alleRader
-        .Where(r => string.IsNullOrEmpty(_typeFilter)
-            || (_typeFilter == "IkkeSatt" ? r.Type is null : r.Type.HasValue && r.Type.Value.ToString() == _typeFilter))
+    private static readonly string[] Farger = ["#835e41", "#b3926f", "#d9c3a7", "#9aa58f", "#c9b8a6", "#ece2d5"];
+
+    private static string TypeKey(KundeType? t) => t?.ToString() ?? "";
+
+    private static string TypeNavn(KundeType? t) => t?.Visningsnavn() ?? "Ikke satt";
+
+    private static string TypeNavn(string key) =>
+        Enum.TryParse<KundeType>(key, out var t) ? t.Visningsnavn() : "Ikke satt";
+
+    private static string Pst(decimal del, decimal total) =>
+        (total == 0 ? 0 : Math.Max(0, del) / total * 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+    private sealed record TypeSum(KundeType? Type, decimal Sum, string Farge);
+
+    private List<TypeSum> PerType => _rader
+        .GroupBy(r => r.Type)
+        .Select(g => (Type: g.Key, Sum: g.Sum(r => r.Sum)))
+        .OrderByDescending(x => x.Sum)
+        .Select((x, i) => new TypeSum(x.Type, x.Sum, Farger[i % Farger.Length]))
+        .ToList();
+
+    private List<KundeRad> Topp20 => _rader
+        .Where(r => _typeFilter is null || TypeKey(r.Type) == _typeFilter)
+        .Where(r => string.IsNullOrWhiteSpace(_sok) || r.Navn.Contains(_sok.Trim(), StringComparison.OrdinalIgnoreCase))
         .OrderByDescending(r => r.Sum)
         .Take(20)
         .ToList();
 
-    private List<(string TypeNavn, decimal Sum)> SumPrType => _alleRader
-        .GroupBy(r => r.Type)
-        .Select(g => (g.Key?.Visningsnavn() ?? "Ikke satt", g.Sum(r => r.Sum)))
-        .OrderByDescending(x => x.Item2)
+    private sealed record Endring(string Navn, decimal Diff);
+
+    private List<Endring> StorsteEndringer => _rader.Select(r => r.Id).Union(_forrige.Keys)
+        .Select(id => new Endring(
+            _rader.FirstOrDefault(r => r.Id == id)?.Navn ?? _forrigeNavn.GetValueOrDefault(id, "?"),
+            (_rader.FirstOrDefault(r => r.Id == id)?.Sum ?? 0) - _forrige.GetValueOrDefault(id)))
+        .Where(x => x.Diff != 0)
+        .OrderByDescending(x => Math.Abs(x.Diff))
+        .Take(4)
         .ToList();
+
+    private void VelgType(KundeType? t)
+    {
+        var key = TypeKey(t);
+        _typeFilter = _typeFilter == key ? null : key;
+    }
 
     protected override async Task OnInitializedAsync() => await HentRapport();
 
     private async Task HentRapport()
     {
-        _lasterNa = true;
+        _laster = true;
         try
         {
-            var tilEksklusiv = _tilDato.Date.AddDays(1);
-            var ordrer = await Db.Arbeidsordre
-                .Where(a => a.FullfortDato != null && a.FullfortDato >= _fraDato.Date && a.FullfortDato < tilEksklusiv)
-                .Include(a => a.Kunde)
-                .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
-                .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer).ThenInclude(l => l.Component)
-                .Include(a => a.Varer).ThenInclude(v => v.Component)
-                .ToListAsync();
-
-            _alleRader = ordrer
-                .Where(a => (a.Kunde ?? a.Prosjekt?.Kunde) is not null)
-                .GroupBy(a => a.Kunde ?? a.Prosjekt!.Kunde!)
-                .Select(g => new KundeRad(g.Key.Navn, g.Key.Type, g.Sum(a => ArbeidsordreOkonomiBeregner.BeregnLinjer(a).Sum(l => l.Belop))))
+            var naa = await RapportData.HentAsync(Db, _periode.Fra, _periode.Til);
+            _rader = naa
+                .Where(o => o.Kunde is not null)
+                .GroupBy(o => o.Kunde!.Id)
+                .Select(g => new KundeRad(g.Key, g.First().Kunde!.Navn, g.First().Kunde!.Type, g.Sum(o => o.Sum)))
+                .Where(r => r.Sum != 0)
                 .ToList();
+
+            _forrige = [];
+            _forrigeNavn = [];
+            if (Sml)
+            {
+                var forrige = await RapportData.HentAsync(Db, _periode.SmlFra, _periode.SmlTil);
+                foreach (var g in forrige.Where(o => o.Kunde is not null).GroupBy(o => o.Kunde!.Id))
+                {
+                    _forrige[g.Key] = g.Sum(o => o.Sum);
+                    _forrigeNavn[g.Key] = g.First().Kunde!.Navn;
+                }
+            }
+
             _harHentet = true;
         }
         finally
         {
-            _lasterNa = false;
+            _laster = false;
         }
+    }
+
+    private async Task Eksporter()
+    {
+        var rader = new List<object?[]> { new object?[] { "Plass", "Kunde", "Kundetype", "Omsetning", Sml ? $"Sammenligning ({_periode.SmlTekst})" : null } };
+        rader.AddRange(_rader.OrderByDescending(r => r.Sum).Select((r, i) => new object?[]
+        {
+            i + 1, r.Navn, TypeNavn(r.Type), r.Sum, Sml ? _forrige.GetValueOrDefault(r.Id) : null
+        }));
+        await JS.InvokeVoidAsync("rapport.lastNedCsv", $"Kunderapport {_periode.Tekst}.csv", RapportData.Csv(rader));
     }
 }

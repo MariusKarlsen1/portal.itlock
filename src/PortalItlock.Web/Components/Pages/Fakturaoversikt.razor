@@ -3,117 +3,204 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 @using PortalItlock.Web.Services
 @inject TripletexService Tripletex
+@inject IJSRuntime JS
 
 <PageTitle>Fakturaoversikt - Full Kontroll</PageTitle>
 
-<div class="side-header">
-    <span class="side-header-ikon"><Icon Name="receipt" /></span>
-    <div>
-        <h1>Fakturaoversikt</h1>
-        <p class="section-hint">
-            Fakturaer sendt fra Tripletex for valgt periode, hentet direkte derfra -
-            selve faktureringen skjer fortsatt manuelt inne i Tripletex, denne siden
-            viser bare oversikten.
-        </p>
-    </div>
-</div>
-
-<div class="kort filter-kort">
-    <label class="felt">
-        <span class="felt-label">Fra</span>
-        <input type="date" @bind="_fraDato" />
-    </label>
-    <label class="felt">
-        <span class="felt-label">Til</span>
-        <input type="date" @bind="_tilDato" />
-    </label>
-    <button type="button" class="knapp-primaer" @onclick="HentRapport" disabled="@_lasterNa">
-        @(_lasterNa ? "Henter..." : "Vis fakturaer")
-    </button>
-</div>
-
-@if (_feil is not null)
-{
-    <p class="form-error">@_feil</p>
-}
-
-@if (_harHentet)
-{
-    @if (_fakturaer.Count == 0)
-    {
-        <p class="list-empty">Ingen fakturaer i denne perioden.</p>
-    }
-    else
-    {
-        <div class="stat-rad">
-            <div class="kort stat-kort">
-                <span class="stat-label">Totalt fakturert</span>
-                <span class="stat-verdi">@_fakturaer.Sum(f => f.Belop).ToString("N0", Kultur) kr</span>
+<RapportRamme Tittel="Fakturaoversikt" Undertittel="Fakturaer sendt fra Tripletex. Selve faktureringen skjer i Tripletex." Ikon="receipt" Kilde="tripletex"
+              KildeTekst="@(_hentet is null ? "Fra Tripletex" : $"Fra Tripletex – hentet {_hentet:HH:mm}")"
+              Periode="_periode" OnPeriodeEndret="HentRapport" Laster="_laster" OnEksporter="Eksporter">
+    <Handlinger>
+        <button type="button" class="rr-knapp" @onclick="HentRapport" disabled="@_laster">↻ Oppdater</button>
+    </Handlinger>
+    <Faner>
+        @if (_harHentet && _feil is null && _fakturaer.Count > 0)
+        {
+            <div class="rr-faner">
+                @foreach (var (key, navn, css) in Faner)
+                {
+                    var k = key;
+                    <button type="button" class="rr-fane @(_fane == k ? "pa" : "")" @onclick="@(() => _fane = k)">@navn <em class="@css">@Filtrert(k).Count</em></button>
+                }
             </div>
-            <div class="kort stat-kort">
-                <span class="stat-label">Utestående</span>
-                <span class="stat-verdi stat-verdi-varsel">@_fakturaer.Sum(f => f.Utestaende).ToString("N0", Kultur) kr</span>
+        }
+    </Faner>
+    <ChildContent>
+        @if (_feil is not null)
+        {
+            <p class="rr-feil">@_feil</p>
+        }
+        else if (_harHentet && _fakturaer.Count == 0)
+        {
+            <p class="rr-tom">Ingen fakturaer i denne perioden.</p>
+        }
+        else if (_harHentet)
+        {
+            var fakturert = _fakturaer.Sum(Netto);
+            var ubetalte = _fakturaer.Where(ErUbetalt).ToList();
+            var forfalte = ubetalte.Where(ErForfalt).ToList();
+            var vanlige = _fakturaer.Count(f => !f.ErKreditnota);
+            <div class="rr-kpis">
+                <div class="rr-kpi"><small>Fakturert</small><b>@RapportPeriode.Kr(fakturert)</b><span>@vanlige fakturaer@(_fakturaer.Count > vanlige ? $", {_fakturaer.Count - vanlige} kreditnota" : "")</span></div>
+                <div class="rr-kpi @(ubetalte.Count > 0 ? "gul" : "")"><small>Utestående</small><b>@RapportPeriode.Kr(ubetalte.Sum(f => f.Utestaende))</b><span>@ubetalte.Count @(ubetalte.Count == 1 ? "faktura" : "fakturaer")</span></div>
+                <div class="rr-kpi @(forfalte.Count > 0 ? "varsel" : "")"><small>Forfalt</small><b>@RapportPeriode.Kr(forfalte.Sum(f => f.Utestaende))</b><span>@(forfalte.Count == 0 ? "ingen forfalte" : $"{forfalte.Count} {(forfalte.Count == 1 ? "faktura" : "fakturaer")} – følg opp")</span></div>
+                <div class="rr-kpi"><small>Snitt per faktura</small><b>@RapportPeriode.Kr(vanlige == 0 ? 0 : _fakturaer.Where(f => !f.ErKreditnota).Sum(f => f.Belop) / vanlige)</b><span>eks. kreditnotaer</span></div>
             </div>
-            <div class="kort stat-kort">
-                <span class="stat-label">Antall fakturaer</span>
-                <span class="stat-verdi">@_fakturaer.Count</span>
-            </div>
-        </div>
 
-        <div class="kort tabell-kort">
-            <table class="rapport-table">
-                <thead>
-                    <tr>
-                        <th>Fakturanr</th>
-                        <th>Dato</th>
-                        <th>Forfall</th>
-                        <th>Kunde</th>
-                        <th>Ordre</th>
-                        <th class="tall-cell">Beløp</th>
-                        <th class="tall-cell">Utestående</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var f in _fakturaer)
-                    {
-                        <tr>
-                            <td>@(f.Nummer?.ToString() ?? "-")</td>
-                            <td>@(f.Dato?.ToString("dd.MM.yyyy") ?? "-")</td>
-                            <td>@(f.Forfallsdato?.ToString("dd.MM.yyyy") ?? "-")</td>
-                            <td>@(f.KundeNavn ?? "-")</td>
-                            <td>@(f.OrdreNummer ?? "-")</td>
-                            <td class="tall-cell">@f.Belop.ToString("N0", Kultur) kr</td>
-                            <td class="tall-cell">@f.Utestaende.ToString("N0", Kultur) kr</td>
-                            <td><span class="status-pille @StatusCss(f)">@StatusTekst(f)</span></td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
-    }
-}
+            @if (ubetalte.Count > 0)
+            {
+                var sumUt = ubetalte.Sum(f => f.Utestaende);
+                <div class="rr-tile">
+                    <div class="rr-tile-t"><h2>Utestående etter alder</h2><small>@RapportPeriode.Kr(sumUt) totalt</small></div>
+                    <div class="rr-alder">
+                        @foreach (var (navn, fraDager, tilDager, farge) in Aldersgrupper)
+                        {
+                            var sum = ubetalte.Where(f => DagerForfalt(f) >= fraDager && DagerForfalt(f) <= tilDager).Sum(f => f.Utestaende);
+                            <div>
+                                <small>@navn</small>
+                                <b>@RapportPeriode.Kr(sum)</b>
+                                <span class="rr-bar"><i style="width:@Pst(sum, sumUt);background:@farge"></i></span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div class="rr-tile">
+                <div class="rr-tile-t">
+                    <h2>@Faner.First(f => f.Key == _fane).Navn</h2>
+                    <label class="rr-sok"><Icon Name="search" /><input type="search" placeholder="Søk kunde, faktura eller ordre …" @bind="_sok" @bind:event="oninput" /></label>
+                </div>
+                @{ var liste = Synlige; }
+                @if (liste.Count == 0)
+                {
+                    <p class="rr-tom">Ingen fakturaer her.</p>
+                }
+                else
+                {
+                    <div class="rr-tabwrap">
+                        <table class="rr-tab">
+                            <thead>
+                                <tr>
+                                    <th>Faktura</th>
+                                    <th>Kunde</th>
+                                    <th>Dato</th>
+                                    <th>Forfall</th>
+                                    <th class="n">Beløp</th>
+                                    <th class="n">Utestående</th>
+                                    <th>Status</th>
+                                    <th class="n">Over forfall</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var f in liste)
+                                {
+                                    <tr>
+                                        <td><b>@(f.Nummer?.ToString() ?? "-")</b>@if (!string.IsNullOrWhiteSpace(f.OrdreNummer)){<small>Ordre @f.OrdreNummer</small>}</td>
+                                        <td>@(f.KundeNavn ?? "-")</td>
+                                        <td>@(f.Dato?.ToString("dd.MM.yyyy") ?? "-")</td>
+                                        <td>@(f.Forfallsdato?.ToString("dd.MM.yyyy") ?? "-")</td>
+                                        <td class="n">@RapportPeriode.Kr(Netto(f))</td>
+                                        <td class="n">@if (ErUbetalt(f)){<b>@RapportPeriode.Kr(f.Utestaende)</b>}else{<span class="dempet">–</span>}</td>
+                                        <td><span class="rr-pille @StatusCss(f)">@StatusTekst(f)</span></td>
+                                        <td class="n">@if (ErForfalt(f)){<span class="rapport-forfalt">@DagerForfalt(f) dager</span>}</td>
+                                    </tr>
+                                }
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="4">Sum (@liste.Count)</td>
+                                    <td class="n">@RapportPeriode.Kr(liste.Sum(Netto))</td>
+                                    <td class="n">@RapportPeriode.Kr(liste.Where(ErUbetalt).Sum(f => f.Utestaende))</td>
+                                    <td colspan="2"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                }
+            </div>
+        }
+    </ChildContent>
+</RapportRamme>
 
 @code {
-    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
-
-    private DateTime _fraDato = new(DateTime.Today.Year, 1, 1);
-    private DateTime _tilDato = DateTime.Today;
-    private bool _lasterNa;
+    private readonly RapportPeriode _periode = new();
+    private bool _laster;
     private bool _harHentet;
     private string? _feil;
+    private DateTime? _hentet;
+    private string _fane = "alle";
+    private string _sok = "";
 
     private List<TripletexService.TripletexFaktura> _fakturaer = [];
+
+    private static readonly (string Key, string Navn, string Css)[] Faner =
+    [
+        ("alle", "Alle", ""),
+        ("ubetalt", "Ikke betalt", "g"),
+        ("forfalt", "Forfalt", "r"),
+        ("betalt", "Betalt", ""),
+        ("kreditnota", "Kreditnota", "")
+    ];
+
+    private static readonly (string Navn, int Fra, int Til, string Farge)[] Aldersgrupper =
+    [
+        ("Ikke forfalt", int.MinValue, 0, "#2b7a4b"),
+        ("1–30 dager", 1, 30, "#d9a441"),
+        ("31–60 dager", 31, 60, "#d0743a"),
+        ("Over 60 dager", 61, int.MaxValue, "#b23b22")
+    ];
+
+    private static decimal Netto(TripletexService.TripletexFaktura f) => f.ErKreditnota ? -Math.Abs(f.Belop) : f.Belop;
+
+    private static bool ErUbetalt(TripletexService.TripletexFaktura f) => !f.ErKreditnota && f.Utestaende > 0;
+
+    private static int DagerForfalt(TripletexService.TripletexFaktura f) =>
+        f.Forfallsdato is DateTime d ? (DateTime.Today - d.Date).Days : 0;
+
+    private static bool ErForfalt(TripletexService.TripletexFaktura f) => ErUbetalt(f) && DagerForfalt(f) > 0;
+
+    private static string Pst(decimal del, decimal total) =>
+        (total == 0 ? 0 : Math.Max(0, del) / total * 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+    private List<TripletexService.TripletexFaktura> Filtrert(string fane) => fane switch
+    {
+        "ubetalt" => _fakturaer.Where(ErUbetalt).ToList(),
+        "forfalt" => _fakturaer.Where(ErForfalt).OrderByDescending(DagerForfalt).ToList(),
+        "betalt" => _fakturaer.Where(f => !f.ErKreditnota && f.Utestaende <= 0).ToList(),
+        "kreditnota" => _fakturaer.Where(f => f.ErKreditnota).ToList(),
+        _ => _fakturaer
+    };
+
+    private List<TripletexService.TripletexFaktura> Synlige
+    {
+        get
+        {
+            var s = _sok.Trim();
+            return Filtrert(_fane)
+                .Where(f => s.Length == 0
+                    || (f.KundeNavn?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (f.Nummer?.ToString().Contains(s) ?? false)
+                    || (f.OrdreNummer?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false))
+                .ToList();
+        }
+    }
+
+    private static string StatusTekst(TripletexService.TripletexFaktura f) =>
+        f.ErKreditnota ? "Kreditnota" : f.Utestaende <= 0 ? "Betalt" : ErForfalt(f) ? "Forfalt" : "Ikke betalt";
+
+    private static string StatusCss(TripletexService.TripletexFaktura f) =>
+        f.ErKreditnota ? "rr-p-gra" : f.Utestaende <= 0 ? "rr-p-gronn" : ErForfalt(f) ? "rr-p-rod" : "rr-p-gul";
 
     protected override async Task OnInitializedAsync() => await HentRapport();
 
     private async Task HentRapport()
     {
-        _lasterNa = true;
+        _laster = true;
         _feil = null;
         try
         {
-            var (fakturaer, feil) = await Tripletex.HentFakturaerAsync(_fraDato, _tilDato);
+            var (fakturaer, feil) = await Tripletex.HentFakturaerAsync(_periode.Fra, _periode.Til);
             if (feil is not null)
             {
                 _feil = feil;
@@ -122,20 +209,23 @@
             else
             {
                 _fakturaer = fakturaer.OrderByDescending(f => f.Dato).ToList();
+                _hentet = DateTime.Now;
             }
             _harHentet = true;
         }
         finally
         {
-            _lasterNa = false;
+            _laster = false;
         }
     }
 
-    private static string StatusTekst(TripletexService.TripletexFaktura f) => f.ErKreditnota
-        ? "Kreditnota"
-        : f.Utestaende <= 0 ? "Betalt" : "Ikke betalt";
-
-    private static string StatusCss(TripletexService.TripletexFaktura f) => f.ErKreditnota
-        ? "status-kreditnota"
-        : f.Utestaende <= 0 ? "status-betalt" : "status-ikke-betalt";
+    private async Task Eksporter()
+    {
+        var rader = new List<object?[]> { new object?[] { "Fakturanr", "Ordre", "Kunde", "Dato", "Forfall", "Beløp", "Utestående", "Status", "Dager over forfall" } };
+        rader.AddRange(Synlige.Select(f => new object?[]
+        {
+            f.Nummer, f.OrdreNummer, f.KundeNavn, f.Dato, f.Forfallsdato, Netto(f), ErUbetalt(f) ? f.Utestaende : 0, StatusTekst(f), ErForfalt(f) ? DagerForfalt(f) : null
+        }));
+        await JS.InvokeVoidAsync("rapport.lastNedCsv", $"Fakturaoversikt {_periode.Tekst}.csv", RapportData.Csv(rader));
+    }
 }

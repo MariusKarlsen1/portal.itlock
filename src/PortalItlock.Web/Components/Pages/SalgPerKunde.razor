@@ -1,150 +1,209 @@
 @page "/rapporter/salg-per-kunde"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using PortalItlock.Web.Data
 @using PortalItlock.Web.Services
 @inject TripletexService Tripletex
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>Salg per kunde - Full Kontroll</PageTitle>
 
-<div class="side-header">
-    <span class="side-header-ikon"><Icon Name="users" /></span>
-    <div>
-        <h1>Salg per kunde</h1>
-        <p class="section-hint">
-            Faktisk fakturert salg pr. kunde for valgt periode, hentet direkte fra
-            Tripletex sine fakturaer (kreditnotaer trekkes fra). Dette er tallene som
-            faktisk er sendt til kunden - se Rapporter &rarr; Kunde for portalens
-            egen prognose basert på ferdigmeldte arbeidsordre.
-        </p>
-    </div>
-</div>
+<RapportRamme Tittel="Salg per kunde" Undertittel="Faktisk fakturert salg per kunde. Kreditnotaer er trukket fra." Ikon="users" Kilde="tripletex"
+              KildeTekst="@(_hentet is null ? "Fra Tripletex" : $"Fra Tripletex – hentet {_hentet:HH:mm}")"
+              Periode="_periode" OnPeriodeEndret="HentRapport" VisSammenlign="true" Laster="_laster" OnEksporter="Eksporter">
+    <Handlinger>
+        <button type="button" class="rr-knapp" @onclick="HentRapport" disabled="@_laster">↻ Oppdater</button>
+        <a class="rr-knapp" href="/rapporter/kunde">Kunderapport (portalen)</a>
+    </Handlinger>
+    <ChildContent>
+        @if (_feil is not null)
+        {
+            <p class="rr-feil">@_feil</p>
+        }
+        else if (_harHentet && _rader.Count == 0)
+        {
+            <p class="rr-tom">Ingen fakturert salg i denne perioden.</p>
+        }
+        else if (_harHentet)
+        {
+            var total = _rader.Sum(r => r.Sum);
+            var antallFakturaer = _rader.Sum(r => r.Antall);
+            decimal? totalFor = Sml ? _forrige.Values.Sum(f => f.Sum) : null;
+            var ikkeFakturert = _rader.Sum(IkkeFakturert) + _bareIPortalen.Values.Sum();
+            var kunderIkkeFakturert = _rader.Count(r => IkkeFakturert(r) > 0) + _bareIPortalen.Count;
+            <div class="rr-kpis">
+                <div class="rr-kpi"><small>Fakturert</small><b>@RapportPeriode.Kr(total)</b><span><RapportDelta Naa="total" For="totalFor" /> @(Sml ? $"mot {_periode.SmlTekst}" : "i perioden")</span></div>
+                <div class="rr-kpi"><small>Kunder</small><b>@_rader.Count</b><span>med minst én faktura</span></div>
+                <div class="rr-kpi"><small>Fakturaer</small><b>@antallFakturaer</b><span>snitt @RapportPeriode.Kr(antallFakturaer == 0 ? 0 : total / antallFakturaer)</span></div>
+                <div class="rr-kpi @(ikkeFakturert > 0 ? "gul" : "")" title="Ferdigmeldte arbeidsordre i portalen i samme periode som er mer enn det som er fakturert, per kunde."><small>Ferdigmeldt, ikke fakturert</small><b>@RapportPeriode.Kr(ikkeFakturert)</b><span>på @kunderIkkeFakturert @(kunderIkkeFakturert == 1 ? "kunde" : "kunder")</span></div>
+            </div>
 
-<div class="kort filter-kort">
-    <label class="felt">
-        <span class="felt-label">Fra</span>
-        <input type="date" @bind="_fraDato" />
-    </label>
-    <label class="felt">
-        <span class="felt-label">Til</span>
-        <input type="date" @bind="_tilDato" />
-    </label>
-    <button type="button" class="knapp-primaer" @onclick="HentRapport" disabled="@_lasterNa">
-        @(_lasterNa ? "Henter..." : "Vis rapport")
-    </button>
-</div>
+            <div class="rr-tile">
+                <div class="rr-tile-t">
+                    <h2>Fakturert per kunde</h2>
+                    <label class="rr-sok"><Icon Name="search" /><input type="search" placeholder="Finn kunde …" @bind="_sok" @bind:event="oninput" /></label>
+                </div>
+                @{
+                    var liste = _rader.Where(r => string.IsNullOrWhiteSpace(_sok) || r.Navn.Contains(_sok.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+                    var maks = liste.Count == 0 ? 0 : liste.Max(r => r.Sum);
+                }
+                <div class="rr-tabwrap">
+                    <table class="rr-tab">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Kunde</th>
+                                <th>Andel</th>
+                                <th class="n">Fakturaer</th>
+                                <th class="n">Snitt per faktura</th>
+                                <th class="n">Fakturert</th>
+                                @if (Sml)
+                                {
+                                    <th class="n">Endring</th>
+                                }
+                                <th class="n">Ferdigmeldt, ikke fakturert</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var (r, i) in liste.Select((r, i) => (r, i)))
+                            {
+                                var ikke = IkkeFakturert(r);
+                                <tr>
+                                    <td class="plass">@(i + 1)</td>
+                                    <td><span class="rr-navn"><span class="rr-av">@RapportData.Initialer(r.Navn)</span><span>@r.Navn</span></span></td>
+                                    <td><span class="rr-andel"><span class="rr-bar"><i style="width:@Pst(r.Sum, maks)"></i></span><span>@RapportPeriode.Prosent(r.Sum, total)</span></span></td>
+                                    <td class="n">@r.Antall</td>
+                                    <td class="n">@RapportPeriode.Kr(r.Antall == 0 ? 0 : r.Sum / r.Antall)</td>
+                                    <td class="n"><b>@RapportPeriode.Kr(r.Sum)</b></td>
+                                    @if (Sml)
+                                    {
+                                        <td class="n"><RapportDelta Naa="r.Sum" For="(_forrige.TryGetValue(Nokkel(r.Navn), out var f) ? f.Sum : 0)" /></td>
+                                    }
+                                    <td class="n">@if (ikke > 0){<span class="rr-pille rr-p-gul">@RapportPeriode.Kr(ikke)</span>}else{<span class="dempet">–</span>}</td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="3">Totalt (@_rader.Count kunder)</td>
+                                <td class="n">@antallFakturaer</td>
+                                <td class="n">@RapportPeriode.Kr(antallFakturaer == 0 ? 0 : total / antallFakturaer)</td>
+                                <td class="n">@RapportPeriode.Kr(total)</td>
+                                @if (Sml)
+                                {
+                                    <td class="n"><RapportDelta Naa="total" For="totalFor" /></td>
+                                }
+                                <td class="n">@RapportPeriode.Kr(_rader.Sum(IkkeFakturert))</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
 
-@if (_feil is not null)
-{
-    <p class="form-error">@_feil</p>
-}
-
-@if (_harHentet)
-{
-    @if (_rader.Count == 0)
-    {
-        <p class="list-empty">Ingen fakturert salg i denne perioden.</p>
-    }
-    else
-    {
-        <div class="kort stat-kort">
-            <span class="stat-label">Total omsetning</span>
-            <span class="stat-verdi">@_rader.Sum(r => r.Sum).ToString("N0", Kultur) kr</span>
-        </div>
-
-        <div class="kort tabell-kort">
-            <table class="rapport-table">
-                <thead>
-                    <tr>
-                        <th class="plass-cell">#</th>
-                        <th>Kunde</th>
-                        <th class="tall-cell">Antall fakturaer</th>
-                        <th class="tall-cell">Omsetning</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @{ var plass = 0; }
-                    @foreach (var r in _rader)
-                    {
-                        plass++;
-                        <tr>
-                            <td class="plass-cell">@plass</td>
-                            <td><span class="avatar">@Initialer(r.Navn)</span>@r.Navn</td>
-                            <td class="tall-cell">@r.Antall</td>
-                            <td class="tall-cell">@r.Sum.ToString("N0", Kultur) kr</td>
-                        </tr>
-                    }
-                </tbody>
-                <tfoot>
-                    <tr>
-                        <td colspan="2">Totalt</td>
-                        <td></td>
-                        <td class="tall-cell">@_rader.Sum(r => r.Sum).ToString("N0", Kultur) kr</td>
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
-    }
-}
+            @if (_bareIPortalen.Count > 0)
+            {
+                <div class="rr-merk">
+                    <span>⚠️</span>
+                    <span>
+                        <b>@_bareIPortalen.Count @(_bareIPortalen.Count == 1 ? "kunde har" : "kunder har") ferdigmeldte arbeidsordre for @RapportPeriode.Kr(_bareIPortalen.Values.Sum()), men ingen faktura i perioden:</b>
+                        @string.Join(", ", _bareIPortalen.OrderByDescending(x => x.Value).Take(6).Select(x => x.Key))@(_bareIPortalen.Count > 6 ? " …" : "").
+                    </span>
+                </div>
+            }
+        }
+    </ChildContent>
+</RapportRamme>
 
 @code {
-    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
-
-    private DateTime _fraDato = new(DateTime.Today.Year, 1, 1);
-    private DateTime _tilDato = DateTime.Today;
-    private bool _lasterNa;
+    private readonly RapportPeriode _periode = new();
+    private bool _laster;
     private bool _harHentet;
     private string? _feil;
+    private DateTime? _hentet;
+    private string _sok = "";
 
     private sealed record KundeRad(string Navn, int Antall, decimal Sum);
     private List<KundeRad> _rader = [];
+    private Dictionary<string, KundeRad> _forrige = [];
+    // Portalens ferdigmeldte omsetning per kunde (samme periode), matchet på navn.
+    private Dictionary<string, decimal> _portal = [];
+    private Dictionary<string, decimal> _bareIPortalen = [];
 
-    private static string Initialer(string? navn)
-    {
-        if (string.IsNullOrWhiteSpace(navn))
-        {
-            return "?";
-        }
+    private bool Sml => _periode.Sammenlign;
 
-        var deler = navn.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return deler.Length switch
-        {
-            0 => "?",
-            1 => deler[0].Length >= 2 ? deler[0][..2].ToUpperInvariant() : deler[0][..1].ToUpperInvariant(),
-            _ => (deler[0][..1] + deler[^1][..1]).ToUpperInvariant()
-        };
-    }
+    private static string Nokkel(string navn) => navn.Trim().ToLowerInvariant();
+
+    private decimal IkkeFakturert(KundeRad r) =>
+        Math.Max(0, _portal.GetValueOrDefault(Nokkel(r.Navn)) - r.Sum);
+
+    private static string Pst(decimal del, decimal total) =>
+        (total == 0 ? 0 : Math.Max(0, del) / total * 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+    private static List<KundeRad> Grupper(List<TripletexService.TripletexFaktura> fakturaer) => fakturaer
+        .Where(f => f.KundeNavn is not null)
+        .GroupBy(f => f.KundeNavn!)
+        .Select(g => new KundeRad(g.Key, g.Count(), g.Sum(f => f.ErKreditnota ? -f.Belop : f.Belop)))
+        .OrderByDescending(r => r.Sum)
+        .ToList();
 
     protected override async Task OnInitializedAsync() => await HentRapport();
 
     private async Task HentRapport()
     {
-        _lasterNa = true;
+        _laster = true;
         _feil = null;
         try
         {
-            var (fakturaer, feil) = await Tripletex.HentFakturaerAsync(_fraDato, _tilDato);
+            var (fakturaer, feil) = await Tripletex.HentFakturaerAsync(_periode.Fra, _periode.Til);
             if (feil is not null)
             {
                 _feil = feil;
                 _rader = [];
+                _harHentet = true;
+                return;
             }
-            else
+
+            _rader = Grupper(fakturaer);
+            _hentet = DateTime.Now;
+
+            _forrige = [];
+            if (Sml)
             {
-                _rader = fakturaer
-                    .Where(f => f.KundeNavn is not null)
-                    .GroupBy(f => f.KundeNavn!)
-                    .Select(g => new KundeRad(
-                        g.Key,
-                        g.Count(),
-                        g.Sum(f => f.ErKreditnota ? -f.Belop : f.Belop)))
-                    .OrderByDescending(r => r.Sum)
-                    .ToList();
+                var (forrige, forrigeFeil) = await Tripletex.HentFakturaerAsync(_periode.SmlFra, _periode.SmlTil);
+                if (forrigeFeil is null)
+                {
+                    _forrige = Grupper(forrige).GroupBy(r => Nokkel(r.Navn)).ToDictionary(g => g.Key, g => g.First());
+                }
             }
+
+            var portalPerKunde = (await RapportData.HentAsync(Db, _periode.Fra, _periode.Til))
+                .Where(o => o.Kunde is not null)
+                .GroupBy(o => Nokkel(o.Kunde!.Navn))
+                .ToList();
+            _portal = portalPerKunde.ToDictionary(g => g.Key, g => g.Sum(o => o.Sum));
+            var visningsnavn = portalPerKunde.ToDictionary(g => g.Key, g => g.First().Kunde!.Navn);
+
+            var fakturerteNavn = _rader.Select(r => Nokkel(r.Navn)).ToHashSet();
+            _bareIPortalen = _portal
+                .Where(x => x.Value > 0 && !fakturerteNavn.Contains(x.Key))
+                .ToDictionary(x => visningsnavn.GetValueOrDefault(x.Key, x.Key), x => x.Value);
+
             _harHentet = true;
         }
         finally
         {
-            _lasterNa = false;
+            _laster = false;
         }
+    }
+
+    private async Task Eksporter()
+    {
+        var rader = new List<object?[]> { new object?[] { "Plass", "Kunde", "Fakturaer", "Fakturert", Sml ? $"Sammenligning ({_periode.SmlTekst})" : null, "Ferdigmeldt, ikke fakturert" } };
+        rader.AddRange(_rader.Select((r, i) => new object?[]
+        {
+            i + 1, r.Navn, r.Antall, r.Sum, Sml ? (_forrige.TryGetValue(Nokkel(r.Navn), out var f) ? f.Sum : 0) : null, IkkeFakturert(r)
+        }));
+        await JS.InvokeVoidAsync("rapport.lastNedCsv", $"Salg per kunde {_periode.Tekst}.csv", RapportData.Csv(rader));
     }
 }
