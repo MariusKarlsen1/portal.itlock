@@ -1648,12 +1648,21 @@ app.MapGet("/plattform/organisasjon/{id:int}/logo", async (int id, PlatformDbCon
         : Results.File(tenant.LogoData, FilSikkerhet.TryggContentType(tenant.LogoContentType ?? "image/png"));
 }).RequireAuthorization("Plattform");
 
-app.MapGet("/kundebilde/{id:int}", async (int id, ApplicationDbContext db) =>
+app.MapGet("/kundebilde/{id:int}", async (int id, int? w, ApplicationDbContext db) =>
 {
     var kunde = await db.Kunder.FindAsync(id);
-    return kunde?.BildeData is null
-        ? Results.NotFound()
-        : Results.File(kunde.BildeData, FilSikkerhet.TryggContentType(kunde.BildeContentType ?? "application/octet-stream"), kunde.BildeFilnavn);
+    if (kunde?.BildeData is null)
+    {
+        return Results.NotFound();
+    }
+
+    // ?w=... gir et lite miniatyrbilde til liste- og sidepanelvisningen.
+    if (w is int maks && BildeMiniatyr.Lag(kunde.BildeData, Math.Clamp(maks, 32, 800)) is { } miniatyr)
+    {
+        return Results.File(miniatyr.Data, miniatyr.ContentType);
+    }
+
+    return Results.File(kunde.BildeData, FilSikkerhet.TryggContentType(kunde.BildeContentType ?? "application/octet-stream"), kunde.BildeFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/kundedokument/{id:int}", async (int id, ApplicationDbContext db) =>
