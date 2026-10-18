@@ -18,8 +18,6 @@
 else if (_produktgruppe is not null)
 {
     var varer = _produktgruppe.Komponenter;
-    var leverandorer = varer.Where(c => !string.IsNullOrWhiteSpace(c.Leverandor)).Select(c => c.Leverandor!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-    var priser = varer.Where(c => c.PrisNetto is > 0).Select(c => c.PrisNetto!.Value).ToList();
 
     <a class="pg-tilbake" href="/produktgrupper">&larr; Produktgrupper</a>
 
@@ -39,14 +37,8 @@ else if (_produktgruppe is not null)
                 {
                     <h1>@_produktgruppe.Navn <button type="button" class="pg-blyant" title="Gi nytt navn" @onclick="StartNavn"><Icon Name="edit" /></button></h1>
                 }
-                <p>@varer.Count @(varer.Count == 1 ? "vare" : "varer") fra @leverandorer @(leverandorer == 1 ? "leverandør" : "leverandører") · brukes til kunderabatter under kundekortets «Rabatter».</p>
+                <p>Brukes til kunderabatter under kundekortets «Rabatter».</p>
             </div>
-        </div>
-        <div class="pg-stat">
-            <div><small>Varer</small><b>@varer.Count</b></div>
-            <div><small>Leverandører</small><b>@leverandorer</b></div>
-            <div><small>Kunder med rabatt</small><b>@_antallKunderabatter</b></div>
-            <div><small>Nettopris</small><b>@(priser.Count == 0 ? "–" : $"{Tall(priser.Min())}–{Tall(priser.Max())}")</b></div>
         </div>
     </div>
 
@@ -55,7 +47,13 @@ else if (_produktgruppe is not null)
             <Icon Name="search" />
             <input type="search" placeholder="Filtrer varer i gruppen …" @bind="_filter" @bind:event="oninput" />
         </label>
-        <button type="button" class="pg-knapp @(_visLeggTil ? "" : "primaer")" @onclick="VekslLeggTil">
+        <span class="pg-grupper-lbl">Grupper etter</span>
+        <div class="pg-seg" role="group" aria-label="Grupper etter">
+            <button type="button" class="@(_grupperEtter == "" ? "pa" : "")" @onclick='@(() => VelgGruppering(""))'>Ingen</button>
+            <button type="button" class="@(_grupperEtter == "lev" ? "pa" : "")" @onclick='@(() => VelgGruppering("lev"))'>Leverandør</button>
+            <button type="button" class="@(_grupperEtter == "gruppe" ? "pa" : "")" @onclick='@(() => VelgGruppering("gruppe"))'>Varegruppe</button>
+        </div>
+        <button type="button" class="pg-knapp pg-leggtil-knapp @(_visLeggTil ? "" : "primaer")" @onclick="VekslLeggTil">
             <Icon Name="@(_visLeggTil ? "x" : "plus")" />@(_visLeggTil ? "Lukk" : "Legg til varer")
         </button>
         @if (!string.IsNullOrEmpty(_melding))
@@ -140,20 +138,40 @@ else if (_produktgruppe is not null)
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var c in Synlige)
+                    @if (_grupperEtter == "")
                     {
-                        var id = c.Id;
-                        var valgt = _valgte.Contains(id);
-                        <tr class="@(valgt ? "valgt" : "")">
-                            <td class="pg-cb"><input type="checkbox" checked="@valgt" @onchange="@(() => VekslValgt(id))" aria-label="@($"Velg {c.Navn}")" /></td>
-                            <td><b>@c.Navn</b>@if (!string.IsNullOrWhiteSpace(c.Navn2)){<small>@c.Navn2</small>}</td>
-                            <td class="pg-kode">@(c.Produktkode ?? "–")</td>
-                            <td>@(c.Leverandor ?? "–")</td>
-                            <td class="dempet">@(c.Varegruppe ?? "–")</td>
-                            <td class="n">@Kr(c.PrisNetto)</td>
-                            <td class="n dempet">@Kr(c.PrisVeiledende)</td>
-                            <td class="n"><button type="button" class="pg-fjern" title="Fjern fra gruppen" @onclick="@(() => FjernVare(c))"><Icon Name="x" /></button></td>
-                        </tr>
+                        @foreach (var c in Synlige)
+                        {
+                            @VareRad(c)
+                        }
+                    }
+                    else
+                    {
+                        @foreach (var g in Grupperte)
+                        {
+                            var navn = g.Navn;
+                            var lukket = _lukket.Contains(navn);
+                            var alleIGruppen = g.Varer.All(c => _valgte.Contains(c.Id));
+                            <tr class="pg-grh" @onclick="@(() => VekslLukket(navn))">
+                                <td class="pg-cb" @onclick:stopPropagation="true"><input type="checkbox" checked="@alleIGruppen" @onchange="@(e => VelgGruppe(g.Varer, e))" aria-label="@($"Velg alle i {navn}")" /></td>
+                                <td colspan="7">
+                                    <span class="pg-grh-pil">@(lukket ? "▸" : "▾")</span>
+                                    @if (_grupperEtter == "lev")
+                                    {
+                                        <i class="pg-prikk" style="background:@Farge(navn)"></i>
+                                    }
+                                    <b>@navn</b>
+                                    <small>@g.Varer.Count @(g.Varer.Count == 1 ? "vare" : "varer")</small>
+                                </td>
+                            </tr>
+                            @if (!lukket)
+                            {
+                                @foreach (var c in g.Varer)
+                                {
+                                    @VareRad(c)
+                                }
+                            }
+                        }
                     }
                 </tbody>
             </table>
@@ -175,6 +193,70 @@ else if (_produktgruppe is not null)
     }
 
     private sealed record GruppeValg(int Id, string Navn);
+    private sealed record Gruppering(string Navn, List<Component> Varer);
+
+    private static readonly string[] Farger = ["#835e41", "#2f6f8f", "#c9a98c", "#6b8f71", "#9a7bb0", "#c08b5c", "#5a8fb0", "#b06b4a", "#d9c3a7"];
+
+    // E4: grupper tabellen etter leverandør eller varegruppe (standard: leverandør).
+    private string _grupperEtter = "lev";
+    private readonly HashSet<string> _lukket = [];
+
+    // Samme farge per leverandør som på oversiktssiden.
+    private static string Farge(string navn) =>
+        Farger[(int)((uint)navn.ToLowerInvariant().Aggregate(17, (h, c) => h * 31 + c) % (uint)Farger.Length)];
+
+    private List<Gruppering> Grupperte => Synlige
+        .GroupBy(c => (_grupperEtter == "lev" ? c.Leverandor : c.Varegruppe)?.Trim() is { Length: > 0 } n ? n : "Ikke satt",
+            StringComparer.OrdinalIgnoreCase)
+        .Select(g => new Gruppering(g.Key, g.ToList()))
+        .OrderByDescending(g => g.Varer.Count)
+        .ThenBy(g => g.Navn)
+        .ToList();
+
+    private void VelgGruppering(string verdi)
+    {
+        _grupperEtter = verdi;
+        _lukket.Clear();
+    }
+
+    private void VekslLukket(string navn)
+    {
+        if (!_lukket.Add(navn))
+        {
+            _lukket.Remove(navn);
+        }
+    }
+
+    private void VelgGruppe(List<Component> varer, ChangeEventArgs e)
+    {
+        foreach (var c in varer)
+        {
+            if (e.Value is true)
+            {
+                _valgte.Add(c.Id);
+            }
+            else
+            {
+                _valgte.Remove(c.Id);
+            }
+        }
+    }
+
+    private RenderFragment VareRad(Component c) => __builder =>
+    {
+        var id = c.Id;
+        var valgt = _valgte.Contains(id);
+        <tr class="@(valgt ? "valgt" : "")">
+            <td class="pg-cb"><input type="checkbox" checked="@valgt" @onchange="@(() => VekslValgt(id))" aria-label="@($"Velg {c.Navn}")" /></td>
+            <td><b>@c.Navn</b>@if (!string.IsNullOrWhiteSpace(c.Navn2)){<small>@c.Navn2</small>}</td>
+            <td class="pg-kode">@(c.Produktkode ?? "–")</td>
+            <td>@(c.Leverandor ?? "–")</td>
+            <td class="dempet">@(c.Varegruppe ?? "–")</td>
+            <td class="n">@Kr(c.PrisNetto)</td>
+            <td class="n dempet">@Kr(c.PrisVeiledende)</td>
+            <td class="n"><button type="button" class="pg-fjern" title="Fjern fra gruppen" @onclick="@(() => FjernVare(c))"><Icon Name="x" /></button></td>
+        </tr>
+    };
 
     private Produktgruppe? _produktgruppe;
     private bool _notFound;
@@ -184,7 +266,6 @@ else if (_produktgruppe is not null)
     private bool _visLeggTil;
     private bool _redigererNavn;
     private string _nyttNavn = "";
-    private int _antallKunderabatter;
     private List<SearchResult> _sokeresultater = [];
     private List<GruppeValg> _andreGrupper = [];
     private readonly HashSet<int> _valgte = [];
@@ -259,7 +340,6 @@ else if (_produktgruppe is not null)
             return;
         }
 
-        _antallKunderabatter = await Db.KundeRabatter.CountAsync(r => r.ProduktgruppeId == Id);
         _andreGrupper = await Db.Produktgrupper
             .Where(p => p.Id != Id)
             .OrderBy(p => p.Navn)
