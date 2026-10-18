@@ -1,91 +1,162 @@
 @page "/produktgrupper/{Id:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using System.Globalization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
-@inject NavigationManager Nav
 
 <PageTitle>@(_produktgruppe?.Navn ?? "Produktgruppe")</PageTitle>
 
+@* D5 (produktgruppe-detalj-forslag.html): tabell med flervalg, sortering,
+   filter, legg til med ett klikk og flytt/kopier/fjern for valgte varer. *@
 @if (_notFound)
 {
     <p class="form-error">Fant ikke produktgruppen. Den kan være slettet.</p>
 }
 else if (_produktgruppe is not null)
 {
-    <a class="back-link" href="/produktgrupper"><Icon Name="arrow-left" />Tilbake til produktgrupper</a>
+    var varer = _produktgruppe.Komponenter;
+    var leverandorer = varer.Where(c => !string.IsNullOrWhiteSpace(c.Leverandor)).Select(c => c.Leverandor!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+    var priser = varer.Where(c => c.PrisNetto is > 0).Select(c => c.PrisNetto!.Value).ToList();
 
-    <div class="gruppe-hero">
-        <span class="hero-ikon"><Icon Name="folder" /></span>
-        <div>
-            <input class="hero-navn-input" @bind="_produktgruppe.Navn" @bind:event="oninput" />
-            <div class="hero-meta">@_produktgruppe.Komponenter.Count vare@(_produktgruppe.Komponenter.Count == 1 ? "" : "r") i gruppen</div>
+    <a class="pg-tilbake" href="/produktgrupper">&larr; Produktgrupper</a>
+
+    <div class="pg-hode">
+        <div class="pg-hode-v">
+            <span class="pg-ikon"><Icon Name="folder" /></span>
+            <div>
+                @if (_redigererNavn)
+                {
+                    <div class="pg-navn-rediger">
+                        <input @bind="_nyttNavn" @bind:event="oninput" @onkeydown="NavnTast" aria-label="Navn på produktgruppe" />
+                        <button type="button" class="pg-knapp primaer" @onclick="LagreNavn"><Icon Name="check" />Lagre</button>
+                        <button type="button" class="pg-knapp" @onclick="@(() => _redigererNavn = false)">Avbryt</button>
+                    </div>
+                }
+                else
+                {
+                    <h1>@_produktgruppe.Navn <button type="button" class="pg-blyant" title="Gi nytt navn" @onclick="StartNavn"><Icon Name="edit" /></button></h1>
+                }
+                <p>@varer.Count @(varer.Count == 1 ? "vare" : "varer") fra @leverandorer @(leverandorer == 1 ? "leverandør" : "leverandører") · brukes til kunderabatter under kundekortets «Rabatter».</p>
+            </div>
+        </div>
+        <div class="pg-stat">
+            <div><small>Varer</small><b>@varer.Count</b></div>
+            <div><small>Leverandører</small><b>@leverandorer</b></div>
+            <div><small>Kunder med rabatt</small><b>@_antallKunderabatter</b></div>
+            <div><small>Nettopris</small><b>@(priser.Count == 0 ? "–" : $"{Tall(priser.Min())}–{Tall(priser.Max())}")</b></div>
         </div>
     </div>
 
-    <div class="hero-actions">
-        <button type="button" class="knapp knapp-primaer" @onclick="LagreNavn">Lagre navn</button>
+    <div class="pg-verktoy">
+        <label class="pg-sok">
+            <Icon Name="search" />
+            <input type="search" placeholder="Filtrer varer i gruppen …" @bind="_filter" @bind:event="oninput" />
+        </label>
+        <button type="button" class="pg-knapp @(_visLeggTil ? "" : "primaer")" @onclick="VekslLeggTil">
+            <Icon Name="@(_visLeggTil ? "x" : "plus")" />@(_visLeggTil ? "Lukk" : "Legg til varer")
+        </button>
         @if (!string.IsNullOrEmpty(_melding))
         {
-            <span class="save-success">@_melding</span>
+            <span class="pg-melding">@_melding</span>
         }
     </div>
 
-    <div class="kort">
-        <h2>Legg til vare</h2>
-        <label class="sok-felt-label">Søk i komponentregisteret</label>
-        <div class="sok-boks">
-            <Icon Name="search" />
-            <input @bind="_sok" @bind:event="oninput" @bind:after="OnSokEndret" placeholder="Søk på navn, leverandør eller produktkode" />
+    @if (_visLeggTil)
+    {
+        <div class="pg-leggtil">
+            <label class="pg-sok pg-sok-stor">
+                <Icon Name="search" />
+                <input type="search" placeholder="Søk i komponentregisteret – navn, leverandør eller produktkode" @bind="_sok" @bind:event="oninput" @bind:after="OnSokEndret" />
+            </label>
+            @if (_sokeresultater.Count > 0)
+            {
+                <div class="pg-treff">
+                    @foreach (var r in _sokeresultater)
+                    {
+                        var lagt = varer.Any(c => c.Id == r.Id);
+                        <div class="pg-treff-rad">
+                            <span><b>@r.Navn</b><small>@r.Leverandor@(string.IsNullOrWhiteSpace(r.Produktkode) ? "" : $" · {r.Produktkode}")</small></span>
+                            <button type="button" class="pg-pluss @(lagt ? "lagt" : "")" title="@(lagt ? "Lagt til" : "Legg til i gruppen")" disabled="@lagt" @onclick="@(() => LeggTilVare(r.Id))">@(lagt ? "✓" : "+")</button>
+                        </div>
+                    }
+                </div>
+            }
+            else if (_sok.Trim().Length >= 2)
+            {
+                <p class="pg-tom">Ingen treff som ikke allerede ligger i gruppen.</p>
+            }
+            else
+            {
+                <p class="pg-hint">Skriv minst to tegn. Trykk + for å legge til – søket blir stående, så du kan legge til flere etter hverandre.</p>
+            }
         </div>
-        @if (_sokeresultater.Count > 0)
-        {
-            <ul class="search-results">
-                @foreach (var r in _sokeresultater)
+    }
+
+    @if (_valgte.Count > 0)
+    {
+        <div class="pg-bulk">
+            <b>@_valgte.Count valgt</b>
+            <button type="button" class="pg-bulk-knapp" @onclick="FjernValgte"><Icon Name="trash" />Fjern fra gruppen</button>
+            <span class="pg-bulk-skille"></span>
+            <select @bind="_malGruppeId" aria-label="Velg produktgruppe">
+                <option value="0">Velg annen gruppe …</option>
+                @foreach (var g in _andreGrupper)
                 {
-                    <li>
-                        <button type="button" class="search-result" @onclick="@(() => LeggTilVare(r.Id))">
-                            <span class="search-result-name">@r.Navn</span>
-                            <span class="search-result-meta">@r.Leverandor</span>
-                        </button>
-                    </li>
+                    <option value="@g.Id">@g.Navn</option>
                 }
-            </ul>
-        }
-        else if (_sok.Trim().Length >= 2)
-        {
-            <p class="search-empty">Ingen treff.</p>
-        }
-    </div>
-
-    <div class="kort">
-        <div class="kort-topp-rad">
-            <h2>Varer i gruppen</h2>
-            <span class="vare-teller">@_produktgruppe.Komponenter.Count vare@(_produktgruppe.Komponenter.Count == 1 ? "" : "r")</span>
+            </select>
+            <button type="button" class="pg-bulk-knapp" disabled="@(_malGruppeId == 0)" @onclick="@(() => TilAnnenGruppe(flytt: true))">↪ Flytt dit</button>
+            <button type="button" class="pg-bulk-knapp lys" disabled="@(_malGruppeId == 0)" @onclick="@(() => TilAnnenGruppe(flytt: false))">⧉ Kopier dit</button>
+            <button type="button" class="pg-bulk-lukk" title="Fjern markering" @onclick="@(() => _valgte.Clear())">✕</button>
         </div>
+    }
 
-        @if (_produktgruppe.Komponenter.Count == 0)
+    <div class="pg-tabell">
+        @if (varer.Count == 0)
         {
-            <p class="list-empty">Ingen varer lagt til i denne gruppen ennå.</p>
+            <p class="pg-tom">Ingen varer i denne gruppen ennå. Trykk «Legg til varer» for å fylle den.</p>
+        }
+        else if (Synlige.Count == 0)
+        {
+            <p class="pg-tom">Ingen varer passer filteret.</p>
         }
         else
         {
-            <div class="vare-liste">
-                @foreach (var c in _produktgruppe.Komponenter.OrderBy(c => c.Navn))
-                {
-                    <div class="vare-rad" @key="c.Id">
-                        <span class="vare-navn">@c.Navn</span>
-                        <span class="vare-lev">@c.Leverandor</span>
-                        @if (!string.IsNullOrWhiteSpace(c.Produktkode))
-                        {
-                            <span class="vare-kode">@c.Produktkode</span>
-                        }
-                        <button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => FjernVare(c))"><Icon Name="trash" /></button>
-                    </div>
-                }
-            </div>
+            var alleValgt = Synlige.All(c => _valgte.Contains(c.Id));
+            <table>
+                <thead>
+                    <tr>
+                        <th class="pg-cb"><input type="checkbox" checked="@alleValgt" @onchange="VelgAlle" aria-label="Velg alle" /></th>
+                        <th>@Kolonne("navn", "Vare")</th>
+                        <th>@Kolonne("kode", "Produktkode")</th>
+                        <th>@Kolonne("lev", "Leverandør")</th>
+                        <th>@Kolonne("gruppe", "Varegruppe")</th>
+                        <th class="n">@Kolonne("netto", "Netto")</th>
+                        <th class="n">@Kolonne("veil", "Veil. pris")</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in Synlige)
+                    {
+                        var id = c.Id;
+                        var valgt = _valgte.Contains(id);
+                        <tr class="@(valgt ? "valgt" : "")">
+                            <td class="pg-cb"><input type="checkbox" checked="@valgt" @onchange="@(() => VekslValgt(id))" aria-label="@($"Velg {c.Navn}")" /></td>
+                            <td><b>@c.Navn</b>@if (!string.IsNullOrWhiteSpace(c.Navn2)){<small>@c.Navn2</small>}</td>
+                            <td class="pg-kode">@(c.Produktkode ?? "–")</td>
+                            <td>@(c.Leverandor ?? "–")</td>
+                            <td class="dempet">@(c.Varegruppe ?? "–")</td>
+                            <td class="n">@Kr(c.PrisNetto)</td>
+                            <td class="n dempet">@Kr(c.PrisVeiledende)</td>
+                            <td class="n"><button type="button" class="pg-fjern" title="Fjern fra gruppen" @onclick="@(() => FjernVare(c))"><Icon Name="x" /></button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
         }
     </div>
 }
@@ -93,19 +164,74 @@ else if (_produktgruppe is not null)
 @code {
     [Parameter] public int Id { get; set; }
 
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
     private sealed class SearchResult
     {
         public int Id { get; set; }
         public string Navn { get; set; } = "";
         public string? Leverandor { get; set; }
+        public string? Produktkode { get; set; }
     }
+
+    private sealed record GruppeValg(int Id, string Navn);
 
     private Produktgruppe? _produktgruppe;
     private bool _notFound;
     private string? _melding;
     private string _sok = "";
+    private string _filter = "";
+    private bool _visLeggTil;
+    private bool _redigererNavn;
+    private string _nyttNavn = "";
+    private int _antallKunderabatter;
     private List<SearchResult> _sokeresultater = [];
+    private List<GruppeValg> _andreGrupper = [];
+    private readonly HashSet<int> _valgte = [];
+    private int _malGruppeId;
+    private string _sorter = "navn";
+    private bool _synkende;
     private int? _loadedId;
+
+    private static string Tall(decimal d) => d.ToString("N0", Kultur);
+
+    private static string Kr(decimal? d) => d is decimal v ? v.ToString("N0", Kultur) + " kr" : "–";
+
+    private List<Component> Synlige
+    {
+        get
+        {
+            if (_produktgruppe is null)
+            {
+                return [];
+            }
+
+            var f = _filter.Trim();
+            var liste = _produktgruppe.Komponenter.Where(c => f.Length == 0
+                || c.Navn.Contains(f, StringComparison.OrdinalIgnoreCase)
+                || (c.Produktkode?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (c.Leverandor?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (c.Varegruppe?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false));
+
+            IOrderedEnumerable<Component> sortert = _sorter switch
+            {
+                "kode" => _synkende ? liste.OrderByDescending(c => c.Produktkode) : liste.OrderBy(c => c.Produktkode),
+                "lev" => _synkende ? liste.OrderByDescending(c => c.Leverandor) : liste.OrderBy(c => c.Leverandor),
+                "gruppe" => _synkende ? liste.OrderByDescending(c => c.Varegruppe) : liste.OrderBy(c => c.Varegruppe),
+                "netto" => _synkende ? liste.OrderByDescending(c => c.PrisNetto) : liste.OrderBy(c => c.PrisNetto),
+                "veil" => _synkende ? liste.OrderByDescending(c => c.PrisVeiledende) : liste.OrderBy(c => c.PrisVeiledende),
+                _ => _synkende ? liste.OrderByDescending(c => c.Navn) : liste.OrderBy(c => c.Navn)
+            };
+            return sortert.ThenBy(c => c.Navn).ToList();
+        }
+    }
+
+    private RenderFragment Kolonne(string key, string tekst) => __builder =>
+    {
+        <button type="button" class="pg-sorter @(_sorter == key ? "pa" : "")" @onclick="@(() => Sorter(key))">
+            @tekst<span>@(_sorter == key ? (_synkende ? "▼" : "▲") : "↕")</span>
+        </button>
+    };
 
     protected override async Task OnParametersSetAsync()
     {
@@ -117,25 +243,98 @@ else if (_produktgruppe is not null)
         _loadedId = Id;
         _melding = null;
         _sok = "";
+        _filter = "";
         _sokeresultater = [];
+        _valgte.Clear();
+        _visLeggTil = false;
+        _redigererNavn = false;
 
         _produktgruppe = await Db.Produktgrupper
             .Include(p => p.Komponenter)
             .FirstOrDefaultAsync(p => p.Id == Id);
 
         _notFound = _produktgruppe is null;
-    }
-
-    private async Task LagreNavn()
-    {
-        if (_produktgruppe is null || string.IsNullOrWhiteSpace(_produktgruppe.Navn))
+        if (_produktgruppe is null)
         {
             return;
         }
 
-        _produktgruppe.Navn = _produktgruppe.Navn.Trim();
+        _antallKunderabatter = await Db.KundeRabatter.CountAsync(r => r.ProduktgruppeId == Id);
+        _andreGrupper = await Db.Produktgrupper
+            .Where(p => p.Id != Id)
+            .OrderBy(p => p.Navn)
+            .Select(p => new GruppeValg(p.Id, p.Navn))
+            .ToListAsync();
+    }
+
+    private void Sorter(string key)
+    {
+        _synkende = _sorter == key && !_synkende;
+        _sorter = key;
+    }
+
+    private void VekslValgt(int id)
+    {
+        if (!_valgte.Add(id))
+        {
+            _valgte.Remove(id);
+        }
+    }
+
+    private void VelgAlle(ChangeEventArgs e)
+    {
+        if (e.Value is true)
+        {
+            foreach (var c in Synlige)
+            {
+                _valgte.Add(c.Id);
+            }
+        }
+        else
+        {
+            foreach (var c in Synlige)
+            {
+                _valgte.Remove(c.Id);
+            }
+        }
+    }
+
+    private void StartNavn()
+    {
+        _nyttNavn = _produktgruppe?.Navn ?? "";
+        _redigererNavn = true;
+    }
+
+    private async Task NavnTast(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await LagreNavn();
+        }
+        else if (e.Key == "Escape")
+        {
+            _redigererNavn = false;
+        }
+    }
+
+    private async Task LagreNavn()
+    {
+        if (_produktgruppe is null || string.IsNullOrWhiteSpace(_nyttNavn))
+        {
+            return;
+        }
+
+        _produktgruppe.Navn = _nyttNavn.Trim();
         await Db.SaveChangesAsync();
-        _melding = "Lagret.";
+        _redigererNavn = false;
+        _melding = "Navnet er lagret.";
+    }
+
+    private void VekslLeggTil()
+    {
+        _visLeggTil = !_visLeggTil;
+        _sok = "";
+        _sokeresultater = [];
     }
 
     private async Task OnSokEndret()
@@ -155,13 +354,15 @@ else if (_produktgruppe is not null)
                     (c.Leverandor != null && EF.Functions.Like(c.Leverandor, $"%{term}%")) ||
                     (c.Produktkode != null && EF.Functions.Like(c.Produktkode, $"%{term}%"))))
                 .OrderBy(c => c.Navn)
-                .Take(20)
-                .Select(c => new SearchResult { Id = c.Id, Navn = c.Navn, Leverandor = c.Leverandor })
+                .Take(30)
+                .Select(c => new SearchResult { Id = c.Id, Navn = c.Navn, Leverandor = c.Leverandor, Produktkode = c.Produktkode })
                 .ToListAsync())
             .Where(r => !alleredeIGruppen.Contains(r.Id))
+            .Take(20)
             .ToList();
     }
 
+    // Legger til uten å tømme søket, så man kan legge til flere etter hverandre.
     private async Task LeggTilVare(int componentId)
     {
         if (_produktgruppe is null || _produktgruppe.Komponenter.Any(c => c.Id == componentId))
@@ -177,9 +378,6 @@ else if (_produktgruppe is not null)
 
         _produktgruppe.Komponenter.Add(component);
         await Db.SaveChangesAsync();
-
-        _sok = "";
-        _sokeresultater = [];
         _melding = $"\"{component.Navn}\" lagt til i gruppen.";
     }
 
@@ -191,7 +389,63 @@ else if (_produktgruppe is not null)
         }
 
         _produktgruppe.Komponenter.Remove(c);
+        _valgte.Remove(c.Id);
         await Db.SaveChangesAsync();
         _melding = $"\"{c.Navn}\" fjernet fra gruppen.";
+    }
+
+    private async Task FjernValgte()
+    {
+        if (_produktgruppe is null || _valgte.Count == 0)
+        {
+            return;
+        }
+
+        var fjern = _produktgruppe.Komponenter.Where(c => _valgte.Contains(c.Id)).ToList();
+        foreach (var c in fjern)
+        {
+            _produktgruppe.Komponenter.Remove(c);
+        }
+
+        await Db.SaveChangesAsync();
+        _valgte.Clear();
+        _melding = $"{fjern.Count} {(fjern.Count == 1 ? "vare" : "varer")} fjernet fra gruppen.";
+    }
+
+    private async Task TilAnnenGruppe(bool flytt)
+    {
+        if (_produktgruppe is null || _valgte.Count == 0 || _malGruppeId == 0)
+        {
+            return;
+        }
+
+        var mal = await Db.Produktgrupper.Include(p => p.Komponenter).FirstOrDefaultAsync(p => p.Id == _malGruppeId);
+        if (mal is null)
+        {
+            return;
+        }
+
+        var valgte = _produktgruppe.Komponenter.Where(c => _valgte.Contains(c.Id)).ToList();
+        var nye = 0;
+        foreach (var c in valgte)
+        {
+            if (!mal.Komponenter.Any(k => k.Id == c.Id))
+            {
+                mal.Komponenter.Add(c);
+                nye++;
+            }
+
+            if (flytt)
+            {
+                _produktgruppe.Komponenter.Remove(c);
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _valgte.Clear();
+        _melding = flytt
+            ? $"{valgte.Count} {(valgte.Count == 1 ? "vare" : "varer")} flyttet til «{mal.Navn}»."
+            : $"{nye} {(nye == 1 ? "vare" : "varer")} kopiert til «{mal.Navn}»{(nye < valgte.Count ? $" ({valgte.Count - nye} lå der fra før)" : "")}.";
+        _malGruppeId = 0;
     }
 }
