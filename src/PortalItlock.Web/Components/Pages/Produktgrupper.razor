@@ -1,106 +1,290 @@
 @page "/produktgrupper"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using System.Globalization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject NavigationManager Nav
 
 <PageTitle>Produktgrupper</PageTitle>
 
-<div class="side-header">
-    <div class="side-header-venstre">
-        <span class="side-header-ikon"><Icon Name="folder" /></span>
+@* O2 (produktgrupper-oversikt-forslag.html): tabell i samme stil som D5 inne
+   i gruppene, med «Ny produktgruppe» fast til høyre og «＋ Ny» øverst. *@
+<div class="po-hode">
+    <div class="po-hode-v">
+        <span class="po-ikon"><Icon Name="folder" /></span>
         <div>
             <h1>Produktgrupper</h1>
-            <p class="section-hint">Grupper varer i komponentregisteret på tvers av leverandør, slik at kunder kan gis en fast rabatt per produktgruppe under kundekortets "Rabatter"-fane. Koble en komponent til riktig produktgruppe under Komponentregister.</p>
+            <p>Grupper varer på tvers av leverandør, så kunder kan få fast rabatt per gruppe under kundekortets «Rabatter».</p>
         </div>
     </div>
-</div>
-
-<div class="verktoy-rad">
-    <div class="sok-boks">
-        <Icon Name="search" />
-        <input @bind="_sok" @bind:event="oninput" placeholder="Søk produktgruppe..." />
+    <div class="po-hode-h">
+        <label class="po-sok">
+            <Icon Name="search" />
+            <input type="search" placeholder="Filtrer grupper …" @bind="_sok" @bind:event="oninput" />
+        </label>
+        <button type="button" class="po-knapp primaer" @onclick="GaTilNy"><Icon Name="plus" />Ny</button>
     </div>
-    <span class="stat-chip"><span class="dot"></span>@_produktgrupper.Count produktgrupper</span>
 </div>
 
-@if (_produktgrupper.Count == 0)
-{
-    <p class="list-empty">Ingen produktgrupper opprettet ennå.</p>
-}
-else if (_synlige.Count == 0)
-{
-    <p class="list-empty">Ingen treff.</p>
-}
-else
-{
-    <div class="gruppe-liste">
-        @foreach (var p in _synlige)
+<div class="po-stat">
+    <div><small>Grupper</small><b>@_rader.Count</b></div>
+    <div><small>Varer i grupper</small><b>@_varerIGrupper</b></div>
+    <div class="@(_utenGruppe > 0 ? "gul" : "")"><small>Uten gruppe</small><b>@_utenGruppe</b></div>
+    <div><small>Kunder med rabatt</small><b>@_kunderMedRabatt</b></div>
+</div>
+
+<div class="po-oppsett">
+    <div class="po-tabell">
+        @if (_rader.Count == 0)
         {
-            <div class="gruppe-rad" @key="p.Gruppe.Id">
-                <span class="gruppe-ikon"><Icon Name="folder" /></span>
-                <input class="gruppe-navn-input" @bind="p.Gruppe.Navn" />
-                <span class="vare-badge">@p.AntallVarer vare@(p.AntallVarer == 1 ? "" : "r")</span>
-                <div class="gruppe-actions">
-                    <a class="knapp knapp-primaer" href="@($"/produktgrupper/{p.Gruppe.Id}")">Åpne</a>
-                    <button type="button" class="ikon-btn" title="Lagre" @onclick="@(() => Lagre(p.Gruppe))"><Icon Name="check" /></button>
-                    <button type="button" class="ikon-btn slett" title="@(p.AntallVarer > 0 ? "Kan ikke slette - i bruk på varer" : "Slett")" disabled="@(p.AntallVarer > 0)" @onclick="@(() => Slett(p))"><Icon Name="trash" /></button>
-                </div>
-            </div>
+            <p class="po-tom">Ingen produktgrupper opprettet ennå. Lag den første til høyre.</p>
+        }
+        else if (Synlige.Count == 0)
+        {
+            <p class="po-tom">Ingen grupper passer filteret.</p>
+        }
+        else
+        {
+            <table>
+                <thead>
+                    <tr>
+                        <th>@Kolonne("navn", "Produktgruppe")</th>
+                        <th class="n">@Kolonne("varer", "Varer")</th>
+                        <th>Leverandører</th>
+                        <th class="n">@Kolonne("kunder", "Kunder med rabatt")</th>
+                        <th class="n">Rabatt</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in Synlige)
+                    {
+                        var id = r.Id;
+                        <tr class="@(_redigerId == id ? "redigerer" : "klikk")" @onclick="@(() => Apne(id))">
+                            <td>
+                                @if (_redigerId == id)
+                                {
+                                    <span class="po-rename" @onclick:stopPropagation="true">
+                                        <input @bind="_redigerNavn" @bind:event="oninput" @onkeydown="@(e => RenameTast(e, id))" aria-label="Nytt navn" />
+                                        <button type="button" class="po-knapp liten primaer" @onclick="@(() => LagreNavn(id))">Lagre</button>
+                                        <button type="button" class="po-knapp liten" @onclick="@(() => _redigerId = null)">Avbryt</button>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="po-gr">
+                                        <span class="po-gik"><Icon Name="folder" /></span>
+                                        <span><b>@r.Navn</b>@if (r.Varer == 0){<span class="po-pille gra">Tom gruppe</span>}</span>
+                                    </span>
+                                }
+                            </td>
+                            <td class="n">@r.Varer</td>
+                            <td>
+                                @if (r.Leverandorer.Count == 0)
+                                {
+                                    <span class="dempet">–</span>
+                                }
+                                else
+                                {
+                                    var tot = r.Leverandorer.Sum(l => l.Antall);
+                                    <span class="po-lev" title="@string.Join(", ", r.Leverandorer.Select(l => $"{l.Navn} {l.Antall}"))">
+                                        @foreach (var l in r.Leverandorer)
+                                        {
+                                            <i style="width:@Pst(l.Antall, tot);background:@Farge(l.Navn)"></i>
+                                        }
+                                    </span>
+                                    <small>@string.Join(", ", r.Leverandorer.Take(3).Select(l => l.Navn))@(r.Leverandorer.Count > 3 ? $" +{r.Leverandorer.Count - 3}" : "")</small>
+                                }
+                            </td>
+                            <td class="n">@(r.Kunder == 0 ? "–" : r.Kunder.ToString(Kultur))</td>
+                            <td class="n">@if (r.RabattMin is decimal min){<span class="po-pille">@Rabatt(min, r.RabattMax!.Value)</span>}else{<span class="dempet">–</span>}</td>
+                            <td class="n po-meny-celle" @onclick:stopPropagation="true">
+                                <button type="button" class="po-mer" title="Flere valg" @onclick="@(() => _menyId = _menyId == id ? null : id)"><Icon Name="more-horizontal" /></button>
+                                @if (_menyId == id)
+                                {
+                                    <span class="po-meny">
+                                        <button type="button" @onclick="@(() => Apne(id))"><Icon Name="folder" />Åpne gruppen</button>
+                                        <button type="button" @onclick="@(() => StartRename(r))"><Icon Name="edit" />Gi nytt navn</button>
+                                        <button type="button" class="farlig" disabled="@(r.Varer > 0)" title="@(r.Varer > 0 ? "Kan ikke slettes – gruppen har varer" : "")" @onclick="@(() => Slett(r))"><Icon Name="trash" />Slett</button>
+                                    </span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
         }
     </div>
-}
 
-<div class="kort ny-gruppe">
-    <h2>Ny produktgruppe</h2>
-    <div class="ny-gruppe-form">
-        <input @bind="_nyNavn" placeholder="Navn, f.eks. Låser" />
-        <button type="button" class="knapp knapp-primaer" @onclick="Opprett">Opprett</button>
-    </div>
-    @if (!string.IsNullOrEmpty(_melding))
-    {
-        <p class="save-success">@_melding</p>
-    }
-    @if (!string.IsNullOrEmpty(_feil))
-    {
-        <p class="form-error">@_feil</p>
-    }
+    <aside class="po-ny">
+        <h2>Ny produktgruppe</h2>
+        <label class="po-felt">
+            <span>Navn</span>
+            <input @ref="_nyInput" @bind="_nyNavn" @bind:event="oninput" @onkeydown="NyTast" placeholder="F.eks. Låskasser" />
+        </label>
+        <button type="button" class="po-knapp primaer full" @onclick="Opprett"><Icon Name="plus" />Opprett og åpne</button>
+        <p class="po-hint">Gruppen åpnes med en gang, så du kan legge til varer.</p>
+        @if (_utenGruppe > 0)
+        {
+            <p class="po-varsel">⚠️ <b>@_utenGruppe @(_utenGruppe == 1 ? "vare" : "varer")</b> mangler produktgruppe, og får derfor ingen kunderabatt. <a href="/komponenter">Gå til komponentregisteret →</a></p>
+        }
+        @if (!string.IsNullOrEmpty(_melding))
+        {
+            <p class="po-ok">@_melding</p>
+        }
+        @if (!string.IsNullOrEmpty(_feil))
+        {
+            <p class="po-feil">@_feil</p>
+        }
+    </aside>
 </div>
 
 @code {
-    private sealed class ProduktgruppeRad
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly string[] Farger = ["#835e41", "#2f6f8f", "#c9a98c", "#6b8f71", "#9a7bb0", "#c08b5c", "#5a8fb0", "#b06b4a", "#d9c3a7"];
+
+    private sealed record Lev(string Navn, int Antall);
+
+    private sealed class GruppeRad
     {
-        public required Produktgruppe Gruppe { get; set; }
-        public int AntallVarer { get; set; }
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public int Varer { get; set; }
+        public List<Lev> Leverandorer { get; set; } = [];
+        public int Kunder { get; set; }
+        public decimal? RabattMin { get; set; }
+        public decimal? RabattMax { get; set; }
     }
 
-    private List<ProduktgruppeRad> _produktgrupper = [];
+    private List<GruppeRad> _rader = [];
+    private int _varerIGrupper;
+    private int _utenGruppe;
+    private int _kunderMedRabatt;
     private string _sok = "";
+    private string _sorter = "navn";
+    private bool _synkende;
+    private int? _menyId;
+    private int? _redigerId;
+    private string _redigerNavn = "";
     private string _nyNavn = "";
     private string? _melding;
     private string? _feil;
+    private ElementReference _nyInput;
 
-    private List<ProduktgruppeRad> _synlige => string.IsNullOrWhiteSpace(_sok)
-        ? _produktgrupper
-        : _produktgrupper.Where(p => p.Gruppe.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase)).ToList();
+    private static string Pst(int del, int total) =>
+        (total == 0 ? 0 : del * 100.0 / total).ToString("0.#", CultureInfo.InvariantCulture) + "%";
 
-    protected override async Task OnInitializedAsync()
+    private static string Rabatt(decimal min, decimal max) =>
+        min == max ? $"{min.ToString("0.#", Kultur)} %" : $"{min.ToString("0.#", Kultur)}–{max.ToString("0.#", Kultur)} %";
+
+    // Fast farge per leverandørnavn, så samme leverandør har samme farge i alle grupper.
+    private static string Farge(string navn) =>
+        Farger[(int)((uint)navn.ToLowerInvariant().Aggregate(17, (h, c) => h * 31 + c) % (uint)Farger.Length)];
+
+    private List<GruppeRad> Synlige
     {
-        await LastAsync();
+        get
+        {
+            var s = _sok.Trim();
+            var liste = _rader.Where(r => s.Length == 0
+                || r.Navn.Contains(s, StringComparison.OrdinalIgnoreCase)
+                || r.Leverandorer.Any(l => l.Navn.Contains(s, StringComparison.OrdinalIgnoreCase)));
+            IOrderedEnumerable<GruppeRad> sortert = _sorter switch
+            {
+                "varer" => _synkende ? liste.OrderByDescending(r => r.Varer) : liste.OrderBy(r => r.Varer),
+                "kunder" => _synkende ? liste.OrderByDescending(r => r.Kunder) : liste.OrderBy(r => r.Kunder),
+                _ => _synkende ? liste.OrderByDescending(r => r.Navn) : liste.OrderBy(r => r.Navn)
+            };
+            return sortert.ThenBy(r => r.Navn).ToList();
+        }
     }
 
-    // Teller varer per gruppe med en korrelert underspørring i stedet for å
-    // laste inn hele komponent-radene via Include (som noen produktgrupper
-    // har tusenvis av) - bare for å telle dem. Gjorde siden merkbart treg å
-    // navigere til.
+    private RenderFragment Kolonne(string key, string tekst) => __builder =>
+    {
+        <button type="button" class="po-sorter @(_sorter == key ? "pa" : "")" @onclick="@(() => Sorter(key))">
+            @tekst<span>@(_sorter == key ? (_synkende ? "▼" : "▲") : "↕")</span>
+        </button>
+    };
+
+    private void Sorter(string key)
+    {
+        // Tall sorteres størst først ved første klikk, navn alfabetisk.
+        _synkende = _sorter == key ? !_synkende : key != "navn";
+        _sorter = key;
+    }
+
+    protected override async Task OnInitializedAsync() => await LastAsync();
+
+    // Teller via join-tabellen i stedet for Include på hele komponentene, så
+    // siden er rask også når gruppene har tusenvis av varer.
     private async Task LastAsync()
     {
-        _produktgrupper = await Db.Produktgrupper
+        var grupper = await Db.Produktgrupper
             .OrderBy(p => p.Navn)
-            .Select(p => new ProduktgruppeRad { Gruppe = p, AntallVarer = p.Komponenter.Count })
+            .Select(p => new { p.Id, p.Navn, Varer = p.Komponenter.Count })
             .ToListAsync();
+
+        // Bare leverandørnavnet per vare (SQLite støtter ikke SelectMany/APPLY her).
+        var medlemmer = (await Db.Produktgrupper
+                .Select(g => new { g.Id, Leverandorer = g.Komponenter.Select(c => c.Leverandor).ToList() })
+                .ToListAsync())
+            .SelectMany(g => g.Leverandorer.Select(l => new { GruppeId = g.Id, Leverandor = l }))
+            .ToList();
+
+        var rabatter = await Db.KundeRabatter
+            .Select(r => new { r.ProduktgruppeId, r.KundeId, r.RabattProsent })
+            .ToListAsync();
+
+        _rader = grupper.Select(g =>
+        {
+            var lev = medlemmer.Where(m => m.GruppeId == g.Id)
+                .GroupBy(m => string.IsNullOrWhiteSpace(m.Leverandor) ? "Ukjent" : m.Leverandor!.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(x => new Lev(x.First().Leverandor?.Trim() is { Length: > 0 } n ? n : "Ukjent", x.Count()))
+                .OrderByDescending(x => x.Antall)
+                .ToList();
+            var r = rabatter.Where(x => x.ProduktgruppeId == g.Id && x.RabattProsent > 0).ToList();
+            return new GruppeRad
+            {
+                Id = g.Id,
+                Navn = g.Navn,
+                Varer = g.Varer,
+                Leverandorer = lev,
+                Kunder = r.Select(x => x.KundeId).Distinct().Count(),
+                RabattMin = r.Count == 0 ? null : r.Min(x => x.RabattProsent),
+                RabattMax = r.Count == 0 ? null : r.Max(x => x.RabattProsent)
+            };
+        }).ToList();
+
+        _varerIGrupper = await Db.Components.CountAsync(c => c.Produktgrupper.Any());
+        _utenGruppe = await Db.Components.CountAsync(c => c.Aktiv && !c.Produktgrupper.Any());
+        _kunderMedRabatt = rabatter.Where(x => x.RabattProsent > 0).Select(x => x.KundeId).Distinct().Count();
+    }
+
+    private void Apne(int id)
+    {
+        if (_redigerId == id)
+        {
+            return;
+        }
+
+        Nav.NavigateTo($"/produktgrupper/{id}");
+    }
+
+    private async Task GaTilNy()
+    {
+        // Fokuserer navnefeltet i panelet (og ruller dit på smale skjermer).
+        await _nyInput.FocusAsync();
+    }
+
+    private async Task NyTast(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await Opprett();
+        }
     }
 
     private async Task Opprett()
@@ -111,38 +295,69 @@ else
             return;
         }
 
-        Db.Produktgrupper.Add(new Produktgruppe { Navn = _nyNavn.Trim() });
-        await Db.SaveChangesAsync();
+        var navn = _nyNavn.Trim();
+        if (_rader.Any(r => string.Equals(r.Navn, navn, StringComparison.OrdinalIgnoreCase)))
+        {
+            _feil = $"Det finnes allerede en produktgruppe som heter «{navn}».";
+            return;
+        }
 
-        _feil = null;
-        _melding = $"Produktgruppen \"{_nyNavn}\" er opprettet.";
-        _nyNavn = "";
-        await LastAsync();
+        var ny = new Produktgruppe { Navn = navn };
+        Db.Produktgrupper.Add(ny);
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo($"/produktgrupper/{ny.Id}");
     }
 
-    private async Task Lagre(Produktgruppe p)
+    private void StartRename(GruppeRad r)
     {
-        var entitet = await Db.Produktgrupper.FirstOrDefaultAsync(x => x.Id == p.Id);
+        _menyId = null;
+        _redigerId = r.Id;
+        _redigerNavn = r.Navn;
+    }
+
+    private async Task RenameTast(KeyboardEventArgs e, int id)
+    {
+        if (e.Key == "Enter")
+        {
+            await LagreNavn(id);
+        }
+        else if (e.Key == "Escape")
+        {
+            _redigerId = null;
+        }
+    }
+
+    private async Task LagreNavn(int id)
+    {
+        if (string.IsNullOrWhiteSpace(_redigerNavn))
+        {
+            _feil = "Navn må fylles ut.";
+            return;
+        }
+
+        var entitet = await Db.Produktgrupper.FirstOrDefaultAsync(x => x.Id == id);
         if (entitet is null)
         {
             return;
         }
 
-        entitet.Navn = p.Navn.Trim();
+        entitet.Navn = _redigerNavn.Trim();
         await Db.SaveChangesAsync();
-
         _feil = null;
-        _melding = $"\"{p.Navn}\" er lagret.";
+        _melding = $"\"{entitet.Navn}\" er lagret.";
+        _redigerId = null;
+        await LastAsync();
     }
 
-    private async Task Slett(ProduktgruppeRad rad)
+    private async Task Slett(GruppeRad rad)
     {
-        if (rad.AntallVarer > 0)
+        _menyId = null;
+        if (rad.Varer > 0)
         {
             return;
         }
 
-        var entitet = await Db.Produktgrupper.FirstOrDefaultAsync(x => x.Id == rad.Gruppe.Id);
+        var entitet = await Db.Produktgrupper.FirstOrDefaultAsync(x => x.Id == rad.Id);
         if (entitet is null)
         {
             return;
@@ -150,7 +365,7 @@ else
 
         Db.Produktgrupper.Remove(entitet);
         await Db.SaveChangesAsync();
-        _melding = $"\"{rad.Gruppe.Navn}\" er slettet.";
+        _melding = $"\"{rad.Navn}\" er slettet.";
         _feil = null;
         await LastAsync();
     }
