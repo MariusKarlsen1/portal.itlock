@@ -1616,12 +1616,21 @@ app.MapGet("/fellesskapbilde/{id:int}", async (int id, ApplicationDbContext db) 
         : Results.File(fellesskap.OmslagData, FilSikkerhet.TryggContentType(fellesskap.OmslagContentType ?? "application/octet-stream"));
 }).RequireAuthorization();
 
-app.MapGet("/leverandorlogo/{id:int}", async (int id, ApplicationDbContext db) =>
+app.MapGet("/leverandorlogo/{id:int}", async (int id, int? w, ApplicationDbContext db) =>
 {
     var leverandor = await db.Leverandorer.FindAsync(id);
-    return leverandor?.LogoData is null
-        ? Results.NotFound()
-        : Results.File(leverandor.LogoData, FilSikkerhet.TryggContentType(leverandor.LogoContentType ?? "application/octet-stream"), leverandor.LogoFilnavn);
+    if (leverandor?.LogoData is null)
+    {
+        return Results.NotFound();
+    }
+
+    // ?w=... gir et forminsket miniatyrbilde til listene (som kundebildene).
+    if (w is int maks && BildeMiniatyr.Lag(leverandor.LogoData, Math.Clamp(maks, 32, 800)) is { } miniatyr)
+    {
+        return Results.File(miniatyr.Data, miniatyr.ContentType);
+    }
+
+    return Results.File(leverandor.LogoData, FilSikkerhet.TryggContentType(leverandor.LogoContentType ?? "application/octet-stream"), leverandor.LogoFilnavn);
 }).RequireAuthorization();
 
 // Organisasjonens eget merkevare-bilde (satt av plattformeier på /plattform)
