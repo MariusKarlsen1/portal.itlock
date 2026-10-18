@@ -87,7 +87,12 @@ builder.Services.AddMemoryCache();
 builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
 {
     var tenantContext = sp.GetRequiredService<ITenantContext>();
-    options.UseSqlite(tenantContext.Current?.ConnectionString ?? defaultConnectionString);
+    // SplitQuery: Include av flere lister (f.eks. prosjekt med plantegninger,
+    // vedlegg, tilbud og montering) hentes som egne spørringer i stedet for
+    // ett kryssprodukt der hver rad (og hvert vedlegg) gjentas for hver
+    // kombinasjon - det gjorde enkelte sider svært trege med mye data.
+    options.UseSqlite(tenantContext.Current?.ConnectionString ?? defaultConnectionString,
+        o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
     // Se SqliteUnicodeFunctionsInterceptor - lar tekstsøk (f.eks.
     // SokResultat.razor) filtreres i databasen med korrekt æøå-håndtering,
     // i stedet for å måtte hente hele tabellen til minnet.
@@ -141,6 +146,7 @@ builder.Services.AddHttpClient<DatabaseBackupService>(client =>
     client.BaseAddress = new Uri("https://api.github.com/");
 });
 builder.Services.AddHostedService<DatabaseBackupBackgroundService>();
+builder.Services.AddHostedService<BlobKolonneOmorganisering>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddSingleton<PostnummerService>();
 builder.Services.AddSingleton<PresenceService>();
@@ -1241,7 +1247,7 @@ app.MapGet("/foresporselmedia/{id:int}/fil", async (int id, ApplicationDbContext
 
 app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
 {
-    var komponent = await db.Components.Include(c => c.Filer).FirstOrDefaultAsync(c => c.Id == id);
+    var komponent = await db.LastFilerAsync(db.Components.FirstOrDefaultAsync(c => c.Id == id));
     return komponent?.FdvData is null
         ? Results.NotFound()
         : Results.File(komponent.FdvData, FilSikkerhet.TryggContentType(komponent.FdvContentType ?? "application/pdf"), komponent.FdvFilnavn);
@@ -1257,7 +1263,7 @@ app.MapGet("/komponent/fdvdokument/{id:int}", async (int id, ApplicationDbContex
 
 app.MapGet("/komponent/{id:int}/montasjeblad", async (int id, ApplicationDbContext db) =>
 {
-    var komponent = await db.Components.Include(c => c.Filer).FirstOrDefaultAsync(c => c.Id == id);
+    var komponent = await db.LastFilerAsync(db.Components.FirstOrDefaultAsync(c => c.Id == id));
     return komponent?.MontasjebladData is null
         ? Results.NotFound()
         : Results.File(komponent.MontasjebladData, FilSikkerhet.TryggContentType(komponent.MontasjebladContentType ?? "application/pdf"), komponent.MontasjebladFilnavn);
@@ -1273,7 +1279,7 @@ app.MapGet("/komponent/montasjebladdokument/{id:int}", async (int id, Applicatio
 
 app.MapGet("/komponent/{id:int}/datablad", async (int id, ApplicationDbContext db) =>
 {
-    var komponent = await db.Components.Include(c => c.Filer).FirstOrDefaultAsync(c => c.Id == id);
+    var komponent = await db.LastFilerAsync(db.Components.FirstOrDefaultAsync(c => c.Id == id));
     return komponent?.DatabladData is null
         ? Results.NotFound()
         : Results.File(komponent.DatabladData, FilSikkerhet.TryggContentType(komponent.DatabladContentType ?? "application/pdf"), komponent.DatabladFilnavn);
@@ -1289,7 +1295,7 @@ app.MapGet("/komponent/databladdokument/{id:int}", async (int id, ApplicationDbC
 
 app.MapGet("/komponent/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
 {
-    var komponent = await db.Components.Include(c => c.Filer).FirstOrDefaultAsync(c => c.Id == id);
+    var komponent = await db.LastFilerAsync(db.Components.FirstOrDefaultAsync(c => c.Id == id));
     return komponent?.BildeData is null
         ? Results.NotFound()
         : Results.File(komponent.BildeData, FilSikkerhet.TryggContentType(komponent.BildeContentType ?? "image/jpeg"), komponent.BildeFilnavn);
@@ -1660,6 +1666,11 @@ app.MapGet("/plattform/organisasjon/{id:int}/logo", async (int id, PlatformDbCon
 app.MapGet("/kundebilde/{id:int}", async (int id, int? w, ApplicationDbContext db) =>
 {
     var kunde = await db.Kunder.FindAsync(id);
+    if (kunde is not null)
+    {
+        await db.LastBildeAsync(kunde);
+    }
+
     if (kunde?.BildeData is null)
     {
         return Results.NotFound();

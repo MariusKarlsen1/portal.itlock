@@ -3195,9 +3195,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("BildeContentType")
                         .HasColumnType("TEXT");
 
-                    b.Property<byte[]>("BildeData")
-                        .HasColumnType("BLOB");
-
                     b.Property<string>("BildeFilnavn")
                         .HasColumnType("TEXT");
 
@@ -3246,7 +3243,20 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Kunder");
+                    b.ToTable("Kunder", (string)null);
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KundeBilde", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<byte[]>("BildeData")
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Kunder", (string)null);
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KundeDokument", b =>
@@ -7129,6 +7139,15 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("SymbolBibliotek");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.KundeBilde", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Kunde", null)
+                        .WithOne("Bilde")
+                        .HasForeignKey("PortalItlock.Web.Models.KundeBilde", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.KundeDokument", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Kunde", "Kunde")
@@ -8200,6 +8219,8 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Kunde", b =>
                 {
+                    b.Navigation("Bilde");
+
                     b.Navigation("Dokumenter");
 
                     b.Navigation("Hendelser");

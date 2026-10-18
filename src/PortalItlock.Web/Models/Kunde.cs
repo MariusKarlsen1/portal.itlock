@@ -14,7 +14,17 @@ public class Kunde
     public string? Notater { get; set; }
     public string? TripletexKundenummer { get; set; }
 
-    public byte[]? BildeData { get; set; }
+    // Selve bildet ligger i samme tabell, men er skilt ut i KundeBilde slik at
+    // det IKKE lastes hver gang en kunde hentes - Include(a => a.Kunde) på f.eks.
+    // arbeidsordrelisten hentet ellers kundebildet én gang per rad. Der bildet
+    // faktisk trengs: db.LastBildeAsync(kunde) (eller Include(k => k.Bilde) på
+    // ett enkelt oppslag), og alltid før BildeData endres.
+    public KundeBilde? Bilde { get; set; }
+
+    private KundeBilde SikreBilde() => Bilde ??= new KundeBilde { Id = Id };
+
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public byte[]? BildeData { get => Bilde?.BildeData; set => SikreBilde().BildeData = value; }
     public string? BildeContentType { get; set; }
     public string? BildeFilnavn { get; set; }
     public DateTime? NesteOppfolgingsDato { get; set; }

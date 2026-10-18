@@ -263,6 +263,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         // tabell/kolonner som før, men som egne entiteter slik at de bare
         // lastes med Include(... .Filer / .Fil) - se Component.Filer og
         // Plantegning.Fil. Kolonnenavnene er uendret.
+        modelBuilder.HasDbFunction(typeof(SqlFn).GetMethod(nameof(SqlFn.TypeOf), [typeof(byte[])])!).HasName("typeof").IsBuiltIn();
+
         modelBuilder.Entity<Component>().Ignore(c => c.FdvData).Ignore(c => c.MontasjebladData)
             .Ignore(c => c.DatabladData).Ignore(c => c.BildeData);
         modelBuilder.Entity<Component>()
@@ -272,6 +274,13 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         modelBuilder.Entity<ComponentFiler>().ToTable("Components");
         modelBuilder.Entity<Component>().ToTable("Components");
 
+        modelBuilder.Entity<Kunde>().Ignore(k => k.BildeData);
+        modelBuilder.Entity<Kunde>()
+            .HasOne(k => k.Bilde)
+            .WithOne()
+            .HasForeignKey<KundeBilde>(b => b.Id);
+        modelBuilder.Entity<KundeBilde>().ToTable("Kunder");
+        modelBuilder.Entity<Kunde>().ToTable("Kunder");
         modelBuilder.Entity<Plantegning>().Ignore(p => p.Data);
         modelBuilder.Entity<Plantegning>()
             .HasOne(p => p.Fil)

@@ -15,18 +15,23 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantCont
         var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
 
         var komponentIder = await db.DorKomponenter
-            .Where(dk => dk.Dor!.ProsjektId == prosjektId && dk.Component!.Filer!.FdvData != null
+            .Where(dk => dk.Dor!.ProsjektId == prosjektId
                 && (valgteByggetrinn == null || (dk.Dor!.Plantegning != null && valgteByggetrinn.Contains(dk.Dor!.Plantegning!.Byggetrinn))))
             .Select(dk => dk.ComponentId)
             .Distinct()
             .ToListAsync();
 
-        return await db.Components
-            .Where(c => komponentIder.Contains(c.Id))
+        // Filene hentes for seg på Id - c.Filer i en join/Include leser alle
+        // filene i databasen (se KomponentFilerExtensions).
+        var medFdv = await db.KomponenterMedFilAsync("FdvData", komponentIder);
+        var ider = komponentIder.Where(medFdv.Contains).ToList();
+        var komponenter = await db.Components
+            .Where(c => ider.Contains(c.Id))
             .Include(c => c.FdvDokumenter)
-            .Include(c => c.Filer)
             .OrderBy(c => c.Navn)
             .ToListAsync();
+        await db.Set<ComponentFiler>().Where(f => ider.Contains(f.Id)).LoadAsync();
+        return komponenter;
     }
 
     // Mal F7 (fdv-pdf-forslag.html): forside med fargekolonne (kontaktperson,

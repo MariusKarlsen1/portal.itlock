@@ -1,3 +1,4 @@
+using PortalItlock.Web.Data;
 using System.Globalization;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -522,6 +523,10 @@ public partial class KundeSkjema
         };
 
         _kunde = await Db.Kunder.FirstOrDefaultAsync(k => k.Id == Id);
+        if (_kunde is not null)
+        {
+            await Db.LastBildeAsync(_kunde);
+        }
         _notFound = _kunde is null;
 
         if (_kunde is null)

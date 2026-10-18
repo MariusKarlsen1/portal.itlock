@@ -704,8 +704,9 @@
     // bilde som legges til. Dette var hovedårsaken til at siden ble treg og
     // ustabil (minnepress/lange spørringer). Projiserer derfor rett til en
     // lett rad-type i selve SQL-spørringen i stedet for å laste inn hele
-    // Component-objektet - EF Core oversetter da f.eks. "FdvData != null"
-    // til et billig IS NOT NULL-sjekk uten å hente selve dataene.
+    // Component-objektet. "Har fil"-flaggene hentes for seg med
+    // KomponenterMedFilAsync - c.Filer.X her ville gitt en join som leser alle
+    // filene i databasen for hver rad (se KomponentFilerExtensions).
     private sealed class ComponentRow
     {
         public int Id { get; set; }
@@ -779,9 +780,7 @@
         Aktiv = c.Aktiv,
         ILagerstyring = c.ILagerstyring,
         PackageCount = c.Pakker.Count,
-        HarFdv = c.Filer!.FdvData != null,
         FdvFilnavn = c.FdvFilnavn,
-        HarMontasjeblad = c.Filer!.MontasjebladData != null,
         MontasjebladFilnavn = c.MontasjebladFilnavn,
         InntektskontoId = c.InntektskontoId,
         ErKomplett = c.ErKomplett,
@@ -879,10 +878,14 @@
 
         var leverandorLookup = await LoadLeverandorNavnLookupAsync(null);
         var produktgruppeLookup = await LoadProduktgruppeNavnLookupAsync(null);
+        var medFdv = await Db.KomponenterMedFilAsync("FdvData");
+        var medMontasjeblad = await Db.KomponenterMedFilAsync("MontasjebladData");
         foreach (var r in rows)
         {
             r.LeverandorNavn = leverandorLookup.GetValueOrDefault(r.Id) ?? [];
             r.ProduktgruppeNavnListe = produktgruppeLookup.GetValueOrDefault(r.Id) ?? [];
+            r.HarFdv = medFdv.Contains(r.Id);
+            r.HarMontasjeblad = medMontasjeblad.Contains(r.Id);
         }
 
         _components = rows.Select(MapToDraft).ToList();
@@ -912,6 +915,8 @@
         var produktgruppeLookup = await LoadProduktgruppeNavnLookupAsync([id]);
         r.LeverandorNavn = leverandorLookup.GetValueOrDefault(r.Id) ?? [];
         r.ProduktgruppeNavnListe = produktgruppeLookup.GetValueOrDefault(r.Id) ?? [];
+        r.HarFdv = (await Db.KomponenterMedFilAsync("FdvData", [id])).Count > 0;
+        r.HarMontasjeblad = (await Db.KomponenterMedFilAsync("MontasjebladData", [id])).Count > 0;
 
         var index = _components.FindIndex(d => d.Id == r.Id);
         if (index >= 0)
@@ -1035,7 +1040,7 @@
             await stream.CopyToAsync(buffer);
         }
 
-        var entity = await Db.Components.Include(c => c.Filer).FirstAsync(c => c.Id == draft.Id);
+        var entity = await Db.LastFilerAsync(await Db.Components.FirstAsync(c => c.Id == draft.Id));
         entity.FdvData = buffer.ToArray();
         entity.FdvFilnavn = file.Name;
         entity.FdvContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType;
@@ -1047,7 +1052,7 @@
 
     private async Task RemoveFdv(ComponentDraft draft)
     {
-        var entity = await Db.Components.Include(c => c.Filer).FirstAsync(c => c.Id == draft.Id);
+        var entity = await Db.LastFilerAsync(await Db.Components.FirstAsync(c => c.Id == draft.Id));
         entity.FdvData = null;
         entity.FdvFilnavn = null;
         entity.FdvContentType = null;
@@ -1073,7 +1078,7 @@
             await stream.CopyToAsync(buffer);
         }
 
-        var entity = await Db.Components.Include(c => c.Filer).FirstAsync(c => c.Id == draft.Id);
+        var entity = await Db.LastFilerAsync(await Db.Components.FirstAsync(c => c.Id == draft.Id));
         entity.MontasjebladData = buffer.ToArray();
         entity.MontasjebladFilnavn = file.Name;
         entity.MontasjebladContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType;
@@ -1085,7 +1090,7 @@
 
     private async Task RemoveMontasjeblad(ComponentDraft draft)
     {
-        var entity = await Db.Components.Include(c => c.Filer).FirstAsync(c => c.Id == draft.Id);
+        var entity = await Db.LastFilerAsync(await Db.Components.FirstAsync(c => c.Id == draft.Id));
         entity.MontasjebladData = null;
         entity.MontasjebladFilnavn = null;
         entity.MontasjebladContentType = null;
