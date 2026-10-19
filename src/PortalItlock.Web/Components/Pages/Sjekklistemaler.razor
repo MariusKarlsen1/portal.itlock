@@ -4,158 +4,349 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>Sjekklistemaler</PageTitle>
 
-<div class="side-header">
-    <span class="side-header-ikon"><Icon Name="check-circle" /></span>
-    <div>
-        <h1>Sjekklistemaler</h1>
-        <p class="section-hint">Digitale sjekklister per dørtype som montør fyller ut på arbeidsordre. Legg til punktene i den rekkefølgen de skal vises.</p>
+@* SM1 (sjekklistemaler-forslag.html): dashbord-kort med malene i en meny inni,
+   som Kravdimensjoner og Dørfunksjoner. Punktene er nummerert og kan flyttes
+   med ▲▼ eller dras; alle endringer lagres fra lagre-linjen nederst. *@
+<div class="sm @(_full ? "sm-full" : "")">
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="check-circle" /></span>
+            <div>
+                <h1>Sjekklistemaler</h1>
+                <p class="section-hint">Sjekklister per dørtype som montøren fyller ut på arbeidsordren. Punktene vises i rekkefølgen under.</p>
+            </div>
+        </div>
     </div>
-</div>
 
-@if (_maler.Count == 0)
-{
-    <p class="list-empty">Ingen sjekklistemaler opprettet ennå.</p>
-}
-
-<div class="mal-rutenett">
-    @foreach (var mal in _maler)
+    @if (!string.IsNullOrEmpty(_melding))
     {
-        <div @key="mal.Id" class="mal-kort @(ErApen(mal.Id) ? "mal-kort-apen" : "")">
-            @if (!ErApen(mal.Id))
-            {
-                <div class="mal-kort-header">
-                    <span class="mal-navn">@(string.IsNullOrWhiteSpace(mal.Dortype) ? "(Uten dørtype)" : mal.Dortype)</span>
-                    <span class="mal-antall">@Ordnet(mal).Count punkt@(Ordnet(mal).Count == 1 ? "" : "er")</span>
-                </div>
-                @if (Ordnet(mal).Count == 0)
+        <p class="sm-ok">@_melding</p>
+    }
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
+    }
+
+    <div class="sm-kort">
+        <nav class="sm-meny">
+            <label class="sm-sok">
+                <Icon Name="search" />
+                <input type="search" @bind="_search" @bind:event="oninput" placeholder="Finn mal eller punkt" />
+            </label>
+            <div class="sm-liste">
+                @foreach (var mal in _filtrert)
                 {
-                    <p class="punkt-preview-tom">Ingen punkter lagt til ennå.</p>
+                    var id = mal.Id;
+                    <button type="button" @key="mal.Id" class="@(mal.Id == _valgtId ? "pa" : "")" @onclick="@(() => Velg(id))">
+                        <span class="sm-meny-ikon"><Icon Name="check-circle" /></span>
+                        <span class="sm-navn">@(string.IsNullOrWhiteSpace(mal.Dortype) ? "(Uten dørtype)" : mal.Dortype)@(mal.Endret ? " •" : "")</span>
+                        <small>@mal.Punkter.Count(p => !p.Slettet)</small>
+                    </button>
                 }
-                else
+                @if (_filtrert.Count == 0)
                 {
-                    <div class="punkt-preview">
-                        @for (var i = 0; i < Math.Min(3, Ordnet(mal).Count); i++)
+                    <p class="sm-dempet">@(_maler.Count == 0 ? "Ingen sjekklistemaler ennå." : "Ingen treff.")</p>
+                }
+            </div>
+            <div class="sm-ny">
+                <input @bind="_nyDortype" @bind:event="oninput" placeholder="＋ Ny sjekklistemal"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettMal(); } })" />
+                @if (!string.IsNullOrWhiteSpace(_nyDortype))
+                {
+                    <button type="button" class="sm-knapp primaer" @onclick="OpprettMal">Opprett</button>
+                }
+            </div>
+        </nav>
+
+        <section class="sm-innhold">
+            <button type="button" class="sm-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+                <Icon Name="@(_full ? "minimize" : "maximize")" />
+            </button>
+
+            @if (_valgt is { } valgt)
+            {
+                var punkter = valgt.Punkter.Where(p => !p.Slettet).ToList();
+                <div class="sm-topp">
+                    <span class="sm-stort-ikon"><Icon Name="check-circle" /></span>
+                    <div>
+                        <h2>@(string.IsNullOrWhiteSpace(valgt.Dortype) ? "(Uten dørtype)" : valgt.Dortype)</h2>
+                        <p>@punkter.Count @(punkter.Count == 1 ? "punkt" : "punkter")</p>
+                    </div>
+                    <span class="sm-topp-knapper">
+                        <button type="button" class="sm-knapp" @onclick="@(() => DupliserMal(valgt))"><Icon Name="clipboard" />Dupliser</button>
+                    </span>
+                </div>
+
+                <label class="sm-felt">
+                    <span>Dørtype</span>
+                    <input @bind="valgt.Dortype" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" placeholder="F.eks. Ytterdør" />
+                </label>
+
+                <span class="sm-seksjon">Punkter</span>
+                <div class="sm-punkter">
+                    @for (var i = 0; i < punkter.Count; i++)
+                    {
+                        var punkt = punkter[i];
+                        var indeks = i;
+                        <div @key="punkt" class="sm-punkt @(_dragPunkt == punkt ? "drar" : "")"
+                             draggable="true"
+                             @ondragstart="@(() => _dragPunkt = punkt)"
+                             @ondragover="@(() => { })" @ondragover:preventDefault
+                             @ondrop="@(() => Slipp(valgt, punkt))"
+                             @ondragend="@(() => _dragPunkt = null)">
+                            <span class="sm-grep" title="Dra for å endre rekkefølge">⠿</span>
+                            <span class="sm-nr">@(indeks + 1)</span>
+                            <input @bind="punkt.Tekst" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" />
+                            <span class="sm-pil">
+                                <button type="button" title="Flytt opp" disabled="@(indeks == 0)" @onclick="@(() => Flytt(valgt, punkt, -1))">▲</button>
+                                <button type="button" title="Flytt ned" disabled="@(indeks == punkter.Count - 1)" @onclick="@(() => Flytt(valgt, punkt, 1))">▼</button>
+                                <button type="button" class="sm-fjern" title="Fjern punkt" @onclick="@(() => FjernPunkt(valgt, punkt))"><Icon Name="x" /></button>
+                            </span>
+                        </div>
+                    }
+                    <div class="sm-punkt sm-punkt-ny">
+                        <span></span>
+                        <span class="sm-nr ny"><Icon Name="plus" /></span>
+                        <input @bind="valgt.NyttPunkt" @bind:event="oninput" placeholder="Nytt punkt – trykk Enter"
+                               @onkeydown="@(e => { if (e.Key == "Enter") { LeggTilPunkt(valgt); } })" />
+                        @if (!string.IsNullOrWhiteSpace(valgt.NyttPunkt))
                         {
-                            var visningsindeks = i + 1;
-                            <div class="punkt-preview-rad"><span class="punkt-preview-nr">@visningsindeks</span>@Ordnet(mal)[i].Tekst</div>
+                            <button type="button" class="sm-knapp" @onclick="@(() => LeggTilPunkt(valgt))">Legg til</button>
                         }
                     </div>
-                    @if (Ordnet(mal).Count > 3)
+                </div>
+
+                <div class="sm-bunn">
+                    @if (_bekreftSlett)
                     {
-                        <span class="punkt-preview-mer">+@(Ordnet(mal).Count - 3) flere punkter</span>
+                        <span class="sm-dempet">Slette malen «@valgt.Dortype» med alle punktene?</span>
+                        <button type="button" class="sm-knapp fare" @onclick="@(() => SlettMal(valgt))">Ja, slett</button>
+                        <button type="button" class="sm-knapp" @onclick="@(() => _bekreftSlett = false)">Avbryt</button>
                     }
-                }
-                <div class="mal-kort-footer">
-                    <button type="button" class="btn-liten" @onclick="@(() => ToggleApen(mal.Id))">Rediger</button>
-                    <button type="button" class="btn-liten" @onclick="@(() => DupliserMal(mal))">Dupliser</button>
+                    else
+                    {
+                        <button type="button" class="sm-lenke" @onclick="@(() => _bekreftSlett = true)"><Icon Name="trash" />Slett mal</button>
+                    }
                 </div>
             }
             else
             {
-                <div class="mal-editor">
-                    <div class="mal-editor-header">
-                        <input class="mal-dortype-input" @bind="mal.Dortype" @bind:event="oninput" placeholder="Dørtype, f.eks. Ytterdør" />
-                        <button type="button" class="knapp knapp-primaer" @onclick="@(() => LagreMal(mal))">Lagre</button>
-                        <button type="button" class="knapp" @onclick="@(() => DupliserMal(mal))">Dupliser</button>
-                        <button type="button" class="knapp knapp-fare" @onclick="@(() => SlettMal(mal))">Slett mal</button>
-                        <button type="button" class="knapp" @onclick="@(() => ToggleApen(mal.Id))">Lukk</button>
-                    </div>
-
-                    @if (mal.Punkter.Count == 0)
-                    {
-                        <p class="list-empty">Ingen punkter lagt til ennå.</p>
-                    }
-                    else
-                    {
-                        <ol class="punkt-list">
-                            @foreach (var punkt in mal.Punkter.OrderBy(p => p.Rekkefolge))
-                            {
-                                <li @key="punkt.Id" class="@(_dragPunkt?.Id == punkt.Id ? "punkt-dragging" : "")"
-                                    draggable="true"
-                                    @ondragstart="@(() => OnDragStart(punkt))"
-                                    @ondragover="@(() => { })" @ondragover:preventDefault
-                                    @ondrop="@(() => OnDrop(mal, punkt))">
-                                    <span class="punkt-handle" title="Dra for å endre rekkefølge">⠿</span>
-                                    <input @bind="punkt.Tekst" @bind:event="oninput" />
-                                    <button type="button" class="knapp-liten-fjern" @onclick="@(() => SlettPunkt(mal, punkt))">Fjern</button>
-                                </li>
-                            }
-                        </ol>
-                    }
-
-                    <div class="ny-punkt-form">
-                        <input @bind="mal.NyttPunktTekst" @bind:event="oninput"
-                               @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilPunkt(mal); } })"
-                               placeholder="Nytt sjekkpunkt" />
-                        <button type="button" class="knapp knapp-primaer" @onclick="@(() => LeggTilPunkt(mal))">Legg til punkt</button>
-                    </div>
-                </div>
+                <p class="sm-dempet">Velg en mal i menyen, eller lag en ny nederst i menyen.</p>
             }
+        </section>
+    </div>
+
+    @if (_maler.Any(m => m.Endret))
+    {
+        var antall = _maler.Count(m => m.Endret);
+        <div class="sm-lagrebar">
+            <span><Icon Name="edit" /><b>Endringer i @antall @(antall == 1 ? "mal" : "maler")</b> er ikke lagret</span>
+            <span class="sm-lagrebar-knapper">
+                <button type="button" class="sm-knapp" @onclick="Forkast">Forkast</button>
+                <button type="button" class="sm-knapp primaer" @onclick="LagreAlle"><Icon Name="check" />Lagre</button>
+            </span>
         </div>
     }
-
-    <div class="ny-mal-kort">
-        <span class="ny-mal-ikon"><Icon Name="plus" /></span>
-        <span class="ny-mal-tittel">Ny sjekklistemal</span>
-        <input @bind="_nyDortype" @bind:event="oninput" placeholder="Dørtype, f.eks. Skyvedør"
-               @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettMal(); } })" />
-        <button type="button" class="knapp knapp-primaer" @onclick="OpprettMal">Opprett</button>
-    </div>
 </div>
 
-@if (!string.IsNullOrEmpty(_melding))
-{
-    <p class="save-success">@_melding</p>
-}
-@if (!string.IsNullOrEmpty(_feil))
-{
-    <p class="form-error">@_feil</p>
-}
-
 @code {
-    private sealed class MalRad
+    private sealed class PunktDraft
+    {
+        public int Id { get; set; }
+        public string Tekst { get; set; } = "";
+        public bool Slettet { get; set; }
+    }
+
+    private sealed class MalDraft
     {
         public int Id { get; set; }
         public string Dortype { get; set; } = "";
-        public List<SjekklistePunkt> Punkter { get; set; } = [];
-        public string NyttPunktTekst { get; set; } = "";
+        public List<PunktDraft> Punkter { get; set; } = [];
+        public string NyttPunkt { get; set; } = "";
+        public bool Endret { get; set; }
     }
 
-    private List<MalRad> _maler = [];
+    private List<MalDraft> _maler = [];
+    private string _search = "";
     private string _nyDortype = "";
     private string? _melding;
     private string? _feil;
-    private HashSet<int> _apne = [];
-    private SjekklistePunkt? _dragPunkt;
+    private int? _valgtId;
+    private bool _bekreftSlett;
+    private bool _full;
+    private PunktDraft? _dragPunkt;
 
-    private bool ErApen(int id) => _apne.Contains(id);
+    private MalDraft? _valgt => _maler.FirstOrDefault(m => m.Id == _valgtId);
 
-    private static List<SjekklistePunkt> Ordnet(MalRad mal) => mal.Punkter.OrderBy(p => p.Rekkefolge).ToList();
-
-    private void ToggleApen(int id)
-    {
-        if (!_apne.Add(id))
-        {
-            _apne.Remove(id);
-        }
-    }
+    private List<MalDraft> _filtrert => string.IsNullOrWhiteSpace(_search)
+        ? _maler
+        : _maler.Where(m => m.Dortype.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+            || m.Punkter.Any(p => !p.Slettet && p.Tekst.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase))).ToList();
 
     protected override async Task OnInitializedAsync()
     {
+        _full = await VisningPref.HentAsync("sjekklistemaler-bredde", "normal") == "full";
         await LoadAsync();
+        _valgtId = _maler.FirstOrDefault()?.Id;
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("sjekklistemaler-bredde", _full ? "full" : "normal");
     }
 
     private async Task LoadAsync()
     {
-        _maler = await Db.SjekklisteMaler
+        var maler = await Db.SjekklisteMaler
             .Include(m => m.Punkter)
             .OrderBy(m => m.Dortype)
-            .Select(m => new MalRad { Id = m.Id, Dortype = m.Dortype, Punkter = m.Punkter })
             .ToListAsync();
+
+        _maler = maler.Select(m => new MalDraft
+        {
+            Id = m.Id,
+            Dortype = m.Dortype,
+            Punkter = m.Punkter.OrderBy(p => p.Rekkefolge).Select(p => new PunktDraft { Id = p.Id, Tekst = p.Tekst }).ToList()
+        }).ToList();
+
+        if (_valgtId is not null && _maler.All(m => m.Id != _valgtId))
+        {
+            _valgtId = _maler.FirstOrDefault()?.Id;
+        }
+    }
+
+    private void Velg(int id)
+    {
+        _valgtId = id;
+        _bekreftSlett = false;
+        _feil = null;
+    }
+
+    private void LeggTilPunkt(MalDraft mal)
+    {
+        var tekst = mal.NyttPunkt.Trim();
+        if (tekst.Length == 0)
+        {
+            return;
+        }
+
+        mal.Punkter.Add(new PunktDraft { Tekst = tekst });
+        mal.NyttPunkt = "";
+        mal.Endret = true;
+    }
+
+    private void FjernPunkt(MalDraft mal, PunktDraft punkt)
+    {
+        if (punkt.Id == 0)
+        {
+            mal.Punkter.Remove(punkt);
+        }
+        else
+        {
+            punkt.Slettet = true;
+        }
+
+        mal.Endret = true;
+    }
+
+    private void Flytt(MalDraft mal, PunktDraft punkt, int retning)
+    {
+        var synlige = mal.Punkter.Where(p => !p.Slettet).ToList();
+        var i = synlige.IndexOf(punkt);
+        var j = i + retning;
+        if (i < 0 || j < 0 || j >= synlige.Count)
+        {
+            return;
+        }
+
+        var a = mal.Punkter.IndexOf(synlige[i]);
+        var b = mal.Punkter.IndexOf(synlige[j]);
+        (mal.Punkter[a], mal.Punkter[b]) = (mal.Punkter[b], mal.Punkter[a]);
+        mal.Endret = true;
+    }
+
+    private void Slipp(MalDraft mal, PunktDraft mal_punkt)
+    {
+        if (_dragPunkt is null || _dragPunkt == mal_punkt || !mal.Punkter.Contains(_dragPunkt))
+        {
+            _dragPunkt = null;
+            return;
+        }
+
+        mal.Punkter.Remove(_dragPunkt);
+        mal.Punkter.Insert(mal.Punkter.IndexOf(mal_punkt), _dragPunkt);
+        _dragPunkt = null;
+        mal.Endret = true;
+    }
+
+    private async Task Forkast()
+    {
+        _feil = null;
+        _melding = null;
+        await LoadAsync();
+    }
+
+    private async Task LagreAlle()
+    {
+        _feil = null;
+        var endrede = _maler.Where(m => m.Endret).ToList();
+        if (endrede.Any(m => string.IsNullOrWhiteSpace(m.Dortype)))
+        {
+            _feil = "Alle maler må ha en dørtype.";
+            return;
+        }
+
+        if (endrede.Any(m => m.Punkter.Any(p => !p.Slettet && string.IsNullOrWhiteSpace(p.Tekst))))
+        {
+            _feil = "Punkter kan ikke stå tomme – skriv inn tekst eller fjern punktet.";
+            return;
+        }
+
+        foreach (var draft in endrede)
+        {
+            var mal = await Db.SjekklisteMaler.Include(m => m.Punkter).FirstOrDefaultAsync(m => m.Id == draft.Id);
+            if (mal is null)
+            {
+                continue;
+            }
+
+            mal.Dortype = draft.Dortype.Trim();
+            var rekkefolge = 1;
+            foreach (var p in draft.Punkter)
+            {
+                var entitet = p.Id == 0 ? null : mal.Punkter.FirstOrDefault(x => x.Id == p.Id);
+                if (p.Slettet)
+                {
+                    if (entitet is not null)
+                    {
+                        Db.SjekklistePunkter.Remove(entitet);
+                    }
+
+                    continue;
+                }
+
+                if (entitet is null)
+                {
+                    mal.Punkter.Add(new SjekklistePunkt { Tekst = p.Tekst.Trim(), Rekkefolge = rekkefolge++ });
+                }
+                else
+                {
+                    entitet.Tekst = p.Tekst.Trim();
+                    entitet.Rekkefolge = rekkefolge++;
+                }
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+        _melding = endrede.Count == 1 ? $"«{endrede[0].Dortype.Trim()}» er lagret." : $"{endrede.Count} maler er lagret.";
     }
 
     private async Task OpprettMal()
@@ -163,7 +354,6 @@
         var dortype = _nyDortype.Trim();
         if (dortype.Length == 0)
         {
-            _feil = "Dørtype må fylles ut.";
             return;
         }
 
@@ -172,148 +362,60 @@
         await Db.SaveChangesAsync();
 
         _nyDortype = "";
+        _search = "";
         _feil = null;
-        _melding = $"Sjekklistemal \"{dortype}\" er opprettet.";
-        await LoadAsync();
-        _apne.Add(nyMal.Id);
+        _melding = $"«{dortype}» er opprettet. Legg til punktene under.";
+        await LastPaNyttBeholdEndringer();
+        Velg(nyMal.Id);
     }
 
-    private async Task LagreMal(MalRad mal)
+    private async Task DupliserMal(MalDraft mal)
     {
-        var dortype = mal.Dortype.Trim();
-        if (dortype.Length == 0)
+        var kopi = new SjekklisteMal { Dortype = $"{mal.Dortype.Trim()} (kopi)" };
+        var rekkefolge = 1;
+        foreach (var punkt in mal.Punkter.Where(p => !p.Slettet && !string.IsNullOrWhiteSpace(p.Tekst)))
         {
-            _feil = "Dørtype må fylles ut.";
-            return;
-        }
-
-        var entitet = await Db.SjekklisteMaler.FirstOrDefaultAsync(m => m.Id == mal.Id);
-        if (entitet is null)
-        {
-            return;
-        }
-
-        entitet.Dortype = dortype;
-
-        foreach (var punkt in mal.Punkter)
-        {
-            var punktEntitet = await Db.SjekklistePunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
-            if (punktEntitet is not null)
-            {
-                punktEntitet.Tekst = punkt.Tekst;
-            }
-        }
-
-        await Db.SaveChangesAsync();
-        _feil = null;
-        _melding = $"\"{dortype}\" er lagret.";
-    }
-
-    private async Task SlettMal(MalRad mal)
-    {
-        var entitet = await Db.SjekklisteMaler.FirstOrDefaultAsync(m => m.Id == mal.Id);
-        if (entitet is null)
-        {
-            return;
-        }
-
-        Db.SjekklisteMaler.Remove(entitet);
-        await Db.SaveChangesAsync();
-        _melding = $"\"{mal.Dortype}\" er slettet.";
-        _feil = null;
-        _apne.Remove(mal.Id);
-        await LoadAsync();
-    }
-
-    private async Task LeggTilPunkt(MalRad mal)
-    {
-        var tekst = mal.NyttPunktTekst.Trim();
-        if (tekst.Length == 0)
-        {
-            return;
-        }
-
-        var nesteRekkefolge = mal.Punkter.Count == 0 ? 1 : mal.Punkter.Max(p => p.Rekkefolge) + 1;
-        Db.SjekklistePunkter.Add(new SjekklistePunkt
-        {
-            SjekklisteMalId = mal.Id,
-            Tekst = tekst,
-            Rekkefolge = nesteRekkefolge
-        });
-        await Db.SaveChangesAsync();
-
-        mal.NyttPunktTekst = "";
-        _feil = null;
-        await LoadAsync();
-    }
-
-    private async Task SlettPunkt(MalRad mal, SjekklistePunkt punkt)
-    {
-        var entitet = await Db.SjekklistePunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
-        if (entitet is null)
-        {
-            return;
-        }
-
-        Db.SjekklistePunkter.Remove(entitet);
-        await Db.SaveChangesAsync();
-        await LoadAsync();
-    }
-
-    private void OnDragStart(SjekklistePunkt punkt)
-    {
-        _dragPunkt = punkt;
-    }
-
-    private async Task OnDrop(MalRad mal, SjekklistePunkt target)
-    {
-        if (_dragPunkt is null || _dragPunkt.Id == target.Id)
-        {
-            _dragPunkt = null;
-            return;
-        }
-
-        var ordnet = mal.Punkter.OrderBy(p => p.Rekkefolge).ToList();
-        var dragget = ordnet.FirstOrDefault(p => p.Id == _dragPunkt.Id);
-        if (dragget is null)
-        {
-            _dragPunkt = null;
-            return;
-        }
-
-        ordnet.Remove(dragget);
-        var targetIndex = ordnet.FindIndex(p => p.Id == target.Id);
-        ordnet.Insert(targetIndex, dragget);
-
-        for (var i = 0; i < ordnet.Count; i++)
-        {
-            var nyRekkefolge = i + 1;
-            var entitet = await Db.SjekklistePunkter.FirstOrDefaultAsync(p => p.Id == ordnet[i].Id);
-            if (entitet is not null)
-            {
-                entitet.Rekkefolge = nyRekkefolge;
-            }
-            ordnet[i].Rekkefolge = nyRekkefolge;
-        }
-
-        await Db.SaveChangesAsync();
-        _dragPunkt = null;
-    }
-
-    private async Task DupliserMal(MalRad mal)
-    {
-        var kopi = new SjekklisteMal { Dortype = $"{mal.Dortype} (kopi)" };
-        foreach (var punkt in mal.Punkter.OrderBy(p => p.Rekkefolge))
-        {
-            kopi.Punkter.Add(new SjekklistePunkt { Tekst = punkt.Tekst, Rekkefolge = punkt.Rekkefolge });
+            kopi.Punkter.Add(new SjekklistePunkt { Tekst = punkt.Tekst.Trim(), Rekkefolge = rekkefolge++ });
         }
 
         Db.SjekklisteMaler.Add(kopi);
         await Db.SaveChangesAsync();
 
-        _melding = $"\"{mal.Dortype}\" er duplisert.";
+        _melding = $"«{kopi.Dortype}» er laget.";
         _feil = null;
+        await LastPaNyttBeholdEndringer();
+        Velg(kopi.Id);
+    }
+
+    private async Task SlettMal(MalDraft mal)
+    {
+        _bekreftSlett = false;
+        var entitet = await Db.SjekklisteMaler.FirstOrDefaultAsync(m => m.Id == mal.Id);
+        if (entitet is not null)
+        {
+            Db.SjekklisteMaler.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        _melding = $"«{mal.Dortype}» er slettet.";
+        _feil = null;
+        _valgtId = null;
+        await LastPaNyttBeholdEndringer();
+        _valgtId = _maler.FirstOrDefault()?.Id;
+    }
+
+    // Laster listen på nytt uten å miste ulagrede endringer i andre maler.
+    private async Task LastPaNyttBeholdEndringer()
+    {
+        var ulagret = _maler.Where(m => m.Endret).ToList();
         await LoadAsync();
-        _apne.Add(kopi.Id);
+        foreach (var m in ulagret)
+        {
+            var i = _maler.FindIndex(x => x.Id == m.Id);
+            if (i >= 0)
+            {
+                _maler[i] = m;
+            }
+        }
     }
 }
