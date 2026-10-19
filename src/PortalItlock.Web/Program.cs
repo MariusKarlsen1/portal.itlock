@@ -1301,9 +1301,10 @@ app.MapGet("/komponent/{id:int}/bilde", async (int id, int? w, ApplicationDbCont
         return Results.NotFound();
     }
 
-    // ?w=... gir et forminsket bilde til varepanelet i Komponentregisteret,
-    // så nettleseren ikke laster ned originalen (ofte flere MB) for hver vare.
-    if (w is int maks && BildeMiniatyr.Lag(komponent.BildeData, Math.Clamp(maks, 32, 1200)) is { } miniatyr)
+    // ?w=... gir et forminsket bilde (tomme kanter skåret bort) til varepanelet,
+    // varekortet og tilbudet, så varen fyller rammen og originalen (ofte flere MB)
+    // ikke lastes ned for hver vare.
+    if (w is int maks && BildeMiniatyr.Lag(komponent.BildeData, Math.Clamp(maks, 32, 1200), trimKanter: true) is { } miniatyr)
     {
         return Results.File(miniatyr.Data, miniatyr.ContentType);
     }
