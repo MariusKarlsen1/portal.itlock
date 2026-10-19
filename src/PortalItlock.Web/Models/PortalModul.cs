@@ -1,4 +1,4 @@
-﻿namespace PortalItlock.Web.Models;
+namespace PortalItlock.Web.Models;
 
 // Hvem som ser en modul. Verdiene er utledet fra de tre gamle seksjonene på
 // forsiden, slik at ingen mister eller får noe de ikke hadde: en modul som lå
@@ -105,7 +105,6 @@ public static class PortalModulRegister
         new Lenke("Dørfunksjoner", "Opprett og vedlikehold dørfunksjoner som kan legges på dører.", "dorfunksjoner", "tool"),
         new Lenke("Sjekklistemaler", "Digitale sjekklister per dørtype til bruk på arbeidsordre.", "sjekklistemaler", "alert"),
         new Lenke("Sjekkliste for servicerunder", "Punktene som automatisk legges til hver servicerunde.", "service-sjekklistemal", "clock"),
-        new Lenke("Tilvalg", "Publiserte og besvarte tilvalg på tvers av prosjekter.", "tilvalg", "tag"),
         new Lenke("Tilvalgsmaler", "Ferdige maler med alternativer, bilder og priser til gjenbruk.", "tilvalgmaler", "receipt"),
         new Lenke("Forsider", "Lag forside-/forbeholdstekster til bruk på tilbud.", "forsider", "folder"),
         new Lenke("Godkjenninger", "Godkjenn innsendte timer og fraværssøknader, se sammendrag og eksporter til lønn.", "timegodkjenning", "check-circle"),

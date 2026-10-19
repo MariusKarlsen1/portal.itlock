@@ -1,93 +1,520 @@
 @page "/tilvalgmaler"
+@page "/tilvalgmaler/{Id:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>Tilvalgsmaler - Full Kontroll</PageTitle>
 
-<h1>Tilvalgsmaler</h1>
-<p class="section-hint">Ferdige maler med alternativer, bilder og priser du kan gjenbruke når du oppretter et nytt tilvalg på et prosjekt.</p>
-
-@if (_maler.Count == 0)
-{
-    <p class="list-empty">Ingen maler opprettet ennå.</p>
-}
-
-<div class="mal-rutenett">
-    @foreach (var m in _maler)
-    {
-        var alternativer = m.Alternativer.OrderBy(a => a.Rekkefolge).ToList();
-        <div @key="m.Id" class="mal-kort">
-            <div class="mal-kort-thumb-rad">
-                @if (alternativer.Count == 0)
-                {
-                    <span class="mal-kort-thumb-tom">Ingen alternativer</span>
-                }
-                else
-                {
-                    @for (var i = 0; i < Math.Min(3, alternativer.Count); i++)
-                    {
-                        var alt = alternativer[i];
-                        @if (alt.BildeData is not null)
-                        {
-                            <img class="mal-kort-thumb" src="@($"/tilvalgmalalternativ/{alt.Id}/bilde")" alt="@alt.Navn" />
-                        }
-                        else
-                        {
-                            <span class="mal-kort-thumb mal-kort-thumb-tom-liten"></span>
-                        }
-                    }
-                }
-            </div>
+@* TM9 (tilvalgsmaler-forslag.html): malene i en meny inni dashbord-kortet, og
+   alternativene til valgt mal som kort med bilde. Erstatter den gamle
+   redigeringssiden (/tilvalgmaler/{id} åpner nå malen her). Prisene lagres
+   eks. mva som før - bryteren lar deg bare skrive og se dem inkl. mva. *@
+<div class="sm @(_full ? "sm-full" : "")">
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="receipt" /></span>
             <div>
-                <div class="mal-kort-navn">@m.Navn</div>
-                <div class="mal-kort-antall">@(alternativer.Count == 0 ? "Ingen alternativer" : $"{alternativer.Count} alternativ{(alternativer.Count == 1 ? "" : "er")}")</div>
-            </div>
-            <div class="mal-kort-footer">
-                <a class="mal-kort-apne" href="@($"/tilvalgmaler/{m.Id}")">Åpne &rarr;</a>
-                <button type="button" class="mal-kort-slett" @onclick="@(() => SlettMal(m))">Slett</button>
+                <h1>Tilvalgsmaler</h1>
+                <p class="section-hint">Ferdige maler med alternativer, bilder og priser som brukes når man lager et tilvalg på et prosjekt.</p>
             </div>
         </div>
+        <span class="tm-mva" title="Prisene lagres eks. mva – dette velger bare hvordan du skriver og ser dem">
+            <button type="button" class="@(!_inklMva ? "pa" : "")" @onclick="@(() => VelgMva(false))">Eks. mva</button>
+            <button type="button" class="@(_inklMva ? "pa" : "")" @onclick="@(() => VelgMva(true))">Inkl. mva</button>
+        </span>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_melding))
+    {
+        <p class="sm-ok">@_melding</p>
+    }
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
     }
 
-    <button type="button" class="ny-mal-kort" @onclick="NyMal">
-        <span class="ny-mal-pluss">+</span>
-        <span>Ny mal</span>
-    </button>
+    <div class="sm-kort">
+        <nav class="sm-meny">
+            <label class="sm-sok">
+                <Icon Name="search" />
+                <input type="search" @bind="_search" @bind:event="oninput" placeholder="Finn mal eller alternativ" />
+            </label>
+            <div class="sm-liste">
+                @foreach (var mal in _filtrert)
+                {
+                    var id = mal.Id;
+                    <button type="button" @key="mal.Id" class="@(mal.Id == _valgtId ? "pa" : "")" @onclick="@(() => Velg(id))">
+                        <span class="sm-meny-ikon"><Icon Name="receipt" /></span>
+                        <span class="sm-navn">@(string.IsNullOrWhiteSpace(mal.Navn) ? "(Uten navn)" : mal.Navn)@(mal.Endret ? " •" : "")</span>
+                        <small>@mal.Alternativer.Count</small>
+                    </button>
+                }
+                @if (_filtrert.Count == 0)
+                {
+                    <p class="sm-dempet">@(_maler.Count == 0 ? "Ingen maler ennå." : "Ingen treff.")</p>
+                }
+            </div>
+            <div class="sm-ny">
+                <input @bind="_nyNavn" @bind:event="oninput" placeholder="＋ Ny tilvalgsmal"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettMal(); } })" />
+                @if (!string.IsNullOrWhiteSpace(_nyNavn))
+                {
+                    <button type="button" class="sm-knapp primaer" @onclick="OpprettMal">Opprett</button>
+                }
+            </div>
+        </nav>
+
+        <section class="sm-innhold">
+            <button type="button" class="sm-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+                <Icon Name="@(_full ? "minimize" : "maximize")" />
+            </button>
+
+            @if (_valgt is { } valgt)
+            {
+                <div class="sm-topp">
+                    <span class="sm-stort-ikon"><Icon Name="receipt" /></span>
+                    <div>
+                        <h2>@(string.IsNullOrWhiteSpace(valgt.Navn) ? "(Uten navn)" : valgt.Navn)</h2>
+                        <p>@valgt.Alternativer.Count @(valgt.Alternativer.Count == 1 ? "alternativ" : "alternativer") · priser @(_inklMva ? "inkl." : "eks.") mva</p>
+                    </div>
+                    <span class="sm-topp-knapper">
+                        <button type="button" class="sm-knapp" @onclick="@(() => DupliserMal(valgt))"><Icon Name="clipboard" />Dupliser</button>
+                    </span>
+                </div>
+
+                <div class="tm-to">
+                    <label class="sm-felt">
+                        <span>Navn på malen</span>
+                        <input @bind="valgt.Navn" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" />
+                    </label>
+                    <label class="sm-felt">
+                        <span>Beskrivelse til kunden</span>
+                        <input @bind="valgt.Beskrivelse" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" placeholder="F.eks. Velg vrider til leilighetsdøra" />
+                    </label>
+                </div>
+
+                <span class="sm-seksjon">Alternativer</span>
+                <div class="tm-grid">
+                    @for (var i = 0; i < valgt.Alternativer.Count; i++)
+                    {
+                        var alt = valgt.Alternativer[i];
+                        var indeks = i;
+                        <div @key="alt.Id" class="tm-alt">
+                            <label class="tm-bilde" title="Klikk for å @(alt.HarBilde ? "bytte" : "legge til") bilde">
+                                @if (alt.HarBilde)
+                                {
+                                    <img src="@($"/tilvalgmalalternativ/{alt.Id}/bilde?v={alt.BildeVersjon}")" alt="@alt.Navn" loading="lazy" />
+                                }
+                                else
+                                {
+                                    <span class="tm-bilde-tom"><Icon Name="image" />Legg til bilde</span>
+                                }
+                                <span class="tm-bilde-bytt">@(alt.HarBilde ? "Bytt bilde" : "Velg bilde")</span>
+                                <InputFile OnChange="@(e => LastOppBilde(alt, e))" accept="image/*" style="display:none;" />
+                            </label>
+                            <div class="tm-alt-inn">
+                                <input class="tm-navn" @bind="alt.Navn" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" placeholder="Navn" />
+                                <input class="tm-utf" @bind="alt.Utforelse" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" placeholder="Utførelse (valgfritt)" />
+                                <div class="tm-pris">
+                                    <input type="number" step="0.01" min="0" value="@VisPris(alt.Pris)" @onchange="@(e => SettPris(valgt, alt, e))" />
+                                    <span>kr @(_inklMva ? "inkl." : "eks.") mva</span>
+                                </div>
+                                <small class="tm-motsatt">= @Kr(_inklMva ? alt.Pris : alt.Pris * Mva) @(_inklMva ? "eks." : "inkl.") mva</small>
+                                <div class="tm-alt-knapper">
+                                    <button type="button" title="Flytt til venstre" disabled="@(indeks == 0)" @onclick="@(() => Flytt(valgt, alt, -1))">◀</button>
+                                    <button type="button" title="Flytt til høyre" disabled="@(indeks == valgt.Alternativer.Count - 1)" @onclick="@(() => Flytt(valgt, alt, 1))">▶</button>
+                                    <button type="button" class="sm-fjern" title="Slett alternativet" @onclick="@(() => SlettAlternativ(valgt, alt))"><Icon Name="x" /></button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    <div class="tm-alt tm-alt-ny">
+                        <span class="tm-ny-ikon"><Icon Name="plus" /></span>
+                        <input @bind="_nyttAlternativ" @bind:event="oninput" placeholder="Nytt alternativ – trykk Enter"
+                               @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilAlternativ(valgt); } })" />
+                        @if (!string.IsNullOrWhiteSpace(_nyttAlternativ))
+                        {
+                            <button type="button" class="sm-knapp primaer" @onclick="@(() => LeggTilAlternativ(valgt))">Legg til</button>
+                        }
+                    </div>
+                </div>
+
+                <div class="sm-bunn">
+                    @if (_bekreftSlett)
+                    {
+                        <span class="sm-dempet">Slette malen «@valgt.Navn»? Tilvalg som allerede er laget fra den, påvirkes ikke.</span>
+                        <button type="button" class="sm-knapp fare" @onclick="@(() => SlettMal(valgt))">Ja, slett</button>
+                        <button type="button" class="sm-knapp" @onclick="@(() => _bekreftSlett = false)">Avbryt</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="sm-lenke" @onclick="@(() => _bekreftSlett = true)"><Icon Name="trash" />Slett mal</button>
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="sm-dempet">Velg en mal i menyen, eller lag en ny nederst i menyen.</p>
+            }
+        </section>
+    </div>
+
+    @if (_maler.Any(m => m.Endret))
+    {
+        var antall = _maler.Count(m => m.Endret);
+        <div class="sm-lagrebar">
+            <span><Icon Name="edit" /><b>Endringer i @antall @(antall == 1 ? "mal" : "maler")</b> er ikke lagret</span>
+            <span class="sm-lagrebar-knapper">
+                <button type="button" class="sm-knapp" @onclick="Forkast">Forkast</button>
+                <button type="button" class="sm-knapp primaer" @onclick="LagreAlle"><Icon Name="check" />Lagre</button>
+            </span>
+        </div>
+    }
 </div>
 
 @code {
-    private List<TilvalgMal> _maler = [];
+    [Parameter] public int? Id { get; set; }
+
+    private const decimal Mva = 1.25m;
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private sealed class AltDraft
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Utforelse { get; set; }
+        public decimal Pris { get; set; }
+        public bool HarBilde { get; set; }
+        public int BildeVersjon { get; set; }
+    }
+
+    private sealed class MalDraft
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Beskrivelse { get; set; }
+        public List<AltDraft> Alternativer { get; set; } = [];
+        public bool Endret { get; set; }
+    }
+
+    private List<MalDraft> _maler = [];
+    private string _search = "";
+    private string _nyNavn = "";
+    private string _nyttAlternativ = "";
+    private string? _melding;
+    private string? _feil;
+    private int? _valgtId;
+    private bool _bekreftSlett;
+    private bool _full;
+    private bool _inklMva;
+
+    private MalDraft? _valgt => _maler.FirstOrDefault(m => m.Id == _valgtId);
+
+    private List<MalDraft> _filtrert => string.IsNullOrWhiteSpace(_search)
+        ? _maler
+        : _maler.Where(m => m.Navn.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+            || m.Alternativer.Any(a => a.Navn.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase))).ToList();
+
+    private string VisPris(decimal eksMva) =>
+        (_inklMva ? Math.Round(eksMva * Mva, 2) : eksMva).ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static string Kr(decimal v) => v.ToString("N2", Kultur) + " kr";
 
     protected override async Task OnInitializedAsync()
     {
-        await LastMaler();
+        _full = await VisningPref.HentAsync("tilvalgmaler-bredde", "normal") == "full";
+        _inklMva = await VisningPref.HentAsync("tilvalgmaler-mva", "eks") == "inkl";
+        await LoadAsync();
     }
 
-    private async Task LastMaler()
+    protected override void OnParametersSet()
     {
-        _maler = await Db.TilvalgMaler
-            .Include(m => m.Alternativer)
-            .OrderBy(m => m.Navn)
+        _valgtId = Id is int id && _maler.Any(m => m.Id == id) ? id : _valgtId ?? _maler.FirstOrDefault()?.Id;
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("tilvalgmaler-bredde", _full ? "full" : "normal");
+    }
+
+    private async Task VelgMva(bool inkl)
+    {
+        _inklMva = inkl;
+        await VisningPref.SettAsync("tilvalgmaler-mva", inkl ? "inkl" : "eks");
+    }
+
+    private async Task LoadAsync()
+    {
+        // Uten selve bildene - de vises via /tilvalgmalalternativ/{id}/bilde.
+        var alternativer = await Db.TilvalgMalAlternativer
+            .Select(a => new
+            {
+                a.Id,
+                a.TilvalgMalId,
+                a.Navn,
+                a.Utforelse,
+                a.Pris,
+                a.Rekkefolge,
+                HarBilde = SqlFn.TypeOf(a.BildeData) != "null"
+            })
             .ToListAsync();
+
+        var maler = await Db.TilvalgMaler.OrderBy(m => m.Navn).Select(m => new { m.Id, m.Navn, m.Beskrivelse }).ToListAsync();
+
+        _maler = maler.Select(m => new MalDraft
+        {
+            Id = m.Id,
+            Navn = m.Navn,
+            Beskrivelse = m.Beskrivelse,
+            Alternativer = alternativer
+                .Where(a => a.TilvalgMalId == m.Id)
+                .OrderBy(a => a.Rekkefolge).ThenBy(a => a.Id)
+                .Select(a => new AltDraft { Id = a.Id, Navn = a.Navn, Utforelse = a.Utforelse, Pris = a.Pris, HarBilde = a.HarBilde })
+                .ToList()
+        }).ToList();
+
+        if (_valgtId is not null && _maler.All(m => m.Id != _valgtId))
+        {
+            _valgtId = _maler.FirstOrDefault()?.Id;
+        }
     }
 
-    private async Task NyMal()
+    private void Velg(int id)
     {
-        var mal = new TilvalgMal { Navn = "Ny mal" };
-        Db.TilvalgMaler.Add(mal);
-        await Db.SaveChangesAsync();
-        Nav.NavigateTo($"/tilvalgmaler/{mal.Id}");
+        _valgtId = id;
+        _bekreftSlett = false;
+        _feil = null;
+        _nyttAlternativ = "";
     }
 
-    private async Task SlettMal(TilvalgMal mal)
+    private void SettPris(MalDraft mal, AltDraft alt, ChangeEventArgs e)
     {
-        Db.TilvalgMaler.Remove(mal);
+        if (!decimal.TryParse(e.Value?.ToString()?.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var verdi) || verdi < 0)
+        {
+            return;
+        }
+
+        // Lagres alltid eks. mva.
+        alt.Pris = _inklMva ? Math.Round(verdi / Mva, 2) : verdi;
+        mal.Endret = true;
+    }
+
+    private void Flytt(MalDraft mal, AltDraft alt, int retning)
+    {
+        var i = mal.Alternativer.IndexOf(alt);
+        var j = i + retning;
+        if (i < 0 || j < 0 || j >= mal.Alternativer.Count)
+        {
+            return;
+        }
+
+        (mal.Alternativer[i], mal.Alternativer[j]) = (mal.Alternativer[j], mal.Alternativer[i]);
+        mal.Endret = true;
+    }
+
+    // Nye alternativer, sletting og bilder lagres med en gang (bildet trenger
+    // en lagret rad); navn, utførelse, pris og rekkefølge lagres fra lagre-linjen.
+    private async Task LeggTilAlternativ(MalDraft mal)
+    {
+        var navn = _nyttAlternativ.Trim();
+        if (navn.Length == 0)
+        {
+            return;
+        }
+
+        var nytt = new TilvalgMalAlternativ { TilvalgMalId = mal.Id, Navn = navn, Rekkefolge = mal.Alternativer.Count };
+        Db.TilvalgMalAlternativer.Add(nytt);
         await Db.SaveChangesAsync();
-        _maler.Remove(mal);
+        mal.Alternativer.Add(new AltDraft { Id = nytt.Id, Navn = navn });
+        _nyttAlternativ = "";
+    }
+
+    private async Task SlettAlternativ(MalDraft mal, AltDraft alt)
+    {
+        var entitet = await Db.TilvalgMalAlternativer.FindAsync(alt.Id);
+        if (entitet is not null)
+        {
+            Db.TilvalgMalAlternativer.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        mal.Alternativer.Remove(alt);
+        _melding = $"«{alt.Navn}» er slettet.";
+    }
+
+    private async Task LastOppBilde(AltDraft alt, InputFileChangeEventArgs e)
+    {
+        var fil = e.File;
+        if (fil.Size > 10_000_000)
+        {
+            _feil = $"«{fil.Name}» er for stort (maks 10 MB).";
+            return;
+        }
+
+        using var buffer = new MemoryStream();
+        await using (var stream = fil.OpenReadStream(maxAllowedSize: 10_000_000))
+        {
+            await stream.CopyToAsync(buffer);
+        }
+
+        var entitet = await Db.TilvalgMalAlternativer.FindAsync(alt.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.BildeData = buffer.ToArray();
+        entitet.BildeContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType;
+        await Db.SaveChangesAsync();
+
+        alt.HarBilde = true;
+        alt.BildeVersjon++;
+        _feil = null;
+    }
+
+    private async Task Forkast()
+    {
+        _feil = null;
+        _melding = null;
+        await LoadAsync();
+    }
+
+    private async Task LagreAlle()
+    {
+        _feil = null;
+        var endrede = _maler.Where(m => m.Endret).ToList();
+        if (endrede.Any(m => string.IsNullOrWhiteSpace(m.Navn) || m.Alternativer.Any(a => string.IsNullOrWhiteSpace(a.Navn))))
+        {
+            _feil = "Maler og alternativer må ha et navn.";
+            return;
+        }
+
+        foreach (var draft in endrede)
+        {
+            var mal = await Db.TilvalgMaler.Include(m => m.Alternativer).FirstOrDefaultAsync(m => m.Id == draft.Id);
+            if (mal is null)
+            {
+                continue;
+            }
+
+            mal.Navn = draft.Navn.Trim();
+            mal.Beskrivelse = string.IsNullOrWhiteSpace(draft.Beskrivelse) ? null : draft.Beskrivelse.Trim();
+            for (var i = 0; i < draft.Alternativer.Count; i++)
+            {
+                var a = draft.Alternativer[i];
+                var entitet = mal.Alternativer.FirstOrDefault(x => x.Id == a.Id);
+                if (entitet is null)
+                {
+                    continue;
+                }
+
+                entitet.Navn = a.Navn.Trim();
+                entitet.Utforelse = string.IsNullOrWhiteSpace(a.Utforelse) ? null : a.Utforelse.Trim();
+                entitet.Pris = a.Pris;
+                entitet.Rekkefolge = i;
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+        _melding = endrede.Count == 1 ? $"«{endrede[0].Navn.Trim()}» er lagret." : $"{endrede.Count} maler er lagret.";
+    }
+
+    private async Task OpprettMal()
+    {
+        var navn = _nyNavn.Trim();
+        if (navn.Length == 0)
+        {
+            return;
+        }
+
+        var ny = new TilvalgMal { Navn = navn };
+        Db.TilvalgMaler.Add(ny);
+        await Db.SaveChangesAsync();
+
+        _nyNavn = "";
+        _search = "";
+        _feil = null;
+        _melding = $"«{navn}» er opprettet. Legg til alternativene under.";
+        await LastPaNyttBeholdEndringer();
+        Velg(ny.Id);
+    }
+
+    private async Task DupliserMal(MalDraft mal)
+    {
+        // Kopierer også bildene - hentes rett fra databasen.
+        var kilde = await Db.TilvalgMaler.AsNoTracking().Include(m => m.Alternativer).FirstOrDefaultAsync(m => m.Id == mal.Id);
+        if (kilde is null)
+        {
+            return;
+        }
+
+        var kopi = new TilvalgMal { Navn = $"{mal.Navn.Trim()} (kopi)", Beskrivelse = mal.Beskrivelse };
+        for (var i = 0; i < mal.Alternativer.Count; i++)
+        {
+            var a = mal.Alternativer[i];
+            var k = kilde.Alternativer.FirstOrDefault(x => x.Id == a.Id);
+            kopi.Alternativer.Add(new TilvalgMalAlternativ
+            {
+                Navn = a.Navn.Trim(),
+                Utforelse = a.Utforelse,
+                Pris = a.Pris,
+                Rekkefolge = i,
+                BildeData = k?.BildeData,
+                BildeContentType = k?.BildeContentType
+            });
+        }
+
+        Db.TilvalgMaler.Add(kopi);
+        await Db.SaveChangesAsync();
+        _melding = $"«{kopi.Navn}» er laget.";
+        _feil = null;
+        await LastPaNyttBeholdEndringer();
+        Velg(kopi.Id);
+    }
+
+    private async Task SlettMal(MalDraft mal)
+    {
+        _bekreftSlett = false;
+        var entitet = await Db.TilvalgMaler.FirstOrDefaultAsync(m => m.Id == mal.Id);
+        if (entitet is not null)
+        {
+            Db.TilvalgMaler.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        _melding = $"«{mal.Navn}» er slettet.";
+        _feil = null;
+        _valgtId = null;
+        await LastPaNyttBeholdEndringer();
+        _valgtId = _maler.FirstOrDefault()?.Id;
+        if (Id is not null)
+        {
+            Nav.NavigateTo("/tilvalgmaler", replace: true);
+        }
+    }
+
+    // Laster listen på nytt uten å miste ulagrede endringer i andre maler.
+    private async Task LastPaNyttBeholdEndringer()
+    {
+        var ulagret = _maler.Where(m => m.Endret).ToList();
+        await LoadAsync();
+        foreach (var m in ulagret)
+        {
+            var i = _maler.FindIndex(x => x.Id == m.Id);
+            if (i >= 0)
+            {
+                _maler[i] = m;
+            }
+        }
     }
 }
