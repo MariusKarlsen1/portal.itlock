@@ -4,92 +4,157 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>Kravdimensjoner</PageTitle>
 
-<div class="side-header">
-    <div class="side-header-venstre">
-        <span class="side-header-ikon"><Icon Name="tag" /></span>
-        <div>
-            <h1>Kravdimensjoner</h1>
-            <p class="section-hint">Endre navn på kravkategoriene og verdiene under dem, eller legg til nye verdier. Endringer slår ut med én gang i kravvelgeren og på pakkedetaljer.</p>
+@* KD12 (kravdimensjoner-kort-forslag.html): ett dashbord-kort med kategoriene i
+   en meny til venstre inni kortet og den valgte kategorien til høyre. Endringer
+   samles og lagres fra lagre-linjen nederst. Utvid-knappen gir full bredde. *@
+<div class="kd @(_full ? "kd-full" : "")">
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="tag" /></span>
+            <div>
+                <h1>Kravdimensjoner</h1>
+                <p class="section-hint">Kategoriene og verdiene i kravvelgeren. Endringer slår ut i «Finn dørpakke» og på pakkene når du lagrer.</p>
+            </div>
         </div>
-    </div>
-</div>
-
-<div class="krav-splitt">
-    <div class="krav-liste-panel">
-        <div class="krav-sok">
+        <label class="kd-sok">
             <Icon Name="search" />
-            <input @bind="_search" @bind:event="oninput" placeholder="Søk kategori..." />
-        </div>
+            <input type="search" @bind="_search" @bind:event="oninput" placeholder="Søk kategori eller verdi …" />
+        </label>
+    </div>
 
-        <div class="krav-liste">
+    @if (!string.IsNullOrEmpty(_melding))
+    {
+        <p class="kd-ok">@_melding</p>
+    }
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
+    }
+
+    <div class="kd-kort">
+        <nav class="kd-meny">
             @foreach (var dim in _filtrerte)
             {
-                <button type="button" @key="dim.Id" class="krav-rad @(dim.Id == _valgtId ? "valgt" : "")" @onclick="@(() => _valgtId = dim.Id)">
-                    <span class="krav-ikon"><Icon Name="@IkonForDimensjon(dim.Navn)" /></span>
-                    <span class="krav-rad-navn">@dim.Navn</span>
-                    <span class="krav-rad-antall">@dim.Verdier.Count</span>
+                var id = dim.Id;
+                <button type="button" @key="dim.Id" class="@(dim.Id == _valgtId ? "pa" : "")" @onclick="@(() => { _valgtId = id; _bekreftSlettKategori = false; })">
+                    <span class="kd-meny-ikon"><Icon Name="@IkonForDimensjon(dim.Navn)" /></span>
+                    <span class="kd-meny-navn">@dim.Navn@(dim.Endret ? " •" : "")</span>
+                    <small>@dim.Verdier.Count(v => !v.Slettet)</small>
                 </button>
             }
             @if (_filtrerte.Count == 0)
             {
-                <p class="list-empty">Ingen kategorier funnet.</p>
+                <p class="kd-dempet">Ingen kategorier funnet.</p>
             }
-        </div>
-
-        <div class="krav-ny-kategori">
-            <input @bind="_nyKategoriNavn" @bind:event="oninput" placeholder="Navn på ny kategori"
-                   @onkeydown="@(async e => { if (e.Key == "Enter") { await CreateDimension(); } })" />
-            <button type="button" class="knapp" @onclick="CreateDimension">+ Ny</button>
-        </div>
-        @if (!string.IsNullOrEmpty(_nyKategoriMelding))
-        {
-            <p class="save-success krav-ny-kategori-melding">@_nyKategoriMelding</p>
-        }
-    </div>
-
-    @if (_valgt is { } valgt)
-    {
-        <div class="krav-detalj-panel">
-            <div class="krav-detalj-header">
-                <span class="krav-detalj-ikon"><Icon Name="@IkonForDimensjon(valgt.Navn)" /></span>
-                <h2>@valgt.Navn</h2>
+            <div class="kd-ny-kategori">
+                <input @bind="_nyKategoriNavn" @bind:event="oninput" placeholder="＋ Ny kategori"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") { await CreateDimension(); } })" />
+                @if (!string.IsNullOrWhiteSpace(_nyKategoriNavn))
+                {
+                    <button type="button" class="kd-knapp primaer" @onclick="CreateDimension">Opprett</button>
+                }
             </div>
+        </nav>
 
-            <label class="krav-felt">
-                Navn på kategori
-                <input @bind="valgt.Navn" @bind:event="oninput" />
-            </label>
+        <section class="kd-innhold">
+            <button type="button" class="kd-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+                <Icon Name="@(_full ? "minimize" : "maximize")" />
+            </button>
 
-            <div class="krav-verdier">
-                <span class="krav-verdier-label">Verdier</span>
-                <div class="krav-verdi-liste">
-                    @foreach (var v in valgt.Verdier)
+            @if (_valgt is { } valgt)
+            {
+                var plass = _dimensions.IndexOf(valgt);
+                <div class="kd-topp">
+                    <span class="kd-stort-ikon"><Icon Name="@IkonForDimensjon(valgt.Navn)" /></span>
+                    <div>
+                        <h2>@valgt.Navn</h2>
+                        <p>
+                            @valgt.Verdier.Count(v => !v.Slettet) verdier · nr. @(plass + 1) i kravvelgeren
+                            <span class="kd-flytt">
+                                <button type="button" title="Flytt opp i kravvelgeren" disabled="@(plass == 0)" @onclick="@(() => FlyttDimensjon(valgt, -1))">▲</button>
+                                <button type="button" title="Flytt ned i kravvelgeren" disabled="@(plass == _dimensions.Count - 1)" @onclick="@(() => FlyttDimensjon(valgt, 1))">▼</button>
+                            </span>
+                        </p>
+                    </div>
+                </div>
+
+                <label class="kd-felt">
+                    <span>Navn på kategori</span>
+                    <input @bind="valgt.Navn" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" />
+                </label>
+
+                <span class="kd-seksjon">Verdier</span>
+                <div class="kd-verdier">
+                    @{
+                        var synlige = valgt.Verdier.Where(v => !v.Slettet).ToList();
+                    }
+                    @for (var i = 0; i < synlige.Count; i++)
                     {
-                        <div @key="@(v.Id == 0 ? v.GetHashCode() : v.Id)" class="krav-verdi-rad">
-                            <input @bind="v.Verdi" @bind:event="oninput" />
-                            <button type="button" class="krav-slett-verdi" title="Slett verdi" @onclick="@(() => SlettVerdi(valgt, v))"><Icon Name="x" /></button>
+                        var v = synlige[i];
+                        var indeks = i;
+                        <div @key="v" class="kd-verdi">
+                            <span class="kd-pil">
+                                <button type="button" title="Flytt opp" disabled="@(indeks == 0)" @onclick="@(() => FlyttVerdi(valgt, v, -1))">▲</button>
+                                <button type="button" title="Flytt ned" disabled="@(indeks == synlige.Count - 1)" @onclick="@(() => FlyttVerdi(valgt, v, 1))">▼</button>
+                            </span>
+                            <input @bind="v.Verdi" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" />
+                            <span class="kd-bruk">@(v.Id == 0 ? "ny" : v.Brukt == 0 ? "ikke i bruk" : $"brukt i {v.Brukt} {(v.Brukt == 1 ? "pakke" : "pakker")}")</span>
+                            <button type="button" class="kd-slett" disabled="@(v.Brukt > 0)"
+                                    title="@(v.Brukt > 0 ? $"Kan ikke slettes – brukt i {v.Brukt} {(v.Brukt == 1 ? "pakke" : "pakker")}" : "Slett verdi")"
+                                    @onclick="@(() => SlettVerdi(valgt, v))">
+                                <Icon Name="x" />
+                            </button>
                         </div>
                     }
+                    <div class="kd-verdi kd-verdi-ny">
+                        <span class="kd-pil"><Icon Name="plus" /></span>
+                        <input @bind="valgt.NyVerdi" @bind:event="oninput" placeholder="Ny verdi – trykk Enter"
+                               @onkeydown="@(e => { if (e.Key == "Enter") { LeggTilVerdi(valgt); } })" />
+                        @if (!string.IsNullOrWhiteSpace(valgt.NyVerdi))
+                        {
+                            <button type="button" class="kd-knapp" @onclick="@(() => LeggTilVerdi(valgt))">Legg til</button>
+                        }
+                    </div>
                 </div>
-                <div class="krav-legg-til-verdi">
-                    <input @bind="valgt.NyVerdi" @bind:event="oninput" placeholder="Ny verdi"
-                           @onkeydown="@(async e => { if (e.Key == "Enter") { await AddValueAsync(valgt); } })" />
-                    <button type="button" class="knapp" @onclick="@(() => AddValueAsync(valgt))">Legg til verdi</button>
-                </div>
-            </div>
 
-            @if (!string.IsNullOrEmpty(valgt.Melding))
-            {
-                <p class="save-success">@valgt.Melding</p>
+                <div class="kd-bunn">
+                    @if (valgt.Verdier.Any(v => v.Brukt > 0))
+                    {
+                        <span class="kd-dempet">Kategorien kan ikke slettes så lenge noen av verdiene er i bruk.</span>
+                    }
+                    else if (_bekreftSlettKategori)
+                    {
+                        <span class="kd-dempet">Slette «@valgt.Navn» og alle verdiene?</span>
+                        <button type="button" class="kd-knapp fare" @onclick="@(() => SlettKategori(valgt))">Ja, slett</button>
+                        <button type="button" class="kd-knapp" @onclick="@(() => _bekreftSlettKategori = false)">Avbryt</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="kd-lenke" @onclick="@(() => _bekreftSlettKategori = true)"><Icon Name="trash" />Slett kategori</button>
+                    }
+                </div>
             }
+            else
+            {
+                <p class="kd-dempet">Velg en kategori i menyen.</p>
+            }
+        </section>
+    </div>
 
-            <div class="krav-footer">
-                <button type="button" class="knapp knapp-primaer" @onclick="@(() => SaveDimension(valgt))">Lagre endringer</button>
-            </div>
+    @if (_dimensions.Any(d => d.Endret))
+    {
+        <div class="kd-lagrebar">
+            <span><Icon Name="edit" /><b>Endringer i @_dimensions.Count(d => d.Endret) @(_dimensions.Count(d => d.Endret) == 1 ? "kategori" : "kategorier")</b> er ikke lagret</span>
+            <span class="kd-lagrebar-knapper">
+                <button type="button" class="kd-knapp" @onclick="Forkast">Forkast</button>
+                <button type="button" class="kd-knapp primaer" @onclick="LagreAlle"><Icon Name="check" />Lagre</button>
+            </span>
         </div>
     }
 </div>
@@ -99,6 +164,8 @@
     {
         public int Id { get; set; }
         public string Verdi { get; set; } = "";
+        public int Brukt { get; set; }
+        public bool Slettet { get; set; }
     }
 
     private sealed class DimensionDraft
@@ -107,24 +174,35 @@
         public string Navn { get; set; } = "";
         public List<ValueDraft> Verdier { get; set; } = [];
         public string NyVerdi { get; set; } = "";
-        public string? Melding { get; set; }
+        public bool Endret { get; set; }
     }
 
     private List<DimensionDraft> _dimensions = [];
     private string _search = "";
     private int? _valgtId;
     private string _nyKategoriNavn = "";
-    private string? _nyKategoriMelding;
+    private string? _melding;
+    private string? _feil;
+    private bool _full;
+    private bool _bekreftSlettKategori;
 
     private DimensionDraft? _valgt => _dimensions.FirstOrDefault(d => d.Id == _valgtId);
 
     private List<DimensionDraft> _filtrerte => string.IsNullOrWhiteSpace(_search)
         ? _dimensions
-        : _dimensions.Where(d => d.Navn.Contains(_search, StringComparison.OrdinalIgnoreCase)).ToList();
+        : _dimensions.Where(d => d.Navn.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+            || d.Verdier.Any(v => v.Verdi.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase))).ToList();
 
     protected override async Task OnInitializedAsync()
     {
+        _full = await VisningPref.HentAsync("kravdimensjoner-bredde", "normal") == "full";
         await LoadAsync();
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("kravdimensjoner-bredde", _full ? "full" : "normal");
     }
 
     private static string IkonForDimensjon(string navn) => navn.Trim().ToLowerInvariant() switch
@@ -148,13 +226,18 @@
             .OrderBy(d => d.Rekkefolge)
             .ToListAsync();
 
+        var bruk = await Db.PackageRequirements
+            .GroupBy(pr => pr.RequirementValueId)
+            .Select(g => new { g.Key, Antall = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Antall);
+
         _dimensions = dimensions.Select(d => new DimensionDraft
         {
             Id = d.Id,
             Navn = d.Navn,
             Verdier = d.Verdier
                 .OrderBy(v => v.Rekkefolge)
-                .Select(v => new ValueDraft { Id = v.Id, Verdi = v.Verdi })
+                .Select(v => new ValueDraft { Id = v.Id, Verdi = v.Verdi, Brukt = bruk.GetValueOrDefault(v.Id) })
                 .ToList()
         }).ToList();
 
@@ -164,81 +247,171 @@
         }
     }
 
-    private async Task AddValueAsync(DimensionDraft dim)
+    private void LeggTilVerdi(DimensionDraft dim)
     {
-        var text = dim.NyVerdi.Trim();
-        if (text.Length == 0)
+        var tekst = dim.NyVerdi.Trim();
+        if (tekst.Length == 0)
         {
             return;
         }
 
-        dim.Verdier.Add(new ValueDraft { Id = 0, Verdi = text });
+        dim.Verdier.Add(new ValueDraft { Id = 0, Verdi = tekst });
         dim.NyVerdi = "";
-        await Task.CompletedTask;
+        dim.Endret = true;
     }
 
-    private async Task SlettVerdi(DimensionDraft dim, ValueDraft v)
+    private void FlyttVerdi(DimensionDraft dim, ValueDraft verdi, int retning)
     {
-        if (v.Id == 0)
+        var synlige = dim.Verdier.Where(v => !v.Slettet).ToList();
+        var i = synlige.IndexOf(verdi);
+        var j = i + retning;
+        if (i < 0 || j < 0 || j >= synlige.Count)
         {
-            dim.Verdier.Remove(v);
             return;
         }
 
-        var brukt = await Db.PackageRequirements.CountAsync(pr => pr.RequirementValueId == v.Id);
-        if (brukt > 0)
+        // Bytter plass med naboen i den fullstendige listen (slettede ligger igjen til lagring).
+        var a = dim.Verdier.IndexOf(synlige[i]);
+        var b = dim.Verdier.IndexOf(synlige[j]);
+        (dim.Verdier[a], dim.Verdier[b]) = (dim.Verdier[b], dim.Verdier[a]);
+        dim.Endret = true;
+    }
+
+    private void SlettVerdi(DimensionDraft dim, ValueDraft verdi)
+    {
+        if (verdi.Brukt > 0)
         {
-            dim.Melding = $"Kan ikke slette \"{v.Verdi}\" - brukt på {brukt} pakke{(brukt == 1 ? "" : "r")}.";
             return;
         }
 
-        var entity = await Db.RequirementValues.FindAsync(v.Id);
-        if (entity is not null)
+        if (verdi.Id == 0)
         {
-            Db.RequirementValues.Remove(entity);
-            await Db.SaveChangesAsync();
+            dim.Verdier.Remove(verdi);
+        }
+        else
+        {
+            verdi.Slettet = true;
         }
 
-        dim.Verdier.Remove(v);
-        dim.Melding = "Slettet.";
+        dim.Endret = true;
     }
 
-    private async Task SaveDimension(DimensionDraft dim)
+    // Rekkefølgen på kategoriene lagres med en gang - den er uavhengig av
+    // endringene i lagre-linjen.
+    private async Task FlyttDimensjon(DimensionDraft dim, int retning)
     {
-        var dimension = await Db.RequirementDimensions
-            .Include(d => d.Verdier)
-            .FirstAsync(d => d.Id == dim.Id);
-
-        dimension.Navn = dim.Navn.Trim();
-
-        var nextRekkefolge = dimension.Verdier.Count == 0 ? 1 : dimension.Verdier.Max(v => v.Rekkefolge) + 1;
-
-        foreach (var draft in dim.Verdier)
+        var i = _dimensions.IndexOf(dim);
+        var j = i + retning;
+        if (i < 0 || j < 0 || j >= _dimensions.Count)
         {
-            if (draft.Id == 0)
+            return;
+        }
+
+        (_dimensions[i], _dimensions[j]) = (_dimensions[j], _dimensions[i]);
+
+        var ider = _dimensions.Select(d => d.Id).ToList();
+        var entiteter = await Db.RequirementDimensions.Where(d => ider.Contains(d.Id)).ToListAsync();
+        foreach (var e in entiteter)
+        {
+            e.Rekkefolge = ider.IndexOf(e.Id) + 1;
+        }
+
+        await Db.SaveChangesAsync();
+        _melding = $"«{dim.Navn}» er flyttet til nr. {j + 1} i kravvelgeren.";
+    }
+
+    private async Task Forkast()
+    {
+        _feil = null;
+        _melding = null;
+        await LoadAsync();
+    }
+
+    private async Task LagreAlle()
+    {
+        _feil = null;
+        var endrede = _dimensions.Where(d => d.Endret).ToList();
+
+        if (endrede.Any(d => string.IsNullOrWhiteSpace(d.Navn)))
+        {
+            _feil = "Alle kategorier må ha et navn.";
+            return;
+        }
+
+        if (endrede.Any(d => d.Verdier.Any(v => !v.Slettet && string.IsNullOrWhiteSpace(v.Verdi))))
+        {
+            _feil = "Verdier kan ikke stå tomme – skriv inn et navn eller slett verdien.";
+            return;
+        }
+
+        foreach (var dim in endrede)
+        {
+            var dimension = await Db.RequirementDimensions
+                .Include(d => d.Verdier)
+                .FirstAsync(d => d.Id == dim.Id);
+
+            dimension.Navn = dim.Navn.Trim();
+
+            var rekkefolge = 1;
+            foreach (var draft in dim.Verdier)
             {
-                dimension.Verdier.Add(new RequirementValue
+                if (draft.Slettet)
                 {
-                    RequirementDimensionId = dimension.Id,
-                    Verdi = draft.Verdi.Trim(),
-                    Rekkefolge = nextRekkefolge++
-                });
-            }
-            else
-            {
-                var existing = dimension.Verdier.First(v => v.Id == draft.Id);
-                existing.Verdi = draft.Verdi.Trim();
+                    var entitet = dimension.Verdier.FirstOrDefault(v => v.Id == draft.Id);
+                    // Sjekker bruken på nytt i tilfelle en pakke har fått verdien siden siden ble lastet.
+                    if (entitet is not null && !await Db.PackageRequirements.AnyAsync(pr => pr.RequirementValueId == draft.Id))
+                    {
+                        Db.RequirementValues.Remove(entitet);
+                    }
+
+                    continue;
+                }
+
+                if (draft.Id == 0)
+                {
+                    dimension.Verdier.Add(new RequirementValue
+                    {
+                        RequirementDimensionId = dimension.Id,
+                        Verdi = draft.Verdi.Trim(),
+                        Rekkefolge = rekkefolge++
+                    });
+                }
+                else
+                {
+                    var existing = dimension.Verdier.First(v => v.Id == draft.Id);
+                    existing.Verdi = draft.Verdi.Trim();
+                    existing.Rekkefolge = rekkefolge++;
+                }
             }
         }
 
         await Db.SaveChangesAsync();
-
         await LoadAsync();
-        var reloaded = _dimensions.FirstOrDefault(d => d.Id == dim.Id);
-        if (reloaded is not null)
+        _melding = endrede.Count == 1 ? $"«{endrede[0].Navn.Trim()}» er lagret." : $"{endrede.Count} kategorier er lagret.";
+    }
+
+    private async Task SlettKategori(DimensionDraft dim)
+    {
+        _bekreftSlettKategori = false;
+        var ider = dim.Verdier.Where(v => v.Id != 0).Select(v => v.Id).ToList();
+        if (await Db.PackageRequirements.AnyAsync(pr => ider.Contains(pr.RequirementValueId)))
         {
-            reloaded.Melding = "Lagret.";
+            _feil = $"«{dim.Navn}» kan ikke slettes – noen av verdiene er i bruk på pakker.";
+            await LoadAsync();
+            return;
         }
+
+        var dimension = await Db.RequirementDimensions.Include(d => d.Verdier).FirstOrDefaultAsync(d => d.Id == dim.Id);
+        if (dimension is not null)
+        {
+            Db.RequirementValues.RemoveRange(dimension.Verdier);
+            Db.RequirementDimensions.Remove(dimension);
+            await Db.SaveChangesAsync();
+        }
+
+        _melding = $"«{dim.Navn}» er slettet.";
+        _valgtId = null;
+        await LoadAsync();
     }
 
     private async Task CreateDimension()
@@ -261,8 +434,19 @@
         await Db.SaveChangesAsync();
 
         _nyKategoriNavn = "";
-        _nyKategoriMelding = null;
+        _melding = $"«{navn}» er opprettet. Legg til verdier under.";
+        // Beholder ulagrede endringer i andre kategorier.
+        var ulagret = _dimensions.Where(d => d.Endret).ToList();
         await LoadAsync();
+        foreach (var d in ulagret)
+        {
+            var i = _dimensions.FindIndex(x => x.Id == d.Id);
+            if (i >= 0)
+            {
+                _dimensions[i] = d;
+            }
+        }
+
         _valgtId = ny.Id;
     }
 }
