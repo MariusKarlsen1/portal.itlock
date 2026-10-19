@@ -7,6 +7,10 @@ public class Foresporsel
     public string? FraNavn { get; set; }
     public string Emne { get; set; } = "";
     public string Innhold { get; set; } = "";
+
+    // E-postens HTML-versjon (med logo i signaturen, lenker og formatering). Vises i
+    // en sandkasse-iframe i lesepanelet; Innhold (ren tekst) brukes til søk og forhåndsvisning.
+    public string? InnholdHtml { get; set; }
     public DateTime MottattDato { get; set; } = DateTime.Now;
     public bool Lest { get; set; }
     public string RawJson { get; set; } = "";

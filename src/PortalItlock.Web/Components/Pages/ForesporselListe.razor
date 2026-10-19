@@ -9,6 +9,7 @@
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 @inject EmailService Epost
+@inject ResendReceivingClient ResendKlient
 
 @inject VisningPreferanseService VisningPref
 <PageTitle>Forespørsler</PageTitle>
@@ -252,7 +253,14 @@
                                         <span class="ol-mhode-tid">@_valgt.MottattDato.ToString("ddd dd.MM.yyyy HH:mm", System.Globalization.CultureInfo.GetCultureInfo("nb-NO"))</span>
                                         <button type="button" class="ol-ikon" title="Svar" @onclick="ApneSvar"><Icon Name="send" /></button>
                                     </div>
-                                    @if (string.IsNullOrWhiteSpace(_valgt.Innhold))
+                                    @if (EpostHtml(_valgt) is { } html)
+                                    {
+                                        @* E-posten slik den ble sendt (logo i signaturen, lenker, formatering).
+                                           Sandkasse uten allow-scripts: ingen skript fra e-posten kan kjøre. *@
+                                        <iframe class="ol-epost-ramme" title="E-post" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                                                srcdoc="@html" onload="this.style.height=(this.contentDocument.documentElement.scrollHeight+8)+'px'"></iframe>
+                                    }
+                                    else if (string.IsNullOrWhiteSpace(_valgt.Innhold))
                                     {
                                         <p class="fp-tom">Ingen tekst registrert.</p>
                                     }
@@ -273,16 +281,6 @@
                                                 </li>
                                             }
                                         </ul>
-                                    }
-                                    @if (!string.IsNullOrWhiteSpace(_valgt.RawJson))
-                                    {
-                                        <button type="button" class="fp-raadata-toggle" @onclick="@(() => _visRaadata = !_visRaadata)">
-                                            <Icon Name="chevron-down" />@(_visRaadata ? "Skjul rådata" : "Vis rådata")
-                                        </button>
-                                        @if (_visRaadata)
-                                        {
-                                            <pre class="fp-raadata-boks">@_valgt.RawJson</pre>
-                                        }
                                     }
                                 </div>
 
@@ -517,6 +515,11 @@
                 _valgt = treff;
             }
         }
+
+        if (_valgt is not null)
+        {
+            await HentHtmlOmMangler(_valgt);
+        }
     }
 
     private async Task LastDataAsync()
@@ -535,6 +538,7 @@
         // det tidligere .Include(f => f.Media) gjorde. Se CODE_REVIEW.md 2026-10-08.
         _vedleggForForesporsel = (await Db.ForesporselMedia
                 .AsNoTracking()
+                .Where(m => !m.ErInline)
                 .Select(m => new { m.ForesporselId, m.Id, m.Filnavn })
                 .ToListAsync())
             .GroupBy(m => m.ForesporselId)
@@ -789,6 +793,108 @@
             f.Lest = true;
             await Db.SaveChangesAsync();
         }
+
+        await HentHtmlOmMangler(f);
+    }
+
+    // ---------- E-posten som HTML (logo i signatur, lenker, formatering) ----------
+
+    private readonly Dictionary<int, string?> _htmlCache = [];
+    private readonly HashSet<int> _htmlForsokt = [];
+
+    // E-poster som kom inn før HTML ble lagret: hent HTML og innebygde bilder fra
+    // Resend én gang og lagre dem, så de vises likt som i e-postprogrammet.
+    private async Task HentHtmlOmMangler(Foresporsel f)
+    {
+        if (f.Kanal != ForesporselKanal.Epost || f.InnholdHtml is not null || !_htmlForsokt.Add(f.Id))
+        {
+            return;
+        }
+
+        var html = ResendInboundParser.HentHtml(f.RawJson);
+        var emailId = ResendInboundParser.Tolk(f.RawJson).EmailId;
+        var full = string.IsNullOrEmpty(emailId) ? null : await ResendKlient.HentFullInnholdAsync(emailId);
+        html = full?.Html ?? html;
+        if (html is null)
+        {
+            return;
+        }
+
+        f.InnholdHtml = html;
+        if (full is not null)
+        {
+            var eksisterende = await Db.ForesporselMedia.Where(m => m.ForesporselId == f.Id).ToListAsync();
+            foreach (var v in full.Vedlegg.Where(v => v.ContentId is not null))
+            {
+                var treff = eksisterende.FirstOrDefault(m => m.ContentId is null && m.Filnavn == v.Filnavn);
+                if (treff is not null)
+                {
+                    treff.ContentId = v.ContentId;
+                    treff.ErInline = v.ErInline;
+                }
+                else
+                {
+                    Db.ForesporselMedia.Add(new ForesporselMedia
+                    {
+                        ForesporselId = f.Id,
+                        Filnavn = v.Filnavn,
+                        ContentType = v.ContentType,
+                        Data = v.Data,
+                        ContentId = v.ContentId,
+                        ErInline = v.ErInline
+                    });
+                }
+            }
+        }
+
+        await Db.SaveChangesAsync();
+        _htmlCache.Remove(f.Id);
+        await LastDataAsync();
+    }
+
+    // Bygger dokumentet til sandkasse-iframen: innebygde bilder (cid:) blir data-URI-er,
+    // lenker åpnes i ny fane, og meta/base/skript fra e-posten fjernes.
+    private string? EpostHtml(Foresporsel f)
+    {
+        if (string.IsNullOrWhiteSpace(f.InnholdHtml))
+        {
+            return null;
+        }
+
+        if (_htmlCache.TryGetValue(f.Id, out var ferdig))
+        {
+            return ferdig;
+        }
+
+        const System.Text.RegularExpressions.RegexOptions valg =
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline;
+        var html = f.InnholdHtml;
+        html = System.Text.RegularExpressions.Regex.Replace(html, @"<script\b.*?</script\s*>", "", valg);
+        html = System.Text.RegularExpressions.Regex.Replace(html, @"<(meta|base)\b[^>]*>", "", valg);
+
+        if (html.Contains("cid:", StringComparison.OrdinalIgnoreCase))
+        {
+            var inline = Db.ForesporselMedia.AsNoTracking()
+                .Where(m => m.ForesporselId == f.Id && m.ContentId != null)
+                .Select(m => new { m.ContentId, m.ContentType, m.Data })
+                .ToList();
+            foreach (var m in inline)
+            {
+                var type = m.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !m.ContentType.Contains("svg", StringComparison.OrdinalIgnoreCase)
+                    ? m.ContentType
+                    : "image/png";
+                html = System.Text.RegularExpressions.Regex.Replace(html,
+                    "cid:" + System.Text.RegularExpressions.Regex.Escape(m.ContentId!),
+                    $"data:{type};base64,{Convert.ToBase64String(m.Data)}",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            }
+        }
+
+        var dokument = "<!doctype html><html><head><meta charset=\"utf-8\"><base target=\"_blank\">"
+            + "<style>html,body{margin:0;padding:0;background:transparent}body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14.5px;line-height:1.55;color:#2f2721;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}a{color:#835e41}</style>"
+            + "</head><body>" + html + "</body></html>";
+        _htmlCache[f.Id] = dokument;
+        return dokument;
     }
 
     private async Task Forrige()

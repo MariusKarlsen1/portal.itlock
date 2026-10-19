@@ -2611,6 +2611,9 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("InnholdHtml")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Kanal")
                         .HasColumnType("INTEGER");
 
@@ -2635,6 +2638,9 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ContentId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -2642,6 +2648,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<byte[]>("Data")
                         .IsRequired()
                         .HasColumnType("BLOB");
+
+                    b.Property<bool>("ErInline")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Filnavn")
                         .IsRequired()

@@ -1771,6 +1771,7 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
 
     var tolket = ResendInboundParser.Tolk(body);
     var innhold = tolket.Innhold;
+    string? innholdHtml = null;
     var vedlegg = new List<ResendReceivingClient.VedleggData>();
 
     if (!string.IsNullOrEmpty(tolket.EmailId))
@@ -1782,9 +1783,12 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
             {
                 innhold = fullInnhold.Tekst;
             }
+            innholdHtml = fullInnhold.Html;
             vedlegg = fullInnhold.Vedlegg;
         }
     }
+
+    innholdHtml ??= ResendInboundParser.HentHtml(body);
 
     var foresporsel = new PortalItlock.Web.Models.Foresporsel
     {
@@ -1792,6 +1796,7 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
         FraNavn = tolket.FraNavn,
         Emne = tolket.Emne,
         Innhold = innhold,
+        InnholdHtml = innholdHtml,
         RawJson = body
     };
     db.Foresporsler.Add(foresporsel);
@@ -1802,7 +1807,9 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
         {
             Filnavn = v.Filnavn,
             ContentType = v.ContentType,
-            Data = v.Data
+            Data = v.Data,
+            ContentId = v.ContentId,
+            ErInline = v.ErInline
         });
     }
 

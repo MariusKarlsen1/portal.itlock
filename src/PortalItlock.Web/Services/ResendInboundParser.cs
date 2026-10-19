@@ -38,6 +38,22 @@ public static class ResendInboundParser
         }
     }
 
+    // HTML-delen fra selve webhooken (brukes hvis den ikke kan hentes fra Resend-API-et).
+    public static string? HentHtml(string rawJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            var root = doc.RootElement;
+            var data = root.TryGetProperty("data", out var d) ? d : root;
+            return HentTekst(data, "html");
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     private static string? HentTekst(JsonElement element, params string[] sti)
     {
         var gjeldende = element;

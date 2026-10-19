@@ -1,12 +1,13 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace PortalItlock.Web.Services;
 
 public class ResendReceivingClient(HttpClient http, IConfiguration config, ILogger<ResendReceivingClient> logger)
 {
-    public record VedleggData(string Filnavn, string ContentType, byte[] Data);
-    public record FullInnhold(string? Tekst, List<VedleggData> Vedlegg);
+    public record VedleggData(string Filnavn, string ContentType, byte[] Data, string? ContentId = null, bool ErInline = false);
+    public record FullInnhold(string? Tekst, List<VedleggData> Vedlegg, string? Html = null);
 
     public async Task<FullInnhold?> HentFullInnholdAsync(string emailId)
     {
@@ -38,7 +39,8 @@ public class ResendReceivingClient(HttpClient http, IConfiguration config, ILogg
             return null;
         }
 
-        var tekst = HentTekst(root, "text") ?? HentTekst(root, "html");
+        var html = HentTekst(root, "html");
+        var tekst = HentTekst(root, "text") ?? (html is null ? null : HtmlTilTekst(html));
         var vedlegg = new List<VedleggData>();
 
         if (root.TryGetProperty("attachments", out var attArr) && attArr.ValueKind == JsonValueKind.Array)
@@ -57,12 +59,16 @@ public class ResendReceivingClient(HttpClient http, IConfiguration config, ILogg
                 var data = await HentVedleggAsync(emailId, attId, apiKey);
                 if (data is not null)
                 {
-                    vedlegg.Add(new VedleggData(filnavn, contentType, data));
+                    // Innebygde bilder (logo i signatur o.l.) har content_id og/eller
+                    // content_disposition "inline" - HTML-en peker på dem med cid:.
+                    var contentId = HentTekst(att, "content_id")?.Trim().Trim('<', '>');
+                    var inline = string.Equals(HentTekst(att, "content_disposition"), "inline", StringComparison.OrdinalIgnoreCase);
+                    vedlegg.Add(new VedleggData(filnavn, contentType, data, contentId, inline || contentId is not null));
                 }
             }
         }
 
-        return new FullInnhold(tekst, vedlegg);
+        return new FullInnhold(tekst, vedlegg, html);
     }
 
     private async Task<byte[]?> HentVedleggAsync(string emailId, string attachmentId, string apiKey)
@@ -99,6 +105,16 @@ public class ResendReceivingClient(HttpClient http, IConfiguration config, ILogg
             logger.LogWarning(ex, "Klarte ikke å laste ned vedlegg {AttachmentId} for e-post {EmailId}.", attachmentId, emailId);
             return null;
         }
+    }
+
+    // Enkel tekstversjon av HTML (til søk og forhåndsvisning) når e-posten mangler text-del.
+    private static string HtmlTilTekst(string html)
+    {
+        const RegexOptions valg = RegexOptions.Singleline | RegexOptions.IgnoreCase;
+        var t = Regex.Replace(html, @"<(script|style)[^>]*>.*?</\1>", "", valg);
+        t = Regex.Replace(t, @"<(br|/p|/div|/tr|/h[1-6])[^>]*>", "\n", valg);
+        t = Regex.Replace(t, "<[^>]+>", "");
+        return System.Net.WebUtility.HtmlDecode(t).Trim();
     }
 
     private static string? HentTekst(JsonElement element, string felt) =>
