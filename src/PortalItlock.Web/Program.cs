@@ -1617,20 +1617,38 @@ app.MapGet("/arbeidsordremedia/{id:int}", async (int id, ApplicationDbContext db
     return media is null ? Results.NotFound() : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), media.Filnavn);
 }).RequireAuthorization();
 
-app.MapGet("/kunngjoringbilde/{id:int}", async (int id, ApplicationDbContext db) =>
+app.MapGet("/kunngjoringbilde/{id:int}", async (int id, int? w, ApplicationDbContext db) =>
 {
     var kunngjoring = await db.Kunngjoringer.FindAsync(id);
-    return kunngjoring?.BildeData is null
-        ? Results.NotFound()
-        : Results.File(kunngjoring.BildeData, FilSikkerhet.TryggContentType(kunngjoring.BildeContentType ?? "application/octet-stream"), kunngjoring.BildeFilnavn);
+    if (kunngjoring?.BildeData is null)
+    {
+        return Results.NotFound();
+    }
+
+    // ?w=... gir en forminsket WebP (riktig rotert) til feeden og bildefanen,
+    // så et mobilbilde på flere MB ikke lastes ned i full størrelse.
+    if (w is int maks && BildeMiniatyr.Lag(kunngjoring.BildeData, Math.Clamp(maks, 64, 2000)) is { } miniatyr)
+    {
+        return Results.File(miniatyr.Data, miniatyr.ContentType);
+    }
+
+    return Results.File(kunngjoring.BildeData, FilSikkerhet.TryggContentType(kunngjoring.BildeContentType ?? "application/octet-stream"), kunngjoring.BildeFilnavn);
 }).RequireAuthorization();
 
-app.MapGet("/fellesskapbilde/{id:int}", async (int id, ApplicationDbContext db) =>
+app.MapGet("/fellesskapbilde/{id:int}", async (int id, int? w, ApplicationDbContext db) =>
 {
     var fellesskap = await db.Fellesskap.FindAsync(id);
-    return fellesskap?.OmslagData is null
-        ? Results.NotFound()
-        : Results.File(fellesskap.OmslagData, FilSikkerhet.TryggContentType(fellesskap.OmslagContentType ?? "application/octet-stream"));
+    if (fellesskap?.OmslagData is null)
+    {
+        return Results.NotFound();
+    }
+
+    if (w is int maks && BildeMiniatyr.Lag(fellesskap.OmslagData, Math.Clamp(maks, 64, 2000)) is { } miniatyr)
+    {
+        return Results.File(miniatyr.Data, miniatyr.ContentType);
+    }
+
+    return Results.File(fellesskap.OmslagData, FilSikkerhet.TryggContentType(fellesskap.OmslagContentType ?? "application/octet-stream"));
 }).RequireAuthorization();
 
 app.MapGet("/leverandorlogo/{id:int}", async (int id, int? w, ApplicationDbContext db) =>

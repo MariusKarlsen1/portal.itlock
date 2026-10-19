@@ -7,8 +7,10 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@implements IAsyncDisposable
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>@SideTittel - Full Kontroll</PageTitle>
 
@@ -175,7 +177,7 @@
                         <div class="kg-bildegrid">
                             @foreach (var k in medBilde)
                             {
-                                <a href="@($"/kunngjoring/{k.Id}")" style="background-image:url('@($"/kunngjoringbilde/{k.Id}")');" title="@k.Tittel"></a>
+                                <a href="@($"/kunngjoring/{k.Id}")" class="kg-bb" style="--b:url('/kunngjoringbilde/@(k.Id)?w=500')" title="@k.Tittel"><img src="@($"/kunngjoringbilde/{k.Id}?w=500")" alt="" loading="lazy" /></a>
                             }
                         </div>
                     }
@@ -258,8 +260,8 @@
                         var forste = VenterPaBekreftelse[0];
                         <div class="kg-viktig">
                             <span class="kg-viktig-ik">📣</span>
-                            <div><b>@VenterPaBekreftelse.Count @(VenterPaBekreftelse.Count == 1 ? "kunngjøring venter" : "kunngjøringer venter") på «Lest og forstått»</b><small>@Kort(forste.Tittel, 70) · fra @(forste.OpprettetAvBruker?.Navn ?? "ukjent")</small></div>
-                            <button type="button" class="kg-knapp kg-knapp-p" @onclick="@(() => _filter = "bekreft")">Les nå</button>
+                            <div><b>@VenterPaBekreftelse.Count @(VenterPaBekreftelse.Count == 1 ? "viktig kunngjøring" : "viktige kunngjøringer") du ikke har sett</b><small>@Kort(forste.Tittel, 70) · fra @(forste.OpprettetAvBruker?.Navn ?? "ukjent")</small></div>
+                            <button type="button" class="kg-knapp kg-knapp-p" @onclick="@(() => _filter = "viktig")">Vis</button>
                         </div>
                     }
 
@@ -401,7 +403,7 @@
         [("samtaler", "Samtaler"), ("kunngjoringer", "Kunngjøringer"), ("sporsmal", "Spørsmål"), ("arrangement", "Arrangement"), ("bilder", "Bilder"), ("om", "Om")];
 
     private static readonly (string Id, string Navn)[] HjemFilter =
-        [("", "Alt"), ("kunngjoringer", "📣 Kunngjøringer"), ("sporsmal", "❓ Spørsmål"), ("ros", "🏅 Ros"), ("arrangement", "📅 Arrangement"), ("avstemning", "📊 Avstemning"), ("ulest", "Ulest")];
+        [("", "Alt"), ("kunngjoringer", "📣 Kunngjøringer"), ("sporsmal", "❓ Spørsmål"), ("ros", "🏅 Ros"), ("arrangement", "📅 Arrangement"), ("avstemning", "📊 Avstemning"), ("viktig", "Viktig"), ("ulest", "Ulest")];
 
     private static readonly (PameldingSvar Svar, string Tekst)[] PameldingValg =
         [(PameldingSvar.Kommer, "Kommer"), (PameldingSvar.Kanskje, "Kanskje"), (PameldingSvar.KanIkke, "Kan ikke")];
@@ -985,6 +987,51 @@
         await Db.SaveChangesAsync();
     }
 
+    // ---------- VK4: viktige kunngjøringer merkes som sett automatisk ----------
+
+    private DotNetObjectReference<Kunngjoringer>? _jsRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (firstRender)
+            {
+                _jsRef = DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("viktigSett.start", _jsRef);
+            }
+            await JS.InvokeVoidAsync("viktigSett.oppdater");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    [JSInvokable]
+    public async Task MarkerSett(int id)
+    {
+        var k = _innlegg.FirstOrDefault(x => x.Id == id);
+        if (k is null || !k.KreverBekreftelse || k.OpprettetAvBrukerId == _naverendeBrukerId)
+        {
+            return;
+        }
+
+        await Bekreft(k);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("viktigSett.stopp");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        _jsRef?.Dispose();
+    }
+
     private async Task Bekreft(Kunngjoring k)
     {
         if (_naverendeBrukerId is not { } bid || HarBekreftet(k))
@@ -996,10 +1043,6 @@
         Db.KunngjoringBekreftelser.Add(b);
         if (!k.Bekreftelser.Contains(b)) { k.Bekreftelser.Add(b); }
         await Db.SaveChangesAsync();
-        if (_filter == "bekreft" && VenterPaBekreftelse.Count == 0)
-        {
-            _filter = "";
-        }
     }
 
     // Stem, eller bytt stemme. Samme valg igjen trekker stemmen.
@@ -1092,7 +1135,7 @@
                 "arrangement" => liste.Where(k => k.Type == InnleggType.Arrangement || k.EventDato is not null),
                 "avstemning" => liste.Where(k => k.Type == InnleggType.Avstemning),
                 "ulest" => liste.Where(k => _ulesteVedApning.Contains(k.Id)),
-                "bekreft" => VenterPaBekreftelse,
+                "viktig" => liste.Where(k => k.KreverBekreftelse),
                 _ => liste
             };
             if (_sortering == "aktivitet")
@@ -1220,7 +1263,7 @@
         var tema = FellesskapTema.Hent(f.Tema);
         @if (f.OmslagData is not null)
         {
-            <span class="kg-oms kg-oms-bilde @klasse" style="background-image:url('/fellesskapbilde/@f.Id');"></span>
+            <span class="kg-oms kg-oms-bilde @klasse" style="background-image:url('/fellesskapbilde/@(f.Id)?w=1600');"></span>
         }
         else
         {
@@ -1408,7 +1451,7 @@
                             }
                             @if (valgt == InnleggType.Kunngjoring)
                             {
-                                <label class="kg-sjekk"><input type="checkbox" @bind="_nyKrevBekreftelse" />Krev «Lest og forstått»</label>
+                                <label class="kg-sjekk"><input type="checkbox" @bind="_nyKrevBekreftelse" />Viktig – vis hvem som har sett den</label>
                             }
                         </div>
                         <div class="kg-form-knapper">
@@ -1448,7 +1491,9 @@
     {
         var ny = _ulesteVedApning.Contains(k.Id);
         var forfatter = k.OpprettetAvBruker?.Navn ?? "Ukjent";
-        <article class="kg-post @(k.Type == InnleggType.Kunngjoring ? "kunngj" : "") @(ny ? "ny" : "")" @key="k.Id">
+        // VK4: viktige kunngjøringer merkes som sett når de har vært på skjermen i 2 sekunder (js/viktigsett.js).
+        var viktigIkkeSett = k.KreverBekreftelse && k.OpprettetAvBrukerId != _naverendeBrukerId && !HarBekreftet(k);
+        <article class="kg-post @(k.Type == InnleggType.Kunngjoring ? "kunngj" : "") @(ny ? "ny" : "") @(viktigIkkeSett ? "kg-viktig-ny" : "")" @key="k.Id" data-viktig="@(viktigIkkeSett ? k.Id : null)">
             <div class="kg-ph">
                 @Avatar(forfatter, "kg-av-l")
                 <div>
@@ -1457,6 +1502,10 @@
                 </div>
                 <div class="kg-ph-hoyre">
                     @if (ny) {<span class="kg-nytt">Ny</span>}
+                    @if (k.KreverBekreftelse)
+                    {
+                        <span class="kg-tag kg-t-viktig"><span class="kg-sett-prikk @(viktigIkkeSett ? "" : "sett")" title="@(viktigIkkeSett ? "Ikke sett ennå" : "Sett")"></span>Viktig</span>
+                    }
                     @if (k.Festet) {<span class="kg-tag kg-t-fest"><Icon Name="star" />Festet</span>}
                     @if (k.Type == InnleggType.Sporsmal && k.BesteSvarKommentarId is not null) {<span class="kg-tag kg-t-lost"><Icon Name="check" />Løst</span>}
                     @if (KanKunngjore(k.Fellesskap))
@@ -1483,7 +1532,10 @@
 
             @if (k.BildeData is not null)
             {
-                <a href="@($"/kunngjoring/{k.Id}")" class="kg-pbg" style="background-image:url('@($"/kunngjoringbilde/{k.Id}")');" aria-label="@k.Tittel">
+                @* Hele bildet vises (høye bilder midt i rammen med en uskarp kopi i kantene)
+                   i stedet for å skjæres til en fast stripe. *@
+                <a href="@($"/kunngjoring/{k.Id}")" class="kg-pbg" style="--b:url('/kunngjoringbilde/@(k.Id)?w=1200')" aria-label="@k.Tittel">
+                    <img src="@($"/kunngjoringbilde/{k.Id}?w=1200")" alt="" loading="lazy" />
                     @if (!string.IsNullOrWhiteSpace(k.Sted)) {<span class="kg-pbg-over"><Icon Name="map-pin" />@k.Sted</span>}
                 </a>
             }
@@ -1575,26 +1627,26 @@
                 var mottakere = MottakereAv(k);
                 var bekreftet = k.Bekreftelser.Count;
                 <div class="kg-bekreft">
-                    <span class="kg-bekreft-tall"><span class="kg-lestbar"><i style="width:@(Math.Min(100, bekreftet * 100 / mottakere))%"></i></span>@bekreftet av @mottakere har bekreftet</span>
-                    @if (KanKunngjore(k.Fellesskap) && bekreftet < mottakere)
+                    <span class="kg-bekreft-tall">@Math.Min(bekreftet, mottakere) av @mottakere har sett</span>
+                    @if (KanKunngjore(k.Fellesskap) && ManglerBekreftelse(k).Count > 0)
                     {
-                        <button type="button" class="kg-lenke" @onclick="@(() => { if (!_visManglerBekreftelse.Remove(k.Id)) { _visManglerBekreftelse.Add(k.Id); } })">@(_visManglerBekreftelse.Contains(k.Id) ? "Skjul" : "Hvem mangler?")</button>
+                        <button type="button" class="kg-lenke" @onclick="@(() => { if (!_visManglerBekreftelse.Remove(k.Id)) { _visManglerBekreftelse.Add(k.Id); } })">@(_visManglerBekreftelse.Contains(k.Id) ? "Skjul" : $"Hvem har ikke sett? ({ManglerBekreftelse(k).Count})")</button>
                     }
                     @if (k.OpprettetAvBrukerId != _naverendeBrukerId)
                     {
                         @if (HarBekreftet(k))
                         {
-                            <span class="kg-bekreftet"><Icon Name="check" />Du har bekreftet</span>
+                            <span class="kg-bekreftet"><span class="kg-sett-prikk sett"></span>Du har sett denne</span>
                         }
                         else
                         {
-                            <button type="button" class="kg-knapp kg-knapp-p" @onclick="@(() => Bekreft(k))"><Icon Name="check" />Lest og forstått</button>
+                            <span class="kg-bekreft-vent">Merkes som sett når den har vært på skjermen</span>
                         }
                     }
                 </div>
                 @if (_visManglerBekreftelse.Contains(k.Id))
                 {
-                    <div class="kg-mangler">Mangler: @string.Join(", ", ManglerBekreftelse(k).Select(b => b.Navn))</div>
+                    <div class="kg-mangler">Har ikke sett: @string.Join(", ", ManglerBekreftelse(k).Select(b => b.Navn))</div>
                 }
             }
 
