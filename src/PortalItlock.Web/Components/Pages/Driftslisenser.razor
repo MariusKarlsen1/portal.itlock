@@ -50,10 +50,30 @@
                 }
                 @if (MenyKunder.Count == 0)
                 {
-                    <p class="dl-dempet">@(string.IsNullOrWhiteSpace(_sok) ? "Ingen kunder med prosjekter ennå." : "Ingen treff.")</p>
+                    <p class="dl-dempet">@(string.IsNullOrWhiteSpace(_sok) ? "Ingen kunder ennå. Trykk «Legg til kunde» nederst for å gi vaktmestere hos en kunde tilgang." : "Ingen treff.")</p>
                 }
             </div>
             <div class="dl-meny-bunn">
+                @if (_visLeggTilKunde)
+                {
+                    <div class="dl-leggtil">
+                        <select @bind="_leggTilKundeId" aria-label="Velg kunde">
+                            <option value="">Velg kunde …</option>
+                            @foreach (var k in KunderSomKanLeggesTil)
+                            {
+                                <option value="@k.Id">@k.Navn</option>
+                            }
+                        </select>
+                        <span class="dl-leggtil-knapper">
+                            <button type="button" class="knapp-sekundaer" @onclick="@(() => _visLeggTilKunde = false)">Avbryt</button>
+                            <button type="button" class="knapp-primaer" disabled="@(_leggTilKundeId is null)" @onclick="LeggTilKunde">Legg til</button>
+                        </span>
+                    </div>
+                }
+                else
+                {
+                    <button type="button" class="dl-leggtil-knapp" @onclick="@(() => { _visLeggTilKunde = true; _leggTilKundeId = null; })"><Icon Name="plus" />Legg til kunde</button>
+                }
                 <span class="dl-tall"><b>@_antallAktive aktive</b> · @_antallInaktive inaktive driftslisenser</span>
             </div>
         </nav>
@@ -76,6 +96,10 @@
                     @if (kid != UtenProsjekter)
                     {
                         <button type="button" class="knapp-primaer" @onclick="@(() => VisNy(kid))"><Icon Name="plus" />Ny vaktmester</button>
+                        @if (VisteLisenser.Count == 0 && _lagtTil.Contains(kid))
+                        {
+                            <button type="button" class="lenke-knapp" title="Fjern kunden fra menyen" @onclick="@(() => FjernKundeFraMeny(kid))"><Icon Name="x" />Fjern fra menyen</button>
+                        }
                     }
                 }
                 <button type="button" class="dl-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
@@ -279,6 +303,47 @@
     private bool _full;
     private HashSet<int> _nyeProsjekter = [];
 
+    // Kunder som er lagt til i menyen uten (ennå) å ha vaktmestere - huskes per bruker.
+    private HashSet<int> _lagtTil = [];
+    private bool _visLeggTilKunde;
+    private int? _leggTilKundeId;
+
+    private List<MenyKunde> KunderSomKanLeggesTil => _prosjekter
+        .Where(p => p.KundeId is not null)
+        .Select(p => p.KundeId!.Value)
+        .Distinct()
+        .Where(id => !_lagtTil.Contains(id) && LisenserFor(id).Count == 0)
+        .Select(id => new MenyKunde(id, KundeNavn(id)))
+        .OrderBy(k => k.Navn, StringComparer.Create(System.Globalization.CultureInfo.GetCultureInfo("nb-NO"), true))
+        .ToList();
+
+    private async Task LagreLagtTil() =>
+        await VisningPref.SettAsync("driftslisenser-kunder", string.Join(',', _lagtTil));
+
+    private async Task LeggTilKunde()
+    {
+        if (_leggTilKundeId is not int id)
+        {
+            return;
+        }
+
+        _lagtTil.Add(id);
+        await LagreLagtTil();
+        _visLeggTilKunde = false;
+        _leggTilKundeId = null;
+        _sok = "";
+        await VelgKunde(id);
+        VisNy(id);
+    }
+
+    private async Task FjernKundeFraMeny(int id)
+    {
+        _lagtTil.Remove(id);
+        await LagreLagtTil();
+        _valgtKundeId = null;
+        _visNy = false;
+    }
+
     private string KundeNavn(int id) => id switch
     {
         UtenProsjekter => "Uten prosjekter",
@@ -309,12 +374,14 @@
                 .Where(p => p.KundeId is not null)
                 .Select(p => p.KundeId!.Value)
                 .Distinct()
+                // Bare kunder som har vaktmestere, eller som er lagt til i menyen.
+                .Where(id => _lagtTil.Contains(id) || LisenserFor(id).Count > 0)
                 .Select(id => new MenyKunde(id, KundeNavn(id)))
                 // Kundene som har vaktmestere først, så resten alfabetisk.
                 .OrderBy(k => LisenserFor(k.Id).Count == 0)
                 .ThenBy(k => k.Navn, StringComparer.Create(System.Globalization.CultureInfo.GetCultureInfo("nb-NO"), true))
                 .ToList();
-            if (_prosjekter.Any(p => p.KundeId is null))
+            if (LisenserFor(UtenKunde).Count > 0)
             {
                 liste.Add(new MenyKunde(UtenKunde, KundeNavn(UtenKunde)));
             }
@@ -481,6 +548,11 @@
     protected override async Task OnInitializedAsync()
     {
         _full = await VisningPref.HentAsync("driftslisenser-bredde", "normal") == "full";
+        _lagtTil = (await VisningPref.HentAsync("driftslisenser-kunder", ""))
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => int.TryParse(s, out var i) ? i : 0)
+            .Where(i => i > 0)
+            .ToHashSet();
         _kundeNavn = await Db.Kunder.Select(k => new { k.Id, k.Navn }).ToDictionaryAsync(k => k.Id, k => k.Navn);
         _prosjekter = await Db.Prosjekter
             .OrderBy(p => p.Navn)
