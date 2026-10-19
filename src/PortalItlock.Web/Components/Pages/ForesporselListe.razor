@@ -10,6 +10,7 @@
 @inject NavigationManager Nav
 @inject EmailService Epost
 @inject ResendReceivingClient ResendKlient
+@inject IJSRuntime JS
 
 @inject VisningPreferanseService VisningPref
 <PageTitle>Forespørsler</PageTitle>
@@ -279,6 +280,10 @@
                                 <button type="button" class="@(_aktivFane == "vedlegg" ? "pa" : "")" @onclick='@(() => _aktivFane = "vedlegg")'>Vedlegg <small>@VedleggForValgt.Count</small></button>
                                 <button type="button" class="@(_aktivFane == "notater" ? "pa" : "")" @onclick='@(() => _aktivFane = "notater")'>Interne notater <small>@_valgt.Notater.Count</small></button>
                                 <button type="button" class="@(_aktivFane == "aktivitet" ? "pa" : "")" @onclick='@(() => _aktivFane = "aktivitet")'>Aktivitet</button>
+                                @if (DriftFor(_valgt) is not null)
+                                {
+                                    <button type="button" class="@(_aktivFane == "kart" ? "pa" : "")" @onclick='@(() => _aktivFane = "kart")'><Icon Name="map-pin" />Kart</button>
+                                }
                             </nav>
 
                             @if (_aktivFane == "oversikt")
@@ -390,6 +395,47 @@
                                         }
                                     </ul>
                                 }
+                            }
+                            else if (_aktivFane == "kart" && DriftFor(_valgt) is { } dk)
+                            {
+                                @* Hvor driftsmeldingen gjelder: bygget på kartet og døren på plantegningen. *@
+                                <div class="ol-kart-seksjon">
+                                    <div class="ol-kart-tittel">
+                                        <b>@(dk.ProsjektNavn ?? "Prosjekt")</b>
+                                        @if (!string.IsNullOrWhiteSpace(dk.Adresse)) {<span>@dk.Adresse</span>}
+                                        @if (dk.Lat is double lat && dk.Lng is double lng)
+                                        {
+                                            <a href="@($"https://www.google.com/maps/search/?api=1&query={lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{lng.ToString(System.Globalization.CultureInfo.InvariantCulture)}")" target="_blank" rel="noopener"><Icon Name="map" />Veibeskrivelse</a>
+                                        }
+                                    </div>
+                                    @if (dk.Lat is not null && dk.Lng is not null)
+                                    {
+                                        <div id="fp-drift-kart" class="ol-kart" @key="_valgt.Id"></div>
+                                    }
+                                    else
+                                    {
+                                        <p class="fp-tom">Prosjektet har ingen kartposisjon ennå – legg inn adresse på prosjektet.</p>
+                                    }
+                                </div>
+
+                                <div class="ol-kart-seksjon">
+                                    <div class="ol-kart-tittel">
+                                        <b>Dør @dk.Dornummer</b>
+                                        @if (!string.IsNullOrWhiteSpace(dk.PlantegningNavn)) {<span>@dk.PlantegningNavn@(string.IsNullOrWhiteSpace(dk.Etasje) ? "" : $" · {dk.Etasje}")</span>}
+                                        <a href="@($"/dor/{dk.DorId}")"><Icon Name="door" />Åpne døren</a>
+                                    </div>
+                                    @if (dk.PlantegningId is int planId && dk.PosX is double px && dk.PosY is double py)
+                                    {
+                                        <div class="ol-plan">
+                                            <img src="@($"/plantegningbilde/{planId}")" alt="Plantegning" />
+                                            <span class="ol-plan-pin" style="left:@(px.ToString(System.Globalization.CultureInfo.InvariantCulture))%;top:@(py.ToString(System.Globalization.CultureInfo.InvariantCulture))%" title="Dør @dk.Dornummer"><i></i><b>@dk.Dornummer</b></span>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <p class="fp-tom">Døren er ikke plassert på en plantegning ennå.</p>
+                                    }
+                                </div>
                             }
                             else if (_aktivFane == "aktivitet")
                             {
@@ -627,10 +673,20 @@
                     Kunde = m.Dor!.Prosjekt!.Kunde,
                     m.Kategori,
                     m.Haster,
-                    Media = m.Media.Select(x => new DriftMedia(x.Id, x.Filnavn, x.ContentType)).ToList()
+                    Media = m.Media.Select(x => new DriftMedia(x.Id, x.Filnavn, x.ContentType)).ToList(),
+                    Lat = m.Dor!.Prosjekt!.Latitude,
+                    Lng = m.Dor!.Prosjekt!.Longitude,
+                    Adresse = m.Dor!.Prosjekt!.Adresse,
+                    Postnr = m.Dor!.Prosjekt!.Postnr,
+                    m.Dor!.PlantegningId,
+                    PlantegningNavn = m.Dor!.Plantegning!.Navn,
+                    m.Dor!.PosX,
+                    m.Dor!.PosY,
+                    m.Dor!.Etasje
                 })
                 .ToListAsync())
-            .ToDictionary(x => x.Id, x => new DriftInfo(x.DorId, x.Dornummer, x.ProsjektId, x.ProsjektNavn, x.Kunde, x.Kategori, x.Haster, x.Media));
+            .ToDictionary(x => x.Id, x => new DriftInfo(x.DorId, x.Dornummer, x.ProsjektId, x.ProsjektNavn, x.Kunde, x.Kategori, x.Haster, x.Media,
+                x.Lat, x.Lng, string.Join(", ", new[] { x.Adresse, x.Postnr }.Where(s => !string.IsNullOrWhiteSpace(s))), x.PlantegningId, x.PlantegningNavn, x.PosX, x.PosY, x.Etasje));
 
         _valgt = (valgtId.HasValue ? _foresporsler.FirstOrDefault(f => f.Id == valgtId) : null) ?? VisteForesporsler.FirstOrDefault();
     }
@@ -714,7 +770,8 @@
     private string _mappe = "alle";
 
     private sealed record DriftMedia(int Id, string Filnavn, string ContentType);
-    private sealed record DriftInfo(int DorId, string? Dornummer, int? ProsjektId, string? ProsjektNavn, Kunde? Kunde, string? Kategori, bool Haster, List<DriftMedia> Media);
+    private sealed record DriftInfo(int DorId, string? Dornummer, int? ProsjektId, string? ProsjektNavn, Kunde? Kunde, string? Kategori, bool Haster, List<DriftMedia> Media,
+        double? Lat = null, double? Lng = null, string? Adresse = null, int? PlantegningId = null, string? PlantegningNavn = null, double? PosX = null, double? PosY = null, string? Etasje = null);
     private Dictionary<int, DriftInfo> _drift = [];
     private DriftInfo? DriftFor(Foresporsel f) => f.DriftsmeldingId is int id && _drift.TryGetValue(id, out var d) ? d : null;
     private bool _visMapper;
@@ -759,6 +816,33 @@
     {
         _full = !_full;
         await VisningPref.SettAsync("foresporsler-bredde", _full ? "full" : "normal");
+    }
+
+    // Kart-fanen på driftsmeldinger: tegner Leaflet-kartet med en nål på bygget
+    // når fanen vises (og på nytt når en annen driftsmelding velges).
+    private int? _kartTegnetFor;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_aktivFane != "kart" || _valgt is null || DriftFor(_valgt) is not { Lat: double lat, Lng: double lng })
+        {
+            _kartTegnetFor = null;
+            return;
+        }
+
+        if (_kartTegnetFor == _valgt.Id)
+        {
+            return;
+        }
+
+        _kartTegnetFor = _valgt.Id;
+        try
+        {
+            await JS.InvokeVoidAsync("minikart.vis", "fp-drift-kart", lat, lng, "#b23b22");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
     }
 
     private void ApneSvar()
