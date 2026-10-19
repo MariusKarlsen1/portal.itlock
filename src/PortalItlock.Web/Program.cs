@@ -1293,12 +1293,22 @@ app.MapGet("/komponent/databladdokument/{id:int}", async (int id, ApplicationDbC
         : Results.File(dokument.Data, FilSikkerhet.TryggContentType(dokument.ContentType), dokument.Filnavn);
 }).RequireAuthorization();
 
-app.MapGet("/komponent/{id:int}/bilde", async (int id, ApplicationDbContext db) =>
+app.MapGet("/komponent/{id:int}/bilde", async (int id, int? w, ApplicationDbContext db) =>
 {
     var komponent = await db.LastFilerAsync(db.Components.FirstOrDefaultAsync(c => c.Id == id));
-    return komponent?.BildeData is null
-        ? Results.NotFound()
-        : Results.File(komponent.BildeData, FilSikkerhet.TryggContentType(komponent.BildeContentType ?? "image/jpeg"), komponent.BildeFilnavn);
+    if (komponent?.BildeData is null)
+    {
+        return Results.NotFound();
+    }
+
+    // ?w=... gir et forminsket bilde til varepanelet i Komponentregisteret,
+    // så nettleseren ikke laster ned originalen (ofte flere MB) for hver vare.
+    if (w is int maks && BildeMiniatyr.Lag(komponent.BildeData, Math.Clamp(maks, 32, 1200)) is { } miniatyr)
+    {
+        return Results.File(miniatyr.Data, miniatyr.ContentType);
+    }
+
+    return Results.File(komponent.BildeData, FilSikkerhet.TryggContentType(komponent.BildeContentType ?? "image/jpeg"), komponent.BildeFilnavn);
 }).RequireAuthorization();
 
 app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, string? byggetrinn, HttpContext context, ApplicationDbContext db, FdvPdfService fdvService) =>
