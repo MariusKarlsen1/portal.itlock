@@ -4,90 +4,223 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>Forsider</PageTitle>
 
-<h1>Forsider</h1>
-<p class="section-hint">
-    Lag gjenbrukbare forside-/forbeholdstekster som kan velges når du genererer et tilbud.
-    Skriv og formater teksten direkte i boksen, med overskrifter, fet skrift, lister og lenker.
-</p>
-
-<div class="layout">
-    <div class="kort side-liste">
-        @if (_forsider.Count == 0)
-        {
-            <p class="tom-liste">Ingen forsider opprettet ennå.</p>
-        }
-        else
-        {
-            @foreach (var f in _forsider)
-            {
-                <div @key="f.Id" class="liste-rad @(f.Id == _valgtId ? "liste-rad-aktiv" : "")" @onclick="@(() => VelgForside(f.Id))">
-                    <span class="liste-navn">@(string.IsNullOrWhiteSpace(f.Navn) ? "(Uten navn)" : f.Navn)</span>
-                    <span class="liste-pil">&rsaquo;</span>
-                </div>
-            }
-        }
-        <div class="ny-rad">
-            <input class="ny-input" @bind="_nyNavn" @bind:event="oninput" placeholder="Navn på ny forside"
-                   @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettForside(); } })" />
-            <button type="button" class="btn-liten btn-primaer" @onclick="OpprettForside" disabled="@string.IsNullOrWhiteSpace(_nyNavn)">Opprett</button>
+@* FS1 (forsider-forslag.html): forsidene i en meny inni dashbord-kortet, som
+   Sjekklistemaler og Tilvalgsmaler. Endringer lagres fra lagre-linjen nederst. *@
+<div class="sm @(_full ? "sm-full" : "")">
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="folder" /></span>
+            <div>
+                <h1>Forsider</h1>
+                <p class="section-hint">Ferdige forside- og forbeholdstekster som velges når du lager et tilbud. Skriv og formater teksten med overskrifter, fet skrift, lister og lenker.</p>
+            </div>
         </div>
     </div>
 
-    <div class="hoved">
-        @if (_valgt is null)
-        {
-            <div class="kort tom-hoved">
-                <p class="tom-liste">Velg en forside i listen til venstre, eller opprett en ny.</p>
-            </div>
-        }
-        else
-        {
-            <input class="navn-input" @bind="_valgt.Navn" @bind:event="oninput" placeholder="Navn på forsiden" />
-            <div class="kort">
-                <ForsideTekstRedigering @key="_valgt.Id" @bind-Value="_valgt.Innhold" Rows="16" Placeholder="Tilbudsforutsetninger og forbehold ..." />
-            </div>
-            <div class="footer-rad">
-                <button type="button" class="btn-liten btn-primaer" @onclick="@(() => LagreForside(_valgt))">Lagre</button>
-                <button type="button" class="btn-liten btn-fare" @onclick="@(() => SlettForside(_valgt))">Slett</button>
-                @if (!string.IsNullOrEmpty(_melding))
+    @if (!string.IsNullOrEmpty(_melding))
+    {
+        <p class="sm-ok">@_melding</p>
+    }
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
+    }
+
+    <div class="sm-kort">
+        <nav class="sm-meny">
+            <label class="sm-sok">
+                <Icon Name="search" />
+                <input type="search" @bind="_search" @bind:event="oninput" placeholder="Finn forside" />
+            </label>
+            <div class="sm-liste">
+                @foreach (var f in _filtrert)
                 {
-                    <span class="save-success">@_melding</span>
+                    var id = f.Id;
+                    <button type="button" @key="f.Id" class="@(f.Id == _valgtId ? "pa" : "")" @onclick="@(() => Velg(id))">
+                        <span class="sm-meny-ikon"><Icon Name="folder" /></span>
+                        <span class="sm-navn">@(string.IsNullOrWhiteSpace(f.Navn) ? "(Uten navn)" : f.Navn)@(f.Endret ? " •" : "")</span>
+                    </button>
+                }
+                @if (_filtrert.Count == 0)
+                {
+                    <p class="sm-dempet">@(_forsider.Count == 0 ? "Ingen forsider ennå." : "Ingen treff.")</p>
                 }
             </div>
-        }
+            <div class="sm-ny">
+                <input @bind="_nyNavn" @bind:event="oninput" placeholder="＋ Ny forside"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettForside(); } })" />
+                @if (!string.IsNullOrWhiteSpace(_nyNavn))
+                {
+                    <button type="button" class="sm-knapp primaer" @onclick="OpprettForside">Opprett</button>
+                }
+            </div>
+        </nav>
+
+        <section class="sm-innhold">
+            <button type="button" class="sm-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+                <Icon Name="@(_full ? "minimize" : "maximize")" />
+            </button>
+
+            @if (_valgt is { } valgt)
+            {
+                <div class="sm-topp">
+                    <span class="sm-stort-ikon"><Icon Name="folder" /></span>
+                    <div>
+                        <h2>@(string.IsNullOrWhiteSpace(valgt.Navn) ? "(Uten navn)" : valgt.Navn)</h2>
+                        <p>Velges når du lager et tilbud</p>
+                    </div>
+                    <span class="sm-topp-knapper">
+                        <button type="button" class="sm-knapp" @onclick="@(() => DupliserForside(valgt))"><Icon Name="clipboard" />Dupliser</button>
+                    </span>
+                </div>
+
+                <label class="sm-felt">
+                    <span>Navn på forsiden</span>
+                    <input @bind="valgt.Navn" @bind:event="oninput" placeholder="F.eks. Standard forbehold" />
+                </label>
+
+                <div class="fs-editor">
+                    <ForsideTekstRedigering @key="valgt.Id" @bind-Value="valgt.Innhold" Rows="18" Placeholder="Tilbudsforutsetninger og forbehold ..." />
+                </div>
+
+                <div class="sm-bunn">
+                    @if (_bekreftSlett)
+                    {
+                        <span class="sm-dempet">Slette «@valgt.Navn»? Tilbud som allerede er laget, påvirkes ikke.</span>
+                        <button type="button" class="sm-knapp fare" @onclick="@(() => SlettForside(valgt))">Ja, slett</button>
+                        <button type="button" class="sm-knapp" @onclick="@(() => _bekreftSlett = false)">Avbryt</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="sm-lenke" @onclick="@(() => _bekreftSlett = true)"><Icon Name="trash" />Slett forside</button>
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="sm-dempet">Velg en forside i menyen, eller lag en ny nederst i menyen.</p>
+            }
+        </section>
     </div>
+
+    @if (_forsider.Any(f => f.Endret))
+    {
+        var antall = _forsider.Count(f => f.Endret);
+        <div class="sm-lagrebar">
+            <span><Icon Name="edit" /><b>Endringer i @antall @(antall == 1 ? "forside" : "forsider")</b> er ikke lagret</span>
+            <span class="sm-lagrebar-knapper">
+                <button type="button" class="sm-knapp" @onclick="Forkast">Forkast</button>
+                <button type="button" class="sm-knapp primaer" @onclick="LagreAlle"><Icon Name="check" />Lagre</button>
+            </span>
+        </div>
+    }
 </div>
 
 @code {
-    private List<TilbudForside> _forsider = [];
+    private sealed class ForsideDraft
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public string? Innhold { get; set; }
+        public string OpprinneligNavn { get; set; } = "";
+        public string? OpprinneligInnhold { get; set; }
+
+        // Sammenligner med det som er lagret, så editoren ikke gir falske «endringer».
+        public bool Endret => Navn != OpprinneligNavn || (Innhold ?? "") != (OpprinneligInnhold ?? "");
+    }
+
+    private List<ForsideDraft> _forsider = [];
+    private string _search = "";
     private string _nyNavn = "";
     private string? _melding;
+    private string? _feil;
     private int? _valgtId;
+    private bool _bekreftSlett;
+    private bool _full;
 
-    private TilbudForside? _valgt => _forsider.FirstOrDefault(f => f.Id == _valgtId);
+    private ForsideDraft? _valgt => _forsider.FirstOrDefault(f => f.Id == _valgtId);
+
+    private List<ForsideDraft> _filtrert => string.IsNullOrWhiteSpace(_search)
+        ? _forsider
+        : _forsider.Where(f => f.Navn.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+            || (f.Innhold?.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
 
     protected override async Task OnInitializedAsync()
     {
+        _full = await VisningPref.HentAsync("forsider-bredde", "normal") == "full";
         await LoadAsync();
+        _valgtId = _forsider.FirstOrDefault()?.Id;
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("forsider-bredde", _full ? "full" : "normal");
     }
 
     private async Task LoadAsync()
     {
-        _forsider = await Db.TilbudForsider.OrderBy(f => f.Navn).ToListAsync();
-        if (_valgtId is null || !_forsider.Any(f => f.Id == _valgtId))
+        _forsider = (await Db.TilbudForsider.AsNoTracking().OrderBy(f => f.Navn).ToListAsync())
+            .Select(f => new ForsideDraft
+            {
+                Id = f.Id,
+                Navn = f.Navn,
+                Innhold = f.Innhold,
+                OpprinneligNavn = f.Navn,
+                OpprinneligInnhold = f.Innhold
+            }).ToList();
+
+        if (_valgtId is not null && _forsider.All(f => f.Id != _valgtId))
         {
             _valgtId = _forsider.FirstOrDefault()?.Id;
         }
     }
 
-    private void VelgForside(int id)
+    private void Velg(int id)
     {
         _valgtId = id;
+        _bekreftSlett = false;
+        _feil = null;
+    }
+
+    private async Task Forkast()
+    {
+        _feil = null;
         _melding = null;
+        await LoadAsync();
+    }
+
+    private async Task LagreAlle()
+    {
+        _feil = null;
+        var endrede = _forsider.Where(f => f.Endret).ToList();
+        if (endrede.Any(f => string.IsNullOrWhiteSpace(f.Navn)))
+        {
+            _feil = "Alle forsider må ha et navn.";
+            return;
+        }
+
+        foreach (var draft in endrede)
+        {
+            var forside = await Db.TilbudForsider.FirstOrDefaultAsync(f => f.Id == draft.Id);
+            if (forside is null)
+            {
+                continue;
+            }
+
+            forside.Navn = draft.Navn.Trim();
+            forside.Innhold = draft.Innhold;
+        }
+
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+        _melding = endrede.Count == 1 ? $"«{endrede[0].Navn.Trim()}» er lagret." : $"{endrede.Count} forsider er lagret.";
     }
 
     private async Task OpprettForside()
@@ -98,28 +231,59 @@
             return;
         }
 
-        var forside = new TilbudForside { Navn = navn };
-        Db.TilbudForsider.Add(forside);
+        var ny = new TilbudForside { Navn = navn };
+        Db.TilbudForsider.Add(ny);
         await Db.SaveChangesAsync();
 
         _nyNavn = "";
-        _melding = $"Forsiden \"{navn}\" er opprettet.";
-        await LoadAsync();
-        _valgtId = forside.Id;
+        _search = "";
+        _feil = null;
+        _melding = $"«{navn}» er opprettet. Skriv teksten under.";
+        await LastPaNyttBeholdEndringer();
+        Velg(ny.Id);
     }
 
-    private async Task LagreForside(TilbudForside forside)
+    private async Task DupliserForside(ForsideDraft forside)
     {
+        var kopi = new TilbudForside { Navn = $"{forside.Navn.Trim()} (kopi)", Innhold = forside.Innhold };
+        Db.TilbudForsider.Add(kopi);
         await Db.SaveChangesAsync();
-        _melding = $"\"{forside.Navn}\" er lagret.";
+
+        _melding = $"«{kopi.Navn}» er laget.";
+        _feil = null;
+        await LastPaNyttBeholdEndringer();
+        Velg(kopi.Id);
     }
 
-    private async Task SlettForside(TilbudForside forside)
+    private async Task SlettForside(ForsideDraft forside)
     {
-        Db.TilbudForsider.Remove(forside);
-        await Db.SaveChangesAsync();
-        _melding = $"\"{forside.Navn}\" er slettet.";
+        _bekreftSlett = false;
+        var entitet = await Db.TilbudForsider.FirstOrDefaultAsync(f => f.Id == forside.Id);
+        if (entitet is not null)
+        {
+            Db.TilbudForsider.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        _melding = $"«{forside.Navn}» er slettet.";
+        _feil = null;
         _valgtId = null;
+        await LastPaNyttBeholdEndringer();
+        _valgtId = _forsider.FirstOrDefault()?.Id;
+    }
+
+    // Laster listen på nytt uten å miste ulagrede endringer i andre forsider.
+    private async Task LastPaNyttBeholdEndringer()
+    {
+        var ulagret = _forsider.Where(f => f.Endret).ToList();
         await LoadAsync();
+        foreach (var f in ulagret)
+        {
+            var i = _forsider.FindIndex(x => x.Id == f.Id);
+            if (i >= 0)
+            {
+                _forsider[i] = f;
+            }
+        }
     }
 }
