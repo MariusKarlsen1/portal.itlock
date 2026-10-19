@@ -1,16 +1,12 @@
-@page "/produktgrupper/{Id:int}"
-@rendermode InteractiveServer
-@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 @using System.Globalization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 
-<PageTitle>@(_produktgruppe?.Navn ?? "Produktgruppe")</PageTitle>
-
-@* D5 (produktgruppe-detalj-forslag.html): tabell med flervalg, sortering,
-   filter, legg til med ett klikk og flytt/kopier/fjern for valgte varer. *@
+@* Innholdet i én produktgruppe (D5): tabell med flervalg, sortering, filter,
+   legg til med ett klikk og flytt/kopier/fjern for valgte varer. Vises til høyre
+   i Produktgrupper (PG1), med gruppene i menyen til venstre. *@
 @if (_notFound)
 {
     <p class="form-error">Fant ikke produktgruppen. Den kan være slettet.</p>
@@ -18,8 +14,7 @@
 else if (_produktgruppe is not null)
 {
     var varer = _produktgruppe.Komponenter;
-
-    <a class="pg-tilbake" href="/produktgrupper">&larr; Produktgrupper</a>
+    <div class="pg-innhold-kol">
 
     <div class="pg-hode">
         <div class="pg-hode-v">
@@ -37,8 +32,20 @@ else if (_produktgruppe is not null)
                 {
                     <h1>@_produktgruppe.Navn <button type="button" class="pg-blyant" title="Gi nytt navn" @onclick="StartNavn"><Icon Name="edit" /></button></h1>
                 }
-                <p>Brukes til kunderabatter under kundekortets «Rabatter».</p>
+                <p>@Undertekst</p>
             </div>
+        </div>
+        <div class="pg-hode-h">
+            @if (_bekreftSlett)
+            {
+                <span class="pg-melding">Slette «@_produktgruppe.Navn»?</span>
+                <button type="button" class="pg-knapp fare" @onclick="SlettGruppe">Ja, slett</button>
+                <button type="button" class="pg-knapp" @onclick="@(() => _bekreftSlett = false)">Avbryt</button>
+            }
+            else
+            {
+                <button type="button" class="pg-knapp pg-slett" disabled="@(varer.Count > 0)" title="@(varer.Count > 0 ? "Fjern varene først – bare tomme grupper kan slettes" : "Slett gruppen")" @onclick="@(() => _bekreftSlett = true)"><Icon Name="trash" /></button>
+            }
         </div>
     </div>
 
@@ -90,25 +97,6 @@ else if (_produktgruppe is not null)
             {
                 <p class="pg-hint">Skriv minst to tegn. Trykk + for å legge til – søket blir stående, så du kan legge til flere etter hverandre.</p>
             }
-        </div>
-    }
-
-    @if (_valgte.Count > 0)
-    {
-        <div class="pg-bulk">
-            <b>@_valgte.Count valgt</b>
-            <button type="button" class="pg-bulk-knapp" @onclick="FjernValgte"><Icon Name="trash" />Fjern fra gruppen</button>
-            <span class="pg-bulk-skille"></span>
-            <select @bind="_malGruppeId" aria-label="Velg produktgruppe">
-                <option value="0">Velg annen gruppe …</option>
-                @foreach (var g in _andreGrupper)
-                {
-                    <option value="@g.Id">@g.Navn</option>
-                }
-            </select>
-            <button type="button" class="pg-bulk-knapp" disabled="@(_malGruppeId == 0)" @onclick="@(() => TilAnnenGruppe(flytt: true))">↪ Flytt dit</button>
-            <button type="button" class="pg-bulk-knapp lys" disabled="@(_malGruppeId == 0)" @onclick="@(() => TilAnnenGruppe(flytt: false))">⧉ Kopier dit</button>
-            <button type="button" class="pg-bulk-lukk" title="Fjern markering" @onclick="@(() => _valgte.Clear())">✕</button>
         </div>
     }
 
@@ -177,10 +165,40 @@ else if (_produktgruppe is not null)
             </table>
         }
     </div>
+
+    @if (_valgte.Count > 0)
+    {
+        <div class="pg-bulk">
+            <b>@_valgte.Count valgt</b>
+            <button type="button" class="pg-bulk-knapp" @onclick="FjernValgte"><Icon Name="trash" />Fjern fra gruppen</button>
+            <span class="pg-bulk-skille"></span>
+            <select @bind="_malGruppeId" aria-label="Velg produktgruppe">
+                <option value="0">Velg annen gruppe …</option>
+                @foreach (var g in _andreGrupper)
+                {
+                    <option value="@g.Id">@g.Navn</option>
+                }
+            </select>
+            <button type="button" class="pg-bulk-knapp" disabled="@(_malGruppeId == 0)" @onclick="@(() => TilAnnenGruppe(flytt: true))">↪ Flytt dit</button>
+            <button type="button" class="pg-bulk-knapp lys" disabled="@(_malGruppeId == 0)" @onclick="@(() => TilAnnenGruppe(flytt: false))">⧉ Kopier dit</button>
+            <button type="button" class="pg-bulk-lukk" title="Fjern markering" @onclick="@(() => _valgte.Clear())">✕</button>
+        </div>
+    }
+    </div>
 }
 
 @code {
     [Parameter] public int Id { get; set; }
+
+    // Linjen under navnet (antall varer, leverandører, kunder med rabatt) - fra oversikten.
+    [Parameter] public string? Undertekst { get; set; }
+
+    // Sier fra til oversikten når navn eller varer er endret, så menyen oppdateres.
+    [Parameter] public EventCallback OnEndret { get; set; }
+
+    [Parameter] public EventCallback<string> OnSlettet { get; set; }
+
+    private bool _bekreftSlett;
 
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
 
@@ -329,6 +347,7 @@ else if (_produktgruppe is not null)
         _valgte.Clear();
         _visLeggTil = false;
         _redigererNavn = false;
+        _bekreftSlett = false;
 
         _produktgruppe = await Db.Produktgrupper
             .Include(p => p.Komponenter)
@@ -408,6 +427,7 @@ else if (_produktgruppe is not null)
         await Db.SaveChangesAsync();
         _redigererNavn = false;
         _melding = "Navnet er lagret.";
+        await OnEndret.InvokeAsync();
     }
 
     private void VekslLeggTil()
@@ -459,6 +479,7 @@ else if (_produktgruppe is not null)
         _produktgruppe.Komponenter.Add(component);
         await Db.SaveChangesAsync();
         _melding = $"\"{component.Navn}\" lagt til i gruppen.";
+        await OnEndret.InvokeAsync();
     }
 
     private async Task FjernVare(Component c)
@@ -472,6 +493,7 @@ else if (_produktgruppe is not null)
         _valgte.Remove(c.Id);
         await Db.SaveChangesAsync();
         _melding = $"\"{c.Navn}\" fjernet fra gruppen.";
+        await OnEndret.InvokeAsync();
     }
 
     private async Task FjernValgte()
@@ -490,6 +512,7 @@ else if (_produktgruppe is not null)
         await Db.SaveChangesAsync();
         _valgte.Clear();
         _melding = $"{fjern.Count} {(fjern.Count == 1 ? "vare" : "varer")} fjernet fra gruppen.";
+        await OnEndret.InvokeAsync();
     }
 
     private async Task TilAnnenGruppe(bool flytt)
@@ -527,5 +550,21 @@ else if (_produktgruppe is not null)
             ? $"{valgte.Count} {(valgte.Count == 1 ? "vare" : "varer")} flyttet til «{mal.Navn}»."
             : $"{nye} {(nye == 1 ? "vare" : "varer")} kopiert til «{mal.Navn}»{(nye < valgte.Count ? $" ({valgte.Count - nye} lå der fra før)" : "")}.";
         _malGruppeId = 0;
+        await OnEndret.InvokeAsync();
+    }
+
+    private async Task SlettGruppe()
+    {
+        _bekreftSlett = false;
+        if (_produktgruppe is null || _produktgruppe.Komponenter.Count > 0)
+        {
+            return;
+        }
+
+        var navn = _produktgruppe.Navn;
+        Db.Produktgrupper.Remove(_produktgruppe);
+        await Db.SaveChangesAsync();
+        _produktgruppe = null;
+        await OnSlettet.InvokeAsync(navn);
     }
 }
