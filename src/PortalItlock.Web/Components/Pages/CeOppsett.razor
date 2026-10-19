@@ -4,149 +4,166 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>CE-oppsett - Full Kontroll</PageTitle>
 
-<h1>CE-oppsett</h1>
-<p class="section-hint">
-    Sett CE-kategori på beslagstypene. Komponenter av en type kategorisert som "Dørautomatikk" vises som
-    maskinen i en CE-godkjenning, "Sikkerhetstilbehør" og "Annet tilbehør" vises i tilbehørslistene.
-    Et dokument lastet opp her brukes automatisk som sertifikat/produktark for alle varer av typen som
-    ikke har sin egen FDV-fil. De kategoriserte typene vises gruppert øverst - de uten kategori ligger
-    samlet nederst.
-</p>
+@* CE2 (ce-oppsett-forslag.html): CE-kategoriene i en meny inni dashbord-kortet,
+   som Sjekklistemaler, med beslagstypene i valgt kategori til høyre og
+   «Grenseverdier» nederst i menyen. Kategori og sertifikat lagres med en gang. *@
+<div class="sm @(_full ? "sm-full" : "")">
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="shield" /></span>
+            <div>
+                <h1>CE-oppsett</h1>
+                <p class="section-hint">Hvilke beslagstyper som er med i CE-godkjenningen, sertifikat per type, og grenseverdiene for målingene.</p>
+            </div>
+        </div>
+    </div>
 
-@if (!string.IsNullOrEmpty(_feil))
-{
-    <p class="form-error">@_feil</p>
-}
-
-@foreach (var kategori in KategoriserteGrupper)
-{
-    var rader = TyperFor(kategori);
-    if (rader.Count == 0)
+    @if (!string.IsNullOrEmpty(_melding))
     {
-        continue;
+        <p class="sm-ok">@_melding</p>
+    }
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
     }
 
-    <div class="gruppe-kort">
-        <div class="gruppe-header">
-            <span class="gruppe-tittel">@kategori.Visningsnavn()</span>
-            <span class="gruppe-antall">@rader.Count type@(rader.Count == 1 ? "" : "r")</span>
-        </div>
-        @foreach (var t in rader)
-        {
-            <div @key="t.Id" class="gruppe-rad">
-                <span class="rad-navn">@t.Navn</span>
-                <select @bind="t.CeKategori" @bind:after="@(() => LagreKategori(t))">
-                    @foreach (var k in Kategorier)
-                    {
-                        <option value="@k">@k.Visningsnavn()</option>
-                    }
-                </select>
-                <span class="rad-dok">
-                    @if (t.HarDokument)
-                    {
-                        <a href="@($"/komponenttype/{t.Id}/ce-dokument")" target="_blank">@t.DokumentFilnavn</a>
-                        <button type="button" class="remove-button" @onclick="@(() => FjernDokument(t))">Fjern</button>
-                    }
-                    else
-                    {
-                        <span class="dok-tom">Ingen fil</span>
-                        <InputFile OnChange="@(e => LastOppDokument(t, e))" accept=".pdf,application/pdf" />
-                    }
-                </span>
+    <div class="sm-kort">
+        <nav class="sm-meny">
+            <span class="ce-gt">CE-kategorier</span>
+            <div class="sm-liste">
+                @foreach (var k in Kategorier)
+                {
+                    var kategori = k;
+                    <button type="button" class="@(_valgt == kategori.ToString() ? "pa" : "")" @onclick="@(() => Velg(kategori.ToString()))">
+                        <span class="sm-meny-ikon"><Icon Name="@Ikon(kategori)" /></span>
+                        <span class="sm-navn">@Navn(kategori)</span>
+                        <small>@_typer.Count(t => t.CeKategori == kategori)</small>
+                    </button>
+                }
             </div>
-        }
-    </div>
-}
+            <span class="ce-gt ce-gt-skille">Målinger</span>
+            <div class="sm-liste">
+                <button type="button" class="@(_valgt == "grense" ? "pa" : "")" @onclick="@(() => Velg("grense"))">
+                    <span class="sm-meny-ikon"><Icon Name="maximize" /></span>
+                    <span class="sm-navn">Grenseverdier@(GrenseEndret ? " •" : "")</span>
+                </button>
+            </div>
+        </nav>
 
-<div class="gruppe-kort">
-    <button type="button" class="uten-kategori-toggle" @onclick="@(() => _visIngen = !_visIngen)">
-        <span class="gruppe-tittel gruppe-tittel-muted">Uten kategori (@UtenKategori.Count type@(UtenKategori.Count == 1 ? "" : "r")) &ndash; klikk for å @(_visIngen ? "skjule" : "vise")</span>
-        <span class="pil @(_visIngen ? "pil-apen" : "")">&rsaquo;</span>
-    </button>
-    @if (_visIngen)
+        <section class="sm-innhold">
+            <button type="button" class="sm-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+                <Icon Name="@(_full ? "minimize" : "maximize")" />
+            </button>
+
+            @if (_valgt == "grense")
+            {
+                <div class="sm-topp">
+                    <span class="sm-stort-ikon"><Icon Name="maximize" /></span>
+                    <div>
+                        <h2>Grenseverdier</h2>
+                        <p>Standardverdier iht. NS-EN 16005. Brukes til å kontrollere Mål-steget i CE-godkjenningen.</p>
+                    </div>
+                </div>
+
+                @if (_grenseverdier is not null)
+                {
+                    <div class="ce-grense">
+                        <label class="ce-gv">
+                            <span>Maks åpningstid</span>
+                            <span class="ce-gv-inp"><input type="number" step="0.1" min="0" @bind="_grenseverdier.MaksApningstidSek" @bind:event="oninput" /><i>sek</i></span>
+                        </label>
+                        <label class="ce-gv">
+                            <span>Maks lukketid 90–10°</span>
+                            <span class="ce-gv-inp"><input type="number" step="0.1" min="0" @bind="_grenseverdier.MaksLukketidHoySek" @bind:event="oninput" /><i>sek</i></span>
+                        </label>
+                        <label class="ce-gv">
+                            <span>Maks lukketid 10–0°</span>
+                            <span class="ce-gv-inp"><input type="number" step="0.1" min="0" @bind="_grenseverdier.MaksLukketidLavSek" @bind:event="oninput" /><i>sek</i></span>
+                        </label>
+                        <label class="ce-gv">
+                            <span>Maks åpningskraft</span>
+                            <span class="ce-gv-inp"><input type="number" step="0.1" min="0" @bind="_grenseverdier.MaksApningskraftN" @bind:event="oninput" /><i>N</i></span>
+                        </label>
+                    </div>
+                }
+            }
+            else
+            {
+                var kategori = Enum.Parse<CeTilbehorKategori>(_valgt);
+                var typer = _typer
+                    .Where(t => t.CeKategori == kategori)
+                    .Where(t => string.IsNullOrWhiteSpace(_search) || t.Navn.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                <div class="sm-topp">
+                    <span class="sm-stort-ikon"><Icon Name="@Ikon(kategori)" /></span>
+                    <div>
+                        <h2>@Navn(kategori)</h2>
+                        <p>@Beskrivelse(kategori)</p>
+                    </div>
+                </div>
+
+                <label class="sm-sok ce-sok">
+                    <Icon Name="search" />
+                    <input type="search" @bind="_search" @bind:event="oninput" placeholder="Søk beslagstype …" />
+                </label>
+
+                <div class="ce-liste">
+                    @foreach (var t in typer)
+                    {
+                        var type = t;
+                        <div @key="t.Id" class="ce-rad">
+                            <b class="ce-navn">@t.Navn</b>
+                            <span class="ce-dok">
+                                @if (t.HarDokument)
+                                {
+                                    <a href="@($"/komponenttype/{t.Id}/ce-dokument")" target="_blank" title="Åpne sertifikatet"><span class="ce-pdf">PDF</span>@t.DokumentFilnavn</a>
+                                    <label class="ce-lenke" title="Bytt sertifikat">Bytt<InputFile OnChange="@(e => LastOppDokument(type, e))" accept=".pdf,application/pdf" style="display:none;" /></label>
+                                    <button type="button" class="sm-fjern" title="Fjern sertifikatet" @onclick="@(() => FjernDokument(type))"><Icon Name="x" /></button>
+                                }
+                                else
+                                {
+                                    <label class="ce-last"><Icon Name="upload" />Last opp PDF<InputFile OnChange="@(e => LastOppDokument(type, e))" accept=".pdf,application/pdf" style="display:none;" /></label>
+                                }
+                            </span>
+                            <select class="ce-flytt" value="" @onchange="@(e => FlyttType(type, e))" title="Flytt til en annen CE-kategori">
+                                <option value="">Flytt til …</option>
+                                @foreach (var k in Kategorier.Where(k => k != kategori))
+                                {
+                                    <option value="@k">@Navn(k)</option>
+                                }
+                            </select>
+                        </div>
+                    }
+                    @if (typer.Count == 0)
+                    {
+                        <p class="sm-dempet ce-tom">@(string.IsNullOrWhiteSpace(_search) ? "Ingen beslagstyper i denne kategorien." : "Ingen treff.")</p>
+                    }
+                </div>
+                @if (kategori != CeTilbehorKategori.Ingen)
+                {
+                    <p class="sm-dempet">Sertifikatet brukes automatisk for alle varer av typen som ikke har sin egen FDV-fil.</p>
+                }
+            }
+        </section>
+    </div>
+
+    @if (GrenseEndret)
     {
-        @foreach (var t in UtenKategori)
-        {
-            <div @key="t.Id" class="gruppe-rad">
-                <span class="rad-navn">@t.Navn</span>
-                <select @bind="t.CeKategori" @bind:after="@(() => LagreKategori(t))">
-                    @foreach (var k in Kategorier)
-                    {
-                        <option value="@k">@k.Visningsnavn()</option>
-                    }
-                </select>
-                <span class="rad-dok">
-                    @if (t.HarDokument)
-                    {
-                        <a href="@($"/komponenttype/{t.Id}/ce-dokument")" target="_blank">@t.DokumentFilnavn</a>
-                        <button type="button" class="remove-button" @onclick="@(() => FjernDokument(t))">Fjern</button>
-                    }
-                    else
-                    {
-                        <span class="dok-tom">Ingen fil</span>
-                        <InputFile OnChange="@(e => LastOppDokument(t, e))" accept=".pdf,application/pdf" />
-                    }
-                </span>
-            </div>
-        }
+        <div class="sm-lagrebar">
+            <span><Icon Name="edit" /><b>Endrede grenseverdier</b> er ikke lagret</span>
+            <span class="sm-lagrebar-knapper">
+                <button type="button" class="sm-knapp" @onclick="ForkastGrense">Forkast</button>
+                <button type="button" class="sm-knapp primaer" @onclick="LagreGrenseverdier"><Icon Name="check" />Lagre</button>
+            </span>
+        </div>
     }
 </div>
-
-@if (_grenseverdier is not null)
-{
-    <div class="grenseverdi-kort">
-        <div class="grenseverdi-header">
-            <span class="grenseverdi-ikon"><Icon Name="shield" /></span>
-            <div>
-                <div class="grenseverdi-tittel">Grenseverdier for målte verdier</div>
-                <p class="grenseverdi-hint">Standardverdier iht. NS-EN 16005, brukes til å validere Mål-steget i CE-godkjenningen.</p>
-            </div>
-        </div>
-
-        <div class="stat-rad">
-            <div class="stat-kort">
-                <span class="stat-label">Maks åpningstid</span>
-                <div class="stat-input-rad">
-                    <input class="stat-input" @bind="_grenseverdier.MaksApningstidSek" type="number" step="0.1" />
-                    <span class="stat-enhet">sek</span>
-                </div>
-            </div>
-            <div class="stat-kort">
-                <span class="stat-label">Maks lukketid 90&ndash;10&deg;</span>
-                <div class="stat-input-rad">
-                    <input class="stat-input" @bind="_grenseverdier.MaksLukketidHoySek" type="number" step="0.1" />
-                    <span class="stat-enhet">sek</span>
-                </div>
-            </div>
-            <div class="stat-kort">
-                <span class="stat-label">Maks lukketid 10&ndash;0&deg;</span>
-                <div class="stat-input-rad">
-                    <input class="stat-input" @bind="_grenseverdier.MaksLukketidLavSek" type="number" step="0.1" />
-                    <span class="stat-enhet">sek</span>
-                </div>
-            </div>
-            <div class="stat-kort">
-                <span class="stat-label">Maks åpningskraft</span>
-                <div class="stat-input-rad">
-                    <input class="stat-input" @bind="_grenseverdier.MaksApningskraftN" type="number" step="0.1" />
-                    <span class="stat-enhet">N</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="grenseverdi-footer">
-            <button type="button" class="save-button" @onclick="LagreGrenseverdier">Lagre grenseverdier</button>
-            @if (!string.IsNullOrEmpty(_grenseverdiMelding))
-            {
-                <span class="save-success">@_grenseverdiMelding</span>
-            }
-        </div>
-    </div>
-}
 
 @code {
     private sealed class TypeDraft
@@ -158,33 +175,55 @@
         public string? DokumentFilnavn { get; set; }
     }
 
+    // Rekkefølgen i menyen: kategoriene som er med i CE-godkjenningen først.
     private static readonly CeTilbehorKategori[] Kategorier =
     [
-        CeTilbehorKategori.Ingen,
         CeTilbehorKategori.DorAutomatikk,
         CeTilbehorKategori.SikkerhetsTilbehor,
-        CeTilbehorKategori.AnnetTilbehor
-    ];
-
-    private static readonly CeTilbehorKategori[] KategoriserteGrupper =
-    [
-        CeTilbehorKategori.DorAutomatikk,
-        CeTilbehorKategori.SikkerhetsTilbehor,
-        CeTilbehorKategori.AnnetTilbehor
+        CeTilbehorKategori.AnnetTilbehor,
+        CeTilbehorKategori.Ingen
     ];
 
     private List<TypeDraft> _typer = [];
     private CeMaleGrenseverdier? _grenseverdier;
+    private (double, double, double, double) _lagretGrense;
+    private string _valgt = nameof(CeTilbehorKategori.DorAutomatikk);
+    private string _search = "";
     private string? _feil;
-    private string? _grenseverdiMelding;
-    private bool _visIngen;
+    private string? _melding;
+    private bool _full;
 
-    private List<TypeDraft> TyperFor(CeTilbehorKategori kategori) => _typer.Where(t => t.CeKategori == kategori).ToList();
-    private List<TypeDraft> UtenKategori => _typer.Where(t => t.CeKategori == CeTilbehorKategori.Ingen).ToList();
+    private bool GrenseEndret => _grenseverdier is { } g
+        && (g.MaksApningstidSek, g.MaksLukketidHoySek, g.MaksLukketidLavSek, g.MaksApningskraftN) != _lagretGrense;
+
+    private static string Navn(CeTilbehorKategori k) => k == CeTilbehorKategori.Ingen ? "Uten kategori" : k.Visningsnavn();
+
+    private static string Ikon(CeTilbehorKategori k) => k switch
+    {
+        CeTilbehorKategori.DorAutomatikk => "settings",
+        CeTilbehorKategori.SikkerhetsTilbehor => "shield",
+        CeTilbehorKategori.AnnetTilbehor => "tool",
+        _ => "circle"
+    };
+
+    private static string Beskrivelse(CeTilbehorKategori k) => k switch
+    {
+        CeTilbehorKategori.DorAutomatikk => "Vises som maskinen i CE-godkjenningen.",
+        CeTilbehorKategori.SikkerhetsTilbehor => "Vises i listen over sikkerhetstilbehør i CE-godkjenningen.",
+        CeTilbehorKategori.AnnetTilbehor => "Vises i listen over annet tilbehør i CE-godkjenningen.",
+        _ => "Ikke med i CE-godkjenningen. Flytt en type til en kategori for å ta den med."
+    };
 
     protected override async Task OnInitializedAsync()
     {
+        _full = await VisningPref.HentAsync("ce-oppsett-bredde", "normal") == "full";
         await LoadAsync();
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("ce-oppsett-bredde", _full ? "full" : "normal");
     }
 
     private async Task LoadAsync()
@@ -196,7 +235,7 @@
                 Id = t.Id,
                 Navn = t.Navn,
                 CeKategori = t.CeKategori,
-                HarDokument = PortalItlock.Web.Data.SqlFn.TypeOf(t.CeDokumentData) != "null",
+                HarDokument = SqlFn.TypeOf(t.CeDokumentData) != "null",
                 DokumentFilnavn = t.CeDokumentFilnavn
             })
             .ToListAsync();
@@ -208,13 +247,37 @@
             Db.CeMaleGrenseverdier.Add(_grenseverdier);
             await Db.SaveChangesAsync();
         }
+
+        HuskGrense();
     }
 
-    private async Task LagreKategori(TypeDraft draft)
+    private void HuskGrense()
     {
-        var entity = await Db.ComponentTypes.FirstAsync(t => t.Id == draft.Id);
-        entity.CeKategori = draft.CeKategori;
+        if (_grenseverdier is { } g)
+        {
+            _lagretGrense = (g.MaksApningstidSek, g.MaksLukketidHoySek, g.MaksLukketidLavSek, g.MaksApningskraftN);
+        }
+    }
+
+    private void Velg(string valgt)
+    {
+        _valgt = valgt;
+        _search = "";
+        _feil = null;
+    }
+
+    private async Task FlyttType(TypeDraft type, ChangeEventArgs e)
+    {
+        if (!Enum.TryParse<CeTilbehorKategori>(e.Value?.ToString(), out var ny) || ny == type.CeKategori)
+        {
+            return;
+        }
+
+        var entity = await Db.ComponentTypes.FirstAsync(t => t.Id == type.Id);
+        entity.CeKategori = ny;
         await Db.SaveChangesAsync();
+        type.CeKategori = ny;
+        _melding = $"«{type.Navn}» er flyttet til {Navn(ny)}.";
     }
 
     private async Task LastOppDokument(TypeDraft draft, InputFileChangeEventArgs e)
@@ -223,7 +286,7 @@
         var file = e.File;
         if (file.Size > 20_000_000)
         {
-            _feil = $"\"{file.Name}\" er for stor (maks 20 MB).";
+            _feil = $"«{file.Name}» er for stor (maks 20 MB).";
             return;
         }
 
@@ -241,6 +304,7 @@
 
         draft.HarDokument = true;
         draft.DokumentFilnavn = file.Name;
+        _melding = $"Sertifikatet for «{draft.Navn}» er lagret.";
     }
 
     private async Task FjernDokument(TypeDraft draft)
@@ -253,6 +317,15 @@
 
         draft.HarDokument = false;
         draft.DokumentFilnavn = null;
+        _melding = $"Sertifikatet for «{draft.Navn}» er fjernet.";
+    }
+
+    private void ForkastGrense()
+    {
+        if (_grenseverdier is { } g)
+        {
+            (g.MaksApningstidSek, g.MaksLukketidHoySek, g.MaksLukketidLavSek, g.MaksApningskraftN) = _lagretGrense;
+        }
     }
 
     private async Task LagreGrenseverdier()
@@ -262,13 +335,8 @@
             return;
         }
 
-        var entity = await Db.CeMaleGrenseverdier.FirstAsync(g => g.Id == _grenseverdier.Id);
-        entity.MaksApningstidSek = _grenseverdier.MaksApningstidSek;
-        entity.MaksLukketidHoySek = _grenseverdier.MaksLukketidHoySek;
-        entity.MaksLukketidLavSek = _grenseverdier.MaksLukketidLavSek;
-        entity.MaksApningskraftN = _grenseverdier.MaksApningskraftN;
         await Db.SaveChangesAsync();
-
-        _grenseverdiMelding = "Grenseverdiene er lagret.";
+        HuskGrense();
+        _melding = "Grenseverdiene er lagret.";
     }
 }
