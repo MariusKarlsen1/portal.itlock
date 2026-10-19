@@ -127,7 +127,6 @@ public static class PortalModulRegister
         new Lenke("Leverandører", "Søk opp leverandører, se hvilke varer de leverer, og sett varenummer/pris/standard pr. leverandør.", "komponenter/leverandorer", "users"),
         new Lenke("Rabattgrupper", "Faste rabattavtaler per leverandør/produktserie, brukes til å beregne nettopris automatisk.", "rabattgrupper", "tag"),
         new Lenke("Produktgrupper", "Opprett produktgrupper og legg til varer i dem. Brukes til å sette kunderabatt per gruppe.", "produktgrupper", "folder"),
-        new Lenke("Lagerstyring", "Hold oversikt over lagerbeholdning og få varsel ved lav beholdning.", "lager", "box"),
     ];
 
     private static readonly List<Lenke> BrukerKundeUndermoduler =
@@ -197,7 +196,7 @@ public static class PortalModulRegister
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings", OppsettUndermoduler),
-                    new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler),
+                    new Lenke("Komponenter og priser", "Komponentregister, prisimport, leverandører, rabattgrupper og produktgrupper samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler),
                     new Lenke("Brukere og kunder", "Brukere, kundetilgang og driftslisenser samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler),
                     new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt", RapporterUndermoduler),
                 ]),
@@ -288,7 +287,7 @@ public static class PortalModulRegister
             [
                 new LenkeGruppe("Moduler", [
                     new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings", OppsettUndermoduler, ModulTilgang.KunAdmin),
-                    new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler, ModulTilgang.KunAdmin),
+                    new Lenke("Komponenter og priser", "Komponentregister, prisimport, leverandører, rabattgrupper og produktgrupper samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler, ModulTilgang.KunAdmin),
                     new Lenke("Brukere og kunder", "Brukere, kundetilgang og driftslisenser samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler, ModulTilgang.KunAdmin),
                     new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt", RapporterUndermoduler, ModulTilgang.KunAdmin),
                 ]),
