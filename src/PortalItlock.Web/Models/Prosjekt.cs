@@ -48,6 +48,11 @@ public class Prosjekt
     // Hvor mange servicerunder avtalen skal ha i året (1 = årlig, 2 = halvårlig
     // osv.). Null = ikke satt; da leses intervallet fra rundene i stedet.
     public int? ServiceGangerPerAr { get; set; }
+
+    // Sjekklisten servicerundene på avtalen får (se ServiceSjekkliste). Null =
+    // standardlisten. Bevisst uten navigasjon/FK - slettes en liste, settes
+    // feltet tilbake til null i koden (ServiceSjekklistemal.razor).
+    public int? ServiceSjekklisteId { get; set; }
     public List<ServiceMinuttLinje> ServiceMinuttLinjer { get; set; } = [];
     public List<ServiceKategoriPris> ServiceKategoriPriser { get; set; } = [];
     public List<Arbeidsordre> Arbeidsordre { get; set; } = [];

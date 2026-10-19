@@ -119,6 +119,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Servicerunde> Servicerunder => Set<Servicerunde>();
     public DbSet<ServicerundeDel> ServicerundeDeler => Set<ServicerundeDel>();
     public DbSet<ServicerundeSjekklistepunkt> ServicerundeSjekklistepunkter => Set<ServicerundeSjekklistepunkt>();
+    public DbSet<ServiceSjekkliste> ServiceSjekklister => Set<ServiceSjekkliste>();
     public DbSet<ServiceavtaleSjekkpunkt> ServiceavtaleSjekkpunkter => Set<ServiceavtaleSjekkpunkt>();
     public DbSet<ServicerundeSjekkpunkt> ServicerundeSjekkpunkter => Set<ServicerundeSjekkpunkt>();
     public DbSet<ServicerundeMedia> ServicerundeMedia => Set<ServicerundeMedia>();
@@ -606,6 +607,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(f => f.TilUtstyrId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<ServiceSjekkliste>()
+            .HasMany(l => l.Punkter)
+            .WithOne(p => p.ServiceSjekkliste)
+            .HasForeignKey(p => p.ServiceSjekklisteId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Servicerunde>()
             .HasOne(s => s.Prosjekt)

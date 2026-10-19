@@ -4729,6 +4729,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("ServiceGangerPerAr")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("ServiceSjekklisteId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal?>("ServiceTimepris")
                         .HasColumnType("TEXT");
 
@@ -5327,6 +5330,24 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ServiceMinuttLinjer");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ServiceSjekkliste", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ErStandard")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ServiceSjekklister");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ServiceVarselSendt", b =>
                 {
                     b.Property<int>("Id")
@@ -5565,11 +5586,16 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("Rekkefolge")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("ServiceSjekklisteId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Tekst")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ServiceSjekklisteId");
 
                     b.ToTable("ServicerundeSjekklistepunkter");
                 });
@@ -7835,6 +7861,16 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Servicerunde");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeSjekklistepunkt", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.ServiceSjekkliste", "ServiceSjekkliste")
+                        .WithMany("Punkter")
+                        .HasForeignKey("ServiceSjekklisteId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("ServiceSjekkliste");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeSjekkpunkt", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Bruker", "FullfortAvBruker")
@@ -8334,6 +8370,11 @@ namespace PortalItlock.Web.Migrations
             modelBuilder.Entity("PortalItlock.Web.Models.RequirementValue", b =>
                 {
                     b.Navigation("Pakker");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ServiceSjekkliste", b =>
+                {
+                    b.Navigation("Punkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Servicehenvendelse", b =>

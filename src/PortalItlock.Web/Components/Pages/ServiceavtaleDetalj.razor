@@ -144,7 +144,22 @@ else if (_prosjekt is not null)
 
                 <div class="sa-kol">
                     <section class="sa-tile">
-                        <div class="sa-tile-t"><h3>Sjekkpunkter for avtalen</h3><small>gjøres hver runde</small></div>
+                        <div class="sa-tile-t">
+                            <h3>Sjekkpunkter for avtalen</h3>
+                            @if (_sjekklister.Count > 1 && _naverendeRolle != BrukerRolle.Montor)
+                            {
+                                <select class="sa-sjekkliste-valg" title="Hvilken sjekkliste servicerundene på avtalen får" value="@ValgtSjekklisteId" @onchange="VelgSjekkliste">
+                                    @foreach (var liste in _sjekklister)
+                                    {
+                                        <option value="@liste.Id">@liste.Navn@(liste.ErStandard ? " (standard)" : "")</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <small>gjøres hver runde</small>
+                            }
+                        </div>
                         @if (_sjekklistemal.Count == 0 && _avtalePunkter.Count == 0)
                         {
                             <p class="sa-tom">Ingen sjekkpunkter ennå. Legg til punkter som skal gjøres hver runde.</p>
@@ -701,7 +716,7 @@ else if (_prosjekt is not null)
             .OrderBy(d => d.Dornummer)
             .Select(d => new DorOption { Id = d.Id, Dornummer = d.Dornummer })
             .ToListAsync();
-        _sjekklistemal = await Db.ServicerundeSjekklistepunkter.OrderBy(p => p.Rekkefolge).ToListAsync();
+        await LastSjekklisteAsync();
         _avtalePunkter = await Db.ServiceavtaleSjekkpunkter.Where(p => p.ProsjektId == ProsjektId).OrderBy(p => p.Rekkefolge).ToListAsync();
         ByggNyeSjekkpunkter();
 
@@ -715,6 +730,48 @@ else if (_prosjekt is not null)
             .ToList();
 
         await LastRunderAsync();
+    }
+
+    // Sjekklistene fra Oppsett → Sjekkliste for servicerunder. Avtalen bruker
+    // sin valgte liste, eller standardlisten når den ikke har valgt noen.
+    private List<ServiceSjekkliste> _sjekklister = [];
+
+    private int? ValgtSjekklisteId =>
+        _prosjekt?.ServiceSjekklisteId is int id && _sjekklister.Any(l => l.Id == id)
+            ? id
+            : _sjekklister.FirstOrDefault(l => l.ErStandard)?.Id;
+
+    private async Task LastSjekklisteAsync()
+    {
+        _sjekklister = await Db.ServiceSjekklister
+            .OrderByDescending(l => l.ErStandard).ThenBy(l => l.Navn)
+            .ToListAsync();
+        var listeId = ValgtSjekklisteId;
+        _sjekklistemal = await Db.ServicerundeSjekklistepunkter
+            .Where(p => p.ServiceSjekklisteId == listeId)
+            .OrderBy(p => p.Rekkefolge)
+            .ToListAsync();
+    }
+
+    private async Task VelgSjekkliste(ChangeEventArgs e)
+    {
+        if (_prosjekt is null || !int.TryParse(e.Value?.ToString(), out var id))
+        {
+            return;
+        }
+
+        // Standardlisten lagres som null, så avtalen følger med hvis en annen liste blir standard.
+        int? nyVerdi = _sjekklister.FirstOrDefault(l => l.Id == id)?.ErStandard == true ? null : id;
+        // Lagrer bare dette feltet, så andre ulagrede endringer på siden ikke blir med.
+        await Db.Prosjekter.Where(p => p.Id == _prosjekt.Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(p => p.ServiceSjekklisteId, nyVerdi));
+        // Oppdaterer også originalverdien, så EF ikke ser feltet som endret
+        // (IsModified = false ville satt verdien tilbake til den gamle).
+        var felt = Db.Entry(_prosjekt).Property(p => p.ServiceSjekklisteId);
+        felt.CurrentValue = nyVerdi;
+        felt.OriginalValue = nyVerdi;
+        await LastSjekklisteAsync();
+        ByggNyeSjekkpunkter();
     }
 
     // Sjekklisten for neste runde: felles mal + avtalens faste punkter.

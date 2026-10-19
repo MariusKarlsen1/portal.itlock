@@ -4,181 +4,465 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject VisningPreferanseService VisningPref
 
-<PageTitle>Sjekkliste for servicerunder</PageTitle>
+<PageTitle>Sjekklister for servicerunder</PageTitle>
 
-<div class="side-header">
-    <span class="side-header-ikon"><Icon Name="check-circle" /></span>
-    <div>
-        <h1>Sjekkliste for servicerunder</h1>
-        <p class="section-hint">Denne sjekklisten legges automatisk til hver gang en ny servicerunde registreres i Serviceavtaler-modulen, slik at punktene kan hukes av på stedet eller årlig.</p>
-    </div>
-</div>
-
-<div class="service-splitt">
-    <div class="mal-editor">
-        @if (_punkter.Count == 0)
-        {
-            <p class="list-empty">Ingen punkter lagt til ennå.</p>
-        }
-        else
-        {
-            <ol class="punkt-list">
-                @foreach (var punkt in _punkter.OrderBy(p => p.Rekkefolge))
-                {
-                    <li @key="punkt.Id" class="@(_dragPunkt?.Id == punkt.Id ? "punkt-dragging" : "")"
-                        draggable="true"
-                        @ondragstart="@(() => OnDragStart(punkt))"
-                        @ondragover="@(() => { })" @ondragover:preventDefault
-                        @ondrop="@(() => OnDrop(punkt))">
-                        <span class="punkt-handle" title="Dra for å endre rekkefølge">⠿</span>
-                        <input @bind="punkt.Tekst" @bind:event="oninput" />
-                        <button type="button" class="knapp-liten-fjern" @onclick="@(() => SlettPunkt(punkt))">Fjern</button>
-                    </li>
-                }
-            </ol>
-        }
-
-        <div class="ny-punkt-form">
-            <input @bind="_nyttPunktTekst" @bind:event="oninput"
-                   @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilPunkt(); } })"
-                   placeholder="Nytt sjekkpunkt" />
-            <button type="button" class="knapp knapp-primaer" @onclick="LeggTilPunkt">Legg til punkt</button>
-        </div>
-
-        <div class="mal-editor-footer">
-            <button type="button" class="knapp knapp-primaer" @onclick="LagreAlle">Lagre endringer</button>
-            @if (!string.IsNullOrEmpty(_melding))
-            {
-                <span class="save-success">@_melding</span>
-            }
-        </div>
-    </div>
-
-    <div class="rapport-panel">
-        <div class="rapport-ark">
-            <div class="rapport-topp">
-                <span class="rapport-logo">Full Kontroll</span>
-                <span class="rapport-dato">Servicerapport &middot; @DateTime.Now.ToString("dd.MM.yyyy")</span>
+@* SS10 (service-sjekklister-flere-forslag.html): flere sjekklister for
+   servicerunder i samme dashbord-kort som Sjekklistemaler. Serviceavtalen
+   velger liste (ServiceavtaleDetalj.razor); uten valg brukes standardlisten. *@
+<div class="sm @(_full ? "sm-full" : "")">
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="check-circle" /></span>
+            <div>
+                <h1>Sjekklister for servicerunder</h1>
+                <p class="section-hint">Serviceavtalen velger hvilken liste rundene får – uten valg brukes standardlisten. Punktene legges på hver ny servicerunde, så de kan hukes av på stedet.</p>
             </div>
-            <div class="rapport-tittel">Utført sjekkliste</div>
-            @if (_punkter.Count == 0)
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_melding))
+    {
+        <p class="sm-ok">@_melding</p>
+    }
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
+    }
+
+    <div class="sm-kort">
+        <nav class="sm-meny">
+            <label class="sm-sok">
+                <Icon Name="search" />
+                <input type="search" @bind="_search" @bind:event="oninput" placeholder="Finn liste eller punkt" />
+            </label>
+            <div class="sm-liste">
+                @foreach (var liste in _filtrert)
+                {
+                    var id = liste.Id;
+                    <button type="button" @key="liste.Id" class="@(liste.Id == _valgtId ? "pa" : "")" @onclick="@(() => Velg(id))">
+                        <span class="sm-meny-ikon"><Icon Name="check-circle" /></span>
+                        <span class="sm-navn">
+                            @(string.IsNullOrWhiteSpace(liste.Navn) ? "(Uten navn)" : liste.Navn)@(liste.Endret ? " •" : "")
+                            @if (liste.ErStandard)
+                            {
+                                <span class="sm-std-tekst">Standard</span>
+                            }
+                        </span>
+                        <small>@liste.Punkter.Count(p => !p.Slettet)</small>
+                    </button>
+                }
+                @if (_filtrert.Count == 0)
+                {
+                    <p class="sm-dempet">@(_lister.Count == 0 ? "Ingen sjekklister ennå." : "Ingen treff.")</p>
+                }
+            </div>
+            <div class="sm-ny">
+                <input @bind="_nyNavn" @bind:event="oninput" placeholder="＋ Ny sjekkliste"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettListe(); } })" />
+                @if (!string.IsNullOrWhiteSpace(_nyNavn))
+                {
+                    <button type="button" class="sm-knapp primaer" @onclick="OpprettListe">Opprett</button>
+                }
+            </div>
+        </nav>
+
+        <section class="sm-innhold">
+            <button type="button" class="sm-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+                <Icon Name="@(_full ? "minimize" : "maximize")" />
+            </button>
+
+            @if (_valgt is { } valgt)
             {
-                <p class="rapport-tom">Ingen punkter lagt til ennå.</p>
+                var punkter = valgt.Punkter.Where(p => !p.Slettet).ToList();
+                <div class="sm-topp">
+                    <span class="sm-stort-ikon"><Icon Name="check-circle" /></span>
+                    <div>
+                        <h2>
+                            @(string.IsNullOrWhiteSpace(valgt.Navn) ? "(Uten navn)" : valgt.Navn)
+                            @if (valgt.ErStandard)
+                            {
+                                <span class="sm-std">Standard</span>
+                            }
+                        </h2>
+                        <p>@punkter.Count @(punkter.Count == 1 ? "punkt" : "punkter")@(valgt.ErStandard ? " · brukes på avtaler som ikke har valgt en annen liste" : "")</p>
+                    </div>
+                    <span class="sm-topp-knapper">
+                        @if (!valgt.ErStandard)
+                        {
+                            <button type="button" class="sm-knapp" @onclick="@(() => GjorTilStandard(valgt))"><Icon Name="star" />Gjør til standard</button>
+                        }
+                        <button type="button" class="sm-knapp" @onclick="@(() => DupliserListe(valgt))"><Icon Name="clipboard" />Dupliser</button>
+                    </span>
+                </div>
+
+                <label class="sm-felt">
+                    <span>Navn på sjekklisten</span>
+                    <input @bind="valgt.Navn" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" placeholder="F.eks. Automatikkdører" />
+                </label>
+
+                <span class="sm-seksjon">Punkter</span>
+                <div class="sm-punkter">
+                    @for (var i = 0; i < punkter.Count; i++)
+                    {
+                        var punkt = punkter[i];
+                        var indeks = i;
+                        <div @key="punkt" class="sm-punkt @(_dragPunkt == punkt ? "drar" : "")"
+                             draggable="true"
+                             @ondragstart="@(() => _dragPunkt = punkt)"
+                             @ondragover="@(() => { })" @ondragover:preventDefault
+                             @ondrop="@(() => Slipp(valgt, punkt))"
+                             @ondragend="@(() => _dragPunkt = null)">
+                            <span class="sm-grep" title="Dra for å endre rekkefølge">⠿</span>
+                            <span class="sm-nr">@(indeks + 1)</span>
+                            <input @bind="punkt.Tekst" @bind:event="oninput" @bind:after="@(() => valgt.Endret = true)" />
+                            <span class="sm-pil">
+                                <button type="button" title="Flytt opp" disabled="@(indeks == 0)" @onclick="@(() => Flytt(valgt, punkt, -1))">▲</button>
+                                <button type="button" title="Flytt ned" disabled="@(indeks == punkter.Count - 1)" @onclick="@(() => Flytt(valgt, punkt, 1))">▼</button>
+                                <button type="button" class="sm-fjern" title="Fjern punkt" @onclick="@(() => FjernPunkt(valgt, punkt))"><Icon Name="x" /></button>
+                            </span>
+                        </div>
+                    }
+                    <div class="sm-punkt sm-punkt-ny">
+                        <span></span>
+                        <span class="sm-nr ny"><Icon Name="plus" /></span>
+                        <input @bind="valgt.NyttPunkt" @bind:event="oninput" placeholder="Nytt punkt – trykk Enter"
+                               @onkeydown="@(e => { if (e.Key == "Enter") { LeggTilPunkt(valgt); } })" />
+                        @if (!string.IsNullOrWhiteSpace(valgt.NyttPunkt))
+                        {
+                            <button type="button" class="sm-knapp" @onclick="@(() => LeggTilPunkt(valgt))">Legg til</button>
+                        }
+                    </div>
+                </div>
+
+                <div class="sm-bunn">
+                    @if (valgt.ErStandard)
+                    {
+                        <span class="sm-dempet">Standardlisten kan ikke slettes – gjør en annen liste til standard først.</span>
+                    }
+                    else if (_bekreftSlett)
+                    {
+                        <span class="sm-dempet">Slette «@valgt.Navn»? Avtaler som bruker den, får standardlisten i stedet.</span>
+                        <button type="button" class="sm-knapp fare" @onclick="@(() => SlettListe(valgt))">Ja, slett</button>
+                        <button type="button" class="sm-knapp" @onclick="@(() => _bekreftSlett = false)">Avbryt</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="sm-lenke" @onclick="@(() => _bekreftSlett = true)"><Icon Name="trash" />Slett sjekkliste</button>
+                    }
+                </div>
             }
             else
             {
-                @foreach (var punkt in _punkter.OrderBy(p => p.Rekkefolge))
-                {
-                    <div class="rapport-punkt" @key="punkt.Id"><span class="rapport-boks"></span>@punkt.Tekst</div>
-                }
+                <p class="sm-dempet">Velg en sjekkliste i menyen, eller lag en ny nederst i menyen.</p>
             }
-            <div class="rapport-fot">Signert av montør ved fullført servicerunde</div>
-        </div>
-        <p class="rapport-hint">Slik ser sjekklisten ut på servicerapporten kunden mottar.</p>
+        </section>
     </div>
+
+    @if (_lister.Any(l => l.Endret))
+    {
+        var antall = _lister.Count(l => l.Endret);
+        <div class="sm-lagrebar">
+            <span><Icon Name="edit" /><b>Endringer i @antall @(antall == 1 ? "sjekkliste" : "sjekklister")</b> er ikke lagret</span>
+            <span class="sm-lagrebar-knapper">
+                <button type="button" class="sm-knapp" @onclick="Forkast">Forkast</button>
+                <button type="button" class="sm-knapp primaer" @onclick="LagreAlle"><Icon Name="check" />Lagre</button>
+            </span>
+        </div>
+    }
 </div>
 
 @code {
-    private List<ServicerundeSjekklistepunkt> _punkter = [];
-    private string _nyttPunktTekst = "";
+    private sealed class PunktDraft
+    {
+        public int Id { get; set; }
+        public string Tekst { get; set; } = "";
+        public bool Slettet { get; set; }
+    }
+
+    private sealed class ListeDraft
+    {
+        public int Id { get; set; }
+        public string Navn { get; set; } = "";
+        public bool ErStandard { get; set; }
+        public List<PunktDraft> Punkter { get; set; } = [];
+        public string NyttPunkt { get; set; } = "";
+        public bool Endret { get; set; }
+    }
+
+    private List<ListeDraft> _lister = [];
+    private string _search = "";
+    private string _nyNavn = "";
     private string? _melding;
-    private ServicerundeSjekklistepunkt? _dragPunkt;
+    private string? _feil;
+    private int? _valgtId;
+    private bool _bekreftSlett;
+    private bool _full;
+    private PunktDraft? _dragPunkt;
+
+    private ListeDraft? _valgt => _lister.FirstOrDefault(l => l.Id == _valgtId);
+
+    private List<ListeDraft> _filtrert => string.IsNullOrWhiteSpace(_search)
+        ? _lister
+        : _lister.Where(l => l.Navn.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+            || l.Punkter.Any(p => !p.Slettet && p.Tekst.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase))).ToList();
 
     protected override async Task OnInitializedAsync()
     {
+        _full = await VisningPref.HentAsync("service-sjekkliste-bredde", "normal") == "full";
         await LoadAsync();
+        _valgtId = _lister.FirstOrDefault()?.Id;
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("service-sjekkliste-bredde", _full ? "full" : "normal");
     }
 
     private async Task LoadAsync()
     {
-        _punkter = await Db.ServicerundeSjekklistepunkter.OrderBy(p => p.Rekkefolge).ToListAsync();
+        var lister = await Db.ServiceSjekklister
+            .Include(l => l.Punkter)
+            .ToListAsync();
+
+        _lister = lister
+            .OrderByDescending(l => l.ErStandard).ThenBy(l => l.Navn)
+            .Select(l => new ListeDraft
+            {
+                Id = l.Id,
+                Navn = l.Navn,
+                ErStandard = l.ErStandard,
+                Punkter = l.Punkter.OrderBy(p => p.Rekkefolge).Select(p => new PunktDraft { Id = p.Id, Tekst = p.Tekst }).ToList()
+            }).ToList();
+
+        if (_valgtId is not null && _lister.All(l => l.Id != _valgtId))
+        {
+            _valgtId = _lister.FirstOrDefault()?.Id;
+        }
     }
 
-    private async Task LeggTilPunkt()
+    private void Velg(int id)
     {
-        var tekst = _nyttPunktTekst.Trim();
+        _valgtId = id;
+        _bekreftSlett = false;
+        _feil = null;
+    }
+
+    private void LeggTilPunkt(ListeDraft liste)
+    {
+        var tekst = liste.NyttPunkt.Trim();
         if (tekst.Length == 0)
         {
             return;
         }
 
-        var nesteRekkefolge = _punkter.Count == 0 ? 1 : _punkter.Max(p => p.Rekkefolge) + 1;
-        Db.ServicerundeSjekklistepunkter.Add(new ServicerundeSjekklistepunkt { Tekst = tekst, Rekkefolge = nesteRekkefolge });
-        await Db.SaveChangesAsync();
-
-        _nyttPunktTekst = "";
-        _melding = "Punkt lagt til.";
-        await LoadAsync();
+        liste.Punkter.Add(new PunktDraft { Tekst = tekst });
+        liste.NyttPunkt = "";
+        liste.Endret = true;
     }
 
-    private async Task SlettPunkt(ServicerundeSjekklistepunkt punkt)
+    private void FjernPunkt(ListeDraft liste, PunktDraft punkt)
     {
-        var entitet = await Db.ServicerundeSjekklistepunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
-        if (entitet is null)
+        if (punkt.Id == 0)
+        {
+            liste.Punkter.Remove(punkt);
+        }
+        else
+        {
+            punkt.Slettet = true;
+        }
+
+        liste.Endret = true;
+    }
+
+    private void Flytt(ListeDraft liste, PunktDraft punkt, int retning)
+    {
+        var synlige = liste.Punkter.Where(p => !p.Slettet).ToList();
+        var i = synlige.IndexOf(punkt);
+        var j = i + retning;
+        if (i < 0 || j < 0 || j >= synlige.Count)
         {
             return;
         }
 
-        Db.ServicerundeSjekklistepunkter.Remove(entitet);
-        await Db.SaveChangesAsync();
-        _melding = "Punkt fjernet.";
+        var a = liste.Punkter.IndexOf(synlige[i]);
+        var b = liste.Punkter.IndexOf(synlige[j]);
+        (liste.Punkter[a], liste.Punkter[b]) = (liste.Punkter[b], liste.Punkter[a]);
+        liste.Endret = true;
+    }
+
+    private void Slipp(ListeDraft liste, PunktDraft mal)
+    {
+        if (_dragPunkt is null || _dragPunkt == mal || !liste.Punkter.Contains(_dragPunkt))
+        {
+            _dragPunkt = null;
+            return;
+        }
+
+        liste.Punkter.Remove(_dragPunkt);
+        liste.Punkter.Insert(liste.Punkter.IndexOf(mal), _dragPunkt);
+        _dragPunkt = null;
+        liste.Endret = true;
+    }
+
+    private async Task Forkast()
+    {
+        _feil = null;
+        _melding = null;
         await LoadAsync();
     }
 
     private async Task LagreAlle()
     {
-        foreach (var punkt in _punkter)
+        _feil = null;
+        var endrede = _lister.Where(l => l.Endret).ToList();
+        if (endrede.Any(l => string.IsNullOrWhiteSpace(l.Navn)))
         {
-            var entitet = await Db.ServicerundeSjekklistepunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
-            if (entitet is not null)
+            _feil = "Alle sjekklister må ha et navn.";
+            return;
+        }
+
+        if (endrede.Any(l => l.Punkter.Any(p => !p.Slettet && string.IsNullOrWhiteSpace(p.Tekst))))
+        {
+            _feil = "Punkter kan ikke stå tomme – skriv inn tekst eller fjern punktet.";
+            return;
+        }
+
+        foreach (var draft in endrede)
+        {
+            var liste = await Db.ServiceSjekklister.Include(l => l.Punkter).FirstOrDefaultAsync(l => l.Id == draft.Id);
+            if (liste is null)
             {
-                entitet.Tekst = punkt.Tekst;
+                continue;
+            }
+
+            liste.Navn = draft.Navn.Trim();
+            var rekkefolge = 1;
+            foreach (var p in draft.Punkter)
+            {
+                var entitet = p.Id == 0 ? null : liste.Punkter.FirstOrDefault(x => x.Id == p.Id);
+                if (p.Slettet)
+                {
+                    if (entitet is not null)
+                    {
+                        Db.ServicerundeSjekklistepunkter.Remove(entitet);
+                    }
+
+                    continue;
+                }
+
+                if (entitet is null)
+                {
+                    liste.Punkter.Add(new ServicerundeSjekklistepunkt { Tekst = p.Tekst.Trim(), Rekkefolge = rekkefolge++ });
+                }
+                else
+                {
+                    entitet.Tekst = p.Tekst.Trim();
+                    entitet.Rekkefolge = rekkefolge++;
+                }
             }
         }
 
         await Db.SaveChangesAsync();
-        _melding = "Sjekklisten er lagret.";
+        await LoadAsync();
+        _melding = endrede.Count == 1 ? $"«{endrede[0].Navn.Trim()}» er lagret." : $"{endrede.Count} sjekklister er lagret.";
     }
 
-    private void OnDragStart(ServicerundeSjekklistepunkt punkt)
+    // Lagres med en gang - uavhengig av lagre-linjen.
+    private async Task GjorTilStandard(ListeDraft liste)
     {
-        _dragPunkt = punkt;
-    }
-
-    private async Task OnDrop(ServicerundeSjekklistepunkt target)
-    {
-        if (_dragPunkt is null || _dragPunkt.Id == target.Id)
+        var alle = await Db.ServiceSjekklister.ToListAsync();
+        foreach (var l in alle)
         {
-            _dragPunkt = null;
-            return;
-        }
-
-        var ordnet = _punkter.OrderBy(p => p.Rekkefolge).ToList();
-        var dragget = ordnet.FirstOrDefault(p => p.Id == _dragPunkt.Id);
-        if (dragget is null)
-        {
-            _dragPunkt = null;
-            return;
-        }
-
-        ordnet.Remove(dragget);
-        var targetIndex = ordnet.FindIndex(p => p.Id == target.Id);
-        ordnet.Insert(targetIndex, dragget);
-
-        for (var i = 0; i < ordnet.Count; i++)
-        {
-            var nyRekkefolge = i + 1;
-            var entitet = await Db.ServicerundeSjekklistepunkter.FirstOrDefaultAsync(p => p.Id == ordnet[i].Id);
-            if (entitet is not null)
-            {
-                entitet.Rekkefolge = nyRekkefolge;
-            }
-            ordnet[i].Rekkefolge = nyRekkefolge;
+            l.ErStandard = l.Id == liste.Id;
         }
 
         await Db.SaveChangesAsync();
-        _dragPunkt = null;
+        foreach (var l in _lister)
+        {
+            l.ErStandard = l.Id == liste.Id;
+        }
+
+        _melding = $"«{liste.Navn.Trim()}» er nå standardlisten.";
+    }
+
+    private async Task OpprettListe()
+    {
+        var navn = _nyNavn.Trim();
+        if (navn.Length == 0)
+        {
+            return;
+        }
+
+        // Den første listen blir automatisk standard.
+        var ny = new ServiceSjekkliste { Navn = navn, ErStandard = !await Db.ServiceSjekklister.AnyAsync() };
+        Db.ServiceSjekklister.Add(ny);
+        await Db.SaveChangesAsync();
+
+        _nyNavn = "";
+        _search = "";
+        _feil = null;
+        _melding = $"«{navn}» er opprettet. Legg til punktene under.";
+        await LastPaNyttBeholdEndringer();
+        Velg(ny.Id);
+    }
+
+    private async Task DupliserListe(ListeDraft liste)
+    {
+        var kopi = new ServiceSjekkliste { Navn = $"{liste.Navn.Trim()} (kopi)" };
+        var rekkefolge = 1;
+        foreach (var punkt in liste.Punkter.Where(p => !p.Slettet && !string.IsNullOrWhiteSpace(p.Tekst)))
+        {
+            kopi.Punkter.Add(new ServicerundeSjekklistepunkt { Tekst = punkt.Tekst.Trim(), Rekkefolge = rekkefolge++ });
+        }
+
+        Db.ServiceSjekklister.Add(kopi);
+        await Db.SaveChangesAsync();
+
+        _melding = $"«{kopi.Navn}» er laget.";
+        _feil = null;
+        await LastPaNyttBeholdEndringer();
+        Velg(kopi.Id);
+    }
+
+    private async Task SlettListe(ListeDraft liste)
+    {
+        _bekreftSlett = false;
+        var entitet = await Db.ServiceSjekklister.FirstOrDefaultAsync(l => l.Id == liste.Id);
+        if (entitet is null || entitet.ErStandard)
+        {
+            return;
+        }
+
+        // Avtaler som brukte listen, går tilbake til standardlisten.
+        await Db.Prosjekter.Where(p => p.ServiceSjekklisteId == liste.Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(p => p.ServiceSjekklisteId, (int?)null));
+        Db.ServiceSjekklister.Remove(entitet);
+        await Db.SaveChangesAsync();
+
+        _melding = $"«{liste.Navn}» er slettet.";
+        _feil = null;
+        _valgtId = null;
+        await LastPaNyttBeholdEndringer();
+        _valgtId = _lister.FirstOrDefault()?.Id;
+    }
+
+    // Laster listen på nytt uten å miste ulagrede endringer i andre lister.
+    private async Task LastPaNyttBeholdEndringer()
+    {
+        var ulagret = _lister.Where(l => l.Endret).ToList();
+        await LoadAsync();
+        foreach (var l in ulagret)
+        {
+            var i = _lister.FindIndex(x => x.Id == l.Id);
+            if (i >= 0)
+            {
+                _lister[i] = l;
+            }
+        }
     }
 }
