@@ -124,6 +124,41 @@ public class PrisimportService(ApplicationDbContext db)
         return (kolonner, dataRader);
     }
 
+    // Varer leverandøren allerede har under sitt EGET varenummer (ComponentLeverandor.Varenummer)
+    // regnes også som eksisterende - ellers ville de blitt lagt inn på nytt som duplikater
+    // når varens egen produktkode er en annen enn leverandørens varenummer.
+    private async Task LeggTilViaLeverandorVarenummerAsync(Dictionary<string, Component> perKode, string leverandor, Func<IQueryable<Component>, IQueryable<Component>> inkluder)
+    {
+        var lenker = await db.ComponentLeverandorer
+            .Where(l => l.Varenummer != null && l.Leverandor != null && l.Leverandor.Navn.ToLower() == leverandor.ToLower())
+            .Select(l => new { l.ComponentId, l.Varenummer })
+            .ToListAsync();
+        var mangler = lenker
+            .Where(l => !string.IsNullOrWhiteSpace(l.Varenummer) && !perKode.ContainsKey(l.Varenummer!.Trim().ToLowerInvariant()))
+            .ToList();
+        if (mangler.Count == 0)
+        {
+            return;
+        }
+
+        var varer = new Dictionary<int, Component>();
+        foreach (var bolk in mangler.Select(l => l.ComponentId).Distinct().Chunk(500))
+        {
+            foreach (var c in await inkluder(db.Components.Where(c => bolk.Contains(c.Id))).ToListAsync())
+            {
+                varer[c.Id] = c;
+            }
+        }
+
+        foreach (var l in mangler)
+        {
+            if (varer.TryGetValue(l.ComponentId, out var c))
+            {
+                perKode.TryAdd(l.Varenummer!.Trim().ToLowerInvariant(), c);
+            }
+        }
+    }
+
     public async Task<List<ImportRad>> ForhandsvisAsync(List<string[]> rader, string leverandor, KolonneForslag valgt)
     {
         var eksisterende = await db.Components
@@ -133,6 +168,7 @@ public class PrisimportService(ApplicationDbContext db)
         var eksisterendePerKode = eksisterende
             .GroupBy(c => c.Produktkode!.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First());
+        await LeggTilViaLeverandorVarenummerAsync(eksisterendePerKode, leverandor, q => q.Include(c => c.Rabattgruppe));
 
         var rabattgrupperPerKode = (await db.Rabattgrupper
                 .Where(r => r.Leverandor.ToLower() == leverandor.ToLower() && r.Aktiv)
@@ -318,6 +354,7 @@ public class PrisimportService(ApplicationDbContext db)
                 .ToListAsync())
             .GroupBy(c => c.Produktkode!.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First());
+        await LeggTilViaLeverandorVarenummerAsync(eksisterendePerKode, leverandor, q => q.Include(c => c.Produktgrupper));
 
         var eksisterendeIder = eksisterendePerKode.Values.Select(c => c.Id).ToList();
 

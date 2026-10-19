@@ -1,4 +1,5 @@
 @page "/komponenter/prisimport"
+@page "/komponenter/oppdater-priser"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 @using Microsoft.AspNetCore.Components.Authorization
@@ -8,416 +9,746 @@
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject PrisimportService PrisimportSvc
+@inject PrisoppdateringService PrisoppdateringSvc
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>Prisimport</PageTitle>
 
-<a class="back-link" href="/komponenter">← Tilbake til komponentregisteret</a>
-<h1>Prisimport</h1>
-<p class="section-hint">
-    Last opp en prisliste (Excel) fra en leverandør. Varer som allerede finnes (matchet på produktkode og leverandør) får oppdatert pris. Nye produktkoder legges til som nye varer.
-    Hvis en eksisterende vare har en <a href="/rabattgrupper">rabattgruppe</a> satt, beregnes nettopris automatisk fra veiledende pris i filen og rabattgruppens prosent - da trenger du ikke en egen netto-kolonne for de varene.
-</p>
-
-@if (_steg == 1)
-{
-    <div class="import-hero">
-        <div class="import-card import-upload-card">
-            <h2>Velg importfil</h2>
-            <label class="import-dropzone">
-                <InputFile OnChange="LastOppFil" accept=".xlsx" class="import-dropzone-input" />
-                <div class="import-dropzone-content">
-                    <span class="import-dropzone-ikon">📄</span>
-                    <p><strong>Klikk for å velge fil</strong> eller dra og slipp den her</p>
-                    <p class="import-dropzone-hint">Excel-fil (.xlsx)</p>
-                </div>
-            </label>
-            <label class="import-leverandor-felt">
-                Leverandør
-                <input @bind="_leverandor" @bind:event="oninput" placeholder="F.eks. ASSA ABLOY" />
-            </label>
-            <p class="section-hint">Alle rader i filen regnes som fra denne leverandøren. Du kan fylle den ut før eller etter du velger fil - den må bare være fylt ut før du går videre til forhåndsvisning.</p>
-
-            @if (!string.IsNullOrEmpty(_feil))
-            {
-                <p class="form-error">@_feil</p>
-            }
+@* PI2 (prisimport-forslag.html): leverandørene i en meny inni kortet, og for valgt
+   leverandør fanene Prisoppdatering (bare prisene endres, matchet på leverandørens
+   varenummer), Importer varer (nye varer og varedata) og Historikk. *@
+<div class="pi @(_full ? "pi-full" : "")">
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="upload" /></span>
+            <div>
+                <h1>Prisimport</h1>
+                <p class="section-hint">Velg leverandør. Oppdater prisene fra årets prisliste, eller importer nye varer fra en vareliste.</p>
+            </div>
         </div>
-
-        <div class="import-card import-komigang-card">
-            <h2>Kom i gang</h2>
-            <ol>
-                <li>Velg eller dra inn Excel-filen med prislisten.</li>
-                <li>Skriv inn hvilken leverandør prislisten kommer fra.</li>
-                <li>Match kolonnene i filen mot feltene i portalen - vi foreslår automatisk ut fra overskriftene.</li>
-                <li>Se gjennom forhåndsvisningen og trykk Start import.</li>
-            </ol>
-        </div>
+        <a class="pi-knapp" href="/komponenter"><Icon Name="arrow-left" />Komponentregister</a>
     </div>
 
-    @if (_historikkRader.Count > 0)
-    {
-        <div class="import-card import-historikk-card">
-            <h2>Tidligere importer</h2>
-            <table class="import-historikk-table">
-                <thead>
-                    <tr>
-                        <th>Fil</th>
-                        <th>Leverandør</th>
-                        <th>Dato</th>
-                        <th>Av</th>
-                        <th>Status</th>
-                        <th>Resultat</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var rad in _historikkRader)
+    <div class="pi-kort">
+        <nav class="pi-meny">
+            <label class="pi-minisok">
+                <Icon Name="search" />
+                <input type="search" @bind="_levSok" @bind:event="oninput" placeholder="Finn leverandør" />
+            </label>
+            <div class="pi-levliste">
+                @foreach (var l in _leverandorer.Where(l => string.IsNullOrWhiteSpace(_levSok) || l.Navn.Contains(_levSok.Trim(), StringComparison.OrdinalIgnoreCase)))
+                {
+                    var id = l.Id;
+                    <button type="button" @key="l.Id" class="@(_valgtLevId == id ? "pa" : "")" @onclick="@(() => VelgLeverandor(id))">
+                        <span class="pi-avatar">@Initialer(l.Navn)</span>
+                        <span class="pi-levnavn">
+                            <span>@l.Navn</span>
+                            <small class="@(ErGammel(l) ? "pi-gammel" : "")">@(l.SistOppdatert is { } d ? $"Priser {d:dd.MM.yyyy}" : "Ingen prisliste ennå")</small>
+                        </span>
+                    </button>
+                }
+                @if (_leverandorer.Count == 0)
+                {
+                    <p class="pi-dempet">Ingen leverandører ennå. Legg til en under.</p>
+                }
+            </div>
+            <div class="pi-ny-lev">
+                <input @bind="_nyLevNavn" @bind:event="oninput" placeholder="＋ Ny leverandør"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettLeverandor(); } })" />
+                @if (!string.IsNullOrWhiteSpace(_nyLevNavn))
+                {
+                    <button type="button" class="pi-knapp primaer" @onclick="OpprettLeverandor">Legg til</button>
+                }
+            </div>
+        </nav>
+
+        <section class="pi-innhold">
+            <button type="button" class="pi-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+                <Icon Name="@(_full ? "minimize" : "maximize")" />
+            </button>
+
+            @if (Valgt is not { } lev)
+            {
+                <p class="pi-dempet">Velg en leverandør i menyen.</p>
+            }
+            else
+            {
+                <div class="pi-levhode">
+                    <span class="pi-avatar stor">@Initialer(lev.Navn)</span>
+                    <div>
+                        <h2>@lev.Navn</h2>
+                        <p>
+                            @lev.AntallVarer.ToString("N0", Kultur) @(lev.AntallVarer == 1 ? "vare" : "varer")
+                            · @(lev.SistOppdatert is { } d ? $"priser sist oppdatert {d:dd.MM.yyyy}" : "ingen prisliste lastet opp ennå")
+                            @if (ErGammel(lev))
+                            {
+                                <b class="pi-gammel"> · over ett år siden</b>
+                            }
+                        </p>
+                    </div>
+                </div>
+
+                <div class="pi-faner">
+                    <button type="button" class="@(_fane == "pris" ? "pa" : "")" @onclick="@(() => _fane = "pris")"><Icon Name="trend-up" />Prisoppdatering</button>
+                    <button type="button" class="@(_fane == "import" ? "pa" : "")" @onclick="@(() => _fane = "import")"><Icon Name="upload" />Importer varer</button>
+                    <button type="button" class="@(_fane == "hist" ? "pa" : "")" @onclick="@(() => _fane = "hist")"><Icon Name="clock" />Historikk</button>
+                </div>
+
+                @if (_fane == "pris")
+                {
+                    @if (_planlagt.Count > 0 && _pSteg == 1)
                     {
-                        var h = rad.Item;
-                        <tr @key="h.Id" class="@(rad.ErOppdatering ? "historikk-rad-oppdatering" : "")">
-                            <td>@(rad.ErOppdatering ? "↳ " : "")@h.Filnavn</td>
-                            <td>@h.Leverandor</td>
-                            <td>@h.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</td>
-                            <td>@(h.OpprettetAvBruker?.Navn ?? "-")</td>
-                            <td><span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : h.Status == "Feilet" ? "import-status-badge-feil" : "import-status-badge-pagar")">@(rad.ErOppdatering && h.Status == "Fullført" ? "Oppdatering" : h.Status)</span></td>
-                            <td>@(h.AntallNye is not null ? $"{h.AntallNye} nye, {h.AntallOppdatert} oppdatert" : "-")</td>
-                            <td class="historikk-actions">
-                                @if (!string.IsNullOrWhiteSpace(h.Leverandor))
+                        <div class="pi-planlagt">
+                            @foreach (var p in _planlagt)
+                            {
+                                var dato = p.Dato;
+                                <div>
+                                    <span class="pi-status plan"></span>
+                                    <span><b>@p.Antall.ToString("N0", Kultur) @(p.Antall == 1 ? "vare" : "varer")</b> får ny pris fra <b>@p.Dato.ToString("dd.MM.yyyy")</b></span>
+                                    @if (_avbryterPlanDato == dato)
+                                    {
+                                        <span class="pi-knapperad">
+                                            <span class="pi-dempet">Avbryte prisendringen?</span>
+                                            <button type="button" class="pi-knapp fare" @onclick="@(() => AvbrytPlanlagt(dato))">Ja, avbryt</button>
+                                            <button type="button" class="pi-knapp" @onclick="@(() => _avbryterPlanDato = null)">Nei</button>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="pi-lenke" @onclick="@(() => _avbryterPlanDato = dato)">Avbryt</button>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @StegLinje(_pSteg)
+
+                    @if (_pSteg == 1)
+                    {
+                        <div class="pi-rad">
+                            <div class="pi-stabel">
+                                <label class="pi-felt pi-dato">
+                                    <span>Gjelder fra</span>
+                                    <input type="date" @bind="_pDato" />
+                                </label>
+                                <label class="pi-slipp">
+                                    <InputFile OnChange="LastOppPrisliste" accept=".xlsx" />
+                                    <Icon Name="upload" />
+                                    <b>Slipp @lev.Navn sin prisliste her, eller klikk for å velge</b>
+                                    <small>Excel (.xlsx)@(_pHarHusket ? " · kolonnene fra forrige gang brukes" : "")</small>
+                                </label>
+                                @if (!string.IsNullOrEmpty(_pFeil))
                                 {
-                                    <button type="button" class="cancel-button" title="Fyller inn leverandør og gjenbruker kolonnevalgene fra denne importen når du velger fil på nytt" @onclick="@(() => ApneTidligereImport(h))">Åpne</button>
+                                    <p class="form-error">@_pFeil</p>
                                 }
-                                @if (_slettendeHistorikkId == h.Id)
+                            </div>
+                            <div class="pi-boks">
+                                <b>Slik fungerer prisoppdatering</b>
+                                <ol>
+                                    <li>Last opp årets prisliste fra @lev.Navn.</li>
+                                    <li>Varenummeret i filen sjekkes mot @lev.Navn sitt varenummer på varene (produktkode og GTIN/EAN brukes som reserve).</li>
+                                    <li>Der prisen er forskjellig endres <b>bare prisen</b> - netto og veiledende. Navn og andre felt røres ikke.</li>
+                                    <li>Varer som ikke finnes lages ikke. Bruk Importer varer for det.</li>
+                                </ol>
+                            </div>
+                        </div>
+                    }
+                    else if (_pSteg == 2)
+                    {
+                        <p class="pi-dempet"><b>@_pFilnavn</b> · @_pRader.Count.ToString("N0", Kultur) rader. Velg hvilke kolonner i filen som er varenummer og priser.</p>
+                        <div class="pi-tabell-ramme">
+                            <table class="pi-tabell">
+                                <thead><tr><th>Felt</th><th>Kolonne i filen</th><th>Eksempel fra første rad</th></tr></thead>
+                                <tbody>
+                                    @foreach (var rad in PrisMapping())
+                                    {
+                                        <tr>
+                                            <td><b>@rad.Label</b>@if (rad.Krevd) {<span class="pi-krevd"> *</span>}</td>
+                                            <td>
+                                                <select class="pi-select" value="@(rad.Get()?.ToString() ?? "")" @onchange="@(e => rad.Set(ParseIndeks(e.Value)))">
+                                                    <option value="">Ikke i bruk</option>
+                                                    @foreach (var k in _pKolonner)
+                                                    {
+                                                        <option value="@k.Indeks">@k.Overskrift</option>
+                                                    }
+                                                </select>
+                                            </td>
+                                            <td class="pi-dempet">@Eksempel(_pEksempel, rad.Get())</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="pi-dempet">Har filen bare veiledende pris, regnes netto ut fra varens rabattgruppe.</p>
+                        @if (!string.IsNullOrEmpty(_pFeil))
+                        {
+                            <p class="form-error">@_pFeil</p>
+                        }
+                        <div class="pi-lagrebar">
+                            <span>@(_pHarHusket ? "Kolonnene er husket fra forrige prisoppdatering" : "Kolonnene er gjettet ut fra overskriftene - sjekk at de stemmer")</span>
+                            <span class="pi-lagrebar-knapper">
+                                <button type="button" class="pi-knapp" @onclick="AvbrytPrisoppdatering">Avbryt</button>
+                                <button type="button" class="pi-knapp primaer" disabled="@_pBusy" @onclick="ForhandsvisPriser">@(_pBusy ? "Sjekker priser ..." : "Neste")</button>
+                            </span>
+                        </div>
+                    }
+                    else if (_pSteg == 3)
+                    {
+                        var endret = _pRaderVist.Count(r => r.Feil is null && r.ErEndret);
+                        var uendret = _pRaderVist.Count(r => r.Feil is null && !r.ErEndret);
+                        var ikke = _pRaderVist.Count(r => r.Feil is not null);
+                        var filtrert = PFiltrert().ToList();
+                        <p class="pi-dempet"><b>@_pFilnavn</b> · gjelder fra <b>@_pDato.ToString("dd.MM.yyyy")</b>@(_pDato.Date > DateTime.Today ? " (planlegges)" : " (endres med en gang)")</p>
+                        <div class="pi-filter">
+                            <button type="button" class="@(_pFilter == "endret" ? "pa" : "")" @onclick="@(() => SettPFilter("endret"))">Ny pris <small>@endret.ToString("N0", Kultur)</small></button>
+                            <button type="button" class="@(_pFilter == "lik" ? "pa" : "")" @onclick="@(() => SettPFilter("lik"))">Uendret <small>@uendret.ToString("N0", Kultur)</small></button>
+                            <button type="button" class="@(_pFilter == "ikke" ? "pa" : "")" @onclick="@(() => SettPFilter("ikke"))">Ikke funnet <small>@ikke.ToString("N0", Kultur)</small></button>
+                        </div>
+                        @if (_pFilter == "ikke" && ikke > 0)
+                        {
+                            <p class="pi-boks">Disse varenumrene finnes ikke på noen vare fra @lev.Navn. De endres ikke her - bruk <b>Importer varer</b> om de skal legges inn.</p>
+                        }
+                        <div class="pi-tabell-ramme">
+                            <div class="pi-tabell-scroll">
+                                <table class="pi-tabell">
+                                    <thead>
+                                        <tr>
+                                            @if (_pFilter == "endret")
+                                            {
+                                                <th class="pi-cb"><input type="checkbox" checked="@filtrert.All(r => r.Inkluder)" @onchange="@(e => VelgAllePriser((bool)e.Value!))" /></th>
+                                            }
+                                            <th>Vare</th>
+                                            <th>Varenr</th>
+                                            <th class="pi-n">Netto</th>
+                                            <th class="pi-n">Veiledende</th>
+                                            <th class="pi-n">Endring</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var r in filtrert.Take(_pVis))
+                                        {
+                                            <tr @key="r.RadNummer" class="@(r.Inkluder || _pFilter != "endret" ? "" : "pi-av")">
+                                                @if (_pFilter == "endret")
+                                                {
+                                                    <td class="pi-cb"><input type="checkbox" @bind="r.Inkluder" /></td>
+                                                }
+                                                <td>@(r.ComponentNavn ?? "–")</td>
+                                                <td><span class="pi-kode">@(r.Varenummer ?? r.Gtin)</span></td>
+                                                <td class="pi-n">
+                                                    @if (r.Feil is null && r.NyPrisNetto != r.GammelPrisNetto)
+                                                    {
+                                                        <span class="pi-gml">@Kr(r.GammelPrisNetto)</span>
+                                                    }
+                                                    @Kr(r.NyPrisNetto)@(r.NettoErBeregnet ? "*" : "")
+                                                </td>
+                                                <td class="pi-n">
+                                                    @if (r.Feil is null && r.NyPrisVeiledende != r.GammelPrisVeiledende)
+                                                    {
+                                                        <span class="pi-gml">@Kr(r.GammelPrisVeiledende)</span>
+                                                    }
+                                                    @Kr(r.NyPrisVeiledende)
+                                                </td>
+                                                <td class="pi-n">
+                                                    @if (r.ErEndret && r.EndringProsent is { } p)
+                                                    {
+                                                        <span class="pi-pst @(p > 0 ? "opp" : "ned")">@(p > 0 ? "+" : "")@p.ToString("0.0", Kultur) %</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                        @if (filtrert.Count == 0)
+                                        {
+                                            <tr><td colspan="6" class="pi-tom">Ingen varer her.</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            @if (filtrert.Count > _pVis)
+                            {
+                                <div class="pi-flere">
+                                    <span>Viser @_pVis.ToString("N0", Kultur) av @filtrert.Count.ToString("N0", Kultur)</span>
+                                    <button type="button" class="pi-knapp" @onclick="@(() => _pVis += 200)">Vis flere</button>
+                                </div>
+                            }
+                        </div>
+                        @if (_pRaderVist.Any(r => r.NettoErBeregnet))
+                        {
+                            <p class="pi-dempet">* Netto regnet ut fra veiledende pris og varens rabattgruppe.</p>
+                        }
+                        @if (!string.IsNullOrEmpty(_pFeil))
+                        {
+                            <p class="form-error">@_pFeil</p>
+                        }
+                        var antallValgt = _pRaderVist.Count(r => r.Inkluder && r.Feil is null && r.ErEndret);
+                        <div class="pi-lagrebar">
+                            <span><b>@antallValgt.ToString("N0", Kultur) @(antallValgt == 1 ? "vare" : "varer")</b> får ny pris @(_pDato.Date > DateTime.Today ? $"fra {_pDato:dd.MM.yyyy}" : "nå") · bare prisen endres</span>
+                            <span class="pi-lagrebar-knapper">
+                                <button type="button" class="pi-knapp" disabled="@_pBusy" @onclick="@(() => _pSteg = 2)">Tilbake</button>
+                                <button type="button" class="pi-knapp primaer" disabled="@(_pBusy || antallValgt == 0)" @onclick="OppdaterPriser"><Icon Name="check" />@(_pBusy ? "Oppdaterer ..." : "Oppdater priser")</button>
+                            </span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="pi-ferdig">
+                            <b><Icon Name="check" />Ferdig</b>
+                            <span>
+                                @if (_pResultat.Planlagt > 0)
                                 {
-                                    <span class="fjern-bekreft">
-                                        Er du sikker?
-                                        <button type="button" class="remove-button" @onclick="@(() => SlettHistorikk(h))">Ja</button>
-                                        <button type="button" class="cancel-button" @onclick="@(() => _slettendeHistorikkId = null)">Avbryt</button>
-                                    </span>
+                                    <text>@_pResultat.Planlagt.ToString("N0", Kultur) @(_pResultat.Planlagt == 1 ? "vare" : "varer") får ny pris fra @_pDato.ToString("dd.MM.yyyy"). Endringen tas i bruk automatisk den dagen.</text>
                                 }
                                 else
                                 {
-                                    <button type="button" class="cancel-button" @onclick="@(() => _slettendeHistorikkId = h.Id)">Slett</button>
+                                    <text>@_pResultat.Naa.ToString("N0", Kultur) @(_pResultat.Naa == 1 ? "vare" : "varer") har fått ny pris. Navn og andre felt er ikke endret, og endringene ligger i prishistorikken.</text>
                                 }
-                            </td>
-                        </tr>
+                            </span>
+                            <button type="button" class="pi-knapp" @onclick="NullstillPris">Ny prisoppdatering</button>
+                        </div>
                     }
-                </tbody>
-            </table>
-
-            <ul class="mobil-historikk-liste">
-                @foreach (var rad in _historikkRader)
-                {
-                    var h = rad.Item;
-                    <li @key="h.Id" class="mobil-historikk-kort @(rad.ErOppdatering ? "mobil-historikk-kort-oppdatering" : "")">
-                        <div class="mobil-historikk-topp">
-                            <span class="mobil-historikk-fil">@(rad.ErOppdatering ? "↳ " : "")@h.Filnavn</span>
-                            <span class="import-status-badge @(h.Status == "Fullført" ? "import-status-badge-ok" : h.Status == "Avbrutt" ? "import-status-badge-uendret" : h.Status == "Feilet" ? "import-status-badge-feil" : "import-status-badge-pagar")">@(rad.ErOppdatering && h.Status == "Fullført" ? "Oppdatering" : h.Status)</span>
-                        </div>
-                        <div class="mobil-historikk-meta">
-                            @h.Leverandor &middot; @h.OpprettetDato.ToString("dd.MM.yyyy HH:mm") &middot; @(h.OpprettetAvBruker?.Navn ?? "-")
-                        </div>
-                        @if (h.AntallNye is not null)
-                        {
-                            <div class="mobil-historikk-meta">@h.AntallNye nye, @h.AntallOppdatert oppdatert</div>
-                        }
-                        <div class="mobil-historikk-knapper">
-                            @if (!string.IsNullOrWhiteSpace(h.Leverandor))
-                            {
-                                <button type="button" class="cancel-button" @onclick="@(() => ApneTidligereImport(h))">Åpne</button>
-                            }
-                            @if (_slettendeHistorikkId == h.Id)
-                            {
-                                <span class="fjern-bekreft">
-                                    Er du sikker?
-                                    <button type="button" class="remove-button" @onclick="@(() => SlettHistorikk(h))">Ja</button>
-                                    <button type="button" class="cancel-button" @onclick="@(() => _slettendeHistorikkId = null)">Avbryt</button>
-                                </span>
-                            }
-                            else
-                            {
-                                <button type="button" class="cancel-button" @onclick="@(() => _slettendeHistorikkId = h.Id)">Slett</button>
-                            }
-                        </div>
-                    </li>
                 }
-            </ul>
-        </div>
-    }
-}
-else if (_steg == 2)
-{
-    <div class="import-card import-info-card">
-        <h2>@_filnavn</h2>
-        <p class="section-hint">Fant @_rader.Count rad(er) og @_kolonner.Count kolonne(r) i filen.</p>
-    </div>
-
-    <div class="import-card import-mapping-card">
-        <h2>Match kolonner</h2>
-        <p class="section-hint">Vi har forsøkt å matche kolonnene i filen automatisk ut fra overskriftene - kontroller at de stemmer, og rett opp med nedtrekksmenyene der det trengs. Artikkelnr er obligatorisk.</p>
-
-        <label class="import-leverandor-felt">
-            Leverandør
-            <input @bind="_leverandor" @bind:event="oninput" placeholder="F.eks. ASSA ABLOY" />
-        </label>
-
-        <table class="mapping-table">
-            <thead>
-                <tr>
-                    <th>Felt i portalen</th>
-                    <th>Kolonne i filen</th>
-                    <th>Eksempel fra første rad</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var rad in MappingRader())
+                else if (_fane == "import")
                 {
-                    <tr>
-                        <td>
-                            @rad.Label
-                            @if (rad.Krevd)
-                            {
-                                <span class="krevd">*</span>
-                            }
-                        </td>
-                        <td>
-                            <select value="@(rad.Get()?.ToString() ?? "")" @onchange="@(e => rad.Set(ParseIndeks(e.Value)))">
-                                <option value="">Ikke i bruk</option>
-                                @foreach (var k in _kolonner)
+                    @StegLinje(_iSteg)
+
+                    @if (_iSteg == 1)
+                    {
+                        <div class="pi-rad">
+                            <div class="pi-stabel">
+                                <label class="pi-slipp">
+                                    <InputFile OnChange="LastOppVareliste" accept=".xlsx" />
+                                    <Icon Name="upload" />
+                                    <b>Slipp varelisten fra @lev.Navn her, eller klikk for å velge</b>
+                                    <small>Excel (.xlsx)</small>
+                                </label>
+                                @if (!string.IsNullOrEmpty(_iFeil))
                                 {
-                                    <option value="@k.Indeks">@k.Overskrift</option>
+                                    <p class="form-error">@_iFeil</p>
                                 }
-                            </select>
-                            @if (rad.Get() is not null && rad.Get() == rad.AutoIndeks)
-                            {
-                                <span class="mapping-auto-badge">Auto-matchet</span>
-                            }
-                        </td>
-                        <td class="mapping-eksempel">@Eksempel(rad.Get())</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-
-        <ul class="mobil-mapping-liste">
-            @foreach (var rad in MappingRader())
-            {
-                <li class="mobil-mapping-rad">
-                    <div class="mobil-mapping-label">
-                        @rad.Label
-                        @if (rad.Krevd)
-                        {
-                            <span class="krevd">*</span>
-                        }
-                        @if (rad.Get() is not null && rad.Get() == rad.AutoIndeks)
-                        {
-                            <span class="mapping-auto-badge">Auto-matchet</span>
-                        }
-                    </div>
-                    <select value="@(rad.Get()?.ToString() ?? "")" @onchange="@(e => rad.Set(ParseIndeks(e.Value)))">
-                        <option value="">Ikke i bruk</option>
-                        @foreach (var k in _kolonner)
-                        {
-                            <option value="@k.Indeks">@k.Overskrift</option>
-                        }
-                    </select>
-                    @if (Eksempel(rad.Get()) is { } eksempel)
-                    {
-                        <span class="mobil-mapping-eksempel">Eksempel: @eksempel</span>
-                    }
-                </li>
-            }
-        </ul>
-
-        <div class="form-actions">
-            <button type="button" class="save-button" @onclick="VisForhandsvisning" disabled="@_forhandsviser">@(_forhandsviser ? "Lager forhåndsvisning, vennligst vent..." : "Neste")</button>
-            <button type="button" class="cancel-button" @onclick="AvbrytImport">Avbryt</button>
-            @if (!string.IsNullOrEmpty(_feil))
-            {
-                <span class="form-error">@_feil</span>
-            }
-        </div>
-    </div>
-}
-else if (_steg == 3)
-{
-    <div class="import-card">
-        <h2>Validering</h2>
-        <p class="section-hint">Kontroller resultatet under før du starter importen. Rader med feil er markert i rødt og importeres ikke.</p>
-        <div class="import-oppsummering">
-            <span class="import-oppsummering-tall import-oppsummering-ok">@_forhandsvisning.Count(r => r.Feil is null && r.ErNyVare) nye</span>
-            <span class="import-oppsummering-tall import-oppsummering-ok">@_forhandsvisning.Count(r => r.Feil is null && !r.ErNyVare) oppdateres</span>
-            <span class="import-oppsummering-tall import-oppsummering-feil">@_forhandsvisning.Count(r => r.Feil is not null) ikke importert</span>
-        </div>
-
-        <table class="import-table">
-            <thead>
-                <tr>
-                    <th></th>
-                    <th>Rad</th>
-                    <th>Artikkelnr</th>
-                    <th>Navn</th>
-                    <th>Enhet</th>
-                    <th>Pris netto</th>
-                    <th>Pris veiledende</th>
-                    <th>Rabattgruppe</th>
-                    <th>Lager</th>
-                    <th>Inaktiv</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var r in _forhandsvisning)
-                {
-                    <tr @key="r.RadNummer" class="@(r.Feil is not null ? "import-rad-feil" : "import-rad-ok")">
-                        <td><input type="checkbox" @bind="r.Inkluder" disabled="@(r.Feil is not null)" /></td>
-                        <td>@r.RadNummer</td>
-                        <td>@r.Produktkode</td>
-                        <td>@(r.ErNyVare ? r.Navn : r.EksisterendeNavn)</td>
-                        <td>@r.Enhet</td>
-                        <td>
-                            @(r.PrisNetto?.ToString("N2", Kultur))
-                            @if (r.NettoErBeregnet)
-                            {
-                                <span class="import-beregnet" title="Beregnet fra veiledende pris og rabattgruppe">(beregnet)</span>
-                            }
-                        </td>
-                        <td>@(r.PrisVeiledende?.ToString("N2", Kultur))</td>
-                        <td>@r.RabattgruppeKode</td>
-                        <td>@(r.LagervareVerdi is true ? "Ja" : r.LagervareVerdi is false ? "Nei" : "")</td>
-                        <td>@(r.AktivVerdi is true ? "Aktiv" : r.AktivVerdi is false ? "Inaktiv" : "")</td>
-                        <td>
-                            @if (r.Feil is not null)
-                            {
-                                <span class="import-status-badge import-status-badge-feil">@r.Feil</span>
-                            }
-                            else if (r.ErNyVare)
-                            {
-                                <span class="import-status-badge import-status-badge-ok">Ny vare</span>
-                            }
-                            else
-                            {
-                                <span class="import-status-badge import-status-badge-ok">Oppdaterer</span>
-                            }
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-
-        <ul class="mobil-import-liste">
-            @foreach (var r in _forhandsvisning)
-            {
-                <li @key="r.RadNummer" class="mobil-import-kort @(r.Feil is not null ? "mobil-import-kort-feil" : "")">
-                    <div class="mobil-import-topp">
-                        <input type="checkbox" @bind="r.Inkluder" disabled="@(r.Feil is not null)" />
-                        <span class="mobil-import-artikkel">@r.Produktkode</span>
-                        @if (r.Feil is not null)
-                        {
-                            <span class="import-status-badge import-status-badge-feil">@r.Feil</span>
-                        }
-                        else if (r.ErNyVare)
-                        {
-                            <span class="import-status-badge import-status-badge-ok">Ny vare</span>
-                        }
-                        else
-                        {
-                            <span class="import-status-badge import-status-badge-ok">Oppdaterer</span>
-                        }
-                    </div>
-                    <div class="mobil-import-navn">@(r.ErNyVare ? r.Navn : r.EksisterendeNavn)</div>
-                    <div class="mobil-import-meta">
-                        Rad @r.RadNummer &middot; @r.Enhet
-                        @if (!string.IsNullOrWhiteSpace(r.RabattgruppeKode))
-                        {
-                            <text> &middot; Rabattgruppe @r.RabattgruppeKode</text>
-                        }
-                    </div>
-                    <div class="mobil-import-priser">
-                        <span>Netto: @(r.PrisNetto?.ToString("N2", Kultur) ?? "-")@(r.NettoErBeregnet ? " (beregnet)" : "")</span>
-                        <span>Veiledende: @(r.PrisVeiledende?.ToString("N2", Kultur) ?? "-")</span>
-                    </div>
-                    @if (r.LagervareVerdi is not null || r.AktivVerdi is not null)
-                    {
-                        <div class="mobil-import-meta">
-                            @if (r.LagervareVerdi is not null)
-                            {
-                                <text>Lager: @(r.LagervareVerdi is true ? "Ja" : "Nei")</text>
-                            }
-                            @if (r.AktivVerdi is not null)
-                            {
-                                <text> &middot; @(r.AktivVerdi is true ? "Aktiv" : "Inaktiv")</text>
-                            }
+                            </div>
+                            <div class="pi-boks">
+                                <b>Slik fungerer import av varer</b>
+                                <ol>
+                                    <li>Last opp varelisten fra @lev.Navn.</li>
+                                    <li>Velg hvilke kolonner som er varenummer, navn, priser, type osv.</li>
+                                    <li>Nye varenummer blir nye varer (inaktive til du har sjekket dem). Varer som finnes får oppdatert data fra filen.</li>
+                                    <li>Har varen en <a href="/rabattgrupper">rabattgruppe</a>, regnes netto ut fra veiledende pris.</li>
+                                </ol>
+                            </div>
                         </div>
                     }
-                </li>
+                    else if (_iSteg == 2)
+                    {
+                        <p class="pi-dempet"><b>@_iFilnavn</b> · @_iRader.Count.ToString("N0", Kultur) rader og @_iKolonner.Count kolonner. Artikkelnr er obligatorisk.</p>
+                        <div class="pi-tabell-ramme">
+                            <table class="pi-tabell">
+                                <thead><tr><th>Felt i portalen</th><th>Kolonne i filen</th><th>Eksempel fra første rad</th></tr></thead>
+                                <tbody>
+                                    @foreach (var rad in ImportMapping())
+                                    {
+                                        <tr>
+                                            <td><b>@rad.Label</b>@if (rad.Krevd) {<span class="pi-krevd"> *</span>}</td>
+                                            <td>
+                                                <select class="pi-select" value="@(rad.Get()?.ToString() ?? "")" @onchange="@(e => rad.Set(ParseIndeks(e.Value)))">
+                                                    <option value="">Ikke i bruk</option>
+                                                    @foreach (var k in _iKolonner)
+                                                    {
+                                                        <option value="@k.Indeks">@k.Overskrift</option>
+                                                    }
+                                                </select>
+                                            </td>
+                                            <td class="pi-dempet">@Eksempel(_iEksempel, rad.Get())</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_iFeil))
+                        {
+                            <p class="form-error">@_iFeil</p>
+                        }
+                        <div class="pi-lagrebar">
+                            <span>@(_iHarHusket ? "Kolonnene er husket fra forrige import" : "Kolonnene er gjettet ut fra overskriftene - sjekk at de stemmer")</span>
+                            <span class="pi-lagrebar-knapper">
+                                <button type="button" class="pi-knapp" @onclick="AvbrytImport">Avbryt</button>
+                                <button type="button" class="pi-knapp primaer" disabled="@_iBusy" @onclick="ForhandsvisImport">@(_iBusy ? "Lager kontroll ..." : "Neste")</button>
+                            </span>
+                        </div>
+                    }
+                    else if (_iSteg == 3)
+                    {
+                        <p class="pi-dempet">
+                            <b>@_iForhandsvisning.Count(r => r.Feil is null && r.ErNyVare).ToString("N0", Kultur)</b> nye ·
+                            <b>@_iForhandsvisning.Count(r => r.Feil is null && !r.ErNyVare).ToString("N0", Kultur)</b> oppdateres ·
+                            <b>@_iForhandsvisning.Count(r => r.Feil is not null).ToString("N0", Kultur)</b> med feil (importeres ikke)
+                        </p>
+                        <div class="pi-tabell-ramme">
+                            <div class="pi-tabell-scroll">
+                                <table class="pi-tabell">
+                                    <thead>
+                                        <tr>
+                                            <th class="pi-cb"></th>
+                                            <th>Artikkelnr</th>
+                                            <th>Navn</th>
+                                            <th>Enhet</th>
+                                            <th class="pi-n">Netto</th>
+                                            <th class="pi-n">Veiledende</th>
+                                            <th>Rabattgr.</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var r in _iForhandsvisning.Take(_iVis))
+                                        {
+                                            <tr @key="r.RadNummer" class="@(r.Feil is not null ? "pi-av" : "")">
+                                                <td class="pi-cb"><input type="checkbox" @bind="r.Inkluder" disabled="@(r.Feil is not null)" /></td>
+                                                <td><span class="pi-kode">@r.Produktkode</span></td>
+                                                <td>@(r.ErNyVare ? r.Navn : r.EksisterendeNavn)</td>
+                                                <td>@r.Enhet</td>
+                                                <td class="pi-n">@Kr(r.PrisNetto)@(r.NettoErBeregnet ? "*" : "")</td>
+                                                <td class="pi-n">@Kr(r.PrisVeiledende)</td>
+                                                <td>@r.RabattgruppeKode</td>
+                                                <td>
+                                                    @if (r.Feil is not null)
+                                                    {
+                                                        <span class="pi-st feil">@r.Feil</span>
+                                                    }
+                                                    else if (r.ErNyVare)
+                                                    {
+                                                        <span class="pi-st plan">Ny vare</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="pi-st ok">Oppdateres</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            @if (_iForhandsvisning.Count > _iVis)
+                            {
+                                <div class="pi-flere">
+                                    <span>Viser @_iVis.ToString("N0", Kultur) av @_iForhandsvisning.Count.ToString("N0", Kultur)</span>
+                                    <button type="button" class="pi-knapp" @onclick="@(() => _iVis += 200)">Vis flere</button>
+                                </div>
+                            }
+                        </div>
+                        @if (_iForhandsvisning.Any(r => r.NettoErBeregnet))
+                        {
+                            <p class="pi-dempet">* Netto regnet ut fra veiledende pris og rabattgruppen.</p>
+                        }
+                        @if (!string.IsNullOrEmpty(_iFeil))
+                        {
+                            <p class="form-error">@_iFeil</p>
+                        }
+                        var antallImport = _iForhandsvisning.Count(r => r.Inkluder && r.Feil is null);
+                        <div class="pi-lagrebar">
+                            <span><b>@antallImport.ToString("N0", Kultur) @(antallImport == 1 ? "vare" : "varer")</b> importeres fra @lev.Navn</span>
+                            <span class="pi-lagrebar-knapper">
+                                <button type="button" class="pi-knapp" disabled="@_iBusy" @onclick="@(() => _iSteg = 2)">Tilbake</button>
+                                <button type="button" class="pi-knapp primaer" disabled="@(_iBusy || antallImport == 0)" @onclick="Importer"><Icon Name="check" />@(_iBusy ? "Importerer ..." : "Importer")</button>
+                            </span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="pi-ferdig">
+                            <b><Icon Name="check" />Ferdig</b>
+                            <span>@_iNye.ToString("N0", Kultur) @(_iNye == 1 ? "ny vare" : "nye varer") lagt til (inaktive til du har sjekket dem) og @_iOppdatert.ToString("N0", Kultur) oppdatert.</span>
+                            <button type="button" class="pi-knapp" @onclick="NullstillImport">Ny import</button>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="pi-tabell-ramme">
+                        <table class="pi-tabell">
+                            <thead>
+                                <tr><th>Dato</th><th>Type</th><th>Fil</th><th>Resultat</th><th>Av</th><th>Status</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var h in _historikk)
+                                {
+                                    <tr @key="h.Id">
+                                        <td class="pi-nowrap">@h.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</td>
+                                        <td>@(h.Kilde == "Oppdater priser" ? "Prisoppdatering" : "Importer varer")</td>
+                                        <td>@h.Filnavn</td>
+                                        <td>@HistorikkResultat(h)</td>
+                                        <td>@(h.OpprettetAvBruker?.Navn ?? "-")</td>
+                                        <td><span class="pi-st @(h.Status == "Fullført" ? "ok" : h.Status == "Feilet" ? "feil" : "")">@h.Status</span></td>
+                                        <td class="pi-n">
+                                            @if (_slettendeHistorikkId == h.Id)
+                                            {
+                                                <span class="pi-knapperad">
+                                                    <button type="button" class="pi-knapp fare" @onclick="@(() => SlettHistorikk(h))">Slett</button>
+                                                    <button type="button" class="pi-knapp" @onclick="@(() => _slettendeHistorikkId = null)">Avbryt</button>
+                                                </span>
+                                            }
+                                            else
+                                            {
+                                                <button type="button" class="pi-ikon" title="Slett fra historikken" @onclick="@(() => _slettendeHistorikkId = h.Id)"><Icon Name="trash" /></button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                                @if (_historikk.Count == 0)
+                                {
+                                    <tr><td colspan="7" class="pi-tom">Ingen importer eller prisoppdateringer for @lev.Navn ennå.</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
             }
-        </ul>
-
-        <div class="form-actions">
-            <button type="button" class="save-button" @onclick="Importer" disabled="@_importerer">
-                @(_importerer ? "Importerer, vennligst vent..." : $"Start import ({_forhandsvisning.Count(r => r.Inkluder && r.Feil is null)} vare(r))")
-            </button>
-            <button type="button" class="cancel-button" @onclick="@(() => _steg = 2)" disabled="@_importerer">Tilbake</button>
-            @if (!string.IsNullOrEmpty(_feil))
-            {
-                <span class="form-error">@_feil</span>
-            }
-        </div>
+        </section>
     </div>
-}
-else if (_steg == 4)
-{
-    <div class="import-card">
-        <h2>Ferdig</h2>
-        <p class="save-success">@_oppdatertAntall pris(er) oppdatert. @_nyeAntall ny(e) vare(r) lagt til.</p>
-        <button type="button" class="save-button" @onclick="NyImport">Ny import</button>
-    </div>
-}
+</div>
 
 @code {
     private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+    private const string KildePris = "Oppdater priser";
+    private const string KildeImport = "Prisimport";
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
-    private int? _naverendeBrukerId;
+    [SupplyParameterFromQuery(Name = "fane")] public string? FaneParam { get; set; }
+    [SupplyParameterFromQuery(Name = "lev")] public int? LevParam { get; set; }
 
-    private int _steg = 1;
-    private string _leverandor = "";
-    private string? _feil;
-    private string? _filnavn;
+    private sealed record LevInfo(int Id, string Navn, int AntallVarer, DateTime? SistOppdatert);
+    private sealed record PlanGruppe(DateTime Dato, int Antall);
 
-    private List<PrisimportService.ArkKolonne> _kolonner = [];
-    private List<string[]> _rader = [];
-    private string[]? _radeksempel;
+    private int? _brukerId;
+    private bool _full;
+    private string _fane = "pris";
+    private List<LevInfo> _leverandorer = [];
+    private int? _valgtLevId;
+    private string _levSok = "";
+    private string _nyLevNavn = "";
+    private List<PlanGruppe> _planlagt = [];
+    private DateTime? _avbryterPlanDato;
+    private List<Importhistorikk> _historikk = [];
+    private int? _slettendeHistorikkId;
 
-    private PrisimportService.KolonneForslag _valgt = new();
-    private PrisimportService.KolonneForslag _autoForslag = new();
+    private LevInfo? Valgt => _leverandorer.FirstOrDefault(l => l.Id == _valgtLevId);
 
-    private string? Eksempel(int? kolIndeks) =>
-        kolIndeks is not null && _radeksempel is not null && kolIndeks.Value < _radeksempel.Length
-            ? _radeksempel[kolIndeks.Value]
-            : null;
+    // ---------- Prisoppdatering ----------
+    private int _pSteg = 1;
+    private DateTime _pDato = DateTime.Today;
+    private string? _pFilnavn;
+    private string? _pFeil;
+    private bool _pBusy;
+    private bool _pHarHusket;
+    private List<PrisimportService.ArkKolonne> _pKolonner = [];
+    private List<string[]> _pRader = [];
+    private string[]? _pEksempel;
+    private PrisimportService.KolonneForslag _pValgt = new();
+    private List<PrisoppdateringService.OppdateringRad> _pRaderVist = [];
+    private string _pFilter = "endret";
+    private int _pVis = 200;
+    private (int Naa, int Planlagt) _pResultat;
+    private Importhistorikk? _pHistorikk;
 
-    // EF Core sin DbUpdateException gir kun en generisk "See the inner
-    // exception for details"-melding i ex.Message - den faktiske
-    // databasefeilen (f.eks. unik-constraint, FK-brudd) ligger i
-    // InnerException. Henter ut hele kjeden slik at brukeren faktisk ser
-    // hva som gikk galt, i stedet for en tom henvisning til noe de ikke kan se.
-    private static string FullFeilmelding(Exception ex)
+    // ---------- Importer varer ----------
+    private int _iSteg = 1;
+    private string? _iFilnavn;
+    private string? _iFeil;
+    private bool _iBusy;
+    private bool _iHarHusket;
+    private List<PrisimportService.ArkKolonne> _iKolonner = [];
+    private List<string[]> _iRader = [];
+    private string[]? _iEksempel;
+    private PrisimportService.KolonneForslag _iValgt = new();
+    private List<PrisimportService.ImportRad> _iForhandsvisning = [];
+    private int _iVis = 200;
+    private int _iNye;
+    private int _iOppdatert;
+    private Importhistorikk? _iHistorikk;
+
+    protected override async Task OnInitializedAsync()
     {
-        var meldinger = new List<string> { ex.Message };
-        var indre = ex.InnerException;
-        while (indre is not null)
+        if (AuthStateTask is not null)
         {
-            meldinger.Add(indre.Message);
-            indre = indre.InnerException;
+            var state = await AuthStateTask;
+            if (int.TryParse(state.User.FindFirst("BrukerId")?.Value, out var bid))
+            {
+                _brukerId = bid;
+            }
         }
-        return string.Join(" → ", meldinger);
+
+        _full = await VisningPref.HentAsync("prisimport-bredde", "normal") == "full";
+        // /komponenter/oppdater-priser (gammel adresse) og standard åpner Prisoppdatering.
+        _fane = FaneParam is "import" or "hist" ? FaneParam : "pris";
+
+        await LastLeverandorerAsync();
+        var start = LevParam is int lp && _leverandorer.Any(l => l.Id == lp) ? lp : _leverandorer.FirstOrDefault()?.Id;
+        if (start is int s)
+        {
+            await VelgLeverandor(s);
+        }
     }
 
-    private static int? ParseIndeks(object? value)
+    private async Task VekslFull()
     {
-        var s = value?.ToString();
-        return string.IsNullOrEmpty(s) ? null : int.Parse(s);
+        _full = !_full;
+        await VisningPref.SettAsync("prisimport-bredde", _full ? "full" : "normal");
+    }
+
+    private async Task LastLeverandorerAsync()
+    {
+        var lev = await Db.Leverandorer
+            .OrderBy(l => l.Navn)
+            .Select(l => new { l.Id, l.Navn })
+            .ToListAsync();
+        var antall = await Db.ComponentLeverandorer
+            .GroupBy(l => l.LeverandorId)
+            .Select(g => new { g.Key, Antall = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Antall);
+
+        // Sist oppdaterte prisliste per leverandør (importhistorikken lagrer navnet).
+        var sist = (await Db.Importhistorikk
+                .Where(h => h.Status == "Fullført" && h.Leverandor != null && (h.Kilde == KildePris || h.Kilde == KildeImport))
+                .Select(h => new { h.Leverandor, h.OpprettetDato })
+                .ToListAsync())
+            .GroupBy(h => h.Leverandor!.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.Max(h => h.OpprettetDato));
+
+        _leverandorer = lev
+            .Select(l => new LevInfo(l.Id, l.Navn, antall.GetValueOrDefault(l.Id), sist.TryGetValue(l.Navn.Trim().ToLowerInvariant(), out var d) ? d : null))
+            .ToList();
+    }
+
+    private static bool ErGammel(LevInfo l) => l.AntallVarer > 0 && (l.SistOppdatert is null || l.SistOppdatert < DateTime.Today.AddYears(-1));
+
+    private static string Initialer(string navn) =>
+        string.Concat(navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(d => char.ToUpperInvariant(d[0])));
+
+    private async Task VelgLeverandor(int id)
+    {
+        if (_valgtLevId == id)
+        {
+            return;
+        }
+
+        await MarkerAvbruttAsync();
+        _valgtLevId = id;
+        NullstillPris();
+        NullstillImport();
+        _pHarHusket = await HentMappingAsync(KildePris) is not null;
+        await LastPlanlagtOgHistorikkAsync();
+    }
+
+    private async Task LastPlanlagtOgHistorikkAsync()
+    {
+        if (Valgt is not { } lev)
+        {
+            _planlagt = [];
+            _historikk = [];
+            return;
+        }
+
+        var navn = lev.Navn.ToLower();
+        _planlagt = (await Db.PlanlagtePrisendringer
+                .Where(p => !p.Utfort && (p.LeverandorId == lev.Id || (p.LeverandorId == null && p.Kilde != null && p.Kilde.ToLower() == navn)))
+                .Select(p => p.GjelderFraDato)
+                .ToListAsync())
+            .GroupBy(d => d.Date)
+            .OrderBy(g => g.Key)
+            .Select(g => new PlanGruppe(g.Key, g.Count()))
+            .ToList();
+
+        _historikk = await Db.Importhistorikk
+            .Include(h => h.OpprettetAvBruker)
+            .Where(h => (h.Kilde == KildePris || h.Kilde == KildeImport) && h.Leverandor != null && h.Leverandor.ToLower() == navn)
+            .OrderByDescending(h => h.OpprettetDato)
+            .Take(50)
+            .ToListAsync();
+    }
+
+    private async Task OpprettLeverandor()
+    {
+        var navn = _nyLevNavn.Trim();
+        if (navn.Length == 0)
+        {
+            return;
+        }
+
+        var lev = await LeverandorSync.FinnEllerOpprettAsync(Db, navn);
+        await Db.SaveChangesAsync();
+        _nyLevNavn = "";
+        _levSok = "";
+        await LastLeverandorerAsync();
+        await VelgLeverandor(lev.Id);
+        _fane = "import";
+    }
+
+    private async Task AvbrytPlanlagt(DateTime dato)
+    {
+        if (Valgt is not { } lev)
+        {
+            return;
+        }
+
+        var navn = lev.Navn.ToLower();
+        var fra = dato.Date;
+        var til = fra.AddDays(1);
+        await Db.PlanlagtePrisendringer
+            .Where(p => !p.Utfort && p.GjelderFraDato >= fra && p.GjelderFraDato < til
+                && (p.LeverandorId == lev.Id || (p.LeverandorId == null && p.Kilde != null && p.Kilde.ToLower() == navn)))
+            .ExecuteDeleteAsync();
+        _avbryterPlanDato = null;
+        await LastPlanlagtOgHistorikkAsync();
+    }
+
+    private async Task SlettHistorikk(Importhistorikk h)
+    {
+        // Rader som peker på denne som "opprinnelig import" mister bare koblingen.
+        await Db.Importhistorikk.Where(x => x.OpprinneligImportId == h.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.OpprinneligImportId, (int?)null));
+        Db.Importhistorikk.Remove(h);
+        await Db.SaveChangesAsync();
+        _slettendeHistorikkId = null;
+        await LastPlanlagtOgHistorikkAsync();
+    }
+
+    private static string HistorikkResultat(Importhistorikk h) => h.Status != "Fullført"
+        ? "-"
+        : h.Kilde == KildePris
+            ? $"{h.AntallOppdatert ?? 0:N0} nye priser av {h.AntallRader ?? 0:N0} rader"
+            : $"{h.AntallNye ?? 0:N0} nye, {h.AntallOppdatert ?? 0:N0} oppdatert";
+
+    // ---------- felles ----------
+    private static readonly string[] StegNavn = ["Fil", "Kolonner", "Kontroll", "Ferdig"];
+
+    private static RenderFragment StegLinje(int steg) => @<div class="pi-steg">
+        @for (var i = 0; i < StegNavn.Length; i++)
+        {
+            var nr = i + 1;
+            @if (i > 0)
+            {
+                <b></b>
+            }
+            <span class="@(nr < steg ? "ferdig" : nr == steg ? "pa" : "")"><i>@(nr < steg ? "✓" : nr.ToString())</i>@StegNavn[i]</span>
+        }
+    </div>;
+
+    private static string Kr(decimal? v) => v?.ToString("N2", Kultur) ?? "–";
+
+    private static string? Eksempel(string[]? rad, int? indeks) =>
+        indeks is int i && rad is not null && i < rad.Length ? rad[i] : null;
+
+    private static int? ParseIndeks(object? value) =>
+        int.TryParse(value?.ToString(), out var i) ? i : null;
+
+    private static string FullFeilmelding(Exception ex)
+    {
+        var meldinger = new List<string>();
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            meldinger.Add(e.Message);
+        }
+
+        return string.Join(" → ", meldinger);
     }
 
     private sealed class MappingRad
@@ -426,137 +757,15 @@ else if (_steg == 4)
         public bool Krevd { get; init; }
         public required Func<int?> Get { get; init; }
         public required Action<int?> Set { get; init; }
-        public int? AutoIndeks { get; init; }
     }
 
-    private List<MappingRad> MappingRader() =>
-    [
-        new() { Label = "Artikkelnr", Krevd = true, Get = () => _valgt.Produktkode, Set = v => _valgt.Produktkode = v, AutoIndeks = _autoForslag.Produktkode },
-        new() { Label = "GTIN/EAN", Get = () => _valgt.Gtin, Set = v => _valgt.Gtin = v, AutoIndeks = _autoForslag.Gtin },
-        new() { Label = "Varenavn 1", Get = () => _valgt.Navn, Set = v => _valgt.Navn = v, AutoIndeks = _autoForslag.Navn },
-        new() { Label = "Varenavn 2", Get = () => _valgt.Navn2, Set = v => _valgt.Navn2 = v, AutoIndeks = _autoForslag.Navn2 },
-        new() { Label = "Beskrivelse", Get = () => _valgt.Beskrivelse, Set = v => _valgt.Beskrivelse = v, AutoIndeks = _autoForslag.Beskrivelse },
-        new() { Label = "Varegruppe", Get = () => _valgt.Varegruppe, Set = v => _valgt.Varegruppe = v, AutoIndeks = _autoForslag.Varegruppe },
-        new() { Label = "Overflate", Get = () => _valgt.Overflate, Set = v => _valgt.Overflate = v, AutoIndeks = _autoForslag.Overflate },
-        new() { Label = "Konsept", Get = () => _valgt.Konsept, Set = v => _valgt.Konsept = v, AutoIndeks = _autoForslag.Konsept },
-        new() { Label = "Komponenttype", Get = () => _valgt.Komponenttype, Set = v => _valgt.Komponenttype = v, AutoIndeks = _autoForslag.Komponenttype },
-        new() { Label = "Produktgruppe", Get = () => _valgt.Produktgruppe, Set = v => _valgt.Produktgruppe = v, AutoIndeks = _autoForslag.Produktgruppe },
-        new() { Label = "Enhet (1 = Stk, 2 = Par, 3 = M, 4 = Sett)", Get = () => _valgt.Enhet, Set = v => _valgt.Enhet = v, AutoIndeks = _autoForslag.Enhet },
-        new() { Label = "Pris netto", Get = () => _valgt.PrisNetto, Set = v => _valgt.PrisNetto = v, AutoIndeks = _autoForslag.PrisNetto },
-        new() { Label = "Pris veiledende", Get = () => _valgt.PrisVeiledende, Set = v => _valgt.PrisVeiledende = v, AutoIndeks = _autoForslag.PrisVeiledende },
-        new() { Label = "Rabattgruppe", Get = () => _valgt.Rabattgruppe, Set = v => _valgt.Rabattgruppe = v, AutoIndeks = _autoForslag.Rabattgruppe },
-        new() { Label = "Lager (J = lagervare, N = ikke lagervare)", Get = () => _valgt.Lager, Set = v => _valgt.Lager = v, AutoIndeks = _autoForslag.Lager },
-        new() { Label = "Aktiv/Inaktiv (A = aktiv, I = inaktiv)", Get = () => _valgt.Inaktiv, Set = v => _valgt.Inaktiv = v, AutoIndeks = _autoForslag.Inaktiv },
-    ];
-
-    private List<PrisimportService.ImportRad> _forhandsvisning = [];
-    private int _oppdatertAntall;
-    private int _nyeAntall;
-    private bool _importerer;
-    private bool _forhandsviser;
-
-    private sealed record HistorikkRad(Importhistorikk Item, bool ErOppdatering);
-
-    private List<HistorikkRad> _historikkRader = [];
-    private Importhistorikk? _gjeldendeHistorikk;
-    private int? _slettendeHistorikkId;
-
-    protected override async Task OnInitializedAsync()
+    private async Task<(List<PrisimportService.ArkKolonne>, List<string[]>, string)?> LesFilAsync(InputFileChangeEventArgs e, Action<string> feil)
     {
-        if (AuthStateTask is not null)
-        {
-            var state = await AuthStateTask;
-            var brukerClaim = state.User.FindFirst("BrukerId")?.Value;
-            if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
-            {
-                _naverendeBrukerId = bid;
-            }
-        }
-
-        await LastHistorikkAsync();
-    }
-
-    private async Task LastHistorikkAsync()
-    {
-        // Grupperer i minnet: alle rader med samme "rot" (satt i LastOppFil
-        // når filnavnet matcher en tidligere import) havner i samme gruppe,
-        // vist som rot-raden pluss dens "Oppdatering"-rader under. Grupperes
-        // etter siste aktivitet i gruppen, ikke bare rotens egen dato, slik
-        // at en fersk oppdatering av en gammel fil fortsatt dukker øverst.
-        var alle = await Db.Importhistorikk
-            .Include(h => h.OpprettetAvBruker)
-            .Where(h => h.Kilde == "Prisimport")
-            .OrderByDescending(h => h.OpprettetDato)
-            .Take(100)
-            .ToListAsync();
-
-        var grupper = alle
-            .GroupBy(h => h.OpprinneligImportId ?? h.Id)
-            .Select(g =>
-            {
-                var sortert = g.OrderByDescending(h => h.OpprettetDato).ToList();
-                var rot = sortert.FirstOrDefault(h => h.Id == g.Key) ?? sortert[^1];
-                var oppdateringer = sortert.Where(h => h.Id != rot.Id).ToList();
-                return (Rot: rot, Oppdateringer: oppdateringer, SisteAktivitet: sortert[0].OpprettetDato);
-            })
-            .OrderByDescending(gr => gr.SisteAktivitet)
-            .Take(15)
-            .ToList();
-
-        _historikkRader = grupper
-            .SelectMany(gr => new[] { new HistorikkRad(gr.Rot, false) }
-                .Concat(gr.Oppdateringer.Select(o => new HistorikkRad(o, true))))
-            .ToList();
-    }
-
-    private async Task SlettHistorikk(Importhistorikk h)
-    {
-        Db.Importhistorikk.Remove(h);
-        await Db.SaveChangesAsync();
-        _slettendeHistorikkId = null;
-        await LastHistorikkAsync();
-    }
-
-    private async Task<PrisimportService.KolonneForslag?> HentTidligereMappingAsync(string leverandor)
-    {
-        var trimmet = leverandor.Trim();
-        var forrige = await Db.Importhistorikk
-            .Where(h => h.Kilde == "Prisimport" && h.Status == "Fullført"
-                && h.Leverandor != null && h.Leverandor.ToLower() == trimmet.ToLower()
-                && h.MappingJson != null)
-            .OrderByDescending(h => h.OpprettetDato)
-            .FirstOrDefaultAsync();
-
-        if (forrige?.MappingJson is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            return System.Text.Json.JsonSerializer.Deserialize<PrisimportService.KolonneForslag>(forrige.MappingJson);
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return null;
-        }
-    }
-
-    private void ApneTidligereImport(Importhistorikk h)
-    {
-        _leverandor = h.Leverandor ?? "";
-        _feil = null;
-    }
-
-    private async Task LastOppFil(InputFileChangeEventArgs e)
-    {
-        _feil = null;
         var file = e.File;
-
         if (file.Size > 20_000_000)
         {
-            _feil = $"\"{file.Name}\" er for stor (maks 20 MB).";
-            return;
+            feil($"«{file.Name}» er for stor (maks 20 MB).");
+            return null;
         }
 
         using var buffer = new MemoryStream();
@@ -566,204 +775,404 @@ else if (_steg == 4)
         }
 
         buffer.Position = 0;
-
         try
         {
-            (_kolonner, _rader) = PrisimportSvc.LesFil(buffer);
+            var (kolonner, rader) = PrisimportSvc.LesFil(buffer);
+            if (kolonner.Count == 0)
+            {
+                feil("Fant ingen data i filen.");
+                return null;
+            }
+
+            return (kolonner, rader, file.Name);
         }
         catch (Exception ex)
         {
-            _feil = $"Klarte ikke å lese filen: {ex.Message}";
-            return;
+            feil($"Klarte ikke å lese filen: {ex.Message}");
+            return null;
         }
-
-        if (_kolonner.Count == 0)
-        {
-            _feil = "Fant ingen data i filen.";
-            return;
-        }
-
-        _filnavn = file.Name;
-        _radeksempel = _rader.Count > 0 ? _rader[0] : null;
-
-        _autoForslag = PrisimportService.AutoMatchKolonner(_kolonner);
-
-        // Gjenbruker feltvalgene fra forrige fullførte import for SAMME
-        // leverandør, hvis det finnes en - i stedet for kun å gjette ut fra
-        // kolonneoverskriftene hver gang. Felt som sto som "Ikke i bruk" sist
-        // (verdi null) forblir null her også, så ingenting blir rørt som ikke
-        // uttrykkelig var valgt.
-        var tidligereMapping = string.IsNullOrWhiteSpace(_leverandor) ? null : await HentTidligereMappingAsync(_leverandor);
-        _valgt = tidligereMapping ?? PrisimportService.AutoMatchKolonner(_kolonner);
-
-        // Er filnavnet helt likt en tidligere import, kobles denne kjøringen
-        // automatisk som en "Oppdatering" under den opprinnelige i
-        // historikken (se LastHistorikkAsync), i stedet for som en ny,
-        // løsrevet rad.
-        var tidligereMedSammeFil = await Db.Importhistorikk
-            .Where(h => h.Kilde == "Prisimport" && h.Filnavn == _filnavn)
-            .OrderByDescending(h => h.OpprettetDato)
-            .FirstOrDefaultAsync();
-
-        _gjeldendeHistorikk = new Importhistorikk
-        {
-            Kilde = "Prisimport",
-            Filnavn = _filnavn,
-            Leverandor = _leverandor,
-            OpprettetAvBrukerId = _naverendeBrukerId,
-            Status = "Pågår",
-            OpprinneligImportId = tidligereMedSammeFil is null ? null : (tidligereMedSammeFil.OpprinneligImportId ?? tidligereMedSammeFil.Id)
-        };
-        Db.Importhistorikk.Add(_gjeldendeHistorikk);
-        await Db.SaveChangesAsync();
-        await LastHistorikkAsync();
-
-        _steg = 2;
     }
 
-    private async Task VisForhandsvisning()
+    // Kolonnevalgene fra forrige fullførte kjøring for samme leverandør.
+    private async Task<PrisimportService.KolonneForslag?> HentMappingAsync(string kilde)
     {
-        if (_valgt.Produktkode is null)
+        if (Valgt is not { } lev)
         {
-            _feil = "Du må velge hvilken kolonne som er Artikkelnr - den brukes til å matche mot eksisterende varer, og må derfor alltid være satt (kan ikke stå som \"Ikke i bruk\").";
-            return;
+            return null;
         }
 
-        if (string.IsNullOrWhiteSpace(_leverandor))
+        var navn = lev.Navn.Trim().ToLower();
+        var json = await Db.Importhistorikk
+            .Where(h => h.Kilde == kilde && h.Status == "Fullført" && h.Leverandor != null && h.Leverandor.ToLower() == navn && h.MappingJson != null)
+            .OrderByDescending(h => h.OpprettetDato)
+            .Select(h => h.MappingJson)
+            .FirstOrDefaultAsync();
+        if (json is null)
         {
-            _feil = "Skriv inn hvilken leverandør prislisten kommer fra før du går videre.";
-            return;
+            return null;
         }
 
-        _forhandsviser = true;
         try
         {
-            if (_gjeldendeHistorikk is not null)
-            {
-                _gjeldendeHistorikk.Leverandor = _leverandor;
-                await Db.SaveChangesAsync();
-            }
+            return System.Text.Json.JsonSerializer.Deserialize<PrisimportService.KolonneForslag>(json);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
 
-            _forhandsvisning = await PrisimportSvc.ForhandsvisAsync(_rader, _leverandor, _valgt);
+    private static bool Gyldig(int? indeks, int antall) => indeks is null || (indeks >= 0 && indeks < antall);
 
-            if (_forhandsvisning.Count == 0)
+    private async Task<Importhistorikk> StartHistorikkAsync(string kilde, string filnavn)
+    {
+        var tidligere = await Db.Importhistorikk
+            .Where(h => h.Kilde == kilde && h.Filnavn == filnavn)
+            .OrderByDescending(h => h.OpprettetDato)
+            .FirstOrDefaultAsync();
+        var h = new Importhistorikk
+        {
+            Kilde = kilde,
+            Filnavn = filnavn,
+            Leverandor = Valgt?.Navn,
+            OpprettetAvBrukerId = _brukerId,
+            Status = "Pågår",
+            OpprinneligImportId = tidligere is null ? null : (tidligere.OpprinneligImportId ?? tidligere.Id)
+        };
+        Db.Importhistorikk.Add(h);
+        await Db.SaveChangesAsync();
+        return h;
+    }
+
+    private async Task SettStatusAsync(Importhistorikk? h, string status)
+    {
+        if (h is null)
+        {
+            return;
+        }
+
+        try
+        {
+            h.Status = status;
+            await Db.SaveChangesAsync();
+        }
+        catch
+        {
+            // Feilmeldingen fra selve jobben vises uansett.
+        }
+    }
+
+    private async Task MarkerAvbruttAsync()
+    {
+        if (_pHistorikk is { Status: "Pågår" })
+        {
+            await SettStatusAsync(_pHistorikk, "Avbrutt");
+        }
+
+        if (_iHistorikk is { Status: "Pågår" })
+        {
+            await SettStatusAsync(_iHistorikk, "Avbrutt");
+        }
+    }
+
+    // ---------- Prisoppdatering ----------
+    private List<MappingRad> PrisMapping() =>
+    [
+        new() { Label = "Varenummer", Krevd = true, Get = () => _pValgt.Produktkode, Set = v => _pValgt.Produktkode = v },
+        new() { Label = "GTIN/EAN (reserve)", Get = () => _pValgt.Gtin, Set = v => _pValgt.Gtin = v },
+        new() { Label = "Pris netto", Get = () => _pValgt.PrisNetto, Set = v => _pValgt.PrisNetto = v },
+        new() { Label = "Pris veiledende", Get = () => _pValgt.PrisVeiledende, Set = v => _pValgt.PrisVeiledende = v },
+    ];
+
+    private IEnumerable<PrisoppdateringService.OppdateringRad> PFiltrert() => _pFilter switch
+    {
+        "lik" => _pRaderVist.Where(r => r.Feil is null && !r.ErEndret),
+        "ikke" => _pRaderVist.Where(r => r.Feil is not null),
+        _ => _pRaderVist.Where(r => r.Feil is null && r.ErEndret).OrderByDescending(r => Math.Abs(r.EndringProsent ?? 0))
+    };
+
+    private void SettPFilter(string filter)
+    {
+        _pFilter = filter;
+        _pVis = 200;
+    }
+
+    private void VelgAllePriser(bool valgt)
+    {
+        foreach (var r in _pRaderVist.Where(r => r.Feil is null && r.ErEndret))
+        {
+            r.Inkluder = valgt;
+        }
+    }
+
+    private async Task LastOppPrisliste(InputFileChangeEventArgs e)
+    {
+        _pFeil = null;
+        if (await LesFilAsync(e, f => _pFeil = f) is not { } fil)
+        {
+            return;
+        }
+
+        var (kolonner, rader, filnavn) = fil;
+
+        _pKolonner = kolonner;
+        _pRader = rader;
+        _pFilnavn = filnavn;
+        _pEksempel = rader.FirstOrDefault();
+
+        var auto = PrisimportService.AutoMatchKolonner(kolonner);
+        var husket = await HentMappingAsync(KildePris);
+        _pHarHusket = husket is not null && husket.Produktkode is not null
+            && new[] { husket.Produktkode, husket.Gtin, husket.PrisNetto, husket.PrisVeiledende }.All(i => Gyldig(i, kolonner.Count));
+        _pValgt = _pHarHusket
+            ? new PrisimportService.KolonneForslag { Produktkode = husket!.Produktkode, Gtin = husket.Gtin, PrisNetto = husket.PrisNetto, PrisVeiledende = husket.PrisVeiledende }
+            : new PrisimportService.KolonneForslag { Produktkode = auto.Produktkode, Gtin = auto.Gtin, PrisNetto = auto.PrisNetto, PrisVeiledende = auto.PrisVeiledende };
+
+        _pHistorikk = await StartHistorikkAsync(KildePris, filnavn);
+        _pSteg = 2;
+    }
+
+    private async Task ForhandsvisPriser()
+    {
+        if (Valgt is not { } lev)
+        {
+            return;
+        }
+
+        if (_pValgt.Produktkode is null && _pValgt.Gtin is null)
+        {
+            _pFeil = "Velg hvilken kolonne som er varenummer (eller GTIN/EAN).";
+            return;
+        }
+
+        if (_pValgt.PrisNetto is null && _pValgt.PrisVeiledende is null)
+        {
+            _pFeil = "Velg minst én priskolonne.";
+            return;
+        }
+
+        _pFeil = null;
+        _pBusy = true;
+        try
+        {
+            _pRaderVist = await PrisoppdateringSvc.ForhandsvisAsync(_pRader, lev.Id, _pValgt.Produktkode, _pValgt.Gtin, _pValgt.PrisNetto, _pValgt.PrisVeiledende);
+            if (_pRaderVist.Count == 0)
             {
-                _feil = "Fant ingen gyldige rader å importere.";
+                _pFeil = "Fant ingen rader med varenummer i filen.";
                 return;
             }
 
-            _feil = null;
-            _steg = 3;
+            _pFilter = _pRaderVist.Any(r => r.ErEndret) ? "endret" : _pRaderVist.Any(r => r.Feil is null) ? "lik" : "ikke";
+            _pVis = 200;
+            _pSteg = 3;
         }
         catch (Exception ex)
         {
-            // Fanges her av samme grunn som i Importer() - en ufanget
-            // exception her drepte tidligere hele Blazor-kretsen med ingen
-            // forklaring, og historikkraden ble stående som "Pågår" for alltid
-            // siden Importer() aldri ble nådd.
-            _feil = $"Klarte ikke å lage forhåndsvisning: {FullFeilmelding(ex)}. Prøv gjerne på nytt.";
-            // I egen try/catch - om DENNE lagringen også feiler (f.eks. samme
-            // underliggende DB-problem som utløste feilen over), skal ikke
-            // det i tillegg drepe kretsen og skjule _feil-meldingen over.
-            try
-            {
-                if (_gjeldendeHistorikk is not null)
-                {
-                    _gjeldendeHistorikk.Status = "Feilet";
-                    await Db.SaveChangesAsync();
-                    await LastHistorikkAsync();
-                }
-            }
-            catch
-            {
-                // Ignorerer - hovedfeilmeldingen over er allerede satt og vises uansett.
-            }
+            _pFeil = $"Klarte ikke å sjekke prisene: {FullFeilmelding(ex)}";
+            await SettStatusAsync(_pHistorikk, "Feilet");
         }
         finally
         {
-            _forhandsviser = false;
+            _pBusy = false;
+        }
+    }
+
+    private async Task OppdaterPriser()
+    {
+        if (Valgt is not { } lev)
+        {
+            return;
+        }
+
+        _pFeil = null;
+        _pBusy = true;
+        try
+        {
+            _pResultat = await PrisoppdateringSvc.OppdaterAsync(_pRaderVist, _pDato, lev.Id, lev.Navn);
+            if (_pHistorikk is not null)
+            {
+                _pHistorikk.Status = "Fullført";
+                _pHistorikk.AntallRader = _pRaderVist.Count;
+                _pHistorikk.AntallOppdatert = _pResultat.Naa + _pResultat.Planlagt;
+                _pHistorikk.MappingJson = System.Text.Json.JsonSerializer.Serialize(_pValgt);
+                await Db.SaveChangesAsync();
+            }
+
+            _pSteg = 4;
+            await LastLeverandorerAsync();
+            await LastPlanlagtOgHistorikkAsync();
+        }
+        catch (Exception ex)
+        {
+            _pFeil = $"Prisoppdateringen feilet: {FullFeilmelding(ex)}. Du kan trygt prøve igjen.";
+            await SettStatusAsync(_pHistorikk, "Feilet");
+        }
+        finally
+        {
+            _pBusy = false;
+        }
+    }
+
+    private async Task AvbrytPrisoppdatering()
+    {
+        await SettStatusAsync(_pHistorikk, "Avbrutt");
+        NullstillPris();
+        await LastPlanlagtOgHistorikkAsync();
+    }
+
+    private void NullstillPris()
+    {
+        _pSteg = 1;
+        _pFeil = null;
+        _pFilnavn = null;
+        _pKolonner = [];
+        _pRader = [];
+        _pEksempel = null;
+        _pValgt = new();
+        _pRaderVist = [];
+        _pHistorikk = null;
+        _pDato = DateTime.Today;
+    }
+
+    // ---------- Importer varer ----------
+    private List<MappingRad> ImportMapping() =>
+    [
+        new() { Label = "Artikkelnr", Krevd = true, Get = () => _iValgt.Produktkode, Set = v => _iValgt.Produktkode = v },
+        new() { Label = "GTIN/EAN", Get = () => _iValgt.Gtin, Set = v => _iValgt.Gtin = v },
+        new() { Label = "Varenavn 1", Get = () => _iValgt.Navn, Set = v => _iValgt.Navn = v },
+        new() { Label = "Varenavn 2", Get = () => _iValgt.Navn2, Set = v => _iValgt.Navn2 = v },
+        new() { Label = "Beskrivelse", Get = () => _iValgt.Beskrivelse, Set = v => _iValgt.Beskrivelse = v },
+        new() { Label = "Varegruppe", Get = () => _iValgt.Varegruppe, Set = v => _iValgt.Varegruppe = v },
+        new() { Label = "Overflate", Get = () => _iValgt.Overflate, Set = v => _iValgt.Overflate = v },
+        new() { Label = "Konsept", Get = () => _iValgt.Konsept, Set = v => _iValgt.Konsept = v },
+        new() { Label = "Komponenttype", Get = () => _iValgt.Komponenttype, Set = v => _iValgt.Komponenttype = v },
+        new() { Label = "Produktgruppe", Get = () => _iValgt.Produktgruppe, Set = v => _iValgt.Produktgruppe = v },
+        new() { Label = "Enhet (1 = Stk, 2 = Par, 3 = M, 4 = Sett)", Get = () => _iValgt.Enhet, Set = v => _iValgt.Enhet = v },
+        new() { Label = "Pris netto", Get = () => _iValgt.PrisNetto, Set = v => _iValgt.PrisNetto = v },
+        new() { Label = "Pris veiledende", Get = () => _iValgt.PrisVeiledende, Set = v => _iValgt.PrisVeiledende = v },
+        new() { Label = "Rabattgruppe", Get = () => _iValgt.Rabattgruppe, Set = v => _iValgt.Rabattgruppe = v },
+        new() { Label = "Lager (J/N)", Get = () => _iValgt.Lager, Set = v => _iValgt.Lager = v },
+        new() { Label = "Aktiv/Inaktiv (A/I)", Get = () => _iValgt.Inaktiv, Set = v => _iValgt.Inaktiv = v },
+    ];
+
+    private async Task LastOppVareliste(InputFileChangeEventArgs e)
+    {
+        _iFeil = null;
+        if (await LesFilAsync(e, f => _iFeil = f) is not { } fil)
+        {
+            return;
+        }
+
+        var (kolonner, rader, filnavn) = fil;
+
+        _iKolonner = kolonner;
+        _iRader = rader;
+        _iFilnavn = filnavn;
+        _iEksempel = rader.FirstOrDefault();
+
+        var husket = await HentMappingAsync(KildeImport);
+        _iHarHusket = husket is not null && husket.Produktkode is not null && Gyldig(husket.Produktkode, kolonner.Count)
+            && new[] { husket.Gtin, husket.Navn, husket.Navn2, husket.Beskrivelse, husket.Varegruppe, husket.Overflate, husket.Konsept, husket.Enhet, husket.PrisNetto, husket.PrisVeiledende, husket.Lager, husket.Inaktiv, husket.Rabattgruppe, husket.Komponenttype, husket.Produktgruppe }
+                .All(i => Gyldig(i, kolonner.Count));
+        _iValgt = _iHarHusket ? husket! : PrisimportService.AutoMatchKolonner(kolonner);
+
+        _iHistorikk = await StartHistorikkAsync(KildeImport, filnavn);
+        _iSteg = 2;
+    }
+
+    private async Task ForhandsvisImport()
+    {
+        if (Valgt is not { } lev)
+        {
+            return;
+        }
+
+        if (_iValgt.Produktkode is null)
+        {
+            _iFeil = "Velg hvilken kolonne som er Artikkelnr - den brukes til å finne varene som finnes fra før.";
+            return;
+        }
+
+        _iFeil = null;
+        _iBusy = true;
+        try
+        {
+            _iForhandsvisning = await PrisimportSvc.ForhandsvisAsync(_iRader, lev.Navn, _iValgt);
+            if (_iForhandsvisning.Count == 0)
+            {
+                _iFeil = "Fant ingen gyldige rader å importere.";
+                return;
+            }
+
+            _iVis = 200;
+            _iSteg = 3;
+        }
+        catch (Exception ex)
+        {
+            _iFeil = $"Klarte ikke å lage kontrollen: {FullFeilmelding(ex)}";
+            await SettStatusAsync(_iHistorikk, "Feilet");
+        }
+        finally
+        {
+            _iBusy = false;
         }
     }
 
     private async Task Importer()
     {
-        _feil = null;
-        _importerer = true;
+        if (Valgt is not { } lev)
+        {
+            return;
+        }
+
+        _iFeil = null;
+        _iBusy = true;
         try
         {
-            (_oppdatertAntall, _nyeAntall) = await PrisimportSvc.ImporterAsync(_forhandsvisning, _leverandor);
-
-            if (_gjeldendeHistorikk is not null)
+            (_iOppdatert, _iNye) = await PrisimportSvc.ImporterAsync(_iForhandsvisning, lev.Navn);
+            if (_iHistorikk is not null)
             {
-                _gjeldendeHistorikk.Status = "Fullført";
-                _gjeldendeHistorikk.AntallRader = _forhandsvisning.Count;
-                _gjeldendeHistorikk.AntallNye = _nyeAntall;
-                _gjeldendeHistorikk.AntallOppdatert = _oppdatertAntall;
-                // Lagrer nøyaktig de feltvalgene som ble brukt - lar en senere
-                // import for samme leverandør starte fra disse i stedet for kun
-                // gjetting ut fra kolonneoverskrifter (se LastOppFil).
-                _gjeldendeHistorikk.MappingJson = System.Text.Json.JsonSerializer.Serialize(_valgt);
+                _iHistorikk.Status = "Fullført";
+                _iHistorikk.AntallRader = _iForhandsvisning.Count;
+                _iHistorikk.AntallNye = _iNye;
+                _iHistorikk.AntallOppdatert = _iOppdatert;
+                _iHistorikk.MappingJson = System.Text.Json.JsonSerializer.Serialize(_iValgt);
                 await Db.SaveChangesAsync();
-                await LastHistorikkAsync();
             }
 
-            _steg = 4;
+            _iSteg = 4;
+            await LastLeverandorerAsync();
+            await LastPlanlagtOgHistorikkAsync();
         }
         catch (Exception ex)
         {
-            // Fanges her i stedet for å la den sprette videre opp til Blazor
-            // sin globale feilhåndtering - en ufanget exception i en
-            // event-handler dreper hele kretsen (den kjente "An unhandled
-            // error has occurred"-boksen), og da svarer ALLE knapper på siden
-            // med ingenting til siden reloades. Import kan trygt kjøres på
-            // nytt (se oppdaterings-logikken i ImporterAsync), så bruker
-            // beholdes på steg 3 og kan bare prøve igjen.
-            _feil = $"Importen feilet: {FullFeilmelding(ex)}. Du kan trygt trykke Start import på nytt - varer som allerede ble lagret før feilen oppstod blir ikke duplisert.";
-            // I egen try/catch - se samme resonnement i VisForhandsvisning().
-            try
-            {
-                if (_gjeldendeHistorikk is not null)
-                {
-                    _gjeldendeHistorikk.Status = "Feilet";
-                    await Db.SaveChangesAsync();
-                    await LastHistorikkAsync();
-                }
-            }
-            catch
-            {
-                // Ignorerer - hovedfeilmeldingen over er allerede satt og vises uansett.
-            }
+            // Importen kan trygt kjøres på nytt - varer som ble lagret før feilen dupliseres ikke.
+            _iFeil = $"Importen feilet: {FullFeilmelding(ex)}. Du kan trygt prøve igjen.";
+            await SettStatusAsync(_iHistorikk, "Feilet");
         }
         finally
         {
-            _importerer = false;
+            _iBusy = false;
         }
     }
 
     private async Task AvbrytImport()
     {
-        if (_gjeldendeHistorikk is not null)
-        {
-            _gjeldendeHistorikk.Status = "Avbrutt";
-            await Db.SaveChangesAsync();
-            await LastHistorikkAsync();
-        }
-
-        NyImport();
+        await SettStatusAsync(_iHistorikk, "Avbrutt");
+        NullstillImport();
+        await LastPlanlagtOgHistorikkAsync();
     }
 
-    private void NyImport()
+    private void NullstillImport()
     {
-        _steg = 1;
-        _leverandor = "";
-        _feil = null;
-        _filnavn = null;
-        _kolonner = [];
-        _rader = [];
-        _radeksempel = null;
-        _valgt = new();
-        _autoForslag = new();
-        _forhandsvisning = [];
-        _gjeldendeHistorikk = null;
+        _iSteg = 1;
+        _iFeil = null;
+        _iFilnavn = null;
+        _iKolonner = [];
+        _iRader = [];
+        _iEksempel = null;
+        _iValgt = new();
+        _iForhandsvisning = [];
+        _iHistorikk = null;
     }
 }

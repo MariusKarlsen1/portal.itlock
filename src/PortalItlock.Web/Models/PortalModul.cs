@@ -123,7 +123,7 @@ public static class PortalModulRegister
     private static readonly List<Lenke> KomponentPrisUndermoduler =
     [
         new Lenke("Komponentregister", "Søk, prissett og administrer komponenter og leverandører.", "komponenter", "tool"),
-        new Lenke("Prisimport", "Last opp prisliste fra leverandør, oppdater priser og legg til nye varer.", "komponenter/prisimport", "receipt"),
+        new Lenke("Prisimport", "Oppdater prisene fra leverandørens prisliste, eller importer nye varer.", "komponenter/prisimport", "receipt"),
         new Lenke("Leverandører", "Søk opp leverandører, se hvilke varer de leverer, og sett varenummer/pris/standard pr. leverandør.", "komponenter/leverandorer", "users"),
         new Lenke("Rabattgrupper", "Faste rabattavtaler per leverandør/produktserie, brukes til å beregne nettopris automatisk.", "rabattgrupper", "tag"),
         new Lenke("Produktgrupper", "Opprett produktgrupper og legg til varer i dem. Brukes til å sette kunderabatt per gruppe.", "produktgrupper", "folder"),

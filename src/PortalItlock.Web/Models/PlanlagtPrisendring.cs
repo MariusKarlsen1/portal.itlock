@@ -6,6 +6,10 @@ public class PlanlagtPrisendring
     public int ComponentId { get; set; }
     public Component? Component { get; set; }
 
+    // Leverandøren prisen kom fra (prisoppdatering per leverandør) - da
+    // oppdateres også leverandørens pris på varen når endringen utføres.
+    public int? LeverandorId { get; set; }
+
     public decimal? GammelPrisNetto { get; set; }
     public decimal? GammelPrisVeiledende { get; set; }
     public decimal? NyPrisNetto { get; set; }

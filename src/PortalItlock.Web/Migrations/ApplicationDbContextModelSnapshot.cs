@@ -4443,6 +4443,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Kilde")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("LeverandorId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal?>("NyPrisNetto")
                         .HasColumnType("TEXT");
 

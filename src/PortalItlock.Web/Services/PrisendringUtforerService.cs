@@ -21,9 +21,22 @@ public class PrisendringUtforerService(ApplicationDbContext db, ILogger<Prisendr
                 continue;
             }
 
-            PrisHistorikkLogger.Logg(db, p.Component, p.NyPrisNetto, p.NyPrisVeiledende, "Planlagt prisoppdatering");
-            p.Component.PrisNetto = p.NyPrisNetto;
-            p.Component.PrisVeiledende = p.NyPrisVeiledende;
+            // Endringer fra prisoppdatering per leverandør oppdaterer også
+            // leverandørens pris på varen (se PrisoppdateringService.SettPris).
+            // Eldre planlagte endringer uten leverandør endrer bare varen.
+            if (p.LeverandorId is int levId)
+            {
+                var lenke = await db.ComponentLeverandorer.FirstOrDefaultAsync(l => l.ComponentId == p.ComponentId && l.LeverandorId == levId);
+                var antallLenker = await db.ComponentLeverandorer.CountAsync(l => l.ComponentId == p.ComponentId);
+                PrisoppdateringService.SettPris(db, p.Component, lenke, antallLenker, p.NyPrisNetto, p.NyPrisVeiledende, "Planlagt prisoppdatering");
+            }
+            else
+            {
+                PrisHistorikkLogger.Logg(db, p.Component, p.NyPrisNetto, p.NyPrisVeiledende, "Planlagt prisoppdatering");
+                p.Component.PrisNetto = p.NyPrisNetto;
+                p.Component.PrisVeiledende = p.NyPrisVeiledende;
+            }
+
             p.Utfort = true;
         }
 
