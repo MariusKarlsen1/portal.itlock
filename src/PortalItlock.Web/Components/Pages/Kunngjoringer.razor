@@ -125,7 +125,7 @@
             <div class="kg-fs kg-fs-vk4">
                 <div class="kg-kol">
                     <div class="kg-fhode">
-                        @Omslag(akt, "kg-oms-tynn")
+                        @Omslag(akt, "kg-oms-stor")
                         <div class="kg-fi">
                             <span class="kg-flogo kg-flogo-l" style="background:@akt.Farge">@Forkortelse(akt.Navn)</span>
                             <div class="kg-fi-rad">
@@ -183,7 +183,7 @@
                         <div class="kg-bildegrid">
                             @foreach (var k in medBilde)
                             {
-                                <a href="@($"/kunngjoring/{k.Id}")" class="kg-bb" style="--b:url('/kunngjoringbilde/@(k.Id)?w=500')" title="@k.Tittel"><img src="@($"/kunngjoringbilde/{k.Id}?w=500")" alt="" loading="lazy" /></a>
+                                <a href="@($"/kunngjoringbilde/{k.Id}")" target="_blank" class="kg-bb" style="--b:url('/kunngjoringbilde/@(k.Id)?w=500')" title="@k.Tittel"><img src="@($"/kunngjoringbilde/{k.Id}?w=500")" alt="" loading="lazy" /></a>
                             }
                         </div>
                     }
@@ -246,11 +246,6 @@
                 </div>
 
                 <aside class="kg-hp">
-                    @if (_naverendeBruker is { } meg)
-                    {
-                        var mine = _innlegg.Count(k => k.OpprettetAvBrukerId == meg.Id && k.OpprettetDato >= DateTime.Today.AddDays(-30));
-                        <div class="kg-wid"><h4>Deg</h4><div class="kg-wrad">@Avatar(meg.Navn, "kg-av-l")<span><b>@meg.Navn</b><small>@(meg.Stilling ?? meg.Rolle.Visningsnavn()) · @mine @(mine == 1 ? "innlegg" : "innlegg") siste 30 dager</small></span></div></div>
-                    }
                     @if (RosDenneManeden.Count > 0)
                     {
                         <div class="kg-wid">
@@ -306,6 +301,36 @@
             @if (ErAdminEllerPl)
             {
                 <label class="kg-sjekk"><input type="checkbox" @bind="_fObligatorisk" />Obligatorisk – alle i organisasjonen er medlemmer</label>
+            }
+            @if (!_fObligatorisk)
+            {
+                @* Velg hvem som skal være med. Den som oppretter er alltid med (som administrator). *@
+                var treff = _interneBrukere.Where(b => string.IsNullOrWhiteSpace(_fMedSok) || b.Navn.Contains(_fMedSok.Trim(), StringComparison.OrdinalIgnoreCase) || (b.Stilling ?? "").Contains(_fMedSok.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+                var alleValgt = treff.Count > 0 && treff.All(b => _fMedlemmer.Contains(b.Id));
+                <div class="kg-medvelg">
+                    <div class="kg-medvelg-topp">
+                        <span class="kg-lbl">Medlemmer <small>@_fMedlemmer.Count valgt</small></span>
+                        <button type="button" class="kg-lenke" @onclick="@(() => VelgAlleMedlemmer(treff, !alleValgt))">@(alleValgt ? "Fjern alle" : "Velg alle")</button>
+                    </div>
+                    <input class="kg-medvelg-sok" type="search" placeholder="Søk etter navn eller stilling …" @bind="_fMedSok" @bind:event="oninput" />
+                    <div class="kg-medvelg-liste">
+                        @foreach (var b in treff)
+                        {
+                            var bid = b.Id;
+                            var meg = bid == _naverendeBrukerId;
+                            var valgt = meg || _fMedlemmer.Contains(bid);
+                            <label class="@(valgt ? "pa" : "")">
+                                <input type="checkbox" checked="@valgt" disabled="@meg" @onchange="@(() => { if (!_fMedlemmer.Remove(bid)) _fMedlemmer.Add(bid); })" />
+                                @Avatar(b.Navn, "")
+                                <span><b>@b.Navn@(meg ? " (deg)" : "")</b><small>@(b.Stilling ?? b.Rolle.Visningsnavn())</small></span>
+                            </label>
+                        }
+                        @if (treff.Count == 0)
+                        {
+                            <p class="list-empty">Ingen treff.</p>
+                        }
+                    </div>
+                </div>
             }
             @if (!string.IsNullOrEmpty(_fFeil))
             {
@@ -603,6 +628,23 @@
     private string? _fBeskrivelse;
     private string _fTema = "alle";
     private bool _fObligatorisk;
+    private HashSet<int> _fMedlemmer = [];
+    private string _fMedSok = "";
+
+    private void VelgAlleMedlemmer(List<Bruker> brukere, bool velg)
+    {
+        foreach (var b in brukere)
+        {
+            if (velg)
+            {
+                _fMedlemmer.Add(b.Id);
+            }
+            else if (b.Id != _naverendeBrukerId)
+            {
+                _fMedlemmer.Remove(b.Id);
+            }
+        }
+    }
     private byte[]? _fOmslagData;
     private string? _fOmslagType;
     private bool _fFjernOmslag;
@@ -616,6 +658,10 @@
         _fBeskrivelse = f?.Beskrivelse;
         _fTema = f?.Tema ?? "montor";
         _fObligatorisk = f?.ErObligatorisk ?? false;
+        _fMedlemmer = f is null
+            ? (_naverendeBrukerId is { } meg ? [meg] : [])
+            : f.Medlemmer.Select(m => m.BrukerId).ToHashSet();
+        _fMedSok = "";
         _fOmslagData = null;
         _fOmslagType = null;
         _fFjernOmslag = false;
@@ -669,6 +715,27 @@
         {
             f.OmslagData = null;
             f.OmslagContentType = null;
+        }
+
+        // Medlemmene som er krysset av (gjelder ikke obligatoriske - der er alle med).
+        if (!f.ErObligatorisk)
+        {
+            if (_naverendeBrukerId is { } meg)
+            {
+                _fMedlemmer.Add(meg);
+            }
+            foreach (var m in f.Medlemmer.Where(m => !_fMedlemmer.Contains(m.BrukerId)).ToList())
+            {
+                f.Medlemmer.Remove(m);
+                if (m.Id != 0)
+                {
+                    Db.Remove(m);
+                }
+            }
+            foreach (var bid in _fMedlemmer.Where(bid => f.Medlemmer.All(m => m.BrukerId != bid)))
+            {
+                f.Medlemmer.Add(new FellesskapMedlem { BrukerId = bid });
+            }
         }
 
         await Db.SaveChangesAsync();
@@ -956,6 +1023,21 @@
     // ---------- VK4: viktige kunngjøringer merkes som sett automatisk ----------
 
     private DotNetObjectReference<Kunngjoringer>? _jsRef;
+
+    // «Kommende» i sidepanelet: hopp til innlegget i feeden (ikke egen side).
+    private async Task GaTilInnlegg(int id)
+    {
+        _filter = "";
+        StateHasChanged();
+        await Task.Yield();
+        try
+        {
+            await JS.InvokeVoidAsync("scrollTilElement", $"innlegg-{id}");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
 
     // Utvid-knappen i fellesskapshodet: kortet fyller hele bredden.
     private bool _full;
@@ -1288,10 +1370,10 @@
                 <h4>Kommende</h4>
                 @foreach (var a in kommende)
                 {
-                    <a class="kg-wrad" href="@($"/kunngjoring/{a.Id}")">
+                    <button type="button" class="kg-wrad" @onclick="@(() => GaTilInnlegg(a.Id))">
                         <span class="kg-kal kg-kal-liten"><small>@a.EventDato!.Value.ToString("MMM", _kultur).TrimEnd('.')</small><b>@a.EventDato.Value.Day</b></span>
                         <span><b>@Kort(a.Tittel, 40)</b><small>@(a.Sted ?? a.EventDato.Value.ToString("dddd", _kultur)) · @a.Pameldinger.Count(p => p.Svar == PameldingSvar.Kommer) kommer</small></span>
-                    </a>
+                    </button>
                 }
             </div>
         }
@@ -1468,7 +1550,7 @@
         var forfatter = k.OpprettetAvBruker?.Navn ?? "Ukjent";
         // VK4: viktige kunngjøringer merkes som sett når de har vært på skjermen i 2 sekunder (js/viktigsett.js).
         var viktigIkkeSett = k.KreverBekreftelse && k.OpprettetAvBrukerId != _naverendeBrukerId && !HarBekreftet(k);
-        <article class="kg-post @(k.Type == InnleggType.Kunngjoring ? "kunngj" : "") @(ny ? "ny" : "") @(viktigIkkeSett ? "kg-viktig-ny" : "")" @key="k.Id" data-viktig="@(viktigIkkeSett ? k.Id : null)">
+        <article class="kg-post @(k.Type == InnleggType.Kunngjoring ? "kunngj" : "") @(ny ? "ny" : "") @(viktigIkkeSett ? "kg-viktig-ny" : "")" @key="k.Id" id="innlegg-@(k.Id)" data-viktig="@(viktigIkkeSett ? k.Id : null)">
             <div class="kg-ph">
                 @Avatar(forfatter, "kg-av-l")
                 <div>
@@ -1509,15 +1591,15 @@
             {
                 @* Hele bildet vises (høye bilder midt i rammen med en uskarp kopi i kantene)
                    i stedet for å skjæres til en fast stripe. *@
-                <a href="@($"/kunngjoring/{k.Id}")" class="kg-pbg" style="--b:url('/kunngjoringbilde/@(k.Id)?w=1200')" aria-label="@k.Tittel">
+                <div class="kg-pbg" style="--b:url('/kunngjoringbilde/@(k.Id)?w=1200')" aria-label="@k.Tittel">
                     <img src="@($"/kunngjoringbilde/{k.Id}?w=1200")" alt="" loading="lazy" />
                     @if (!string.IsNullOrWhiteSpace(k.Sted)) {<span class="kg-pbg-over"><Icon Name="map-pin" />@k.Sted</span>}
-                </a>
+                </div>
             }
 
             @if (k.Type.HarTittel())
             {
-                <h3><a href="@($"/kunngjoring/{k.Id}")">@k.Tittel</a></h3>
+                <h3>@k.Tittel</h3>
             }
 
             @if (k.Type == InnleggType.Ros)
