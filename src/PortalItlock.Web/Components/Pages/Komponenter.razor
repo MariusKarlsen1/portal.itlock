@@ -7,384 +7,461 @@
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
-@inject IJSRuntime JS
 @inject VisningPreferanseService VisningPref
 
 <PageTitle>Komponentregister</PageTitle>
 
-<div class="side-header">
-    <div class="side-header-venstre">
-        <span class="side-header-ikon"><Icon Name="box" /></span>
-        <div>
-            <h1>Komponentregister</h1>
-            <p class="section-hint">Søk og bla i alle komponenter. Trykk på varenavnet for å åpne varekortet, eller "Rediger" for rask inline-endring av navn, leverandør, produktkode eller pris.</p>
-        </div>
-    </div>
-    <div class="snarvei-rad">
-        <a class="knapp" href="/komponenter/prisimport"><Icon Name="upload" />Importer prisliste</a>
-        <a class="knapp" href="/komponenter/oppdater-priser"><Icon Name="trend-up" />Oppdater priser</a>
-        <a class="knapp" href="/rabattgrupper"><Icon Name="tag" />Rabattgrupper</a>
-    </div>
-</div>
-
-<div class="verktoy-kort">
-    <div class="verktoy-rad">
-        <div class="sok-boks">
-            <Icon Name="search" />
-            <input @bind="_search" @bind:event="oninput" @bind:after="ResetPage" placeholder="Søk på navn, leverandør eller produktkode" />
-        </div>
-        <select class="felt-select" @bind="_selectedTypeId" @bind:after="ResetPage">
-            <option value="0">Alle komponenttyper</option>
-            @foreach (var t in _types)
-            {
-                <option value="@t.Id">@t.Navn</option>
-            }
-        </select>
-        <select class="felt-select" @bind="_selectedLeverandor" @bind:after="ResetPage">
-            <option value="">Alle leverandører</option>
-            @foreach (var l in _leverandorer)
-            {
-                <option value="@l">@l</option>
-            }
-        </select>
-        <div class="filter-rad">
-            <button type="button" class="filter-chip @(_activeFilter == "active" ? "aktiv" : "")" @onclick="@(() => SettActiveFilter("active"))">Kun aktive</button>
-            <button type="button" class="filter-chip @(_activeFilter == "inactive" ? "aktiv" : "")" @onclick="@(() => SettActiveFilter("inactive"))">Kun inaktive</button>
-            <button type="button" class="filter-chip @(_activeFilter == "all" ? "aktiv" : "")" @onclick="@(() => SettActiveFilter("all"))">Alle</button>
-        </div>
-        <button type="button" class="types-toggle" @onclick="@(() => _visTyperPanel = !_visTyperPanel)">@(_visTyperPanel ? "Skjul komponenttyper" : "Endre komponenttyper")</button>
-    </div>
-
-    @if (_visTyperPanel)
-    {
-        <div class="types-panel">
-            @foreach (var t in _types)
-            {
-                <div class="type-rad" @key="t.Id">
-                    <input @bind="t.Navn" @bind:event="oninput" />
-                    <input type="number" @bind="t.Sortering" title="Rekkefølge i nedtrekksmenyer, lavest tall først" />
-                    <button type="button" class="ikon-btn" title="Lagre" @onclick="@(() => RenameComponentType(t))"><Icon Name="check" /></button>
-                    <button type="button" class="ikon-btn slett" disabled="@_components.Any(c => c.ComponentTypeId == t.Id)" title="@(_components.Any(c => c.ComponentTypeId == t.Id) ? "Kan ikke slette - i bruk på komponenter" : "Slett")" @onclick="@(() => DeleteComponentType(t))"><Icon Name="trash" /></button>
-                </div>
-            }
-            @if (!string.IsNullOrEmpty(_typerPanelMessage))
-            {
-                <p class="save-success">@_typerPanelMessage</p>
-            }
-            <div class="verktoy-rad ny-type-rad">
-                <input @bind="_nyTypeNavn" @bind:event="oninput" placeholder="Navn på ny komponenttype" />
-                <input type="number" @bind="_nyTypeSortering" placeholder="Sortering" title="Rekkefølge i nedtrekksmenyer, lavest tall først" />
-                <button type="button" class="knapp knapp-primaer knapp-liten" @onclick="CreateComponentType">Opprett komponenttype</button>
-                @if (!string.IsNullOrEmpty(_nyTypeMessage))
-                {
-                    <span class="save-success">@_nyTypeMessage</span>
-                }
+@* KR7 (komponenter-forslag.html): komponenttypene i en meny inni kortet, en smal
+   tabell i midten og et varepanel til høyre. Hele varekortet (KomponentPanel)
+   åpnes fra panelet. *@
+<div class="kr @(_full ? "kr-full" : "")">
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="box" /></span>
+            <div>
+                <h1>Komponentregister</h1>
+                <p class="section-hint">Velg komponenttype i menyen og klikk på en vare for å se den i panelet til høyre. Åpne varekortet for å endre alt om varen.</p>
             </div>
         </div>
+        <div class="kr-hode-knapper">
+            <span class="kr-nedtrekk">
+                <button type="button" class="kr-knapp" @onclick="@(() => _visPrisMeny = !_visPrisMeny)"><Icon Name="trend-up" />Priser og import</button>
+                @if (_visPrisMeny)
+                {
+                    <span class="kr-nedtrekk-bakgrunn" @onclick="@(() => _visPrisMeny = false)"></span>
+                    <span class="kr-nedtrekk-boks">
+                        <a href="/komponenter/prisimport"><Icon Name="upload" />Importer prisliste</a>
+                        <a href="/komponenter/oppdater-priser"><Icon Name="trend-up" />Oppdater priser</a>
+                        <a href="/rabattgrupper"><Icon Name="tag" />Rabattgrupper</a>
+                    </span>
+                }
+            </span>
+            <button type="button" class="kr-knapp primaer" @onclick="StartNyVare"><Icon Name="plus" />Ny vare</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_fdvFeil))
+    {
+        <p class="form-error">@_fdvFeil</p>
     }
-</div>
 
-<div class="status-rad">
-    <span class="stat-chip"><span class="dot"></span>@_filteredCount av @_components.Count komponenter</span>
-    <div class="pagination">
-        <button type="button" class="knapp knapp-liten" disabled="@(_page == 0)" @onclick="@(() => ChangePage(-1))"><Icon Name="arrow-left" />Forrige</button>
-        <span>Side @(_page + 1) av @Math.Max(1, TotalPages)</span>
-        <button type="button" class="knapp knapp-liten" disabled="@(_page + 1 >= TotalPages)" @onclick="@(() => ChangePage(1))">Neste<span class="pil-hoyre"><Icon Name="arrow-left" /></span></button>
-    </div>
-</div>
-@if (_etikettValgt.Count > 0)
-{
-    @* Valgte varer: lag etiketter med strekkode fra GTIN/EAN, som i Tripletex. *@
-    <div class="etikett-linje">
-        <span><b>@_etikettValgt.Count</b> @(_etikettValgt.Count == 1 ? "vare" : "varer") valgt</span>
-        <button type="button" class="knapp knapp-primaer knapp-liten" @onclick="@(() => _visEtikettDialog = true)"><Icon Name="tag" />Lag etikett</button>
-        <button type="button" class="knapp knapp-liten etikett-fjern" @onclick="@(() => _etikettValgt.Clear())">Fjern valg</button>
-    </div>
-}
-@if (!string.IsNullOrEmpty(_fdvFeil))
-{
-    <p class="form-error">@_fdvFeil</p>
-}
+    <div class="kr-kort @(_visTyperPanel ? "kr-uten-panel" : "")">
+        <nav class="kr-meny">
+            <label class="kr-minisok">
+                <Icon Name="search" />
+                <input type="search" @bind="_typeSok" @bind:event="oninput" placeholder="Finn komponenttype" />
+            </label>
+            <div class="kr-typeliste">
+                @if (string.IsNullOrWhiteSpace(_typeSok))
+                {
+                    <button type="button" class="@(!_visTyperPanel && _selectedTypeId == 0 ? "pa" : "")" @onclick="@(() => VelgType(0))">
+                        <span class="kr-meny-ikon"><Icon Name="box" /></span>
+                        <span class="kr-navn">Alle typer</span>
+                        <small>@_typeAntall.Values.Sum().ToString("N0", Nb)</small>
+                    </button>
+                }
+                @foreach (var t in _types.Where(t => string.IsNullOrWhiteSpace(_typeSok) || t.Navn.Contains(_typeSok.Trim(), StringComparison.OrdinalIgnoreCase)))
+                {
+                    var id = t.Id;
+                    <button type="button" @key="t.Id" class="@(!_visTyperPanel && _selectedTypeId == id ? "pa" : "")" @onclick="@(() => VelgType(id))">
+                        <span class="kr-meny-ikon"><Icon Name="box" /></span>
+                        <span class="kr-navn">@t.Navn</span>
+                        <small>@_typeAntall.GetValueOrDefault(id).ToString("N0", Nb)</small>
+                    </button>
+                }
+                @if (_typeAntall.GetValueOrDefault(-1) > 0 && string.IsNullOrWhiteSpace(_typeSok))
+                {
+                    <button type="button" class="@(!_visTyperPanel && _selectedTypeId == -1 ? "pa" : "")" @onclick="@(() => VelgType(-1))">
+                        <span class="kr-meny-ikon"><Icon Name="box" /></span>
+                        <span class="kr-navn">Uten type</span>
+                        <small>@_typeAntall[-1].ToString("N0", Nb)</small>
+                    </button>
+                }
+            </div>
+            <button type="button" class="kr-endre-typer @(_visTyperPanel ? "pa" : "")" @onclick="@(() => { _visTyperPanel = true; _typerPanelMessage = null; })">
+                <Icon Name="edit" />Endre komponenttyper
+            </button>
+        </nav>
 
-<div class="tabell-kort">
-<div id="komponenter-scroll-top" class="table-scroll-top">
-    <div class="table-scroll-top-inner"></div>
-</div>
-<div class="table-wrap" id="komponenter-table-wrap">
-    <table class="component-table">
-        <thead>
-            <tr>
-                <th>
-                    <input type="checkbox" class="etikett-cb" title="Velg alle på siden for etikett"
-                           checked="@(PagedComponents.Any() && PagedComponents.All(c => _etikettValgt.Contains(c.Id)))" @onchange="VelgAlleForEtikett" />
-                </th>
-                <th>Aktiv</th>
-                <th>Lager</th>
-                <th>Komponenttype</th>
-                <th>Varenavn 1</th>
-                <th>Varenavn 2</th>
-                <th>Leverandør</th>
-                <th>Konsept</th>
-                <th>Kjøpes inn av</th>
-                <th>Produktkode</th>
-                <th>GTIN/EAN</th>
-                <th>Overflate</th>
-                <th>Netto</th>
-                <th>Veiledende</th>
-                <th>Rabattgruppe</th>
-                <th title="Sperrer kunderabatt på denne varen i tilbud">Ingen rabatt</th>
-                <th>Produktgruppe</th>
-                <th>Montasjetid prosjekt</th>
-                <th>Montasjetid arbeidsordre</th>
-                <th>Tidsbruk serviceavtale</th>
-                <th>Garantitid (mnd)</th>
-                <th>Enhet</th>
-                <th>FDV</th>
-                <th>Montasjeblad</th>
-                <th>Inntektskonto</th>
-                <th>Brukt i</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var c in PagedComponents)
-            {
-                <tr class="@(c.Aktiv ? "" : "inactive-row")">
-                    @if (_editingId == c.Id)
+        @if (_visTyperPanel)
+        {
+            <section class="kr-innhold">
+                <button type="button" class="kr-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+                    <Icon Name="@(_full ? "minimize" : "maximize")" />
+                </button>
+                <div class="kr-tittel">
+                    <h2>Komponenttyper</h2>
+                    <p>Navn og rekkefølge i nedtrekksmenyer (lavest tall først). Typer som er i bruk kan ikke slettes.</p>
+                </div>
+                @if (!string.IsNullOrEmpty(_typerPanelMessage))
+                {
+                    <p class="kr-ok">@_typerPanelMessage</p>
+                }
+                <div class="kr-tabell-ramme">
+                    <table class="kr-tabell">
+                        <thead>
+                            <tr>
+                                <th>Komponenttype</th>
+                                <th class="kr-n">Varer</th>
+                                <th class="kr-n">Rekkefølge</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var t in _types)
+                            {
+                                var iBruk = _components.Count(c => c.ComponentTypeId == t.Id);
+                                <tr @key="t.Id">
+                                    <td><input class="kr-celle-input" @bind="t.Navn" @bind:event="oninput" /></td>
+                                    <td class="kr-n">@iBruk.ToString("N0", Nb)</td>
+                                    <td class="kr-n"><input class="kr-celle-input kr-tall" type="number" @bind="t.Sortering" /></td>
+                                    <td class="kr-n kr-nowrap">
+                                        <button type="button" class="kr-ikon" title="Lagre" @onclick="@(() => RenameComponentType(t))"><Icon Name="check" /></button>
+                                        <button type="button" class="kr-ikon fare" disabled="@(iBruk > 0)" title="@(iBruk > 0 ? "Kan ikke slette - i bruk på komponenter" : "Slett")" @onclick="@(() => DeleteComponentType(t))"><Icon Name="trash" /></button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="kr-ny-type">
+                    <input @bind="_nyTypeNavn" @bind:event="oninput" placeholder="＋ Ny komponenttype"
+                           @onkeydown="@(async e => { if (e.Key == "Enter") { await CreateComponentType(); } })" />
+                    <input type="number" class="kr-tall" @bind="_nyTypeSortering" title="Rekkefølge i nedtrekksmenyer, lavest tall først" />
+                    @if (!string.IsNullOrWhiteSpace(_nyTypeNavn))
                     {
-                        <td class="actions">
-                            @if (_slettendeId == c.Id)
-                            {
-                                <span class="delete-confirm">
-                                    <input @bind="_slettBekreftelseTekst" @bind:event="oninput" placeholder="SLETT" class="kode-input" />
-                                    <button type="button" class="knapp knapp-farlig knapp-liten" disabled="@(_slettBekreftelseTekst != "SLETT")" @onclick="@(() => SlettKomponent(c))">Slett</button>
-                                    <button type="button" class="knapp knapp-liten" @onclick="@(() => { _slettendeId = null; _slettBekreftelseTekst = ""; })">Avbryt</button>
-                                </span>
-                            }
-                            else
-                            {
-                                <button type="button" class="knapp knapp-primaer knapp-liten" @onclick="@(() => Save(c))">Lagre</button>
-                                <button type="button" class="knapp knapp-liten" @onclick="@(() => _editingId = null)">Avbryt</button>
-                                <button type="button" class="knapp knapp-farlig knapp-liten" @onclick="@(() => _slettendeId = c.Id)">Slett</button>
-                            }
-                        </td>
+                        <button type="button" class="kr-knapp primaer" @onclick="CreateComponentType">Opprett</button>
                     }
-                    else
+                </div>
+            </section>
+        }
+        else
+        {
+            var markert = Markert;
+            <section class="kr-innhold">
+                <div class="kr-verktoy">
+                    <label class="kr-sok">
+                        <Icon Name="search" />
+                        <input type="search" @bind="_search" @bind:event="oninput" @bind:after="ResetPage" placeholder="Søk navn, leverandør, produktkode eller GTIN" />
+                    </label>
+                    <select class="kr-select" @bind="_selectedLeverandor" @bind:after="ResetPage">
+                        <option value="">Alle leverandører</option>
+                        @foreach (var l in _leverandorer)
+                        {
+                            <option value="@l">@l</option>
+                        }
+                    </select>
+                    <span class="kr-filter">
+                        <button type="button" class="@(_activeFilter == "active" ? "pa" : "")" @onclick="@(() => SettActiveFilter("active"))">Aktive</button>
+                        <button type="button" class="@(_activeFilter == "inactive" ? "pa" : "")" @onclick="@(() => SettActiveFilter("inactive"))">Inaktive</button>
+                        <button type="button" class="@(_activeFilter == "all" ? "pa" : "")" @onclick="@(() => SettActiveFilter("all"))">Alle</button>
+                    </span>
+                    <button type="button" class="kr-utvid kr-utvid-inline" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull">
+                        <Icon Name="@(_full ? "minimize" : "maximize")" />
+                    </button>
+                </div>
+
+                @if (_etikettValgt.Count > 0)
+                {
+                    @* Valgte varer: lag etiketter med strekkode fra GTIN/EAN, som i Tripletex. *@
+                    <div class="kr-etikett-linje">
+                        <span><b>@_etikettValgt.Count</b> @(_etikettValgt.Count == 1 ? "vare" : "varer") valgt</span>
+                        <button type="button" class="kr-knapp primaer" @onclick="@(() => _visEtikettDialog = true)"><Icon Name="tag" />Lag etikett</button>
+                        <button type="button" class="kr-knapp" @onclick="@(() => _etikettValgt.Clear())">Fjern valg</button>
+                    </div>
+                }
+
+                <div class="kr-tabell-ramme">
+                    <table class="kr-tabell kr-varer">
+                        <thead>
+                            <tr>
+                                <th class="kr-cb">
+                                    <input type="checkbox" title="Velg alle på siden for etikett"
+                                           checked="@(PagedComponents.Any() && PagedComponents.All(c => _etikettValgt.Contains(c.Id)))" @onchange="VelgAlleForEtikett" />
+                                </th>
+                                <th>Vare</th>
+                                <th class="kr-n">Netto</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var c in PagedComponents)
+                            {
+                                var id = c.Id;
+                                <tr @key="c.Id" class="@(markert?.Id == id ? "valgt" : "") @(c.Aktiv ? "" : "inaktiv")" @onclick="@(() => VelgVare(id))">
+                                    <td class="kr-cb" @onclick:stopPropagation="true">
+                                        <input type="checkbox" title="Velg for etikett" checked="@_etikettValgt.Contains(id)"
+                                               @onchange="@(() => { if (!_etikettValgt.Remove(id)) _etikettValgt.Add(id); })" />
+                                    </td>
+                                    <td>
+                                        <div class="kr-vare">
+                                            <span class="kr-status @StatusKlasse(c)" title="@StatusTekst(c)"></span>
+                                            <div>
+                                                <b>@c.Navn</b>
+                                                <span class="kr-under">
+                                                    @if (_selectedTypeId == 0)
+                                                    {
+                                                        <text>@c.TypeName · </text>
+                                                    }
+                                                    @(c.Leverandor ?? c.Produsent ?? "Ingen leverandør")
+                                                    @if (!string.IsNullOrWhiteSpace(c.Produktkode))
+                                                    {
+                                                        <text> · </text><span class="kr-kode">@c.Produktkode</span>
+                                                    }
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td class="kr-n">@FormatPrice(c.PrisNetto)</td>
+                                </tr>
+                            }
+                            @if (_filteredCount == 0)
+                            {
+                                <tr><td colspan="3" class="kr-tom">Ingen varer passer søket.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                    <div class="kr-sidebunn">
+                        <span>@(_filteredCount == 0 ? "Ingen varer" : $"Viser {_page * _perSide + 1:N0}–{Math.Min(_filteredCount, (_page + 1) * _perSide):N0} av {_filteredCount:N0}")</span>
+                        <span class="kr-sider">
+                            <button type="button" disabled="@(_page == 0)" title="Forrige side" @onclick="@(() => ChangePage(-1))">‹</button>
+                            <span>Side @(_page + 1) av @Math.Max(1, TotalPages)</span>
+                            <button type="button" disabled="@(_page + 1 >= TotalPages)" title="Neste side" @onclick="@(() => ChangePage(1))">›</button>
+                        </span>
+                        <span class="kr-sider">
+                            Per side
+                            @foreach (var n in new[] { 25, 50, 100 })
+                            {
+                                var antall = n;
+                                <button type="button" class="@(_perSide == antall ? "pa" : "")" @onclick="@(() => SettPerSide(antall))">@antall</button>
+                            }
+                        </span>
+                    </div>
+                </div>
+            </section>
+
+            <aside class="kr-panel">
+                @if (_nyVare)
+                {
+                    <div class="kr-tittel">
+                        <h2>Ny vare</h2>
+                        <p>Fyll ut resten i varekortet etterpå.</p>
+                    </div>
+                    <label class="kr-felt"><span>Komponenttype</span>
+                        <select @bind="_draft.ComponentTypeId">
+                            <option value="0">Ingen type</option>
+                            @foreach (var t in _types)
+                            {
+                                <option value="@t.Id">@t.Navn</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="kr-felt"><span>Navn</span><input @bind="_draft.Navn" /></label>
+                    <label class="kr-felt"><span>Leverandør (valgfritt)</span><input @bind="_draft.Leverandor" /></label>
+                    <label class="kr-felt"><span>Produktkode (valgfritt)</span><input @bind="_draft.Produktkode" /></label>
+                    @if (!string.IsNullOrEmpty(_addMessage))
                     {
-                        <td class="actions">
-                            <input type="checkbox" class="etikett-cb" title="Velg for etikett" checked="@_etikettValgt.Contains(c.Id)"
-                                   @onchange="@(() => { if (!_etikettValgt.Remove(c.Id)) _etikettValgt.Add(c.Id); })" />
-                            <span class="status-dots">
-                                @if (c.ErKomplett)
-                                {
-                                    <span class="status-dot dot-komplett" title="Komplett"></span>
-                                }
-                                @if (c.TrengerDobbelsjekk)
-                                {
-                                    <span class="status-dot dot-dobbelsjekk" title="Dobbelsjekk"></span>
-                                }
-                            </span>
-                            <button type="button" class="ikon-btn" title="Rediger" @onclick="@(() => StartEdit(c))"><Icon Name="edit" /></button>
-                            <a class="ikon-btn" title="Historikk" href="@($"/komponenter/{c.Id}/prishistorikk")"><Icon Name="clock" /></a>
-                        </td>
+                        <p class="form-error">@_addMessage</p>
                     }
-                    <td>
-                        <input class="toggle-mini" type="checkbox" checked="@c.Aktiv" @onchange="@(e => ToggleActive(c, (bool)e.Value!))" />
-                    </td>
-                    <td>
-                        <input class="toggle-mini" type="checkbox" title="Vis denne varen i lagerstyring" checked="@c.ILagerstyring" @onchange="@(e => ToggleLagerstyring(c, (bool)e.Value!))" />
-                    </td>
-                    @if (_editingId == c.Id)
-                    {
-                        <td>
-                            <select @bind="c.ComponentTypeId">
-                                <option value="">Ikke satt</option>
-                                @foreach (var t in _types)
-                                {
-                                    <option value="@t.Id">@t.Navn</option>
-                                }
-                            </select>
-                        </td>
-                        <td><input @bind="c.Navn" /></td>
-                        <td><input @bind="c.Navn2" placeholder="Varenavn 2 (valgfritt)" /></td>
-                        <td><input @bind="c.Produsent" placeholder="F.eks. Dormakaba" /></td>
-                        <td><input @bind="c.Konsept" placeholder="F.eks. Connect" /></td>
-                        <td><input @bind="c.Leverandor" /></td>
-                        <td><input @bind="c.Produktkode" /></td>
-                        <td><input @bind="c.Gtin" placeholder="GTIN/EAN" /></td>
-                        <td><input @bind="c.Overflate" placeholder="F.eks. Fkrm" /></td>
-                        <td>
-                            <input @bind="c.PrisNetto" class="price-input" disabled="@c.IngenPris" />
-                        </td>
-                        <td>
-                            <input @bind="c.PrisVeiledende" class="price-input" disabled="@c.IngenPris" />
-                            <label class="no-price-toggle">
-                                <input type="checkbox" @bind="c.IngenPris" /> Ingen pris
-                            </label>
-                        </td>
-                        <td>
-                            <select @bind="c.RabattgruppeId">
-                                <option value="">Ingen</option>
-                                @foreach (var r in _rabattgrupper)
-                                {
-                                    <option value="@r.Id">@r.Kode - @r.Leverandor (@r.RabattProsent%)</option>
-                                }
-                            </select>
-                        </td>
-                        <td>
-                            <input type="checkbox" title="Sperrer kunderabatt på denne varen i tilbud" checked="@c.IngenRabattTilgjengelig" @onchange="@(e => ToggleIngenRabatt(c, (bool)e.Value!))" />
-                        </td>
-                        <td title="Produktgrupper redigeres fra selve produktgruppen (Admin → Produktgrupper), en vare kan ligge i flere.">@(c.ProduktgruppeNavn ?? "-")</td>
-                        <td>
-                            <input @bind="c.MontasjeMinutterProsjekt" class="price-input" placeholder="min" /> min
-                        </td>
-                        <td>
-                            <input @bind="c.MontasjeMinutterArbeidsordre" class="price-input" placeholder="min" /> min
-                        </td>
-                        <td>
-                            <input @bind="c.MontasjeMinutterService" class="price-input" placeholder="min" /> min
-                        </td>
-                        <td>
-                            <input @bind="c.GarantitidManeder" class="price-input" placeholder="mnd" /> mnd
-                        </td>
-                        <td>
-                            <input @bind="c.Enhet" class="price-input" placeholder="stk" />
-                        </td>
-                        <td class="fdv-cell">
-                            @if (c.HarFdv)
+                    <div class="kr-knapperad">
+                        <button type="button" class="kr-knapp" @onclick="@(() => { _nyVare = false; _addMessage = null; })">Avbryt</button>
+                        <button type="button" class="kr-knapp primaer" @onclick="AddComponent">Legg til</button>
+                    </div>
+                }
+                else if (markert is null)
+                {
+                    <p class="kr-dempet">Velg en vare i listen.</p>
+                }
+                else if (_editingId == markert.Id)
+                {
+                    var c = markert;
+                    <div class="kr-tittel">
+                        <h2>Hurtigredigering</h2>
+                        <p>@c.Navn</p>
+                    </div>
+                    <label class="kr-felt"><span>Komponenttype</span>
+                        <select @bind="c.ComponentTypeId">
+                            <option value="">Ikke satt</option>
+                            @foreach (var t in _types)
                             {
-                                <span class="fil-chip"><a href="@($"/komponent/{c.Id}/fdv")" target="_blank">@c.FdvFilnavn</a><button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => RemoveFdv(c))"><Icon Name="trash" /></button></span>
+                                <option value="@t.Id">@t.Navn</option>
                             }
-                            else
+                        </select>
+                    </label>
+                    <label class="kr-felt"><span>Varenavn 1</span><input @bind="c.Navn" /></label>
+                    <label class="kr-felt"><span>Varenavn 2</span><input @bind="c.Navn2" /></label>
+                    <div class="kr-to">
+                        <label class="kr-felt"><span>Leverandør (produsent)</span><input @bind="c.Produsent" placeholder="F.eks. Dormakaba" /></label>
+                        <label class="kr-felt"><span>Konsept</span><input @bind="c.Konsept" placeholder="F.eks. Connect" /></label>
+                    </div>
+                    <div class="kr-to">
+                        <label class="kr-felt"><span>Kjøpes inn av</span><input @bind="c.Leverandor" /></label>
+                        <label class="kr-felt"><span>Produktkode</span><input @bind="c.Produktkode" /></label>
+                    </div>
+                    <div class="kr-to">
+                        <label class="kr-felt"><span>GTIN/EAN</span><input @bind="c.Gtin" /></label>
+                        <label class="kr-felt"><span>Overflate</span><input @bind="c.Overflate" placeholder="F.eks. Fkrm" /></label>
+                    </div>
+                    <div class="kr-to">
+                        <label class="kr-felt"><span>Netto</span><input @bind="c.PrisNetto" disabled="@c.IngenPris" /></label>
+                        <label class="kr-felt"><span>Veiledende</span><input @bind="c.PrisVeiledende" disabled="@c.IngenPris" /></label>
+                    </div>
+                    <label class="kr-sjekk"><input type="checkbox" @bind="c.IngenPris" /> Ingen pris</label>
+                    <label class="kr-felt"><span>Rabattgruppe</span>
+                        <select @bind="c.RabattgruppeId">
+                            <option value="">Ingen</option>
+                            @foreach (var r in _rabattgrupper)
                             {
-                                <InputFile OnChange="@(e => UploadFdv(c, e))" accept=".pdf,application/pdf" />
+                                <option value="@r.Id">@r.Kode - @r.Leverandor (@r.RabattProsent%)</option>
                             }
-                        </td>
-                        <td class="fdv-cell">
-                            @if (c.HarMontasjeblad)
-                            {
-                                <span class="fil-chip"><a href="@($"/komponent/{c.Id}/montasjeblad")" target="_blank">@c.MontasjebladFilnavn</a><button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => RemoveMontasjeblad(c))"><Icon Name="trash" /></button></span>
-                            }
-                            else
-                            {
-                                <InputFile OnChange="@(e => UploadMontasjeblad(c, e))" accept=".pdf,application/pdf" />
-                            }
-                        </td>
-                        <td>
-                            <select @bind="c.InntektskontoId" title="Bestemmer hvilken inntektskonto salg av varen grupperes på i Resultatrapporten">
+                        </select>
+                    </label>
+                    <div class="kr-to">
+                        <label class="kr-felt"><span>Montasje prosjekt (min)</span><input @bind="c.MontasjeMinutterProsjekt" /></label>
+                        <label class="kr-felt"><span>Montasje arbeidsordre (min)</span><input @bind="c.MontasjeMinutterArbeidsordre" /></label>
+                    </div>
+                    <div class="kr-to">
+                        <label class="kr-felt"><span>Tidsbruk service (min)</span><input @bind="c.MontasjeMinutterService" /></label>
+                        <label class="kr-felt"><span>Garantitid (mnd)</span><input @bind="c.GarantitidManeder" /></label>
+                    </div>
+                    <div class="kr-to">
+                        <label class="kr-felt"><span>Enhet</span><input @bind="c.Enhet" placeholder="stk" /></label>
+                        <label class="kr-felt"><span>Inntektskonto</span>
+                            <select @bind="c.InntektskontoId">
                                 <option value="">Ikke satt</option>
                                 @foreach (var k in _inntektskontoer)
                                 {
                                     <option value="@k.Id">@k.Nummer - @k.Navn</option>
                                 }
                             </select>
-                        </td>
-                        <td>@UsageLabel(c.PackageCount)</td>
+                        </label>
+                    </div>
+                    <div class="kr-seksjon">Produsentens firmaadresse (CE-egenerklæring)</div>
+                    <label class="kr-felt"><span>Adresse</span><input @bind="c.ProdusentAdresse" /></label>
+                    <div class="kr-to">
+                        <label class="kr-felt"><span>Postnr</span><input @bind="c.ProdusentPostnr" /></label>
+                        <label class="kr-felt"><span>Sted</span><input @bind="c.ProdusentSted" /></label>
+                    </div>
+                    <div class="kr-to">
+                        <label class="kr-felt"><span>Land</span><input @bind="c.ProdusentLand" /></label>
+                        <label class="kr-felt"><span>Org.nr.</span><input @bind="c.ProdusentOrgnr" /></label>
+                    </div>
+                    <div class="kr-knapperad">
+                        <button type="button" class="kr-knapp" @onclick="AvbrytRedigering">Avbryt</button>
+                        <button type="button" class="kr-knapp primaer" @onclick="@(() => Save(c))"><Icon Name="check" />Lagre</button>
+                    </div>
+                    <div class="kr-slett">
+                        @if (_slettendeId == c.Id)
+                        {
+                            <span class="kr-dempet">Skriv SLETT for å slette varen for godt.</span>
+                            <span class="kr-knapperad">
+                                <input class="kr-slett-input" @bind="_slettBekreftelseTekst" @bind:event="oninput" placeholder="SLETT" />
+                                <button type="button" class="kr-knapp fare" disabled="@(_slettBekreftelseTekst != "SLETT")" @onclick="@(() => SlettKomponent(c))">Slett</button>
+                                <button type="button" class="kr-knapp" @onclick="@(() => { _slettendeId = null; _slettBekreftelseTekst = ""; })">Avbryt</button>
+                            </span>
+                        }
+                        else
+                        {
+                            <button type="button" class="kr-lenke" @onclick="@(() => _slettendeId = c.Id)"><Icon Name="trash" />Slett vare</button>
+                        }
+                    </div>
+                }
+                else
+                {
+                    var c = markert;
+                    <div class="kr-bilde">
+                        @if (c.HarBilde)
+                        {
+                            <img src="@($"/komponent/{c.Id}/bilde")" alt="Bilde av varen" loading="lazy" onerror="this.remove()" />
+                        }
+                        else
+                        {
+                            <Icon Name="image" />
+                        }
+                    </div>
+                    <div class="kr-tittel">
+                        <h2>@c.Navn</h2>
+                        @if (!string.IsNullOrWhiteSpace(c.Navn2))
+                        {
+                            <p>@c.Navn2</p>
+                        }
+                        <p><span class="kr-status @StatusKlasse(c)"></span>@c.TypeName · @StatusTekst(c)</p>
+                    </div>
+                    <dl class="kr-kv">
+                        <dt>Netto</dt><dd>@FormatPrice(c.PrisNetto)</dd>
+                        <dt>Veiledende</dt><dd>@FormatPrice(c.PrisVeiledende)</dd>
+                        <dt>Rabattgruppe</dt><dd>@(c.RabattgruppeKode ?? "-")</dd>
+                        <dt>Produktkode</dt><dd class="kr-kode">@(c.Produktkode ?? "-")</dd>
+                        @if (!string.IsNullOrWhiteSpace(c.Gtin))
+                        {
+                            <dt>GTIN/EAN</dt><dd class="kr-kode">@c.Gtin</dd>
+                        }
+                    </dl>
+
+                    <div class="kr-seksjon">Leverandører</div>
+                    @if (c.LeverandorNavn.Count == 0 && string.IsNullOrWhiteSpace(c.Leverandor))
+                    {
+                        <p class="kr-dempet">Ingen leverandør registrert.</p>
                     }
                     else
                     {
-                        <td><span class="type-pille">@c.TypeName</span></td>
-                        <td><button type="button" class="vare-lenke" @onclick="@(() => _valgtVareId = c.Id)">@c.Navn</button></td>
-                        <td>@c.Navn2</td>
-                        <td>@c.Produsent</td>
-                        <td>@c.Konsept</td>
-                        <td>@c.Leverandor</td>
-                        <td>@c.Produktkode</td>
-                        <td>@c.Gtin</td>
-                        <td>@c.Overflate</td>
-                        <td class="price-cell">@FormatPrice(c.PrisNetto)</td>
-                        <td class="price-cell">@FormatPrice(c.PrisVeiledende)</td>
-                        <td>
-                            @if (c.RabattgruppeKode is null)
+                        <div class="kr-levliste">
+                            @foreach (var l in c.LeverandorNavn.DefaultIfEmpty(c.Leverandor!))
                             {
-                                <text>-</text>
+                                <span>@l</span>
                             }
-                            else
-                            {
-                                <span class="rabatt-pille">@c.RabattgruppeKode</span>
-                            }
-                        </td>
-                        <td>
-                            <input class="toggle-mini" type="checkbox" title="Sperrer kunderabatt på denne varen i tilbud" checked="@c.IngenRabattTilgjengelig" @onchange="@(e => ToggleIngenRabatt(c, (bool)e.Value!))" />
-                        </td>
-                        <td>@(c.ProduktgruppeNavn ?? "-")</td>
-                        <td class="price-cell">@FormatMinutter(c.MontasjeMinutterProsjekt)</td>
-                        <td class="price-cell">@FormatMinutter(c.MontasjeMinutterArbeidsordre)</td>
-                        <td class="price-cell">@FormatMinutter(c.MontasjeMinutterService)</td>
-                        <td class="price-cell">@(c.GarantitidManeder.HasValue ? $"{c.GarantitidManeder} mnd" : "-")</td>
-                        <td>@c.Enhet</td>
-                        <td class="fdv-cell">
+                        </div>
+                    }
+
+                    <div class="kr-seksjon">Montasje og service</div>
+                    <dl class="kr-kv">
+                        <dt>Prosjekt</dt><dd>@FormatMinutter(c.MontasjeMinutterProsjekt)</dd>
+                        <dt>Arbeidsordre</dt><dd>@FormatMinutter(c.MontasjeMinutterArbeidsordre)</dd>
+                        <dt>Serviceavtale</dt><dd>@FormatMinutter(c.MontasjeMinutterService)</dd>
+                        <dt>Garanti</dt><dd>@(c.GarantitidManeder.HasValue ? $"{c.GarantitidManeder} mnd" : "-")</dd>
+                        <dt>Brukt i</dt><dd>@UsageLabel(c.PackageCount)</dd>
+                    </dl>
+
+                    <div class="kr-seksjon">Dokumentasjon</div>
+                    <div class="kr-filer">
+                        <div>
+                            <span>FDV</span>
                             @if (c.HarFdv)
                             {
-                                <span class="fil-chip"><a href="@($"/komponent/{c.Id}/fdv")" target="_blank">@c.FdvFilnavn</a><button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => RemoveFdv(c))"><Icon Name="trash" /></button></span>
+                                <span class="kr-fil"><a href="@($"/komponent/{c.Id}/fdv")" target="_blank">@c.FdvFilnavn</a><button type="button" class="kr-ikon" title="Fjern" @onclick="@(() => RemoveFdv(c))"><Icon Name="trash" /></button></span>
                             }
                             else
                             {
-                                <InputFile OnChange="@(e => UploadFdv(c, e))" accept=".pdf,application/pdf" />
+                                <label class="kr-last-opp"><Icon Name="upload" />Last opp<InputFile OnChange="@(e => UploadFdv(c, e))" accept=".pdf,application/pdf" /></label>
                             }
-                        </td>
-                        <td class="fdv-cell">
+                        </div>
+                        <div>
+                            <span>Montasjeblad</span>
                             @if (c.HarMontasjeblad)
                             {
-                                <span class="fil-chip"><a href="@($"/komponent/{c.Id}/montasjeblad")" target="_blank">@c.MontasjebladFilnavn</a><button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => RemoveMontasjeblad(c))"><Icon Name="trash" /></button></span>
+                                <span class="kr-fil"><a href="@($"/komponent/{c.Id}/montasjeblad")" target="_blank">@c.MontasjebladFilnavn</a><button type="button" class="kr-ikon" title="Fjern" @onclick="@(() => RemoveMontasjeblad(c))"><Icon Name="trash" /></button></span>
                             }
                             else
                             {
-                                <InputFile OnChange="@(e => UploadMontasjeblad(c, e))" accept=".pdf,application/pdf" />
+                                <label class="kr-last-opp"><Icon Name="upload" />Last opp<InputFile OnChange="@(e => UploadMontasjeblad(c, e))" accept=".pdf,application/pdf" /></label>
                             }
-                        </td>
-                        <td>@InntektskontoLabel(c.InntektskontoId)</td>
-                        <td>@UsageLabel(c.PackageCount)</td>
-                    }
-                </tr>
-                @if (_editingId == c.Id)
-                {
-                    <tr @key="@($"{c.Id}-produsentadresse")" class="produsentadresse-row">
-                        <td colspan="16">
-                            <div class="produsentadresse-form">
-                                <span class="produsentadresse-tittel">Produsentens firmaadresse (til CE-egenerklæring)</span>
-                                <input @bind="c.ProdusentAdresse" placeholder="Adresse" />
-                                <input @bind="c.ProdusentPostnr" placeholder="Postnr" class="price-input" />
-                                <input @bind="c.ProdusentSted" placeholder="Sted" />
-                                <input @bind="c.ProdusentLand" placeholder="Land" class="price-input" />
-                                <input @bind="c.ProdusentOrgnr" placeholder="Org.nr." class="price-input" />
-                            </div>
-                        </td>
-                    </tr>
+                        </div>
+                    </div>
+
+                    <div class="kr-brytere">
+                        <label><input type="checkbox" checked="@c.Aktiv" @onchange="@(e => ToggleActive(c, (bool)e.Value!))" />Aktiv</label>
+                        <label title="Vis denne varen i lagerstyring"><input type="checkbox" checked="@c.ILagerstyring" @onchange="@(e => ToggleLagerstyring(c, (bool)e.Value!))" />Lagerstyring</label>
+                        <label title="Sperrer kunderabatt på denne varen i tilbud"><input type="checkbox" checked="@c.IngenRabattTilgjengelig" @onchange="@(e => ToggleIngenRabatt(c, (bool)e.Value!))" />Ingen rabatt</label>
+                    </div>
+
+                    <button type="button" class="kr-knapp primaer kr-bred" @onclick="@(() => _valgtVareId = c.Id)">Åpne varekortet<Icon Name="arrow-right" /></button>
+                    <div class="kr-knapperad">
+                        <button type="button" class="kr-lenke" @onclick="@(() => StartEdit(c))"><Icon Name="edit" />Hurtigredigering</button>
+                        <a class="kr-lenke" href="@($"/komponenter/{c.Id}/prishistorikk")"><Icon Name="clock" />Prishistorikk</a>
+                    </div>
                 }
-            }
-        </tbody>
-    </table>
-</div>
-</div>
-
-<div class="bunn-rad">
-    <span></span>
-    <div class="pagination">
-        <button type="button" class="knapp knapp-liten" disabled="@(_page == 0)" @onclick="@(() => ChangePage(-1))"><Icon Name="arrow-left" />Forrige</button>
-        <span>Side @(_page + 1) av @Math.Max(1, TotalPages)</span>
-        <button type="button" class="knapp knapp-liten" disabled="@(_page + 1 >= TotalPages)" @onclick="@(() => ChangePage(1))">Neste<span class="pil-hoyre"><Icon Name="arrow-left" /></span></button>
+            </aside>
+        }
     </div>
-</div>
-
-<div class="kort new-component">
-    <h2>Legg til komponent</h2>
-    <div class="new-component-form">
-        <select @bind="_draft.ComponentTypeId">
-            <option value="0">Ingen type</option>
-            @foreach (var t in _types)
-            {
-                <option value="@t.Id">@t.Navn</option>
-            }
-        </select>
-        <input @bind="_draft.Navn" placeholder="Navn" />
-        <input @bind="_draft.Leverandor" placeholder="Leverandør (valgfritt)" />
-        <input @bind="_draft.Produktkode" placeholder="Produktkode (valgfritt)" />
-        <button type="button" class="knapp knapp-primaer" @onclick="AddComponent">Legg til</button>
-    </div>
-    @if (!string.IsNullOrEmpty(_addMessage))
-    {
-        <p class="save-success">@_addMessage</p>
-    }
 </div>
 
 <KomponentPanel ComponentId="_valgtVareId" OnClose="@(() => _valgtVareId = null)" OnSaved="RefreshValgtVare" />
@@ -501,6 +578,7 @@
         public int? InntektskontoId { get; set; }
         public bool ErKomplett { get; set; }
         public bool TrengerDobbelsjekk { get; set; }
+        public bool HarBilde { get; set; }
     }
 
     private sealed class NewComponentDraft
@@ -511,7 +589,17 @@
         public string? Produktkode { get; set; }
     }
 
-    private const int PageSize = 50;
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+
+    private int _perSide = 50;
+    private bool _full;
+    private bool _visPrisMeny;
+    private bool _nyVare;
+    private string _typeSok = "";
+    private int? _markertId;
+
+    // Antall varer per komponenttype (-1 = uten type) med gjeldende søk og filtre.
+    private Dictionary<int, int> _typeAntall = [];
 
     private List<ComponentDraft> _components = [];
     private List<ComponentType> _types = [];
@@ -584,25 +672,38 @@
     private string? _addMessage;
     private string _nyTypeNavn = "";
     private int _nyTypeSortering;
-    private string? _nyTypeMessage;
     private bool _visTyperPanel;
     private string? _typerPanelMessage;
     private string? _fdvFeil;
 
-    private int TotalPages => (int)Math.Ceiling(_filteredCount / (double)PageSize);
+    private int TotalPages => (int)Math.Ceiling(_filteredCount / (double)_perSide);
 
     private List<ComponentDraft> _filtered = [];
 
     private IEnumerable<ComponentDraft> PagedComponents =>
-        _filtered.Skip(_page * PageSize).Take(PageSize);
+        _filtered.Skip(_page * _perSide).Take(_perSide);
+
+    // Varen som vises i panelet til høyre: den som er klikket, ellers første på siden.
+    private ComponentDraft? Markert =>
+        (_markertId is int id ? PagedComponents.FirstOrDefault(c => c.Id == id) : null) ?? PagedComponents.FirstOrDefault();
 
     private void RefreshFiltered()
     {
-        _filtered = _components.Where(MatchesFilter).OrderBy(c => c.TypeName).ThenBy(c => c.Navn).ToList();
+        var utenType = _components.Where(c => MatchesFilter(c, medType: false)).ToList();
+        _typeAntall = utenType.GroupBy(c => c.ComponentTypeId ?? -1).ToDictionary(g => g.Key, g => g.Count());
+        _filtered = utenType.Where(MatchesType).OrderBy(c => c.TypeName).ThenBy(c => c.Navn).ToList();
         _filteredCount = _filtered.Count;
+        _page = Math.Clamp(_page, 0, Math.Max(0, TotalPages - 1));
     }
 
-    private bool MatchesFilter(ComponentDraft c)
+    private bool MatchesType(ComponentDraft c) => _selectedTypeId switch
+    {
+        0 => true,
+        -1 => c.ComponentTypeId is null,
+        var id => c.ComponentTypeId == id
+    };
+
+    private bool MatchesFilter(ComponentDraft c, bool medType = true)
     {
         if (_activeFilter == "active" && !c.Aktiv)
         {
@@ -614,7 +715,7 @@
             return false;
         }
 
-        if (_selectedTypeId != 0 && c.ComponentTypeId != _selectedTypeId)
+        if (medType && !MatchesType(c))
         {
             return false;
         }
@@ -658,6 +759,7 @@
     private void ResetPage()
     {
         _page = 0;
+        _markertId = null;
         RefreshFiltered();
     }
 
@@ -667,32 +769,94 @@
         ResetPage();
     }
 
-    private void ChangePage(int delta) => _page = Math.Max(0, _page + delta);
+    private void ChangePage(int delta)
+    {
+        _page = Math.Clamp(_page + delta, 0, Math.Max(0, TotalPages - 1));
+        _markertId = null;
+    }
+
+    private async Task SettPerSide(int antall)
+    {
+        _perSide = antall;
+        _page = 0;
+        _markertId = null;
+        await VisningPref.SettAsync("komponenter-per-side", antall.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("komponenter-bredde", _full ? "full" : "normal");
+    }
+
+    private void VelgType(int typeId)
+    {
+        _visTyperPanel = false;
+        _selectedTypeId = typeId;
+        _markertId = null;
+        _editingId = null;
+        ResetPage();
+    }
+
+    private void VelgVare(int id)
+    {
+        if (_markertId != id)
+        {
+            _editingId = null;
+            _slettendeId = null;
+        }
+
+        _markertId = id;
+        _nyVare = false;
+    }
+
+    private void StartNyVare()
+    {
+        _visTyperPanel = false;
+        _editingId = null;
+        _addMessage = null;
+        _draft = new NewComponentDraft { ComponentTypeId = Math.Max(0, _selectedTypeId) };
+        _nyVare = true;
+    }
+
+    private async Task AvbrytRedigering()
+    {
+        // Henter varen på nytt så halvferdige endringer forkastes.
+        var id = _editingId;
+        _editingId = null;
+        _slettendeId = null;
+        if (id is int vareId)
+        {
+            await RefreshDraft(vareId);
+        }
+    }
+
+    private static string StatusKlasse(ComponentDraft c) =>
+        c.TrengerDobbelsjekk ? "dobbelsjekk" : c.ErKomplett ? "komplett" : "";
+
+    private static string StatusTekst(ComponentDraft c) =>
+        c.TrengerDobbelsjekk ? "Dobbelsjekk" : c.ErKomplett ? "Komplett" : "Ikke kontrollert";
 
     private void StartEdit(ComponentDraft c)
     {
         c.IngenPris = c.PrisNetto is null && c.PrisVeiledende is null;
         _editingId = c.Id;
+        _slettendeId = null;
     }
 
     private List<Inntektskonto> _inntektskontoer = [];
 
     protected override async Task OnInitializedAsync()
     {
+        _full = await VisningPref.HentAsync("komponenter-bredde", "normal") == "full";
+        if (int.TryParse(await VisningPref.HentAsync("komponenter-per-side", "50"), out var perSide) && perSide is 25 or 50 or 100)
+        {
+            _perSide = perSide;
+        }
+
         await LoadAsync();
         await HentEtikettValg();
         _inntektskontoer = await Db.Inntektskontoer.OrderBy(k => k.Nummer).ToListAsync();
-    }
-
-    private bool _scrollSynkKoblet;
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender && !_scrollSynkKoblet)
-        {
-            _scrollSynkKoblet = true;
-            await JS.InvokeVoidAsync("tabellscroll.koble", "komponenter-scroll-top", "komponenter-table-wrap");
-        }
     }
 
     // Component har flere store byte[]-kolonner (FdvData, MontasjebladData,
@@ -747,6 +911,7 @@
         public int? InntektskontoId { get; set; }
         public bool ErKomplett { get; set; }
         public bool TrengerDobbelsjekk { get; set; }
+        public bool HarBilde { get; set; }
     }
 
     private IQueryable<ComponentRow> ComponentRowsQuery() => Db.Components.Select(c => new ComponentRow
@@ -826,7 +991,8 @@
         MontasjebladFilnavn = r.MontasjebladFilnavn,
         InntektskontoId = r.InntektskontoId,
         ErKomplett = r.ErKomplett,
-        TrengerDobbelsjekk = r.TrengerDobbelsjekk
+        TrengerDobbelsjekk = r.TrengerDobbelsjekk,
+        HarBilde = r.HarBilde
     };
 
     // Leverandørnavn og produktgruppenavn hentes som egne, flate spørringer
@@ -880,12 +1046,14 @@
         var produktgruppeLookup = await LoadProduktgruppeNavnLookupAsync(null);
         var medFdv = await Db.KomponenterMedFilAsync("FdvData");
         var medMontasjeblad = await Db.KomponenterMedFilAsync("MontasjebladData");
+        var medBilde = await Db.KomponenterMedFilAsync("BildeData");
         foreach (var r in rows)
         {
             r.LeverandorNavn = leverandorLookup.GetValueOrDefault(r.Id) ?? [];
             r.ProduktgruppeNavnListe = produktgruppeLookup.GetValueOrDefault(r.Id) ?? [];
             r.HarFdv = medFdv.Contains(r.Id);
             r.HarMontasjeblad = medMontasjeblad.Contains(r.Id);
+            r.HarBilde = medBilde.Contains(r.Id);
         }
 
         _components = rows.Select(MapToDraft).ToList();
@@ -917,6 +1085,7 @@
         r.ProduktgruppeNavnListe = produktgruppeLookup.GetValueOrDefault(r.Id) ?? [];
         r.HarFdv = (await Db.KomponenterMedFilAsync("FdvData", [id])).Count > 0;
         r.HarMontasjeblad = (await Db.KomponenterMedFilAsync("MontasjebladData", [id])).Count > 0;
+        r.HarBilde = (await Db.KomponenterMedFilAsync("BildeData", [id])).Count > 0;
 
         var index = _components.FindIndex(d => d.Id == r.Id);
         if (index >= 0)
@@ -1108,18 +1277,23 @@
             return;
         }
 
-        Db.Components.Add(new Component
+        var ny = new Component
         {
             ComponentTypeId = _draft.ComponentTypeId == 0 ? null : _draft.ComponentTypeId,
             Navn = _draft.Navn.Trim(),
             Leverandor = string.IsNullOrWhiteSpace(_draft.Leverandor) ? null : _draft.Leverandor.Trim(),
             Produktkode = string.IsNullOrWhiteSpace(_draft.Produktkode) ? null : _draft.Produktkode.Trim()
-        });
+        };
+        Db.Components.Add(ny);
         await Db.SaveChangesAsync();
 
-        _addMessage = $"\"{_draft.Navn.Trim()}\" er lagt til.";
+        _addMessage = null;
         _draft = new NewComponentDraft();
+        _nyVare = false;
         await LoadAsync();
+
+        // Åpner varekortet for den nye varen, så resten kan fylles ut med en gang.
+        _valgtVareId = ny.Id;
     }
 
     private async Task CreateComponentType()
@@ -1133,7 +1307,7 @@
         Db.ComponentTypes.Add(new ComponentType { Navn = navn, Sortering = _nyTypeSortering });
         await Db.SaveChangesAsync();
 
-        _nyTypeMessage = $"Komponenttypen \"{navn}\" er opprettet.";
+        _typerPanelMessage = $"Komponenttypen \"{navn}\" er opprettet.";
         _nyTypeNavn = "";
         _nyTypeSortering = 0;
         await LoadAsync();
