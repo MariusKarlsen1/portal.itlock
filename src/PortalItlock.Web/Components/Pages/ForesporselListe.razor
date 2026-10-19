@@ -10,9 +10,13 @@
 @inject NavigationManager Nav
 @inject EmailService Epost
 
+@inject VisningPreferanseService VisningPref
 <PageTitle>Forespørsler</PageTitle>
 
-<div class="fp-side">
+@* OL2 (foresporsler-outlook-forslag.html): som Outlook på nett - verktøylinje øverst,
+   lista med mappe-velger («Innboks ▾») og lesepanelet til høyre, alt i ett kort som
+   fyller vinduet. ☰-knappen viser mappene som en egen kolonne til venstre (huskes). *@
+<div class="fp-side @(_full ? "fp-full" : "")">
 
     <div class="fp-topbar">
         <span class="fp-topbar-ikon"><Icon Name="mail" /></span>
@@ -20,323 +24,361 @@
             <h1>Forespørsler</h1>
             <p>Omhandler henvendelser mottatt på e-post, kundeportal eller manuelt.</p>
         </div>
-        <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="ApneNyForesporsel"><Icon Name="plus" />Ny forespørsel</button>
     </div>
 
-    @* Serviceoppdrag som kunder melder inn via kundeportalen ("For kunden") hører
-       hjemme her sammen med de andre forespørslene - flyttet fra Service. *@
-    <div class="fp-hovedfaner">
-        <button type="button" class="@(_hovedfane == "foresporsler" ? "aktiv" : "")" @onclick='@(() => _hovedfane = "foresporsler")'>
-            <Icon Name="mail" />Forespørsler<span>@_foresporsler.Count</span>
-        </button>
-        <button type="button" class="@(_hovedfane == "serviceoppdrag" ? "aktiv" : "")" @onclick='@(() => _hovedfane = "serviceoppdrag")'>
-            <Icon Name="bell" />Serviceoppdrag fra kunder<span class="@(_antallApneServiceoppdrag > 0 ? "ny" : "")">@_antallApneServiceoppdrag</span>
-        </button>
-    </div>
-
-    @if (_hovedfane == "serviceoppdrag")
-    {
-        <Serviceoppdrag />
-    }
-    else
-    {
-    @* F2 (foresporsler-likt-forslag.html): de fem store tallboksene er byttet
-       med én rad klikkbare statusfaner som filtrerer lista. *@
-    <div class="fp-statusfaner">
-        <button type="button" class="@(_statusFilter is null ? "aktiv" : "")" @onclick="@(() => _statusFilter = null)">Alle <b>@_foresporsler.Count</b></button>
-        @foreach (var (status, tekst, farge) in StatusFaner)
-        {
-            <button type="button" class="@(_statusFilter == status ? "aktiv" : "")" @onclick="@(() => _statusFilter = _statusFilter == status ? null : status)">
-                <i style="background:@farge"></i>@tekst <b>@_foresporsler.Count(f => StatusFor(f) == status)</b>
-            </button>
-        }
-    </div>
-
-    <div class="fp-verktoylinje">
-        <label class="fp-sok">
-            <Icon Name="search" />
-            <input @bind="_sok" @bind:event="oninput" placeholder="Søk i forespørsler..." />
-        </label>
-        <select class="fp-filter-select" @bind="_kanalFilter">
-            <option value="">Alle kanaler</option>
-            @foreach (var k in Enum.GetValues<ForesporselKanal>())
+    <div class="ol-kort">
+        <div class="ol-ribbon">
+            <button type="button" class="ol-mappeknapp @(_visMapper ? "pa" : "")" title="@(_visMapper ? "Skjul mapper" : "Vis mapper")" @onclick="VekslMapper">☰</button>
+            <button type="button" class="ol-ny" @onclick="ApneNyForesporsel"><Icon Name="plus" />Ny forespørsel</button>
+            @if (_mappe != "serviceoppdrag")
             {
-                <option value="@k">@k.Visningsnavn()</option>
-            }
-        </select>
-        <select class="fp-filter-select" @bind="_kundeFilterRaw">
-            <option value="">Alle kunder</option>
-            @foreach (var k in RelevanteKunder)
-            {
-                <option value="@k.Id">@k.Navn</option>
-            }
-        </select>
-        <select class="fp-filter-select" @bind="_ansvarligFilterRaw">
-            <option value="">Alle ansvarlige</option>
-            @foreach (var b in _brukere)
-            {
-                <option value="@b.Id">@b.Navn</option>
-            }
-        </select>
-        <select class="fp-filter-select" @bind="_sortering">
-            <option value="nyeste">Nyeste først</option>
-            <option value="eldste">Eldste først</option>
-        </select>
-    </div>
-
-    @if (_foresporsler.Count == 0)
-    {
-        <p class="fp-tom">Ingen forespørsler mottatt ennå.</p>
-    }
-    else
-    {
-        <div class="fp-grid">
-            <div class="fp-liste">
-                @if (VisteForesporsler.Count == 0)
+                <span class="ol-skille"></span>
+                @if (_bekreftSlett)
                 {
-                    <p class="fp-tom">Ingen forespørsler matcher filteret.</p>
+                    <button type="button" class="ol-ri ol-ri-fare" disabled="@(_valgt is null)" @onclick="SlettForesporsel"><Icon Name="trash" />Bekreft sletting</button>
+                    <button type="button" class="ol-ri" @onclick="@(() => _bekreftSlett = false)">Avbryt</button>
                 }
                 else
                 {
-                    @foreach (var f in VisteForesporsler)
+                    <button type="button" class="ol-ri" disabled="@(_valgt is null)" @onclick="@(() => _bekreftSlett = true)"><Icon Name="trash" />Slett</button>
+                }
+                <button type="button" class="ol-ri" disabled="@(_valgt is null)" @onclick="ApneSvar"><Icon Name="send" />Svar</button>
+                <button type="button" class="ol-ri" disabled="@(_valgt is null)" @onclick="MerkLestUlest"><Icon Name="mail" />@(_valgt?.Lest == false ? "Merk som lest" : "Merk som ulest")</button>
+                <span class="ol-skille"></span>
+                @if (_valgt is not null)
+                {
+                    var t = TicketFor(_valgt);
+                    <label class="ol-ri-select" title="Tildel">
+                        <Icon Name="users" />
+                        <select value="@(t?.AnsvarligBrukerId)" @onchange="Tildel">
+                            <option value="">Tildel …</option>
+                            @foreach (var b in _brukere)
+                            {
+                                <option value="@b.Id">@b.Navn</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="ol-ri-select" title="Status">
+                        <Icon Name="toggle-right" />
+                        <select value="@(t?.Status ?? TicketStatus.Ny)" @onchange="EndreStatus">
+                            @foreach (var s in TicketStatusExtensions.Rekkefolge)
+                            {
+                                <option value="@s">@s.Visningsnavn()</option>
+                            }
+                        </select>
+                    </label>
+                    @if (t is not null)
                     {
-                        var status = StatusFor(f);
-                        <button type="button" class="fp-kort @(f.Id == _valgt?.Id ? "valgt" : "") @(f.Lest ? "" : "ulest")" @key="f.Id" @onclick="@(() => Velg(f))">
-                            <span class="fp-kort-ikon fp-kanal-@f.Kanal"><Icon Name="@f.Kanal.Ikon()" /></span>
-                            <span class="fp-kort-info">
-                                <span class="fp-kort-tittel">@f.Emne</span>
-                                <span class="fp-kort-meta">@(KundeFor(f)?.Navn ?? (string.IsNullOrWhiteSpace(f.FraNavn) ? f.FraEpost : f.FraNavn)) &middot; @f.Kanal.Visningsnavn()</span>
-                            </span>
-                            <span class="fp-kort-hoyre">
-                                <span class="fp-kort-dato">
-                                    @if (!f.Lest)
-                                    {
-                                        <span class="fp-ny-prikk"></span>
-                                    }
-                                    @f.MottattDato.ToString("dd.MM HH:mm")
-                                </span>
-                                <StatusPill Tekst="@status.Visningsnavn()" Ikon="@status.PillIkon()" Farge="@status.PillFarge()" />
-                            </span>
-                        </button>
+                        <button type="button" class="ol-ri" @onclick="ApneTicket"><Icon Name="tag" />Ticket #@t.Id</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="ol-ri" @onclick="OpprettEllerApneTicket"><Icon Name="tag" />Opprett ticket</button>
                     }
                 }
-            </div>
+            }
+            <button type="button" class="ol-ikon ol-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
+        </div>
 
-            <div class="fp-detalj">
-                @if (_valgt is null)
-                {
-                    <div class="fp-tomvisning">
-                        <Icon Name="mail" />
-                        <p>Velg en forespørsel i listen for å se detaljer.</p>
+        <div class="ol-grid @(_visMapper ? "med-mapper" : "") @(_mappe == "serviceoppdrag" ? "ol-service" : "")">
+            @if (_visMapper)
+            {
+                <nav class="ol-mapper">
+                    <div class="ol-mapper-tittel">Forespørsler</div>
+                    @foreach (var m in Mapper)
+                    {
+                        var key = m.Key;
+                        var ulest = _foresporsler.Count(f => !f.Lest && IMappe(f, key));
+                        <button type="button" class="ol-mi @(_mappe == key ? "pa" : "")" @onclick="@(() => VelgMappe(key))">
+                            <span class="ol-mi-ikon">@if (m.Farge is not null) {<i style="background:@m.Farge"></i>} else {<Icon Name="@m.Ikon" />}</span>
+                            <span class="ol-mi-navn">@m.Navn</span>
+                            @if (ulest > 0) {<b>@ulest</b>}
+                        </button>
+                    }
+                    <div class="ol-mapper-tittel">Fra kunder</div>
+                    <button type="button" class="ol-mi @(_mappe == "serviceoppdrag" ? "pa" : "")" @onclick='@(() => VelgMappe("serviceoppdrag"))'>
+                        <span class="ol-mi-ikon"><Icon Name="bell" /></span>
+                        <span class="ol-mi-navn">Serviceoppdrag fra kunder</span>
+                        @if (_antallApneServiceoppdrag > 0) {<b>@_antallApneServiceoppdrag</b>}
+                    </button>
+                </nav>
+            }
+
+            @if (_mappe == "serviceoppdrag")
+            {
+                <div class="ol-service-innhold">
+                    <div class="ol-lhode">
+                        @MappeVelger()
                     </div>
-                }
-                else
-                {
-                    var status = StatusFor(_valgt);
-                    var ticket = TicketFor(_valgt);
-                    var liste = VisteForesporsler;
-                    var idx = liste.FindIndex(f => f.Id == _valgt.Id);
-
-                    <div class="fp-detalj-header">
-                        <span class="fp-kort-ikon fp-kanal-@_valgt.Kanal"><Icon Name="@_valgt.Kanal.Ikon()" /></span>
-                        <StatusPill Tekst="@status.Visningsnavn()" Ikon="@status.PillIkon()" Farge="@status.PillFarge()" />
-                        <span class="fp-detalj-id">#@_valgt.Id</span>
-                        <div class="fp-detalj-nav">
-                            <button type="button" disabled="@(idx <= 0)" @onclick="Forrige"><Icon Name="arrow-left" /></button>
-                            <button type="button" disabled="@(idx < 0 || idx >= liste.Count - 1)" @onclick="Neste" style="transform:scaleX(-1);"><Icon Name="arrow-left" /></button>
-                        </div>
-                        <div class="fp-detalj-meny-wrap">
-                            <button type="button" class="fp-meny-knapp" @onclick="@(() => _visMeny = !_visMeny)" title="Mer">⋯</button>
-                            @if (_visMeny)
-                            {
-                                <div class="fp-meny">
-                                    @if (ticket is not null)
-                                    {
-                                        <button type="button" @onclick="ApneTicket"><Icon Name="tag" />Åpne ticket #@ticket.Id</button>
-                                    }
-                                    else
-                                    {
-                                        <button type="button" @onclick="OpprettEllerApneTicket"><Icon Name="plus" />Opprett ticket</button>
-                                    }
-                                    <button type="button" @onclick="MerkLestUlest"><Icon Name="check-circle" />@(_valgt.Lest ? "Merk som ulest" : "Merk som lest")</button>
-                                    <button type="button" class="fp-meny-slett" @onclick="SlettForesporsel"><Icon Name="trash" />Slett forespørsel</button>
-                                </div>
-                            }
-                        </div>
+                    <div class="ol-rull ol-service-rull">
+                        <Serviceoppdrag />
                     </div>
-
-                    <h2 class="fp-detalj-tittel">@_valgt.Emne</h2>
-
-                    <div class="fp-fanerad">
-                        <button type="button" class="fp-fane @(_aktivFane == "oversikt" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "oversikt")">Oversikt</button>
-                        <button type="button" class="fp-fane @(_aktivFane == "epost" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "epost")">E-post</button>
-                        <button type="button" class="fp-fane @(_aktivFane == "vedlegg" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "vedlegg")">Vedlegg<span class="fp-fane-badge">@VedleggForValgt.Count</span></button>
-                        <button type="button" class="fp-fane @(_aktivFane == "notater" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "notater")">Interne notater<span class="fp-fane-badge">@_valgt.Notater.Count</span></button>
-                        <button type="button" class="fp-fane @(_aktivFane == "aktivitet" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "aktivitet")">Aktivitet</button>
+                </div>
+            }
+            else
+            {
+                <section class="ol-liste">
+                    <div class="ol-lhode">
+                        @MappeVelger()
+                        <button type="button" class="ol-ikon @(_visFiltre ? "pa" : "")" title="Filtrer" @onclick="@(() => _visFiltre = !_visFiltre)"><Icon Name="filter" /></button>
                     </div>
-
-                    <div class="fp-fane-innhold">
-                        @if (_aktivFane == "oversikt")
-                        {
-                            <div class="fp-avatar-rad">
-                                <span class="fp-avatar" style="background:@AvatarFarge(_valgt)">@Initialer(_valgt)</span>
-                                <div>
-                                    <strong>@(string.IsNullOrWhiteSpace(_valgt.FraNavn) ? _valgt.FraEpost : _valgt.FraNavn)</strong>
-                                    <span class="fp-avatar-sub">@_valgt.FraEpost</span>
-                                </div>
-                            </div>
-
-                            @if (string.IsNullOrWhiteSpace(_valgt.Innhold))
-                            {
-                                <p class="fp-tom">Ingen tekst registrert.</p>
-                            }
-                            else
-                            {
-                                <p class="fp-innhold-tekst">@_valgt.Innhold</p>
-                            }
-
-                            <div class="fp-metagrid">
-                                <div class="fp-metafelt"><span class="fp-metafelt-ikon"><Icon Name="users" /></span><div><span class="fp-metafelt-lbl">Kunde</span><span class="fp-metafelt-verdi">@(KundeFor(_valgt)?.Navn ?? "-")</span></div></div>
-                                <div class="fp-metafelt"><span class="fp-metafelt-ikon"><Icon Name="folder" /></span><div><span class="fp-metafelt-lbl">Prosjekt</span><span class="fp-metafelt-verdi">@(ticket?.Prosjekt?.Navn ?? "-")</span></div></div>
-                                <div class="fp-metafelt"><span class="fp-metafelt-ikon"><Icon Name="trend-up" /></span><div><span class="fp-metafelt-lbl">Prioritet</span><span class="fp-metafelt-verdi">@(ticket?.Prioritet.Visningsnavn() ?? "-")</span></div></div>
-                                <div class="fp-metafelt"><span class="fp-metafelt-ikon"><Icon Name="calendar" /></span><div><span class="fp-metafelt-lbl">Frist</span><span class="fp-metafelt-verdi">@(ticket?.SlaFrist?.ToString("dd.MM.yyyy") ?? "-")</span></div></div>
-                            </div>
-
-                            @if (_visSvarBoks)
-                            {
-                                <div class="fp-svar-boks">
-                                    <textarea rows="4" @bind="_svarTekst" @bind:event="oninput" placeholder="Skriv svar til kunde..."></textarea>
-                                    <div class="fp-svar-actions">
-                                        <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="SendSvar" disabled="@string.IsNullOrWhiteSpace(_svarTekst)">Send svar</button>
-                                        <button type="button" class="fp-knapp" @onclick="@(() => _visSvarBoks = false)">Avbryt</button>
-                                    </div>
-                                </div>
-                            }
-                            @if (_svarSendtOk is bool ok)
-                            {
-                                <p class="@(ok ? "fp-svar-ok" : "fp-svar-feil")">@(ok ? "Svar sendt." : "Svar lagret, men e-post kunne ikke sendes.")</p>
-                            }
-                        }
-                        else if (_aktivFane == "epost")
-                        {
-                            <div class="fp-epost-meta">
-                                <div><span class="fp-metafelt-lbl">Fra</span><span class="fp-metafelt-verdi">@(string.IsNullOrWhiteSpace(_valgt.FraNavn) ? _valgt.FraEpost : $"{_valgt.FraNavn} <{_valgt.FraEpost}>")</span></div>
-                                <div><span class="fp-metafelt-lbl">Emne</span><span class="fp-metafelt-verdi">@_valgt.Emne</span></div>
-                                <div><span class="fp-metafelt-lbl">Mottatt</span><span class="fp-metafelt-verdi">@_valgt.MottattDato.ToString("dd.MM.yyyy HH:mm")</span></div>
-                            </div>
-                            @if (string.IsNullOrWhiteSpace(_valgt.Innhold))
-                            {
-                                <p class="fp-tom">Ingen tekst i e-posten.</p>
-                            }
-                            else
-                            {
-                                <p class="fp-innhold-tekst">@_valgt.Innhold</p>
-                            }
-                            @if (!string.IsNullOrWhiteSpace(_valgt.RawJson))
-                            {
-                                <button type="button" class="fp-raadata-toggle" @onclick="@(() => _visRaadata = !_visRaadata)">
-                                    <Icon Name="chevron-down" />@(_visRaadata ? "Skjul rådata" : "Vis rådata")
-                                </button>
-                                @if (_visRaadata)
+                    <label class="ol-sok">
+                        <Icon Name="search" />
+                        <input @bind="_sok" @bind:event="oninput" placeholder="Søk i forespørsler …" />
+                    </label>
+                    @if (_visFiltre)
+                    {
+                        <div class="ol-filtre">
+                            <select @bind="_kanalFilter">
+                                <option value="">Alle kanaler</option>
+                                @foreach (var k in Enum.GetValues<ForesporselKanal>())
                                 {
-                                    <pre class="fp-raadata-boks">@_valgt.RawJson</pre>
+                                    <option value="@k">@k.Visningsnavn()</option>
                                 }
-                            }
-                        }
-                        else if (_aktivFane == "vedlegg")
-                        {
-                            @if (VedleggForValgt.Count == 0)
-                            {
-                                <p class="fp-tom">Ingen vedlegg.</p>
-                            }
-                            else
-                            {
-                                <ul class="fp-vedlegg-liste">
-                                    @foreach (var m in VedleggForValgt)
-                                    {
-                                        <li>
-                                            <a class="fp-vedlegg-chip" href="@($"/foresporselmedia/{m.Id}/fil")" target="_blank">
-                                                <span class="fp-vedlegg-chip-ikon"><Icon Name="file-text" /></span>
-                                                <span class="fp-vedlegg-chip-navn">@m.Filnavn</span>
-                                            </a>
-                                        </li>
-                                    }
-                                </ul>
-                            }
-                        }
-                        else if (_aktivFane == "notater")
-                        {
-                            <div class="fp-notat-input">
-                                <textarea rows="2" @bind="_nyttNotat" @bind:event="oninput" placeholder="Legg til internt notat..."></textarea>
-                                <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="LeggTilNotat" disabled="@string.IsNullOrWhiteSpace(_nyttNotat)">Legg til</button>
-                            </div>
-                            @if (_valgt.Notater.Count == 0)
-                            {
-                                <p class="fp-tom">Ingen interne notater ennå.</p>
-                            }
-                            else
-                            {
-                                <ul class="fp-notat-liste">
-                                    @foreach (var n in _valgt.Notater.OrderByDescending(n => n.OpprettetDato))
-                                    {
-                                        <li class="fp-notat-rad" @key="n.Id">
-                                            <span class="fp-notat-tidspunkt">@n.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
-                                            <span class="fp-notat-tekst">@n.Tekst @if (n.OpprettetAvBruker is not null) { <text> (@n.OpprettetAvBruker.Navn)</text> }</span>
-                                            <button type="button" class="fp-notat-slett" @onclick="@(() => SlettNotat(n))" title="Slett notat"><Icon Name="trash" /></button>
-                                        </li>
-                                    }
-                                </ul>
-                            }
-                        }
-                        else if (_aktivFane == "aktivitet")
-                        {
-                            var aktivitet = AktivitetFor(_valgt);
-                            @if (aktivitet.Count == 0)
-                            {
-                                <p class="fp-tom">Ingen aktivitet registrert.</p>
-                            }
-                            else
-                            {
-                                <ul class="fp-aktivitet-liste">
-                                    @foreach (var a in aktivitet)
-                                    {
-                                        <li class="fp-aktivitet-rad">
-                                            <span class="fp-aktivitet-tidspunkt">@a.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</span>
-                                            <span class="fp-aktivitet-tekst">@a.Tekst@(a.UtfortAv is not null ? $" ({a.UtfortAv})" : "")</span>
-                                        </li>
-                                    }
-                                </ul>
-                            }
-                        }
-                    </div>
-
-                    <div class="fp-handlingrad">
-                        <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="@(() => _visSvarBoks = !_visSvarBoks)"><Icon Name="mail" />Svar</button>
-                        <div class="fp-handling-select">
-                            <Icon Name="users" />
-                            <select value="@(ticket?.AnsvarligBrukerId)" @onchange="Tildel">
-                                <option value="">Tildel...</option>
+                            </select>
+                            <select @bind="_kundeFilterRaw">
+                                <option value="">Alle kunder</option>
+                                @foreach (var k in RelevanteKunder)
+                                {
+                                    <option value="@k.Id">@k.Navn</option>
+                                }
+                            </select>
+                            <select @bind="_ansvarligFilterRaw">
+                                <option value="">Alle ansvarlige</option>
                                 @foreach (var b in _brukere)
                                 {
                                     <option value="@b.Id">@b.Navn</option>
                                 }
                             </select>
-                        </div>
-                        <div class="fp-handling-select">
-                            <Icon Name="toggle-right" />
-                            <select value="@(ticket?.Status ?? TicketStatus.Ny)" @onchange="EndreStatus">
-                                @foreach (var s in TicketStatusExtensions.Rekkefolge)
-                                {
-                                    <option value="@s">@s.Visningsnavn()</option>
-                                }
+                            <select @bind="_sortering">
+                                <option value="nyeste">Nyeste først</option>
+                                <option value="eldste">Eldste først</option>
                             </select>
                         </div>
+                    }
+                    <div class="ol-rull">
+                        @if (_foresporsler.Count == 0)
+                        {
+                            <p class="fp-tom">Ingen forespørsler mottatt ennå.</p>
+                        }
+                        else if (VisteForesporsler.Count == 0)
+                        {
+                            <p class="fp-tom">Ingen forespørsler her.</p>
+                        }
+                        else
+                        {
+                            var gruppe = "";
+                            @foreach (var f in VisteForesporsler)
+                            {
+                                var g = DagGruppe(f.MottattDato);
+                                if (g != gruppe)
+                                {
+                                    gruppe = g;
+                                    <div class="ol-grp">@g</div>
+                                }
+                                var status = StatusFor(f);
+                                <button type="button" class="ol-rad @(f.Id == _valgt?.Id ? "pa" : "") @(f.Lest ? "" : "ulest")" @key="f.Id" @onclick="@(() => Velg(f))">
+                                    <span class="ol-av" style="background:@AvatarFarge(f)">@Initialer(f)</span>
+                                    <span class="ol-rad-m">
+                                        <span class="ol-fra">@(string.IsNullOrWhiteSpace(f.FraNavn) ? f.FraEpost : f.FraNavn)</span>
+                                        <span class="ol-emne">@f.Emne</span>
+                                        <span class="ol-forh">@Forhand(f)</span>
+                                    </span>
+                                    <span class="ol-rad-r">
+                                        <span>@KortTid(f.MottattDato)</span>
+                                        <span class="ol-rad-ik"><Icon Name="@f.Kanal.Ikon()" />@if (_vedleggForForesporsel.ContainsKey(f.Id)) {<Icon Name="link-ikon" />}</span>
+                                        @if (status != TicketStatus.Ny)
+                                        {
+                                            <span class="ol-kat"><i style="background:@StatusFarge(status)"></i>@status.Visningsnavn()</span>
+                                        }
+                                    </span>
+                                </button>
+                            }
+                        }
                     </div>
-                }
-            </div>
+                </section>
+
+                <section class="ol-lese">
+                    @if (_valgt is null)
+                    {
+                        <div class="fp-tomvisning">
+                            <Icon Name="mail" />
+                            <p>Velg en forespørsel i listen for å lese den.</p>
+                        </div>
+                    }
+                    else
+                    {
+                        var status = StatusFor(_valgt);
+                        var ticket = TicketFor(_valgt);
+                        var liste = VisteForesporsler;
+                        var idx = liste.FindIndex(f => f.Id == _valgt.Id);
+                        <div class="ol-rull ol-lese-innhold">
+                            <div class="ol-lese-topp">
+                                <h2>@_valgt.Emne</h2>
+                                <div class="fp-detalj-nav">
+                                    <button type="button" disabled="@(idx <= 0)" @onclick="Forrige" title="Forrige"><Icon Name="arrow-left" /></button>
+                                    <button type="button" disabled="@(idx < 0 || idx >= liste.Count - 1)" @onclick="Neste" title="Neste" style="transform:scaleX(-1);"><Icon Name="arrow-left" /></button>
+                                </div>
+                            </div>
+                            <div class="ol-kategorier">
+                                <span class="ol-kat"><i style="background:@StatusFarge(status)"></i>@status.Visningsnavn()</span>
+                                <span class="ol-kat"><Icon Name="@_valgt.Kanal.Ikon()" />@_valgt.Kanal.Visningsnavn()</span>
+                                <span class="ol-kat">#@_valgt.Id</span>
+                            </div>
+                            <div class="ol-sak">
+                                <span>Kunde <b>@(KundeFor(_valgt)?.Navn ?? "-")</b></span>
+                                <span>Ansvarlig <b>@(ticket?.AnsvarligBruker?.Navn ?? "Ikke tildelt")</b></span>
+                                <span>Prosjekt <b>@(ticket?.Prosjekt?.Navn ?? "-")</b></span>
+                                <span>Prioritet <b>@(ticket?.Prioritet.Visningsnavn() ?? "-")</b></span>
+                                <span>Frist <b>@(ticket?.SlaFrist?.ToString("dd.MM.yyyy") ?? "-")</b></span>
+                            </div>
+
+                            <nav class="ol-lese-faner">
+                                <button type="button" class="@(_aktivFane == "oversikt" ? "pa" : "")" @onclick='@(() => _aktivFane = "oversikt")'>Melding</button>
+                                <button type="button" class="@(_aktivFane == "vedlegg" ? "pa" : "")" @onclick='@(() => _aktivFane = "vedlegg")'>Vedlegg <small>@VedleggForValgt.Count</small></button>
+                                <button type="button" class="@(_aktivFane == "notater" ? "pa" : "")" @onclick='@(() => _aktivFane = "notater")'>Interne notater <small>@_valgt.Notater.Count</small></button>
+                                <button type="button" class="@(_aktivFane == "aktivitet" ? "pa" : "")" @onclick='@(() => _aktivFane = "aktivitet")'>Aktivitet</button>
+                            </nav>
+
+                            @if (_aktivFane == "oversikt")
+                            {
+                                <div class="ol-melding">
+                                    <div class="ol-mhode">
+                                        <span class="ol-av ol-av-stor" style="background:@AvatarFarge(_valgt)">@Initialer(_valgt)</span>
+                                        <span class="ol-mhode-m">
+                                            <b>@(string.IsNullOrWhiteSpace(_valgt.FraNavn) ? _valgt.FraEpost : _valgt.FraNavn)</b>
+                                            <small>@_valgt.FraEpost</small>
+                                        </span>
+                                        <span class="ol-mhode-tid">@_valgt.MottattDato.ToString("ddd dd.MM.yyyy HH:mm", System.Globalization.CultureInfo.GetCultureInfo("nb-NO"))</span>
+                                        <button type="button" class="ol-ikon" title="Svar" @onclick="ApneSvar"><Icon Name="send" /></button>
+                                    </div>
+                                    @if (string.IsNullOrWhiteSpace(_valgt.Innhold))
+                                    {
+                                        <p class="fp-tom">Ingen tekst registrert.</p>
+                                    }
+                                    else
+                                    {
+                                        <p class="fp-innhold-tekst">@_valgt.Innhold</p>
+                                    }
+                                    @if (VedleggForValgt.Count > 0)
+                                    {
+                                        <ul class="fp-vedlegg-liste">
+                                            @foreach (var m in VedleggForValgt)
+                                            {
+                                                <li>
+                                                    <a class="fp-vedlegg-chip" href="@($"/foresporselmedia/{m.Id}/fil")" target="_blank">
+                                                        <span class="fp-vedlegg-chip-ikon"><Icon Name="file-text" /></span>
+                                                        <span class="fp-vedlegg-chip-navn">@m.Filnavn</span>
+                                                    </a>
+                                                </li>
+                                            }
+                                        </ul>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(_valgt.RawJson))
+                                    {
+                                        <button type="button" class="fp-raadata-toggle" @onclick="@(() => _visRaadata = !_visRaadata)">
+                                            <Icon Name="chevron-down" />@(_visRaadata ? "Skjul rådata" : "Vis rådata")
+                                        </button>
+                                        @if (_visRaadata)
+                                        {
+                                            <pre class="fp-raadata-boks">@_valgt.RawJson</pre>
+                                        }
+                                    }
+                                </div>
+
+                                @if (_visSvarBoks)
+                                {
+                                    <div class="ol-svar">
+                                        <div class="ol-svar-til">Til: <b>@(string.IsNullOrWhiteSpace(_valgt.FraNavn) ? _valgt.FraEpost : _valgt.FraNavn)</b> &lt;@_valgt.FraEpost&gt; · SV: @_valgt.Emne</div>
+                                        <textarea rows="5" @bind="_svarTekst" @bind:event="oninput" placeholder="Skriv svaret ditt …"></textarea>
+                                        <div class="ol-svar-bar">
+                                            <button type="button" class="fp-knapp" @onclick="@(() => _visSvarBoks = false)">Forkast</button>
+                                            <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="SendSvar" disabled="@string.IsNullOrWhiteSpace(_svarTekst)"><Icon Name="send" />Send</button>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="ol-svarknapper">
+                                        <button type="button" @onclick="ApneSvar"><Icon Name="send" />Svar</button>
+                                    </div>
+                                }
+                                @if (_svarSendtOk is bool ok)
+                                {
+                                    <p class="@(ok ? "fp-svar-ok" : "fp-svar-feil")">@(ok ? "Svar sendt." : "Svar lagret, men e-post kunne ikke sendes.")</p>
+                                }
+                            }
+                            else if (_aktivFane == "vedlegg")
+                            {
+                                @if (VedleggForValgt.Count == 0)
+                                {
+                                    <p class="fp-tom">Ingen vedlegg.</p>
+                                }
+                                else
+                                {
+                                    <ul class="fp-vedlegg-liste">
+                                        @foreach (var m in VedleggForValgt)
+                                        {
+                                            <li>
+                                                <a class="fp-vedlegg-chip" href="@($"/foresporselmedia/{m.Id}/fil")" target="_blank">
+                                                    <span class="fp-vedlegg-chip-ikon"><Icon Name="file-text" /></span>
+                                                    <span class="fp-vedlegg-chip-navn">@m.Filnavn</span>
+                                                </a>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            }
+                            else if (_aktivFane == "notater")
+                            {
+                                <div class="fp-notat-input">
+                                    <textarea rows="2" @bind="_nyttNotat" @bind:event="oninput" placeholder="Legg til internt notat..."></textarea>
+                                    <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="LeggTilNotat" disabled="@string.IsNullOrWhiteSpace(_nyttNotat)">Legg til</button>
+                                </div>
+                                @if (_valgt.Notater.Count == 0)
+                                {
+                                    <p class="fp-tom">Ingen interne notater ennå.</p>
+                                }
+                                else
+                                {
+                                    <ul class="fp-notat-liste">
+                                        @foreach (var n in _valgt.Notater.OrderByDescending(n => n.OpprettetDato))
+                                        {
+                                            <li class="fp-notat-rad" @key="n.Id">
+                                                <span class="fp-notat-tidspunkt">@n.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</span>
+                                                <span class="fp-notat-tekst">@n.Tekst @if (n.OpprettetAvBruker is not null) { <text> (@n.OpprettetAvBruker.Navn)</text> }</span>
+                                                <button type="button" class="fp-notat-slett" @onclick="@(() => SlettNotat(n))" title="Slett notat"><Icon Name="trash" /></button>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            }
+                            else if (_aktivFane == "aktivitet")
+                            {
+                                var aktivitet = AktivitetFor(_valgt);
+                                @if (aktivitet.Count == 0)
+                                {
+                                    <p class="fp-tom">Ingen aktivitet registrert.</p>
+                                }
+                                else
+                                {
+                                    <ul class="fp-aktivitet-liste">
+                                        @foreach (var a in aktivitet)
+                                        {
+                                            <li class="fp-aktivitet-rad">
+                                                <span class="fp-aktivitet-tidspunkt">@a.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</span>
+                                                <span class="fp-aktivitet-tekst">@a.Tekst@(a.UtfortAv is not null ? $" ({a.UtfortAv})" : "")</span>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            }
+                        </div>
+                    }
+                </section>
+            }
         </div>
-    }
-    }
+    </div>
 </div>
 
 @if (_visNyForesporselSkjema)
@@ -458,6 +500,12 @@
         await LastDataAsync();
 
         _hovedfane = Fane == "serviceoppdrag" ? "serviceoppdrag" : "foresporsler";
+        if (_hovedfane == "serviceoppdrag")
+        {
+            _mappe = "serviceoppdrag";
+        }
+        _visMapper = await VisningPref.HentAsync("foresporsler-mapper", "skjul") == "vis";
+        _full = await VisningPref.HentAsync("foresporsler-bredde", "normal") == "full";
         _antallApneServiceoppdrag = await Db.Servicehenvendelser.CountAsync(h =>
             h.Status != ServicehenvendelseStatus.Fullfort && h.Status != ServicehenvendelseStatus.Avslatt);
 
@@ -564,10 +612,8 @@
                 q = q.Where(f => TicketFor(f)?.AnsvarligBrukerId == aid);
             }
 
-            if (_statusFilter is TicketStatus st)
-            {
-                q = q.Where(f => StatusFor(f) == st);
-            }
+            var mappe = _mappe;
+            q = q.Where(f => IMappe(f, mappe));
 
             q = _sortering == "eldste" ? q.OrderBy(f => f.MottattDato) : q.OrderByDescending(f => f.MottattDato);
 
@@ -575,8 +621,113 @@
         }
     }
 
-    // Statusfanene over lista (F2). Null = alle.
-    private TicketStatus? _statusFilter;
+    // ---------- OL2: mapper, verktøylinje og lesepanel som Outlook ----------
+
+    private sealed record Mappe(string Key, string Navn, string Ikon, string? Farge);
+
+    private static readonly Mappe[] Mapper =
+    [
+        new("alle", "Innboks", "mail", null),
+        new("mine", "Mine", "users", null),
+        new("ny", "Nye", "", "#2457c5"),
+        new("beh", "Under behandling", "", "#c9902f"),
+        new("god", "Venter godkjenning", "", "#8a6ad0"),
+        new("ferdig", "Ferdig", "", "#2e7d4f"),
+    ];
+
+    private string _mappe = "alle";
+    private bool _visMapper;
+    private bool _visMappeMeny;
+    private bool _visFiltre;
+    private bool _full;
+    private bool _bekreftSlett;
+
+    private bool IMappe(Foresporsel f, string key) => key switch
+    {
+        "mine" => _naverendeBrukerId is int meg && TicketFor(f)?.AnsvarligBrukerId == meg,
+        "ny" => StatusFor(f) == TicketStatus.Ny,
+        "beh" => StatusFor(f) == TicketStatus.UnderBehandling,
+        "god" => StatusFor(f) == TicketStatus.VenterGodkjenning,
+        "ferdig" => StatusFor(f) == TicketStatus.Lukket,
+        _ => true
+    };
+
+    private string MappeNavn => _mappe == "serviceoppdrag"
+        ? "Serviceoppdrag fra kunder"
+        : Mapper.FirstOrDefault(m => m.Key == _mappe)?.Navn ?? "Innboks";
+
+    private void VelgMappe(string key)
+    {
+        _mappe = key;
+        _visMappeMeny = false;
+        _bekreftSlett = false;
+        if (key != "serviceoppdrag" && (_valgt is null || !IMappe(_valgt, key)))
+        {
+            _valgt = VisteForesporsler.FirstOrDefault();
+        }
+    }
+
+    private async Task VekslMapper()
+    {
+        _visMapper = !_visMapper;
+        await VisningPref.SettAsync("foresporsler-mapper", _visMapper ? "vis" : "skjul");
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("foresporsler-bredde", _full ? "full" : "normal");
+    }
+
+    private void ApneSvar()
+    {
+        _aktivFane = "oversikt";
+        _visSvarBoks = true;
+    }
+
+    // «Innboks ▾» over lista - samme mapper som ☰-kolonnen.
+    private RenderFragment MappeVelger() => __builder =>
+    {
+        <div class="ol-mappevelger">
+            <button type="button" class="ol-mappevelger-knapp" @onclick="@(() => _visMappeMeny = !_visMappeMeny)">@MappeNavn <Icon Name="chevron-down" /></button>
+            @if (_visMappeMeny)
+            {
+                <div class="ol-mappevelger-meny">
+                    @foreach (var m in Mapper)
+                    {
+                        var key = m.Key;
+                        <button type="button" class="@(_mappe == key ? "pa" : "")" @onclick="@(() => VelgMappe(key))">
+                            <span class="ol-mi-ikon">@if (m.Farge is not null) {<i style="background:@m.Farge"></i>} else {<Icon Name="@m.Ikon" />}</span>@m.Navn
+                        </button>
+                    }
+                    <button type="button" class="@(_mappe == "serviceoppdrag" ? "pa" : "")" @onclick='@(() => VelgMappe("serviceoppdrag"))'>
+                        <span class="ol-mi-ikon"><Icon Name="bell" /></span>Serviceoppdrag fra kunder
+                    </button>
+                </div>
+            }
+        </div>
+    };
+
+    private static string DagGruppe(DateTime d) =>
+        d.Date == DateTime.Today ? "I dag"
+        : d.Date == DateTime.Today.AddDays(-1) ? "I går"
+        : d.Date > DateTime.Today.AddDays(-7) ? "Tidligere denne uken"
+        : d.Year == DateTime.Today.Year ? d.ToString("MMMM", System.Globalization.CultureInfo.GetCultureInfo("nb-NO"))
+        : d.ToString("MMMM yyyy", System.Globalization.CultureInfo.GetCultureInfo("nb-NO"));
+
+    private static string KortTid(DateTime d) =>
+        d.Date == DateTime.Today ? d.ToString("HH:mm")
+        : d.Date > DateTime.Today.AddDays(-7) ? d.ToString("ddd HH:mm", System.Globalization.CultureInfo.GetCultureInfo("nb-NO"))
+        : d.ToString("dd.MM.yyyy");
+
+    private static string Forhand(Foresporsel f)
+    {
+        var t = string.Join(' ', (f.Innhold ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return t.Length > 110 ? t[..110] + "…" : t;
+    }
+
+    private static string StatusFarge(TicketStatus s) =>
+        StatusFaner.FirstOrDefault(x => x.Status == s).Farge ?? "#9b9189";
 
     private static readonly (TicketStatus Status, string Tekst, string Farge)[] StatusFaner =
     [
@@ -626,6 +777,7 @@
     private async Task Velg(Foresporsel f)
     {
         _valgt = f;
+        _bekreftSlett = false;
         _aktivFane = "oversikt";
         _visSvarBoks = false;
         _visMeny = false;
@@ -846,6 +998,7 @@
         await Db.SaveChangesAsync();
         _visMeny = false;
         _valgt = null;
+        _bekreftSlett = false;
         await LastDataAsync();
     }
 
