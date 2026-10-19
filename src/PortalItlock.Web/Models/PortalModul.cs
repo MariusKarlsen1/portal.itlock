@@ -133,7 +133,6 @@ public static class PortalModulRegister
     private static readonly List<Lenke> BrukerKundeUndermoduler =
     [
         new Lenke("Brukere", "Opprett brukere med e-post, stilling og tilgang til portalen.", "brukere", "users"),
-        new Lenke("Kunder", "Opprett og vedlikehold kunderegisteret.", "kunder", "folder"),
         new Lenke("Kundetilganger", "Administrer innlogging til kundeportalen.", "kundetilganger", "bell"),
         // Fravær er tatt ut herfra 2026-10-13 - det hører under Ressurser og
         // godkjenninger, der det allerede ligger, og trengs ikke to steder.
@@ -199,7 +198,7 @@ public static class PortalModulRegister
                 new LenkeGruppe("Moduler", [
                     new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings", OppsettUndermoduler),
                     new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler),
-                    new Lenke("Brukere og kunder", "Brukere, kunder, kundetilgang og fravær samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler),
+                    new Lenke("Brukere og kunder", "Brukere, kundetilgang og driftslisenser samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler),
                     new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt", RapporterUndermoduler),
                 ]),
             ]),
@@ -290,7 +289,7 @@ public static class PortalModulRegister
                 new LenkeGruppe("Moduler", [
                     new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings", OppsettUndermoduler, ModulTilgang.KunAdmin),
                     new Lenke("Komponenter og priser", "Komponentregister, prisimport, rabattgrupper og lagerstyring samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler, ModulTilgang.KunAdmin),
-                    new Lenke("Brukere og kunder", "Brukere, kunder, kundetilgang og fravær samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler, ModulTilgang.KunAdmin),
+                    new Lenke("Brukere og kunder", "Brukere, kundetilgang og driftslisenser samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler, ModulTilgang.KunAdmin),
                     new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt", RapporterUndermoduler, ModulTilgang.KunAdmin),
                 ]),
             ]),
