@@ -2596,6 +2596,9 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("DriftsmeldingId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Emne")
                         .IsRequired()
                         .HasColumnType("TEXT");

@@ -4,7 +4,10 @@ public enum ForesporselKanal
 {
     Epost,
     Telefon,
-    Skjema
+    Skjema,
+
+    // Driftsmelding fra vaktmester i driftsportalen (se DriftsmeldingForesporsel).
+    Driftsportal
 }
 
 public static class ForesporselKanalExtensions
@@ -14,6 +17,7 @@ public static class ForesporselKanalExtensions
         ForesporselKanal.Epost => "E-post",
         ForesporselKanal.Telefon => "Telefon",
         ForesporselKanal.Skjema => "Skjema",
+        ForesporselKanal.Driftsportal => "Driftsmelding",
         _ => kanal.ToString()
     };
 
@@ -22,6 +26,7 @@ public static class ForesporselKanalExtensions
         ForesporselKanal.Epost => "mail",
         ForesporselKanal.Telefon => "phone",
         ForesporselKanal.Skjema => "file-text",
+        ForesporselKanal.Driftsportal => "door",
         _ => "mail"
     };
 }

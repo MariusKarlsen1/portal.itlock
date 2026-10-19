@@ -97,7 +97,8 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
                 t.Status != TicketStatus.Lukket && t.AnsvarligBrukerId == null);
 
             tilvalgVarsel = await db.Tilvalg.CountAsync(t => t.Status == TilvalgStatus.Besvart && !t.LestAvAnsatt);
-            driftsmeldingerVarsel = await db.Driftsmeldinger.CountAsync(m => !m.LestAvAnsatt);
+            // Driftsmeldinger havner i Forespørsler (telles der som uleste forespørsler).
+            await DriftsmeldingForesporsel.SynkAsync(db);
 
             var ceTerskel = DateTime.Today.AddDays(30);
             ceGodkjenningerVarsel = await db.CeGodkjenninger.CountAsync(c =>

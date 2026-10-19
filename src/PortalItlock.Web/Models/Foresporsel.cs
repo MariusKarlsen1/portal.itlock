@@ -15,6 +15,9 @@ public class Foresporsel
     public bool Lest { get; set; }
     public string RawJson { get; set; } = "";
     public ForesporselKanal Kanal { get; set; } = ForesporselKanal.Epost;
+    // Satt når forespørselen er laget fra en driftsmelding (vaktmester i driftsportalen).
+    public int? DriftsmeldingId { get; set; }
+
     public List<ForesporselMedia> Media { get; set; } = [];
     public List<ForesporselNotat> Notater { get; set; } = [];
 }

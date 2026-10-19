@@ -233,6 +233,46 @@
                                 <span>Prioritet <b>@(ticket?.Prioritet.Visningsnavn() ?? "-")</b></span>
                                 <span>Frist <b>@(ticket?.SlaFrist?.ToString("dd.MM.yyyy") ?? "-")</b></span>
                             </div>
+                            @if (DriftFor(_valgt) is { } drift)
+                            {
+                                @* Driftsmelding fra vaktmester: dør, prosjekt, kategori og bilder/video. *@
+                                <div class="ol-drift">
+                                    <a href="@($"/dor/{drift.DorId}")"><Icon Name="door" />Dør @drift.Dornummer</a>
+                                    @if (drift.ProsjektId is int pid)
+                                    {
+                                        <a href="@($"/prosjekter/{pid}")"><Icon Name="folder" />@drift.ProsjektNavn</a>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(drift.Kategori))
+                                    {
+                                        <span class="ol-kat">@drift.Kategori</span>
+                                    }
+                                    @if (drift.Haster)
+                                    {
+                                        <span class="ol-kat ol-haster"><i style="background:#b23b22"></i>Haster</span>
+                                    }
+                                </div>
+                                @if (drift.Media.Count > 0)
+                                {
+                                    <div class="ol-drift-media">
+                                        @foreach (var m in drift.Media)
+                                        {
+                                            var url = $"/driftsmeldingmedia/{m.Id}/fil";
+                                            @if (m.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                <a href="@url" target="_blank" title="@m.Filnavn"><img src="@url" alt="@m.Filnavn" loading="lazy" /></a>
+                                            }
+                                            else if (m.ContentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                <video src="@url" controls preload="metadata"></video>
+                                            }
+                                            else
+                                            {
+                                                <a class="fp-vedlegg-chip" href="@url" target="_blank"><span class="fp-vedlegg-chip-ikon"><Icon Name="file-text" /></span><span class="fp-vedlegg-chip-navn">@m.Filnavn</span></a>
+                                            }
+                                        }
+                                    </div>
+                                }
+                            }
 
                             <nav class="ol-lese-faner">
                                 <button type="button" class="@(_aktivFane == "oversikt" ? "pa" : "")" @onclick='@(() => _aktivFane = "oversikt")'>Melding</button>
@@ -389,7 +429,7 @@
             <label class="fp-felt">
                 Kanal
                 <select @bind="_nyDraft.Kanal">
-                    @foreach (var k in Enum.GetValues<ForesporselKanal>())
+                    @foreach (var k in Enum.GetValues<ForesporselKanal>().Where(k => k != ForesporselKanal.Driftsportal))
                     {
                         <option value="@k">@k.Visningsnavn()</option>
                     }
@@ -417,6 +457,7 @@
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     [SupplyParameterFromQuery(Name = "id")] public int? Id { get; set; }
     [SupplyParameterFromQuery(Name = "fane")] public string? Fane { get; set; }
+    [SupplyParameterFromQuery(Name = "mappe")] public string? MappeParam { get; set; }
 
     // Hovedfane: forespørsler eller serviceoppdrag som kunder har meldt inn.
     private string _hovedfane = "foresporsler";
@@ -498,6 +539,11 @@
         await LastDataAsync();
 
         _hovedfane = Fane == "serviceoppdrag" ? "serviceoppdrag" : "foresporsler";
+        if (MappeParam == "drift")
+        {
+            _mappe = "drift";
+            _valgt = VisteForesporsler.FirstOrDefault();
+        }
         if (_hovedfane == "serviceoppdrag")
         {
             _mappe = "serviceoppdrag";
@@ -525,6 +571,7 @@
     private async Task LastDataAsync()
     {
         var valgtId = _valgt?.Id;
+        await DriftsmeldingForesporsel.SynkAsync(Db);
 
         _foresporsler = await Db.Foresporsler
             .Include(f => f.Notater).ThenInclude(n => n.OpprettetAvBruker)
@@ -566,6 +613,25 @@
 
         _brukere = await Db.Brukere.OrderBy(b => b.Navn).ToListAsync();
 
+        // Driftsmeldingene bak forespørslene med kanal Driftsportal: dør, prosjekt, kunde og bilder.
+        var driftIder = _foresporsler.Where(x => x.DriftsmeldingId != null).Select(x => x.DriftsmeldingId!.Value).ToList();
+        _drift = driftIder.Count == 0 ? [] : (await Db.Driftsmeldinger.AsNoTracking()
+                .Where(m => driftIder.Contains(m.Id))
+                .Select(m => new
+                {
+                    m.Id,
+                    m.DorId,
+                    Dornummer = m.Dor!.Dornummer,
+                    ProsjektId = (int?)m.Dor!.ProsjektId,
+                    ProsjektNavn = m.Dor!.Prosjekt!.Navn,
+                    Kunde = m.Dor!.Prosjekt!.Kunde,
+                    m.Kategori,
+                    m.Haster,
+                    Media = m.Media.Select(x => new DriftMedia(x.Id, x.Filnavn, x.ContentType)).ToList()
+                })
+                .ToListAsync())
+            .ToDictionary(x => x.Id, x => new DriftInfo(x.DorId, x.Dornummer, x.ProsjektId, x.ProsjektNavn, x.Kunde, x.Kategori, x.Haster, x.Media));
+
         _valgt = (valgtId.HasValue ? _foresporsler.FirstOrDefault(f => f.Id == valgtId) : null) ?? VisteForesporsler.FirstOrDefault();
     }
 
@@ -578,6 +644,11 @@
         if (ticket?.Kunde is not null)
         {
             return ticket.Kunde;
+        }
+
+        if (f.DriftsmeldingId is int did && _drift.TryGetValue(did, out var d) && d.Kunde is not null)
+        {
+            return d.Kunde;
         }
 
         return _kundeByEpost.TryGetValue(f.FraEpost.Trim().ToLowerInvariant(), out var k) ? k : null;
@@ -637,9 +708,15 @@
         new("beh", "Under behandling", "", "#c9902f"),
         new("god", "Venter godkjenning", "", "#8a6ad0"),
         new("ferdig", "Ferdig", "", "#2e7d4f"),
+        new("drift", "Driftsmeldinger", "door", null),
     ];
 
     private string _mappe = "alle";
+
+    private sealed record DriftMedia(int Id, string Filnavn, string ContentType);
+    private sealed record DriftInfo(int DorId, string? Dornummer, int? ProsjektId, string? ProsjektNavn, Kunde? Kunde, string? Kategori, bool Haster, List<DriftMedia> Media);
+    private Dictionary<int, DriftInfo> _drift = [];
+    private DriftInfo? DriftFor(Foresporsel f) => f.DriftsmeldingId is int id && _drift.TryGetValue(id, out var d) ? d : null;
     private bool _visMapper;
     private bool _visMappeMeny;
     private bool _visFiltre;
@@ -653,6 +730,7 @@
         "beh" => StatusFor(f) == TicketStatus.UnderBehandling,
         "god" => StatusFor(f) == TicketStatus.VenterGodkjenning,
         "ferdig" => StatusFor(f) == TicketStatus.Lukket,
+        "drift" => f.Kanal == ForesporselKanal.Driftsportal,
         _ => true
     };
 
@@ -795,6 +873,13 @@
         }
 
         await HentHtmlOmMangler(f);
+
+        // Driftsmelding: vaktmesteren ser «Lest» i driftsportalen når den er åpnet her.
+        if (f.DriftsmeldingId is int did)
+        {
+            await Db.Driftsmeldinger.Where(m => m.Id == did && !m.LestAvAnsatt)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.LestAvAnsatt, true).SetProperty(m => m.LestDato, DateTime.Now));
+        }
     }
 
     // ---------- E-posten som HTML (logo i signatur, lenker, formatering) ----------
@@ -935,7 +1020,11 @@
             Tittel = _valgt.Emne,
             KundeId = kunde?.Id,
             Kontaktperson = _valgt.FraNavn,
-            ForesporselId = _valgt.Id
+            ForesporselId = _valgt.Id,
+            DriftsmeldingId = _valgt.DriftsmeldingId,
+            DorId = DriftFor(_valgt)?.DorId,
+            ProsjektId = DriftFor(_valgt)?.ProsjektId,
+            Lokasjon = DriftFor(_valgt)?.ProsjektNavn
         };
         ticket.Hendelser.Add(new TicketHendelse
         {
