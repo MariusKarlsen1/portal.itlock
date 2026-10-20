@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.Options;
+using PortalItlock.Web.Models;
 using PortalItlock.Web.Services;
 
 namespace PortalItlock.Web.Tests;
@@ -38,13 +39,40 @@ public class TripletexServiceFakturaCacheTests
         }
     }
 
+    private sealed class FastTenant(bool erStandard) : ITenantContext
+    {
+        public Tenant? Current { get; } = new Tenant { Id = erStandard ? 1 : 2, Navn = "Test", ConnectionString = "", ErStandard = erStandard };
+    }
+
+    // Andre organisasjoner enn standard-organisasjonen skal verken få itlock
+    // sine fakturaer fra cachen eller gjøre kall mot Tripletex.
+    [Fact]
+    public async Task HentFakturaerAsync_gir_ingen_data_til_andre_organisasjoner()
+    {
+        var handler = new TellendeHandler();
+        var http = new HttpClient(handler) { BaseAddress = new Uri("https://api-test.tripletex.tech/v2/") };
+        var options = Options.Create(new TripletexOptions { ConsumerToken = "c", EmployeeToken = "e" });
+        var fraDato = new DateTime(2026, 3, 1);
+        var tilDato = new DateTime(2026, 3, 31);
+
+        // Fyll cachen som standard-organisasjonen.
+        await new TripletexService(http, options, new FastTenant(true)).HentFakturaerAsync(fraDato, tilDato);
+        var kallForAnnen = handler.AntallKall;
+
+        var (fakturaer, feil) = await new TripletexService(http, options, new FastTenant(false)).HentFakturaerAsync(fraDato, tilDato);
+
+        Assert.Empty(fakturaer);
+        Assert.Equal(TripletexService.IkkeSattOpp, feil);
+        Assert.Equal(kallForAnnen, handler.AntallKall);
+    }
+
     [Fact]
     public async Task HentFakturaerAsync_gjor_ikke_nytt_HTTP_kall_for_samme_periode_innen_cache_vinduet()
     {
         var handler = new TellendeHandler();
         var http = new HttpClient(handler) { BaseAddress = new Uri("https://api-test.tripletex.tech/v2/") };
         var options = Options.Create(new TripletexOptions { ConsumerToken = "c", EmployeeToken = "e" });
-        var service = new TripletexService(http, options);
+        var service = new TripletexService(http, options, new FastTenant(true));
 
         var fraDato = new DateTime(2026, 1, 1);
         var tilDato = new DateTime(2026, 1, 31);
@@ -53,7 +81,9 @@ public class TripletexServiceFakturaCacheTests
         Assert.Null(forsteFeil);
         Assert.Single(forsteFakturaer);
         var antallKallEtterForste = handler.AntallKall;
-        Assert.True(antallKallEtterForste >= 2); // session-token + faktura-kall
+        // Session-tokenet er delt (statisk), så det kan allerede finnes fra en
+        // annen test. Minst faktura-kallet skal uansett ha gått.
+        Assert.True(antallKallEtterForste >= 1);
 
         var (andreFakturaer, andreFeil) = await service.HentFakturaerAsync(fraDato, tilDato);
 
@@ -69,7 +99,7 @@ public class TripletexServiceFakturaCacheTests
         var handler = new TellendeHandler();
         var http = new HttpClient(handler) { BaseAddress = new Uri("https://api-test.tripletex.tech/v2/") };
         var options = Options.Create(new TripletexOptions { ConsumerToken = "c", EmployeeToken = "e" });
-        var service = new TripletexService(http, options);
+        var service = new TripletexService(http, options, new FastTenant(true));
 
         var fraDato = new DateTime(2026, 1, 1);
         var tilDato = new DateTime(2026, 1, 31);

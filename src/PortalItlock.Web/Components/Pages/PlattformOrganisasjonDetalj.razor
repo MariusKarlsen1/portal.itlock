@@ -12,6 +12,8 @@
 @inject TenantStatistikkService Statistikk
 @inject TenantOppslagService Oppslag
 @inject NavigationManager Nav
+@inject AbonnementService AbonnementSvc
+@inject PlattformFakturaService FakturaSvc
 
 <PageTitle>@(_tenant?.Navn ?? "Organisasjon") - Plattform</PageTitle>
 
@@ -28,7 +30,7 @@
             @foreach (var t in _alleTenants)
             {
                 <a class="pod-lisens-rad pod-velg-org" href="@($"/plattform/organisasjoner/{t.Id}")">
-                    <span class="pod-lisens-info"><span>@t.Navn</span><span class="pod-lisens-bruk">@(t.ErStandard ? "Egen organisasjon · " : "")@(t.Subdomene is { Length: > 0 } s ? $"{s}.full-kontroll.no" : "full-kontroll.no") · @t.Status</span></span>
+                    <span class="pod-lisens-info"><span>@t.Navn</span><span class="pod-lisens-bruk">@(t.ErStandard ? "Egen organisasjon · " : "")@(t.Subdomene is { Length: > 0 } s ? $"{s}.full-kontroll.no" : "full-kontroll.no") · @t.Status.Visningsnavn()</span></span>
                     <span class="pod-lisens-bruk">Åpne →</span>
                 </a>
             }
@@ -58,7 +60,7 @@ else
                 <div>
                     <div class="pod-navn-rad">
                         <h1 class="pod-h1">@_tenant.Navn</h1>
-                        <span class="pod-badge pod-badge-@StatusKlasse(_tenant.Status)"><span class="pod-dot"></span>@_tenant.Status</span>
+                        <span class="pod-badge pod-badge-@StatusKlasse(_tenant.Status)"><span class="pod-dot"></span>@_tenant.Status.Visningsnavn()</span>
                     </div>
                     <div class="pod-meta-rad">
                         @if (!string.IsNullOrWhiteSpace(_tenant.Subdomene))
@@ -86,61 +88,119 @@ else
             </div>
         </div>
 
-        <div class="pod-faner">
-            <button type="button" class="pod-fane @(_fane == "oversikt" ? "pod-fane-aktiv" : "")" @onclick="@(() => _fane = "oversikt")"><Icon Name="home" /> Oversikt</button>
-            <button type="button" class="pod-fane @(_fane == "fakturering" ? "pod-fane-aktiv" : "")" @onclick="@(() => _fane = "fakturering")"><Icon Name="file-text" /> Fakturering</button>
-            <button type="button" class="pod-fane @(_fane == "brukere" ? "pod-fane-aktiv" : "")" @onclick="@(() => _fane = "brukere")"><Icon Name="users" /> Brukere</button>
-            <button type="button" class="pod-fane @(_fane == "aktivitet" ? "pod-fane-aktiv" : "")" @onclick="@(() => _fane = "aktivitet")"><Icon Name="trend-up" /> Aktivitet</button>
-            <button type="button" class="pod-fane @(_fane == "innstillinger" ? "pod-fane-aktiv" : "")" @onclick="@(() => _fane = "innstillinger")"><Icon Name="settings" /> Innstillinger</button>
+        <div class="pod-faner" role="tablist" aria-label="Organisasjon">
+            <button type="button" role="tab" aria-selected="@(_fane == "oversikt" ? "true" : "false")" class="pod-fane @(_fane == "oversikt" ? "pod-fane-aktiv" : "")" @onclick="@(() => VisFane("oversikt"))"><Icon Name="home" /> Oversikt</button>
+            <button type="button" role="tab" aria-selected="@(_fane == "abonnement" ? "true" : "false")" class="pod-fane @(_fane == "abonnement" ? "pod-fane-aktiv" : "")" @onclick="@(() => VisFane("abonnement"))"><Icon Name="credit-card" /> Abonnement</button>
+            <button type="button" role="tab" aria-selected="@(_fane == "fakturaer" ? "true" : "false")" class="pod-fane @(_fane == "fakturaer" ? "pod-fane-aktiv" : "")" @onclick="@(() => VisFane("fakturaer"))">
+                <Icon Name="receipt" /> Fakturaer
+                @if (AntallFakturaVarsel > 0)
+                {
+                    <span class="pod-fane-tall @(_fakturaer.Any(f => f.ErForfalt) ? "" : "pod-fane-tall-gul")">@AntallFakturaVarsel</span>
+                }
+            </button>
+            <button type="button" role="tab" aria-selected="@(_fane == "brukere" ? "true" : "false")" class="pod-fane @(_fane == "brukere" ? "pod-fane-aktiv" : "")" @onclick="@(() => VisFane("brukere"))"><Icon Name="users" /> Brukere</button>
+            <button type="button" role="tab" aria-selected="@(_fane == "oppsett" ? "true" : "false")" class="pod-fane @(_fane == "oppsett" ? "pod-fane-aktiv" : "")" @onclick="@(() => VisFane("oppsett"))">
+                <Icon Name="settings" /> Oppsett
+                @if (OppstartPunkter.Count(p => !p.Klar) > 0)
+                {
+                    <span class="pod-fane-tall pod-fane-tall-gul">@OppstartPunkter.Count(p => !p.Klar)</span>
+                }
+            </button>
+            <button type="button" role="tab" aria-selected="@(_fane == "logg" ? "true" : "false")" class="pod-fane @(_fane == "logg" ? "pod-fane-aktiv" : "")" @onclick="@(() => VisFane("logg"))"><Icon Name="clock" /> Logg og notater</button>
+            <button type="button" role="tab" aria-selected="@(_fane == "innstillinger" ? "true" : "false")" class="pod-fane @(_fane == "innstillinger" ? "pod-fane-aktiv" : "")" @onclick="@(() => VisFane("innstillinger"))"><Icon Name="edit" /> Innstillinger</button>
         </div>
 
+        @* ================= OVERSIKT ================= *@
         @if (_fane == "oversikt")
         {
-            <div class="pod-kpi-grid">
+            var brukerLisens = _lisenser.FirstOrDefault(l => l.Type == LisensType.Brukere)?.AntallTildelt ?? 0;
+            var brukereIBruk = _brukere.Count(b => b.Rolle != BrukerRolle.Kunde && b.Aktiv);
+            var utestaende = _fakturaer.Where(f => f.Status == PlattformFakturaStatus.Fakturert).Sum(f => f.Utestaende ?? 0);
+            var forfalte = _fakturaer.Where(f => f.ErForfalt).ToList();
+            <div class="pod-kpi-grid pod-kpi-grid-4">
                 <div class="pod-card pod-kpi">
-                    <div class="pod-kpi-topp"><span class="pod-eyebrow">Månedlig omsetning</span><span class="pod-kpi-ikon"><Icon Name="file-text" /></span></div>
-                    <div class="pod-kpi-verdi">@ManedligBelop(_tenant.Id).ToString("N0") kr</div>
-                    <div class="pod-kpi-sub">Aktiverte lisenser</div>
+                    <div class="pod-kpi-topp"><span class="pod-eyebrow">Per måned</span><span class="pod-kpi-ikon"><Icon Name="credit-card" /></span></div>
+                    <div class="pod-kpi-verdi">@Kr(Maanedsbelop)</div>
+                    <div class="pod-kpi-sub">eks. mva, fra abonnementet</div>
                 </div>
                 <div class="pod-card pod-kpi">
-                    <div class="pod-kpi-topp"><span class="pod-eyebrow">Totalt fakturert i år</span><span class="pod-kpi-ikon"><Icon Name="receipt" /></span></div>
-                    <div class="pod-kpi-verdi">0 kr</div>
-                    <div class="pod-kpi-sub">Fakturering ikke tatt i bruk</div>
+                    <div class="pod-kpi-topp"><span class="pod-eyebrow">Utestående</span><span class="pod-kpi-ikon"><Icon Name="receipt" /></span></div>
+                    <div class="pod-kpi-verdi @(forfalte.Count > 0 ? "pod-rod" : "")">@Kr(utestaende)</div>
+                    <div class="pod-kpi-sub">inkl. mva · @(forfalte.Count > 0 ? $"{forfalte.Count} forfalt" : "ingen forfalte")</div>
                 </div>
                 <div class="pod-card pod-kpi">
-                    <div class="pod-kpi-topp"><span class="pod-eyebrow">Utestående beløp</span><span class="pod-kpi-ikon"><Icon Name="credit-card" /></span></div>
-                    <div class="pod-kpi-verdi">0 kr</div>
-                    <div class="pod-kpi-sub">Ingen forfalte fakturaer</div>
+                    <div class="pod-kpi-topp"><span class="pod-eyebrow">Brukere</span><span class="pod-kpi-ikon"><Icon Name="users" /></span></div>
+                    <div class="pod-kpi-verdi">@brukereIBruk av @brukerLisens</div>
+                    <div class="pod-kpi-sub">lisenser i bruk</div>
                 </div>
                 <div class="pod-card pod-kpi">
-                    <div class="pod-kpi-topp"><span class="pod-eyebrow">Antall brukere</span><span class="pod-kpi-ikon"><Icon Name="users" /></span></div>
-                    <div class="pod-kpi-verdi">@_brukere.Count(b => b.Rolle != BrukerRolle.Kunde)</div>
-                    <div class="pod-kpi-sub">Aktive brukere</div>
+                    <div class="pod-kpi-topp"><span class="pod-eyebrow">Neste faktura</span><span class="pod-kpi-ikon"><Icon Name="calendar" /></span></div>
+                    <div class="pod-kpi-verdi">@(_tenant.ErStandard ? "–" : _forhandsvisning?.PeriodeFra.ToString("dd.MM.yyyy") ?? "–")</div>
+                    <div class="pod-kpi-sub">@(_tenant.ErStandard ? "Egen organisasjon faktureres ikke" : _forhandsvisning is { } fv ? $"{Kr(fv.BelopEksMva)} eks. mva" : "")</div>
                 </div>
-                <div class="pod-card pod-kpi">
-                    <div class="pod-kpi-topp"><span class="pod-eyebrow">Siste faktura</span><span class="pod-kpi-ikon"><Icon Name="receipt" /></span></div>
-                    <div class="pod-kpi-verdi">-</div>
-                    <div class="pod-kpi-sub">Ingen fakturaer ennå</div>
-                </div>
+            </div>
+
+            <div class="pod-midt-rad pod-midt-rad-to">
+                <section class="pod-card">
+                    <h3 class="pod-h3">Trenger oppfølging</h3>
+                    @{
+                        var punkter = Oppfolgingspunkter();
+                    }
+                    @if (punkter.Count == 0)
+                    {
+                        <p class="pod-tom-tekst">Alt ser bra ut. Ingenting å følge opp.</p>
+                    }
+                    else
+                    {
+                        <div class="pod-sjekk">
+                            @foreach (var p in punkter)
+                            {
+                                var punkt = p;
+                                <div class="pod-sjekk-rad">
+                                    <span class="pod-sjekk-ikon @(punkt.Rod ? "pod-sjekk-rod" : "pod-sjekk-gul")"><Icon Name="@punkt.Ikon" /></span>
+                                    <span class="pod-sjekk-tekst">@punkt.Tittel<small>@punkt.Tekst</small></span>
+                                    <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => VisFane(punkt.Fane, punkt.UnderFane))">@punkt.Knapp</button>
+                                </div>
+                            }
+                        </div>
+                    }
+                </section>
+                <section class="pod-card">
+                    @{
+                        var klare = OppstartPunkter.Count(p => p.Klar);
+                    }
+                    <div class="pod-kort-header-rad">
+                        <h3 class="pod-h3">Oppsett</h3>
+                        <span class="pod-oppstart-teller">@klare av @OppstartPunkter.Count klart</span>
+                    </div>
+                    <div class="pod-fremdrift"><i style="width:@((OppstartPunkter.Count == 0 ? 0 : klare * 100 / OppstartPunkter.Count).ToString(CultureInfo.InvariantCulture))%"></i></div>
+                    <div class="pod-sjekk">
+                        @foreach (var p in OppstartPunkter)
+                        {
+                            <div class="pod-sjekk-rad pod-sjekk-rad-tett">
+                                <span class="pod-sjekk-tekst">@p.Tittel</span>
+                                <span class="pod-chip @(p.Klar ? "pod-chip-ok" : "pod-chip-gul")">@p.Status</span>
+                            </div>
+                        }
+                    </div>
+                    <button type="button" class="pod-vis-alle" @onclick="@(() => VisFane("oppsett", "oppstart"))">Gå til oppsett →</button>
+                </section>
             </div>
 
             <div class="pod-midt-rad">
                 <section class="pod-card">
                     <h3 class="pod-h3">Om organisasjonen</h3>
-                    <div class="pod-info-rad"><span>Organisasjonsnavn</span><strong>@_tenant.Navn</strong></div>
-                    <div class="pod-info-rad"><span>Domene</span><strong>@(_tenant.Subdomene ?? "-")</strong></div>
                     <div class="pod-info-rad"><span>Org.nr</span><strong>@(_tenant.OrgNr ?? "-")</strong></div>
                     <div class="pod-info-rad"><span>Adresse</span><strong>@(_tenant.Adresse ?? "-")@(string.IsNullOrWhiteSpace(_tenant.Postnr) && string.IsNullOrWhiteSpace(_tenant.Sted) ? "" : $", {_tenant.Postnr} {_tenant.Sted}")</strong></div>
                     <div class="pod-info-rad"><span>Kontaktperson</span><strong>@(_tenant.Kundeansvarlig ?? "-")</strong></div>
                     <div class="pod-info-rad"><span>E-post</span><strong>@(_tenant.Epost ?? "-")</strong></div>
                     <div class="pod-info-rad"><span>Telefon</span><strong>@(_tenant.Telefon ?? "-")</strong></div>
-                    <div class="pod-info-rad"><span>Status</span><strong>@_tenant.Status</strong></div>
-                    <div class="pod-info-rad"><span>Opprettet</span><strong>@_tenant.OpprettetDato.ToString("dd.MM.yyyy")</strong></div>
+                    <div class="pod-info-rad"><span>Kunde siden</span><strong>@(_abo?.Startdato.ToString("dd.MM.yyyy") ?? _tenant.OpprettetDato.ToString("dd.MM.yyyy"))</strong></div>
                 </section>
 
                 <section class="pod-card">
                     <div class="pod-kort-header-rad">
-                        <h3 class="pod-h3">Omsetning siste 12 måneder</h3>
+                        <h3 class="pod-h3">Fakturert siste 12 måneder</h3>
                     </div>
                     <div class="pod-stolpediagram">
                         @foreach (var punkt in _omsetningHistorikk)
@@ -152,75 +212,261 @@ else
                             </div>
                         }
                     </div>
+                    <p class="pod-tom-tekst">Sum av fakturaer per periode, eks. mva.</p>
                 </section>
 
-                <section class="pod-card">
-                    <h3 class="pod-h3">Fakturaer som krever oppfølging</h3>
-                    <p class="pod-tom-tekst">Fakturering er ikke tatt i bruk ennå.</p>
-                </section>
-            </div>
-
-            <div class="pod-midt-rad pod-midt-rad-to">
                 <section class="pod-card">
                     <div class="pod-kort-header-rad">
-                        <h3 class="pod-h3">Brukere (@_brukere.Count)</h3>
-                        <button type="button" class="pod-vis-alle" @onclick="@(() => _fane = "brukere")">Vis alle →</button>
+                        <h3 class="pod-h3">Siste notat</h3>
+                        <button type="button" class="pod-vis-alle" @onclick="@(() => VisFane("logg"))">Alle →</button>
                     </div>
-                    @if (_brukere.Count == 0)
+                    @if (_notater.FirstOrDefault() is { } sisteNotat)
                     {
-                        <p class="pod-tom-tekst">Ingen brukere ennå.</p>
+                        <div class="pod-notat">
+                            <small>@sisteNotat.Dato.ToString("dd.MM.yyyy") · @sisteNotat.Type@(sisteNotat.Av is { } av ? $" · {av}" : "")</small>
+                            <span>@sisteNotat.Tekst</span>
+                            @if (sisteNotat.Oppfolging is { } opp && !sisteNotat.Utfort)
+                            {
+                                <small class="@(opp.Date <= DateTime.Today ? "pod-rod" : "")">Følg opp @opp.ToString("dd.MM.yyyy")</small>
+                            }
+                        </div>
                     }
                     else
                     {
-                        @foreach (var b in _brukere.Take(5))
-                        {
-                            <div class="pod-bruker-rad">
-                                <span class="pod-bruker-navn">@b.Navn</span>
-                                <span class="pod-bruker-epost">@b.Epost</span>
-                                <span class="pod-rolle-pille">@b.Rolle.Visningsnavn()</span>
-                                <span class="pod-badge pod-badge-@(b.Aktiv ? "aktiv" : "oppsagt")"><span class="pod-dot"></span>@(b.Aktiv ? "Aktiv" : "Inaktiv")</span>
-                            </div>
-                        }
-                    }
-                </section>
-
-                <section class="pod-card">
-                    <h3 class="pod-h3">Nylig aktivitet</h3>
-                    @if (_aktivitet.Count == 0)
-                    {
-                        <p class="pod-tom-tekst">Ingen aktivitet registrert ennå.</p>
-                    }
-                    else
-                    {
-                        @foreach (var hendelse in _aktivitet)
-                        {
-                            <div class="pod-aktivitet-rad">
-                                <span class="pod-aktivitet-ikon"><Icon Name="@hendelse.Ikon" /></span>
-                                <span class="pod-aktivitet-tekst">
-                                    <span class="pod-aktivitet-tittel">@hendelse.Tittel</span>
-                                    <span class="pod-aktivitet-sub">@hendelse.Undertekst</span>
-                                </span>
-                                <span class="pod-aktivitet-tid">@RelativTid(hendelse.Tidspunkt)</span>
-                            </div>
-                        }
+                        <p class="pod-tom-tekst">Ingen notater ennå.</p>
                     }
                 </section>
             </div>
         }
 
-        @if (_fane == "fakturering")
+        @* ================= ABONNEMENT ================= *@
+        @if (_fane == "abonnement" && _abo is not null)
         {
             <section class="pod-card">
-                <h3 class="pod-h3">Fakturering</h3>
-                <p class="pod-tom-tekst">Fakturering er ikke tatt i bruk for organisasjonene ennå.</p>
+                <div class="pod-kort-header-rad">
+                    <h3 class="pod-h3">Lisenser og moduler</h3>
+                    <a class="pod-vis-alle" href="/plattform/prisliste">Prisliste →</a>
+                </div>
+                <p class="pod-tom-tekst">Endringer gjelder med en gang. Økninger midt i en periode faktureres forholdsmessig på neste faktura. Tom avtalepris betyr listepris.</p>
+                <div class="pod-tabell-ramme">
+                    <table class="pod-varsel-tabell pod-abo-tabell">
+                        <thead>
+                            <tr><th>Hva</th><th class="pod-n">I bruk</th><th class="pod-n">Antall</th><th class="pod-n">Listepris</th><th class="pod-n">Avtalepris</th><th class="pod-n">Rabatt</th><th class="pod-n">Per måned</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var l in _linjer)
+                            {
+                                var linje = l;
+                                <tr>
+                                    <td><b>@linje.Navn</b><small>@linje.Beskrivelse</small></td>
+                                    <td class="pod-n">@IBruk(linje)</td>
+                                    <td class="pod-n">
+                                        @if (linje.Type == PrisType.Lisens)
+                                        {
+                                            <input class="pod-input pod-tall-input" type="number" min="0" value="@linje.Antall" aria-label="@($"Antall {linje.Navn}")"
+                                                   @onchange="@(e => SettAntall(linje.Nokkel, e.Value?.ToString()))" />
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="pod-modul-bryter" role="switch" aria-checked="@(linje.Antall > 0 ? "true" : "false")" aria-label="@linje.Navn"
+                                                    @onclick="@(() => SettAntall(linje.Nokkel, linje.Antall > 0 ? "0" : "1"))"></button>
+                                        }
+                                    </td>
+                                    <td class="pod-n">@Kr(linje.Listepris)</td>
+                                    <td class="pod-n">
+                                        <input class="pod-input pod-tall-input" type="number" min="0" placeholder="@linje.Listepris.ToString("0", CultureInfo.InvariantCulture)"
+                                               value="@(linje.HarAvtalepris ? linje.Pris.ToString("0.##", CultureInfo.InvariantCulture) : "")" aria-label="@($"Avtalepris {linje.Navn}")"
+                                               @onchange="@(e => SettAvtalepris(linje.Nokkel, e.Value?.ToString()))" />
+                                    </td>
+                                    <td class="pod-n">@(linje.RabattProsent is { } r ? $"{r} %" : "–")</td>
+                                    <td class="pod-n"><b>@Kr(linje.Sum)</b></td>
+                                </tr>
+                            }
+                            <tr class="pod-sumrad"><td colspan="6">Sum per måned, eks. mva</td><td class="pod-n">@Kr(Maanedsbelop)</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                @if (!string.IsNullOrEmpty(_aboMelding))
+                {
+                    <p class="pod-suksessmelding">@_aboMelding</p>
+                }
             </section>
+
+            <div class="pod-midt-rad">
+                <section class="pod-card">
+                    <h3 class="pod-h3">Fakturering</h3>
+                    <label class="pod-label" for="pod-intervall">Faktureres
+                        <select id="pod-intervall" class="pod-input" @bind="_abo.Intervall" @bind:after="LagreAbonnement">
+                            @foreach (var i in Enum.GetValues<FakturaIntervall>())
+                            {
+                                <option value="@i">@i.Visningsnavn()</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="pod-label" for="pod-frist">Betalingsfrist (dager)
+                        <input id="pod-frist" class="pod-input" type="number" min="0" max="90" @bind="_abo.BetalingsfristDager" @bind:after="LagreAbonnement" />
+                    </label>
+                    <label class="pod-label" for="pod-fakturaepost">Faktura sendes til
+                        <input id="pod-fakturaepost" class="pod-input" type="email" @bind="_abo.FakturaEpost" @bind:after="LagreAbonnement" placeholder="faktura@firma.no" />
+                    </label>
+                    <label class="pod-label" for="pod-etablering">Etableringsgebyr (tom = listepris)
+                        <input id="pod-etablering" class="pod-input" type="number" min="0" @bind="_abo.Etableringsgebyr" @bind:after="LagreAbonnement" disabled="@_abo.EtableringFakturert" />
+                    </label>
+                    @if (_abo.EtableringFakturert)
+                    {
+                        <p class="pod-tom-tekst">Etableringen er fakturert.</p>
+                    }
+                </section>
+
+                <section class="pod-card">
+                    <h3 class="pod-h3">Avtale</h3>
+                    <label class="pod-label" for="pod-start">Kunde siden
+                        <input id="pod-start" class="pod-input" type="date" @bind="_abo.Startdato" @bind:after="LagreAbonnement" />
+                    </label>
+                    <label class="pod-label" for="pod-binding">Binding til
+                        <input id="pod-binding" class="pod-input" type="date" @bind="_abo.BindingTil" @bind:after="LagreAbonnement" />
+                    </label>
+                    <label class="pod-label" for="pod-prove">Prøveperiode til (faktureres ikke før etter)
+                        <input id="pod-prove" class="pod-input" type="date" @bind="_abo.ProveperiodeTil" @bind:after="LagreAbonnement" />
+                    </label>
+                    <label class="pod-label" for="pod-neste">Neste faktura gjelder fra
+                        <input id="pod-neste" class="pod-input" type="date" @bind="_abo.NesteFakturaFra" @bind:after="LagreAbonnement" />
+                    </label>
+                </section>
+
+                <section class="pod-card">
+                    <h3 class="pod-h3">Endringer</h3>
+                    @{
+                        var endringer = _hendelser.Where(h => h.Ikon is "credit-card" or "tag").Take(8).ToList();
+                    }
+                    @if (endringer.Count == 0)
+                    {
+                        <p class="pod-tom-tekst">Ingen endringer ennå.</p>
+                    }
+                    else
+                    {
+                        <div class="pod-tidslinje">
+                            @foreach (var h in endringer)
+                            {
+                                <div><time>@h.Tidspunkt.ToString("dd.MM.yy")</time><span>@h.Tekst</span></div>
+                            }
+                        </div>
+                    }
+                </section>
+            </div>
         }
 
+        @* ================= FAKTURAER ================= *@
+        @if (_fane == "fakturaer")
+        {
+            @if (_tenant.ErStandard)
+            {
+                <section class="pod-card">
+                    <h3 class="pod-h3">Fakturaer</h3>
+                    <p class="pod-tom-tekst">Dette er din egen organisasjon, og den faktureres ikke.</p>
+                </section>
+            }
+            else
+            {
+                @if (!_tripletexKlar)
+                {
+                    <p class="pod-varselstripe">Tripletex er ikke satt opp for itlock, så fakturaer kan ikke sendes dit. Du kan fakturere på annen måte og markere dem som fakturert og betalt her.</p>
+                }
+                @if (_forhandsvisning is { } neste && !_fakturaer.Any(f => f.Status == PlattformFakturaStatus.Utkast))
+                {
+                    <section class="pod-card pod-forhand">
+                        <div class="pod-kort-header-rad">
+                            <span>
+                                <h3 class="pod-h3">Neste faktura: @AbonnementService.PeriodeTekst(neste.PeriodeFra, neste.PeriodeTil)</h3>
+                                <p class="pod-tom-tekst">Lages automatisk @neste.PeriodeFra.ToString("dd.MM.yyyy") som utkast. Du ser over og sender den selv.</p>
+                            </span>
+                            <b class="pod-forhand-sum">@Kr(neste.BelopEksMva) <small>eks. mva</small></b>
+                        </div>
+                        @FakturaLinjer(neste)
+                        <div class="pod-knapperad">
+                            <button type="button" class="pod-btn-primary" disabled="@(neste.Linjer.Count == 0)" @onclick="LagFakturaNa"><Icon Name="plus" /> Lag utkast nå</button>
+                        </div>
+                    </section>
+                }
+                @if (!string.IsNullOrEmpty(_fakturaFeil))
+                {
+                    <p class="pod-feilmelding">@_fakturaFeil</p>
+                }
+                @if (!string.IsNullOrEmpty(_fakturaMelding))
+                {
+                    <p class="pod-suksessmelding">@_fakturaMelding</p>
+                }
+
+                <section class="pod-card">
+                    <div class="pod-kort-header-rad">
+                        <h3 class="pod-h3">Fakturaer (@_fakturaer.Count)</h3>
+                        @if (_tripletexKlar)
+                        {
+                            <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="HentBetalinger"><Icon Name="download" /> Hent status fra Tripletex</button>
+                        }
+                    </div>
+                    @if (_fakturaer.Count == 0)
+                    {
+                        <p class="pod-tom-tekst">Ingen fakturaer ennå.</p>
+                    }
+                    else
+                    {
+                        <div class="pod-tabell-ramme">
+                            <table class="pod-varsel-tabell">
+                                <thead><tr><th>Periode</th><th class="pod-n">Beløp eks. mva</th><th>Tripletex</th><th>Forfall</th><th>Status</th><th></th></tr></thead>
+                                <tbody>
+                                    @foreach (var f in _fakturaer)
+                                    {
+                                        var faktura = f;
+                                        <tr class="pod-klikkrad" @onclick="@(() => _apenFaktura = _apenFaktura == faktura.Id ? null : faktura.Id)">
+                                            <td><b>@AbonnementService.PeriodeTekst(faktura.PeriodeFra, faktura.PeriodeTil)</b><small>Laget @faktura.Opprettet.ToString("dd.MM.yyyy")</small></td>
+                                            <td class="pod-n">@Kr(faktura.BelopEksMva)</td>
+                                            <td>@(faktura.TripletexFakturaNummer is { } fnr ? $"Faktura {fnr}" : faktura.TripletexOrdreNummer is { } onr ? $"Ordre {onr}" : "–")</td>
+                                            <td>@(faktura.Forfall?.ToString("dd.MM.yyyy") ?? "–")</td>
+                                            <td><span class="pod-chip @FakturaKlasse(faktura)">@FakturaStatus(faktura)</span></td>
+                                            <td class="pod-n" @onclick:stopPropagation="true">
+                                                @if (faktura.Status == PlattformFakturaStatus.Utkast)
+                                                {
+                                                    @if (_tripletexKlar)
+                                                    {
+                                                        <button type="button" class="pod-btn-primary pod-btn-liten" disabled="@_sender" @onclick="@(() => SendFaktura(faktura.Id))">Send til Tripletex</button>
+                                                    }
+                                                    <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => MarkerFaktura(faktura.Id, PlattformFakturaStatus.Fakturert))">Marker fakturert</button>
+                                                    <button type="button" class="pod-btn-ghost pod-btn-liten" title="Slett utkastet" aria-label="Slett utkastet" @onclick="@(() => SlettUtkast(faktura.Id))"><Icon Name="trash" /></button>
+                                                }
+                                                else if (faktura.Status is PlattformFakturaStatus.Fakturert or PlattformFakturaStatus.SendtTilTripletex)
+                                                {
+                                                    <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => MarkerFaktura(faktura.Id, PlattformFakturaStatus.Betalt))">Marker betalt</button>
+                                                }
+                                            </td>
+                                        </tr>
+                                        @if (_apenFaktura == faktura.Id)
+                                        {
+                                            <tr class="pod-faktura-detalj"><td colspan="6">
+                                                @FakturaLinjer(faktura)
+                                                @if (!string.IsNullOrEmpty(faktura.Feil))
+                                                {
+                                                    <p class="pod-feilmelding">@faktura.Feil</p>
+                                                }
+                                            </td></tr>
+                                        }
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="pod-tom-tekst">Sendt til Tripletex blir fakturaen en ordre klar til fakturering. Fakturer den der, så hentes fakturanummer, forfall og betaling hit hver sjette time.</p>
+                    }
+                </section>
+            }
+        }
+
+        @* ================= BRUKERE ================= *@
         @if (_fane == "brukere")
         {
             <section class="pod-card">
                 <div class="pod-kort-header-rad">
                     <h3 class="pod-h3">Brukere (@_brukere.Count)</h3>
+                    <span class="pod-tom-tekst">@_brukere.Count(b => b.Rolle != BrukerRolle.Kunde && b.Aktiv) av @(_lisenser.FirstOrDefault(l => l.Type == LisensType.Brukere)?.AntallTildelt ?? 0) brukerlisenser i bruk</span>
                     <button type="button" class="pod-btn-primary" @onclick="@(() => _visNyBruker = !_visNyBruker)"><Icon Name="plus" /> Ny bruker</button>
                 </div>
 
@@ -271,38 +517,249 @@ else
                             <div>@b.Navn</div>
                             <div>@b.Epost</div>
                             <div><span class="pod-rolle-pille">@b.Rolle.Visningsnavn()</span></div>
-                            <div><span class="pod-badge pod-badge-@(b.Aktiv ? "aktiv" : "oppsagt")"><span class="pod-dot"></span>@(b.Aktiv ? "Aktiv" : "Inaktiv")</span></div>
+                            <div><span class="pod-badge pod-badge-@(b.Aktiv ? "aktiv" : "oppsagt")"><span class="pod-dot"></span>@(b.Aktiv ? (string.IsNullOrEmpty(b.PasswordHash) ? "Har ikke satt passord" : "Aktiv") : "Inaktiv")</span></div>
                         </div>
                     }
                 }
             </section>
         }
 
-        @if (_fane == "aktivitet")
+        @* ================= OPPSETT ================= *@
+        @if (_fane == "oppsett" && _innstillinger is not null)
         {
-            <section class="pod-card">
-                <h3 class="pod-h3">Aktivitet</h3>
-                @if (_aktivitet.Count == 0)
-                {
-                    <p class="pod-tom-tekst">Ingen aktivitet registrert ennå.</p>
-                }
-                else
-                {
-                    @foreach (var hendelse in _aktivitet)
+            <div class="pod-under-faner">
+                <nav class="pod-under-meny" aria-label="Oppsett">
+                    @foreach (var (nokkel, navn) in new[] { ("oppstart", "Oppstart"), ("epost", "E-post og varsler"), ("tripletex", "Tripletex"), ("backup", "Backup") })
                     {
-                        <div class="pod-aktivitet-rad">
-                            <span class="pod-aktivitet-ikon"><Icon Name="@hendelse.Ikon" /></span>
-                            <span class="pod-aktivitet-tekst">
-                                <span class="pod-aktivitet-tittel">@hendelse.Tittel</span>
-                                <span class="pod-aktivitet-sub">@hendelse.Undertekst</span>
-                            </span>
-                            <span class="pod-aktivitet-tid">@RelativTid(hendelse.Tidspunkt)</span>
+                        var n = nokkel;
+                        <button type="button" class="@(_oppsettFane == n ? "aktiv" : "")" aria-current="@(_oppsettFane == n ? "true" : "false")" @onclick="@(() => _oppsettFane = n)">@navn</button>
+                    }
+                </nav>
+                <div class="pod-under-innhold">
+                    @if (_oppsettFane == "oppstart")
+                    {
+                        <div class="pod-midt-rad pod-midt-rad-to">
+                            <section class="pod-card">
+                                <div class="pod-kort-header-rad">
+                                    <h3 class="pod-h3">Klar til bruk?</h3>
+                                    <span class="pod-oppstart-teller">@OppstartPunkter.Count(p => p.Klar) av @OppstartPunkter.Count klart</span>
+                                </div>
+                                <div class="pod-sjekk">
+                                    @foreach (var p in OppstartPunkter)
+                                    {
+                                        <div class="pod-sjekk-rad">
+                                            <span class="pod-sjekk-ikon @(p.Klar ? "pod-sjekk-ok" : "pod-sjekk-gul")"><Icon Name="@(p.Klar ? "check" : p.Ikon)" /></span>
+                                            <span class="pod-sjekk-tekst">@p.Tittel<small>@p.Tekst</small></span>
+                                            <span class="pod-chip @(p.Klar ? "pod-chip-ok" : "pod-chip-gul")">@p.Status</span>
+                                        </div>
+                                    }
+                                </div>
+                            </section>
+                            <section class="pod-card">
+                                <h3 class="pod-h3">Avtale og databehandleravtale</h3>
+                                <p class="pod-tom-tekst">Registrer når kunden har signert abonnementsvilkårene og databehandleravtalen. Databehandleravtalen er påkrevd etter GDPR, siden du lagrer kundens data.</p>
+                                @if (_abo is not null)
+                                {
+                                    <label class="pod-label" for="pod-avtale">Abonnementsavtale signert
+                                        <input id="pod-avtale" class="pod-input" type="date" @bind="_abo.AvtaleSignert" @bind:after="LagreAbonnement" />
+                                    </label>
+                                    <label class="pod-label" for="pod-dba">Databehandleravtale signert
+                                        <input id="pod-dba" class="pod-input" type="date" @bind="_abo.DatabehandleravtaleSignert" @bind:after="LagreAbonnement" />
+                                    </label>
+                                }
+                                <h3 class="pod-h3 pod-h3-mellom">Dette trenger du fra daglig leder</h3>
+                                <ul class="pod-innhent">
+                                    <li>Firmanavn, org.nr. og logo</li>
+                                    <li>Administrator: navn og e-post</li>
+                                    <li>Ønsket e-postnavn, for eksempel <b>@(_innstillinger.EpostNavn ?? "firmanavn")</b>@("@" + OrganisasjonOppsett.EpostDomene)</li>
+                                    <li>Hvem som skal få påminnelsene</li>
+                                    <li>Antall brukere, moduler og fakturaadresse</li>
+                                    <li>Tripletex-nøkkel, når koblingen per firma er klar</li>
+                                </ul>
+                            </section>
                         </div>
                     }
-                }
-            </section>
+                    @if (_oppsettFane == "epost")
+                    {
+                        <div class="pod-midt-rad pod-midt-rad-to">
+                            <section class="pod-card">
+                                <div class="pod-kort-header-rad">
+                                    <h3 class="pod-h3">Organisasjonens e-postadresse</h3>
+                                    <span class="pod-chip pod-chip-gul">Tas i bruk i neste steg</span>
+                                </div>
+                                <p class="pod-tom-tekst">Brukes både som avsender og som innboks. E-post til adressen havner i portalen til @_tenant.Navn, og bare der.</p>
+                                <label class="pod-label" for="pod-epostnavn">Adresse
+                                    <span class="pod-adresse">
+                                        <input id="pod-epostnavn" class="pod-input" @bind="_epostNavn" @bind:event="oninput" />
+                                        <span>@("@" + OrganisasjonOppsett.EpostDomene)</span>
+                                    </span>
+                                </label>
+                                <label class="pod-label" for="pod-avsender">Avsendernavn
+                                    <input id="pod-avsender" class="pod-input" @bind="_avsenderNavn" @bind:event="oninput" placeholder="@_tenant.Navn" />
+                                </label>
+                                <label class="pod-label" for="pod-svartil">Når kunden svarer på en e-post
+                                    <select id="pod-svartil" class="pod-input" @bind="_svarTil">
+                                        <option value="portal">Svaret kommer inn i portalen (Forespørsler)</option>
+                                        <option value="epost">Svaret går til en vanlig e-postadresse</option>
+                                    </select>
+                                </label>
+                                @if (_svarTil == "epost")
+                                {
+                                    <label class="pod-label" for="pod-svarepost">Svar går til
+                                        <input id="pod-svarepost" class="pod-input" type="email" @bind="_svarTilEpost" placeholder="post@firma.no" />
+                                    </label>
+                                }
+                                <p class="pod-tom-tekst">Kunden ser: <b>@(string.IsNullOrWhiteSpace(_avsenderNavn) ? _tenant.Navn : _avsenderNavn)</b> &lt;@OrganisasjonOppsett.Adresse(string.IsNullOrWhiteSpace(_epostNavn) ? "…" : _epostNavn.Trim().ToLowerInvariant())&gt;</p>
+                                <div class="pod-knapperad"><button type="button" class="pod-btn-primary" @onclick="LagreEpost">Lagre</button></div>
+                                @if (!string.IsNullOrEmpty(_epostFeil))
+                                {
+                                    <p class="pod-feilmelding">@_epostFeil</p>
+                                }
+                                @if (!string.IsNullOrEmpty(_epostMelding))
+                                {
+                                    <p class="pod-suksessmelding">@_epostMelding</p>
+                                }
+                            </section>
+                            <section class="pod-card">
+                                <h3 class="pod-h3">Tips til firmaet</h3>
+                                <p class="pod-tom-tekst">Vil firmaet at e-post til sin vanlige adresse også skal komme inn i portalen, lager de en videresending fra for eksempel post@("@")firma.no til adressen over. Det gjøres med en regel i Outlook eller Gmail.</p>
+                            </section>
+                        </div>
+            
+                        <section class="pod-card">
+                            <h3 class="pod-h3">Hvem får påminnelsene?</h3>
+                            <p class="pod-tom-tekst">Hver påminnelse går til dem som har den slått på. Er listen tom, går påminnelsene til organisasjonens aktive administratorer.</p>
+                            <div class="pod-tabell-ramme">
+                                <table class="pod-varsel-tabell">
+                                    <thead>
+                                        <tr>
+                                            <th>Mottaker</th>
+                                            @foreach (var type in Enum.GetValues<VarselType>())
+                                            {
+                                                <th class="pod-c" title="@type.Forklaring()">@type.Visningsnavn()</th>
+                                            }
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var m in _mottakere)
+                                        {
+                                            var mottaker = m;
+                                            <tr>
+                                                <td><b>@mottaker.Epost</b><small>@mottaker.Beskrivelse</small></td>
+                                                @foreach (var type in Enum.GetValues<VarselType>())
+                                                {
+                                                    var t = type;
+                                                    var pa = mottaker.Gjelder(t);
+                                                    <td class="pod-c"><button type="button" class="pod-modul-bryter" role="switch" aria-checked="@(pa ? "true" : "false")" aria-label="@($"{t.Visningsnavn()} til {mottaker.Epost}")" @onclick="@(() => VekslVarsel(mottaker, t))"></button></td>
+                                                }
+                                                <td class="pod-c"><button type="button" class="pod-btn-ghost pod-btn-liten" title="Fjern mottaker" aria-label="@($"Fjern {mottaker.Epost}")" @onclick="@(() => FjernMottaker(mottaker))"><Icon Name="trash" /></button></td>
+                                            </tr>
+                                        }
+                                        @if (_mottakere.Count == 0)
+                                        {
+                                            <tr><td colspan="6" class="pod-tom-tekst">Ingen mottakere valgt. Påminnelsene går til administratorene.</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="pod-ny-mottaker">
+                                <input class="pod-input" type="email" @bind="_nyMottakerEpost" placeholder="E-post, for eksempel service@firma.no" aria-label="E-post til ny mottaker" />
+                                <input class="pod-input" @bind="_nyMottakerBeskrivelse" placeholder="Hvem, for eksempel Serviceavdelingen" aria-label="Beskrivelse" />
+                                <button type="button" class="pod-btn-ghost" @onclick="LeggTilMottaker"><Icon Name="plus" /> Legg til</button>
+                            </div>
+                            @if (!string.IsNullOrEmpty(_mottakerFeil))
+                            {
+                                <p class="pod-feilmelding">@_mottakerFeil</p>
+                            }
+                        </section>
+                    }
+                    @if (_oppsettFane == "tripletex")
+                    {
+                        <section class="pod-card">
+                            <div class="pod-kort-header-rad">
+                                <h3 class="pod-h3">Tripletex</h3>
+                                <span class="pod-chip @(_tenant.ErStandard ? "pod-chip-ok" : "pod-chip-gul")">@(_tenant.ErStandard ? "Koblet" : "Kommer")</span>
+                            </div>
+                            <p class="pod-tom-tekst">@(_tenant.ErStandard
+                                ? "Itlock bruker Tripletex-nøklene som er satt i serveroppsettet."
+                                : "Organisasjonen kan ikke bruke Tripletex ennå. Her kobler du snart til firmaets egen Tripletex med deres nøkkel, tester tilkoblingen og velger hva som skal synkroniseres.")</p>
+                        </section>
+                    }
+                    @if (_oppsettFane == "backup")
+                    {
+                        <section class="pod-card">
+                            <div class="pod-kort-header-rad">
+                                <h3 class="pod-h3">Backup</h3>
+                                <span class="pod-chip pod-chip-gul">Kommer</span>
+                            </div>
+                            <p class="pod-tom-tekst">Her kommer kryptert backup av organisasjonen hver natt, med oversikt over kopiene, nedlasting og gjenoppretting.</p>
+                        </section>
+                    }
+                </div>
+            </div>
         }
 
+        @* ================= LOGG OG NOTATER ================= *@
+        @if (_fane == "logg")
+        {
+            <div class="pod-midt-rad pod-midt-rad-to">
+                <section class="pod-card">
+                    <h3 class="pod-h3">Notater</h3>
+                    <div class="pod-notat-skjema">
+                        <label class="pod-label" for="pod-notat-type">Type
+                            <select id="pod-notat-type" class="pod-input" @bind="_nyNotatType">
+                                @foreach (var t in NotatTyper)
+                                {
+                                    <option value="@t">@t</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="pod-label" for="pod-notat-oppf">Følg opp (valgfritt)
+                            <input id="pod-notat-oppf" class="pod-input" type="date" @bind="_nyNotatOppfolging" />
+                        </label>
+                        <label class="pod-label pod-notat-tekst" for="pod-notat-tekst">Notat
+                            <textarea id="pod-notat-tekst" class="pod-input" rows="3" @bind="_nyNotatTekst" placeholder="Hva ble sagt eller avtalt?"></textarea>
+                        </label>
+                    </div>
+                    <div class="pod-knapperad"><button type="button" class="pod-btn-primary" @onclick="LagreNotat">Lagre notat</button></div>
+                    @if (_notater.Count == 0)
+                    {
+                        <p class="pod-tom-tekst">Ingen notater ennå.</p>
+                    }
+                    @foreach (var n in _notater)
+                    {
+                        var notat = n;
+                        <div class="pod-notat @(notat.Utfort ? "pod-notat-utfort" : "")">
+                            <small>@notat.Dato.ToString("dd.MM.yyyy HH:mm") · @notat.Type@(notat.Av is { } av ? $" · {av}" : "")</small>
+                            <span>@notat.Tekst</span>
+                            @if (notat.Oppfolging is { } opp)
+                            {
+                                <span class="pod-notat-oppf">
+                                    <small class="@(!notat.Utfort && opp.Date <= DateTime.Today ? "pod-rod" : "")">@(notat.Utfort ? "Fulgt opp" : "Følg opp") @opp.ToString("dd.MM.yyyy")</small>
+                                    @if (!notat.Utfort)
+                                    {
+                                        <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => FullforNotat(notat))"><Icon Name="check" /> Fulgt opp</button>
+                                    }
+                                </span>
+                            }
+                        </div>
+                    }
+                </section>
+                <section class="pod-card">
+                    <h3 class="pod-h3">Logg</h3>
+                    <div class="pod-tidslinje">
+                        @foreach (var h in _hendelser.Take(40))
+                        {
+                            <div><time>@h.Tidspunkt.ToString("dd.MM.yy HH:mm")</time><span>@h.Tekst@(h.Av is { } av ? $" ({av})" : "")</span></div>
+                        }
+                        <div><time>@_tenant.OpprettetDato.ToString("dd.MM.yy HH:mm")</time><span>Organisasjonen opprettet</span></div>
+                    </div>
+                </section>
+            </div>
+        }
+
+        @* ================= INNSTILLINGER ================= *@
         @if (_fane == "innstillinger")
         {
             <section class="pod-card">
@@ -325,18 +782,6 @@ else
                             }
                         </select>
                     </label>
-                    @if (!_tenant.ErStandard)
-                    {
-                        <label class="pod-label">
-                            Status
-                            <select class="pod-input" @bind="_tenant.Status" @bind:after="Lagre">
-                                @foreach (var s in Enum.GetValues<TenantStatus>())
-                                {
-                                    <option value="@s">@s</option>
-                                }
-                            </select>
-                        </label>
-                    }
                 </div>
             </section>
 
@@ -394,48 +839,58 @@ else
                 </div>
             </section>
 
-            <section class="pod-card">
-                <h3 class="pod-h3">Lisenser</h3>
-                <p class="pod-tom-tekst">Antall de kan ta i bruk før de må vente på at du aktiverer flere.</p>
-                @foreach (var type in Enum.GetValues<LisensType>())
-                {
-                    var lisens = _lisenser.First(l => l.Type == type);
-                    var brukt = type == LisensType.Brukere ? _brukere.Count(b => b.Rolle != BrukerRolle.Kunde) : _brukere.Count(b => b.Rolle == BrukerRolle.Kunde);
-                    <div class="pod-lisens-rad">
-                        <div class="pod-lisens-info">
-                            <span>@type.Visningsnavn()</span>
-                            <span class="pod-lisens-bruk @(brukt >= lisens.AntallTildelt ? "pod-lisens-bruk-full" : "")">@brukt av @lisens.AntallTildelt i bruk</span>
+            @if (!_tenant.ErStandard)
+            {
+                <section class="pod-card">
+                    <h3 class="pod-h3">Status for organisasjonen</h3>
+                    <div class="pod-sjekk">
+                        <div class="pod-sjekk-rad">
+                            <span class="pod-sjekk-tekst">Aktiv<small>Vanlig bruk</small></span>
+                            @if (_tenant.Status == TenantStatus.Aktiv)
+                            {
+                                <span class="pod-chip pod-chip-ok">Nå</span>
+                            }
+                            else
+                            {
+                                <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => SettStatus(TenantStatus.Aktiv))">Åpne igjen</button>
+                            }
                         </div>
-                        <input type="number" min="0" class="pod-input pod-lisens-input" @bind="lisens.AntallTildelt" />
-                        <button type="button" class="pod-btn-ghost" @onclick="@(() => LagreLisens(lisens))">Aktiver</button>
-                    </div>
-                }
-                @if (!string.IsNullOrEmpty(_lisensMelding))
-                {
-                    <p class="pod-suksessmelding">@_lisensMelding</p>
-                }
-            </section>
-
-            <section class="pod-card">
-                <h3 class="pod-h3">Tilleggsmoduler</h3>
-                <p class="pod-tom-tekst">Moduler organisasjonen har kjøpt. Slått av vises ingenting av modulen i portalen deres - data de har blir liggende og er tilbake hvis du slår den på igjen.</p>
-                @foreach (var info in TilleggsModuler.Alle)
-                {
-                    var modul = _moduler.FirstOrDefault(m => m.Modul == info.Nokkel);
-                    var aktiv = modul?.Aktiv == true;
-                    <div class="pod-lisens-rad pod-modul-rad">
-                        <div class="pod-lisens-info">
-                            <span>@info.Navn</span>
-                            <span class="pod-lisens-bruk">@(aktiv && modul?.AktivertDato is { } dato ? $"Aktiv siden {dato:dd.MM.yyyy}" : info.Beskrivelse)</span>
+                        <div class="pod-sjekk-rad">
+                            <span class="pod-sjekk-tekst">Pause<small>Innloggingen stenges og brukerne logges ut. Ingen data slettes. Brukes for eksempel ved manglende betaling.</small></span>
+                            @if (_tenant.Status == TenantStatus.Suspendert)
+                            {
+                                <span class="pod-chip pod-chip-gul">Nå@(_abo?.PauseFra is { } pf ? $", fra {pf:dd.MM.yyyy}" : "")</span>
+                            }
+                            else
+                            {
+                                <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => _bekreftStatus = TenantStatus.Suspendert)">Sett på pause</button>
+                            }
                         </div>
-                        <button type="button" class="pod-modul-bryter" role="switch" aria-checked="@(aktiv ? "true" : "false")" aria-label="@info.Navn" @onclick="@(() => VekslModul(info.Nokkel))"></button>
+                        <div class="pod-sjekk-rad">
+                            <span class="pod-sjekk-tekst">Oppsagt<small>Innloggingen stenges og det lages ikke flere fakturaer. Data beholdes til du sletter organisasjonen.</small></span>
+                            @if (_tenant.Status == TenantStatus.Oppsagt)
+                            {
+                                <span class="pod-chip pod-chip-gul">Nå@(_abo?.OppsagtDato is { } od ? $", fra {od:dd.MM.yyyy}" : "")</span>
+                            }
+                            else
+                            {
+                                <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => _bekreftStatus = TenantStatus.Oppsagt)">Si opp</button>
+                            }
+                        </div>
                     </div>
-                }
-                @if (!string.IsNullOrEmpty(_modulMelding))
-                {
-                    <p class="pod-suksessmelding">@_modulMelding</p>
-                }
-            </section>
+                    @if (_bekreftStatus is { } ny)
+                    {
+                        <div class="pod-bekreft">
+                            <b>@(ny == TenantStatus.Suspendert ? $"Sette {_tenant.Navn} på pause?" : $"Si opp {_tenant.Navn}?")</b>
+                            <span>Alle brukerne logges ut og kommer ikke inn igjen før du åpner organisasjonen.</span>
+                            <div class="pod-knapperad">
+                                <button type="button" class="pod-btn-slett" @onclick="@(() => SettStatus(ny))">@(ny == TenantStatus.Suspendert ? "Sett på pause" : "Si opp")</button>
+                                <button type="button" class="pod-btn-ghost" @onclick="@(() => _bekreftStatus = null)">Avbryt</button>
+                            </div>
+                        </div>
+                    }
+                </section>
+            }
 
             @if (!_tenant.ErStandard)
             {
@@ -472,12 +927,12 @@ else
 
 @code {
     [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
 
     private Tenant? _tenant;
     private string _fane = "oversikt";
     private List<Bruker> _brukere = [];
     private List<TenantLisens> _lisenser = [];
-    private List<LisensPris> _lisensPriser = [];
     private List<AktivitetHendelse> _aktivitet = [];
     private List<(string Mnd, decimal Belop, bool ErNa)> _omsetningHistorikk = [];
     private decimal _omsetningMaks;
@@ -495,8 +950,20 @@ else
     private bool _sletter;
     private string? _slettFeil;
 
+    // E-post og varsler
+    private TenantInnstillinger? _innstillinger;
+    private List<TenantVarselMottaker> _mottakere = [];
+    private string _epostNavn = "";
+    private string _avsenderNavn = "";
+    private string _svarTil = "portal";
+    private string? _svarTilEpost;
+    private string? _epostFeil;
+    private string? _epostMelding;
+    private string _nyMottakerEpost = "";
+    private string _nyMottakerBeskrivelse = "";
+    private string? _mottakerFeil;
+
     private string? _logoFeil;
-    private string? _lisensMelding;
 
     private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
 
@@ -520,10 +987,14 @@ else
             return;
         }
 
-        _lisensPriser = await PlatformDb.LisensPriser.ToListAsync();
-
         _lisenser = await PlatformDb.TenantLisenser.Where(l => l.TenantId == Id).ToListAsync();
         _moduler = await PlatformDb.TenantModuler.Where(m => m.TenantId == Id).ToListAsync();
+        _innstillinger = OrganisasjonOppsett.SikreInnstillinger(PlatformDb, _tenant);
+        _mottakere = await PlatformDb.TenantVarselMottakere.Where(m => m.TenantId == Id).OrderBy(m => m.Id).ToListAsync();
+        _epostNavn = _innstillinger.EpostNavn ?? "";
+        _avsenderNavn = _innstillinger.AvsenderNavn ?? "";
+        _svarTil = _innstillinger.SvarTilPortal ? "portal" : "epost";
+        _svarTilEpost = _innstillinger.SvarTilEpost;
         foreach (var type in Enum.GetValues<LisensType>())
         {
             if (_lisenser.All(l => l.Type != type))
@@ -536,7 +1007,7 @@ else
         await PlatformDb.SaveChangesAsync();
 
         await LastBrukereAsync();
-        BeregnOmsetningHistorikk();
+        await LastAbonnementAsync();
         BeregnAktivitet();
     }
 
@@ -548,22 +1019,453 @@ else
         _brukere = await db.Brukere.OrderBy(b => b.Navn).ToListAsync();
     }
 
-    private decimal PrisFor(LisensType type) => _lisensPriser.FirstOrDefault(p => p.Type == type)?.KrPerManed ?? 0;
+    // ---------- Abonnement, fakturaer, notater og status ----------
+    private TenantAbonnement? _abo;
+    private List<AbonnementService.Linje> _linjer = [];
+    private PlattformFaktura? _forhandsvisning;
+    private List<PlattformFaktura> _fakturaer = [];
+    private List<TenantHendelse> _hendelser = [];
+    private List<TenantNotat> _notater = [];
+    private bool _tripletexKlar;
+    private string _oppsettFane = "oppstart";
+    private string? _aboMelding;
+    private string? _fakturaMelding;
+    private string? _fakturaFeil;
+    private int? _apenFaktura;
+    private bool _sender;
+    private TenantStatus? _bekreftStatus;
+    private string? _plattformBruker;
 
-    private decimal ManedligBelop(int tenantId) =>
-        _lisenser.Where(l => l.TenantId == tenantId).Sum(l => l.AntallTildelt * PrisFor(l.Type));
+    private static readonly string[] NotatTyper = ["Telefon", "Møte", "E-post", "Support", "Annet"];
+    private string _nyNotatType = "Telefon";
+    private string _nyNotatTekst = "";
+    private DateTime? _nyNotatOppfolging;
 
+    private decimal Maanedsbelop => AbonnementService.Maanedsbelop(_linjer);
+    private int AntallFakturaVarsel => _fakturaer.Count(f => f.ErForfalt || f.Status == PlattformFakturaStatus.Utkast);
+
+    private async Task LastAbonnementAsync()
+    {
+        if (_tenant is null)
+        {
+            return;
+        }
+
+        if (_plattformBruker is null && AuthStateTask is not null)
+        {
+            _plattformBruker = (await AuthStateTask).User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+        }
+
+        _abo = await AbonnementSvc.SikreAbonnementAsync(_tenant);
+        _linjer = await AbonnementSvc.LinjerAsync(_tenant.Id);
+        _forhandsvisning = _tenant.ErStandard ? null : await AbonnementSvc.ForhandsvisNesteAsync(_tenant);
+        _fakturaer = await PlatformDb.PlattformFakturaer.Include(f => f.Linjer)
+            .Where(f => f.TenantId == _tenant.Id)
+            .OrderByDescending(f => f.PeriodeFra).ThenByDescending(f => f.Id)
+            .ToListAsync();
+        _hendelser = await PlatformDb.TenantHendelser.AsNoTracking()
+            .Where(h => h.TenantId == _tenant.Id)
+            .OrderByDescending(h => h.Tidspunkt).ThenByDescending(h => h.Id)
+            .Take(100).ToListAsync();
+        _notater = await PlatformDb.TenantNotater
+            .Where(n => n.TenantId == _tenant.Id)
+            .OrderByDescending(n => n.Dato)
+            .ToListAsync();
+        _tripletexKlar = await FakturaSvc.TripletexKlarAsync();
+        BeregnOmsetningHistorikk();
+    }
+
+    private void VisFane(string fane, string? underFane = null)
+    {
+        _fane = fane;
+        if (underFane is not null)
+        {
+            _oppsettFane = underFane;
+        }
+    }
+
+    private static string Kr(decimal v) => v.ToString("#,##0", Nb) + " kr";
+
+    private string IBruk(AbonnementService.Linje l)
+    {
+        if (l.Nokkel == PrisProdukt.ForLisens(LisensType.Brukere))
+        {
+            return _brukere.Count(b => b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens && b.Aktiv).ToString();
+        }
+
+        if (l.Nokkel == PrisProdukt.ForLisens(LisensType.KundeTilgang))
+        {
+            return _brukere.Count(b => (b.Rolle == BrukerRolle.Kunde || b.Rolle == BrukerRolle.Driftslisens) && b.Aktiv).ToString();
+        }
+
+        return "–";
+    }
+
+    private async Task SettAntall(string nokkel, string? verdi)
+    {
+        if (_tenant is null || !int.TryParse(verdi, out var antall))
+        {
+            return;
+        }
+
+        var tekst = await AbonnementSvc.SettAntallAsync(_tenant.Id, nokkel, antall, _plattformBruker);
+        if (nokkel.StartsWith("modul:"))
+        {
+            TilleggsmodulService.Nullstill(Cache, _tenant.Id);
+        }
+
+        _aboMelding = string.IsNullOrEmpty(tekst) ? null : $"Lagret: {tekst}.";
+        await LastAbonnementAsync();
+    }
+
+    private async Task SettAvtalepris(string nokkel, string? verdi)
+    {
+        if (_tenant is null)
+        {
+            return;
+        }
+
+        decimal? kr = decimal.TryParse(verdi?.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : null;
+        await AbonnementSvc.SettAvtaleprisAsync(_tenant.Id, nokkel, kr, _plattformBruker);
+        _aboMelding = kr is null ? "Listepris brukes." : $"Avtalepris {Kr(kr.Value)} lagret.";
+        await LastAbonnementAsync();
+    }
+
+    private async Task LagreAbonnement()
+    {
+        if (_abo is null || _tenant is null)
+        {
+            return;
+        }
+
+        _abo.BetalingsfristDager = Math.Clamp(_abo.BetalingsfristDager, 0, 90);
+        await PlatformDb.SaveChangesAsync();
+        _forhandsvisning = _tenant.ErStandard ? null : await AbonnementSvc.ForhandsvisNesteAsync(_tenant);
+    }
+
+    private async Task LagFakturaNa()
+    {
+        if (_tenant is null)
+        {
+            return;
+        }
+
+        _fakturaFeil = null;
+        var faktura = await AbonnementSvc.LagNesteFakturaAsync(_tenant, _plattformBruker);
+        _fakturaMelding = faktura is null ? null : $"Utkast laget for {AbonnementService.PeriodeTekst(faktura.PeriodeFra, faktura.PeriodeTil)}. Se over og send den.";
+        await LastAbonnementAsync();
+        _apenFaktura = faktura?.Id;
+    }
+
+    private async Task SendFaktura(int id)
+    {
+        _sender = true;
+        _fakturaFeil = null;
+        _fakturaMelding = null;
+        try
+        {
+            var feil = await FakturaSvc.SendTilTripletexAsync(id, _plattformBruker);
+            if (feil is null)
+            {
+                _fakturaMelding = "Sendt til Tripletex som ordre. Fakturer den der.";
+            }
+            else
+            {
+                _fakturaFeil = feil;
+            }
+        }
+        finally
+        {
+            _sender = false;
+        }
+
+        await LastAbonnementAsync();
+    }
+
+    private async Task MarkerFaktura(int id, PlattformFakturaStatus status)
+    {
+        await FakturaSvc.MarkerAsync(id, status, _plattformBruker);
+        _fakturaMelding = null;
+        await LastAbonnementAsync();
+    }
+
+    private async Task SlettUtkast(int id)
+    {
+        await FakturaSvc.SlettUtkastAsync(id, _plattformBruker);
+        _fakturaMelding = "Utkastet er slettet.";
+        await LastAbonnementAsync();
+    }
+
+    private async Task HentBetalinger()
+    {
+        await FakturaSvc.OppdaterFraTripletexAsync();
+        _fakturaMelding = "Status er hentet fra Tripletex.";
+        await LastAbonnementAsync();
+    }
+
+    private static string FakturaStatus(PlattformFaktura f) => f.Status switch
+    {
+        PlattformFakturaStatus.Utkast => "Utkast",
+        PlattformFakturaStatus.SendtTilTripletex => "Sendt til Tripletex",
+        PlattformFakturaStatus.Fakturert when f.ErForfalt => $"Forfalt {(DateTime.Today - f.Forfall!.Value.Date).Days} d",
+        PlattformFakturaStatus.Fakturert => "Fakturert",
+        PlattformFakturaStatus.Betalt => f.BetaltDato is { } d ? $"Betalt {d:dd.MM}" : "Betalt",
+        PlattformFakturaStatus.Kreditert => "Kreditert",
+        _ => f.Status.ToString()
+    };
+
+    private static string FakturaKlasse(PlattformFaktura f) => f.Status switch
+    {
+        PlattformFakturaStatus.Betalt => "pod-chip-ok",
+        PlattformFakturaStatus.Fakturert when f.ErForfalt => "pod-chip-rod",
+        PlattformFakturaStatus.Utkast => "pod-chip-gul",
+        _ => "pod-chip-n"
+    };
+
+    private RenderFragment FakturaLinjer(PlattformFaktura f) => @<div class="pod-tabell-ramme">
+        <table class="pod-linje-tabell">
+            <tbody>
+                @foreach (var l in f.Linjer.OrderBy(l => l.Rekkefolge))
+                {
+                    <tr><td>@l.Tekst</td><td class="pod-n">@l.Antall.ToString("0.##", Nb) × @Kr(l.Pris)</td><td class="pod-n">@Kr(l.Belop)</td></tr>
+                }
+                @if (f.Linjer.Count == 0)
+                {
+                    <tr><td colspan="3">Ingen linjer. Sett antall og priser under Abonnement.</td></tr>
+                }
+                <tr class="pod-sumrad"><td colspan="2">Sum eks. mva</td><td class="pod-n">@Kr(f.Linjer.Sum(l => l.Belop))</td></tr>
+            </tbody>
+        </table>
+    </div>;
+
+    private async Task LagreNotat()
+    {
+        if (_tenant is null || string.IsNullOrWhiteSpace(_nyNotatTekst))
+        {
+            return;
+        }
+
+        PlatformDb.TenantNotater.Add(new TenantNotat
+        {
+            TenantId = _tenant.Id,
+            Type = _nyNotatType,
+            Tekst = _nyNotatTekst.Trim(),
+            Oppfolging = _nyNotatOppfolging,
+            Av = _plattformBruker
+        });
+        await PlatformDb.SaveChangesAsync();
+        _nyNotatTekst = "";
+        _nyNotatOppfolging = null;
+        await LastAbonnementAsync();
+    }
+
+    private async Task FullforNotat(TenantNotat notat)
+    {
+        notat.Utfort = true;
+        await PlatformDb.SaveChangesAsync();
+    }
+
+    private async Task SettStatus(TenantStatus ny)
+    {
+        if (_tenant is null || _tenant.ErStandard || _abo is null)
+        {
+            return;
+        }
+
+        var gammel = _tenant.Status;
+        _tenant.Status = ny;
+        _tenant.SistOppdatert = DateTime.Now;
+        _abo.PauseFra = ny == TenantStatus.Suspendert ? DateTime.Today : null;
+        if (ny == TenantStatus.Oppsagt)
+        {
+            _abo.OppsagtDato = DateTime.Today;
+        }
+        else if (ny == TenantStatus.Aktiv)
+        {
+            _abo.OppsagtDato = null;
+        }
+
+        await PlatformDb.SaveChangesAsync();
+        var tekst = ny switch
+        {
+            TenantStatus.Suspendert => "Satt på pause",
+            TenantStatus.Oppsagt => "Sagt opp",
+            _ => gammel == TenantStatus.Aktiv ? "Aktiv" : "Åpnet igjen"
+        };
+        await AbonnementSvc.LoggAsync(_tenant.Id, tekst, "settings", _plattformBruker);
+        _bekreftStatus = null;
+        await LastAbonnementAsync();
+    }
+
+    // ---------- Oppstart og oppfølging ----------
+    private sealed record Punkt(string Tittel, string Tekst, bool Klar, string Status, string Ikon);
+
+    private List<Punkt> OppstartPunkter
+    {
+        get
+        {
+            if (_tenant is null || _innstillinger is null)
+            {
+                return [];
+            }
+
+            var admin = _brukere.FirstOrDefault(b => b.Rolle == BrukerRolle.Admin && b.Aktiv);
+            var harPassord = admin is not null && !string.IsNullOrEmpty(admin.PasswordHash);
+            var harLisenser = _lisenser.Any(l => l.AntallTildelt > 0);
+            var signert = _abo?.AvtaleSignert is not null && _abo.DatabehandleravtaleSignert is not null;
+            return
+            [
+                new("Lisenser og moduler", $"{_lisenser.Sum(l => l.AntallTildelt)} lisenser · {Kr(Maanedsbelop)} per måned", harLisenser, harLisenser ? "Klar" : "Mangler", "credit-card"),
+                new("Administrator", admin is null ? "Ingen aktiv administrator" : $"{admin.Navn} · {admin.Epost}{(harPassord ? "" : " · har ikke satt passord")}", harPassord, admin is null ? "Mangler" : harPassord ? "Klar" : "Venter", "users"),
+                new("Påminnelser", _mottakere.Count > 0 ? $"{_mottakere.Count} {(_mottakere.Count == 1 ? "mottaker" : "mottakere")}" : "Ingen valgt, går til administratorene", _mottakere.Count > 0, _mottakere.Count > 0 ? "Klar" : "Velg", "bell"),
+                new("Avtale og databehandleravtale", signert ? $"Signert {_abo!.AvtaleSignert:dd.MM.yyyy} og {_abo.DatabehandleravtaleSignert:dd.MM.yyyy}" : "Ikke registrert som signert", signert, signert ? "Klar" : "Ikke signert", "file-text"),
+                new("E-postadresse", OrganisasjonOppsett.Adresse(_innstillinger.EpostNavn ?? ""), false, "Reservert", "mail"),
+                new("Backup", "Kryptert backup hver natt kommer i neste steg", false, "Kommer", "server"),
+                new("Tripletex", _tenant.ErStandard ? "Koblet til itlock sin Tripletex" : "Stengt til organisasjonen får sin egen kobling", _tenant.ErStandard, _tenant.ErStandard ? "Klar" : "Kommer", "link-ikon"),
+            ];
+        }
+    }
+
+    private sealed record Oppfolging(string Tittel, string Tekst, string Ikon, bool Rod, string Knapp, string Fane, string? UnderFane = null);
+
+    private List<Oppfolging> Oppfolgingspunkter()
+    {
+        var liste = new List<Oppfolging>();
+        if (_tenant is null)
+        {
+            return liste;
+        }
+
+        foreach (var f in _fakturaer.Where(f => f.ErForfalt))
+        {
+            liste.Add(new($"Faktura for {AbonnementService.PeriodeTekst(f.PeriodeFra, f.PeriodeTil)} er forfalt", $"{Kr(f.Utestaende ?? f.BelopEksMva)}, forfalt {f.Forfall:dd.MM.yyyy}", "receipt", true, "Se faktura", "fakturaer"));
+        }
+
+        foreach (var f in _fakturaer.Where(f => f.Status == PlattformFakturaStatus.Utkast))
+        {
+            liste.Add(new("Fakturautkast venter", $"{AbonnementService.PeriodeTekst(f.PeriodeFra, f.PeriodeTil)}, {Kr(f.BelopEksMva)}", "receipt", false, "Se over", "fakturaer"));
+        }
+
+        foreach (var n in _notater.Where(n => !n.Utfort && n.Oppfolging is { } o && o.Date <= DateTime.Today.AddDays(3)))
+        {
+            liste.Add(new("Følg opp", $"{n.Oppfolging:dd.MM}: {n.Tekst}", "calendar", n.Oppfolging!.Value.Date < DateTime.Today, "Notater", "logg"));
+        }
+
+        var brukerLisens = _lisenser.FirstOrDefault(l => l.Type == LisensType.Brukere)?.AntallTildelt ?? 0;
+        var brukereIBruk = _brukere.Count(b => b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens && b.Aktiv);
+        if (brukerLisens > 0 && brukereIBruk >= brukerLisens)
+        {
+            liste.Add(new($"Alle {brukerLisens} brukerlisenser er i bruk", "Neste bruker de legger til, må du aktivere først", "users", false, "Abonnement", "abonnement"));
+        }
+
+        if (_abo?.ProveperiodeTil is { } prove && prove.Date >= DateTime.Today && prove.Date <= DateTime.Today.AddDays(7))
+        {
+            liste.Add(new("Prøveperioden slutter snart", $"Til {prove:dd.MM.yyyy}. Deretter faktureres de.", "calendar", false, "Abonnement", "abonnement"));
+        }
+
+        foreach (var p in OppstartPunkter.Where(p => !p.Klar && p.Status is "Mangler" or "Ikke signert" or "Venter"))
+        {
+            liste.Add(new(p.Tittel, p.Tekst, p.Ikon, false, "Oppsett", "oppsett", "oppstart"));
+        }
+
+        return liste;
+    }
+
+    // ---------- E-post og varsler ----------
+    private async Task LagreEpost()
+    {
+        _epostFeil = null;
+        _epostMelding = null;
+        if (_innstillinger is null || _tenant is null)
+        {
+            return;
+        }
+
+        var navn = _epostNavn.Trim().ToLowerInvariant();
+        if (OrganisasjonOppsett.SjekkEpostNavn(PlatformDb, navn, _tenant.Id) is { } feil)
+        {
+            _epostFeil = feil;
+            return;
+        }
+
+        var svarEpost = _svarTilEpost?.Trim();
+        if (_svarTil == "epost" && (string.IsNullOrEmpty(svarEpost) || !svarEpost.Contains('@')))
+        {
+            _epostFeil = "Skriv inn e-postadressen svarene skal gå til.";
+            return;
+        }
+
+        _innstillinger.EpostNavn = navn;
+        _innstillinger.AvsenderNavn = string.IsNullOrWhiteSpace(_avsenderNavn) ? _tenant.Navn : _avsenderNavn.Trim();
+        _innstillinger.SvarTilPortal = _svarTil == "portal";
+        _innstillinger.SvarTilEpost = _svarTil == "epost" ? svarEpost : null;
+        _innstillinger.SistEndret = DateTime.Now;
+        await PlatformDb.SaveChangesAsync();
+        _epostNavn = navn;
+        _avsenderNavn = _innstillinger.AvsenderNavn;
+        _epostMelding = $"Lagret. Adressen er {OrganisasjonOppsett.Adresse(navn)}.";
+    }
+
+    private async Task LeggTilMottaker()
+    {
+        _mottakerFeil = null;
+        var epost = _nyMottakerEpost.Trim();
+        if (epost.Length < 5 || !epost.Contains('@') || !epost.Contains('.'))
+        {
+            _mottakerFeil = "Skriv inn en gyldig e-postadresse.";
+            return;
+        }
+
+        if (_mottakere.Any(m => string.Equals(m.Epost, epost, StringComparison.OrdinalIgnoreCase)))
+        {
+            _mottakerFeil = $"{epost} er allerede mottaker.";
+            return;
+        }
+
+        var ny = new TenantVarselMottaker
+        {
+            TenantId = Id,
+            Epost = epost,
+            Beskrivelse = string.IsNullOrWhiteSpace(_nyMottakerBeskrivelse) ? null : _nyMottakerBeskrivelse.Trim()
+        };
+        PlatformDb.TenantVarselMottakere.Add(ny);
+        await PlatformDb.SaveChangesAsync();
+        _mottakere.Add(ny);
+        _nyMottakerEpost = "";
+        _nyMottakerBeskrivelse = "";
+    }
+
+    private async Task VekslVarsel(TenantVarselMottaker m, VarselType type)
+    {
+        switch (type)
+        {
+            case VarselType.Service: m.Service = !m.Service; break;
+            case VarselType.Lisens: m.Lisens = !m.Lisens; break;
+            case VarselType.Ticket: m.Ticket = !m.Ticket; break;
+            case VarselType.Prosjektokonomi: m.Prosjektokonomi = !m.Prosjektokonomi; break;
+        }
+
+        await PlatformDb.SaveChangesAsync();
+    }
+
+    private async Task FjernMottaker(TenantVarselMottaker m)
+    {
+        PlatformDb.TenantVarselMottakere.Remove(m);
+        await PlatformDb.SaveChangesAsync();
+        _mottakere.Remove(m);
+    }
+
+    // Fakturert per måned siste 12 måneder (etter periodens startmåned).
     private void BeregnOmsetningHistorikk()
     {
-        if (_tenant is null) { return; }
         var liste = new List<(string Mnd, decimal Belop, bool ErNa)>();
         var naManed = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
+        var fakturerte = _fakturaer.Where(f => f.Status is not (PlattformFakturaStatus.Utkast or PlattformFakturaStatus.Kreditert)).ToList();
 
         for (var i = 11; i >= 0; i--)
         {
             var maned = naManed.AddMonths(-i);
-            var sluttAvManed = maned.AddMonths(1).AddDays(-1);
-            var belop = _tenant.OpprettetDato <= sluttAvManed ? ManedligBelop(_tenant.Id) : 0;
+            var belop = fakturerte.Where(f => f.PeriodeFra.Year == maned.Year && f.PeriodeFra.Month == maned.Month).Sum(f => f.BelopEksMva);
             liste.Add((maned.ToString("MMM", Nb), belop, maned == naManed));
         }
 
@@ -641,38 +1543,7 @@ else
     // ---------- Tilleggsmoduler ----------
     private List<Tenant> _alleTenants = [];
     private List<TenantModul> _moduler = [];
-    private string? _modulMelding;
 
-    private async Task VekslModul(string nokkel)
-    {
-        var modul = _moduler.FirstOrDefault(m => m.Modul == nokkel);
-        if (modul is null)
-        {
-            modul = new TenantModul { TenantId = Id, Modul = nokkel };
-            PlatformDb.TenantModuler.Add(modul);
-            _moduler.Add(modul);
-        }
-
-        modul.Aktiv = !modul.Aktiv;
-        modul.SistEndret = DateTime.Now;
-        if (modul.Aktiv)
-        {
-            modul.AktivertDato ??= DateTime.Now;
-        }
-
-        await PlatformDb.SaveChangesAsync();
-        TilleggsmodulService.Nullstill(Cache, Id);
-
-        var navn = TilleggsModuler.Alle.FirstOrDefault(m => m.Nokkel == nokkel)?.Navn ?? nokkel;
-        _modulMelding = modul.Aktiv ? $"{navn} er slått på." : $"{navn} er slått av.";
-    }
-    private async Task LagreLisens(TenantLisens lisens)
-    {
-        lisens.SistEndret = DateTime.Now;
-        await PlatformDb.SaveChangesAsync();
-        _lisensMelding = $"{lisens.Type.Visningsnavn()} oppdatert til {lisens.AntallTildelt}.";
-        BeregnAktivitet();
-    }
 
     // Krever bekreftelsestekst skrevet nøyaktig for å unngå utilsiktet
     // sletting - sletter organisasjonens rad i platform.db FØR selve

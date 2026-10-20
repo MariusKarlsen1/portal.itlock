@@ -45,8 +45,9 @@ public class PortalModulRegisterTests
     private static readonly Dictionary<BrukerRolle, string[]> BevisstLagtTil = new()
     {
         [BrukerRolle.Montor] = ["finn-dorpakke", "systemregister"],
-        [BrukerRolle.Prosjektleder] = [],
-        [BrukerRolle.Admin] = []
+        // Prosjektøkonomi (2026-10-20): ny modul for prosjektleder og admin.
+        [BrukerRolle.Prosjektleder] = ["prosjektokonomi"],
+        [BrukerRolle.Admin] = ["prosjektokonomi"]
     };
 
     // Moduler som bevisst er tatt HELT ut av portalen. Sidene lever videre på
@@ -116,7 +117,10 @@ public class PortalModulRegisterTests
 
         Assert.NotEmpty(kunIMeny);
 
-        var meny = PortalModulRegister.ModulerFor(rolle).Select(l => l.Href).ToHashSet();
+        // Med alle tilleggsmoduler på, siden f.eks. Lager bare vises når
+        // organisasjonen har kjøpt modulen.
+        var alleTillegg = TilleggsModuler.Alle.Select(m => m.Nokkel).ToHashSet();
+        var meny = PortalModulRegister.ModulerFor(rolle, alleTillegg).Select(l => l.Href).ToHashSet();
         var kort = PortalModulRegister.KategorierFor(rolle)
             .SelectMany(k => k.Grupper)
             .SelectMany(g => g.Lenker)

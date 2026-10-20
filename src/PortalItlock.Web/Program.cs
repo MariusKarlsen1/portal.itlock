@@ -87,11 +87,15 @@ builder.Services.AddMemoryCache();
 builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
 {
     var tenantContext = sp.GetRequiredService<ITenantContext>();
+    // Innlogget i en organisasjon som er stengt (pause, oppsagt, slettet):
+    // en tom database i minnet, aldri standard-organisasjonens data.
+    var stengt = tenantContext.Current is null
+        && sp.GetService<IHttpContextAccessor>()?.HttpContext?.User?.FindFirst("TenantId") is not null;
     // SplitQuery: Include av flere lister (f.eks. prosjekt med plantegninger,
     // vedlegg, tilbud og montering) hentes som egne spørringer i stedet for
     // ett kryssprodukt der hver rad (og hvert vedlegg) gjentas for hver
     // kombinasjon - det gjorde enkelte sider svært trege med mye data.
-    options.UseSqlite(tenantContext.Current?.ConnectionString ?? defaultConnectionString,
+    options.UseSqlite(stengt ? "Data Source=:memory:" : tenantContext.Current?.ConnectionString ?? defaultConnectionString,
         o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
     // Se SqliteUnicodeFunctionsInterceptor - lar tekstsøk (f.eks.
     // SokResultat.razor) filtreres i databasen med korrekt æøå-håndtering,
@@ -132,6 +136,13 @@ builder.Services.AddScoped<SjekklistePdfService>();
 builder.Services.AddScoped<LagretPdfService>();
 builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
+// Bakgrunnsjobbene kjører for hver organisasjon (se OrganisasjonKjorer), og
+// påminnelsene går til mottakerne som er satt opp i adminportalen.
+builder.Services.AddSingleton<OrganisasjonKjorer>();
+builder.Services.AddScoped<VarselMottakerService>();
+builder.Services.AddScoped<AbonnementService>();
+builder.Services.AddScoped<PlattformFakturaService>();
+builder.Services.AddHostedService<PlattformFakturaBackgroundService>();
 builder.Services.AddScoped<ServiceVarselService>();
 builder.Services.AddHostedService<ServiceVarselBackgroundService>();
 builder.Services.AddHostedService<LagerSynkBackgroundService>();
@@ -145,6 +156,8 @@ builder.Services.AddScoped<LagerService>();
 builder.Services.AddScoped<ReservasjonService>();
 builder.Services.AddScoped<PlukkService>();
 builder.Services.AddScoped<ProsjektOkonomiService>();
+builder.Services.AddScoped<ProsjektokonomiVarselService>();
+builder.Services.AddHostedService<ProsjektokonomiVarselBackgroundService>();
 builder.Services.AddScoped<EtterkalkylePdfService>();
 builder.Services.AddScoped<LagerRapportService>();
 builder.Services.AddScoped<InnkjopService>();
@@ -201,19 +214,21 @@ builder.Services.AddHttpClient<DorImportService>(client =>
     client.Timeout = TimeSpan.FromSeconds(120);
 });
 builder.Services.Configure<TripletexOptions>(builder.Configuration.GetSection("Tripletex"));
-// Navngitt (ikke typet) HttpClient - TripletexService må være singleton for at
-// det cachede session-tokenet (se HentSessionTokenAsync) faktisk skal deles på
-// tvers av forespørsler, i stedet for å lages på nytt for hver injeksjon.
+// Navngitt (ikke typet) HttpClient. TripletexService er scoped, siden den må
+// vite hvilken organisasjon som spør (bare itlock har Tripletex inntil hver
+// organisasjon får sin egen kobling). Session-tokenet er statisk i klassen, så
+// det deles fortsatt på tvers av forespørsler.
 builder.Services.AddHttpClient(nameof(TripletexService), (sp, client) =>
 {
     var baseUrl = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TripletexOptions>>().Value.BaseUrl;
     client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(20);
 });
-builder.Services.AddSingleton<TripletexService>(sp =>
+builder.Services.AddScoped<TripletexService>(sp =>
     new TripletexService(
         sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(TripletexService)),
-        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TripletexOptions>>()));
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TripletexOptions>>(),
+        sp.GetRequiredService<ITenantContext>()));
 builder.Services.AddScoped<TripletexSyncService>();
 // Ingen bakgrunnsjobb mot Tripletex. Synkroniseringen kjøres når noen trykker
 // "Synkroniser med Tripletex" i kunderegisteret - da vet man hva som skjer og
@@ -364,6 +379,19 @@ using (var seedScope = app.Services.CreateScope())
     }
 
     var aktiveTenants = platformDb.Tenants.Where(t => t.Status == TenantStatus.Aktiv).ToList();
+
+    // Innstillinger og e-postadresse for organisasjoner som fantes før de kom.
+    // Standard-organisasjonen (itlock) beholder marius@itlock.no som mottaker av
+    // alle påminnelser, slik det var før mottakerne kunne velges.
+    foreach (var tenant in aktiveTenants)
+    {
+        PortalItlock.Web.Services.OrganisasjonOppsett.SikreInnstillinger(platformDb, tenant);
+        if (tenant.ErStandard && !platformDb.TenantVarselMottakere.Any(m => m.TenantId == tenant.Id))
+        {
+            platformDb.TenantVarselMottakere.Add(new PortalItlock.Web.Models.TenantVarselMottaker { TenantId = tenant.Id, Epost = "marius@itlock.no", Beskrivelse = "Marius Karlsen" });
+        }
+        platformDb.SaveChanges();
+    }
     foreach (var tenant in aktiveTenants)
     {
         // Én leietakers database som feiler under migrering (f.eks. et
@@ -596,6 +624,15 @@ app.Use(async (context, next) =>
         var tenantContext = context.RequestServices.GetRequiredService<ITenantContext>();
         if (tenantContext.Current is null)
         {
+            // Innlogget i en organisasjon som er satt på pause eller sagt opp:
+            // logg ut, og vis hvorfor.
+            if (context.User.FindFirst("TenantId") is not null)
+            {
+                await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                context.Response.Redirect("/login?stengt=1");
+                return;
+            }
+
             context.Response.Redirect("/login");
             return;
         }

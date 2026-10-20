@@ -10,9 +10,22 @@ namespace PortalItlock.Web.Services;
 // Blazor Server-krets (samme DI-scope i hele brukerøkten etter at SignalR har
 // koblet til). Verdien slås opp FØRSTE gang noen leser Current, og caches i
 // resten av scopet.
+// Fast organisasjon, uten oppslag. Brukes der koden skal jobbe mot én bestemt
+// organisasjon uansett hvem som spør, f.eks. når adminportalen sender
+// fakturaer til itlock sin egen Tripletex.
+public sealed class FastTenantContext(Tenant? tenant) : ITenantContext
+{
+    public Tenant? Current => tenant;
+}
+
 public interface ITenantContext
 {
     Tenant? Current { get; }
+
+    // Setter organisasjonen for resten av scopet. Brukes av bakgrunnsjobber
+    // (se OrganisasjonKjorer), som ikke har noen forespørsel å lese den fra.
+    // Må kalles før noe i scopet åpner ApplicationDbContext.
+    void Bruk(Tenant tenant) => throw new NotSupportedException();
 }
 
 public class TenantContext(
@@ -22,6 +35,12 @@ public class TenantContext(
 {
     private Tenant? _current;
     private bool _resolved;
+
+    public void Bruk(Tenant tenant)
+    {
+        _current = tenant;
+        _resolved = true;
+    }
 
     public Tenant? Current
     {
@@ -62,6 +81,11 @@ public class TenantContext(
             {
                 return fraInnlogging;
             }
+
+            // Organisasjonen er satt på pause, sagt opp eller slettet. Ikke fall
+            // tilbake til vertsnavnet: på delt adresse ville det gitt en annen
+            // organisasjons data. Middlewaren i Program.cs logger brukeren ut.
+            return null;
         }
 
         var host = httpContextAccessor.HttpContext?.Request.Host.Host;

@@ -1,6 +1,6 @@
 namespace PortalItlock.Web.Services;
 
-public class ServiceVarselBackgroundService(IServiceScopeFactory scopeFactory, ILogger<ServiceVarselBackgroundService> logger) : BackgroundService
+public class ServiceVarselBackgroundService(OrganisasjonKjorer kjorer, ILogger<ServiceVarselBackgroundService> logger) : BackgroundService
 {
     private static readonly TimeSpan SjekkIntervall = TimeSpan.FromHours(6);
 
@@ -12,10 +12,12 @@ public class ServiceVarselBackgroundService(IServiceScopeFactory scopeFactory, I
         {
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                var varselService = scope.ServiceProvider.GetRequiredService<ServiceVarselService>();
-                await varselService.SjekkOgSendVarselAsync();
-                await varselService.OpprettOppfolgingsTicketerAsync();
+                await kjorer.ForHverAsync("Serviceavtale-varsler", async (sp, _) =>
+                {
+                    var varselService = sp.GetRequiredService<ServiceVarselService>();
+                    await varselService.SjekkOgSendVarselAsync();
+                    await varselService.OpprettOppfolgingsTicketerAsync();
+                }, stoppingToken);
             }
             catch (Exception ex)
             {

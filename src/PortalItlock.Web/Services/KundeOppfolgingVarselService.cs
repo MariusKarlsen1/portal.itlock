@@ -56,7 +56,7 @@ public class KundeOppfolgingVarselService(ApplicationDbContext db, EmailService 
     }
 }
 
-public class KundeOppfolgingVarselBackgroundService(IServiceScopeFactory scopeFactory, ILogger<KundeOppfolgingVarselBackgroundService> logger) : BackgroundService
+public class KundeOppfolgingVarselBackgroundService(OrganisasjonKjorer kjorer, ILogger<KundeOppfolgingVarselBackgroundService> logger) : BackgroundService
 {
     private static readonly TimeSpan SjekkIntervall = TimeSpan.FromMinutes(30);
 
@@ -68,8 +68,10 @@ public class KundeOppfolgingVarselBackgroundService(IServiceScopeFactory scopeFa
         {
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                await scope.ServiceProvider.GetRequiredService<KundeOppfolgingVarselService>().SjekkOgSendVarselAsync();
+                await kjorer.ForHverAsync("Oppfølgingsvarsler", async (sp, _) =>
+                {
+                    await sp.GetRequiredService<KundeOppfolgingVarselService>().SjekkOgSendVarselAsync();
+                }, stoppingToken);
             }
             catch (Exception ex)
             {

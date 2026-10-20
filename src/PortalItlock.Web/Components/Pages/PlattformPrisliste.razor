@@ -1,0 +1,104 @@
+@page "/plattform/prisliste"
+@rendermode InteractiveServer
+@layout PortalItlock.Web.Components.Layout.PlattformLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "Plattform")]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject PlatformDbContext PlatformDb
+@inject AbonnementService AbonnementSvc
+
+<PageTitle>Prisliste - Plattform</PageTitle>
+
+@* Prislisten gjelder alle organisasjoner. Hver organisasjon kan ha egen
+   avtalepris under Abonnement på organisasjonssiden. *@
+<div class="ppl-root">
+    <div class="ppl-brodsmule">
+        <NavLink href="/plattform">Oversikt</NavLink>
+        <span>/</span>
+        <span>Prisliste</span>
+    </div>
+
+    <div class="ppl-topp">
+        <div>
+            <h1 class="ppl-h1">Prisliste</h1>
+            <p class="ppl-hint">Standardpriser for alle organisasjoner, eks. mva. En egen avtalepris på organisasjonen går foran listeprisen.</p>
+        </div>
+    </div>
+
+    <section class="ppl-card">
+        <div class="ppl-tabell-ramme">
+            <table class="ppl-tabell">
+                <thead>
+                    <tr><th>Produkt</th><th>Type</th><th class="ppl-n">Pris</th><th>Enhet</th><th class="ppl-n">I bruk hos</th><th class="ppl-n">Avtalepris hos</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var p in _produkter)
+                    {
+                        var produkt = p;
+                        <tr>
+                            <td>
+                                <b>@produkt.Navn</b>
+                                <input class="ppl-input ppl-beskrivelse" @bind="produkt.Beskrivelse" @bind:after="@(() => Lagre(produkt))" placeholder="Beskrivelse" aria-label="@($"Beskrivelse for {produkt.Navn}")" />
+                            </td>
+                            <td><span class="ppl-chip">@produkt.Type.Visningsnavn()</span></td>
+                            <td class="ppl-n"><input class="ppl-input ppl-pris" type="number" min="0" step="1" @bind="produkt.Kr" @bind:after="@(() => Lagre(produkt))" aria-label="@($"Pris for {produkt.Navn}")" /> kr</td>
+                            <td class="ppl-enhet">@produkt.Type.Enhet()</td>
+                            <td class="ppl-n">@IBrukHos(produkt)</td>
+                            <td class="ppl-n">@_avtalepriser.Count(a => a.Nokkel == produkt.Nokkel)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (!string.IsNullOrEmpty(_melding))
+        {
+            <p class="ppl-melding">@_melding</p>
+        }
+    </section>
+
+    <section class="ppl-card ppl-info">
+        <h2 class="ppl-h2">Slik brukes prisene</h2>
+        <ul>
+            <li><b>Grunnpakke</b> og <b>tilleggsmoduler</b> er fast pris per måned.</li>
+            <li><b>Lisenser</b> faktureres per stykk organisasjonen har fått tildelt.</li>
+            <li><b>Etablering</b> faktureres én gang, på første faktura.</li>
+            <li>Endrer du en pris her, gjelder den fra neste faktura for alle som ikke har egen avtalepris.</li>
+        </ul>
+    </section>
+</div>
+
+@code {
+    private List<PrisProdukt> _produkter = [];
+    private List<TenantAvtalepris> _avtalepriser = [];
+    private List<TenantLisens> _lisenser = [];
+    private List<TenantModul> _moduler = [];
+    private int _antallOrganisasjoner;
+    private string? _melding;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _produkter = await AbonnementSvc.PrislisteAsync();
+        _avtalepriser = await PlatformDb.TenantAvtalepriser.AsNoTracking().ToListAsync();
+        _lisenser = await PlatformDb.TenantLisenser.AsNoTracking().ToListAsync();
+        _moduler = await PlatformDb.TenantModuler.AsNoTracking().Where(m => m.Aktiv).ToListAsync();
+        _antallOrganisasjoner = await PlatformDb.Tenants.CountAsync(t => t.Status == TenantStatus.Aktiv && !t.ErStandard);
+    }
+
+    private string IBrukHos(PrisProdukt p) => p.Type switch
+    {
+        PrisType.Lisens => _lisenser.Where(l => PrisProdukt.ForLisens(l.Type) == p.Nokkel && l.AntallTildelt > 0).Select(l => l.TenantId).Distinct().Count().ToString(),
+        PrisType.Modul => _moduler.Count(m => PrisProdukt.ForModul(m.Modul) == p.Nokkel).ToString(),
+        PrisType.Fast => _antallOrganisasjoner.ToString(),
+        _ => "–"
+    };
+
+    private async Task Lagre(PrisProdukt produkt)
+    {
+        produkt.Kr = Math.Max(0, produkt.Kr);
+        await AbonnementSvc.LagrePrisAsync(produkt);
+        _melding = $"{produkt.Navn}: {produkt.Kr.ToString("#,##0", CultureInfo.GetCultureInfo("nb-NO"))} kr {produkt.Type.Enhet()} er lagret.";
+    }
+}

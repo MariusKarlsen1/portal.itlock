@@ -124,6 +124,12 @@ public class TenantProvisioningService(PlatformDbContext platformDb, IConfigurat
             new TenantLisens { TenantId = tenant.Id, Type = LisensType.KundeTilgang, AntallTildelt = 10 });
         await platformDb.SaveChangesAsync();
 
+        // E-postadresse på full-kontroll.no, og admin får alle påminnelsene til
+        // det er satt opp noe annet under «E-post og varsler».
+        OrganisasjonOppsett.SikreInnstillinger(platformDb, tenant);
+        platformDb.TenantVarselMottakere.Add(new TenantVarselMottaker { TenantId = tenant.Id, Epost = adminEpost, Beskrivelse = adminNavn });
+        await platformDb.SaveChangesAsync();
+
         return (true, "");
     }
 

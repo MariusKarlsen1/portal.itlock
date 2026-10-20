@@ -82,6 +82,124 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.ToTable("PlattformBrukerPasswordResetTokener");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.PlattformFaktura", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("BelopEksMva")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("BetaltDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("Fakturadato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Feil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("Forfall")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Opprettet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("PeriodeFra")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("PeriodeTil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TripletexFakturaNummer")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TripletexOrdreId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TripletexOrdreNummer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("Utestaende")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "PeriodeFra");
+
+                    b.ToTable("PlattformFakturaer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PlattformFakturaLinje", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Antall")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FakturaId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Pris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Tekst")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FakturaId");
+
+                    b.ToTable("PlattformFakturaLinjer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PrisProdukt", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Beskrivelse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Kr")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Nokkel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Nokkel")
+                        .IsUnique();
+
+                    b.ToTable("PrisProdukter");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Tenant", b =>
                 {
                     b.Property<int>("Id")
@@ -153,6 +271,192 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.ToTable("Tenants");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantAbonnement", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("AvtaleSignert")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("BetalingsfristDager")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("BindingTil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DatabehandleravtaleSignert")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("EtableringFakturert")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal?>("Etableringsgebyr")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FakturaEpost")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Grunnpakke")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Intervall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("NesteFakturaFra")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("OppsagtDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("PauseFra")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ProveperiodeTil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Startdato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TripletexKundeId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique();
+
+                    b.ToTable("TenantAbonnementer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantAntallEndring", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Dato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Fakturert")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("FraAntall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Nokkel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TilAntall")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("TenantAntallEndringer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantAvtalepris", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Kr")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Nokkel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Nokkel")
+                        .IsUnique();
+
+                    b.ToTable("TenantAvtalepriser");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantHendelse", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Av")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Ikon")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Tekst")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Tidspunkt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("TenantHendelser");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantInnstillinger", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AvsenderNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EpostNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("SistEndret")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("SistOkonomiVarsel")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SvarTilEpost")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("SvarTilPortal")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EpostNavn")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId")
+                        .IsUnique();
+
+                    b.ToTable("TenantInnstillinger");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.TenantLisens", b =>
                 {
                     b.Property<int>("Id")
@@ -208,6 +512,77 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.ToTable("TenantModuler");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantNotat", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Av")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Dato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("Oppfolging")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Tekst")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Utfort")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("TenantNotater");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantVarselMottaker", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Beskrivelse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Epost")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Lisens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Prosjektokonomi")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Service")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Ticket")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("TenantVarselMottakere");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.PlattformBrukerPasswordResetToken", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.PlattformBruker", "PlattformBruker")
@@ -217,6 +592,79 @@ namespace PortalItlock.Web.Migrations.Platform
                         .IsRequired();
 
                     b.Navigation("PlattformBruker");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PlattformFaktura", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PlattformFakturaLinje", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.PlattformFaktura", "Faktura")
+                        .WithMany("Linjer")
+                        .HasForeignKey("FakturaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Faktura");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantAbonnement", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantAntallEndring", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantAvtalepris", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantHendelse", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantInnstillinger", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TenantLisens", b =>
@@ -239,6 +687,31 @@ namespace PortalItlock.Web.Migrations.Platform
                         .IsRequired();
 
                     b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantNotat", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantVarselMottaker", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PlattformFaktura", b =>
+                {
+                    b.Navigation("Linjer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Tenant", b =>

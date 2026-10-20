@@ -42,3 +42,14 @@ public class Tenant
 
     public List<TenantLisens> Lisenser { get; set; } = [];
 }
+
+public static class TenantStatusExtensions
+{
+    // Suspendert heter «Pause» i adminportalen.
+    public static string Visningsnavn(this TenantStatus status) => status switch
+    {
+        TenantStatus.Suspendert => "Pause",
+        TenantStatus.Oppsagt => "Oppsagt",
+        _ => "Aktiv"
+    };
+}

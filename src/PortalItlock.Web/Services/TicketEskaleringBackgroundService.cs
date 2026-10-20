@@ -1,6 +1,6 @@
 namespace PortalItlock.Web.Services;
 
-public class TicketEskaleringBackgroundService(IServiceScopeFactory scopeFactory, ILogger<TicketEskaleringBackgroundService> logger) : BackgroundService
+public class TicketEskaleringBackgroundService(OrganisasjonKjorer kjorer, ILogger<TicketEskaleringBackgroundService> logger) : BackgroundService
 {
     private static readonly TimeSpan SjekkIntervall = TimeSpan.FromHours(1);
 
@@ -12,9 +12,11 @@ public class TicketEskaleringBackgroundService(IServiceScopeFactory scopeFactory
         {
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                var eskaleringService = scope.ServiceProvider.GetRequiredService<TicketEskaleringService>();
-                await eskaleringService.SjekkOgVarsleAsync();
+                await kjorer.ForHverAsync("Ticket-eskalering", async (sp, _) =>
+                {
+                    var eskaleringService = sp.GetRequiredService<TicketEskaleringService>();
+                    await eskaleringService.SjekkOgVarsleAsync();
+                }, stoppingToken);
             }
             catch (Exception ex)
             {

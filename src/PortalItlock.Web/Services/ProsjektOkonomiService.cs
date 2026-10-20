@@ -82,6 +82,12 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
             .Where(p => db.Tilbud.Any(t => t.ProsjektId == p.Id && t.Status == EndringsmeldingStatus.Godkjent))
             .Select(p => p.Id).ToListAsync();
 
+    public async Task<Dictionary<int, string>> ProsjektnavnAsync(IEnumerable<int> ider)
+    {
+        var liste = ider.ToList();
+        return await db.Prosjekter.AsNoTracking().Where(p => liste.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.Navn);
+    }
+
     // Overleverte prosjekter som ikke er kontrollert ennå.
     public async Task<List<Prosjekt>> TilGjennomgangAsync() =>
         await db.Prosjekter.AsNoTracking().Include(p => p.Kunde)

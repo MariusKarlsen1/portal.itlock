@@ -4,9 +4,8 @@ using PortalItlock.Web.Models;
 
 namespace PortalItlock.Web.Services;
 
-public class TicketEskaleringService(ApplicationDbContext db, EmailService epost, ILogger<TicketEskaleringService> logger)
+public class TicketEskaleringService(ApplicationDbContext db, EmailService epost, VarselMottakerService mottakere, ILogger<TicketEskaleringService> logger)
 {
-    private const string MottakerEpost = "marius@itlock.no";
 
     public async Task<int> SjekkOgVarsleAsync()
     {
@@ -31,10 +30,10 @@ public class TicketEskaleringService(ApplicationDbContext db, EmailService epost
             + $"<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><tr><th>Nr</th><th>Tittel</th><th>Kunde</th><th>SLA-frist</th></tr>{rader}</table>"
             + "<p>Se Tickets i portalen for å tildele saken.</p>";
 
-        var sendt = await epost.SendAsync(MottakerEpost, $"Tickets uten eier har passert SLA-fristen ({forfalte.Count})", html);
+        var sendt = await mottakere.SendAsync(epost, VarselType.Ticket, $"Tickets uten eier har passert SLA-fristen ({forfalte.Count})", html, logger);
         if (!sendt)
         {
-            logger.LogWarning("Klarte ikke å sende ticket-eskaleringsvarsel til {Mottaker}.", MottakerEpost);
+            logger.LogWarning("Klarte ikke å sende ticket-eskaleringsvarsel.");
             return 0;
         }
 

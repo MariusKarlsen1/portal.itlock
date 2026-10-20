@@ -1,6 +1,6 @@
 namespace PortalItlock.Web.Services;
 
-public class PrisendringBackgroundService(IServiceScopeFactory scopeFactory, ILogger<PrisendringBackgroundService> logger) : BackgroundService
+public class PrisendringBackgroundService(OrganisasjonKjorer kjorer, ILogger<PrisendringBackgroundService> logger) : BackgroundService
 {
     private static readonly TimeSpan SjekkIntervall = TimeSpan.FromHours(6);
 
@@ -12,9 +12,11 @@ public class PrisendringBackgroundService(IServiceScopeFactory scopeFactory, ILo
         {
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                var utforerService = scope.ServiceProvider.GetRequiredService<PrisendringUtforerService>();
-                await utforerService.UtforForfalteAsync();
+                await kjorer.ForHverAsync("Planlagte prisendringer", async (sp, _) =>
+                {
+                    var utforerService = sp.GetRequiredService<PrisendringUtforerService>();
+                    await utforerService.UtforForfalteAsync();
+                }, stoppingToken);
             }
             catch (Exception ex)
             {

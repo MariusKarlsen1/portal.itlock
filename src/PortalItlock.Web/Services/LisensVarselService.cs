@@ -4,9 +4,8 @@ using PortalItlock.Web.Models;
 
 namespace PortalItlock.Web.Services;
 
-public class LisensVarselService(ApplicationDbContext db, EmailService epost, ILogger<LisensVarselService> logger)
+public class LisensVarselService(ApplicationDbContext db, EmailService epost, VarselMottakerService mottakere, ILogger<LisensVarselService> logger)
 {
-    private const string MottakerEpost = "marius@itlock.no";
     public static readonly TimeSpan VarselFrist = TimeSpan.FromDays(30);
 
     public async Task<List<KundeLisens>> FinnNaerUtlopAsync()
@@ -39,11 +38,7 @@ public class LisensVarselService(ApplicationDbContext db, EmailService epost, IL
                 + $"<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><tr><th>Kunde</th><th>Lisens</th><th>Utløpsdato</th></tr>{rader}</table>"
                 + "<p>Se kundekortet i portalen for detaljer.</p>";
 
-            sendt = await epost.SendAsync(MottakerEpost, $"Lisenser som går ut snart ({naerUtlop.Count})", html);
-            if (!sendt)
-            {
-                logger.LogWarning("Klarte ikke å sende lisensvarsel til {Mottaker}.", MottakerEpost);
-            }
+            sendt = await mottakere.SendAsync(epost, VarselType.Lisens, $"Lisenser som går ut snart ({naerUtlop.Count})", html, logger);
         }
 
         if (sendt || naerUtlop.Count == 0)

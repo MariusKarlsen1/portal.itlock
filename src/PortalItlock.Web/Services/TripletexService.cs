@@ -24,12 +24,18 @@ namespace PortalItlock.Web.Services;
 // Registrert som singleton (se Program.cs) siden session-tokenet er delt
 // for hele appen, ikke pr. bruker/forespørsel - _sessionLas hindrer at flere
 // samtidige forespørsler lager session-tokenet flere ganger.
-public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions> options)
+public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions> options, ITenantContext tenantContext)
 {
     private readonly TripletexOptions _options = options.Value;
-    private readonly SemaphoreSlim _sessionLas = new(1, 1);
-    private string? _sessionToken;
-    private DateTime _sessionUtlopUtc = DateTime.MinValue;
+
+    // Nøklene i konfigurasjonen hører til itlock sin Tripletex. Inntil hver
+    // organisasjon har sin egen kobling (satt opp i adminportalen), er
+    // Tripletex derfor bare tilgjengelig for standard-organisasjonen, så ingen
+    // andre kan lese eller skrive i itlock sitt regnskap. Session-token og
+    // fakturacache er statiske og gjelder dermed bare den organisasjonen.
+    private static readonly SemaphoreSlim _sessionLas = new(1, 1);
+    private static string? _sessionToken;
+    private static DateTime _sessionUtlopUtc = DateTime.MinValue;
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
@@ -40,13 +46,24 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
     // trenger ikke tallene være sekundfriske - en kort cache her gjør begge
     // sidene umiddelbare ved gjentatt besøk/navigasjon innen samme vindu.
     private static readonly TimeSpan FakturaCacheLevetid = TimeSpan.FromMinutes(5);
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime HentetUtc, List<TripletexFaktura> Fakturaer, string? Feilmelding)> _fakturaCache = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime HentetUtc, List<TripletexFaktura> Fakturaer, string? Feilmelding)> _fakturaCache = new();
+
+    public const string IkkeSattOpp = "Tripletex er ikke satt opp for denne organisasjonen ennå.";
+
+    public bool ErTilgjengeligForOrganisasjonen => tenantContext.Current?.ErStandard == true;
 
     public bool ErKonfigurert =>
-        !string.IsNullOrWhiteSpace(_options.ConsumerToken) && !string.IsNullOrWhiteSpace(_options.EmployeeToken);
+        ErTilgjengeligForOrganisasjonen
+        && !string.IsNullOrWhiteSpace(_options.ConsumerToken) && !string.IsNullOrWhiteSpace(_options.EmployeeToken);
 
     private async Task<string> HentSessionTokenAsync(CancellationToken ct)
     {
+        // Sperren må komme før det delte tokenet brukes.
+        if (!ErTilgjengeligForOrganisasjonen)
+        {
+            throw new InvalidOperationException(IkkeSattOpp);
+        }
+
         if (_sessionToken is not null && DateTime.UtcNow < _sessionUtlopUtc)
         {
             return _sessionToken;
@@ -380,6 +397,12 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
     public async Task<(List<TripletexFaktura> Fakturaer, string? Feilmelding)> HentFakturaerAsync(
         DateTime dateFrom, DateTime dateTo, int? kundeId = null, CancellationToken ct = default)
     {
+        // Sperren må komme før den delte cachen leses.
+        if (!ErTilgjengeligForOrganisasjonen)
+        {
+            return ([], IkkeSattOpp);
+        }
+
         var cacheNokkel = $"{dateFrom:yyyy-MM-dd}|{dateTo:yyyy-MM-dd}|{kundeId}";
         if (_fakturaCache.TryGetValue(cacheNokkel, out var cachet) && DateTime.UtcNow - cachet.HentetUtc < FakturaCacheLevetid)
         {

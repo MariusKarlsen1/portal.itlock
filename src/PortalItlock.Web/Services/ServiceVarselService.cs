@@ -4,9 +4,8 @@ using PortalItlock.Web.Models;
 
 namespace PortalItlock.Web.Services;
 
-public class ServiceVarselService(ApplicationDbContext db, EmailService epost, ILogger<ServiceVarselService> logger)
+public class ServiceVarselService(ApplicationDbContext db, EmailService epost, VarselMottakerService mottakere, ILogger<ServiceVarselService> logger)
 {
-    private const string MottakerEpost = "marius@itlock.no";
 
     public async Task<List<(Prosjekt Prosjekt, DateTime NesteServiceDato)>> FinnNaerForfallAsync()
     {
@@ -60,11 +59,7 @@ public class ServiceVarselService(ApplicationDbContext db, EmailService epost, I
                 + $"<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><tr><th>Avtale</th><th>Neste service</th></tr>{rader}</table>"
                 + "<p>Se Service-modulen i portalen for detaljer.</p>";
 
-            sendt = await epost.SendAsync(MottakerEpost, $"Serviceavtaler som nærmer seg forfall ({naerForfall.Count})", html);
-            if (!sendt)
-            {
-                logger.LogWarning("Klarte ikke å sende serviceavtale-varsel til {Mottaker}.", MottakerEpost);
-            }
+            sendt = await mottakere.SendAsync(epost, VarselType.Service, $"Serviceavtaler som nærmer seg forfall ({naerForfall.Count})", html, logger);
         }
 
         if (sendt || naerForfall.Count == 0)
