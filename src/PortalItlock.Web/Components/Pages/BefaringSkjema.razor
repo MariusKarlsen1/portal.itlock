@@ -13,10 +13,17 @@
 @inject BefaringPdfService PdfService
 @inject GeocodingService Geokoding
 @inject IJSRuntime JS
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>@(Id.HasValue ? "Rediger befaring" : "Ny befaring")</PageTitle>
 
 <script>
+    window.bsScrollTilDel = function (id) {
+        var el = document.getElementById(id);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    };
     window.bsScrollOgFokuser = function (id) {
         var el = document.getElementById(id);
         if (!el) {
@@ -37,7 +44,7 @@ else
     @* Fast sideklasse så layouten gir skjemaet full bredde på ALLE steg.
        Uten denne traff bredde-unntaket bare steg som tilfeldigvis hadde
        et .field-grid, og stegene ble ulikt brede. *@
-    <div class="bs-side">
+    <div class="bs-side @(_full ? "bs-full" : "")">
 
     <header class="bs-topp">
         <div class="bs-topp-venstre">
@@ -47,56 +54,35 @@ else
                 <p>@(Id.HasValue ? $"BEF-{Id!.Value:0000}" : "Ny registrering")</p>
             </div>
         </div>
-        <div class="bs-topp-knapper">
-            <div class="bs-meny-wrap">
-                <button type="button" class="bs-ikonknapp" title="Flere valg" @onclick="@(() => _visToppmeny = !_visToppmeny)"><Icon Name="more-vertical" /></button>
-                @if (_visToppmeny)
-                {
-                    <div class="bs-meny">
-                        <a href="/befaringsliste"><Icon Name="arrow-left" />Til befaringsliste</a>
-                        @if (Id.HasValue)
-                        {
-                            <button type="button" @onclick="VisPdfForhandsvisning"><Icon Name="file-text" />Lagre som PDF</button>
-                            <button type="button" class="bs-meny-fare" @onclick="@(() => { _confirmingDelete = true; _visToppmeny = false; _steg = 4; })"><Icon Name="trash" />Slett befaring</button>
-                        }
-                    </div>
-                }
-            </div>
-            <button type="button" class="bs-ikonknapp bs-ikonknapp-primaer" title="@(Id.HasValue ? "Lagre endringer" : "Lagre befaring")" @onclick="SaveBefaring"><Icon Name="check" /></button>
-        </div>
     </header>
 
-    <nav class="bs-stepper">
+    @* BN1 (befaring-detalj-forslag): alt på én side i ett kort. Menyen til
+       venstre hopper til delene, og kart, nøkkelinfo, ⋮, ✓ og utvid-knapp
+       står fast til høyre. *@
+    <div class="bs-kort">
+    <nav class="bs-nav">
         @foreach (var (nr, navn) in Stegnavn)
         {
-            <button type="button" class="bs-steg @(_steg == nr ? "bs-steg-aktiv" : "") @(_steg > nr ? "bs-steg-ferdig" : "")" @onclick="@(() => _steg = nr)">
-                <span class="bs-steg-tall">@nr</span>@navn
+            <button type="button" class="bs-nav-rad @(_steg == nr ? "aktiv" : "") @(DelUtfylt(nr) ? "utfylt" : "")" @onclick="@(() => GaTilDel(nr))">
+                <span class="bs-nav-tall">@(DelUtfylt(nr) && _steg != nr ? "✓" : nr.ToString())</span>@navn
+                @if (nr == 2 && _dorfelt.Count > 0)
+                {
+                    <small>@_dorfelt.Count</small>
+                }
+                else if (nr == 3 && _form.Vedlegg.Count > 0)
+                {
+                    <small>@_form.Vedlegg.Count</small>
+                }
             </button>
         }
+        <div class="bs-nav-fremdrift">
+            <small>@Stegnavn.Count(s => DelUtfylt(s.Nr)) av @Stegnavn.Length deler fylt ut</small>
+            <span class="bs-fremdrift"><i style="width:@(Stegnavn.Count(s => DelUtfylt(s.Nr)) * 100 / Stegnavn.Length)%"></i></span>
+        </div>
     </nav>
 
-    @if (_steg == 1)
-    {
-        <div class="bs-steg1">
-            <div class="bs-kartkort">
-                @if (_form.Latitude is not null && _form.Longitude is not null)
-                {
-                    <div id="befaring-kart-visning" class="bs-kart-visning"></div>
-                }
-                else
-                {
-                    <div class="bs-kart-placeholder"><Icon Name="map-pin" /></div>
-                }
-                @if (HarAdresse)
-                {
-                    <a class="bs-kart-knapp" href="@LokasjonKartUrl" target="_blank" rel="noopener"><Icon Name="map-pin" />Åpne i kart</a>
-                }
-                @if (_geokodingFeilet)
-                {
-                    <p class="bs-kart-feil">Fant ikke posisjon for denne adressen.</p>
-                }
-            </div>
-
+    <div class="bs-hoved">
+        <div class="bs-del" id="bs-del-1">
         <section class="panel" id="grunninformasjon-seksjon">
             <div class="panel-header">
                 <span class="panel-ikon"><Icon Name="users" /></span>
@@ -167,11 +153,8 @@ else
             </details>
         </section>
         </div>
-    }
 
-    @if (_steg == 2)
-    {
-        <div class="bs-steg-innhold">
+        <div class="bs-del bs-steg-innhold" id="bs-del-2">
         <section class="panel" id="dorfelt-seksjon">
             <div class="panel-header">
                 <span class="panel-ikon"><Icon Name="box" /></span>
@@ -426,11 +409,8 @@ else
             <button type="button" class="legg-til-dorfelt" @onclick="AddDorfelt"><Icon Name="plus" />Legg til dørfelt</button>
         </section>
         </div>
-    }
 
-    @if (_steg == 3)
-    {
-        <div class="bs-steg-innhold">
+        <div class="bs-del bs-steg-innhold" id="bs-del-3">
         <section class="panel" id="vedlegg-seksjon">
             <div class="panel-header">
                 <span class="panel-ikon"><Icon Name="upload" /></span>
@@ -511,11 +491,8 @@ else
             </section>
         }
         </div>
-    }
 
-    @if (_steg == 4)
-    {
-        <div class="bs-steg-innhold">
+        <div class="bs-del bs-steg-innhold" id="bs-del-4">
         <section class="panel">
             <div class="panel-header">
                 <span class="panel-ikon"><Icon Name="check-circle" /></span>
@@ -539,7 +516,7 @@ else
                 <div class="bs-detalj-rad"><span>Navn</span><span>@(string.IsNullOrWhiteSpace(_form.Navn) ? "–" : _form.Navn)</span></div>
                 <div class="bs-detalj-rad"><span>Kunde</span><span>@(string.IsNullOrWhiteSpace(_form.Kundenavn) ? "–" : _form.Kundenavn)</span></div>
                 <div class="bs-detalj-rad"><span>Prosjekt</span><span>@(string.IsNullOrWhiteSpace(_form.Bygg) ? "–" : _form.Bygg)</span></div>
-                <div class="bs-detalj-rad"><span>Dato</span><span>@(_form.Dato is { } d ? d.ToString("dd.MM.yyyy · HH:mm") : "–")</span></div>
+                <div class="bs-detalj-rad"><span>Dato</span><span>@(_form.Dato is { } befDato ? befDato.ToString("dd.MM.yyyy · HH:mm") : "–")</span></div>
                 <div class="bs-detalj-rad"><span>Adresse</span><span>@(HarAdresse ? AdresseTekst : "–")</span></div>
                 <div class="bs-detalj-rad">
                     <span>Befart av</span>
@@ -595,38 +572,75 @@ else
         </section>
 
         </div>
-    }
-
-    @if (!string.IsNullOrEmpty(_error))
-    {
-        <p class="form-error">@_error</p>
-    }
-
-    @if (!string.IsNullOrEmpty(_savedMessage))
-    {
-        <p class="save-success">@_savedMessage</p>
-    }
-
-    <div class="bs-bunnlinje">
-        @if (_steg > 1)
-        {
-            <button type="button" class="bs-bunnknapp" @onclick="@(() => _steg--)"><Icon Name="arrow-left" />Tilbake</button>
-        }
-        else
-        {
-            <a class="bs-bunnknapp" href="/befaringsliste"><Icon Name="arrow-left" />Avbryt</a>
-        }
-
-        @if (_steg < 4)
-        {
-            <button type="button" class="bs-bunnknapp bs-bunnknapp-primaer" @onclick="@(() => _steg++)">Neste<Icon Name="arrow-right" /></button>
-        }
-        else
-        {
-            <button type="button" class="bs-bunnknapp bs-bunnknapp-primaer" @onclick="SaveBefaring"><Icon Name="check" />@(Id.HasValue ? "Lagre endringer" : "Lagre befaring")</button>
-        }
     </div>
 
+    <aside class="bs-sidepanel">
+        <div class="bs-sidepanel-knapper">
+            <div class="bs-meny-wrap">
+                <button type="button" class="bs-ikonknapp" title="Flere valg" @onclick="@(() => _visToppmeny = !_visToppmeny)"><Icon Name="more-vertical" /></button>
+                @if (_visToppmeny)
+                {
+                    <div class="bs-meny">
+                        <a href="/befaringsliste"><Icon Name="arrow-left" />Til befaringsliste</a>
+                        @if (Id.HasValue)
+                        {
+                            <button type="button" @onclick="VisPdfForhandsvisning"><Icon Name="file-text" />Lagre som PDF</button>
+                            <button type="button" class="bs-meny-fare" @onclick="@(async () => { _confirmingDelete = true; _visToppmeny = false; await GaTilDel(4); })"><Icon Name="trash" />Slett befaring</button>
+                        }
+                    </div>
+                }
+            </div>
+            <button type="button" class="bs-ikonknapp bs-ikonknapp-primaer" title="@(Id.HasValue ? "Lagre endringer" : "Lagre befaring")" @onclick="SaveBefaring"><Icon Name="check" /></button>
+            <button type="button" class="bs-ikonknapp" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
+        </div>
+
+        <div class="bs-kartkort">
+            @if (_form.Latitude is not null && _form.Longitude is not null)
+            {
+                <div id="befaring-kart-visning" class="bs-kart-visning"></div>
+            }
+            else
+            {
+                <div class="bs-kart-placeholder"><Icon Name="map-pin" /></div>
+            }
+            @if (HarAdresse)
+            {
+                <a class="bs-kart-knapp" href="@LokasjonKartUrl" target="_blank" rel="noopener"><Icon Name="map-pin" />Åpne i kart</a>
+            }
+        </div>
+        @if (_geokodingFeilet)
+        {
+            <p class="bs-kart-feil">Fant ikke posisjon for denne adressen.</p>
+        }
+
+        <div class="bs-sidepanel-info">
+            <b>@(string.IsNullOrWhiteSpace(_form.Navn) ? (Id.HasValue ? "Befaring" : "Ny befaring") : _form.Navn)</b>
+            @if (!string.IsNullOrWhiteSpace(_form.Kundenavn) || HarAdresse)
+            {
+                <span>@_form.Kundenavn@(!string.IsNullOrWhiteSpace(_form.Kundenavn) && HarAdresse ? " · " : "")@(HarAdresse ? AdresseTekst : "")</span>
+            }
+            <div class="bs-sidepanel-rader">
+                <div><span>Dato</span><span>@(_form.Dato is { } dt ? dt.ToString("dd.MM.yyyy · HH:mm") : "–")</span></div>
+                <div><span>Befart av</span><span>@(string.IsNullOrWhiteSpace(_form.BefartAv) ? "–" : _form.BefartAv)</span></div>
+                <div><span>Dørfelt</span><span>@_dorfelt.Count</span></div>
+                <div><span>Bilder og video</span><span>@_form.Vedlegg.Count</span></div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <p class="form-error">@_error</p>
+            }
+
+            @if (!string.IsNullOrEmpty(_savedMessage))
+            {
+                <p class="save-success">@_savedMessage</p>
+            }
+
+            <button type="button" class="bs-bunnknapp bs-bunnknapp-primaer bs-lagre" @onclick="SaveBefaring"><Icon Name="check" />@(Id.HasValue ? "Lagre endringer" : "Lagre befaring")</button>
+            <a class="bs-bunnknapp bs-avbryt" href="/befaringsliste"><Icon Name="arrow-left" />Til befaringsliste</a>
+        </div>
+    </aside>
+    </div>
 
     </div>
 
@@ -646,6 +660,36 @@ else
 
     // Veiviseren: ett steg om gangen i stedet for én lang side.
     private int _steg = 1;
+    private bool _full;
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("befaring-bredde", _full ? "full" : "normal");
+    }
+
+    // BN1: alle delene står på samme side - menyen scroller bare til delen.
+    private async Task GaTilDel(int nr)
+    {
+        _steg = nr;
+        try
+        {
+            await JS.InvokeVoidAsync("bsScrollTilDel", $"bs-del-{nr}");
+        }
+        catch (JSException)
+        {
+            // Ikke kritisk.
+        }
+    }
+
+    private bool DelUtfylt(int nr) => nr switch
+    {
+        1 => !string.IsNullOrWhiteSpace(_form.Navn) && !string.IsNullOrWhiteSpace(_form.Kundenavn) && _form.Dato is not null && !string.IsNullOrWhiteSpace(_form.BefartAv),
+        2 => _dorfelt.Count > 0,
+        3 => _form.Vedlegg.Count > 0,
+        4 => Id.HasValue,
+        _ => false
+    };
     private bool _visToppmeny;
 
     private static readonly (int Nr, string Navn)[] Stegnavn =
@@ -788,6 +832,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        _full = await VisningPref.HentAsync("befaring-bredde", "normal") == "full";
         _kundeNavn = await Db.Kunder.OrderBy(k => k.Navn).Select(k => k.Navn).ToListAsync();
         _prosjektNavn = await Db.Prosjekter.OrderBy(p => p.Navn).Select(p => p.Navn).ToListAsync();
         _brukerNavn = await Db.Brukere.Where(b => b.Aktiv).OrderBy(b => b.Navn).Select(b => b.Navn).ToListAsync();
