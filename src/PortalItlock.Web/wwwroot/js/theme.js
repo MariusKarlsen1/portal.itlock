@@ -1,26 +1,45 @@
 window.theme = (function () {
     const storageKey = 'itlock-theme';
+    const media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+    // Valgt modus: 'light', 'dark' eller 'auto' (følger systemet).
+    function mode() {
+        const stored = localStorage.getItem(storageKey);
+        return stored === 'dark' || stored === 'light' ? stored : 'auto';
+    }
+
+    function systemDark() {
+        return !!(media && media.matches);
+    }
 
     function isDark() {
         const attr = document.documentElement.getAttribute('data-theme');
         if (attr === 'dark') return true;
         if (attr === 'light') return false;
-        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+        return systemDark();
     }
 
+    // data-theme settes alltid (også i Auto), så de mørke reglene bare
+    // trenger å se på attributtet.
     function apply() {
-        const stored = localStorage.getItem(storageKey);
-        if (stored === 'dark' || stored === 'light') {
-            document.documentElement.setAttribute('data-theme', stored);
+        const m = mode();
+        const resolved = m === 'auto' ? (systemDark() ? 'dark' : 'light') : m;
+        document.documentElement.setAttribute('data-theme', resolved);
+        initButtons();
+    }
+
+    function set(m) {
+        if (m === 'dark' || m === 'light') {
+            localStorage.setItem(storageKey, m);
+        } else {
+            localStorage.removeItem(storageKey);
         }
+        apply();
+        return isDark();
     }
 
     function toggle() {
-        const nowDark = isDark();
-        const next = nowDark ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', next);
-        localStorage.setItem(storageKey, next);
-        return next === 'dark';
+        return set(isDark() ? 'light' : 'dark');
     }
 
     function initButtons() {
@@ -29,7 +48,21 @@ window.theme = (function () {
         });
     }
 
+    // I Auto følger portalen med når systemet bytter mellom lys og mørk.
+    if (media) {
+        const onChange = function () {
+            if (mode() === 'auto') {
+                apply();
+            }
+        };
+        if (media.addEventListener) {
+            media.addEventListener('change', onChange);
+        } else if (media.addListener) {
+            media.addListener(onChange);
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', initButtons);
 
-    return { isDark, apply, toggle, initButtons };
+    return { mode, isDark, apply, set, toggle, initButtons };
 })();
