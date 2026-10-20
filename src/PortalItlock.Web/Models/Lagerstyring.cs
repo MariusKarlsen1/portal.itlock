@@ -39,7 +39,7 @@ public enum LagerBevegelseType
     FlyttInn = 4,
     Telling = 5,        // avvik fra varetelling
     Korrigering = 6,    // retting av feil registrering
-    Mottak = 7,         // varemottak fra leverandør (fase 2)
+    Mottak = 7,         // varemottak fra leverandør (InnkjopsordreId)
     Forbruk = 8,        // brukt på prosjekt/arbeidsordre (fase 4)
     Retur = 9           // retur fra montør/prosjekt (fase 4)
 }
@@ -69,6 +69,7 @@ public class LagerBevegelse
     public int? ProsjektId { get; set; }
     public int? ArbeidsordreId { get; set; }
     public int? VaretellingId { get; set; }
+    public int? InnkjopsordreId { get; set; }
 
     public int? BrukerId { get; set; }
     public string? BrukerNavn { get; set; }

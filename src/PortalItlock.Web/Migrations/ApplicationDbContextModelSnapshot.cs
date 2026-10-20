@@ -2891,6 +2891,165 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("Importhistorikk");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.Innkjopsordre", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AvvikKommentar")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BekreftetAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("BekreftetDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("LagerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LeverandorEpost")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("LeverandorId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LeverandorNavn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LeverandorOrdrenr")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Notat")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Nummer")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ObFilnavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("OnsketLevering")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Opprettet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OpprettetAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("Sendt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SendtTil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("VarReferanse")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LagerId");
+
+                    b.HasIndex("LeverandorId");
+
+                    b.HasIndex("Nummer")
+                        .IsUnique();
+
+                    b.HasIndex("ProsjektId");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("Innkjopsordrer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.InnkjopsordreFil", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContentType")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("Filnavn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("InnkjopsordreId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Lastet")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InnkjopsordreId");
+
+                    b.ToTable("InnkjopsordreFiler");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.InnkjopsordreLinje", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Antall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("BekreftetAntall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("BekreftetLevering")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("BekreftetPris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Enhet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("InnkjopsordreId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Mottatt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Pris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Varenummer")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ComponentId");
+
+                    b.HasIndex("InnkjopsordreId");
+
+                    b.ToTable("InnkjopsordreLinjer");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Inntektskonto", b =>
                 {
                     b.Property<int>("Id")
@@ -3786,6 +3945,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<Guid?>("FlyttId")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("InnkjopsordreId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<double>("KostPerStk")
                         .HasColumnType("REAL");
 
@@ -3808,6 +3970,8 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("InnkjopsordreId");
 
                     b.HasIndex("LagerId");
 
@@ -7292,6 +7456,61 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("OpprinneligImport");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.Innkjopsordre", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Lager", "Lager")
+                        .WithMany()
+                        .HasForeignKey("LagerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Leverandor", "Leverandor")
+                        .WithMany()
+                        .HasForeignKey("LeverandorId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
+                        .WithMany()
+                        .HasForeignKey("ProsjektId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Lager");
+
+                    b.Navigation("Leverandor");
+
+                    b.Navigation("Prosjekt");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.InnkjopsordreFil", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Innkjopsordre", "Innkjopsordre")
+                        .WithMany()
+                        .HasForeignKey("InnkjopsordreId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Innkjopsordre");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.InnkjopsordreLinje", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Component", "Component")
+                        .WithMany()
+                        .HasForeignKey("ComponentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Innkjopsordre", "Innkjopsordre")
+                        .WithMany("Linjer")
+                        .HasForeignKey("InnkjopsordreId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Component");
+
+                    b.Navigation("Innkjopsordre");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSkjema", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Dor", "Dor")
@@ -8507,6 +8726,11 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Media");
 
                     b.Navigation("Notater");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.Innkjopsordre", b =>
+                {
+                    b.Navigation("Linjer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsKategori", b =>

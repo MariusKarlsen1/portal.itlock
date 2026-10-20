@@ -5,7 +5,7 @@ namespace PortalItlock.Web.Services;
 
 public class EmailService(HttpClient http, IConfiguration config)
 {
-    public async Task<bool> SendAsync(string til, string emne, string html, IEnumerable<(string Filnavn, byte[] Data)>? vedlegg = null)
+    public async Task<bool> SendAsync(string til, string emne, string html, IEnumerable<(string Filnavn, byte[] Data)>? vedlegg = null, string? svarTil = null)
     {
         var apiKey = config["Resend:ApiKey"];
         if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(til))
@@ -22,6 +22,11 @@ public class EmailService(HttpClient http, IConfiguration config)
             ["subject"] = emne,
             ["html"] = html
         };
+
+        if (!string.IsNullOrWhiteSpace(svarTil))
+        {
+            payload["reply_to"] = svarTil;
+        }
 
         if (vedlegg is not null)
         {

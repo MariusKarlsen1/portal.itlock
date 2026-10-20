@@ -115,6 +115,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<VareLagerplass> VareLagerplasser => Set<VareLagerplass>();
     public DbSet<Varetelling> Varetellinger => Set<Varetelling>();
     public DbSet<VaretellingLinje> VaretellingLinjer => Set<VaretellingLinje>();
+    public DbSet<Innkjopsordre> Innkjopsordrer => Set<Innkjopsordre>();
+    public DbSet<InnkjopsordreLinje> InnkjopsordreLinjer => Set<InnkjopsordreLinje>();
+    public DbSet<InnkjopsordreFil> InnkjopsordreFiler => Set<InnkjopsordreFil>();
     public DbSet<Avvik> Avvik => Set<Avvik>();
     public DbSet<Tilvalg> Tilvalg => Set<Tilvalg>();
     public DbSet<TilvalgAlternativ> TilvalgAlternativer => Set<TilvalgAlternativ>();
@@ -202,6 +205,15 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         });
         modelBuilder.Entity<VareLagerplass>().HasIndex(p => new { p.ComponentId, p.LagerId }).IsUnique();
         modelBuilder.Entity<Lager>().HasOne(l => l.Prosjekt).WithMany().HasForeignKey(l => l.ProsjektId).OnDelete(DeleteBehavior.SetNull);
+        modelBuilder.Entity<Innkjopsordre>(e =>
+        {
+            e.HasIndex(o => o.Nummer).IsUnique();
+            e.HasIndex(o => o.Status);
+            e.HasOne(o => o.Leverandor).WithMany().HasForeignKey(o => o.LeverandorId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(o => o.Prosjekt).WithMany().HasForeignKey(o => o.ProsjektId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(o => o.Lager).WithMany().HasForeignKey(o => o.LagerId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<LagerBevegelse>().HasIndex(b => b.InnkjopsordreId);
 
         modelBuilder.Entity<PackageRequirement>(entity =>
         {

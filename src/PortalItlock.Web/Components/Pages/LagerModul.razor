@@ -10,21 +10,24 @@
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject LagerService LagerSvc
+@inject InnkjopService InnkjopSvc
 @inject TilleggsmodulService Tilleggsmoduler
 @inject VisningPreferanseService VisningPref
 @inject NavigationManager Nav
 
 <PageTitle>Lager</PageTitle>
 
-@* Lagerstyring (tilleggsmodul), fase 1: lagre, beholdning regnet ut fra
+@* Lagerstyring (tilleggsmodul). Fase 1: lagre, beholdning regnet ut fra
    lagerbevegelser, lagerverdi, flytting mellom lagre og varetelling.
-   Innkjøp, varemottak, reservasjoner og plukk kommer i neste faser. *@
+   Fase 2: innkjøpsforslag, innkjøpsordre (PDF på e-post), ordrebekreftelse
+   med avvikskontroll og varemottak med restordre. Reservasjoner og plukk
+   kommer i neste faser. *@
 <div class="lg-side @(_full ? "lg-full" : "")">
     <header class="side-header lg-header">
         <span class="side-header-ikon"><Icon Name="box" /></span>
         <div>
             <h1>Lager</h1>
-            <p class="section-hint">Beholdning, lagerverdi, montørbiler og varetelling</p>
+            <p class="section-hint">Beholdning, innkjøp, varemottak, montørbiler og varetelling</p>
         </div>
     </header>
 
@@ -36,17 +39,23 @@
     {
         <div class="lg-kort">
             <nav class="lg-meny" aria-label="Lager">
-                @foreach (var (nokkel, navn, ikon) in Faner)
+                @{
+                    string? gruppe = null;
+                }
+                @foreach (var (nokkel, navn, ikon, grp) in Faner)
                 {
-                    <a class="lg-meny-rad @(AktivFane == nokkel ? "aktiv" : "")" href="@(nokkel == "oversikt" ? "/lager" : $"/lager/{nokkel}")">
+                    if (grp != gruppe)
+                    {
+                        gruppe = grp;
+                        <span class="lg-meny-grp">@grp</span>
+                    }
+                    var fane = nokkel;
+                    var (tall, tallKlasse) = MenyTall(nokkel);
+                    <a class="lg-meny-rad @(AktivFane == nokkel ? "aktiv" : "")" href="@(nokkel == "oversikt" ? "/lager" : $"/lager/{nokkel}")" @onclick="@(() => { if (fane == AktivFane) { Lukk(); _aktivTellingId = null; } })">
                         <Icon Name="@ikon" />@navn
-                        @if (nokkel == "varer" && UnderMinimum.Count > 0)
+                        @if (tall > 0)
                         {
-                            <small class="lg-meny-tall">@UnderMinimum.Count</small>
-                        }
-                        @if (nokkel == "telling" && _tellinger.Any(t => t.Status == VaretellingStatus.Pagar))
-                        {
-                            <small class="lg-meny-tall lg-meny-tall-n">@_tellinger.Count(t => t.Status == VaretellingStatus.Pagar)</small>
+                            <small class="lg-meny-tall @tallKlasse">@tall</small>
                         }
                     </a>
                 }
@@ -56,13 +65,25 @@
             <div class="lg-innhold">
                 @if (!string.IsNullOrEmpty(_melding))
                 {
-                    <p class="lg-melding">@_melding</p>
+                    <p class="lg-melding">@_melding@if (_meldingLenke is { } lenke && lenke.Melding == _melding)
+                        {
+                            <a href="@lenke.Href">@lenke.Tekst</a>
+                        }</p>
                 }
 
                 @switch (AktivFane)
                 {
                     case "varer":
                         @Varer()
+                        break;
+                    case "innkjop":
+                        @Innkjop()
+                        break;
+                    case "ob":
+                        @Ordrebekreftelser()
+                        break;
+                    case "mottak":
+                        @Varemottak()
                         break;
                     case "lagre":
                         @Lagre()
@@ -88,14 +109,28 @@
 
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
 
-    private static readonly (string Nokkel, string Navn, string Ikon)[] Faner =
+    private static readonly (string Nokkel, string Navn, string Ikon, string Gruppe)[] Faner =
     [
-        ("oversikt", "Oversikt", "bar-chart"),
-        ("varer", "Varer og beholdning", "box"),
-        ("lagre", "Lagre og biler", "building"),
-        ("telling", "Varetelling", "clipboard"),
-        ("bevegelser", "Varebevegelser", "list"),
+        ("oversikt", "Oversikt", "bar-chart", "Lager"),
+        ("varer", "Varer og beholdning", "box", "Lager"),
+        ("innkjop", "Innkjøp", "receipt", "Innkjøp"),
+        ("ob", "Ordrebekreftelser", "mail", "Innkjøp"),
+        ("mottak", "Varemottak", "download", "Innkjøp"),
+        ("lagre", "Lagre og biler", "building", "Kontroll"),
+        ("telling", "Varetelling", "clipboard", "Kontroll"),
+        ("bevegelser", "Varebevegelser", "list", "Kontroll"),
     ];
+
+    // Tallet på menyen: rødt krever handling, gult/blått er til orientering.
+    private (int Tall, string Klasse) MenyTall(string fane) => fane switch
+    {
+        "varer" => (UnderMinimum.Count, ""),
+        "innkjop" => (_forslag.Count, "lg-meny-tall-n"),
+        "ob" => (VenterPaOb.Count + MedAvvik.Count, MedAvvik.Count > 0 ? "" : "lg-meny-tall-b"),
+        "mottak" => (KlareForMottak.Count, "lg-meny-tall-b"),
+        "telling" => (_tellinger.Count(t => t.Status == VaretellingStatus.Pagar), "lg-meny-tall-n"),
+        _ => (0, "")
+    };
 
     private string AktivFane => Faner.Any(f => f.Nokkel == Fane) ? Fane! : "oversikt";
 
@@ -104,6 +139,7 @@
     private string? _melding;
     private int? _brukerId;
     private string? _brukerNavn;
+    private string? _brukerEpost;
 
     private List<Lager> _lagre = [];
     private List<Component> _varer = [];
@@ -129,7 +165,9 @@
             if (int.TryParse(state.User.FindFirst("BrukerId")?.Value, out var id))
             {
                 _brukerId = id;
-                _brukerNavn = (await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id))?.Navn ?? _brukerNavn;
+                var bruker = await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id);
+                _brukerNavn = bruker?.Navn ?? _brukerNavn;
+                _brukerEpost = bruker?.Epost;
             }
         }
 
@@ -152,6 +190,7 @@
         _prosjekter = await Db.Prosjekter.AsNoTracking()
             .Where(p => p.Status == null || (p.Status != ProsjektStatus.Avsluttet && p.Status != ProsjektStatus.TilbudAvslatt))
             .OrderBy(p => p.Navn).Take(500).ToListAsync();
+        await LastInnkjopAsync();
     }
 
     private async Task VekslFull()
@@ -170,6 +209,7 @@
     private List<Component> UnderMinimum => _varer.Where(c => c.Minimumsbeholdning is { } min && Totalt(c.Id) <= min).ToList();
     private string? Hylle(int vare, int lager) => _plasser.GetValueOrDefault((vare, lager))?.Hylle;
     private static string Kr(decimal v) => v.ToString("#,##0", Kultur) + " kr";
+    private static string Kr2(decimal v) => v.ToString("#,##0.00", Kultur) + " kr";
 
     private static string TypeNavn(LagerType t) => t switch
     {
@@ -206,14 +246,24 @@
     private RenderFragment Oversikt() => @<div class="lg-fane">
         <div class="lg-fane-topp">
             <span><h2>Oversikt</h2><p>Lagerverdi og beholdning på tvers av alle lagre</p></span>
-            <a class="lg-knapp lg-knapp-p" href="/lager/varer"><Icon Name="plus" />Ny bevegelse</a>
+            <span class="lg-knapper">
+                <a class="lg-knapp" href="/lager/varer"><Icon Name="search" />Søk vare</a>
+                <a class="lg-knapp lg-knapp-p" href="/lager/innkjop"><Icon Name="plus" />Ny bestilling</a>
+            </span>
         </div>
 
         <div class="lg-kpi">
             <div><b>@Kr(Lagerverdi)</b><span>Lagerverdi (alle lagre)</span></div>
-            <div><b>@_varer.Sum(c => Math.Max(0, Totalt(c.Id))).ToString("#,##0", Kultur) stk</b><span>Varer på lager</span></div>
-            <div><b>@_varer.Count</b><span>Lagerførte varer</span></div>
+            <div><b>@_varer.Sum(c => Math.Max(0, Totalt(c.Id))).ToString("#,##0", Kultur) stk</b><span>@_varer.Count lagerførte varer</span></div>
+            <a href="/lager/innkjop"><b>@Kr(BestiltVerdi)</b><span>I bestilling (@ApneOrdrer.Count() åpne)</span></a>
             <a href="/lager/varer?min=1" class="@(UnderMinimum.Count > 0 ? "lg-kpi-rod" : "")"><b>@UnderMinimum.Count</b><span>Under minimumsbeholdning</span></a>
+        </div>
+
+        <div class="lg-oppf">
+            <a href="/lager/innkjop"><b class="@(_forslag.Count > 0 ? "lg-gul" : "lg-svak")">@_forslag.Count</b><span>Varer foreslått<br />bestilt</span></a>
+            <a href="/lager/ob"><b class="@(VenterPaOb.Count > 0 ? "" : "lg-svak")">@VenterPaOb.Count</b><span>Venter på<br />ordrebekreftelse</span></a>
+            <a href="/lager/ob"><b class="@(MedAvvik.Count > 0 ? "lg-rod" : "lg-svak")">@MedAvvik.Count</b><span>Ordrebekreftelser<br />med avvik</span></a>
+            <a href="/lager/mottak"><b class="@(KlareForMottak.Count > 0 ? "lg-bla" : "lg-svak")">@KlareForMottak.Count</b><span>Bestillinger klare<br />for varemottak</span></a>
         </div>
 
         <div class="lg-to">
@@ -247,6 +297,31 @@
             </section>
         </div>
 
+        @if (ApneOrdrer.Any())
+        {
+            <section class="lg-boks">
+                <div class="lg-boks-topp"><h3>Aktive innkjøp</h3><a href="/lager/innkjop">Alle →</a></div>
+                <div class="lg-tabellwrap">
+                    <table class="lg-tabell lg-tabell-smal">
+                        <thead><tr><th>Ordre</th><th>Leverandør</th><th>Levering</th><th class="n">Verdi</th><th>Status</th></tr></thead>
+                        <tbody>
+                            @foreach (var x in ApneOrdrer.Take(6))
+                            {
+                                var ordre = x;
+                                <tr class="lg-klikkrad" @onclick="@(() => ApneOrdre(ordre.Id, "innkjop"))">
+                                    <td class="mono">@ordre.Visningsnummer</td>
+                                    <td>@ordre.LeverandorNavn</td>
+                                    <td>@((ordre.Linjer.Max(l => l.BekreftetLevering) ?? ordre.OnsketLevering)?.ToString("dd.MM.yyyy") ?? "–")</td>
+                                    <td class="n">@Kr(OrdreSum(ordre))</td>
+                                    <td>@StatusChip(ordre.Status)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        }
+
         <section class="lg-boks">
             <div class="lg-boks-topp"><h3>Siste bevegelser</h3><a href="/lager/bevegelser">Alle →</a></div>
             @BevegelseTabell(_sisteBevegelser.Take(8))
@@ -264,10 +339,33 @@
     private string _leggTilSok = "";
     private List<Component> _leggTilTreff = [];
 
+    // Kjøres også når layouten tegnes på nytt (cascading AuthenticationState),
+    // så adressen sjekkes først - ellers ville meldinger forsvinne og en
+    // lukket ordre åpnes igjen fra ?ordre= hver gang.
+    private string? _sisteUri;
+
     protected override void OnParametersSet()
     {
-        _melding = null;
+        if (_sisteUri == Nav.Uri)
+        {
+            return;
+        }
+
+        _sisteUri = Nav.Uri;
+
+        if (_forrigeFane != AktivFane)
+        {
+            _forrigeFane = AktivFane;
+            _apenOrdreId = null;
+            _bekreft = null;
+        }
+
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        if (query.TryGetValue("ordre", out var ordre) && int.TryParse(ordre, out var ordreId))
+        {
+            _apenOrdreId = ordreId;
+        }
+
         if (query.TryGetValue("min", out var min) && min == "1")
         {
             _kunUnderMin = true;
@@ -343,7 +441,7 @@
                     var hovedId = AktiveLagre.FirstOrDefault(l => l.Type == LagerType.Hovedlager)?.Id ?? 0;
                     <table class="lg-tabell">
                         <thead>
-                            <tr><th>Vare</th><th>Hylle</th><th class="n">På lager</th><th class="n">Min</th><th class="n">Snittkost</th><th class="n">Verdi</th></tr>
+                            <tr><th>Vare</th><th>Hylle</th><th class="n">På lager</th><th class="n">Bestilt</th><th class="n">Min</th><th class="n">Snittkost</th><th class="n">Verdi</th></tr>
                         </thead>
                         <tbody>
                             @foreach (var c in FiltrerteVarer)
@@ -355,6 +453,7 @@
                                     <td><b>@c.Navn</b><small>@c.Produktkode@(string.IsNullOrWhiteSpace(c.Leverandor) ? "" : $" · {c.Leverandor}")</small></td>
                                     <td class="mono">@(Hylle(c.Id, _filterLager ?? hovedId) ?? "–")</td>
                                     <td class="n"><b class="@(antall < 0 ? "lg-rod" : "")">@antall</b> <span class="lg-svak">@(c.Enhet ?? "stk")</span></td>
+                                    <td class="n">@(Bestilt(c.Id) > 0 ? Bestilt(c.Id).ToString() : "–")</td>
                                     <td class="n">
                                         @if (c.Minimumsbeholdning is { } m)
                                         {
@@ -509,11 +608,30 @@
             <button type="button" class="lg-lukk" title="Lukk" @onclick="@(() => _valgtVareId = null)"><Icon Name="x" /></button>
         </div>
 
-        <div class="lg-beh">
+        <div class="lg-beh lg-beh-fire">
             <div><b>@Totalt(c.Id)</b><span>På lager totalt</span></div>
+            <div><b class="@(Bestilt(c.Id) > 0 ? "lg-bla" : "")">@Bestilt(c.Id)</b><span>Bestilt</span></div>
             <div><b>@Kr(Kost(c))</b><span>Snittkost</span></div>
             <div><b>@Kr(Totalt(c.Id) * Kost(c))</b><span>Lagerverdi</span></div>
         </div>
+
+        @{
+            var aapneLinjer = ApneOrdrer.Concat(_ordrer.Where(o => o.Status == InnkjopStatus.Utkast))
+                .SelectMany(o => o.Linjer.Where(l => l.ComponentId == c.Id && l.Rest > 0).Select(l => (Ordre: o, Linje: l))).ToList();
+        }
+        @if (aapneLinjer.Count > 0)
+        {
+            <div class="lg-bestillinger">
+                @foreach (var (ordre, linje) in aapneLinjer)
+                {
+                    var ordreId = ordre.Id;
+                    <button type="button" class="lg-lagerrad lg-klikk lg-radknapp" @onclick="@(() => ApneOrdre(ordreId, "innkjop"))">
+                        <span class="lg-lagerrad-tekst"><b>@ordre.Visningsnummer · @linje.Rest stk</b><small>@ordre.LeverandorNavn@((linje.BekreftetLevering ?? ordre.OnsketLevering) is { } d ? $" · levering {d:dd.MM}" : "")</small></span>
+                        @StatusChip(ordre.Status)
+                    </button>
+                }
+            </div>
+        }
 
         <div class="lg-handlinger">
             <button type="button" class="lg-knapp lg-knapp-s @(_handling == "inn" ? "aktiv" : "")" @onclick="@(() => StartHandling("inn", c))"><Icon Name="plus" />Tilgang</button>
@@ -522,6 +640,7 @@
             {
                 <button type="button" class="lg-knapp lg-knapp-s @(_handling == "flytt" ? "aktiv" : "")" @onclick="@(() => StartHandling("flytt", c))"><Icon Name="arrow-right" />Flytt</button>
             }
+            <button type="button" class="lg-knapp lg-knapp-s" title="Legg varen i en bestilling til leverandøren" @onclick="@(() => BestillVare(c))"><Icon Name="receipt" />Bestill</button>
         </div>
 
         @if (_handling is not null)
@@ -883,6 +1002,949 @@
     </div>;
 
     // ======================================================================
+    // Innkjøp, ordrebekreftelser og varemottak (fase 2)
+    // ======================================================================
+    private List<Innkjopsordre> _ordrer = [];
+    private Dictionary<int, int> _bestilt = [];
+    private List<InnkjopService.Forslag> _forslag = [];
+    private Dictionary<int, int> _forslagAntall = [];
+    private List<Leverandor> _leverandorer = [];
+    private int? _apenOrdreId;
+    private string? _forrigeFane;
+    // Lenke som vises bak en bestemt melding (f.eks. «Åpne IO-1002 →»).
+    private (string Melding, string Href, string Tekst)? _meldingLenke;
+    private bool _visAlleOrdre;
+    private bool _visNyOrdre;
+    private int _nyLeverandorId;
+    private string _nyLeverandorNavn = "";
+    private string _linjeSok = "";
+    private List<Component> _linjeTreff = [];
+    private bool _jobber;
+    private string? _bekreft;
+    private Dictionary<int, int> _mottak = [];
+    private string _mottakNotat = "";
+
+    private async Task LastInnkjopAsync()
+    {
+        _ordrer = await Db.Innkjopsordrer.Include(o => o.Linjer).Include(o => o.Prosjekt)
+            .OrderByDescending(o => o.Nummer).Take(300).ToListAsync();
+        _bestilt = await InnkjopSvc.BestiltAsync();
+        _forslag = await InnkjopSvc.ForslagAsync();
+        _leverandorer = await Db.Leverandorer.AsNoTracking().OrderBy(l => l.Navn)
+            .Select(l => new Leverandor { Id = l.Id, Navn = l.Navn, Epost = l.Epost }).ToListAsync();
+    }
+
+    private Innkjopsordre? ApenOrdre => _ordrer.FirstOrDefault(o => o.Id == _apenOrdreId);
+    private int Bestilt(int vare) => _bestilt.GetValueOrDefault(vare);
+    private IEnumerable<Innkjopsordre> ApneOrdrer => _ordrer.Where(o => InnkjopService.Apne.Contains(o.Status));
+    private decimal BestiltVerdi => ApneOrdrer.SelectMany(o => o.Linjer).Sum(l => l.Rest * l.Pris);
+    private static decimal OrdreSum(Innkjopsordre o) => o.Linjer.Sum(l => l.Antall * l.Pris);
+    private List<Innkjopsordre> VenterPaOb => _ordrer.Where(o => o.Status == InnkjopStatus.Sendt).ToList();
+    private List<Innkjopsordre> MedAvvik => _ordrer.Where(o => o.Status == InnkjopStatus.Avvik).ToList();
+    private List<Innkjopsordre> KlareForMottak => _ordrer.Where(o => InnkjopService.KanMottas.Contains(o.Status)).ToList();
+    private string LagerNavn(int id) => _lagre.FirstOrDefault(l => l.Id == id)?.Navn ?? "";
+
+    private static (string Navn, string Klasse) StatusInfo(InnkjopStatus s) => s switch
+    {
+        InnkjopStatus.Utkast => ("Utkast", "n"),
+        InnkjopStatus.Sendt => ("Sendt", "bla"),
+        InnkjopStatus.Bekreftet => ("Bekreftet", "gronn"),
+        InnkjopStatus.Avvik => ("Avvik", "rod"),
+        InnkjopStatus.DelvisMottatt => ("Delvis mottatt", "gul"),
+        InnkjopStatus.Mottatt => ("Mottatt", "gronn"),
+        InnkjopStatus.Avsluttet => ("Avsluttet", "n"),
+        _ => ("Kansellert", "n")
+    };
+
+    private RenderFragment StatusChip(InnkjopStatus s) => @<span class="lg-chip lg-chip-@StatusInfo(s).Klasse">@StatusInfo(s).Navn</span>;
+
+    // Åpner en ordre i riktig fane (detalj, ordrebekreftelse eller mottak).
+    private void ApneOrdre(int id, string fane)
+    {
+        _apenOrdreId = id;
+        _linjeSok = "";
+        _linjeTreff = [];
+        _mottak.Clear();
+        _mottakNotat = "";
+        _bekreft = null;
+        if (AktivFane != fane)
+        {
+            Nav.NavigateTo($"/lager/{fane}?ordre={id}");
+        }
+    }
+
+    private void Lukk()
+    {
+        _apenOrdreId = null;
+        _bekreft = null;
+    }
+
+    private async Task LagreOrdre() => await Db.SaveChangesAsync();
+
+    // ---------- Innkjøpsforslag ----------
+    private IEnumerable<IGrouping<string, InnkjopService.Forslag>> ForslagGrupper => _forslag.GroupBy(f => f.Kilde.LeverandorNavn);
+    private int ForslagAntall(InnkjopService.Forslag f) => _forslagAntall.TryGetValue(f.Vare.Id, out var a) ? a : f.Antall;
+
+    private async Task BestillForslag(IGrouping<string, InnkjopService.Forslag> gruppe)
+    {
+        var linjer = gruppe.Select(f => (f.Vare.Id, ForslagAntall(f))).Where(l => l.Item2 > 0).ToList();
+        if (linjer.Count == 0)
+        {
+            return;
+        }
+
+        var ordre = await InnkjopSvc.OpprettAsync(gruppe.First().Kilde.LeverandorId, gruppe.Key, _brukerNavn, linjer);
+        foreach (var f in gruppe)
+        {
+            _forslagAntall.Remove(f.Vare.Id);
+        }
+
+        await LastAsync();
+        ApneOrdre(ordre.Id, "innkjop");
+        _melding = $"{ordre.Visningsnummer} er laget med {linjer.Count} varer. Se over og send den til {ordre.LeverandorNavn}.";
+    }
+
+    private async Task OpprettTomOrdre()
+    {
+        var lev = _leverandorer.FirstOrDefault(l => l.Id == _nyLeverandorId);
+        var navn = lev?.Navn ?? _nyLeverandorNavn.Trim();
+        if (string.IsNullOrEmpty(navn))
+        {
+            _melding = "Velg en leverandør eller skriv inn navnet.";
+            return;
+        }
+
+        var ordre = await InnkjopSvc.OpprettAsync(lev?.Id, navn, _brukerNavn, []);
+        _visNyOrdre = false;
+        _nyLeverandorId = 0;
+        _nyLeverandorNavn = "";
+        await LastAsync();
+        ApneOrdre(ordre.Id, "innkjop");
+    }
+
+    // Fra varekortet: legger varen i et åpent utkast til samme leverandør,
+    // eller lager et nytt.
+    private async Task BestillVare(Component c)
+    {
+        var kilde = (await InnkjopSvc.KilderAsync([c]))[c.Id];
+        var antall = c.Minimumsbeholdning is { } min
+            ? Math.Max(1, Math.Max(min * 2, min + 1) - Math.Max(0, Totalt(c.Id)) - Bestilt(c.Id))
+            : 1;
+        var utkast = _ordrer.FirstOrDefault(o => o.Status == InnkjopStatus.Utkast
+            && (kilde.LeverandorId is { } id ? o.LeverandorId == id : o.LeverandorId == null && o.LeverandorNavn == kilde.LeverandorNavn));
+
+        if (utkast is null)
+        {
+            utkast = await InnkjopSvc.OpprettAsync(kilde.LeverandorId, kilde.LeverandorNavn, _brukerNavn, [(c.Id, antall)]);
+        }
+        else
+        {
+            await InnkjopSvc.LeggTilLinjeAsync(utkast, c.Id, antall);
+        }
+
+        await LastAsync();
+        _melding = $"{antall} stk {c.Navn} er lagt i {utkast.Visningsnummer} til {utkast.LeverandorNavn}.";
+        _meldingLenke = (_melding, $"/lager/innkjop?ordre={utkast.Id}", $"Åpne {utkast.Visningsnummer} →");
+    }
+
+    // ---------- Ordre ----------
+    private async Task ByttLeverandor(Innkjopsordre o, string? verdi)
+    {
+        if (!int.TryParse(verdi, out var id) || _leverandorer.FirstOrDefault(l => l.Id == id) is not { } lev)
+        {
+            return;
+        }
+
+        o.LeverandorId = lev.Id;
+        o.LeverandorNavn = lev.Navn;
+        o.LeverandorEpost = lev.Epost;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SokLinje()
+    {
+        var s = _linjeSok.Trim();
+        if (s.Length < 2)
+        {
+            _linjeTreff = [];
+            return;
+        }
+
+        _linjeTreff = await Db.Components.AsNoTracking().Where(c => c.Aktiv)
+            .Where(c => c.Navn.Contains(s) || (c.Produktkode != null && c.Produktkode.Contains(s))
+                || (c.Leverandor != null && c.Leverandor.Contains(s)) || (c.Gtin != null && c.Gtin.Contains(s)))
+            .OrderByDescending(c => c.ILagerstyring).ThenBy(c => c.Navn).Take(10).ToListAsync();
+    }
+
+    private async Task LeggTilLinje(Innkjopsordre o, Component c)
+    {
+        await InnkjopSvc.LeggTilLinjeAsync(o, c.Id, 1);
+        _linjeSok = "";
+        _linjeTreff = [];
+    }
+
+    private async Task FjernLinje(Innkjopsordre o, InnkjopsordreLinje l)
+    {
+        o.Linjer.Remove(l);
+        Db.InnkjopsordreLinjer.Remove(l);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SendOrdre(Innkjopsordre o)
+    {
+        var til = o.LeverandorEpost?.Trim() ?? "";
+        if (!til.Contains('@'))
+        {
+            _melding = "Legg inn leverandørens e-postadresse først.";
+            return;
+        }
+
+        _jobber = true;
+        var (_, melding) = await InnkjopSvc.SendAsync(o, til, _brukerNavn, _brukerEpost);
+        _jobber = false;
+        await LastAsync();
+        _melding = melding;
+    }
+
+    private async Task MarkerBestilt(Innkjopsordre o)
+    {
+        if (o.Linjer.Count == 0)
+        {
+            _melding = "Ordren har ingen varelinjer.";
+            return;
+        }
+
+        InnkjopService.MarkerSendt(o, null);
+        await Db.SaveChangesAsync();
+        await LastAsync();
+        _melding = $"{o.Visningsnummer} er markert som bestilt. Varene regnes nå som «bestilt» og kan tas imot.";
+    }
+
+    private async Task SlettUtkast(Innkjopsordre o)
+    {
+        if (_bekreft != $"slett-{o.Id}")
+        {
+            _bekreft = $"slett-{o.Id}";
+            return;
+        }
+
+        Db.Innkjopsordrer.Remove(o);
+        await Db.SaveChangesAsync();
+        Lukk();
+        await LastAsync();
+        _melding = $"Utkastet {o.Visningsnummer} er slettet.";
+    }
+
+    // Kansellerer ordren - eller avslutter resten hvis noe allerede er mottatt.
+    private async Task Kanseller(Innkjopsordre o)
+    {
+        if (_bekreft != $"kanseller-{o.Id}")
+        {
+            _bekreft = $"kanseller-{o.Id}";
+            return;
+        }
+
+        var noeMottatt = o.Linjer.Any(l => l.Mottatt > 0);
+        o.Status = noeMottatt ? InnkjopStatus.Avsluttet : InnkjopStatus.Kansellert;
+        await Db.SaveChangesAsync();
+        _bekreft = null;
+        await LastAsync();
+        _melding = noeMottatt ? $"Restordren på {o.Visningsnummer} er avsluttet." : $"{o.Visningsnummer} er kansellert.";
+    }
+
+    // ---------- Ordrebekreftelse ----------
+    private void FyllSomBestilt(Innkjopsordre o)
+    {
+        foreach (var l in o.Linjer)
+        {
+            l.BekreftetAntall ??= l.Antall;
+            l.BekreftetPris ??= l.Pris;
+            l.BekreftetLevering ??= o.OnsketLevering;
+        }
+    }
+
+    private async Task LagreBekreftelse(Innkjopsordre o)
+    {
+        var avvik = await InnkjopSvc.RegistrerBekreftelseAsync(o, _brukerNavn);
+        await LastAsync();
+        _melding = avvik
+            ? $"Ordrebekreftelsen for {o.Visningsnummer} har avvik. Se over og godkjenn, eller ta kontakt med {o.LeverandorNavn}."
+            : $"{o.Visningsnummer} er bekreftet uten avvik.";
+    }
+
+    private async Task GodkjennAvvik(Innkjopsordre o)
+    {
+        await InnkjopSvc.GodkjennAvvikAsync(o, _brukerNavn);
+        await LastAsync();
+        _melding = $"Avvikene på {o.Visningsnummer} er godkjent. Bekreftet antall og pris gjelder nå.";
+    }
+
+    private async Task LastOppOb(Innkjopsordre o, InputFileChangeEventArgs e)
+    {
+        const long maks = 15 * 1024 * 1024;
+        if (e.File.Size > maks)
+        {
+            _melding = "Filen er større enn 15 MB.";
+            return;
+        }
+
+        using var ms = new MemoryStream();
+        await e.File.OpenReadStream(maks).CopyToAsync(ms);
+        var fil = new InnkjopsordreFil { InnkjopsordreId = o.Id, Filnavn = e.File.Name, ContentType = e.File.ContentType, Data = ms.ToArray() };
+        Db.InnkjopsordreFiler.Add(fil);
+        o.ObFilnavn = e.File.Name;
+        await Db.SaveChangesAsync();
+        Db.Entry(fil).State = EntityState.Detached;
+        _melding = $"{e.File.Name} er lagt ved ordrebekreftelsen.";
+    }
+
+    private static decimal PrisEndring(Innkjopsordre o) =>
+        o.Linjer.Sum(l => (l.BekreftetAntall ?? l.Antall) * ((l.BekreftetPris ?? l.Pris) - l.Pris));
+
+    private static int? DagerForsinket(Innkjopsordre o)
+    {
+        var senest = o.Linjer.Max(l => l.BekreftetLevering);
+        return senest is { } s && o.OnsketLevering is { } onsket && s.Date > onsket.Date ? (s.Date - onsket.Date).Days : null;
+    }
+
+    // ---------- Varemottak ----------
+    private int MottakAntall(InnkjopsordreLinje l) => _mottak.TryGetValue(l.Id, out var a) ? a : l.Rest;
+
+    private void Juster(InnkjopsordreLinje l, int endring) => _mottak[l.Id] = Math.Clamp(MottakAntall(l) + endring, 0, l.Rest);
+
+    private void SettMottak(InnkjopsordreLinje l, string? verdi) =>
+        _mottak[l.Id] = int.TryParse(verdi, out var a) ? Math.Clamp(a, 0, l.Rest) : 0;
+
+    private void SettAlle(Innkjopsordre o, bool alle)
+    {
+        foreach (var l in o.Linjer)
+        {
+            _mottak[l.Id] = alle ? l.Rest : 0;
+        }
+    }
+
+    private async Task RegistrerMottak(Innkjopsordre o)
+    {
+        var antall = o.Linjer.Where(l => l.Rest > 0).ToDictionary(l => l.Id, MottakAntall);
+        _jobber = true;
+        var totalt = await InnkjopSvc.MottaAsync(o, antall, _mottakNotat, _brukerId, _brukerNavn);
+        _jobber = false;
+        if (totalt == 0)
+        {
+            _melding = "Ingen varer er registrert - sett antall på det som kom.";
+            return;
+        }
+
+        var rest = o.Linjer.Count(l => l.Rest > 0);
+        _mottak.Clear();
+        _mottakNotat = "";
+        Lukk();
+        await LastAsync();
+        _melding = $"{totalt} stk mottatt på {LagerNavn(o.LagerId)} fra {o.LeverandorNavn}."
+            + (rest > 0 ? $" {rest} {(rest == 1 ? "varelinje står" : "varelinjer står")} igjen som restordre på {o.Visningsnummer}." : $" {o.Visningsnummer} er fullt mottatt.");
+    }
+
+    // ======================================================================
+    // Innkjøp - visning
+    // ======================================================================
+    private RenderFragment Innkjop() => @<div class="lg-fane">
+        @if (ApenOrdre is { } o)
+        {
+            @OrdreDetalj(o)
+        }
+        else
+        {
+            <div class="lg-fane-topp">
+                <span><h2>Innkjøp</h2><p>Innkjøpsforslag og bestillinger til leverandører. Bestilte varer vises som «bestilt» til de er tatt imot.</p></span>
+                <button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => _visNyOrdre = !_visNyOrdre)"><Icon Name="plus" />Ny bestilling</button>
+            </div>
+
+            @if (_visNyOrdre)
+            {
+                <div class="lg-handling">
+                    <label class="lg-felt">Leverandør
+                        <select @bind="_nyLeverandorId">
+                            <option value="0">Annen leverandør …</option>
+                            @foreach (var l in _leverandorer)
+                            {
+                                <option value="@l.Id">@l.Navn</option>
+                            }
+                        </select>
+                    </label>
+                    @if (_nyLeverandorId == 0)
+                    {
+                        <label class="lg-felt">Navn på leverandør<input @bind="_nyLeverandorNavn" placeholder="F.eks. Låsgrossisten AS" /></label>
+                    }
+                    <div class="lg-handling-knapper">
+                        <button type="button" class="lg-knapp" @onclick="@(() => _visNyOrdre = false)">Avbryt</button>
+                        <button type="button" class="lg-knapp lg-knapp-p" @onclick="OpprettTomOrdre">Opprett bestilling</button>
+                    </div>
+                </div>
+            }
+
+            @if (_forslag.Count > 0)
+            {
+                <section class="lg-boks lg-forslag">
+                    <div class="lg-boks-topp">
+                        <h3>Innkjøpsforslag</h3>
+                        <span class="lg-chip lg-chip-bla">Laget automatisk</span>
+                        <small class="lg-svak lg-hoyre">Varer der beholdning + bestilt er på eller under minimum. Foreslått antall fyller opp til 2 × minimum.</small>
+                    </div>
+                    @foreach (var gruppe in ForslagGrupper)
+                    {
+                        var g = gruppe;
+                        <div class="lg-forslag-gruppe">
+                            <div class="lg-forslag-topp">
+                                <b>@g.Key</b>
+                                <small class="lg-svak">@g.Count() varer · @Kr(g.Sum(f => ForslagAntall(f) * f.Kilde.Pris))</small>
+                                <button type="button" class="lg-knapp lg-knapp-s lg-knapp-p lg-hoyre" @onclick="@(() => BestillForslag(g))"><Icon Name="receipt" />Lag bestilling</button>
+                            </div>
+                            <div class="lg-tabellwrap">
+                                <table class="lg-tabell lg-tabell-smal">
+                                    <thead><tr><th>Vare</th><th class="n">På lager</th><th class="n">Bestilt</th><th class="n">Min</th><th class="n">Antall</th><th class="n">Beløp</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var f in g)
+                                        {
+                                            var forslag = f;
+                                            <tr>
+                                                <td><b>@f.Vare.Navn</b><small>@f.Kilde.Varenummer</small></td>
+                                                <td class="n @(f.PaLager <= 0 ? "lg-rod" : "")">@f.PaLager</td>
+                                                <td class="n">@(f.Bestilt + f.IUtkast > 0 ? (f.Bestilt + f.IUtkast).ToString() : "–")</td>
+                                                <td class="n">@f.Minimum</td>
+                                                <td class="n"><input type="number" min="0" class="lg-tallfelt" value="@ForslagAntall(f)" @onchange="@(e => _forslagAntall[forslag.Vare.Id] = int.TryParse(e.Value?.ToString(), out var a) ? Math.Max(0, a) : 0)" aria-label="Antall å bestille" /></td>
+                                                <td class="n">@Kr(ForslagAntall(f) * f.Kilde.Pris)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
+                </section>
+            }
+
+            <section class="lg-boks">
+                <div class="lg-boks-topp">
+                    <h3>Bestillinger</h3>
+                    <span class="lg-fanevalg lg-hoyre">
+                        <button type="button" class="@(!_visAlleOrdre ? "aktiv" : "")" @onclick="@(() => _visAlleOrdre = false)">Åpne</button>
+                        <button type="button" class="@(_visAlleOrdre ? "aktiv" : "")" @onclick="@(() => _visAlleOrdre = true)">Alle</button>
+                    </span>
+                </div>
+                @{
+                    var liste = _ordrer.Where(x => _visAlleOrdre || x.Status == InnkjopStatus.Utkast || InnkjopService.Apne.Contains(x.Status)).ToList();
+                }
+                @if (liste.Count == 0)
+                {
+                    <p class="lg-tom">@(_visAlleOrdre ? "Ingen bestillinger ennå." : "Ingen åpne bestillinger.") Trykk «Ny bestilling» eller bruk innkjøpsforslaget.</p>
+                }
+                else
+                {
+                    <div class="lg-tabellwrap">
+                        <table class="lg-tabell">
+                            <thead><tr><th>Ordre</th><th>Leverandør</th><th>Dato</th><th>Levering</th><th class="n">Verdi</th><th class="n">Mottatt</th><th>Status</th></tr></thead>
+                            <tbody>
+                                @foreach (var x in liste)
+                                {
+                                    var ordre = x;
+                                    var bestiltStk = ordre.Linjer.Sum(l => l.Antall);
+                                    <tr class="lg-klikkrad" @onclick="@(() => ApneOrdre(ordre.Id, "innkjop"))">
+                                        <td class="mono">@ordre.Visningsnummer</td>
+                                        <td><b>@ordre.LeverandorNavn</b><small>@ordre.Linjer.Count varelinjer@(ordre.Prosjekt is { } p ? $" · {p.Navn}" : "")</small></td>
+                                        <td>@((ordre.Sendt ?? ordre.Opprettet).ToString("dd.MM.yyyy"))</td>
+                                        <td>@(ordre.Linjer.Max(l => l.BekreftetLevering)?.ToString("dd.MM") ?? ordre.OnsketLevering?.ToString("dd.MM") ?? "–")</td>
+                                        <td class="n">@Kr(OrdreSum(ordre))</td>
+                                        <td class="n">@ordre.Linjer.Sum(l => l.Mottatt) / @bestiltStk</td>
+                                        <td>@StatusChip(ordre.Status)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </section>
+        }
+    </div>;
+
+    private static readonly InnkjopStatus[] Flyt = [InnkjopStatus.Utkast, InnkjopStatus.Sendt, InnkjopStatus.Bekreftet, InnkjopStatus.DelvisMottatt, InnkjopStatus.Mottatt];
+
+    private RenderFragment StatusFlyt(Innkjopsordre o) => @<div class="lg-statusflyt">
+        @{
+            var steg = o.Status switch
+            {
+                InnkjopStatus.Avvik => 2,
+                InnkjopStatus.Avsluttet => 4,
+                InnkjopStatus.Kansellert => -1,
+                _ => Array.IndexOf(Flyt, o.Status)
+            };
+        }
+        @for (var i = 0; i < Flyt.Length; i++)
+        {
+            var navn = i == 2 && o.Status == InnkjopStatus.Avvik ? "Avvik" : i == 4 && o.Status == InnkjopStatus.Avsluttet ? "Avsluttet" : StatusInfo(Flyt[i]).Navn;
+            <span class="@(i < steg ? "ferdig" : i == steg ? (o.Status == InnkjopStatus.Avvik ? "avvik" : "na") : "")">@navn</span>
+            @if (i < Flyt.Length - 1)
+            {
+                <i>›</i>
+            }
+        }
+        @if (o.Status == InnkjopStatus.Kansellert)
+        {
+            <span class="avvik">Kansellert</span>
+        }
+    </div>;
+
+    private RenderFragment OrdreDetalj(Innkjopsordre o) => @<div class="lg-fane">
+        @{
+            var utkast = o.Status == InnkjopStatus.Utkast;
+            var harOb = o.Linjer.Any(l => l.BekreftetAntall is not null);
+        }
+        <div class="lg-fane-topp">
+            <span>
+                <button type="button" class="lg-lenkeknapp lg-tilbake" @onclick="Lukk"><Icon Name="arrow-left" />Alle bestillinger</button>
+                <h2>@o.Visningsnummer · @o.LeverandorNavn</h2>
+                <p>Laget @o.Opprettet.ToString("dd.MM.yyyy") av @(o.OpprettetAv ?? "–")@(o.Sendt is { } s ? $" · sendt {s:dd.MM.yyyy HH:mm}" + (o.SendtTil is null ? "" : $" til {o.SendtTil}") : "")</p>
+            </span>
+            <span class="lg-knapper">
+                <a class="lg-knapp" href="@($"/innkjop/{o.Id}/pdf")" target="_blank"><Icon Name="file-text" />PDF</a>
+                @if (utkast)
+                {
+                    <button type="button" class="lg-knapp" @onclick="@(() => MarkerBestilt(o))" title="Bestilt på telefon, nettbutikk e.l.">Marker som bestilt</button>
+                    <button type="button" class="lg-knapp lg-knapp-p" disabled="@(_jobber || o.Linjer.Count == 0)" @onclick="@(() => SendOrdre(o))"><Icon Name="send" />@(_jobber ? "Sender …" : "Send til leverandør")</button>
+                }
+                @if (o.Status is InnkjopStatus.Sendt or InnkjopStatus.Avvik)
+                {
+                    <button type="button" class="lg-knapp @(o.Status == InnkjopStatus.Avvik ? "lg-knapp-p" : "")" @onclick="@(() => ApneOrdre(o.Id, "ob"))"><Icon Name="mail" />@(o.Status == InnkjopStatus.Avvik ? "Behandle avvik" : "Registrer ordrebekreftelse")</button>
+                }
+                @if (InnkjopService.KanMottas.Contains(o.Status))
+                {
+                    <button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => ApneOrdre(o.Id, "mottak"))"><Icon Name="download" />Ta imot varer</button>
+                }
+            </span>
+        </div>
+
+        @StatusFlyt(o)
+
+        <div class="lg-ordrefelter">
+            @if (utkast)
+            {
+                <label class="lg-felt">Leverandør
+                    <select value="@(o.LeverandorId ?? 0)" @onchange="@(e => ByttLeverandor(o, e.Value?.ToString()))">
+                        @if (o.LeverandorId is null)
+                        {
+                            <option value="0">@o.LeverandorNavn</option>
+                        }
+                        @foreach (var l in _leverandorer)
+                        {
+                            <option value="@l.Id">@l.Navn</option>
+                        }
+                    </select>
+                </label>
+                <label class="lg-felt">Sendes til (e-post)<input type="email" @bind="o.LeverandorEpost" @bind:after="LagreOrdre" placeholder="ordre@leverandor.no" /></label>
+                <label class="lg-felt">Ønsket levering<input type="date" @bind="o.OnsketLevering" @bind:after="LagreOrdre" /></label>
+            }
+            else
+            {
+                <div class="lg-felt-vis"><span>Sendt til</span><b>@(o.SendtTil ?? (o.Sendt is null ? "–" : "Bestilt manuelt"))</b></div>
+                <div class="lg-felt-vis"><span>Ønsket levering</span><b>@(o.OnsketLevering?.ToString("dd.MM.yyyy") ?? "Snarest")</b></div>
+                <div class="lg-felt-vis"><span>Leverandørens ordrenr</span><b>@(o.LeverandorOrdrenr ?? "–")</b></div>
+            }
+            <label class="lg-felt">Tas inn på lager
+                <select @bind="o.LagerId" @bind:after="LagreOrdre" disabled="@(!utkast && !InnkjopService.KanMottas.Contains(o.Status))">
+                    @foreach (var l in AktiveLagre)
+                    {
+                        <option value="@l.Id">@l.Navn</option>
+                    }
+                </select>
+            </label>
+            <label class="lg-felt">Prosjekt
+                <select @bind="o.ProsjektId" @bind:after="LagreOrdre" disabled="@(!utkast)">
+                    <option value="">Til lager (ikke prosjekt)</option>
+                    @foreach (var p in _prosjekter)
+                    {
+                        <option value="@p.Id">@p.Navn</option>
+                    }
+                </select>
+            </label>
+            <label class="lg-felt">Vår referanse<input @bind="o.VarReferanse" @bind:after="LagreOrdre" disabled="@(!utkast)" /></label>
+            <label class="lg-felt lg-felt-bred">Merknad til leverandør<input @bind="o.Notat" @bind:after="LagreOrdre" disabled="@(!utkast)" placeholder="F.eks. ring før levering, levering til byggeplass …" /></label>
+        </div>
+
+        <div class="lg-tabellramme">
+            <table class="lg-tabell">
+                <thead>
+                    <tr>
+                        <th>Varenr</th><th>Vare</th><th class="n">Antall</th><th class="n">Pris</th><th class="n">Sum</th>
+                        @if (harOb)
+                        {
+                            <th class="n">Bekreftet</th>
+                        }
+                        @if (!utkast)
+                        {
+                            <th class="n">Mottatt</th>
+                        }
+                        @if (utkast)
+                        {
+                            <th></th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var x in o.Linjer.OrderBy(l => l.Id))
+                    {
+                        var linje = x;
+                        <tr>
+                            <td class="mono">@(linje.Varenummer ?? "–")</td>
+                            <td><b>@linje.Navn</b></td>
+                            @if (utkast)
+                            {
+                                <td class="n"><input type="number" min="1" class="lg-tallfelt" @bind="linje.Antall" @bind:after="LagreOrdre" aria-label="Antall" /></td>
+                                <td class="n"><input type="number" min="0" step="0.01" class="lg-tallfelt lg-tallfelt-bred" @bind="linje.Pris" @bind:after="LagreOrdre" aria-label="Pris" /></td>
+                            }
+                            else
+                            {
+                                <td class="n">@linje.Antall @(linje.Enhet ?? "stk")</td>
+                                <td class="n">@Kr2(linje.Pris)</td>
+                            }
+                            <td class="n">@Kr(linje.Antall * linje.Pris)</td>
+                            @if (harOb)
+                            {
+                                <td class="n @(InnkjopService.LinjeHarAvvik(o, linje) ? "lg-rod" : "")">@(linje.BekreftetAntall?.ToString() ?? "–")@(linje.BekreftetLevering is { } d ? $" · {d:dd.MM}" : "")</td>
+                            }
+                            @if (!utkast)
+                            {
+                                <td class="n"><b class="@(linje.Rest == 0 ? "lg-gronn" : "")">@linje.Mottatt</b> / @linje.Antall</td>
+                            }
+                            @if (utkast)
+                            {
+                                <td class="n"><button type="button" class="lg-lukk" title="Fjern linjen" @onclick="@(() => FjernLinje(o, linje))"><Icon Name="x" /></button></td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @if (o.Linjer.Count == 0)
+            {
+                <p class="lg-tom lg-innrykk">Ingen varer ennå. Søk opp varer under.</p>
+            }
+            <p class="lg-fot">@o.Linjer.Count varelinjer · <b>@Kr(OrdreSum(o))</b> eks. mva</p>
+        </div>
+
+        @if (utkast)
+        {
+            <div class="lg-boks lg-leggtil">
+                <label class="lg-felt lg-felt-bred">Legg til vare
+                    <input @bind="_linjeSok" @bind:event="oninput" @bind:after="SokLinje" placeholder="Søk navn, varenummer, leverandør eller EAN …" />
+                </label>
+                @foreach (var c in _linjeTreff)
+                {
+                    var treff = c;
+                    <div class="lg-lagerrad">
+                        <span class="lg-lagerrad-tekst"><b>@treff.Navn</b><small>@(treff.Leverandor ?? "Ingen leverandør") · @treff.Produktkode@(treff.ILagerstyring ? $" · {Totalt(treff.Id)} på lager" : " · ikke lagerført")</small></span>
+                        <button type="button" class="lg-knapp lg-knapp-s" @onclick="@(() => LeggTilLinje(o, treff))"><Icon Name="plus" />Legg til</button>
+                    </div>
+                }
+            </div>
+        }
+
+        @{
+            var mottakene = _sisteBevegelser.Where(b => b.InnkjopsordreId == o.Id).ToList();
+        }
+        @if (mottakene.Count > 0)
+        {
+            <section class="lg-boks">
+                <div class="lg-boks-topp"><h3>Varemottak</h3></div>
+                @BevegelseTabell(mottakene)
+            </section>
+        }
+
+        <div class="lg-farerad">
+            @if (utkast)
+            {
+                <button type="button" class="lg-lenkeknapp lg-lenkeknapp-fare" @onclick="@(() => SlettUtkast(o))">@(_bekreft == $"slett-{o.Id}" ? "Trykk igjen for å slette utkastet" : "Slett utkast")</button>
+            }
+            else if (InnkjopService.Apne.Contains(o.Status))
+            {
+                var noeMottatt = o.Linjer.Any(l => l.Mottatt > 0);
+                <button type="button" class="lg-lenkeknapp lg-lenkeknapp-fare" @onclick="@(() => Kanseller(o))">@(_bekreft == $"kanseller-{o.Id}" ? "Trykk igjen for å bekrefte" : noeMottatt ? "Avslutt restordre" : "Kanseller bestilling")</button>
+            }
+        </div>
+    </div>;
+
+    // ======================================================================
+    // Ordrebekreftelser - visning
+    // ======================================================================
+    private RenderFragment Ordrebekreftelser() => @<div class="lg-fane">
+        @if (ApenOrdre is { } o && o.Status != InnkjopStatus.Utkast)
+        {
+            @ObDetalj(o)
+        }
+        else
+        {
+            <div class="lg-fane-topp">
+                <span><h2>Ordrebekreftelser</h2><p>Leverandørens bekreftelse sammenlignes med bestillingen. Avvik i antall, pris eller leveringsdato må godkjennes.</p></span>
+            </div>
+
+            @if (MedAvvik.Count > 0)
+            {
+                <section class="lg-boks lg-boks-rod">
+                    <div class="lg-boks-topp"><h3>Med avvik</h3><span class="lg-chip lg-chip-rod">@MedAvvik.Count</span></div>
+                    @foreach (var x in MedAvvik)
+                    {
+                        var ordre = x;
+                        var diff = PrisEndring(ordre);
+                        <button type="button" class="lg-lagerrad lg-klikk lg-radknapp" @onclick="@(() => ApneOrdre(ordre.Id, "ob"))">
+                            <span class="lg-lagerrad-tekst"><b>@ordre.Visningsnummer · @ordre.LeverandorNavn</b><small>@(diff != 0 ? $"Pris {(diff > 0 ? "+" : "")}{Kr(diff)}" : "Ingen prisendring")@(DagerForsinket(ordre) is { } dager ? $" · levering {dager} dager senere enn ønsket" : "")</small></span>
+                            <span class="lg-chip lg-chip-rod">Behandle</span>
+                        </button>
+                    }
+                </section>
+            }
+
+            <section class="lg-boks">
+                <div class="lg-boks-topp"><h3>Venter på bekreftelse</h3></div>
+                @if (VenterPaOb.Count == 0)
+                {
+                    <p class="lg-tom">Ingen bestillinger venter på ordrebekreftelse.</p>
+                }
+                @foreach (var x in VenterPaOb)
+                {
+                    var ordre = x;
+                    var dager = (DateTime.Today - (ordre.Sendt ?? ordre.Opprettet).Date).Days;
+                    <button type="button" class="lg-lagerrad lg-klikk lg-radknapp" @onclick="@(() => ApneOrdre(ordre.Id, "ob"))">
+                        <span class="lg-lagerrad-tekst"><b>@ordre.Visningsnummer · @ordre.LeverandorNavn</b><small>Sendt @((ordre.Sendt ?? ordre.Opprettet).ToString("dd.MM.yyyy")) · @ordre.Linjer.Count varelinjer · @Kr(OrdreSum(ordre))</small></span>
+                        <span class="lg-chip @(dager >= 3 ? "lg-chip-gul" : "")">@(dager == 0 ? "I dag" : dager == 1 ? "1 dag" : $"{dager} dager")</span>
+                    </button>
+                }
+            </section>
+
+            var nylig = _ordrer.Where(x => x.BekreftetDato is { } d && d >= DateTime.Today.AddDays(-14) && x.Status != InnkjopStatus.Avvik).Take(10).ToList();
+            @if (nylig.Count > 0)
+            {
+                <section class="lg-boks">
+                    <div class="lg-boks-topp"><h3>Bekreftet siste 14 dager</h3></div>
+                    @foreach (var x in nylig)
+                    {
+                        var ordre = x;
+                        <button type="button" class="lg-lagerrad lg-klikk lg-radknapp" @onclick="@(() => ApneOrdre(ordre.Id, "ob"))">
+                            <span class="lg-lagerrad-tekst"><b>@ordre.Visningsnummer · @ordre.LeverandorNavn</b><small>Bekreftet @ordre.BekreftetDato?.ToString("dd.MM.yyyy") av @(ordre.BekreftetAv ?? "–")</small></span>
+                            @StatusChip(ordre.Status)
+                        </button>
+                    }
+                </section>
+            }
+        }
+    </div>;
+
+    private RenderFragment ObDetalj(Innkjopsordre o) => @<div class="lg-fane">
+        @{
+            var kanEndres = o.Status is InnkjopStatus.Sendt or InnkjopStatus.Avvik or InnkjopStatus.Bekreftet;
+            var diff = PrisEndring(o);
+            var forsinket = DagerForsinket(o);
+            var antallAvvik = o.Linjer.Count(l => l.BekreftetAntall is { } a && a != l.Antall);
+        }
+        <div class="lg-fane-topp">
+            <span>
+                <button type="button" class="lg-lenkeknapp lg-tilbake" @onclick="Lukk"><Icon Name="arrow-left" />Alle ordrebekreftelser</button>
+                <h2>Ordrebekreftelse @o.Visningsnummer</h2>
+                <p>@o.LeverandorNavn · sendt @(o.Sendt?.ToString("dd.MM.yyyy") ?? "–") · ønsket levering @(o.OnsketLevering?.ToString("dd.MM.yyyy") ?? "snarest")</p>
+            </span>
+            <span class="lg-knapper">
+                <button type="button" class="lg-knapp" @onclick="@(() => ApneOrdre(o.Id, "innkjop"))">Se bestillingen</button>
+                @StatusChip(o.Status)
+            </span>
+        </div>
+
+        <div class="lg-ordrefelter">
+            <label class="lg-felt">Leverandørens ordrenr<input @bind="o.LeverandorOrdrenr" @bind:after="LagreOrdre" disabled="@(!kanEndres)" /></label>
+            <div class="lg-felt">Bekreftelse (PDF eller bilde)
+                <span class="lg-filrad">
+                    @if (o.ObFilnavn is not null)
+                    {
+                        <a href="@($"/innkjop/{o.Id}/ordrebekreftelse")" target="_blank"><Icon Name="file-text" />@o.ObFilnavn</a>
+                    }
+                    <label class="lg-knapp lg-knapp-s lg-filknapp"><Icon Name="upload" />@(o.ObFilnavn is null ? "Last opp" : "Bytt")<InputFile OnChange="@(e => LastOppOb(o, e))" accept=".pdf,image/*" /></label>
+                </span>
+            </div>
+        </div>
+
+        <p class="lg-hint">Fyll inn det leverandøren har bekreftet. Tomme felt regnes som bekreftet slik det ble bestilt. Røde felt avviker fra bestillingen.</p>
+
+        <div class="lg-tabellramme">
+            <table class="lg-tabell">
+                <thead><tr><th>Vare</th><th class="n">Bestilt</th><th class="n">Bekreftet antall</th><th class="n">Pris bestilt</th><th class="n">Bekreftet pris</th><th>Levering</th></tr></thead>
+                <tbody>
+                    @foreach (var x in o.Linjer.OrderBy(l => l.Id))
+                    {
+                        var l = x;
+                        var antallAvviker = l.BekreftetAntall is { } a && a != l.Antall;
+                        var prisAvviker = l.BekreftetPris is { } p && p != l.Pris;
+                        var datoAvviker = l.BekreftetLevering is { } d && o.OnsketLevering is { } onsket && d.Date > onsket.Date;
+                        <tr>
+                            <td><b>@l.Navn</b><small>@l.Varenummer</small></td>
+                            <td class="n">@l.Antall</td>
+                            <td class="n @(antallAvviker ? "lg-avvik" : "")"><input type="number" min="0" class="lg-tallfelt" @bind="l.BekreftetAntall" placeholder="@l.Antall" disabled="@(!kanEndres)" aria-label="Bekreftet antall" /></td>
+                            <td class="n">@Kr2(l.Pris)</td>
+                            <td class="n @(prisAvviker ? "lg-avvik" : "")"><input type="number" min="0" step="0.01" class="lg-tallfelt lg-tallfelt-bred" @bind="l.BekreftetPris" placeholder="@l.Pris.ToString("0.##", CultureInfo.InvariantCulture)" disabled="@(!kanEndres)" aria-label="Bekreftet pris" /></td>
+                            <td class="@(datoAvviker ? "lg-avvik" : "")"><input type="date" class="lg-datofelt" @bind="l.BekreftetLevering" disabled="@(!kanEndres)" aria-label="Bekreftet levering" /></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (o.Status == InnkjopStatus.Avvik)
+        {
+            <section class="lg-boks lg-boks-rod">
+                <div class="lg-boks-topp"><h3>Avvik fra bestillingen</h3></div>
+                <ul class="lg-avviksliste">
+                    @if (diff != 0)
+                    {
+                        <li>Prisen er <b>@(diff > 0 ? "høyere" : "lavere")</b> enn bestilt: @(diff > 0 ? "+" : "")@Kr(diff) totalt.</li>
+                    }
+                    @if (antallAvvik > 0)
+                    {
+                        <li>Antallet er endret på <b>@antallAvvik</b> @(antallAvvik == 1 ? "linje" : "linjer") (restnotert eller endret av leverandør).</li>
+                    }
+                    @if (forsinket is { } dager)
+                    {
+                        <li>Levering <b>@dager dager</b> senere enn ønsket.@(o.Prosjekt is { } p ? $" Bestillingen gjelder {p.Navn} - sjekk at det passer med montasjen." : "")</li>
+                    }
+                </ul>
+                <label class="lg-felt lg-felt-bred">Kommentar<input @bind="o.AvvikKommentar" @bind:after="LagreOrdre" placeholder="F.eks. avtalt med leverandør, ny pris godtatt …" /></label>
+                <div class="lg-knapper">
+                    <button type="button" class="lg-knapp lg-knapp-ok" @onclick="@(() => GodkjennAvvik(o))"><Icon Name="check" />Godkjenn avvik</button>
+                    <button type="button" class="lg-knapp" @onclick="@(() => LagreBekreftelse(o))">Lagre ny bekreftelse</button>
+                    <button type="button" class="lg-lenkeknapp lg-lenkeknapp-fare" @onclick="@(() => Kanseller(o))">@(_bekreft == $"kanseller-{o.Id}" ? "Trykk igjen for å kansellere" : "Kanseller bestillingen")</button>
+                </div>
+            </section>
+        }
+        else if (kanEndres)
+        {
+            <div class="lg-knapper">
+                <button type="button" class="lg-knapp" @onclick="@(() => FyllSomBestilt(o))">Fyll inn som bestilt</button>
+                <button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => LagreBekreftelse(o))"><Icon Name="check" />@(o.Status == InnkjopStatus.Bekreftet ? "Lagre endringer" : "Lagre bekreftelse")</button>
+                @if (o.Status == InnkjopStatus.Bekreftet)
+                {
+                    <button type="button" class="lg-knapp" @onclick="@(() => ApneOrdre(o.Id, "mottak"))"><Icon Name="download" />Ta imot varer</button>
+                }
+            </div>
+        }
+    </div>;
+
+    // ======================================================================
+    // Varemottak - visning
+    // ======================================================================
+    private RenderFragment Varemottak() => @<div class="lg-fane">
+        @if (ApenOrdre is { } o && InnkjopService.KanMottas.Contains(o.Status))
+        {
+            @MottakDetalj(o)
+        }
+        else
+        {
+            <div class="lg-fane-topp">
+                <span><h2>Varemottak</h2><p>Tell inn varer fra leverandør. Det som ikke kommer, står igjen som restordre, og innprisen oppdaterer snittkosten.</p></span>
+            </div>
+            @if (KlareForMottak.Count == 0 && MedAvvik.Count == 0)
+            {
+                <p class="lg-tom">Ingen bestillinger venter på varer. Bestillinger dukker opp her når de er sendt.</p>
+            }
+            <div class="lg-lagerrutenett">
+                @foreach (var x in KlareForMottak.OrderBy(x => x.Linjer.Max(l => l.BekreftetLevering) ?? x.OnsketLevering ?? DateTime.MaxValue))
+                {
+                    var ordre = x;
+                    var levering = ordre.Linjer.Max(l => l.BekreftetLevering) ?? ordre.OnsketLevering;
+                    <section class="lg-lagerkort lg-mottakskort">
+                        <div class="lg-lagerkort-topp">
+                            <span class="lg-lagerikon"><Icon Name="download" /></span>
+                            <span class="lg-lagerrad-tekst"><b>@ordre.Visningsnummer · @ordre.LeverandorNavn</b><small>@ordre.Linjer.Count(l => l.Rest > 0) @(ordre.Linjer.Count(l => l.Rest > 0) == 1 ? "varelinje venter" : "varelinjer venter") · @ordre.Linjer.Sum(l => l.Rest) stk</small></span>
+                            @StatusChip(ordre.Status)
+                        </div>
+                        <div class="lg-mottak-info">
+                            <span>Til <b>@LagerNavn(ordre.LagerId)</b></span>
+                            <span class="@(levering is { } lv && lv.Date < DateTime.Today ? "lg-rod" : "")">@(levering is { } dato ? $"Levering {dato:dd.MM.yyyy}" : "Ingen leveringsdato")</span>
+                        </div>
+                        <button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => ApneOrdre(ordre.Id, "mottak"))"><Icon Name="check" />Ta imot</button>
+                    </section>
+                }
+                @foreach (var x in MedAvvik)
+                {
+                    var ordre = x;
+                    <section class="lg-lagerkort lg-mottakskort lg-mottakskort-sperret">
+                        <div class="lg-lagerkort-topp">
+                            <span class="lg-lagerikon"><Icon Name="alert-triangle" /></span>
+                            <span class="lg-lagerrad-tekst"><b>@ordre.Visningsnummer · @ordre.LeverandorNavn</b><small>Avvik i ordrebekreftelsen må godkjennes før mottak</small></span>
+                        </div>
+                        <button type="button" class="lg-knapp" @onclick="@(() => ApneOrdre(ordre.Id, "ob"))">Behandle avvik</button>
+                    </section>
+                }
+            </div>
+        }
+    </div>;
+
+    private RenderFragment MottakDetalj(Innkjopsordre o) => @<div class="lg-fane">
+        @{
+            var aktuelle = o.Linjer.Where(l => l.Rest > 0).OrderBy(l => Hylle(l.ComponentId, o.LagerId) ?? "~").ThenBy(l => l.Navn).ToList();
+            var ferdige = o.Linjer.Where(l => l.Rest == 0).ToList();
+            var valgt = aktuelle.Sum(MottakAntall);
+        }
+        <div class="lg-fane-topp">
+            <span>
+                <button type="button" class="lg-lenkeknapp lg-tilbake" @onclick="Lukk"><Icon Name="arrow-left" />Alle mottak</button>
+                <h2>Varemottak @o.Visningsnummer</h2>
+                <p>@o.LeverandorNavn@(o.LeverandorOrdrenr is null ? "" : $" · ordrenr {o.LeverandorOrdrenr}")</p>
+            </span>
+            <span class="lg-knapper">
+                <button type="button" class="lg-knapp lg-knapp-s" @onclick="@(() => SettAlle(o, true))">Alt kom</button>
+                <button type="button" class="lg-knapp lg-knapp-s" @onclick="@(() => SettAlle(o, false))">Nullstill</button>
+            </span>
+        </div>
+
+        <div class="lg-mottak">
+            <label class="lg-felt">Tas inn på
+                <select @bind="o.LagerId" @bind:after="LagreOrdre">
+                    @foreach (var l in AktiveLagre)
+                    {
+                        <option value="@l.Id">@l.Navn</option>
+                    }
+                </select>
+            </label>
+
+            <div class="lg-mottak-liste">
+                @foreach (var x in aktuelle)
+                {
+                    var linje = x;
+                    var antall = MottakAntall(linje);
+                    <div class="lg-mottak-rad @(antall < linje.Rest ? "lg-mottak-mangler" : "")">
+                        <span class="lg-lagerrad-tekst">
+                            <b>@linje.Navn</b>
+                            <small>@(linje.Varenummer ?? "–") · hylle @(Hylle(linje.ComponentId, o.LagerId) ?? "–") · venter @linje.Rest av @linje.Antall</small>
+                            @if (antall < linje.Rest)
+                            {
+                                <small class="lg-rod">@(linje.Rest - antall) blir restordre</small>
+                            }
+                        </span>
+                        <span class="lg-teller">
+                            <button type="button" @onclick="@(() => Juster(linje, -1))" disabled="@(antall <= 0)" aria-label="Én mindre">−</button>
+                            <input type="number" min="0" max="@linje.Rest" value="@antall" @onchange="@(e => SettMottak(linje, e.Value?.ToString()))" aria-label="Antall mottatt" />
+                            <button type="button" @onclick="@(() => Juster(linje, 1))" disabled="@(antall >= linje.Rest)" aria-label="Én til">+</button>
+                        </span>
+                    </div>
+                }
+                @foreach (var linje in ferdige)
+                {
+                    <div class="lg-mottak-rad lg-mottak-ferdig">
+                        <span class="lg-lagerrad-tekst"><b>@linje.Navn</b><small>Mottatt @linje.Mottatt av @linje.Antall</small></span>
+                        <span class="lg-chip lg-chip-gronn">✓ Mottatt</span>
+                    </div>
+                }
+            </div>
+
+            <label class="lg-felt lg-felt-bred">Notat (pakkseddel, skade e.l.)<input @bind="_mottakNotat" placeholder="Valgfritt" /></label>
+            <button type="button" class="lg-knapp lg-knapp-p lg-mottak-knapp" disabled="@(_jobber || valgt == 0)" @onclick="@(() => RegistrerMottak(o))"><Icon Name="check" />@(_jobber ? "Registrerer …" : $"Registrer mottak ({valgt} stk)")</button>
+        </div>
+    </div>;
+
+    // ======================================================================
     // Varebevegelser
     // ======================================================================
     private int? _bevLager;
@@ -912,6 +1974,7 @@
             </select>
             <select class="lg-velg" @bind="_bevType">
                 <option value="">Alle typer</option>
+                <option value="@LagerBevegelseType.Mottak">Varemottak</option>
                 <option value="@LagerBevegelseType.Tilgang">Tilgang</option>
                 <option value="@LagerBevegelseType.Uttak">Uttak</option>
                 <option value="@LagerBevegelseType.FlyttUt">Flytting</option>

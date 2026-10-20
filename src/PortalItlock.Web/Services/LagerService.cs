@@ -57,7 +57,7 @@ public class LagerService(ApplicationDbContext db)
     // kostPerStk brukes ved tilgang (oppdaterer snittkost); ved uttak brukes
     // varens snittkost.
     public async Task RegistrerAsync(int componentId, int lagerId, int antall, LagerBevegelseType type,
-        string? notat, int? brukerId, string? brukerNavn, decimal? kostPerStk = null, int? varetellingId = null)
+        string? notat, int? brukerId, string? brukerNavn, decimal? kostPerStk = null, int? varetellingId = null, int? innkjopsordreId = null)
     {
         if (antall == 0)
         {
@@ -88,7 +88,8 @@ public class LagerService(ApplicationDbContext db)
             Notat = string.IsNullOrWhiteSpace(notat) ? null : notat.Trim(),
             BrukerId = brukerId,
             BrukerNavn = brukerNavn,
-            VaretellingId = varetellingId
+            VaretellingId = varetellingId,
+            InnkjopsordreId = innkjopsordreId
         });
 
         await db.SaveChangesAsync();

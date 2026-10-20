@@ -141,6 +141,8 @@ builder.Services.AddHostedService<KundeOppfolgingVarselBackgroundService>();
 builder.Services.AddScoped<TicketEskaleringService>();
 builder.Services.AddScoped<TilleggsmodulService>();
 builder.Services.AddScoped<LagerService>();
+builder.Services.AddScoped<InnkjopService>();
+builder.Services.AddScoped<InnkjopsordrePdfService>();
 builder.Services.AddScoped<VarselTellerService>();
 builder.Services.AddHostedService<TicketEskaleringBackgroundService>();
 builder.Services.AddHttpClient<DatabaseBackupService>(client =>
@@ -1371,6 +1373,36 @@ app.MapGet("/avvik/{id:int}/pdf", async (int id, HttpContext context, AvvikPdfSe
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
+
+app.MapGet("/innkjop/{id:int}/pdf", async (int id, HttpContext context, ApplicationDbContext db, InnkjopsordrePdfService service) =>
+{
+    var nummer = await db.Innkjopsordrer.Where(o => o.Id == id).Select(o => (int?)o.Nummer).FirstOrDefaultAsync();
+    var pdf = nummer is null ? null : await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName($"Innkjopsordre-IO-{nummer}.pdf");
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
+
+app.MapGet("/innkjop/{id:int}/ordrebekreftelse", async (int id, HttpContext context, ApplicationDbContext db) =>
+{
+    var fil = await db.InnkjopsordreFiler.AsNoTracking().Where(f => f.InnkjopsordreId == id)
+        .OrderByDescending(f => f.Id).FirstOrDefaultAsync();
+    if (fil is null)
+    {
+        return Results.NotFound();
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(fil.Filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(fil.Data, fil.ContentType ?? "application/octet-stream");
+}).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
 
 app.MapGet("/ce/{id:int}/pdf", async (int id, HttpContext context, CeGodkjenningPdfService service) =>
 {

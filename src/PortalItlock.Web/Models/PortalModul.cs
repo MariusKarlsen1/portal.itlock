@@ -291,7 +291,7 @@ public static class PortalModulRegister
             "Beholdning, lagre, bevegelser og varetelling",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Lager", "Beholdning, lagerverdi, montørbiler og varetelling", "lager", "box", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Lager),
+                    new Lenke("Lager", "Beholdning, innkjøp, varemottak og varetelling", "lager", "box", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Lager),
                 ]),
             ]),
 
