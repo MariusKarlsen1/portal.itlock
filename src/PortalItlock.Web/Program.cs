@@ -144,6 +144,7 @@ builder.Services.AddScoped<TilleggsmodulService>();
 builder.Services.AddScoped<LagerService>();
 builder.Services.AddScoped<ReservasjonService>();
 builder.Services.AddScoped<PlukkService>();
+builder.Services.AddScoped<LagerRapportService>();
 builder.Services.AddScoped<InnkjopService>();
 builder.Services.AddScoped<InnkjopsordrePdfService>();
 builder.Services.AddScoped<VarselTellerService>();
@@ -1405,6 +1406,28 @@ app.MapGet("/innkjop/{id:int}/ordrebekreftelse", async (int id, HttpContext cont
     disposisjon.SetHttpFileName(fil.Filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(fil.Data, fil.ContentType ?? "application/octet-stream");
+}).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
+
+app.MapGet("/lager/eksport/beholdning.csv", async (TilleggsmodulService moduler, LagerRapportService rapport) =>
+{
+    if (!await moduler.HarAsync(TilleggsModuler.Lager))
+    {
+        return Results.NotFound();
+    }
+
+    return Results.File(await rapport.BeholdningCsvAsync(), "text/csv; charset=utf-8", $"Lagerbeholdning-{DateTime.Today:yyyy-MM-dd}.csv");
+}).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
+
+app.MapGet("/lager/eksport/bevegelser.csv", async (DateTime? fra, DateTime? til, TilleggsmodulService moduler, LagerRapportService rapport) =>
+{
+    if (!await moduler.HarAsync(TilleggsModuler.Lager))
+    {
+        return Results.NotFound();
+    }
+
+    var start = fra ?? new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    var slutt = til ?? DateTime.Today;
+    return Results.File(await rapport.BevegelserCsvAsync(start, slutt), "text/csv; charset=utf-8", $"Lagerbevegelser-{start:yyyy-MM-dd}-{slutt:yyyy-MM-dd}.csv");
 }).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
 
 app.MapGet("/ce/{id:int}/pdf", async (int id, HttpContext context, CeGodkjenningPdfService service) =>

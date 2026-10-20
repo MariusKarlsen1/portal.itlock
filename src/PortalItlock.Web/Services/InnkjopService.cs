@@ -248,6 +248,12 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, Reserva
         ordre.BekreftetDato = DateTime.Now;
         ordre.BekreftetAv = brukerNavn;
         var avvik = ordre.Linjer.Any(l => LinjeHarAvvik(ordre, l));
+        if (avvik)
+        {
+            ordre.HaddeAvvik = true;
+            ordre.AvvikPris = ordre.Linjer.Sum(l => (l.BekreftetAntall ?? l.Antall) * ((l.BekreftetPris ?? l.Pris) - l.Pris));
+        }
+
         ordre.Status = avvik ? InnkjopStatus.Avvik : (ordre.Linjer.Any(l => l.Mottatt > 0) ? InnkjopStatus.DelvisMottatt : InnkjopStatus.Bekreftet);
         await db.SaveChangesAsync();
         return avvik;

@@ -59,6 +59,11 @@ public class Innkjopsordre
     public string? ObFilnavn { get; set; }
     public string? AvvikKommentar { get; set; }
 
+    // Fase 5: avvikshistorikk til leverandørrapporten (status blir
+    // «Bekreftet» når avviket godkjennes, så dette tas vare på her).
+    public bool HaddeAvvik { get; set; }
+    public decimal? AvvikPris { get; set; }
+
     public List<InnkjopsordreLinje> Linjer { get; set; } = [];
 
     public string Visningsnummer => $"IO-{Nummer}";

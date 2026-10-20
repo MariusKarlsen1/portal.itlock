@@ -2900,11 +2900,17 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("AvvikKommentar")
                         .HasColumnType("TEXT");
 
+                    b.Property<decimal?>("AvvikPris")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("BekreftetAv")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("BekreftetDato")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("HaddeAvvik")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("LagerId")
                         .HasColumnType("INTEGER");
