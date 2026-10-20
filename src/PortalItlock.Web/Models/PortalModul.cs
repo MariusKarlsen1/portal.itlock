@@ -30,7 +30,11 @@ public sealed record Lenke(
     // Modulen ligger i venstremenyen som vanlig, men vises ikke som kort i
     // kategorien på forsiden - for moduler man uansett går rett til fra
     // menyen, og som bare ville tatt plass i kategorioversikten.
-    bool KunIMeny = false);
+    bool KunIMeny = false,
+    // Tilleggsmodul organisasjonen må ha kjøpt (TilleggsModuler), f.eks. "lager".
+    // Uten den vises lenken ikke - heller ikke når listen over aktive
+    // moduler ikke er sendt med (trygg standard).
+    string? KreverModul = null);
 
 public sealed record LenkeGruppe(string Navn, List<Lenke> Lenker);
 public sealed record Rolle(string Nokkel, string Tittel, string Beskrivelse, List<LenkeGruppe> Grupper);
@@ -280,6 +284,17 @@ public static class PortalModulRegister
                 ]),
             ]),
 
+        // Tilleggsmodul - vises bare for organisasjoner som har kjøpt Lagerstyring.
+        new Rolle(
+            "lager",
+            "Lager og innkjøp",
+            "Beholdning, lagre, bevegelser og varetelling",
+            [
+                new LenkeGruppe("Moduler", [
+                    new Lenke("Lager", "Beholdning, lagerverdi, montørbiler og varetelling", "lager", "box", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Lager),
+                ]),
+            ]),
+
         new Rolle(
             "administrasjon",
             "Administrasjon",
@@ -304,7 +319,9 @@ public static class PortalModulRegister
 
     // Alle kategoriene filtrert på hva rollen har tilgang til - KunIMeny er
     // ikke tatt hensyn til her. Grunnlaget for både menyen og forsidekortene.
-    private static List<Rolle> TilgangsfiltrerteKategorier(BrukerRolle? rolle)
+    // aktiveModuler: tilleggsmodulene organisasjonen har (TilleggsmodulService).
+    // Uten listen skjules alle lenker som krever en tilleggsmodul.
+    private static List<Rolle> TilgangsfiltrerteKategorier(BrukerRolle? rolle, IReadOnlySet<string>? aktiveModuler = null)
     {
         var tilgang = TilgangFor(rolle);
 
@@ -312,7 +329,13 @@ public static class PortalModulRegister
             .Select(k => k with
             {
                 Grupper = k.Grupper
-                    .Select(g => g with { Lenker = g.Lenker.Where(l => l.Tilgang.HasFlag(tilgang)).ToList() })
+                    .Select(g => g with
+                    {
+                        Lenker = g.Lenker
+                            .Where(l => l.Tilgang.HasFlag(tilgang))
+                            .Where(l => l.KreverModul is null || (aktiveModuler?.Contains(l.KreverModul) ?? false))
+                            .ToList()
+                    })
                     .Where(g => g.Lenker.Count > 0)
                     .ToList()
             })
@@ -323,7 +346,7 @@ public static class PortalModulRegister
     // Kategoriene slik de vises på forsiden: bare moduler rollen har tilgang
     // til, og uten de som er merket KunIMeny. En kategori uten synlige moduler
     // faller bort av seg selv.
-    public static List<Rolle> KategorierFor(BrukerRolle? rolle) => TilgangsfiltrerteKategorier(rolle)
+    public static List<Rolle> KategorierFor(BrukerRolle? rolle, IReadOnlySet<string>? aktiveModuler = null) => TilgangsfiltrerteKategorier(rolle, aktiveModuler)
         .Select(k => k with
         {
             Grupper = k.Grupper
@@ -336,7 +359,7 @@ public static class PortalModulRegister
 
     // Flat liste over modulene brukeren ser - til venstremenyen. Tar med
     // KunIMeny-modulene, som er hele poenget med dem.
-    public static List<Lenke> ModulerFor(BrukerRolle? rolle) => TilgangsfiltrerteKategorier(rolle)
+    public static List<Lenke> ModulerFor(BrukerRolle? rolle, IReadOnlySet<string>? aktiveModuler = null) => TilgangsfiltrerteKategorier(rolle, aktiveModuler)
         .SelectMany(k => k.Grupper)
         .SelectMany(g => g.Lenker)
         .DistinctBy(l => l.Href)
@@ -346,7 +369,7 @@ public static class PortalModulRegister
     // altså bare sider man faktisk kan lande på. Brukes av "Mine hurtigvalg"
     // på forsiden, som skal peke rett på en modul og ikke på en hub-nøkkel
     // ("oppsettmodul") det ikke finnes noen side for.
-    public static List<Lenke> BladLenkerFor(BrukerRolle? rolle) => ModulerFor(rolle)
+    public static List<Lenke> BladLenkerFor(BrukerRolle? rolle, IReadOnlySet<string>? aktiveModuler = null) => ModulerFor(rolle, aktiveModuler)
         .SelectMany(l => l.Undermoduler is { Count: > 0 } under ? under : [l])
         .DistinctBy(l => l.Href)
         .ToList();

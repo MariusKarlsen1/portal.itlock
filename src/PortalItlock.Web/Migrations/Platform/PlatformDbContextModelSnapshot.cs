@@ -178,6 +178,36 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.ToTable("TenantLisenser");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantModul", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Aktiv")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("AktivertDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Modul")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("SistEndret")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Modul")
+                        .IsUnique();
+
+                    b.ToTable("TenantModuler");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.PlattformBrukerPasswordResetToken", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.PlattformBruker", "PlattformBruker")
@@ -193,6 +223,17 @@ namespace PortalItlock.Web.Migrations.Platform
                 {
                     b.HasOne("PortalItlock.Web.Models.Tenant", "Tenant")
                         .WithMany("Lisenser")
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantModul", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", "Tenant")
+                        .WithMany()
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

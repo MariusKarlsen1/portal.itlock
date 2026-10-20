@@ -1344,6 +1344,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("RabattgruppeId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<decimal?>("Snittkost")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("TrengerDobbelsjekk")
                         .HasColumnType("INTEGER");
 
@@ -3725,6 +3728,94 @@ namespace PortalItlock.Web.Migrations
                         .IsUnique();
 
                     b.ToTable("KunngjoringVisninger");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.Lager", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Aktiv")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AnsvarligBrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Opprettet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProsjektId");
+
+                    b.ToTable("Lagre");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.LagerBevegelse", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Antall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ArbeidsordreId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("BrukerNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("FlyttId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("KostPerStk")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("LagerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Notat")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Tidspunkt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("VaretellingId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LagerId");
+
+                    b.HasIndex("Tidspunkt");
+
+                    b.HasIndex("ComponentId", "LagerId");
+
+                    b.ToTable("LagerBevegelser");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LagretPdf", b =>
@@ -6476,6 +6567,92 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("TripletexSyncTilstand");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.VareLagerplass", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Hylle")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("LagerId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LagerId");
+
+                    b.HasIndex("ComponentId", "LagerId")
+                        .IsUnique();
+
+                    b.ToTable("VareLagerplasser");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.Varetelling", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("Godkjent")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GodkjentAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("LagerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Notat")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Startet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StartetAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LagerId");
+
+                    b.ToTable("Varetellinger");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.VaretellingLinje", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Registrert")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Talt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("VaretellingId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ComponentId");
+
+                    b.HasIndex("VaretellingId");
+
+                    b.ToTable("VaretellingLinjer");
+                });
+
             modelBuilder.Entity("BrukerProsjekt", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Bruker", null)
@@ -7409,6 +7586,35 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Kunngjoring");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.Lager", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
+                        .WithMany()
+                        .HasForeignKey("ProsjektId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Prosjekt");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.LagerBevegelse", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Component", "Component")
+                        .WithMany()
+                        .HasForeignKey("ComponentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Lager", "Lager")
+                        .WithMany()
+                        .HasForeignKey("LagerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Component");
+
+                    b.Navigation("Lager");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.LasplanReserve", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Component", "Component")
@@ -8161,6 +8367,55 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Bruker");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.VareLagerplass", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Component", "Component")
+                        .WithMany()
+                        .HasForeignKey("ComponentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Lager", "Lager")
+                        .WithMany()
+                        .HasForeignKey("LagerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Component");
+
+                    b.Navigation("Lager");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.Varetelling", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Lager", "Lager")
+                        .WithMany()
+                        .HasForeignKey("LagerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Lager");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.VaretellingLinje", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Component", "Component")
+                        .WithMany()
+                        .HasForeignKey("ComponentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Varetelling", "Varetelling")
+                        .WithMany("Linjer")
+                        .HasForeignKey("VaretellingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Component");
+
+                    b.Navigation("Varetelling");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Arbeidsordre", b =>
                 {
                     b.Navigation("Media");
@@ -8433,6 +8688,11 @@ namespace PortalItlock.Web.Migrations
             modelBuilder.Entity("PortalItlock.Web.Models.TilvalgMal", b =>
                 {
                     b.Navigation("Alternativer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.Varetelling", b =>
+                {
+                    b.Navigation("Linjer");
                 });
 #pragma warning restore 612, 618
         }

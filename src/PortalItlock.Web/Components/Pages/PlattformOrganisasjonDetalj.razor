@@ -8,6 +8,7 @@
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject PlatformDbContext PlatformDb
+@inject Microsoft.Extensions.Caching.Memory.IMemoryCache Cache
 @inject TenantStatistikkService Statistikk
 @inject TenantOppslagService Oppslag
 @inject NavigationManager Nav
@@ -399,6 +400,27 @@ else
                 }
             </section>
 
+            <section class="pod-card">
+                <h3 class="pod-h3">Tilleggsmoduler</h3>
+                <p class="pod-tom-tekst">Moduler organisasjonen har kjøpt. Slått av vises ingenting av modulen i portalen deres - data de har blir liggende og er tilbake hvis du slår den på igjen.</p>
+                @foreach (var info in TilleggsModuler.Alle)
+                {
+                    var modul = _moduler.FirstOrDefault(m => m.Modul == info.Nokkel);
+                    var aktiv = modul?.Aktiv == true;
+                    <div class="pod-lisens-rad pod-modul-rad">
+                        <div class="pod-lisens-info">
+                            <span>@info.Navn</span>
+                            <span class="pod-lisens-bruk">@(aktiv && modul?.AktivertDato is { } dato ? $"Aktiv siden {dato:dd.MM.yyyy}" : info.Beskrivelse)</span>
+                        </div>
+                        <button type="button" class="pod-modul-bryter" role="switch" aria-checked="@(aktiv ? "true" : "false")" aria-label="@info.Navn" @onclick="@(() => VekslModul(info.Nokkel))"></button>
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(_modulMelding))
+                {
+                    <p class="pod-suksessmelding">@_modulMelding</p>
+                }
+            </section>
+
             @if (!_tenant.ErStandard)
             {
                 <section class="pod-card pod-faresone">
@@ -484,6 +506,7 @@ else
         _lisensPriser = await PlatformDb.LisensPriser.ToListAsync();
 
         _lisenser = await PlatformDb.TenantLisenser.Where(l => l.TenantId == Id).ToListAsync();
+        _moduler = await PlatformDb.TenantModuler.Where(m => m.TenantId == Id).ToListAsync();
         foreach (var type in Enum.GetValues<LisensType>())
         {
             if (_lisenser.All(l => l.Type != type))
@@ -597,6 +620,34 @@ else
         await Lagre();
     }
 
+
+    // ---------- Tilleggsmoduler ----------
+    private List<TenantModul> _moduler = [];
+    private string? _modulMelding;
+
+    private async Task VekslModul(string nokkel)
+    {
+        var modul = _moduler.FirstOrDefault(m => m.Modul == nokkel);
+        if (modul is null)
+        {
+            modul = new TenantModul { TenantId = Id, Modul = nokkel };
+            PlatformDb.TenantModuler.Add(modul);
+            _moduler.Add(modul);
+        }
+
+        modul.Aktiv = !modul.Aktiv;
+        modul.SistEndret = DateTime.Now;
+        if (modul.Aktiv)
+        {
+            modul.AktivertDato ??= DateTime.Now;
+        }
+
+        await PlatformDb.SaveChangesAsync();
+        TilleggsmodulService.Nullstill(Cache, Id);
+
+        var navn = TilleggsModuler.Alle.FirstOrDefault(m => m.Nokkel == nokkel)?.Navn ?? nokkel;
+        _modulMelding = modul.Aktiv ? $"{navn} er slått på." : $"{navn} er slått av.";
+    }
     private async Task LagreLisens(TenantLisens lisens)
     {
         lisens.SistEndret = DateTime.Now;
@@ -624,6 +675,7 @@ else
         {
             var lisenser = await PlatformDb.TenantLisenser.Where(l => l.TenantId == _tenant.Id).ToListAsync();
             PlatformDb.TenantLisenser.RemoveRange(lisenser);
+            PlatformDb.TenantModuler.RemoveRange(await PlatformDb.TenantModuler.Where(m => m.TenantId == _tenant.Id).ToListAsync());
             PlatformDb.Tenants.Remove(_tenant);
             await PlatformDb.SaveChangesAsync();
 

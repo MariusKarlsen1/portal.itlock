@@ -60,6 +60,9 @@ public class Component
     public int Lagerantall { get; set; }
     public int? Minimumsbeholdning { get; set; }
 
+    // Veid snittkost for lagerverdi (lagermodulen). Null = bruk PrisNetto.
+    public decimal? Snittkost { get; set; }
+
     // Selve filene (FDV, montasjeblad, datablad og bilde) ligger i samme tabell,
     // men er skilt ut i ComponentFiler slik at de IKKE lastes hver gang en vare
     // hentes (dører, beslagslister, tilbud osv. - det gjorde sidene trege).

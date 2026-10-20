@@ -108,6 +108,13 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<SjekklistePunkt> SjekklistePunkter => Set<SjekklistePunkt>();
     public DbSet<ArbeidsordreSjekkpunkt> ArbeidsordreSjekkpunkter => Set<ArbeidsordreSjekkpunkt>();
     public DbSet<PrisHistorikk> PrisHistorikk => Set<PrisHistorikk>();
+
+    // Lagerstyring (tilleggsmodul) - se Models/Lagerstyring.cs.
+    public DbSet<Lager> Lagre => Set<Lager>();
+    public DbSet<LagerBevegelse> LagerBevegelser => Set<LagerBevegelse>();
+    public DbSet<VareLagerplass> VareLagerplasser => Set<VareLagerplass>();
+    public DbSet<Varetelling> Varetellinger => Set<Varetelling>();
+    public DbSet<VaretellingLinje> VaretellingLinjer => Set<VaretellingLinje>();
     public DbSet<Avvik> Avvik => Set<Avvik>();
     public DbSet<Tilvalg> Tilvalg => Set<Tilvalg>();
     public DbSet<TilvalgAlternativ> TilvalgAlternativer => Set<TilvalgAlternativ>();
@@ -185,6 +192,16 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     {
         modelBuilder.HasDbFunction(typeof(ApplicationDbContext).GetMethod(nameof(InneholderUavhengigAvStorForbokstav))!)
             .HasName(SqliteUnicodeFunctionsInterceptor.FunksjonNavn);
+
+        // Lagerstyring
+        modelBuilder.Entity<LagerBevegelse>(e =>
+        {
+            e.HasIndex(b => new { b.ComponentId, b.LagerId });
+            e.HasIndex(b => b.Tidspunkt);
+            e.Property(b => b.KostPerStk).HasConversion<double>();
+        });
+        modelBuilder.Entity<VareLagerplass>().HasIndex(p => new { p.ComponentId, p.LagerId }).IsUnique();
+        modelBuilder.Entity<Lager>().HasOne(l => l.Prosjekt).WithMany().HasForeignKey(l => l.ProsjektId).OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<PackageRequirement>(entity =>
         {

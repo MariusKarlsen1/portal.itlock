@@ -26,7 +26,7 @@ public record VarselTeller(
 
 // Delt mellom NavMenu (venstremeny-badge) og TopBar (brukermeny-badge), slik at
 // begge viser samme varseltall uten å duplisere sporringene.
-public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, ITenantContext tenantCtx)
+public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, ITenantContext tenantCtx, TilleggsmodulService tilleggsmoduler)
 {
     // NavMenu kaller HentAsync() på HVER sidenavigasjon i hele appen (se
     // NavMenu.razor OnLocationChanged) - uten denne korte cachen gjøres de
@@ -90,8 +90,12 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
             kunderTrengerOppfolging = await db.Kunder.CountAsync(k =>
                 k.NesteOppfolgingsDato != null && k.NesteOppfolgingsDato.Value.Date <= DateTime.Today);
 
-            varerLavBeholdning = await db.Components.CountAsync(c =>
-                c.Aktiv && c.ILagerstyring && c.Minimumsbeholdning != null && c.Lagerantall <= c.Minimumsbeholdning.Value);
+            // Bare for organisasjoner som har lagermodulen.
+            if (await tilleggsmoduler.HarAsync(TilleggsModuler.Lager))
+            {
+                varerLavBeholdning = await db.Components.CountAsync(c =>
+                    c.Aktiv && c.ILagerstyring && c.Minimumsbeholdning != null && c.Lagerantall <= c.Minimumsbeholdning.Value);
+            }
 
             ticketerVarsel = await db.Tickets.CountAsync(t =>
                 t.Status != TicketStatus.Lukket && t.AnsvarligBrukerId == null);

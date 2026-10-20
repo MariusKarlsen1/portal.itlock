@@ -139,6 +139,8 @@ builder.Services.AddHostedService<LisensVarselBackgroundService>();
 builder.Services.AddScoped<KundeOppfolgingVarselService>();
 builder.Services.AddHostedService<KundeOppfolgingVarselBackgroundService>();
 builder.Services.AddScoped<TicketEskaleringService>();
+builder.Services.AddScoped<TilleggsmodulService>();
+builder.Services.AddScoped<LagerService>();
 builder.Services.AddScoped<VarselTellerService>();
 builder.Services.AddHostedService<TicketEskaleringBackgroundService>();
 builder.Services.AddHttpClient<DatabaseBackupService>(client =>

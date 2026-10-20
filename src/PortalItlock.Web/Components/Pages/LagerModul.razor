@@ -1,0 +1,956 @@
+@page "/lager"
+@page "/lager/{Fane}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject LagerService LagerSvc
+@inject TilleggsmodulService Tilleggsmoduler
+@inject VisningPreferanseService VisningPref
+@inject NavigationManager Nav
+
+<PageTitle>Lager</PageTitle>
+
+@* Lagerstyring (tilleggsmodul), fase 1: lagre, beholdning regnet ut fra
+   lagerbevegelser, lagerverdi, flytting mellom lagre og varetelling.
+   Innkjøp, varemottak, reservasjoner og plukk kommer i neste faser. *@
+<div class="lg-side @(_full ? "lg-full" : "")">
+    <header class="side-header lg-header">
+        <span class="side-header-ikon"><Icon Name="box" /></span>
+        <div>
+            <h1>Lager</h1>
+            <p class="section-hint">Beholdning, lagerverdi, montørbiler og varetelling</p>
+        </div>
+    </header>
+
+    @if (!_klar)
+    {
+        <p class="list-empty">Laster …</p>
+    }
+    else
+    {
+        <div class="lg-kort">
+            <nav class="lg-meny" aria-label="Lager">
+                @foreach (var (nokkel, navn, ikon) in Faner)
+                {
+                    <a class="lg-meny-rad @(AktivFane == nokkel ? "aktiv" : "")" href="@(nokkel == "oversikt" ? "/lager" : $"/lager/{nokkel}")">
+                        <Icon Name="@ikon" />@navn
+                        @if (nokkel == "varer" && UnderMinimum.Count > 0)
+                        {
+                            <small class="lg-meny-tall">@UnderMinimum.Count</small>
+                        }
+                        @if (nokkel == "telling" && _tellinger.Any(t => t.Status == VaretellingStatus.Pagar))
+                        {
+                            <small class="lg-meny-tall lg-meny-tall-n">@_tellinger.Count(t => t.Status == VaretellingStatus.Pagar)</small>
+                        }
+                    </a>
+                }
+                <button type="button" class="lg-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
+            </nav>
+
+            <div class="lg-innhold">
+                @if (!string.IsNullOrEmpty(_melding))
+                {
+                    <p class="lg-melding">@_melding</p>
+                }
+
+                @switch (AktivFane)
+                {
+                    case "varer":
+                        @Varer()
+                        break;
+                    case "lagre":
+                        @Lagre()
+                        break;
+                    case "telling":
+                        @Telling()
+                        break;
+                    case "bevegelser":
+                        @Bevegelser()
+                        break;
+                    default:
+                        @Oversikt()
+                        break;
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string? Fane { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private static readonly (string Nokkel, string Navn, string Ikon)[] Faner =
+    [
+        ("oversikt", "Oversikt", "bar-chart"),
+        ("varer", "Varer og beholdning", "box"),
+        ("lagre", "Lagre og biler", "building"),
+        ("telling", "Varetelling", "clipboard"),
+        ("bevegelser", "Varebevegelser", "list"),
+    ];
+
+    private string AktivFane => Faner.Any(f => f.Nokkel == Fane) ? Fane! : "oversikt";
+
+    private bool _klar;
+    private bool _full;
+    private string? _melding;
+    private int? _brukerId;
+    private string? _brukerNavn;
+
+    private List<Lager> _lagre = [];
+    private List<Component> _varer = [];
+    private Dictionary<(int Vare, int Lager), int> _beholdning = [];
+    private Dictionary<(int Vare, int Lager), VareLagerplass> _plasser = [];
+    private List<LagerBevegelse> _sisteBevegelser = [];
+    private List<Varetelling> _tellinger = [];
+    private List<Bruker> _montorer = [];
+    private List<Prosjekt> _prosjekter = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Tilleggsmoduler.HarAsync(TilleggsModuler.Lager))
+        {
+            Nav.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            _brukerNavn = state.User.Identity?.Name;
+            if (int.TryParse(state.User.FindFirst("BrukerId")?.Value, out var id))
+            {
+                _brukerId = id;
+                _brukerNavn = (await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id))?.Navn ?? _brukerNavn;
+            }
+        }
+
+        _full = await VisningPref.HentAsync("lager-bredde", "normal") == "full";
+        await LagerSvc.HovedlagerAsync();
+        await LastAsync();
+        _klar = true;
+    }
+
+    private async Task LastAsync()
+    {
+        _lagre = await Db.Lagre.OrderBy(l => l.Type).ThenBy(l => l.Navn).ToListAsync();
+        _varer = await Db.Components.Where(c => c.ILagerstyring && c.Aktiv).OrderBy(c => c.Navn).ToListAsync();
+        _beholdning = (await LagerSvc.BeholdningAsync()).ToDictionary(b => (b.ComponentId, b.LagerId), b => b.Antall);
+        _plasser = (await Db.VareLagerplasser.ToListAsync()).ToDictionary(p => (p.ComponentId, p.LagerId));
+        _sisteBevegelser = await Db.LagerBevegelser.AsNoTracking().Include(b => b.Component).Include(b => b.Lager)
+            .OrderByDescending(b => b.Tidspunkt).ThenByDescending(b => b.Id).Take(400).ToListAsync();
+        _tellinger = await Db.Varetellinger.Include(t => t.Lager).Include(t => t.Linjer).OrderByDescending(t => t.Startet).Take(30).ToListAsync();
+        _montorer = await Db.Brukere.AsNoTracking().Where(b => b.Aktiv && b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens).OrderBy(b => b.Navn).ToListAsync();
+        _prosjekter = await Db.Prosjekter.AsNoTracking()
+            .Where(p => p.Status == null || (p.Status != ProsjektStatus.Avsluttet && p.Status != ProsjektStatus.TilbudAvslatt))
+            .OrderBy(p => p.Navn).Take(500).ToListAsync();
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("lager-bredde", _full ? "full" : "normal");
+    }
+
+    // ---------- Hjelpere ----------
+    private IEnumerable<Lager> AktiveLagre => _lagre.Where(l => l.Aktiv);
+    private int Antall(int vare, int lager) => _beholdning.GetValueOrDefault((vare, lager));
+    private int Totalt(int vare) => _beholdning.Where(b => b.Key.Vare == vare).Sum(b => b.Value);
+    private static decimal Kost(Component c) => LagerService.KostFor(c);
+    private decimal Lagerverdi => _varer.Sum(c => Totalt(c.Id) * Kost(c));
+    private decimal LagerverdiFor(int lager) => _varer.Sum(c => Antall(c.Id, lager) * Kost(c));
+    private List<Component> UnderMinimum => _varer.Where(c => c.Minimumsbeholdning is { } min && Totalt(c.Id) <= min).ToList();
+    private string? Hylle(int vare, int lager) => _plasser.GetValueOrDefault((vare, lager))?.Hylle;
+    private static string Kr(decimal v) => v.ToString("#,##0", Kultur) + " kr";
+
+    private static string TypeNavn(LagerType t) => t switch
+    {
+        LagerType.Bil => "Montørbil",
+        LagerType.Prosjektlager => "Prosjektlager",
+        _ => "Hovedlager"
+    };
+
+    private static string TypeIkon(LagerType t) => t switch
+    {
+        LagerType.Bil => "map-pin",
+        LagerType.Prosjektlager => "building",
+        _ => "box"
+    };
+
+    private static (string Navn, string Klasse) BevegelseInfo(LagerBevegelseType t) => t switch
+    {
+        LagerBevegelseType.Inngaende => ("Startbeholdning", "n"),
+        LagerBevegelseType.Tilgang => ("Tilgang", "gronn"),
+        LagerBevegelseType.Uttak => ("Uttak", "rod"),
+        LagerBevegelseType.FlyttUt => ("Flyttet ut", "bla"),
+        LagerBevegelseType.FlyttInn => ("Flyttet inn", "bla"),
+        LagerBevegelseType.Telling => ("Varetelling", "gul"),
+        LagerBevegelseType.Korrigering => ("Korrigering", "gul"),
+        LagerBevegelseType.Mottak => ("Varemottak", "gronn"),
+        LagerBevegelseType.Forbruk => ("Forbruk", "lilla"),
+        LagerBevegelseType.Retur => ("Retur", "bla"),
+        _ => (t.ToString(), "n")
+    };
+
+    // ======================================================================
+    // Oversikt
+    // ======================================================================
+    private RenderFragment Oversikt() => @<div class="lg-fane">
+        <div class="lg-fane-topp">
+            <span><h2>Oversikt</h2><p>Lagerverdi og beholdning på tvers av alle lagre</p></span>
+            <a class="lg-knapp lg-knapp-p" href="/lager/varer"><Icon Name="plus" />Ny bevegelse</a>
+        </div>
+
+        <div class="lg-kpi">
+            <div><b>@Kr(Lagerverdi)</b><span>Lagerverdi (alle lagre)</span></div>
+            <div><b>@_varer.Sum(c => Math.Max(0, Totalt(c.Id))).ToString("#,##0", Kultur) stk</b><span>Varer på lager</span></div>
+            <div><b>@_varer.Count</b><span>Lagerførte varer</span></div>
+            <a href="/lager/varer?min=1" class="@(UnderMinimum.Count > 0 ? "lg-kpi-rod" : "")"><b>@UnderMinimum.Count</b><span>Under minimumsbeholdning</span></a>
+        </div>
+
+        <div class="lg-to">
+            <section class="lg-boks">
+                <div class="lg-boks-topp"><h3>Lagerverdi per lager</h3><a href="/lager/lagre">Alle lagre →</a></div>
+                @foreach (var l in AktiveLagre)
+                {
+                    var verdi = LagerverdiFor(l.Id);
+                    <div class="lg-lagerrad">
+                        <span class="lg-lagerikon lg-type-@l.Type.ToString().ToLowerInvariant()"><Icon Name="@TypeIkon(l.Type)" /></span>
+                        <span class="lg-lagerrad-tekst"><b>@l.Navn</b><small>@TypeNavn(l.Type)</small></span>
+                        <span class="lg-bar"><i style="width:@(Lagerverdi > 0 ? (verdi / Lagerverdi * 100).ToString("0.#", CultureInfo.InvariantCulture) : "0")%"></i></span>
+                        <b class="lg-tall">@Kr(verdi)</b>
+                    </div>
+                }
+            </section>
+
+            <section class="lg-boks">
+                <div class="lg-boks-topp"><h3>Under minimum</h3><a href="/lager/varer?min=1">Se alle →</a></div>
+                @if (UnderMinimum.Count == 0)
+                {
+                    <p class="lg-tom">Ingen varer er under minimumsbeholdning. 👍</p>
+                }
+                @foreach (var c in UnderMinimum.Take(6))
+                {
+                    <a class="lg-lagerrad lg-klikk" href="@($"/lager/varer?vare={c.Id}")">
+                        <span class="lg-lagerrad-tekst"><b>@c.Navn</b><small>@(c.Leverandor ?? "Ingen leverandør") · @c.Produktkode</small></span>
+                        <span class="lg-chip lg-chip-rod">@Totalt(c.Id) av min @c.Minimumsbeholdning</span>
+                    </a>
+                }
+            </section>
+        </div>
+
+        <section class="lg-boks">
+            <div class="lg-boks-topp"><h3>Siste bevegelser</h3><a href="/lager/bevegelser">Alle →</a></div>
+            @BevegelseTabell(_sisteBevegelser.Take(8))
+        </section>
+    </div>;
+
+    // ======================================================================
+    // Varer og beholdning
+    // ======================================================================
+    private string _sok = "";
+    private int? _filterLager;
+    private bool _kunUnderMin;
+    private int? _valgtVareId;
+    private bool _visLeggTil;
+    private string _leggTilSok = "";
+    private List<Component> _leggTilTreff = [];
+
+    protected override void OnParametersSet()
+    {
+        _melding = null;
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        if (query.TryGetValue("min", out var min) && min == "1")
+        {
+            _kunUnderMin = true;
+        }
+
+        if (query.TryGetValue("vare", out var v) && int.TryParse(v, out var vareId))
+        {
+            _valgtVareId = vareId;
+        }
+    }
+
+    private List<Component> FiltrerteVarer => _varer
+        .Where(c => string.IsNullOrWhiteSpace(_sok)
+            || c.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase)
+            || (c.Produktkode?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (c.Leverandor?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (c.Gtin?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false))
+        .Where(c => !_kunUnderMin || (c.Minimumsbeholdning is { } min && Totalt(c.Id) <= min))
+        .Where(c => _filterLager is null || Antall(c.Id, _filterLager.Value) != 0)
+        .ToList();
+
+    private int AntallVist(Component c) => _filterLager is { } l ? Antall(c.Id, l) : Totalt(c.Id);
+
+    private Component? ValgtVare => _varer.FirstOrDefault(c => c.Id == _valgtVareId);
+
+    private RenderFragment Varer() => @<div class="lg-fane">
+        <div class="lg-fane-topp">
+            <span><h2>Varer og beholdning</h2><p>Samme vareregister som tilbud, dørpakker og prosjektering - her vises varene som er lagerført</p></span>
+            <button type="button" class="lg-knapp" @onclick="@(() => { _visLeggTil = !_visLeggTil; _leggTilSok = ""; _leggTilTreff = []; })"><Icon Name="plus" />Lagerfør vare</button>
+        </div>
+
+        @if (_visLeggTil)
+        {
+            <div class="lg-boks lg-leggtil">
+                <label class="lg-felt lg-felt-bred">Søk i vareregisteret
+                    <input @bind="_leggTilSok" @bind:event="oninput" @bind:after="SokLeggTil" placeholder="Navn, varenummer, leverandør eller EAN …" />
+                </label>
+                @foreach (var c in _leggTilTreff)
+                {
+                    var treff = c;
+                    <div class="lg-lagerrad">
+                        <span class="lg-lagerrad-tekst"><b>@treff.Navn</b><small>@(treff.Leverandor ?? "Ingen leverandør") · @treff.Produktkode</small></span>
+                        <button type="button" class="lg-knapp lg-knapp-s" @onclick="@(() => Lagerfor(treff))">Lagerfør</button>
+                    </div>
+                }
+                @if (_leggTilSok.Trim().Length >= 2 && _leggTilTreff.Count == 0)
+                {
+                    <p class="lg-tom">Ingen varer som ikke allerede er lagerført.</p>
+                }
+            </div>
+        }
+
+        <div class="lg-verktoy">
+            <label class="lg-sok"><Icon Name="search" /><input @bind="_sok" @bind:event="oninput" placeholder="Søk vare, varenummer, leverandør eller EAN …" /></label>
+            <select class="lg-velg" @bind="_filterLager">
+                <option value="">Alle lagre</option>
+                @foreach (var l in AktiveLagre)
+                {
+                    <option value="@l.Id">@l.Navn</option>
+                }
+            </select>
+            <label class="lg-avkryss"><input type="checkbox" @bind="_kunUnderMin" />Kun under minimum</label>
+        </div>
+
+        <div class="lg-delt @(ValgtVare is not null ? "med-panel" : "")">
+            <div class="lg-tabellramme">
+                @if (_varer.Count == 0)
+                {
+                    <p class="lg-tom">Ingen varer er lagerført ennå. Trykk «Lagerfør vare» for å legge til varer fra vareregisteret.</p>
+                }
+                else
+                {
+                    var hovedId = AktiveLagre.FirstOrDefault(l => l.Type == LagerType.Hovedlager)?.Id ?? 0;
+                    <table class="lg-tabell">
+                        <thead>
+                            <tr><th>Vare</th><th>Hylle</th><th class="n">På lager</th><th class="n">Min</th><th class="n">Snittkost</th><th class="n">Verdi</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var c in FiltrerteVarer)
+                            {
+                                var vareId = c.Id;
+                                var antall = AntallVist(c);
+                                var lav = c.Minimumsbeholdning is { } min && Totalt(c.Id) <= min;
+                                <tr class="lg-klikkrad @(c.Id == _valgtVareId ? "valgt" : "")" @onclick="@(() => VelgVare(vareId))">
+                                    <td><b>@c.Navn</b><small>@c.Produktkode@(string.IsNullOrWhiteSpace(c.Leverandor) ? "" : $" · {c.Leverandor}")</small></td>
+                                    <td class="mono">@(Hylle(c.Id, _filterLager ?? hovedId) ?? "–")</td>
+                                    <td class="n"><b class="@(antall < 0 ? "lg-rod" : "")">@antall</b> <span class="lg-svak">@(c.Enhet ?? "stk")</span></td>
+                                    <td class="n">
+                                        @if (c.Minimumsbeholdning is { } m)
+                                        {
+                                            <span class="@(lav ? "lg-chip lg-chip-rod" : "lg-svak")">@m@(lav ? " ⚠" : "")</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="lg-svak">–</span>
+                                        }
+                                    </td>
+                                    <td class="n">@Kr(Kost(c))</td>
+                                    <td class="n">@Kr(antall * Kost(c))</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <p class="lg-fot">@FiltrerteVarer.Count av @_varer.Count varer · verdi @Kr(FiltrerteVarer.Sum(c => AntallVist(c) * Kost(c)))</p>
+                }
+            </div>
+
+            @if (ValgtVare is { } vare)
+            {
+                @Varekort(vare)
+            }
+        </div>
+    </div>;
+
+    private async Task SokLeggTil()
+    {
+        var s = _leggTilSok.Trim();
+        if (s.Length < 2)
+        {
+            _leggTilTreff = [];
+            return;
+        }
+
+        _leggTilTreff = await Db.Components.AsNoTracking()
+            .Where(c => c.Aktiv && !c.ILagerstyring)
+            .Where(c => c.Navn.Contains(s) || (c.Produktkode != null && c.Produktkode.Contains(s))
+                || (c.Leverandor != null && c.Leverandor.Contains(s)) || (c.Gtin != null && c.Gtin.Contains(s)))
+            .OrderBy(c => c.Navn).Take(12).ToListAsync();
+    }
+
+    private async Task Lagerfor(Component treff)
+    {
+        var c = await Db.Components.FirstAsync(x => x.Id == treff.Id);
+        c.ILagerstyring = true;
+        await Db.SaveChangesAsync();
+        _leggTilTreff.Remove(treff);
+        await LastAsync();
+        _valgtVareId = c.Id;
+        _melding = $"{c.Navn} er lagerført. Legg inn beholdning med «Tilgang» i varekortet.";
+    }
+
+    private void VelgVare(int id)
+    {
+        _valgtVareId = _valgtVareId == id ? null : id;
+        _handling = null;
+    }
+
+    // ---------- Varekort ----------
+    private string? _handling; // "inn", "ut", "flytt"
+    private int _hLager;
+    private int _hTilLager;
+    private int _hAntall = 1;
+    private decimal? _hKost;
+    private string _hNotat = "";
+
+    private void StartHandling(string handling, Component c)
+    {
+        _handling = _handling == handling ? null : handling;
+        _hLager = AktiveLagre.FirstOrDefault(l => l.Type == LagerType.Hovedlager)?.Id ?? AktiveLagre.First().Id;
+        _hTilLager = AktiveLagre.FirstOrDefault(l => l.Id != _hLager)?.Id ?? _hLager;
+        _hAntall = 1;
+        _hKost = handling == "inn" ? c.PrisNetto : null;
+        _hNotat = "";
+    }
+
+    private async Task UtforHandling(Component c)
+    {
+        if (_hAntall <= 0)
+        {
+            return;
+        }
+
+        switch (_handling)
+        {
+            case "inn":
+                await LagerSvc.RegistrerAsync(c.Id, _hLager, _hAntall, LagerBevegelseType.Tilgang, _hNotat, _brukerId, _brukerNavn, _hKost);
+                _melding = $"{_hAntall} stk {c.Navn} lagt til.";
+                break;
+            case "ut":
+                await LagerSvc.RegistrerAsync(c.Id, _hLager, -_hAntall, LagerBevegelseType.Uttak, _hNotat, _brukerId, _brukerNavn);
+                _melding = $"{_hAntall} stk {c.Navn} tatt ut.";
+                break;
+            case "flytt":
+                if (_hLager == _hTilLager)
+                {
+                    return;
+                }
+
+                await LagerSvc.FlyttAsync(c.Id, _hLager, _hTilLager, _hAntall, _hNotat, _brukerId, _brukerNavn);
+                _melding = $"{_hAntall} stk {c.Navn} flyttet til {_lagre.First(l => l.Id == _hTilLager).Navn}.";
+                break;
+        }
+
+        _handling = null;
+        await LastAsync();
+    }
+
+    private async Task LagreMinimum(Component c)
+    {
+        if (c.Minimumsbeholdning < 0)
+        {
+            c.Minimumsbeholdning = 0;
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreHylle(int vare, int lager, string? hylle)
+    {
+        if (!_plasser.TryGetValue((vare, lager), out var plass))
+        {
+            plass = new VareLagerplass { ComponentId = vare, LagerId = lager };
+            Db.VareLagerplasser.Add(plass);
+            _plasser[(vare, lager)] = plass;
+        }
+
+        plass.Hylle = string.IsNullOrWhiteSpace(hylle) ? null : hylle.Trim().ToUpperInvariant();
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task Avlagerfor(Component c)
+    {
+        if (Totalt(c.Id) != 0)
+        {
+            _melding = "Varen har beholdning. Ta den ut eller tell den til 0 før den tas ut av lagerstyring.";
+            return;
+        }
+
+        c.ILagerstyring = false;
+        await Db.SaveChangesAsync();
+        _valgtVareId = null;
+        await LastAsync();
+        _melding = $"{c.Navn} er ikke lenger lagerført. Historikken er beholdt.";
+    }
+
+    private RenderFragment Varekort(Component c) => @<aside class="lg-varekort">
+        <div class="lg-varekort-topp">
+            <span><b>@c.Navn</b><small>@c.Produktkode@(string.IsNullOrWhiteSpace(c.Leverandor) ? "" : $" · {c.Leverandor}")@(string.IsNullOrWhiteSpace(c.Gtin) ? "" : $" · EAN {c.Gtin}")</small></span>
+            <button type="button" class="lg-lukk" title="Lukk" @onclick="@(() => _valgtVareId = null)"><Icon Name="x" /></button>
+        </div>
+
+        <div class="lg-beh">
+            <div><b>@Totalt(c.Id)</b><span>På lager totalt</span></div>
+            <div><b>@Kr(Kost(c))</b><span>Snittkost</span></div>
+            <div><b>@Kr(Totalt(c.Id) * Kost(c))</b><span>Lagerverdi</span></div>
+        </div>
+
+        <div class="lg-handlinger">
+            <button type="button" class="lg-knapp lg-knapp-s @(_handling == "inn" ? "aktiv" : "")" @onclick="@(() => StartHandling("inn", c))"><Icon Name="plus" />Tilgang</button>
+            <button type="button" class="lg-knapp lg-knapp-s @(_handling == "ut" ? "aktiv" : "")" @onclick="@(() => StartHandling("ut", c))"><Icon Name="minus" />Uttak</button>
+            @if (AktiveLagre.Count() > 1)
+            {
+                <button type="button" class="lg-knapp lg-knapp-s @(_handling == "flytt" ? "aktiv" : "")" @onclick="@(() => StartHandling("flytt", c))"><Icon Name="arrow-right" />Flytt</button>
+            }
+        </div>
+
+        @if (_handling is not null)
+        {
+            <div class="lg-handling">
+                <label class="lg-felt">@(_handling == "flytt" ? "Fra lager" : "Lager")
+                    <select @bind="_hLager">
+                        @foreach (var l in AktiveLagre)
+                        {
+                            <option value="@l.Id">@l.Navn (@Antall(c.Id, l.Id))</option>
+                        }
+                    </select>
+                </label>
+                @if (_handling == "flytt")
+                {
+                    <label class="lg-felt">Til lager
+                        <select @bind="_hTilLager">
+                            @foreach (var l in AktiveLagre.Where(l => l.Id != _hLager))
+                            {
+                                <option value="@l.Id">@l.Navn</option>
+                            }
+                        </select>
+                    </label>
+                }
+                <label class="lg-felt lg-felt-smal">Antall<input type="number" min="1" @bind="_hAntall" /></label>
+                @if (_handling == "inn")
+                {
+                    <label class="lg-felt lg-felt-smal">Innpris per stk<input type="number" min="0" step="0.01" @bind="_hKost" /></label>
+                }
+                <label class="lg-felt lg-felt-bred">Notat<input @bind="_hNotat" placeholder="@(_handling == "ut" ? "F.eks. ødelagt, svinn …" : "Valgfritt")" /></label>
+                <div class="lg-handling-knapper">
+                    <button type="button" class="lg-knapp" @onclick="@(() => _handling = null)">Avbryt</button>
+                    <button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => UtforHandling(c))">@(_handling switch { "inn" => "Legg til", "ut" => "Ta ut", _ => "Flytt" })</button>
+                </div>
+            </div>
+        }
+
+        <div class="lg-boks-topp lg-boks-topp-smal"><h3>Per lager</h3></div>
+        <table class="lg-tabell lg-tabell-smal">
+            <thead><tr><th>Lager</th><th>Hylle</th><th class="n">Antall</th></tr></thead>
+            <tbody>
+                @foreach (var l in AktiveLagre)
+                {
+                    var lagerId = l.Id;
+                    <tr>
+                        <td>@l.Navn</td>
+                        <td><input class="lg-hylle" value="@Hylle(c.Id, lagerId)" placeholder="–" @onchange="@(e => LagreHylle(c.Id, lagerId, e.Value?.ToString()))" aria-label="Hylle på @l.Navn" /></td>
+                        <td class="n"><b>@Antall(c.Id, lagerId)</b></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <label class="lg-felt lg-felt-smal">Minimumsbeholdning
+            <input type="number" min="0" @bind="c.Minimumsbeholdning" @bind:after="@(() => LagreMinimum(c))" placeholder="Ingen" />
+        </label>
+
+        <div class="lg-boks-topp lg-boks-topp-smal"><h3>Historikk</h3></div>
+        @BevegelseTabell(_sisteBevegelser.Where(b => b.ComponentId == c.Id).Take(15), visVare: false)
+
+        <button type="button" class="lg-lenkeknapp" @onclick="@(() => Avlagerfor(c))">Ta varen ut av lagerstyring</button>
+    </aside>;
+
+    // ======================================================================
+    // Lagre og biler
+    // ======================================================================
+    private bool _visNyttLager;
+    private string _nyttNavn = "";
+    private LagerType _nyType = LagerType.Bil;
+    private int? _nyAnsvarlig;
+    private int? _nyttProsjekt;
+
+    private async Task OpprettLager()
+    {
+        var navn = _nyttNavn.Trim();
+        if (string.IsNullOrEmpty(navn))
+        {
+            navn = _nyType switch
+            {
+                LagerType.Bil => "Bil – " + (_montorer.FirstOrDefault(m => m.Id == _nyAnsvarlig)?.Navn ?? "ny"),
+                LagerType.Prosjektlager => "Prosjektlager – " + (_prosjekter.FirstOrDefault(p => p.Id == _nyttProsjekt)?.Navn ?? "nytt"),
+                _ => "Nytt lager"
+            };
+        }
+
+        Db.Lagre.Add(new Lager { Navn = navn, Type = _nyType, AnsvarligBrukerId = _nyType == LagerType.Bil ? _nyAnsvarlig : null, ProsjektId = _nyType == LagerType.Prosjektlager ? _nyttProsjekt : null });
+        await Db.SaveChangesAsync();
+        _visNyttLager = false;
+        _nyttNavn = "";
+        _nyAnsvarlig = null;
+        _nyttProsjekt = null;
+        await LastAsync();
+        _melding = $"{navn} er opprettet.";
+    }
+
+    private async Task DeaktiverLager(Lager l)
+    {
+        if (_varer.Any(c => Antall(c.Id, l.Id) != 0))
+        {
+            _melding = $"{l.Navn} har fortsatt varer. Flytt dem til et annet lager først.";
+            return;
+        }
+
+        if (l.Type == LagerType.Hovedlager && _lagre.Count(x => x.Aktiv && x.Type == LagerType.Hovedlager) <= 1)
+        {
+            _melding = "Det må finnes minst ett hovedlager.";
+            return;
+        }
+
+        l.Aktiv = false;
+        await Db.SaveChangesAsync();
+        await LastAsync();
+        _melding = $"{l.Navn} er lagt bort.";
+    }
+
+    private async Task GiNyttNavn(Lager l, string? navn)
+    {
+        if (string.IsNullOrWhiteSpace(navn))
+        {
+            return;
+        }
+
+        l.Navn = navn.Trim();
+        await Db.SaveChangesAsync();
+    }
+
+    private void VisVarerPa(int lagerId)
+    {
+        _filterLager = lagerId;
+        Nav.NavigateTo("/lager/varer");
+    }
+
+    private RenderFragment Lagre() => @<div class="lg-fane">
+        <div class="lg-fane-topp">
+            <span><h2>Lagre og biler</h2><p>Hovedlager, montørbiler og prosjektlager. Varer i bil og prosjektlager er fortsatt bedriftens lagerverdi.</p></span>
+            <button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => _visNyttLager = !_visNyttLager)"><Icon Name="plus" />Nytt lager</button>
+        </div>
+
+        @if (_visNyttLager)
+        {
+            <div class="lg-boks lg-handling">
+                <label class="lg-felt">Type
+                    <select @bind="_nyType">
+                        <option value="@LagerType.Bil">Montørbil</option>
+                        <option value="@LagerType.Prosjektlager">Prosjektlager</option>
+                        <option value="@LagerType.Hovedlager">Lager / avdeling</option>
+                    </select>
+                </label>
+                @if (_nyType == LagerType.Bil)
+                {
+                    <label class="lg-felt">Montør
+                        <select @bind="_nyAnsvarlig">
+                            <option value="">Velg montør …</option>
+                            @foreach (var m in _montorer)
+                            {
+                                <option value="@m.Id">@m.Navn</option>
+                            }
+                        </select>
+                    </label>
+                }
+                @if (_nyType == LagerType.Prosjektlager)
+                {
+                    <label class="lg-felt">Prosjekt
+                        <select @bind="_nyttProsjekt">
+                            <option value="">Velg prosjekt …</option>
+                            @foreach (var p in _prosjekter)
+                            {
+                                <option value="@p.Id">@p.Navn</option>
+                            }
+                        </select>
+                    </label>
+                }
+                <label class="lg-felt lg-felt-bred">Navn<input @bind="_nyttNavn" placeholder="Fylles ut automatisk hvis tomt" /></label>
+                <div class="lg-handling-knapper">
+                    <button type="button" class="lg-knapp" @onclick="@(() => _visNyttLager = false)">Avbryt</button>
+                    <button type="button" class="lg-knapp lg-knapp-p" @onclick="OpprettLager">Opprett</button>
+                </div>
+            </div>
+        }
+
+        <div class="lg-lagerrutenett">
+            @foreach (var l in AktiveLagre)
+            {
+                var lager = l;
+                var antallLinjer = _varer.Count(c => Antall(c.Id, lager.Id) != 0);
+                <section class="lg-lagerkort">
+                    <div class="lg-lagerkort-topp">
+                        <span class="lg-lagerikon lg-type-@lager.Type.ToString().ToLowerInvariant()"><Icon Name="@TypeIkon(lager.Type)" /></span>
+                        <span class="lg-lagerrad-tekst">
+                            <input class="lg-navnfelt" value="@lager.Navn" @onchange="@(e => GiNyttNavn(lager, e.Value?.ToString()))" aria-label="Navn på lager" />
+                            <small>@TypeNavn(lager.Type)@(lager.AnsvarligBrukerId is { } a ? " · " + (_montorer.FirstOrDefault(m => m.Id == a)?.Navn ?? "") : "")@(lager.ProsjektId is { } p ? " · " + (_prosjekter.FirstOrDefault(x => x.Id == p)?.Navn ?? "") : "")</small>
+                        </span>
+                    </div>
+                    <div class="lg-beh lg-beh-to">
+                        <div><b>@Kr(LagerverdiFor(lager.Id))</b><span>Lagerverdi</span></div>
+                        <div><b>@antallLinjer</b><span>Varelinjer</span></div>
+                    </div>
+                    <div class="lg-lagerkort-fot">
+                        <button type="button" class="lg-lenkeknapp" @onclick="@(() => VisVarerPa(lager.Id))">Se varer</button>
+                        <button type="button" class="lg-lenkeknapp" @onclick="@(() => StartTelling(lager.Id))">Tell</button>
+                        <button type="button" class="lg-lenkeknapp lg-lenkeknapp-fare" @onclick="@(() => DeaktiverLager(lager))">Legg bort</button>
+                    </div>
+                </section>
+            }
+        </div>
+    </div>;
+
+    // ======================================================================
+    // Varetelling
+    // ======================================================================
+    private int? _aktivTellingId;
+    private int _tellLager;
+
+    private Varetelling? AktivTelling => _tellinger.FirstOrDefault(t => t.Id == _aktivTellingId);
+
+    private async Task StartTelling(int lagerId)
+    {
+        var pagar = _tellinger.FirstOrDefault(t => t.LagerId == lagerId && t.Status == VaretellingStatus.Pagar);
+        if (pagar is not null)
+        {
+            _aktivTellingId = pagar.Id;
+            Nav.NavigateTo("/lager/telling");
+            return;
+        }
+
+        var telling = new Varetelling { LagerId = lagerId, Status = VaretellingStatus.Pagar, StartetAv = _brukerNavn };
+        foreach (var c in _varer)
+        {
+            telling.Linjer.Add(new VaretellingLinje { ComponentId = c.Id, Registrert = Antall(c.Id, lagerId) });
+        }
+
+        Db.Varetellinger.Add(telling);
+        await Db.SaveChangesAsync();
+        await LastAsync();
+        _aktivTellingId = telling.Id;
+        Nav.NavigateTo("/lager/telling");
+    }
+
+    private async Task LagreTalt(VaretellingLinje linje, string? verdi)
+    {
+        linje.Talt = int.TryParse(verdi, out var t) && t >= 0 ? t : null;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task GodkjennTelling()
+    {
+        if (AktivTelling is not { } t)
+        {
+            return;
+        }
+
+        var avvik = t.Linjer.Count(l => l.Talt is not null && l.Talt != l.Registrert);
+        await LagerSvc.GodkjennTellingAsync(t.Id, _brukerId, _brukerNavn);
+        _aktivTellingId = null;
+        await LastAsync();
+        _melding = avvik == 0 ? "Tellingen er godkjent - ingen avvik." : $"Tellingen er godkjent. {avvik} avvik er ført som egne bevegelser.";
+    }
+
+    private async Task AvbrytTelling()
+    {
+        if (AktivTelling is not { } t)
+        {
+            return;
+        }
+
+        t.Status = VaretellingStatus.Avbrutt;
+        await Db.SaveChangesAsync();
+        _aktivTellingId = null;
+        await LastAsync();
+    }
+
+    private decimal KostForId(int vareId) => _varer.FirstOrDefault(c => c.Id == vareId) is { } c ? Kost(c) : 0m;
+
+    private void ApneTelling(Varetelling t)
+    {
+        if (t.Status == VaretellingStatus.Pagar)
+        {
+            _aktivTellingId = t.Id;
+        }
+    }
+
+    private RenderFragment Telling() => @<div class="lg-fane">
+        @if (AktivTelling is { } t)
+        {
+            var talte = t.Linjer.Count(l => l.Talt is not null);
+            var avvikVerdi = t.Linjer.Where(l => l.Talt is not null).Sum(l => (l.Talt!.Value - l.Registrert) * KostForId(l.ComponentId));
+            <div class="lg-fane-topp">
+                <span><h2>Varetelling – @t.Lager?.Navn</h2><p>Startet @t.Startet.ToString("dd.MM.yyyy HH:mm") av @(t.StartetAv ?? "–") · @talte av @t.Linjer.Count talt</p></span>
+                <span class="lg-knapper">
+                    <button type="button" class="lg-knapp" @onclick="@(() => _aktivTellingId = null)">Tilbake</button>
+                    <button type="button" class="lg-knapp" @onclick="AvbrytTelling">Avbryt telling</button>
+                    <button type="button" class="lg-knapp lg-knapp-p" @onclick="GodkjennTelling" disabled="@(talte == 0)">Godkjenn telling</button>
+                </span>
+            </div>
+            <p class="lg-hint">Skriv inn det du teller. Tomme felt regnes som ikke talt og endres ikke. Avviket føres som en egen bevegelse når tellingen godkjennes - bevegelser som skjer mens du teller, telles ikke dobbelt.</p>
+            <div class="lg-tabellramme">
+                <table class="lg-tabell">
+                    <thead><tr><th>Vare</th><th>Hylle</th><th class="n">Registrert</th><th class="n">Talt</th><th class="n">Avvik</th></tr></thead>
+                    <tbody>
+                        @foreach (var linje in t.Linjer.OrderBy(l => Hylle(l.ComponentId, t.LagerId) ?? "~").ThenBy(l => _varer.FirstOrDefault(c => c.Id == l.ComponentId)?.Navn))
+                        {
+                            var l = linje;
+                            var vare = _varer.FirstOrDefault(c => c.Id == l.ComponentId);
+                            var diff = l.Talt is { } tall ? tall - l.Registrert : 0;
+                            <tr>
+                                <td><b>@(vare?.Navn ?? "Ukjent vare")</b><small>@vare?.Produktkode</small></td>
+                                <td class="mono">@(Hylle(l.ComponentId, t.LagerId) ?? "–")</td>
+                                <td class="n">@l.Registrert</td>
+                                <td class="n"><input type="number" min="0" class="lg-tallfelt" value="@l.Talt" @onchange="@(e => LagreTalt(l, e.Value?.ToString()))" aria-label="Talt antall" /></td>
+                                <td class="n"><b class="@(diff < 0 ? "lg-rod" : diff > 0 ? "lg-gronn" : "lg-svak")">@(l.Talt is null ? "–" : diff > 0 ? $"+{diff}" : diff.ToString())</b></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <p class="lg-fot">Avvik i verdi: <b>@Kr(avvikVerdi)</b></p>
+            </div>
+        }
+        else
+        {
+            <div class="lg-fane-topp">
+                <span><h2>Varetelling</h2><p>Tell et lager eller en bil. Avvik føres som egne bevegelser, så historikken alltid stemmer.</p></span>
+                <span class="lg-knapper">
+                    <select class="lg-velg" @bind="_tellLager">
+                        <option value="0">Velg lager …</option>
+                        @foreach (var l in AktiveLagre)
+                        {
+                            <option value="@l.Id">@l.Navn</option>
+                        }
+                    </select>
+                    <button type="button" class="lg-knapp lg-knapp-p" disabled="@(_tellLager == 0)" @onclick="@(() => StartTelling(_tellLager))"><Icon Name="plus" />Start telling</button>
+                </span>
+            </div>
+            <div class="lg-tabellramme">
+                @if (_tellinger.Count == 0)
+                {
+                    <p class="lg-tom">Ingen tellinger ennå.</p>
+                }
+                else
+                {
+                    <table class="lg-tabell">
+                        <thead><tr><th>Lager</th><th>Startet</th><th>Status</th><th class="n">Talt</th><th class="n">Avvik</th></tr></thead>
+                        <tbody>
+                            @foreach (var x in _tellinger)
+                            {
+                                var telling = x;
+                                <tr class="@(telling.Status == VaretellingStatus.Pagar ? "lg-klikkrad" : "")" @onclick="@(() => ApneTelling(telling))">
+                                    <td><b>@telling.Lager?.Navn</b></td>
+                                    <td>@telling.Startet.ToString("dd.MM.yyyy HH:mm")<small>@telling.StartetAv</small></td>
+                                    <td><span class="lg-chip @(telling.Status switch { VaretellingStatus.Pagar => "lg-chip-gul", VaretellingStatus.Godkjent => "lg-chip-gronn", _ => "lg-chip-n" })">@(telling.Status switch { VaretellingStatus.Pagar => "Pågår", VaretellingStatus.Godkjent => "Godkjent", _ => "Avbrutt" })</span></td>
+                                    <td class="n">@telling.Linjer.Count(l => l.Talt is not null) / @telling.Linjer.Count</td>
+                                    <td class="n">@telling.Linjer.Count(l => l.Talt is not null && l.Talt != l.Registrert)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        }
+    </div>;
+
+    // ======================================================================
+    // Varebevegelser
+    // ======================================================================
+    private int? _bevLager;
+    private LagerBevegelseType? _bevType;
+    private string _bevSok = "";
+
+    private IEnumerable<LagerBevegelse> FiltrerteBevegelser => _sisteBevegelser
+        .Where(b => _bevLager is null || b.LagerId == _bevLager)
+        .Where(b => _bevType is null || b.Type == _bevType || (_bevType == LagerBevegelseType.FlyttUt && b.Type == LagerBevegelseType.FlyttInn))
+        .Where(b => string.IsNullOrWhiteSpace(_bevSok)
+            || (b.Component?.Navn.Contains(_bevSok, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (b.Notat?.Contains(_bevSok, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (b.BrukerNavn?.Contains(_bevSok, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    private RenderFragment Bevegelser() => @<div class="lg-fane">
+        <div class="lg-fane-topp">
+            <span><h2>Varebevegelser</h2><p>All historikk. Ingenting skrives over - feil rettes med en ny bevegelse.</p></span>
+        </div>
+        <div class="lg-verktoy">
+            <label class="lg-sok"><Icon Name="search" /><input @bind="_bevSok" @bind:event="oninput" placeholder="Søk vare, notat eller bruker …" /></label>
+            <select class="lg-velg" @bind="_bevLager">
+                <option value="">Alle lagre</option>
+                @foreach (var l in _lagre)
+                {
+                    <option value="@l.Id">@l.Navn</option>
+                }
+            </select>
+            <select class="lg-velg" @bind="_bevType">
+                <option value="">Alle typer</option>
+                <option value="@LagerBevegelseType.Tilgang">Tilgang</option>
+                <option value="@LagerBevegelseType.Uttak">Uttak</option>
+                <option value="@LagerBevegelseType.FlyttUt">Flytting</option>
+                <option value="@LagerBevegelseType.Telling">Varetelling</option>
+                <option value="@LagerBevegelseType.Inngaende">Startbeholdning</option>
+            </select>
+        </div>
+        <div class="lg-tabellramme">
+            @BevegelseTabell(FiltrerteBevegelser.Take(200))
+        </div>
+    </div>;
+
+    private RenderFragment BevegelseTabell(IEnumerable<LagerBevegelse> bevegelser, bool visVare = true) => @<div class="lg-tabellwrap">
+        @if (!bevegelser.Any())
+        {
+            <p class="lg-tom">Ingen bevegelser ennå.</p>
+        }
+        else
+        {
+            <table class="lg-tabell lg-tabell-smal">
+                <thead><tr><th>Tid</th><th>Type</th>@if (visVare) {<th>Vare</th>}<th>Lager</th><th class="n">Antall</th><th>Av / notat</th></tr></thead>
+                <tbody>
+                    @foreach (var b in bevegelser)
+                    {
+                        var (navn, klasse) = BevegelseInfo(b.Type);
+                        <tr>
+                            <td class="mono">@b.Tidspunkt.ToString("dd.MM HH:mm")</td>
+                            <td><span class="lg-chip lg-chip-@klasse">@navn</span></td>
+                            @if (visVare)
+                            {
+                                <td>@b.Component?.Navn</td>
+                            }
+                            <td>@b.Lager?.Navn</td>
+                            <td class="n"><b class="@(b.Antall < 0 ? "lg-rod" : "lg-gronn")">@(b.Antall > 0 ? "+" : "")@b.Antall</b></td>
+                            <td><small>@b.BrukerNavn@(string.IsNullOrWhiteSpace(b.Notat) ? "" : $" · {b.Notat}")</small></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>;
+}

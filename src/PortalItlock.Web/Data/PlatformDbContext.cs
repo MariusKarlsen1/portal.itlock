@@ -13,4 +13,11 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options) : Db
     public DbSet<PlattformBrukerPasswordResetToken> PlattformBrukerPasswordResetTokener => Set<PlattformBrukerPasswordResetToken>();
     public DbSet<TenantLisens> TenantLisenser => Set<TenantLisens>();
     public DbSet<LisensPris> LisensPriser => Set<LisensPris>();
+    public DbSet<TenantModul> TenantModuler => Set<TenantModul>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<TenantModul>().HasIndex(m => new { m.TenantId, m.Modul }).IsUnique();
+    }
 }
