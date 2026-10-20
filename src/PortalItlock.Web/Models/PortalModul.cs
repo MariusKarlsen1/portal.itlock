@@ -285,14 +285,15 @@ public static class PortalModulRegister
                 ]),
             ]),
 
-        // Tilleggsmodul - vises bare for organisasjoner som har kjøpt Lagerstyring.
+        // Tilleggsmodul - vises bare for organisasjoner som har kjøpt Lagerstyring,
+        // og bare i venstremenyen (KunIMeny), ikke som kort under «Mine moduler».
         new Rolle(
             "lager",
             "Lager og innkjøp",
             "Beholdning, lagre, bevegelser og varetelling",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Lager", "Beholdning, innkjøp, varemottak og varetelling", "lager", "box", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Lager),
+                    new Lenke("Lager", "Beholdning, innkjøp, varemottak og varetelling", "lager", "box", null, ModulTilgang.FraProsjektleder, KunIMeny: true, KreverModul: TilleggsModuler.Lager),
                 ]),
             ]),
 
