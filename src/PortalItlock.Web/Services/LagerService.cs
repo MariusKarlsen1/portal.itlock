@@ -57,7 +57,8 @@ public class LagerService(ApplicationDbContext db)
     // kostPerStk brukes ved tilgang (oppdaterer snittkost); ved uttak brukes
     // varens snittkost.
     public async Task RegistrerAsync(int componentId, int lagerId, int antall, LagerBevegelseType type,
-        string? notat, int? brukerId, string? brukerNavn, decimal? kostPerStk = null, int? varetellingId = null, int? innkjopsordreId = null)
+        string? notat, int? brukerId, string? brukerNavn, decimal? kostPerStk = null, int? varetellingId = null, int? innkjopsordreId = null,
+        int? prosjektId = null, int? arbeidsordreId = null)
     {
         if (antall == 0)
         {
@@ -89,7 +90,9 @@ public class LagerService(ApplicationDbContext db)
             BrukerId = brukerId,
             BrukerNavn = brukerNavn,
             VaretellingId = varetellingId,
-            InnkjopsordreId = innkjopsordreId
+            InnkjopsordreId = innkjopsordreId,
+            ProsjektId = prosjektId,
+            ArbeidsordreId = arbeidsordreId
         });
 
         await db.SaveChangesAsync();
@@ -97,7 +100,8 @@ public class LagerService(ApplicationDbContext db)
     }
 
     // Flytter mellom to lagre som to bevegelser med samme FlyttId.
-    public async Task FlyttAsync(int componentId, int fraLagerId, int tilLagerId, int antall, string? notat, int? brukerId, string? brukerNavn)
+    public async Task FlyttAsync(int componentId, int fraLagerId, int tilLagerId, int antall, string? notat, int? brukerId, string? brukerNavn,
+        int? prosjektId = null, int? arbeidsordreId = null)
     {
         if (antall <= 0 || fraLagerId == tilLagerId)
         {
@@ -110,8 +114,8 @@ public class LagerService(ApplicationDbContext db)
         var tid = DateTime.Now;
         var tekst = string.IsNullOrWhiteSpace(notat) ? null : notat.Trim();
 
-        db.LagerBevegelser.Add(new LagerBevegelse { ComponentId = componentId, LagerId = fraLagerId, Antall = -antall, Type = LagerBevegelseType.FlyttUt, KostPerStk = kost, FlyttId = flyttId, Tidspunkt = tid, Notat = tekst, BrukerId = brukerId, BrukerNavn = brukerNavn });
-        db.LagerBevegelser.Add(new LagerBevegelse { ComponentId = componentId, LagerId = tilLagerId, Antall = antall, Type = LagerBevegelseType.FlyttInn, KostPerStk = kost, FlyttId = flyttId, Tidspunkt = tid, Notat = tekst, BrukerId = brukerId, BrukerNavn = brukerNavn });
+        db.LagerBevegelser.Add(new LagerBevegelse { ComponentId = componentId, LagerId = fraLagerId, Antall = -antall, Type = LagerBevegelseType.FlyttUt, KostPerStk = kost, FlyttId = flyttId, Tidspunkt = tid, Notat = tekst, BrukerId = brukerId, BrukerNavn = brukerNavn, ProsjektId = prosjektId, ArbeidsordreId = arbeidsordreId });
+        db.LagerBevegelser.Add(new LagerBevegelse { ComponentId = componentId, LagerId = tilLagerId, Antall = antall, Type = LagerBevegelseType.FlyttInn, KostPerStk = kost, FlyttId = flyttId, Tidspunkt = tid, Notat = tekst, BrukerId = brukerId, BrukerNavn = brukerNavn, ProsjektId = prosjektId, ArbeidsordreId = arbeidsordreId });
         await db.SaveChangesAsync();
         await OppdaterLagerantallAsync(componentId);
     }

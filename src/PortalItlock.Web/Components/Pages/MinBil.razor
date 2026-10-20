@@ -1,0 +1,354 @@
+@page "/min-bil"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject LagerService LagerSvc
+@inject PlukkService PlukkSvc
+@inject ReservasjonService ResSvc
+@inject TilleggsmodulService Tilleggsmoduler
+@inject NavigationManager Nav
+
+<PageTitle>Min bil</PageTitle>
+
+@* Lagerstyring fase 4: montørens bil som eget lager. Viser hva som ligger i
+   bilen, hva som er plukket til hvilke jobber, og lar montøren registrere
+   «Brukt» (legges også på arbeidsordren) og «Retur» til lageret. *@
+<div class="mb-side">
+    <header class="mb-header">
+        <span class="mb-header-ikon"><Icon Name="map-pin" /></span>
+        <div>
+            <h1>Min bil</h1>
+            <p>Varer i bilen, hva som skal til hvilke jobber, bruk og retur</p>
+        </div>
+    </header>
+
+    @if (!_klar)
+    {
+        <p class="mb-tom">Laster …</p>
+    }
+    else if (_biler.Count == 0)
+    {
+        <div class="mb-kort mb-innhold">
+            <p class="mb-tom">Du har ingen bil registrert i lageret ennå. Be den som har ansvar for lageret om å opprette «Bil – @(_brukerNavn ?? "ditt navn")» under Lager → Lagre og biler, med deg som montør.</p>
+        </div>
+    }
+    else
+    {
+        <div class="mb-kort mb-innhold">
+            <div class="mb-topp">
+                @if (_biler.Count > 1)
+                {
+                    <select class="mb-velg" value="@_bilId" @onchange="@(e => ByttBil(e.Value?.ToString()))" aria-label="Velg bil">
+                        @foreach (var b in _biler)
+                        {
+                            <option value="@b.Id">@b.Navn</option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <h2>@Bil?.Navn</h2>
+                }
+                <span class="mb-nokkel"><b>@_varer.Sum(v => v.Antall) stk</b> · @Kr(_varer.Sum(v => v.Antall * v.Kost))</span>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_melding))
+            {
+                <p class="mb-melding">@_melding</p>
+            }
+
+            @if (_jobber.Count > 0)
+            {
+                <section class="mb-boks">
+                    <h3>Plukket til jobbene dine</h3>
+                    @foreach (var j in _jobber)
+                    {
+                        <div class="mb-jobb">
+                            <span><b>@j.Navn</b><small>@string.Join(" · ", j.Varer.Select(v => $"{v.Antall} × {v.Navn}"))</small></span>
+                            @if (j.Montasje is { } d)
+                            {
+                                <span class="mb-chip">@d.ToString("dd.MM")</span>
+                            }
+                        </div>
+                    }
+                    <p class="mb-hint">Varene trekkes automatisk når døren eller arbeidsordren ferdigmeldes. Bruker du noe til en annen jobb, trykk «Brukt».</p>
+                </section>
+            }
+
+            <label class="mb-sok"><Icon Name="search" /><input @bind="_sok" @bind:event="oninput" @onkeydown="SokEnter" placeholder="Søk eller skann vare …" /></label>
+
+            <div class="mb-liste">
+                @if (FiltrerteVarer.Count == 0)
+                {
+                    <p class="mb-tom">@(_varer.Count == 0 ? "Bilen er tom." : "Ingen treff.")</p>
+                }
+                @foreach (var x in FiltrerteVarer)
+                {
+                    var v = x;
+                    <div class="mb-rad @(_aapen == v.ComponentId ? "aapen" : "")">
+                        <div class="mb-rad-topp">
+                            <span class="mb-rad-tekst">
+                                <b>@v.Navn</b>
+                                <small>@(v.Produktkode ?? "–")@(v.TilJobber > 0 ? $" · {v.TilJobber} til jobber" : "")@(v.Standard is { } s ? $" · standard {s}" : "")</small>
+                            </span>
+                            <span class="mb-antall @(v.Standard is { } st && v.Antall - v.TilJobber < st ? "lav" : "")">@v.Antall</span>
+                            <span class="mb-knapper">
+                                <button type="button" class="mb-knapp @(_aapen == v.ComponentId && _handling == "brukt" ? "aktiv" : "")" @onclick="@(() => Apne(v, "brukt"))">Brukt</button>
+                                <button type="button" class="mb-knapp @(_aapen == v.ComponentId && _handling == "retur" ? "aktiv" : "")" @onclick="@(() => Apne(v, "retur"))">Retur</button>
+                            </span>
+                        </div>
+                        @if (_aapen == v.ComponentId)
+                        {
+                            <div class="mb-handling">
+                                <span class="mb-teller">
+                                    <button type="button" @onclick="@(() => _antall = Math.Max(1, _antall - 1))" aria-label="Én mindre">−</button>
+                                    <input type="number" min="1" max="@v.Antall" @bind="_antall" aria-label="Antall" />
+                                    <button type="button" @onclick="@(() => _antall = Math.Min(v.Antall, _antall + 1))" aria-label="Én til">+</button>
+                                </span>
+                                @if (_handling == "brukt")
+                                {
+                                    <label class="mb-felt">Brukt på
+                                        <select @bind="_bruktPa">
+                                            <option value="">Ingen bestemt jobb</option>
+                                            @foreach (var ao in _arbeidsordre)
+                                            {
+                                                <option value="@($"a{ao.Id}")">@ao.Tittel@(ao.PlanlagtDato is { } d ? $" ({d:dd.MM})" : "")</option>
+                                            }
+                                            @foreach (var p in _prosjekter)
+                                            {
+                                                <option value="@($"p{p.Id}")">Prosjekt: @p.Navn</option>
+                                            }
+                                        </select>
+                                    </label>
+                                }
+                                else
+                                {
+                                    <label class="mb-felt">Tilbake til
+                                        <select @bind="_returTil">
+                                            @foreach (var l in _lagre.Where(l => l.Id != _bilId))
+                                            {
+                                                <option value="@l.Id">@l.Navn</option>
+                                            }
+                                        </select>
+                                    </label>
+                                }
+                                <label class="mb-felt">Notat<input @bind="_notat" placeholder="Valgfritt" /></label>
+                                <div class="mb-handling-knapper">
+                                    <button type="button" class="mb-knapp" @onclick="@(() => _aapen = null)">Avbryt</button>
+                                    <button type="button" class="mb-knapp mb-knapp-p" disabled="@(_lagrer || _antall < 1 || _antall > v.Antall)" @onclick="@(() => Utfor(v))">@(_handling == "brukt" ? $"Registrer brukt ({_antall})" : $"Returner ({_antall})")</button>
+                                </div>
+                                @if (_handling == "brukt")
+                                {
+                                    <p class="mb-hint">Velger du en arbeidsordre, legges varen også på arbeidsordren så den blir fakturert.</p>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            @if (_pafyll.Count > 0)
+            {
+                <section class="mb-boks mb-boks-gul">
+                    <h3>Under standardbeholdning</h3>
+                    @foreach (var p in _pafyll)
+                    {
+                        <div class="mb-jobb"><span><b>@p.Vare.Navn</b><small>Har @(p.IBil - p.TilJobber) ledig i bilen, standard @p.Minimum</small></span><span class="mb-chip">+@p.Antall</span></div>
+                    }
+                    <p class="mb-hint">Lageret ser det samme forslaget under Lager → Lagre og biler → Påfyll.</p>
+                </section>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+    private sealed record VareIBil(int ComponentId, string Navn, string? Produktkode, string? Gtin, int Antall, int TilJobber, int? Standard, decimal Kost);
+    private sealed record Jobb(string Navn, DateTime? Montasje, List<(string Navn, int Antall)> Varer);
+
+    private bool _klar;
+    private int? _brukerId;
+    private string? _brukerNavn;
+    private List<Lager> _biler = [];
+    private List<Lager> _lagre = [];
+    private int _bilId;
+    private List<VareIBil> _varer = [];
+    private List<Jobb> _jobber = [];
+    private List<PlukkService.Pafyll> _pafyll = [];
+    private List<Arbeidsordre> _arbeidsordre = [];
+    private List<Prosjekt> _prosjekter = [];
+    private string? _melding;
+    private string _sok = "";
+
+    private int? _aapen;
+    private string _handling = "brukt";
+    private int _antall = 1;
+    private string _bruktPa = "";
+    private int _returTil;
+    private string _notat = "";
+    private bool _lagrer;
+
+    private Lager? Bil => _biler.FirstOrDefault(b => b.Id == _bilId);
+    private static string Kr(decimal v) => v.ToString("#,##0", Kultur) + " kr";
+
+    private List<VareIBil> FiltrerteVarer => _varer
+        .Where(v => string.IsNullOrWhiteSpace(_sok) || v.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase)
+            || (v.Produktkode?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false) || v.Gtin == _sok.Trim())
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Tilleggsmoduler.HarAsync(TilleggsModuler.Lager))
+        {
+            Nav.NavigateTo("/", replace: true);
+            return;
+        }
+
+        var erLeder = false;
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            _brukerNavn = state.User.Identity?.Name;
+            erLeder = state.User.IsInRole("Admin") || state.User.IsInRole("Prosjektleder");
+            if (int.TryParse(state.User.FindFirst("BrukerId")?.Value, out var id))
+            {
+                _brukerId = id;
+                _brukerNavn = (await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id))?.Navn ?? _brukerNavn;
+            }
+        }
+
+        await PlukkSvc.SynkForbrukAsync();
+        _lagre = await Db.Lagre.AsNoTracking().Where(l => l.Aktiv).OrderBy(l => l.Type).ThenBy(l => l.Navn).ToListAsync();
+        var alleBiler = _lagre.Where(l => l.Type == LagerType.Bil).ToList();
+        // Montøren ser sin egen bil; leder kan se alle biler.
+        _biler = alleBiler.Where(b => b.AnsvarligBrukerId == _brukerId).ToList();
+        if (erLeder)
+        {
+            _biler = _biler.Concat(alleBiler.Where(b => b.AnsvarligBrukerId != _brukerId)).ToList();
+        }
+
+        _bilId = _biler.FirstOrDefault()?.Id ?? 0;
+        _returTil = _lagre.FirstOrDefault(l => l.Type == LagerType.Hovedlager)?.Id ?? 0;
+        await LastAsync();
+        _klar = true;
+    }
+
+    private async Task ByttBil(string? verdi)
+    {
+        if (int.TryParse(verdi, out var id))
+        {
+            _bilId = id;
+            _aapen = null;
+            await LastAsync();
+        }
+    }
+
+    private async Task LastAsync()
+    {
+        if (_bilId == 0)
+        {
+            return;
+        }
+
+        var beholdning = (await LagerSvc.BeholdningAsync(lagerId: _bilId)).Where(b => b.Antall != 0).ToList();
+        var ider = beholdning.Select(b => b.ComponentId).ToList();
+        var komponenter = await Db.Components.AsNoTracking().Where(c => ider.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+        var reservasjoner = await Db.LagerReservasjoner.AsNoTracking().Include(r => r.Prosjekt).Include(r => r.Arbeidsordre)
+            .Where(r => r.PlukketLagerId == _bilId && r.Plukket > 0).ToListAsync();
+        var standard = await Db.VareLagerplasser.AsNoTracking().Where(p => p.LagerId == _bilId && p.Minimum != null)
+            .ToDictionaryAsync(p => p.ComponentId, p => p.Minimum);
+
+        _varer = beholdning
+            .Where(b => komponenter.ContainsKey(b.ComponentId))
+            .Select(b =>
+            {
+                var c = komponenter[b.ComponentId];
+                return new VareIBil(c.Id, c.Navn, c.Produktkode, c.Gtin, b.Antall,
+                    reservasjoner.Where(r => r.ComponentId == c.Id).Sum(r => r.Plukket), standard.GetValueOrDefault(c.Id), LagerService.KostFor(c));
+            })
+            .OrderBy(v => v.Navn).ToList();
+
+        var montasje = await Db.Arbeidsordre.AsNoTracking()
+            .Where(a => a.ProsjektId != null && a.PlanlagtDato != null && a.Status != ArbeidsordreStatus.Ferdig && a.Status != ArbeidsordreStatus.Fakturert)
+            .Select(a => new { a.ProsjektId, a.PlanlagtDato }).ToListAsync();
+        _jobber = reservasjoner
+            .GroupBy(r => r.ProsjektId is { } p ? $"p{p}" : $"a{r.ArbeidsordreId}")
+            .Select(g =>
+            {
+                var r = g.First();
+                var dato = r.ProsjektId is { } p ? montasje.Where(m => m.ProsjektId == p).Min(m => m.PlanlagtDato) : r.Arbeidsordre?.PlanlagtDato;
+                return new Jobb(r.Prosjekt?.Navn ?? r.Arbeidsordre?.Tittel ?? "Jobb", dato,
+                    g.Select(x => (komponenter.GetValueOrDefault(x.ComponentId)?.Navn ?? "Vare", x.Plukket)).ToList());
+            })
+            .OrderBy(j => j.Montasje ?? DateTime.MaxValue).ToList();
+
+        _pafyll = await PlukkSvc.PafyllAsync(_bilId, await ResSvc.LedigAsync());
+
+        // Jobber å føre bruk på: montørens åpne arbeidsordre (alle for leder)
+        // og prosjektene som har varer i bilen.
+        var bilEier = Bil?.AnsvarligBrukerId;
+        _arbeidsordre = await Db.Arbeidsordre.AsNoTracking()
+            .Where(a => a.Status != ArbeidsordreStatus.Ferdig && a.Status != ArbeidsordreStatus.Fakturert)
+            .Where(a => bilEier == null || a.AnsvarligMontorId == bilEier)
+            .OrderBy(a => a.PlanlagtDato ?? DateTime.MaxValue).Take(60).ToListAsync();
+        var prosjektIder = reservasjoner.Where(r => r.ProsjektId != null).Select(r => r.ProsjektId!.Value).Distinct().ToList();
+        _prosjekter = await Db.Prosjekter.AsNoTracking()
+            .Where(p => prosjektIder.Contains(p.Id) || (bilEier != null && p.AnsvarligMontorId == bilEier && p.Status == ProsjektStatus.UnderArbeid))
+            .OrderBy(p => p.Navn).ToListAsync();
+    }
+
+    private void Apne(VareIBil v, string handling)
+    {
+        if (_aapen == v.ComponentId && _handling == handling)
+        {
+            _aapen = null;
+            return;
+        }
+
+        _aapen = v.ComponentId;
+        _handling = handling;
+        _antall = 1;
+        _notat = "";
+        _bruktPa = "";
+    }
+
+    private void SokEnter(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && FiltrerteVarer.Count == 1)
+        {
+            Apne(FiltrerteVarer[0], "brukt");
+        }
+    }
+
+    private async Task Utfor(VareIBil v)
+    {
+        _lagrer = true;
+        if (_handling == "brukt")
+        {
+            int? aoId = _bruktPa.StartsWith('a') && int.TryParse(_bruktPa[1..], out var a) ? a : null;
+            int? prosjektId = _bruktPa.StartsWith('p') && int.TryParse(_bruktPa[1..], out var p) ? p : null;
+            await PlukkSvc.BruktAsync(v.ComponentId, _bilId, _antall, prosjektId, aoId, _notat, _brukerId, _brukerNavn);
+            var hvor = aoId is { } x ? _arbeidsordre.FirstOrDefault(o => o.Id == x)?.Tittel : prosjektId is { } y ? _prosjekter.FirstOrDefault(o => o.Id == y)?.Navn : null;
+            _melding = $"{_antall} × {v.Navn} registrert som brukt" + (hvor is null ? "." : $" på {hvor}.") + (aoId is not null ? " Varen er lagt på arbeidsordren." : "");
+        }
+        else
+        {
+            await PlukkSvc.ReturAsync(v.ComponentId, _bilId, _returTil, _antall, _notat, _brukerId, _brukerNavn);
+            _melding = $"{_antall} × {v.Navn} returnert til {_lagre.FirstOrDefault(l => l.Id == _returTil)?.Navn}.";
+        }
+
+        _lagrer = false;
+        _aapen = null;
+        _sok = "";
+        await LastAsync();
+    }
+}

@@ -8,6 +8,7 @@ namespace PortalItlock.Web.Services;
 //
 // Behovet hentes fra det som allerede finnes i portalen:
 //  - prosjekt: varene på dørene (Levert av F = vi leverer), ikke montert
+//    (verken varen eller hele døren ferdig montert)
 //  - arbeidsordre: varene på arbeidsordren, ikke plukket
 // «Ledig» er beholdningen på hovedlager(ene) minus det som er reservert.
 // Reservasjonen tar det som er ledig, resten blir «venter» og går inn i
@@ -44,7 +45,7 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
         var montasje = await MontasjedatoerAsync();
 
         var dorBehov = await db.DorKomponenter.AsNoTracking()
-            .Where(k => k.LevertAv == LevertAv.F && !k.Montert && k.ComponentId != 0 && k.Antall > 0)
+            .Where(k => k.LevertAv == LevertAv.F && !k.Montert && k.Dor!.Status != MontasjeStatus.FerdigMontert && k.ComponentId != 0 && k.Antall > 0)
             .Where(k => k.Dor!.Prosjekt!.Status == null || AktiveProsjekt.Contains(k.Dor!.Prosjekt!.Status!.Value))
             .GroupBy(k => new { k.Dor!.ProsjektId, k.ComponentId })
             .Select(g => new { g.Key.ProsjektId, g.Key.ComponentId, Antall = g.Sum(k => k.Antall) })
@@ -124,13 +125,14 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
         return ider;
     }
 
-    // Ledig = på hovedlager minus reservert, per vare.
+    // Ledig = på hovedlager minus det som er reservert og ikke plukket ut ennå.
     public async Task<Dictionary<int, int>> LedigAsync()
     {
         var hoved = await HovedlagerIderAsync();
         var paLager = await db.LagerBevegelser.AsNoTracking().Where(b => hoved.Contains(b.LagerId))
             .GroupBy(b => b.ComponentId).Select(g => new { g.Key, Antall = g.Sum(b => b.Antall) }).ToListAsync();
-        var reservert = await ReservertAsync();
+        var reservert = (await db.LagerReservasjoner.AsNoTracking().Select(r => new { r.ComponentId, Rest = r.Antall - r.Plukket }).ToListAsync())
+            .GroupBy(r => r.ComponentId).ToDictionary(g => g.Key, g => g.Sum(r => r.Rest));
         var ider = paLager.Select(p => p.Key).Union(reservert.Keys);
         return ider.ToDictionary(id => id, id => (paLager.FirstOrDefault(p => p.Key == id)?.Antall ?? 0) - reservert.GetValueOrDefault(id));
     }
@@ -190,6 +192,7 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
                 res.Venter -= fraVenter;
                 res.Antall -= overskudd - fraVenter;
                 frigitt += overskudd;
+                res.Plukket = Math.Min(res.Plukket, res.Antall);
             }
 
             // Har vi fått ledige varer siden sist, flyttes ventende over.

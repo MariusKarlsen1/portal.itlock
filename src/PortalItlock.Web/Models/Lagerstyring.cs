@@ -85,6 +85,10 @@ public class VareLagerplass
     public int LagerId { get; set; }
     public Lager? Lager { get; set; }
     public string? Hylle { get; set; }
+
+    // Standardbeholdning på dette lageret (brukes for montørbiler: påfyll
+    // foreslås når bilen har mindre enn dette, utenom det som er plukket til jobber).
+    public int? Minimum { get; set; }
 }
 
 public enum VaretellingStatus
@@ -147,6 +151,11 @@ public class LagerReservasjon
 
     public int Antall { get; set; }
     public int Venter { get; set; }
+
+    // Fase 4: hvor mye av Antall som er plukket og flyttet ut av hovedlageret
+    // (til montørbil eller prosjektlager) - fortsatt reservert til kilden.
+    public int Plukket { get; set; }
+    public int? PlukketLagerId { get; set; }
 
     public DateTime Opprettet { get; set; } = DateTime.Now;
     public DateTime SistEndret { get; set; } = DateTime.Now;

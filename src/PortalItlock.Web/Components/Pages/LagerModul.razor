@@ -12,6 +12,7 @@
 @inject LagerService LagerSvc
 @inject InnkjopService InnkjopSvc
 @inject ReservasjonService ResSvc
+@inject PlukkService PlukkSvc
 @inject TilleggsmodulService Tilleggsmoduler
 @inject VisningPreferanseService VisningPref
 @inject NavigationManager Nav
@@ -24,7 +25,9 @@
    med avvikskontroll og varemottak med restordre.
    Fase 3: prosjekt-behov fra dører og arbeidsordre, reservasjoner, innkjøp
    av det som mangler og varsel om forsinket levering før montasje.
-   Plukk og montørbiler kommer i fase 4. *@
+   Fase 4: plukk fra reservasjoner (med skanning), montørbiler med påfyll,
+   forbruk når dør/arbeidsordre ferdigmeldes (PlukkService + bakgrunnsjobb).
+   Montørens egen visning er MinBil.razor. *@
 <div class="lg-side @(_full ? "lg-full" : "")">
     <header class="side-header lg-header">
         <span class="side-header-ikon"><Icon Name="box" /></span>
@@ -91,6 +94,9 @@
                     case "mottak":
                         @Varemottak()
                         break;
+                    case "plukk":
+                        @Plukk()
+                        break;
                     case "lagre":
                         @Lagre()
                         break;
@@ -119,10 +125,11 @@
     [
         ("oversikt", "Oversikt", "bar-chart", "Lager"),
         ("varer", "Varer og beholdning", "box", "Lager"),
-        ("behov", "Prosjekt-behov", "folder", "Innkjøp"),
-        ("innkjop", "Innkjøp", "receipt", "Innkjøp"),
-        ("ob", "Ordrebekreftelser", "mail", "Innkjøp"),
-        ("mottak", "Varemottak", "download", "Innkjøp"),
+        ("behov", "Prosjekt-behov", "folder", "Vareflyt"),
+        ("innkjop", "Innkjøp", "receipt", "Vareflyt"),
+        ("ob", "Ordrebekreftelser", "mail", "Vareflyt"),
+        ("mottak", "Varemottak", "download", "Vareflyt"),
+        ("plukk", "Plukk og utlevering", "tag", "Vareflyt"),
         ("lagre", "Lagre og biler", "building", "Kontroll"),
         ("telling", "Varetelling", "clipboard", "Kontroll"),
         ("bevegelser", "Varebevegelser", "list", "Kontroll"),
@@ -136,6 +143,7 @@
         "innkjop" => (_forslag.Count, "lg-meny-tall-n"),
         "ob" => (VenterPaOb.Count + MedAvvik.Count, MedAvvik.Count > 0 ? "" : "lg-meny-tall-b"),
         "mottak" => (KlareForMottak.Count, "lg-meny-tall-b"),
+        "plukk" => (PlukkKilder.Count, "lg-meny-tall-b"),
         "telling" => (_tellinger.Count(t => t.Status == VaretellingStatus.Pagar), "lg-meny-tall-n"),
         _ => (0, "")
     };
@@ -181,6 +189,7 @@
 
         _full = await VisningPref.HentAsync("lager-bredde", "normal") == "full";
         await LagerSvc.HovedlagerAsync();
+        await PlukkSvc.SynkForbrukAsync();
         await LastAsync();
         _klar = true;
     }
@@ -199,6 +208,7 @@
             .Where(p => p.Status == null || (p.Status != ProsjektStatus.Avsluttet && p.Status != ProsjektStatus.TilbudAvslatt))
             .OrderBy(p => p.Navn).Take(500).ToListAsync();
         await LastBehovAsync();
+        await LastPafyllTallAsync();
         await LastInnkjopAsync();
     }
 
@@ -717,7 +727,7 @@
 
         <div class="lg-boks-topp lg-boks-topp-smal"><h3>Per lager</h3></div>
         <table class="lg-tabell lg-tabell-smal">
-            <thead><tr><th>Lager</th><th>Hylle</th><th class="n">Antall</th></tr></thead>
+            <thead><tr><th>Lager</th><th>Hylle</th><th class="n">Antall</th><th class="n" title="Standardbeholdning (påfyll foreslås under dette)">Standard</th></tr></thead>
             <tbody>
                 @foreach (var l in AktiveLagre)
                 {
@@ -726,6 +736,10 @@
                         <td>@l.Navn</td>
                         <td><input class="lg-hylle" value="@Hylle(c.Id, lagerId)" placeholder="–" @onchange="@(e => LagreHylle(c.Id, lagerId, e.Value?.ToString()))" aria-label="Hylle på @l.Navn" /></td>
                         <td class="n"><b>@Antall(c.Id, lagerId)</b></td>
+                        <td class="n">@if (l.Type != LagerType.Hovedlager)
+                            {
+                                <input class="lg-hylle lg-standard" type="number" min="0" value="@_plasser.GetValueOrDefault((c.Id, lagerId))?.Minimum" placeholder="–" @onchange="@(e => LagreStandard(c.Id, lagerId, e.Value?.ToString()))" aria-label="Standardbeholdning på @l.Navn" />
+                            }</td>
                     </tr>
                 }
             </tbody>
@@ -858,6 +872,11 @@
             </div>
         }
 
+        @if (_pafyllLagerId is not null)
+        {
+            @PafyllVisning()
+        }
+
         <div class="lg-lagerrutenett">
             @foreach (var l in AktiveLagre)
             {
@@ -878,6 +897,10 @@
                     <div class="lg-lagerkort-fot">
                         <button type="button" class="lg-lenkeknapp" @onclick="@(() => VisVarerPa(lager.Id))">Se varer</button>
                         <button type="button" class="lg-lenkeknapp" @onclick="@(() => StartTelling(lager.Id))">Tell</button>
+                        @if (lager.Type == LagerType.Bil)
+                        {
+                            <button type="button" class="lg-lenkeknapp" @onclick="@(() => ApnePafyll(lager.Id))">Påfyll@(_pafyllTall.GetValueOrDefault(lager.Id) > 0 ? $" ({_pafyllTall[lager.Id]})" : "")</button>
+                        }
                         <button type="button" class="lg-lenkeknapp lg-lenkeknapp-fare" @onclick="@(() => DeaktiverLager(lager))">Legg bort</button>
                     </div>
                 </section>
@@ -2012,7 +2035,7 @@
         _ledig = await ResSvc.LedigAsync();
         var ider = _behov.SelectMany(b => b.Behov.Keys).Concat(_reservasjoner.Select(r => r.ComponentId)).Distinct().ToList();
         _behovVarer = await Db.Components.AsNoTracking().Where(c => ider.Contains(c.Id))
-            .Select(c => new Component { Id = c.Id, Navn = c.Navn, Produktkode = c.Produktkode, Leverandor = c.Leverandor, ILagerstyring = c.ILagerstyring, Enhet = c.Enhet })
+            .Select(c => new Component { Id = c.Id, Navn = c.Navn, Produktkode = c.Produktkode, Gtin = c.Gtin, Leverandor = c.Leverandor, ILagerstyring = c.ILagerstyring, Enhet = c.Enhet })
             .ToDictionaryAsync(c => c.Id);
     }
 
@@ -2317,7 +2340,7 @@
 
         <div class="lg-tabellramme">
             <table class="lg-tabell">
-                <thead><tr><th>Vare</th><th class="n">Behov</th><th class="n">Ledig nå</th><th class="n">Reservert</th><th class="n">Venter</th><th>Status</th></tr></thead>
+                <thead><tr><th>Vare</th><th class="n">Behov</th><th class="n">Ledig nå</th><th class="n">Reservert</th><th class="n">Plukket</th><th class="n">Venter</th><th>Status</th></tr></thead>
                 <tbody>
                     @foreach (var id in b.Behov.Keys.Union(res.Select(r => r.ComponentId)).OrderBy(VareNavn))
                     {
@@ -2331,6 +2354,7 @@
                             <td class="n">@behov</td>
                             <td class="n @(Ledig(id) <= 0 ? "lg-rod" : "")">@Ledig(id)</td>
                             <td class="n">@(r?.Antall > 0 ? r.Antall.ToString() : "–")</td>
+                            <td class="n">@(r?.Plukket > 0 ? r.Plukket.ToString() : "–")</td>
                             <td class="n @(r?.Venter > 0 ? "lg-gul" : "")">@(r?.Venter > 0 ? r.Venter.ToString() : "–")</td>
                             <td>
                                 @if (r is null)
@@ -2374,6 +2398,313 @@
     </div>;
 
     // ======================================================================
+    // Plukk og utlevering, påfyll av bil (fase 4)
+    // ======================================================================
+    private string? _plukkKilde;
+    private Dictionary<int, int> _plukk = [];
+    private int _plukkTil = -1;
+    private string _skann = "";
+    private string? _skannSvar;
+    private int? _pafyllLagerId;
+    private List<PlukkService.Pafyll> _pafyll = [];
+    private Dictionary<int, int> _pafyllAntall = [];
+    private Dictionary<int, int> _pafyllTall = [];
+
+    private async Task LastPafyllTallAsync()
+    {
+        _pafyllTall = [];
+        foreach (var bil in _lagre.Where(l => l.Aktiv && l.Type == LagerType.Bil))
+        {
+            _pafyllTall[bil.Id] = (await PlukkSvc.PafyllAsync(bil.Id, _ledig)).Count;
+        }
+    }
+
+    private List<LagerReservasjon> KlarForPlukk(ReservasjonService.Kilde k) =>
+        ReservasjonerFor(k).Where(r => r.Antall - r.Plukket > 0).ToList();
+
+    private List<ReservasjonService.Behovskilde> PlukkKilder => _behov
+        .Where(b => KlarForPlukk(b.Kilde).Count > 0)
+        .OrderBy(b => b.Montasje ?? DateTime.MaxValue).ThenBy(b => b.Navn).ToList();
+
+    private ReservasjonService.Behovskilde? ApenPlukk => _behov.FirstOrDefault(b => b.Kilde.Nokkel == _plukkKilde);
+
+    private int PlukkAntall(LagerReservasjon r) => _plukk.TryGetValue(r.Id, out var a) ? a : r.Antall - r.Plukket;
+
+    private async Task ApnePlukk(ReservasjonService.Behovskilde b)
+    {
+        _plukkKilde = b.Kilde.Nokkel;
+        _plukk.Clear();
+        _skann = "";
+        _skannSvar = null;
+
+        // Standard mottaker: bilen til ansvarlig montør på jobben, ellers
+        // prosjektlageret, ellers første bil.
+        int? montor = b.Kilde.ProsjektId is { } p
+            ? await Db.Prosjekter.Where(x => x.Id == p).Select(x => x.AnsvarligMontorId).FirstOrDefaultAsync()
+            : await Db.Arbeidsordre.Where(x => x.Id == b.Kilde.ArbeidsordreId).Select(x => x.AnsvarligMontorId).FirstOrDefaultAsync();
+        var bil = AktiveLagre.FirstOrDefault(l => l.Type == LagerType.Bil && montor != null && l.AnsvarligBrukerId == montor);
+        var prosjektlager = AktiveLagre.FirstOrDefault(l => l.Type == LagerType.Prosjektlager && b.Kilde.ProsjektId != null && l.ProsjektId == b.Kilde.ProsjektId);
+        _plukkTil = bil?.Id ?? prosjektlager?.Id ?? AktiveLagre.FirstOrDefault(l => l.Type == LagerType.Bil)?.Id ?? 0;
+    }
+
+    private void SettPlukk(LagerReservasjon r, int verdi) => _plukk[r.Id] = Math.Clamp(verdi, 0, r.Antall - r.Plukket);
+
+    private void SettAllePlukk(ReservasjonService.Behovskilde b, bool alle)
+    {
+        foreach (var r in KlarForPlukk(b.Kilde))
+        {
+            _plukk[r.Id] = alle ? r.Antall - r.Plukket : 0;
+        }
+    }
+
+    // Skanning: EAN/GTIN eller varenummer. Første skann setter listen til 0
+    // (så man teller med skanneren), deretter +1 per skann.
+    private void Skann(ReservasjonService.Behovskilde b, KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter" || string.IsNullOrWhiteSpace(_skann))
+        {
+            return;
+        }
+
+        var kode = _skann.Trim();
+        _skann = "";
+        var linjer = KlarForPlukk(b.Kilde);
+        var treff = linjer.FirstOrDefault(r => _behovVarer.GetValueOrDefault(r.ComponentId) is { } c
+            && (string.Equals(c.Gtin, kode, StringComparison.OrdinalIgnoreCase) || string.Equals(c.Produktkode, kode, StringComparison.OrdinalIgnoreCase)));
+        if (treff is null)
+        {
+            _skannSvar = $"«{kode}» er ikke på denne plukklisten.";
+            return;
+        }
+
+        if (_plukk.Count == 0)
+        {
+            SettAllePlukk(b, false);
+        }
+
+        var for_ = PlukkAntall(treff);
+        SettPlukk(treff, for_ + 1);
+        _skannSvar = PlukkAntall(treff) == for_
+            ? $"Alle {treff.Antall - treff.Plukket} av {VareNavn(treff.ComponentId)} er allerede plukket."
+            : $"✓ {VareNavn(treff.ComponentId)}: {PlukkAntall(treff)} av {treff.Antall - treff.Plukket}";
+    }
+
+    private async Task FullforPlukk(ReservasjonService.Behovskilde b)
+    {
+        var antall = KlarForPlukk(b.Kilde).ToDictionary(r => r.Id, PlukkAntall);
+        _jobber = true;
+        var totalt = await PlukkSvc.PlukkAsync(antall, _plukkTil == 0 ? null : _plukkTil, _brukerId, _brukerNavn);
+        _jobber = false;
+        if (totalt == 0)
+        {
+            _melding = "Ingen varer er plukket - sett antall på det du har tatt ut.";
+            return;
+        }
+
+        _plukkKilde = null;
+        _plukk.Clear();
+        await LastAsync();
+        _melding = _plukkTil == 0
+            ? $"{totalt} stk plukket og ført som forbruk på {b.Navn}."
+            : $"{totalt} stk plukket til {LagerNavn(_plukkTil)}. Varene er fortsatt reservert til {b.Navn}, og føres som forbruk når døren eller arbeidsordren ferdigmeldes.";
+    }
+
+    // ---------- Påfyll ----------
+    private async Task ApnePafyll(int bilId)
+    {
+        _pafyllLagerId = bilId;
+        _pafyll = await PlukkSvc.PafyllAsync(bilId, _ledig);
+        _pafyllAntall = _pafyll.ToDictionary(p => p.Vare.Id, p => Math.Max(0, Math.Min(p.Antall, p.LedigHovedlager)));
+    }
+
+    private async Task FyllPa()
+    {
+        if (_pafyllLagerId is not { } bil)
+        {
+            return;
+        }
+
+        var hoved = AktiveLagre.FirstOrDefault(l => l.Type == LagerType.Hovedlager)?.Id ?? 0;
+        var totalt = 0;
+        foreach (var (vare, antall) in _pafyllAntall.Where(a => a.Value > 0))
+        {
+            await LagerSvc.FlyttAsync(vare, hoved, bil, antall, "Påfyll av bil", _brukerId, _brukerNavn);
+            totalt += antall;
+        }
+
+        _pafyllLagerId = null;
+        await LastAsync();
+        _melding = totalt == 0 ? "Ingenting å fylle på." : $"{totalt} stk flyttet fra hovedlageret til {LagerNavn(bil)}.";
+    }
+
+    private async Task LagreStandard(int vare, int lager, string? verdi)
+    {
+        if (!_plasser.TryGetValue((vare, lager), out var plass))
+        {
+            plass = new VareLagerplass { ComponentId = vare, LagerId = lager };
+            Db.VareLagerplasser.Add(plass);
+            _plasser[(vare, lager)] = plass;
+        }
+
+        plass.Minimum = int.TryParse(verdi, out var m) && m > 0 ? m : null;
+        await Db.SaveChangesAsync();
+    }
+
+    // ======================================================================
+    // Plukk - visning
+    // ======================================================================
+    private RenderFragment Plukk() => @<div class="lg-fane">
+        @if (ApenPlukk is { } b)
+        {
+            @PlukkDetalj(b)
+        }
+        else
+        {
+            <div class="lg-fane-topp">
+                <span><h2>Plukk og utlevering</h2><p>Plukklister lages fra reservasjonene og sorteres etter hylle. Varene flyttes til montørens bil eller prosjektlageret - de er fortsatt bedriftens lagerverdi til de er montert.</p></span>
+            </div>
+
+            @if (PlukkKilder.Count == 0)
+            {
+                <p class="lg-tom">Ingen plukklister. Reserver varer under <a href="/lager/behov">Prosjekt-behov</a> først.</p>
+            }
+            <div class="lg-lagerrutenett">
+                @foreach (var x in PlukkKilder)
+                {
+                    var kilde = x;
+                    var linjer = KlarForPlukk(kilde.Kilde);
+                    var venter = ReservasjonerFor(kilde.Kilde).Sum(r => r.Venter);
+                    <section class="lg-lagerkort lg-mottakskort">
+                        <div class="lg-lagerkort-topp">
+                            <span class="lg-lagerikon"><Icon Name="tag" /></span>
+                            <span class="lg-lagerrad-tekst"><b>@kilde.Navn</b><small>@linjer.Count varelinjer · @linjer.Sum(r => r.Antall - r.Plukket) stk klar til plukk</small></span>
+                        </div>
+                        <div class="lg-mottak-info">
+                            <span class="@(kilde.Montasje is { } m && m.Date <= DateTime.Today.AddDays(3) ? "lg-rod" : "")">@(kilde.Montasje is { } dato ? $"Montasje {dato:dd.MM.yyyy}" : "Ingen montasjedato")</span>
+                            @if (venter > 0)
+                            {
+                                <span class="lg-gul">@venter stk venter på innkjøp</span>
+                            }
+                        </div>
+                        <button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => ApnePlukk(kilde))"><Icon Name="check" />Plukk</button>
+                    </section>
+                }
+            </div>
+
+            var plukket = _reservasjoner.Where(r => r.Plukket > 0 && r.PlukketLagerId != null).GroupBy(r => r.PlukketLagerId!.Value).ToList();
+            @if (plukket.Count > 0)
+            {
+                <section class="lg-boks">
+                    <div class="lg-boks-topp"><h3>Plukket - ute i biler og prosjektlager</h3></div>
+                    @foreach (var g in plukket)
+                    {
+                        <div class="lg-lagerrad">
+                            <span class="lg-lagerikon lg-type-@(_lagre.FirstOrDefault(l => l.Id == g.Key)?.Type.ToString().ToLowerInvariant())"><Icon Name="map-pin" /></span>
+                            <span class="lg-lagerrad-tekst"><b>@LagerNavn(g.Key)</b><small>@string.Join(" · ", g.GroupBy(KildeNavn).Select(k => $"{k.Key}: {k.Sum(r => r.Plukket)} stk"))</small></span>
+                            <b class="lg-tall">@Kr(g.Sum(r => r.Plukket * KostForBehov(r.ComponentId)))</b>
+                        </div>
+                    }
+                </section>
+            }
+        }
+    </div>;
+
+    private RenderFragment PlukkDetalj(ReservasjonService.Behovskilde b) => @<div class="lg-fane">
+        @{
+            var linjer = KlarForPlukk(b.Kilde)
+                .OrderBy(r => Hylle(r.ComponentId, r.LagerId) ?? "~").ThenBy(r => VareNavn(r.ComponentId)).ToList();
+            var valgt = linjer.Sum(PlukkAntall);
+        }
+        <div class="lg-fane-topp">
+            <span>
+                <button type="button" class="lg-lenkeknapp lg-tilbake" @onclick="@(() => _plukkKilde = null)"><Icon Name="arrow-left" />Alle plukklister</button>
+                <h2>Plukkliste – @b.Navn</h2>
+                <p>@(b.Undertekst ?? "Prosjekt")@(b.Montasje is { } m ? $" · montasje {m:dd.MM.yyyy}" : "")</p>
+            </span>
+            <span class="lg-knapper">
+                <button type="button" class="lg-knapp lg-knapp-s" @onclick="@(() => SettAllePlukk(b, true))">Alt plukket</button>
+                <button type="button" class="lg-knapp lg-knapp-s" @onclick="@(() => SettAllePlukk(b, false))">Nullstill</button>
+            </span>
+        </div>
+
+        <div class="lg-mottak">
+            <label class="lg-sok lg-skann"><Icon Name="qr" /><input @bind="_skann" @bind:event="oninput" @onkeydown="@(e => Skann(b, e))" placeholder="Skann strekkode eller skriv varenummer og trykk Enter" /></label>
+            @if (_skannSvar is not null)
+            {
+                <p class="lg-hint">@_skannSvar</p>
+            }
+
+            <div class="lg-mottak-liste">
+                @foreach (var x in linjer)
+                {
+                    var r = x;
+                    var maks = r.Antall - r.Plukket;
+                    var antall = PlukkAntall(r);
+                    var vare = _behovVarer.GetValueOrDefault(r.ComponentId);
+                    <div class="lg-mottak-rad @(antall < maks ? "lg-mottak-mangler" : "")">
+                        <span class="lg-hyllemerke">@(Hylle(r.ComponentId, r.LagerId) ?? "–")</span>
+                        <span class="lg-lagerrad-tekst">
+                            <b>@VareNavn(r.ComponentId)</b>
+                            <small>@(vare?.Produktkode ?? "–")@(string.IsNullOrWhiteSpace(vare?.Gtin) ? "" : $" · EAN {vare.Gtin}") · @maks reservert@(r.Plukket > 0 ? $" ({r.Plukket} plukket før)" : "")</small>
+                        </span>
+                        <span class="lg-teller">
+                            <button type="button" @onclick="@(() => SettPlukk(r, antall - 1))" disabled="@(antall <= 0)" aria-label="Én mindre">−</button>
+                            <input type="number" min="0" max="@maks" value="@antall" @onchange="@(e => SettPlukk(r, int.TryParse(e.Value?.ToString(), out var a) ? a : 0))" aria-label="Antall plukket" />
+                            <button type="button" @onclick="@(() => SettPlukk(r, antall + 1))" disabled="@(antall >= maks)" aria-label="Én til">+</button>
+                        </span>
+                    </div>
+                }
+            </div>
+
+            <label class="lg-felt">Leveres til
+                <select @bind="_plukkTil">
+                    @foreach (var l in AktiveLagre.Where(l => l.Type != LagerType.Hovedlager))
+                    {
+                        <option value="@l.Id">@l.Navn</option>
+                    }
+                    <option value="0">Rett til montasje (føres som forbruk nå)</option>
+                </select>
+            </label>
+            <button type="button" class="lg-knapp lg-knapp-p lg-mottak-knapp" disabled="@(_jobber || valgt == 0)" @onclick="@(() => FullforPlukk(b))"><Icon Name="check" />@(_jobber ? "Lagrer …" : $"Fullfør plukk ({valgt} stk)")</button>
+            <p class="lg-hint">Er det ikke opprettet bil for montøren ennå, gjøres det under <a href="/lager/lagre">Lagre og biler</a>.</p>
+        </div>
+    </div>;
+
+    private RenderFragment PafyllVisning() => @<section class="lg-boks">
+        <div class="lg-boks-topp">
+            <h3>Påfyll – @LagerNavn(_pafyllLagerId ?? 0)</h3>
+            <button type="button" class="lg-lukk lg-hoyre" title="Lukk" @onclick="@(() => _pafyllLagerId = null)"><Icon Name="x" /></button>
+        </div>
+        @if (_pafyll.Count == 0)
+        {
+            <p class="lg-tom">Bilen har alt den skal ha. Standardbeholdning settes per vare i varekortet (kolonnen «Standard» for bilen).</p>
+        }
+        else
+        {
+            <div class="lg-tabellwrap">
+                <table class="lg-tabell lg-tabell-smal">
+                    <thead><tr><th>Vare</th><th class="n">I bil</th><th class="n">Til jobber</th><th class="n">Standard</th><th class="n">Ledig på lager</th><th class="n">Fyll på</th></tr></thead>
+                    <tbody>
+                        @foreach (var x in _pafyll)
+                        {
+                            var p = x;
+                            <tr>
+                                <td><b>@p.Vare.Navn</b><small>@p.Vare.Produktkode</small></td>
+                                <td class="n">@p.IBil</td>
+                                <td class="n">@(p.TilJobber > 0 ? p.TilJobber.ToString() : "–")</td>
+                                <td class="n">@p.Minimum</td>
+                                <td class="n @(p.LedigHovedlager < p.Antall ? "lg-rod" : "")">@p.LedigHovedlager</td>
+                                <td class="n"><input type="number" min="0" class="lg-tallfelt" value="@_pafyllAntall.GetValueOrDefault(p.Vare.Id)" @onchange="@(e => _pafyllAntall[p.Vare.Id] = int.TryParse(e.Value?.ToString(), out var a) ? Math.Max(0, a) : 0)" aria-label="Antall å fylle på" /></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <span><button type="button" class="lg-knapp lg-knapp-p" @onclick="FyllPa"><Icon Name="arrow-right" />Flytt til bilen (@_pafyllAntall.Values.Sum() stk)</button></span>
+        }
+    </section>;
+
+    // ======================================================================
     // Varebevegelser
     // ======================================================================
     private int? _bevLager;
@@ -2404,6 +2735,7 @@
             <select class="lg-velg" @bind="_bevType">
                 <option value="">Alle typer</option>
                 <option value="@LagerBevegelseType.Mottak">Varemottak</option>
+                <option value="@LagerBevegelseType.Forbruk">Forbruk</option>
                 <option value="@LagerBevegelseType.Tilgang">Tilgang</option>
                 <option value="@LagerBevegelseType.Uttak">Uttak</option>
                 <option value="@LagerBevegelseType.FlyttUt">Flytting</option>

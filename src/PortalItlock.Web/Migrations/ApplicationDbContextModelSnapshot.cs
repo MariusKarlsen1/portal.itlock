@@ -4006,6 +4006,12 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("OpprettetAv")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Plukket")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("PlukketLagerId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("ProsjektId")
                         .HasColumnType("INTEGER");
 
@@ -6790,6 +6796,9 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int>("LagerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Minimum")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
