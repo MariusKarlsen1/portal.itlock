@@ -14,6 +14,7 @@
 @inject NavigationManager Nav
 @inject AbonnementService AbonnementSvc
 @inject PlattformFakturaService FakturaSvc
+@inject OrganisasjonBackupService BackupSvc
 
 <PageTitle>@(_tenant?.Navn ?? "Organisasjon") - Plattform</PageTitle>
 
@@ -113,8 +114,8 @@ else
         @* ================= OVERSIKT ================= *@
         @if (_fane == "oversikt")
         {
-            var brukerLisens = _lisenser.FirstOrDefault(l => l.Type == LisensType.Brukere)?.AntallTildelt ?? 0;
-            var brukereIBruk = _brukere.Count(b => b.Rolle != BrukerRolle.Kunde && b.Aktiv);
+            var brukerLisens = AnsattLisenser;
+            var brukereIBruk = AnsatteIBruk;
             var utestaende = _fakturaer.Where(f => f.Status == PlattformFakturaStatus.Fakturert).Sum(f => f.Utestaende ?? 0);
             var forfalte = _fakturaer.Where(f => f.ErForfalt).ToList();
             <div class="pod-kpi-grid pod-kpi-grid-4">
@@ -466,7 +467,7 @@ else
             <section class="pod-card">
                 <div class="pod-kort-header-rad">
                     <h3 class="pod-h3">Brukere (@_brukere.Count)</h3>
-                    <span class="pod-tom-tekst">@_brukere.Count(b => b.Rolle != BrukerRolle.Kunde && b.Aktiv) av @(_lisenser.FirstOrDefault(l => l.Type == LisensType.Brukere)?.AntallTildelt ?? 0) brukerlisenser i bruk</span>
+                    <span class="pod-tom-tekst">@string.Join(" · ", LisensTypeExtensions.Aktive.Select(t => $"{t.Kortnavn()} {IBrukFor(t)} av {Tildelt(t)}"))</span>
                     <button type="button" class="pod-btn-primary" @onclick="@(() => _visNyBruker = !_visNyBruker)"><Icon Name="plus" /> Ny bruker</button>
                 </div>
 
@@ -688,12 +689,105 @@ else
                     }
                     @if (_oppsettFane == "backup")
                     {
+                        var siste = _backuper.FirstOrDefault(b => b.Feil is null);
+                        var feilet = _backuper.FirstOrDefault() is { Feil: not null } f0 ? f0 : null;
+                        <div class="pod-kpi-grid pod-kpi-grid-3">
+                            <div class="pod-card pod-kpi">
+                                <div class="pod-kpi-topp"><span class="pod-eyebrow">Siste backup</span><span class="pod-kpi-ikon"><Icon Name="server" /></span></div>
+                                <div class="pod-kpi-verdi @(siste is null || siste.Tidspunkt < DateTime.Now.AddDays(-2) ? "pod-rod" : "")">@(siste is null ? "Ingen ennå" : RelativTid(siste.Tidspunkt))</div>
+                                <div class="pod-kpi-sub">@(siste is null ? "Tas i natt etter kl. 02" : siste.Kontrollert ? "Kontrollert og i orden" : "Ikke kontrollert")</div>
+                            </div>
+                            <div class="pod-card pod-kpi">
+                                <div class="pod-kpi-topp"><span class="pod-eyebrow">Størrelse</span><span class="pod-kpi-ikon"><Icon Name="box" /></span></div>
+                                <div class="pod-kpi-verdi">@(siste is null ? "–" : Storrelse(siste.DatabaseStorrelse))</div>
+                                <div class="pod-kpi-sub">@(siste is null ? "" : $"{Storrelse(siste.Storrelse)} komprimert og kryptert")</div>
+                            </div>
+                            <div class="pod-card pod-kpi">
+                                <div class="pod-kpi-topp"><span class="pod-eyebrow">Kopier lagret</span><span class="pod-kpi-ikon"><Icon Name="list" /></span></div>
+                                <div class="pod-kpi-verdi">@_backuper.Count(b => b.Feil is null)</div>
+                                <div class="pod-kpi-sub">@_backuper.Count(b => b.Type == BackupType.Daglig && b.Feil is null) daglige · @_backuper.Count(b => b.Type == BackupType.Ukentlig && b.Feil is null) ukentlige · @_backuper.Count(b => b.Type == BackupType.Manedlig && b.Feil is null) månedlige</div>
+                            </div>
+                        </div>
+
+                        @if (feilet is not null)
+                        {
+                            <p class="pod-varselstripe">Siste forsøk @feilet.Tidspunkt.ToString("dd.MM.yyyy HH:mm") feilet: @feilet.Feil</p>
+                        }
+                        @if (BackupSvc.Lagring.Type == BackupLagringType.Lokal)
+                        {
+                            <p class="pod-varselstripe">Kopiene lagres på serveren. Det beskytter mot feil og sletting, men ikke mot at serveren forsvinner. Sett Backup:AzureSasUrl for å lagre dem i Azure i stedet.</p>
+                        }
+
                         <section class="pod-card">
                             <div class="pod-kort-header-rad">
-                                <h3 class="pod-h3">Backup</h3>
-                                <span class="pod-chip pod-chip-gul">Kommer</span>
+                                <h3 class="pod-h3">Sikkerhetskopier</h3>
+                                <span class="pod-tom-tekst">@BackupSvc.Lagring.Beskrivelse · kryptert med AES-256</span>
+                                <button type="button" class="pod-btn-primary" disabled="@_tarBackup" @onclick="TaBackupNa"><Icon Name="plus" /> @(_tarBackup ? "Tar backup …" : "Ta backup nå")</button>
                             </div>
-                            <p class="pod-tom-tekst">Her kommer kryptert backup av organisasjonen hver natt, med oversikt over kopiene, nedlasting og gjenoppretting.</p>
+                            @if (!string.IsNullOrEmpty(_backupMelding))
+                            {
+                                <p class="pod-suksessmelding">@_backupMelding</p>
+                            }
+                            @if (!string.IsNullOrEmpty(_backupFeil))
+                            {
+                                <p class="pod-feilmelding">@_backupFeil</p>
+                            }
+                            @if (_backuper.Count == 0)
+                            {
+                                <p class="pod-tom-tekst">Ingen kopier ennå. Den første tas i natt etter kl. 02, eller trykk «Ta backup nå».</p>
+                            }
+                            else
+                            {
+                                <div class="pod-tabell-ramme">
+                                    <table class="pod-varsel-tabell">
+                                        <thead><tr><th>Tatt</th><th>Type</th><th class="pod-n">Størrelse</th><th>Kontroll</th><th></th></tr></thead>
+                                        <tbody>
+                                            @foreach (var b in _backuper)
+                                            {
+                                                var backup = b;
+                                                <tr>
+                                                    <td><b>@backup.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</b><small>@(backup.Av ?? "Automatisk")</small></td>
+                                                    <td>@backup.Type.Visningsnavn()</td>
+                                                    <td class="pod-n">@(backup.Feil is null ? Storrelse(backup.DatabaseStorrelse) : "–")</td>
+                                                    <td>
+                                                        @if (backup.Feil is not null)
+                                                        {
+                                                            <span class="pod-chip pod-chip-rod" title="@backup.Feil">Feilet</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="pod-chip @(backup.Kontrollert ? "pod-chip-ok" : "pod-chip-gul")">@(backup.Kontrollert ? "I orden" : "Ikke kontrollert")</span>
+                                                        }
+                                                    </td>
+                                                    <td class="pod-n">
+                                                        @if (backup.Feil is null)
+                                                        {
+                                                            <a class="pod-btn-ghost pod-btn-liten" href="@($"/plattform/backup/{backup.Id}/last-ned")" target="_blank"><Icon Name="download" /> Last ned</a>
+                                                            <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => _bekreftGjenoppretting = backup)">Gjenopprett</button>
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                            @if (_bekreftGjenoppretting is { } gb)
+                            {
+                                <div class="pod-bekreft">
+                                    <b>Gjenopprette @_tenant.Navn fra @gb.Tidspunkt.ToString("dd.MM.yyyy HH:mm")?</b>
+                                    <span>Portalen deres settes tilbake til dette tidspunktet, og alt som er lagt inn etterpå forsvinner. Det tas en ny kopi av dagens data først, så du kan angre. Brukere som er inne nå, bør laste siden på nytt etterpå.</span>
+                                    <div class="pod-knapperad">
+                                        <button type="button" class="pod-btn-slett" disabled="@_tarBackup" @onclick="Gjenopprett">@(_tarBackup ? "Gjenoppretter …" : "Gjenopprett")</button>
+                                        <button type="button" class="pod-btn-ghost" @onclick="@(() => _bekreftGjenoppretting = null)">Avbryt</button>
+                                    </div>
+                                </div>
+                            }
+                            <p class="pod-tom-tekst">Tas hver natt etter kl. 02. Beholdes: 14 daglige, 8 ukentlige og 12 månedlige. Manuelle kopier og kopier tatt før gjenoppretting beholdes i 60 dager. Nedlastet kopi er en vanlig SQLite-fil med alle data, også bilder og vedlegg.</p>
+                            @if (!BackupSvc.NokkelFraOppsett)
+                            {
+                                <p class="pod-tom-tekst">Krypteringsnøkkelen er laget automatisk og ligger på serveren (backup-nokkel.txt i datamappen). Legg en kopi av den i passordhvelvet ditt, eller sett den som Backup:Nokkel. Uten nøkkelen kan kopiene ikke åpnes.</p>
+                            }
                         </section>
                     }
                 </div>
@@ -995,7 +1089,7 @@ else
         _avsenderNavn = _innstillinger.AvsenderNavn ?? "";
         _svarTil = _innstillinger.SvarTilPortal ? "portal" : "epost";
         _svarTilEpost = _innstillinger.SvarTilEpost;
-        foreach (var type in Enum.GetValues<LisensType>())
+        foreach (var type in LisensTypeExtensions.Aktive)
         {
             if (_lisenser.All(l => l.Type != type))
             {
@@ -1072,6 +1166,7 @@ else
             .OrderByDescending(n => n.Dato)
             .ToListAsync();
         _tripletexKlar = await FakturaSvc.TripletexKlarAsync();
+        await LastBackuperAsync();
         BeregnOmsetningHistorikk();
     }
 
@@ -1086,19 +1181,15 @@ else
 
     private static string Kr(decimal v) => v.ToString("#,##0", Nb) + " kr";
 
+    private int Tildelt(LisensType t) => _lisenser.Where(l => l.Type == t).Sum(l => l.AntallTildelt);
+    private int IBrukFor(LisensType t) => t.Rolle() is { } r ? _brukere.Count(b => b.Aktiv && b.Rolle == r) : 0;
+    private int AnsattLisenser => LisensTypeExtensions.Ansatte.Sum(Tildelt);
+    private int AnsatteIBruk => LisensTypeExtensions.Ansatte.Sum(IBrukFor);
+
     private string IBruk(AbonnementService.Linje l)
     {
-        if (l.Nokkel == PrisProdukt.ForLisens(LisensType.Brukere))
-        {
-            return _brukere.Count(b => b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens && b.Aktiv).ToString();
-        }
-
-        if (l.Nokkel == PrisProdukt.ForLisens(LisensType.KundeTilgang))
-        {
-            return _brukere.Count(b => (b.Rolle == BrukerRolle.Kunde || b.Rolle == BrukerRolle.Driftslisens) && b.Aktiv).ToString();
-        }
-
-        return "–";
+        var type = LisensTypeExtensions.Aktive.FirstOrDefault(t => PrisProdukt.ForLisens(t) == l.Nokkel, LisensType.Brukere);
+        return type == LisensType.Brukere ? "–" : IBrukFor(type).ToString();
     }
 
     private async Task SettAntall(string nokkel, string? verdi)
@@ -1320,10 +1411,18 @@ else
                 new("Påminnelser", _mottakere.Count > 0 ? $"{_mottakere.Count} {(_mottakere.Count == 1 ? "mottaker" : "mottakere")}" : "Ingen valgt, går til administratorene", _mottakere.Count > 0, _mottakere.Count > 0 ? "Klar" : "Velg", "bell"),
                 new("Avtale og databehandleravtale", signert ? $"Signert {_abo!.AvtaleSignert:dd.MM.yyyy} og {_abo.DatabehandleravtaleSignert:dd.MM.yyyy}" : "Ikke registrert som signert", signert, signert ? "Klar" : "Ikke signert", "file-text"),
                 new("E-postadresse", OrganisasjonOppsett.Adresse(_innstillinger.EpostNavn ?? ""), false, "Reservert", "mail"),
-                new("Backup", "Kryptert backup hver natt kommer i neste steg", false, "Kommer", "server"),
+                BackupPunkt(),
                 new("Tripletex", _tenant.ErStandard ? "Koblet til itlock sin Tripletex" : "Stengt til organisasjonen får sin egen kobling", _tenant.ErStandard, _tenant.ErStandard ? "Klar" : "Kommer", "link-ikon"),
             ];
         }
+    }
+
+    private Punkt BackupPunkt()
+    {
+        var siste = _backuper.FirstOrDefault(b => b.Feil is null);
+        var ok = siste is not null && siste.Tidspunkt > DateTime.Now.AddDays(-2);
+        return new Punkt("Backup", siste is null ? "Første kopi tas i natt etter kl. 02" : $"Siste {siste.Tidspunkt:dd.MM.yyyy HH:mm} · {Storrelse(siste.DatabaseStorrelse)}",
+            ok, ok ? "Klar" : siste is null ? "Venter" : "For gammel", "server");
     }
 
     private sealed record Oppfolging(string Tittel, string Tekst, string Ikon, bool Rod, string Knapp, string Fane, string? UnderFane = null);
@@ -1351,11 +1450,9 @@ else
             liste.Add(new("Følg opp", $"{n.Oppfolging:dd.MM}: {n.Tekst}", "calendar", n.Oppfolging!.Value.Date < DateTime.Today, "Notater", "logg"));
         }
 
-        var brukerLisens = _lisenser.FirstOrDefault(l => l.Type == LisensType.Brukere)?.AntallTildelt ?? 0;
-        var brukereIBruk = _brukere.Count(b => b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens && b.Aktiv);
-        if (brukerLisens > 0 && brukereIBruk >= brukerLisens)
+        foreach (var t in LisensTypeExtensions.Aktive.Where(t => Tildelt(t) > 0 && IBrukFor(t) >= Tildelt(t)))
         {
-            liste.Add(new($"Alle {brukerLisens} brukerlisenser er i bruk", "Neste bruker de legger til, må du aktivere først", "users", false, "Abonnement", "abonnement"));
+            liste.Add(new($"Alle {Tildelt(t)} {t.Visningsnavn().ToLowerInvariant()} er i bruk", "Neste de legger til, må du aktivere først", "users", false, "Abonnement", "abonnement"));
         }
 
         if (_abo?.ProveperiodeTil is { } prove && prove.Date >= DateTime.Today && prove.Date <= DateTime.Today.AddDays(7))
@@ -1363,12 +1460,108 @@ else
             liste.Add(new("Prøveperioden slutter snart", $"Til {prove:dd.MM.yyyy}. Deretter faktureres de.", "calendar", false, "Abonnement", "abonnement"));
         }
 
-        foreach (var p in OppstartPunkter.Where(p => !p.Klar && p.Status is "Mangler" or "Ikke signert" or "Venter"))
+        foreach (var p in OppstartPunkter.Where(p => !p.Klar && p.Status is "Mangler" or "Ikke signert" or "Venter" or "For gammel"))
         {
             liste.Add(new(p.Tittel, p.Tekst, p.Ikon, false, "Oppsett", "oppsett", "oppstart"));
         }
 
         return liste;
+    }
+
+    // ---------- Backup ----------
+    private List<TenantBackup> _backuper = [];
+    private bool _tarBackup;
+    private string? _backupMelding;
+    private string? _backupFeil;
+    private TenantBackup? _bekreftGjenoppretting;
+
+    private async Task LastBackuperAsync()
+    {
+        if (_tenant is null)
+        {
+            return;
+        }
+
+        _backuper = await PlatformDb.TenantBackuper.AsNoTracking()
+            .Where(b => b.TenantId == _tenant.Id && !b.ErPlattform)
+            .OrderByDescending(b => b.Tidspunkt)
+            .ToListAsync();
+    }
+
+    private async Task TaBackupNa()
+    {
+        if (_tenant is null)
+        {
+            return;
+        }
+
+        _tarBackup = true;
+        _backupMelding = null;
+        _backupFeil = null;
+        StateHasChanged();
+        try
+        {
+            var b = await BackupSvc.TaAsync(_tenant, BackupType.Manuell, _plattformBruker);
+            if (b.Feil is null)
+            {
+                _backupMelding = $"Backup tatt: {Storrelse(b.DatabaseStorrelse)}, kontrollert og kryptert.";
+            }
+            else
+            {
+                _backupFeil = $"Backup feilet: {b.Feil}";
+            }
+        }
+        finally
+        {
+            _tarBackup = false;
+        }
+
+        await LastBackuperAsync();
+    }
+
+    private async Task Gjenopprett()
+    {
+        if (_bekreftGjenoppretting is not { } backup)
+        {
+            return;
+        }
+
+        _tarBackup = true;
+        _backupMelding = null;
+        _backupFeil = null;
+        StateHasChanged();
+        try
+        {
+            var feil = await BackupSvc.GjenopprettAsync(backup.Id, _plattformBruker);
+            if (feil is null)
+            {
+                _backupMelding = $"{_tenant?.Navn} er satt tilbake til {backup.Tidspunkt:dd.MM.yyyy HH:mm}. Dagens data ble lagret som en egen kopi først.";
+            }
+            else
+            {
+                _backupFeil = feil;
+            }
+        }
+        finally
+        {
+            _tarBackup = false;
+            _bekreftGjenoppretting = null;
+        }
+
+        await LastBackuperAsync();
+        await LastBrukereAsync();
+        await LastAbonnementAsync();
+    }
+
+    private static string Storrelse(long byte_)
+    {
+        if (byte_ <= 0)
+        {
+            return "–";
+        }
+
+        var mb = byte_ / 1024m / 1024m;
+        return mb >= 1024 ? $"{mb / 1024:0.0} GB" : mb >= 1 ? $"{mb:0.#} MB" : $"{byte_ / 1024m:0} kB";
     }
 
     // ---------- E-post og varsler ----------

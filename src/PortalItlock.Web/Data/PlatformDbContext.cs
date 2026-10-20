@@ -24,6 +24,7 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options) : Db
     public DbSet<PlattformFakturaLinje> PlattformFakturaLinjer => Set<PlattformFakturaLinje>();
     public DbSet<TenantNotat> TenantNotater => Set<TenantNotat>();
     public DbSet<TenantHendelse> TenantHendelser => Set<TenantHendelse>();
+    public DbSet<TenantBackup> TenantBackuper => Set<TenantBackup>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -44,6 +45,8 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options) : Db
         modelBuilder.Entity<TenantNotat>().HasIndex(n => n.TenantId);
         modelBuilder.Entity<TenantNotat>().HasOne<Tenant>().WithMany().HasForeignKey(n => n.TenantId).OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<TenantHendelse>().HasIndex(h => h.TenantId);
+        modelBuilder.Entity<TenantBackup>().HasIndex(b => new { b.TenantId, b.Tidspunkt });
+        modelBuilder.Entity<TenantBackup>().HasOne(b => b.Tenant).WithMany().HasForeignKey(b => b.TenantId).OnDelete(DeleteBehavior.SetNull);
         modelBuilder.Entity<TenantHendelse>().HasOne<Tenant>().WithMany().HasForeignKey(h => h.TenantId).OnDelete(DeleteBehavior.Cascade);
     }
 }

@@ -9,6 +9,7 @@
 @inject PlatformDbContext PlatformDb
 @inject ITenantContext TenantCtx
 @inject TenantOppslagService Oppslag
+@inject LisensService Lisenser
 
 @inject VisningPreferanseService VisningPref
 
@@ -45,16 +46,16 @@
                 }
             </div>
             <div class="br-meny-bunn">
-                @if (_lisensTildelt > 0)
+                @foreach (var l in _lisensStatus.Where(l => l.Tildelt > 0 && LisensTypeExtensions.Ansatte.Contains(l.Type)))
                 {
-                    <div class="lisens @(_lisensBrukt >= _lisensTildelt ? "lisens-full" : "")">
-                        <span><b>@_lisensBrukt av @_lisensTildelt</b> lisenser – @(Math.Max(0, _lisensTildelt - _lisensBrukt)) ledige</span>
-                        <span class="lisens-bar"><i style="width:@(Math.Min(100, _lisensBrukt * 100 / _lisensTildelt))%"></i></span>
-                        @if (_lisensBrukt >= _lisensTildelt)
-                        {
-                            <small>Dere har nådd grensen – ta kontakt med Itlock for å få aktivert flere.</small>
-                        }
+                    <div class="lisens @(l.Full ? "lisens-full" : "")">
+                        <span><b>@l.Type.Kortnavn(): @l.Brukt av @l.Tildelt</b> – @l.Ledige ledige</span>
+                        <span class="lisens-bar"><i style="width:@(Math.Min(100, l.Brukt * 100 / l.Tildelt))%"></i></span>
                     </div>
+                }
+                @if (_lisensStatus.Any(l => l.Full && LisensTypeExtensions.Ansatte.Contains(l.Type)))
+                {
+                    <small class="lisens-hint">Ta kontakt med Full Kontroll for å få aktivert flere lisenser.</small>
                 }
                 <button type="button" class="knapp-primaer opprett" @onclick="VisNyBruker"><Icon Name="plus" />Ny bruker</button>
             </div>
@@ -224,8 +225,7 @@
     private string? _feil;
     private string _sok = "";
     private int? _apenId;
-    private int _lisensTildelt;
-    private int _lisensBrukt;
+    private List<LisensService.Status> _lisensStatus = [];
 
     private BrukerRolle? _rolleFilter;
     private bool _visNy;
@@ -336,14 +336,7 @@
             })
             .ToListAsync();
 
-        _lisensBrukt = _brukere.Count;
-        var tenantId = TenantCtx.Current?.Id;
-        _lisensTildelt = tenantId is null
-            ? 0
-            : await PlatformDb.TenantLisenser
-                .Where(l => l.TenantId == tenantId && l.Type == LisensType.Brukere)
-                .Select(l => l.AntallTildelt)
-                .FirstOrDefaultAsync();
+        _lisensStatus = await Lisenser.AlleAsync();
     }
 
     private async Task OpprettBruker()
@@ -369,9 +362,9 @@
             return;
         }
 
-        if (_lisensTildelt > 0 && _lisensBrukt >= _lisensTildelt)
+        if (await Lisenser.SjekkLedigAsync(_nyRolle) is { } lisensFeil)
         {
-            _feil = $"Dere har brukt opp alle {_lisensTildelt} brukerlisensene deres. Ta kontakt med Itlock for å få aktivert flere før dere kan opprette nye brukere.";
+            _feil = lisensFeil;
             return;
         }
 
@@ -413,6 +406,12 @@
         bruker.Navn = navn;
         bruker.Epost = epost;
         bruker.Stilling = string.IsNullOrWhiteSpace(rad.Stilling) ? null : rad.Stilling.Trim();
+        if (bruker.Rolle != rad.Rolle && bruker.Aktiv && await Lisenser.SjekkLedigAsync(rad.Rolle, bruker.Id) is { } lisensFeil)
+        {
+            _feil = lisensFeil;
+            return;
+        }
+
         bruker.Rolle = rad.Rolle;
         bruker.FerieKvote = Math.Max(0, rad.FerieKvote);
         await Db.SaveChangesAsync();

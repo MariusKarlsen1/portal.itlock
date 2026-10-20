@@ -32,10 +32,22 @@ public class AbonnementService(PlatformDbContext db)
         var standard = new List<PrisProdukt>
         {
             new() { Nokkel = PrisProdukt.Grunnpakke, Navn = "Grunnpakke", Beskrivelse = "Prosjekter, tilbud, service, kundeportal og Prosjektøkonomi", Type = PrisType.Fast, Kr = 0, Rekkefolge = 1 },
-            new() { Nokkel = PrisProdukt.ForLisens(LisensType.Brukere), Navn = "Brukere", Beskrivelse = "Ansatte med innlogging", Type = PrisType.Lisens, Kr = Gammel(LisensType.Brukere), Rekkefolge = 2 },
-            new() { Nokkel = PrisProdukt.ForLisens(LisensType.KundeTilgang), Navn = "Kundetilganger", Beskrivelse = "Kunder og vaktmestere i kundeportalen", Type = PrisType.Lisens, Kr = Gammel(LisensType.KundeTilgang), Rekkefolge = 3 },
+            new() { Nokkel = PrisProdukt.ForLisens(LisensType.KundeTilgang), Navn = "Kundetilganger", Beskrivelse = LisensType.KundeTilgang.Beskrivelse(), Type = PrisType.Lisens, Kr = Gammel(LisensType.KundeTilgang), Rekkefolge = 6 },
             new() { Nokkel = PrisProdukt.Etablering, Navn = "Etablering", Beskrivelse = "Oppsett, import og opplæring", Type = PrisType.Engang, Kr = 0, Rekkefolge = 20 },
         };
+        // Én lisens per rolle. Prisen på den gamle felles brukerlisensen brukes
+        // som startpris for admin, prosjektleder og montør.
+        var brukerPris = await db.PrisProdukter.Where(p => p.Nokkel == PrisProdukt.ForLisens(LisensType.Brukere)).Select(p => (decimal?)p.Kr).FirstOrDefaultAsync() ?? Gammel(LisensType.Brukere);
+        var rek = 2;
+        foreach (var type in new[] { LisensType.Admin, LisensType.Prosjektleder, LisensType.Montor, LisensType.Driftslisens })
+        {
+            standard.Add(new PrisProdukt
+            {
+                Nokkel = PrisProdukt.ForLisens(type), Navn = type.Kortnavn(), Beskrivelse = type.Beskrivelse(), Type = PrisType.Lisens,
+                Kr = type == LisensType.Driftslisens ? Gammel(LisensType.KundeTilgang) : brukerPris, Rekkefolge = rek++
+            });
+        }
+
         var nr = 10;
         foreach (var modul in TilleggsModuler.Alle)
         {
@@ -46,6 +58,42 @@ public class AbonnementService(PlatformDbContext db)
         if (nye.Count > 0)
         {
             db.PrisProdukter.AddRange(nye);
+            await db.SaveChangesAsync();
+        }
+
+        // Avtalepriser på den gamle brukerlisensen flyttes til de nye, og den
+        // gamle fjernes fra prislisten.
+        var gammelNokkel = PrisProdukt.ForLisens(LisensType.Brukere);
+        var gammelProdukt = await db.PrisProdukter.FirstOrDefaultAsync(p => p.Nokkel == gammelNokkel);
+        if (gammelProdukt is not null)
+        {
+            var gamleAvtaler = await db.TenantAvtalepriser.Where(a => a.Nokkel == gammelNokkel).ToListAsync();
+            foreach (var a in gamleAvtaler)
+            {
+                foreach (var type in LisensTypeExtensions.Ansatte)
+                {
+                    var nokkel = PrisProdukt.ForLisens(type);
+                    if (!await db.TenantAvtalepriser.AnyAsync(x => x.TenantId == a.TenantId && x.Nokkel == nokkel))
+                    {
+                        db.TenantAvtalepriser.Add(new TenantAvtalepris { TenantId = a.TenantId, Nokkel = nokkel, Kr = a.Kr });
+                    }
+                }
+            }
+
+            db.TenantAvtalepriser.RemoveRange(gamleAvtaler);
+            foreach (var e in await db.TenantAntallEndringer.Where(e => e.Nokkel == gammelNokkel && !e.Fakturert).ToListAsync())
+            {
+                e.Fakturert = true;
+            }
+
+            var kundeProdukt = await db.PrisProdukter.FirstOrDefaultAsync(p => p.Nokkel == PrisProdukt.ForLisens(LisensType.KundeTilgang));
+            if (kundeProdukt is not null)
+            {
+                kundeProdukt.Beskrivelse = LisensType.KundeTilgang.Beskrivelse();
+                kundeProdukt.Rekkefolge = 6;
+            }
+
+            db.PrisProdukter.Remove(gammelProdukt);
             await db.SaveChangesAsync();
         }
     }

@@ -140,9 +140,12 @@ builder.Services.AddScoped<CeGodkjenningPdfService>();
 // påminnelsene går til mottakerne som er satt opp i adminportalen.
 builder.Services.AddSingleton<OrganisasjonKjorer>();
 builder.Services.AddScoped<VarselMottakerService>();
+builder.Services.AddScoped<LisensService>();
 builder.Services.AddScoped<AbonnementService>();
 builder.Services.AddScoped<PlattformFakturaService>();
 builder.Services.AddHostedService<PlattformFakturaBackgroundService>();
+builder.Services.AddScoped<OrganisasjonBackupService>();
+builder.Services.AddHostedService<OrganisasjonBackupBackgroundService>();
 builder.Services.AddScoped<ServiceVarselService>();
 builder.Services.AddHostedService<ServiceVarselBackgroundService>();
 builder.Services.AddHostedService<LagerSynkBackgroundService>();
@@ -410,6 +413,7 @@ using (var seedScope = app.Services.CreateScope())
             seedDb.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
             PortalItlock.Web.Services.TenantSeedHelper.SeedNyheter(seedDb);
             PortalItlock.Web.Services.TenantSeedHelper.SeedTestbrukere(seedDb);
+            PortalItlock.Web.Services.LisensOmlegging.Kjor(platformDb, seedDb, tenant);
 
             if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
             {
@@ -1838,6 +1842,36 @@ app.MapGet("/plattform/organisasjon/{id:int}/logo", async (int id, PlatformDbCon
     return tenant?.LogoData is null
         ? Results.NotFound()
         : Results.File(tenant.LogoData, FilSikkerhet.TryggContentType(tenant.LogoContentType ?? "image/png"));
+}).RequireAuthorization("Plattform");
+
+// Last ned en backup som vanlig SQLite-fil (dekryptert og pakket ut). Bare
+// plattformadmin. Filen åpnes med f.eks. DB Browser for SQLite.
+app.MapGet("/plattform/backup/{id:int}/last-ned", async (int id, HttpContext http, PlatformDbContext platformDb, OrganisasjonBackupService backupSvc) =>
+{
+    var backup = await platformDb.TenantBackuper.FirstOrDefaultAsync(b => b.Id == id);
+    if (backup is null || backup.Feil is not null)
+    {
+        return Results.NotFound();
+    }
+
+    var fil = await backupSvc.HentDatabaseAsync(backup, http.RequestAborted);
+    http.Response.OnCompleted(() =>
+    {
+        try { Directory.Delete(Path.GetDirectoryName(fil)!, recursive: true); } catch (IOException) { }
+        return Task.CompletedTask;
+    });
+    var navn = $"{OrganisasjonOppsett.Slug(backup.Navn ?? "plattform")}-{backup.Tidspunkt:yyyy-MM-dd_HHmm}.db";
+    platformDb.TenantHendelser.Add(new TenantHendelse { TenantId = backup.TenantId ?? 0, Tekst = $"Backup {backup.Tidspunkt:dd.MM.yyyy HH:mm} lastet ned", Ikon = "download", Av = http.User.Identity?.Name });
+    if (backup.TenantId is not null)
+    {
+        await platformDb.SaveChangesAsync();
+    }
+    else
+    {
+        platformDb.ChangeTracker.Clear();
+    }
+
+    return Results.File(File.OpenRead(fil), "application/vnd.sqlite3", navn);
 }).RequireAuthorization("Plattform");
 
 app.MapGet("/kundebilde/{id:int}", async (int id, int? w, ApplicationDbContext db) =>

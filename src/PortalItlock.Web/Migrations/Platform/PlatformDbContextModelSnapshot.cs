@@ -389,6 +389,59 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.ToTable("TenantAvtalepriser");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantBackup", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Av")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("DatabaseStorrelse")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ErPlattform")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Feil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Kontrollert")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Lagring")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Navn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Sha256")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Sti")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Storrelse")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Tidspunkt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Tidspunkt");
+
+                    b.ToTable("TenantBackuper");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.TenantHendelse", b =>
                 {
                     b.Property<int>("Id")
@@ -643,6 +696,16 @@ namespace PortalItlock.Web.Migrations.Platform
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantBackup", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("Tenant");
                 });
