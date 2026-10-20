@@ -1,7 +1,10 @@
+@page "/prosjektokonomi"
+@page "/prosjektokonomi/{Fane}"
 @page "/etterkalkyle"
 @page "/etterkalkyle/{Fane}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@implements IDisposable
 @using System.Globalization
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
@@ -13,17 +16,21 @@
 @inject VisningPreferanseService VisningPref
 @inject NavigationManager Nav
 
-<PageTitle>Etterkalkyle</PageTitle>
+<PageTitle>Prosjektøkonomi</PageTitle>
 
-@* Etterkalkyle: overleverte prosjekter går hit automatisk for gjennomgang.
-   Den løpende oppfølgingen skjer i fanen «Økonomi» i hvert prosjekt;
-   «Følg med» samler de aktive prosjektene som har gult eller rødt varsel. *@
+@* Prosjektøkonomi har to faner:
+   - Pågående: prosjekter som er registrert eller under arbeid, med budsjett
+     fra godkjente tilbud mot timer og varer brukt hittil. Oppdateres av seg
+     selv mens siden er åpen.
+   - Etterkalkyle: overleverte prosjekter til gjennomgang, de kontrollerte,
+     og lærdom for neste tilbud.
+   /etterkalkyle er den gamle adressen og virker fortsatt. *@
 <div class="ek-side @(_full ? "ek-full" : "")">
     <header class="ek-header">
         <span class="ek-header-ikon"><Icon Name="trend-up" /></span>
         <div>
-            <h1>Etterkalkyle</h1>
-            <p>Tilbudt mot faktisk for overleverte prosjekter, og prosjekter som går over budsjett</p>
+            <h1>Prosjektøkonomi</h1>
+            <p>Følg økonomien mens prosjektene pågår, og gå gjennom etterkalkylen når de er overlevert</p>
         </div>
     </header>
 
@@ -34,20 +41,28 @@
     else
     {
         <div class="ek-kort">
-            <nav class="ek-meny" aria-label="Etterkalkyle">
-                @foreach (var (nokkel, navn, ikon) in Faner.Where(f => f.Nokkel != "innstillinger" || _erAdmin))
-                {
-                    var fane = nokkel;
-                    var tall = nokkel switch { "gjennomgang" => _tilGjennomgang.Count, "folg" => _folgMed.Count, _ => 0 };
-                    <a class="ek-meny-rad @(AktivFane == nokkel ? "aktiv" : "")" href="@(nokkel == "gjennomgang" ? "/etterkalkyle" : $"/etterkalkyle/{nokkel}")" @onclick="@(() => { if (fane == AktivFane) _apenProsjekt = null; })">
-                        <Icon Name="@ikon" />@navn
-                        @if (tall > 0)
-                        {
-                            <small class="ek-meny-tall @(nokkel == "folg" && _folgMed.Any(f => f.Status == ProsjektOkonomiService.OkonomiStatus.OverBudsjett) ? "" : "ek-meny-tall-gul")">@tall</small>
-                        }
-                    </a>
-                }
-                <button type="button" class="ek-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
+            <nav class="ek-meny" aria-label="Prosjektøkonomi">
+                <a class="ek-meny-rad @(HovedFane == "pagaende" ? "aktiv" : "")" href="/prosjektokonomi" @onclick="@(() => { if (HovedFane == "pagaende") _apenProsjekt = null; })">
+                    <Icon Name="bar-chart" /><span class="ek-meny-tekst">Pågående<small>@_pagaende.Count prosjekter</small></span>
+                    @if (_folgMed.Count > 0)
+                    {
+                        <small class="ek-meny-tall @(_folgMed.Any(f => f.Status == ProsjektOkonomiService.OkonomiStatus.OverBudsjett) ? "" : "ek-meny-tall-gul")" title="Med gult eller rødt varsel">@_folgMed.Count</small>
+                    }
+                </a>
+                <a class="ek-meny-rad @(HovedFane == "etterkalkyle" ? "aktiv" : "")" href="/prosjektokonomi/etterkalkyle" @onclick="@(() => { if (Visning == "etterkalkyle") _apenProsjekt = null; })">
+                    <Icon Name="clipboard" /><span class="ek-meny-tekst">Etterkalkyle<small>@_tilGjennomgang.Count til gjennomgang</small></span>
+                    @if (_tilGjennomgang.Count > 0)
+                    {
+                        <small class="ek-meny-tall ek-meny-tall-gul" title="Venter på gjennomgang">@_tilGjennomgang.Count</small>
+                    }
+                </a>
+                <span class="ek-meny-bunn">
+                    @if (_erAdmin)
+                    {
+                        <a class="ek-meny-rad ek-meny-liten @(HovedFane == "innstillinger" ? "aktiv" : "")" href="/prosjektokonomi/innstillinger"><Icon Name="settings" />Innstillinger</a>
+                    }
+                    <button type="button" class="ek-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
+                </span>
             </nav>
 
             <div class="ek-innhold">
@@ -62,10 +77,10 @@
                 }
                 else
                 {
-                    @switch (AktivFane)
+                    @switch (Visning)
                     {
-                        case "folg":
-                            @FolgMed()
+                        case "etterkalkyle":
+                            @Gjennomgang()
                             break;
                         case "kontrollert":
                             @Kontrollerte()
@@ -77,7 +92,7 @@
                             @Innstillinger()
                             break;
                         default:
-                            @Gjennomgang()
+                            @Pagaende()
                             break;
                     }
                 }
@@ -92,16 +107,24 @@
 
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
 
-    private static readonly (string Nokkel, string Navn, string Ikon)[] Faner =
-    [
-        ("gjennomgang", "Til gjennomgang", "clipboard"),
-        ("folg", "Følg med", "alert-triangle"),
-        ("kontrollert", "Kontrollert", "check-circle"),
-        ("laerdom", "Lærdom", "sparkle"),
-        ("innstillinger", "Innstillinger", "settings"),
-    ];
+    private static readonly string[] Visninger = ["pagaende", "etterkalkyle", "kontrollert", "laerdom", "innstillinger"];
 
-    private string AktivFane => Faner.Any(f => f.Nokkel == Fane) ? Fane! : "gjennomgang";
+    // Hva som vises. Gamle adresser: «folg» = Pågående med filteret «Følg med»,
+    // «gjennomgang» og /etterkalkyle uten fane = Etterkalkyle.
+    private string Visning => Fane switch
+    {
+        "folg" => "pagaende",
+        "gjennomgang" => "etterkalkyle",
+        { } f when Visninger.Contains(f) => f,
+        _ => new Uri(Nav.Uri).AbsolutePath.StartsWith("/etterkalkyle", StringComparison.OrdinalIgnoreCase) ? "etterkalkyle" : "pagaende"
+    };
+
+    private string HovedFane => Visning switch
+    {
+        "etterkalkyle" or "kontrollert" or "laerdom" => "etterkalkyle",
+        "innstillinger" => "innstillinger",
+        _ => "pagaende"
+    };
 
     private bool _klar;
     private bool _full;
@@ -111,7 +134,9 @@
 
     private List<Prosjekt> _tilGjennomgang = [];
     private Dictionary<int, ProsjektOkonomiService.Okonomi> _okonomi = [];
-    private List<(Prosjekt Prosjekt, ProsjektOkonomiService.Okonomi O)> _folgMedListe = [];
+    private List<(Prosjekt Prosjekt, ProsjektOkonomiService.Okonomi? O)> _pagaende = [];
+    private bool _bareVarsel;
+    private DateTime _lastet;
     private List<ProsjektOkonomiService.Okonomi> _folgMed = [];
     private List<ProsjektEtterkalkyle> _kontrollerte = [];
     private List<ProsjektOkonomiService.Laerdom> _laerdom = [];
@@ -119,6 +144,7 @@
 
     private Prosjekt? _apenProsjekt;
     private ProsjektEtterkalkyle? _apenKontroll;
+    private ProsjektOkonomiService.Okonomi? _apenOkonomi;
     private EtterkalkyleArsak _arsak = EtterkalkyleArsak.IngenAvvik;
     private string _kommentar = "";
 
@@ -135,16 +161,89 @@
             }
         }
 
+        _bareVarsel = Fane == "folg";
         _full = await VisningPref.HentAsync("etterkalkyle-bredde", "normal") == "full";
         await LastAsync();
 
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
         if (query.TryGetValue("prosjekt", out var pid) && int.TryParse(pid, out var prosjektId))
         {
-            await ApneAsync(prosjektId);
+            await ApneIntern(prosjektId);
         }
 
         _klar = true;
+    }
+
+    // ---------- Live: tallene regnes ut på nytt hvert halve minutt ----------
+    // All databasebruk på siden går gjennom _laas, så oppdateringen i
+    // bakgrunnen aldri bruker databasen samtidig med et klikk.
+    private const int OppdaterSekunder = 30;
+    private readonly SemaphoreSlim _laas = new(1, 1);
+    private System.Threading.Timer? _tikk;
+    private bool _oppdaterer;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _tikk = new System.Threading.Timer(_ => _ = InvokeAsync(OppdaterIBakgrunnen), null,
+                TimeSpan.FromSeconds(OppdaterSekunder), TimeSpan.FromSeconds(OppdaterSekunder));
+        }
+    }
+
+    private async Task OppdaterIBakgrunnen()
+    {
+        // Ikke mens innstillinger fylles ut, og hopp over hvis noe annet pågår.
+        if (!_klar || Visning == "innstillinger" || !await _laas.WaitAsync(0))
+        {
+            return;
+        }
+
+        try
+        {
+            _oppdaterer = true;
+            await LastAsync();
+            if (_apenProsjekt is { } p)
+            {
+                _apenOkonomi = await OkonomiSvc.BeregnAsync(p.Id);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+        finally
+        {
+            _oppdaterer = false;
+            _laas.Release();
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task Kjor(Func<Task> arbeid)
+    {
+        await _laas.WaitAsync();
+        try
+        {
+            await arbeid();
+        }
+        finally
+        {
+            _laas.Release();
+        }
+    }
+
+    private Task OppdaterAsync() => Kjor(OppdaterIntern);
+    private Task ApneAsync(int prosjektId) => Kjor(() => ApneIntern(prosjektId));
+    private Task Kontroller() => Kjor(KontrollerIntern);
+    private Task LagreInnstillinger() => Kjor(LagreInnstillingerIntern);
+    private Task JusterMontasjetid(ProsjektOkonomiService.Laerdom l) => Kjor(() => JusterMontasjetidIntern(l));
+
+    public void Dispose()
+    {
+        _tikk?.Dispose();
+        _tikk = null;
     }
 
     private async Task LastAsync()
@@ -152,32 +251,55 @@
         _tilGjennomgang = await OkonomiSvc.TilGjennomgangAsync();
         _kontrollerte = await Db.ProsjektEtterkalkyler.AsNoTracking().Include(k => k.Prosjekt!).ThenInclude(p => p.Kunde)
             .OrderByDescending(k => k.Kontrollert).ToListAsync();
-        var aktive = await OkonomiSvc.AktiveVunneIderAsync();
-        var alle = aktive.Concat(_tilGjennomgang.Select(p => p.Id)).Distinct().ToList();
-        _okonomi = alle.Count == 0 ? [] : await OkonomiSvc.BeregnFlereAsync(alle);
-        _folgMed = aktive.Where(_okonomi.ContainsKey).Select(id => _okonomi[id])
-            .Where(o => o.Status is ProsjektOkonomiService.OkonomiStatus.FolgMed or ProsjektOkonomiService.OkonomiStatus.OverBudsjett)
-            .ToList();
-        var ider = _folgMed.Select(o => o.ProsjektId).ToList();
+        // Pågående: alle som er registrert eller under arbeid, også de som
+        // mangler godkjent tilbud, så de ikke glemmes.
         var prosjekter = await Db.Prosjekter.AsNoTracking().Include(p => p.Kunde).Include(p => p.Prosjektleder)
-            .Where(p => ider.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
-        _folgMedListe = _folgMed.Where(o => prosjekter.ContainsKey(o.ProsjektId))
-            .Select(o => (prosjekter[o.ProsjektId], o))
-            .OrderBy(x => x.o.Status == ProsjektOkonomiService.OkonomiStatus.OverBudsjett ? 0 : 1)
-            .ThenByDescending(x => x.o.BudsjettKost > 0 ? x.o.PrognoseKost / x.o.BudsjettKost : 0)
+            .Where(p => p.Status == ProsjektStatus.Registrert || p.Status == ProsjektStatus.UnderArbeid)
+            .ToListAsync();
+        var alle = prosjekter.Select(p => p.Id).Concat(_tilGjennomgang.Select(p => p.Id)).Distinct().ToList();
+        _okonomi = alle.Count == 0 ? [] : await OkonomiSvc.BeregnFlereAsync(alle);
+        _pagaende = prosjekter
+            .Select(p => (p, _okonomi.GetValueOrDefault(p.Id) is { Tilbud.Count: > 0 } o ? o : null))
+            .OrderBy(x => Rekkefolge(x.Item2))
+            .ThenByDescending(x => x.Item2 is { BudsjettKost: > 0 } o ? o.PrognoseKost / o.BudsjettKost : 0)
+            .ThenBy(x => x.p.Navn)
             .ToList();
+        _folgMed = _pagaende.Where(x => ErVarsel(x.O)).Select(x => x.O!).ToList();
+        _lastet = DateTime.Now;
         _laerdom = await OkonomiSvc.LaerdomAsync();
         _inn = await OkonomiSvc.InnstillingerAsync();
     }
 
-    private async Task VekslFull()
+    private static bool ErVarsel(ProsjektOkonomiService.Okonomi? o) =>
+        o?.Status is ProsjektOkonomiService.OkonomiStatus.FolgMed or ProsjektOkonomiService.OkonomiStatus.OverBudsjett;
+
+    private static int Rekkefolge(ProsjektOkonomiService.Okonomi? o) => o is not { Inntekt: > 0 } ? 3 : o.Status switch
+    {
+        ProsjektOkonomiService.OkonomiStatus.OverBudsjett => 0,
+        ProsjektOkonomiService.OkonomiStatus.FolgMed => 1,
+        ProsjektOkonomiService.OkonomiStatus.IRute => 2,
+        _ => 3
+    };
+
+    private static string Pst(decimal v) => Math.Clamp(v * 100, 0, 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+
+    private async Task OppdaterIntern()
+    {
+        await LastAsync();
+        _melding = null;
+    }
+
+    private Task VekslFull() => Kjor(VekslFullIntern);
+
+    private async Task VekslFullIntern()
     {
         _full = !_full;
         await VisningPref.SettAsync("etterkalkyle-bredde", _full ? "full" : "normal");
     }
 
-    private async Task ApneAsync(int prosjektId)
+    private async Task ApneIntern(int prosjektId)
     {
+        _apenOkonomi = await OkonomiSvc.BeregnAsync(prosjektId);
         _apenProsjekt = await Db.Prosjekter.AsNoTracking().Include(p => p.Kunde).Include(p => p.Prosjektleder).FirstOrDefaultAsync(p => p.Id == prosjektId);
         _apenKontroll = await Db.ProsjektEtterkalkyler.AsNoTracking().FirstOrDefaultAsync(k => k.ProsjektId == prosjektId);
         _arsak = _apenKontroll?.Arsak ?? EtterkalkyleArsak.IngenAvvik;
@@ -185,7 +307,7 @@
         _melding = null;
     }
 
-    private async Task Kontroller()
+    private async Task KontrollerIntern()
     {
         if (_apenProsjekt is not { } p)
         {
@@ -204,7 +326,7 @@
         _melding = $"{p.Navn} er kontrollert og lagt i arkivet.";
     }
 
-    private async Task LagreInnstillinger()
+    private async Task LagreInnstillingerIntern()
     {
         if (_inn is null)
         {
@@ -221,7 +343,7 @@
         _melding = "Innstillingene er lagret. Status på prosjektene er regnet ut på nytt.";
     }
 
-    private async Task JusterMontasjetid(ProsjektOkonomiService.Laerdom l)
+    private async Task JusterMontasjetidIntern(ProsjektOkonomiService.Laerdom l)
     {
         if (l.ForslagMinutter is not { } nye)
         {
@@ -246,6 +368,25 @@
         return (p > 0 ? "+" : "") + p.ToString("0", Kultur) + " %";
     }
 
+    // Avvik i prosentpoeng for dekningsgrad.
+    private static string PoengAvvik(decimal? faktisk, decimal? kalkulert) =>
+        faktisk is { } f && kalkulert is { } k ? ((f - k) * 100 >= 0 ? "+" : "") + ((f - k) * 100).ToString("0.#", Kultur) + " poeng" : "–";
+
+    // Én rad i «Faktisk mot kalkulert». For kost er høyere faktisk dårlig
+    // (rødt), for resultat er høyere bra.
+    private RenderFragment AvvikRad(string navn, decimal kalkulert, decimal faktisk, Func<decimal, string> fmt, bool hoyereErBra) => @<tr class="@(navn is "Total kost" or "Resultat (inntekt − kost)" ? "ek-sumrad" : "")">
+        @{
+            var diff = faktisk - kalkulert;
+            var darlig = hoyereErBra ? diff < 0 : diff > 0;
+            var klasse = Math.Abs(diff) < 0.5m ? "" : darlig ? "ek-rod" : "ek-gronn";
+        }
+        <td><b>@navn</b></td>
+        <td class="n">@fmt(kalkulert)</td>
+        <td class="n"><b>@fmt(faktisk)</b></td>
+        <td class="n @klasse">@(diff > 0 ? "+" : diff < 0 ? "−" : "")@fmt(Math.Abs(diff))</td>
+        <td class="n @klasse">@(kalkulert != 0 ? ((diff / Math.Abs(kalkulert)) * 100 > 0 ? "+" : "") + ((diff / Math.Abs(kalkulert)) * 100).ToString("0", Kultur) + " %" : "–")</td>
+    </tr>;
+
     private static string Klasse(ProsjektOkonomiService.OkonomiStatus s) => s switch
     {
         ProsjektOkonomiService.OkonomiStatus.OverBudsjett => "rod",
@@ -255,9 +396,17 @@
     };
 
     // ======================================================================
+    // Undermenyen i fanen Etterkalkyle.
+    private RenderFragment EtterkalkyleMeny() => @<nav class="ek-undermeny" aria-label="Etterkalkyle">
+        <a class="@(Visning == "etterkalkyle" ? "aktiv" : "")" href="/prosjektokonomi/etterkalkyle">Til gjennomgang<small>@_tilGjennomgang.Count</small></a>
+        <a class="@(Visning == "kontrollert" ? "aktiv" : "")" href="/prosjektokonomi/kontrollert">Kontrollert<small>@_kontrollerte.Count</small></a>
+        <a class="@(Visning == "laerdom" ? "aktiv" : "")" href="/prosjektokonomi/laerdom">Lærdom<small>@_laerdom.Count</small></a>
+    </nav>;
+
     private RenderFragment Gjennomgang() => @<div class="ek-fane">
+        @EtterkalkyleMeny()
         <div class="ek-fane-topp">
-            <span><h2>Til gjennomgang</h2><p>Prosjekter som er satt til <i>Overlevert</i> havner her automatisk. Gå gjennom tallene, skriv en kort kommentar og marker som kontrollert.</p></span>
+            <span><h2>Til gjennomgang</h2><p>Prosjekter som er satt til <i>Overlevert</i> havner her automatisk. Åpne prosjektet, gå gjennom faktisk mot kalkulert, skriv en kort kommentar og marker som kontrollert.</p></span>
         </div>
         @if (_tilGjennomgang.Count == 0)
         {
@@ -297,30 +446,60 @@
         }
     </div>;
 
-    private RenderFragment FolgMed() => @<div class="ek-fane">
+    private RenderFragment Pagaende() => @<div class="ek-fane">
         <div class="ek-fane-topp">
-            <span><h2>Følg med</h2><p>Pågående prosjekter med gult eller rødt varsel. Grønne prosjekter vises bare i fanen «Økonomi» i prosjektet.</p></span>
+            <span><h2>Pågående prosjekter</h2><p>Prosjekter som er satt til <i>Registrert</i> eller <i>Under arbeid</i>. Budsjettet er de godkjente tilbudene og endringsmeldingene på prosjektet, og det faktiske er timer og varer brukt hittil. Når prosjektet overleveres, flyttes det til Etterkalkyle.</p></span>
+            <span class="ek-knapper">
+                <span class="ek-oppdatert"><i class="ek-live"></i>Live · oppdatert @_lastet.ToString("HH:mm:ss")</span>
+                <button type="button" class="ek-knapp" @onclick="OppdaterAsync">Oppdater tallene</button>
+            </span>
         </div>
-        @if (_folgMedListe.Count == 0)
+        @{
+            var medTall = _pagaende.Where(x => x.O is { Inntekt: > 0 }).Select(x => x.O!).ToList();
+            var inntekt = medTall.Sum(o => o.Inntekt);
+            var prognose = medTall.Sum(o => o.PrognoseKost);
+            var varsel = _pagaende.Count(x => ErVarsel(x.O));
+            var liste = _bareVarsel ? _pagaende.Where(x => ErVarsel(x.O)).ToList() : _pagaende;
+        }
+        <div class="ek-kpi">
+            <div><span>Pågående prosjekter</span><b>@_pagaende.Count</b><small>@varsel med gult eller rødt varsel</small></div>
+            <div><span>Tilbudt totalt</span><b>@Kr(inntekt)</b><small>godkjente tilbud</small></div>
+            <div><span>Kost hittil</span><b>@Kr(medTall.Sum(o => o.FaktiskKost))</b><small>av @Kr(medTall.Sum(o => o.BudsjettKost)) i budsjett</small></div>
+            <div><span>Dekningsgrad (prognose)</span><b>@DG(inntekt > 0 ? (inntekt - prognose) / inntekt : null)</b><small>tilbudt @DG(inntekt > 0 ? (inntekt - medTall.Sum(o => o.BudsjettKost)) / inntekt : null)</small></div>
+        </div>
+        <div class="ek-filter">
+            <button type="button" class="ek-arsak @(!_bareVarsel ? "aktiv" : "")" @onclick="@(() => _bareVarsel = false)">Alle (@_pagaende.Count)</button>
+            <button type="button" class="ek-arsak @(_bareVarsel ? "aktiv" : "")" @onclick="@(() => _bareVarsel = true)">Følg med (@varsel)</button>
+        </div>
+        @if (liste.Count == 0)
         {
-            <div class="ek-tomboks"><Icon Name="check-circle" /><span>Alle pågående prosjekter er i rute mot budsjettet.</span></div>
+            <div class="ek-tomboks"><Icon Name="check-circle" /><span>@(_bareVarsel ? "Alle pågående prosjekter er i rute mot budsjettet." : "Ingen prosjekter er registrert eller under arbeid.")</span></div>
         }
         else
         {
             <div class="ek-tabellramme">
                 <table class="ek-tabell">
-                    <thead><tr><th>Prosjekt</th><th>Hvorfor</th><th class="n">Budsjett</th><th class="n">Prognose</th><th class="n">Dekningsgrad</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Prosjekt</th><th>Fremdrift</th><th class="n">Tilbudt</th><th class="n">Kost hittil</th><th class="n">Prognose</th><th class="n">Dekningsgrad</th><th>Status</th></tr></thead>
                     <tbody>
-                        @foreach (var (p, o) in _folgMedListe)
+                        @foreach (var (p, o) in liste)
                         {
-                            var href = $"/prosjekter/{p.Id}?fane=okonomi";
-                            <tr class="ek-klikkrad" @onclick="@(() => Nav.NavigateTo(href))">
-                                <td><b>@p.Navn</b><small>@(p.Kunde?.Navn ?? "Ingen kunde")@(p.Prosjektleder is { } pl ? $" · {pl.Navn}" : "")</small></td>
-                                <td><small class="ek-hvorfor">@o.StatusTekst</small></td>
-                                <td class="n">@Kr(o.BudsjettKost)</td>
-                                <td class="n"><b class="@(o.PrognoseKost > o.BudsjettKost ? "ek-rod" : "")">@Kr(o.PrognoseKost)</b><small>@Avvik(o.PrognoseKost, o.BudsjettKost)</small></td>
-                                <td class="n">@DG(o.PrognoseDekningsgrad)<small>tilbudt @DG(o.BudsjettDekningsgrad)</small></td>
-                                <td><span class="ek-chip ek-chip-@Klasse(o.Status)">@ProsjektOkonomiPanel.StatusNavn(o.Status)</span></td>
+                            var id = p.Id;
+                            <tr class="ek-klikkrad" @onclick="@(() => ApneAsync(id))">
+                                <td><b>@p.Navn</b><small>@(p.Kunde?.Navn ?? "Ingen kunde")@(p.Prosjektleder is { } pl ? $" · {pl.Navn}" : "") · @(p.Status?.Visningsnavn() ?? "Aktiv")</small></td>
+                                @if (o is { Inntekt: > 0 })
+                                {
+                                    <td class="ek-fremdrift"><span class="ek-minibar"><i style="width:@Pst(o.Fremdrift)"></i></span><small>@o.FremdriftTekst</small></td>
+                                    <td class="n">@Kr(o.Inntekt)</td>
+                                    <td class="n">@Kr(o.FaktiskKost)<small>av @Kr(o.BudsjettKost)</small></td>
+                                    <td class="n"><b class="@(o.PrognoseKost > o.BudsjettKost ? "ek-rod" : "")">@Kr(o.PrognoseKost)</b><small>@Avvik(o.PrognoseKost, o.BudsjettKost)</small></td>
+                                    <td class="n">@DG(o.PrognoseDekningsgrad)<small>tilbudt @DG(o.BudsjettDekningsgrad)</small></td>
+                                    <td><span title="@o.StatusTekst" class="ek-chip ek-chip-@Klasse(o.Status)">@ProsjektOkonomiPanel.StatusNavn(o.Status)</span></td>
+                                }
+                                else
+                                {
+                                    <td colspan="5"><small>@(o is null ? "Budsjettet låses når et tilbud på prosjektet settes til Godkjent." : "Det godkjente tilbudet har ingen beløp. Legg inn linjer i tilbudet, så følges økonomien opp.")</small></td>
+                                    <td><span class="ek-chip">@(o is null ? "Mangler godkjent tilbud" : "Tilbud uten beløp")</span></td>
+                                }
                             </tr>
                         }
                     </tbody>
@@ -330,6 +509,7 @@
     </div>;
 
     private RenderFragment Kontrollerte() => @<div class="ek-fane">
+        @EtterkalkyleMeny()
         <div class="ek-fane-topp">
             <span><h2>Kontrollert</h2><p>Gjennomgåtte prosjekter, med tallene slik de var da de ble kontrollert.</p></span>
         </div>
@@ -368,6 +548,7 @@
     </div>;
 
     private RenderFragment LaerdomVisning() => @<div class="ek-fane">
+        @EtterkalkyleMeny()
         <div class="ek-fane-topp">
             <span><h2>Lærdom</h2><p>Varer der de kontrollerte prosjektene har brukt merkbart mer eller mindre tid enn beregnet (minst 15 % avvik, i minst to prosjekter). Juster montasjetiden, så treffer neste tilbud bedre.</p></span>
         </div>
@@ -402,7 +583,7 @@
 
     private RenderFragment Innstillinger() => @<div class="ek-fane">
         <div class="ek-fane-topp">
-            <span><h2>Innstillinger</h2><p>Gjelder fanen «Økonomi» i alle prosjekter, varslene og etterkalkylen.</p></span>
+            <span><h2>Innstillinger</h2><p>Gjelder Prosjektøkonomi, fanen «Økonomi» i prosjektene og varslene.</p></span>
         </div>
         @if (_inn is { } inn)
         {
@@ -427,20 +608,59 @@
     </div>;
 
     private RenderFragment Detalj(Prosjekt p) => @<div class="ek-fane">
+        @{
+            var erEtterkalkyle = p.Status == ProsjektStatus.Overlevert || _apenKontroll is not null;
+            var o = _apenOkonomi;
+        }
         <div class="ek-fane-topp">
             <span>
-                <button type="button" class="ek-tilbake" @onclick="@(() => _apenProsjekt = null)"><Icon Name="arrow-left" />Tilbake</button>
+                <button type="button" class="ek-tilbake" @onclick="@(() => _apenProsjekt = null)"><Icon Name="arrow-left" />@(HovedFane == "etterkalkyle" ? "Til etterkalkylene" : "Til pågående prosjekter")</button>
                 <h2>@p.Navn</h2>
-                <p>@(p.Kunde?.Navn ?? "Ingen kunde")@(p.Prosjektleder is { } pl ? $" · prosjektleder {pl.Navn}" : "")@(p.OverlevertDato is { } d ? $" · overlevert {d:dd.MM.yyyy}" : "")</p>
+                <p>@(p.Kunde?.Navn ?? "Ingen kunde")@(p.Prosjektleder is { } pl ? $" · prosjektleder {pl.Navn}" : "") · @(p.Status?.Visningsnavn() ?? "Aktiv")@(p.OverlevertDato is { } d ? $" {d:dd.MM.yyyy}" : "")</p>
             </span>
             <span class="ek-knapper">
+                @if (!erEtterkalkyle)
+                {
+                    <span class="ek-oppdatert"><i class="ek-live"></i>Live · oppdatert @_lastet.ToString("HH:mm:ss")</span>
+                }
                 <a class="ek-knapp" href="@($"/prosjekter/{p.Id}?fane=okonomi")"><Icon Name="folder" />Åpne prosjektet</a>
-                <a class="ek-knapp" href="@($"/prosjekt/{p.Id}/etterkalkyle/pdf")" target="_blank"><Icon Name="file-text" />PDF</a>
+                @if (erEtterkalkyle)
+                {
+                    <a class="ek-knapp" href="@($"/prosjekt/{p.Id}/etterkalkyle/pdf")" target="_blank"><Icon Name="file-text" />PDF</a>
+                }
             </span>
         </div>
 
-        <ProsjektOkonomiPanel ProsjektId="@p.Id" />
+        @if (erEtterkalkyle && o is { Inntekt: > 0 })
+        {
+            <section class="ek-avvik">
+                <h3>Faktisk mot kalkulert</h3>
+                <div class="ek-tabellramme">
+                    <table class="ek-tabell">
+                        <thead><tr><th></th><th class="n">Kalkulert</th><th class="n">Faktisk</th><th class="n">Avvik</th><th class="n">Avvik %</th></tr></thead>
+                        <tbody>
+                            @AvvikRad("Timer", o.BudsjettTimer, o.FaktiskTimer, v => v.ToString("0.#", Kultur) + " t", false)
+                            @AvvikRad("Timekost", o.BudsjettTimekost, o.FaktiskTimekost, Kr, false)
+                            @AvvikRad("Varer", o.BudsjettVarer, o.FaktiskVarer, Kr, false)
+                            @AvvikRad("Total kost", o.BudsjettKost, o.FaktiskKost, Kr, false)
+                            @AvvikRad("Resultat (inntekt − kost)", o.Inntekt - o.BudsjettKost, o.Inntekt - o.FaktiskKost, Kr, true)
+                            <tr class="ek-sumrad">
+                                <td><b>Dekningsgrad</b></td>
+                                <td class="n">@DG(o.BudsjettDekningsgrad)</td>
+                                <td class="n"><b>@DG(o.FaktiskDekningsgrad)</b></td>
+                                <td class="n @((o.FaktiskDekningsgrad ?? 0) < (o.BudsjettDekningsgrad ?? 0) ? "ek-rod" : "ek-gronn")">@PoengAvvik(o.FaktiskDekningsgrad, o.BudsjettDekningsgrad)</td>
+                                <td class="n"></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        }
 
+        <ProsjektOkonomiPanel ProsjektId="@p.Id" Data="@o" Etterkalkyle="@(erEtterkalkyle && o is { Inntekt: > 0 })" />
+
+        @if (erEtterkalkyle)
+        {
         <section class="ek-signering @(_apenKontroll is not null ? "ek-signert" : "")">
             @if (_apenKontroll is { } k)
             {
@@ -467,5 +687,6 @@
                 <span><button type="button" class="ek-knapp ek-knapp-ok" @onclick="Kontroller"><Icon Name="check" />Marker som kontrollert</button></span>
             }
         </section>
+        }
     </div>;
 }

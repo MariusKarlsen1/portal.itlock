@@ -227,7 +227,7 @@ public static class PortalModulRegister
                     new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tilbud", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield"),
-                    new Lenke("Etterkalkyle", "Tilbudt mot faktisk, og gjennomgang av overleverte prosjekter.", "etterkalkyle", "trend-up", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Prosjektøkonomi", "Økonomien i pågående prosjekter, og etterkalkyle når de er overlevert.", "prosjektokonomi", "trend-up", null, ModulTilgang.FraProsjektleder),
                     // Begge ligger i venstremenyen og vises derfor ikke som
                     // egne kort i kategorien.
                     new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock", null, ModulTilgang.Alle, KunIMeny: true),

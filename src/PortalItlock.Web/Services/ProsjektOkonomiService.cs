@@ -18,8 +18,8 @@ namespace PortalItlock.Web.Services;
 // Bare prosjekter med minst ett godkjent tilbud («vunnet») følges opp.
 public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulService tilleggsmoduler)
 {
-    private static readonly ProsjektStatus[] IkkeAktive =
-        [ProsjektStatus.Avsluttet, ProsjektStatus.TilbudAvslatt, ProsjektStatus.Overlevert, ProsjektStatus.Serviceavtale];
+    // Pågående prosjekter: registrert (vunnet) eller under arbeid.
+    private static readonly ProsjektStatus[] Pagaende = [ProsjektStatus.Registrert, ProsjektStatus.UnderArbeid];
 
     public enum OkonomiStatus { IkkeVunnet, IRute, FolgMed, OverBudsjett }
 
@@ -75,10 +75,10 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
 
     public async Task<Okonomi> BeregnAsync(int prosjektId) => (await BeregnFlereAsync([prosjektId]))[prosjektId];
 
-    // Prosjekter som følges opp nå (vunnet og ikke overlevert/avsluttet).
+    // Prosjekter som følges opp nå: pågående og med godkjent tilbud.
     public async Task<List<int>> AktiveVunneIderAsync() =>
         await db.Prosjekter.AsNoTracking()
-            .Where(p => p.Status == null || !IkkeAktive.Contains(p.Status.Value))
+            .Where(p => p.Status != null && Pagaende.Contains(p.Status.Value))
             .Where(p => db.Tilbud.Any(t => t.ProsjektId == p.Id && t.Status == EndringsmeldingStatus.Godkjent))
             .Select(p => p.Id).ToListAsync();
 
