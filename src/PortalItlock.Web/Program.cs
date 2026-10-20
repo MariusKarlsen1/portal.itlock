@@ -549,7 +549,12 @@ app.Use(async (context, next) =>
         && !context.Request.Query.ContainsKey("fullversjon")
         && MobilDeteksjon.GjettFraUserAgent(context.Request.Headers.UserAgent.ToString()))
     {
-        context.Response.Redirect("/min-dag");
+        // Driftslisens og kunde har egne portaler - /min-dag er bare for
+        // ansatte, og sendte dem rett tilbake til innloggingen på mobil.
+        var mal = context.User.IsInRole(nameof(BrukerRolle.Driftslisens)) ? "/drift"
+            : context.User.IsInRole(nameof(BrukerRolle.Kunde)) ? "/kunde"
+            : "/min-dag";
+        context.Response.Redirect(mal);
         return;
     }
 
