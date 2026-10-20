@@ -121,3 +121,34 @@ public class VaretellingLinje
     public int Registrert { get; set; }
     public int? Talt { get; set; }
 }
+
+// ---------- Fase 3: reservasjoner til prosjekt og arbeidsordre ----------
+//
+// Én rad per vare og behovskilde (prosjekt ELLER arbeidsordre). Antall er
+// satt av fra hovedlageret (trekkes fra «ledig»), Venter er det som mangler
+// og må kjøpes inn - det går inn i innkjøpsforslaget, og varemottak flytter
+// Venter over til Antall automatisk. Behovet hentes fra dørenes varer
+// (Levert av F, ikke montert) og arbeidsordrenes varer (ikke plukket).
+public class LagerReservasjon
+{
+    public int Id { get; set; }
+
+    public int ComponentId { get; set; }
+    public Component? Component { get; set; }
+
+    public int LagerId { get; set; }
+    public Lager? Lager { get; set; }
+
+    public int? ProsjektId { get; set; }
+    public Prosjekt? Prosjekt { get; set; }
+
+    public int? ArbeidsordreId { get; set; }
+    public Arbeidsordre? Arbeidsordre { get; set; }
+
+    public int Antall { get; set; }
+    public int Venter { get; set; }
+
+    public DateTime Opprettet { get; set; } = DateTime.Now;
+    public DateTime SistEndret { get; set; } = DateTime.Now;
+    public string? OpprettetAv { get; set; }
+}

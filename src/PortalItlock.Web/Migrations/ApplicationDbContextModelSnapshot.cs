@@ -3982,6 +3982,52 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("LagerBevegelser");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.LagerReservasjon", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Antall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ArbeidsordreId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("LagerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Opprettet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OpprettetAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("SistEndret")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Venter")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ArbeidsordreId");
+
+                    b.HasIndex("ComponentId");
+
+                    b.HasIndex("LagerId");
+
+                    b.HasIndex("ProsjektId");
+
+                    b.ToTable("LagerReservasjoner");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.LagretPdf", b =>
                 {
                     b.Property<int>("Id")
@@ -7832,6 +7878,39 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Component");
 
                     b.Navigation("Lager");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.LagerReservasjon", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
+                        .WithMany()
+                        .HasForeignKey("ArbeidsordreId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("PortalItlock.Web.Models.Component", "Component")
+                        .WithMany()
+                        .HasForeignKey("ComponentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Lager", "Lager")
+                        .WithMany()
+                        .HasForeignKey("LagerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
+                        .WithMany()
+                        .HasForeignKey("ProsjektId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Arbeidsordre");
+
+                    b.Navigation("Component");
+
+                    b.Navigation("Lager");
+
+                    b.Navigation("Prosjekt");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.LasplanReserve", b =>

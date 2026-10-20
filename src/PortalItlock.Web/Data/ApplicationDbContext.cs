@@ -118,6 +118,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Innkjopsordre> Innkjopsordrer => Set<Innkjopsordre>();
     public DbSet<InnkjopsordreLinje> InnkjopsordreLinjer => Set<InnkjopsordreLinje>();
     public DbSet<InnkjopsordreFil> InnkjopsordreFiler => Set<InnkjopsordreFil>();
+    public DbSet<LagerReservasjon> LagerReservasjoner => Set<LagerReservasjon>();
     public DbSet<Avvik> Avvik => Set<Avvik>();
     public DbSet<Tilvalg> Tilvalg => Set<Tilvalg>();
     public DbSet<TilvalgAlternativ> TilvalgAlternativer => Set<TilvalgAlternativ>();
@@ -214,6 +215,15 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             e.HasOne(o => o.Lager).WithMany().HasForeignKey(o => o.LagerId).OnDelete(DeleteBehavior.Restrict);
         });
         modelBuilder.Entity<LagerBevegelse>().HasIndex(b => b.InnkjopsordreId);
+        modelBuilder.Entity<LagerReservasjon>(e =>
+        {
+            e.HasIndex(r => r.ComponentId);
+            e.HasIndex(r => r.ProsjektId);
+            e.HasIndex(r => r.ArbeidsordreId);
+            e.HasOne(r => r.Lager).WithMany().HasForeignKey(r => r.LagerId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(r => r.Prosjekt).WithMany().HasForeignKey(r => r.ProsjektId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.Arbeidsordre).WithMany().HasForeignKey(r => r.ArbeidsordreId).OnDelete(DeleteBehavior.Cascade);
+        });
 
         modelBuilder.Entity<PackageRequirement>(entity =>
         {

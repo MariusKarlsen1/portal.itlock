@@ -141,6 +141,7 @@ builder.Services.AddHostedService<KundeOppfolgingVarselBackgroundService>();
 builder.Services.AddScoped<TicketEskaleringService>();
 builder.Services.AddScoped<TilleggsmodulService>();
 builder.Services.AddScoped<LagerService>();
+builder.Services.AddScoped<ReservasjonService>();
 builder.Services.AddScoped<InnkjopService>();
 builder.Services.AddScoped<InnkjopsordrePdfService>();
 builder.Services.AddScoped<VarselTellerService>();

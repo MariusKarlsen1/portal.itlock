@@ -9,7 +9,9 @@ namespace PortalItlock.Web.Services;
 // ordrebekreftelse med avvikskontroll og varemottak. Selve
 // beholdningsendringen ved mottak går gjennom LagerService, så snittkost og
 // Lagerantall oppdateres på samme måte som for alle andre bevegelser.
-public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailService epost,
+// Fase 3: forslaget tar med det prosjekter venter på, og mottak på
+// hovedlager fyller ventende reservasjoner (ReservasjonService).
+public class InnkjopService(ApplicationDbContext db, LagerService lager, ReservasjonService reservasjoner, EmailService epost,
     InnkjopsordrePdfService pdf, ITenantContext tenantContext)
 {
     // Ordre der varer fortsatt er på vei (teller som «bestilt»).
@@ -22,7 +24,8 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailSe
 
     public sealed record Kilde(int? LeverandorId, string LeverandorNavn, string? Varenummer, string Navn, decimal Pris);
 
-    public sealed record Forslag(Component Vare, int PaLager, int Bestilt, int IUtkast, int Minimum, int Antall, Kilde Kilde);
+    // Minimum er null når forslaget bare skyldes prosjekter som venter.
+    public sealed record Forslag(Component Vare, int PaLager, int Bestilt, int IUtkast, int? Minimum, int Venter, int Antall, Kilde Kilde);
 
     // Antall bestilt og ikke mottatt per vare (åpne ordre).
     public async Task<Dictionary<int, int>> BestiltAsync()
@@ -42,7 +45,7 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailSe
         var ider = liste.Select(c => c.Id).ToList();
         var koblinger = await db.ComponentLeverandorer.AsNoTracking().Include(cl => cl.Leverandor)
             .Where(cl => ider.Contains(cl.ComponentId)).ToListAsync();
-        var leverandorer = await db.Leverandorer.AsNoTracking().ToListAsync();
+        var leverandorer = await db.Leverandorer.AsNoTracking().Select(l => new { l.Id, l.Navn }).ToListAsync();
 
         var resultat = new Dictionary<int, Kilde>();
         foreach (var c in liste)
@@ -62,12 +65,18 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailSe
         return resultat;
     }
 
-    // Varer der beholdning + bestilt + det som ligger i utkast er på eller
-    // under minimum. Foreslått antall fyller opp til to ganger minimum.
+    // Tilgjengelig = på lager − reservert + bestilt + i utkast − det
+    // prosjekter venter på. Forslag når tilgjengelig er på/under minimum
+    // (fyller opp til 2 × minimum), eller under null for varer prosjekter
+    // venter på (også varer som ikke er lagerført - de kjøpes inn til
+    // prosjektet). Utkast regnes med, så ingenting foreslås to ganger.
     public async Task<List<Forslag>> ForslagAsync()
     {
+        var venter = await reservasjoner.VenterAsync();
+        var reservert = await reservasjoner.ReservertAsync();
+        var venterIder = venter.Keys.ToList();
         var varer = await db.Components.AsNoTracking()
-            .Where(c => c.ILagerstyring && c.Aktiv && c.Minimumsbeholdning != null)
+            .Where(c => c.Aktiv && ((c.ILagerstyring && c.Minimumsbeholdning != null) || venterIder.Contains(c.Id)))
             .ToListAsync();
         if (varer.Count == 0)
         {
@@ -81,27 +90,30 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailSe
                 .Select(l => new { l.ComponentId, l.Antall }).ToListAsync())
             .GroupBy(l => l.ComponentId).ToDictionary(g => g.Key, g => g.Sum(l => l.Antall));
 
-        var aktuelle = new List<(Component Vare, int PaLager, int Bestilt, int Utkast, int Min)>();
+        var aktuelle = new List<(Component Vare, int PaLager, int Bestilt, int Utkast, int? Min, int Venter, int Antall)>();
         foreach (var c in varer)
         {
             var paLager = beholdning.GetValueOrDefault(c.Id);
             var b = bestilt.GetValueOrDefault(c.Id);
             var u = utkast.GetValueOrDefault(c.Id);
-            var min = c.Minimumsbeholdning!.Value;
-            if (paLager + b + u <= min)
+            var v = venter.GetValueOrDefault(c.Id);
+            var tilgjengelig = Math.Max(0, paLager) - reservert.GetValueOrDefault(c.Id) + b + u - v;
+            if (c.ILagerstyring && c.Minimumsbeholdning is { } min)
             {
-                aktuelle.Add((c, paLager, b, u, min));
+                if (tilgjengelig <= min)
+                {
+                    aktuelle.Add((c, paLager, b, u, min, v, Math.Max(1, Math.Max(min * 2, min + 1) - tilgjengelig)));
+                }
+            }
+            else if (tilgjengelig < 0)
+            {
+                aktuelle.Add((c, paLager, b, u, null, v, -tilgjengelig));
             }
         }
 
         var kilder = await KilderAsync(aktuelle.Select(a => a.Vare));
         return aktuelle
-            .Select(a =>
-            {
-                var mal = Math.Max(a.Min * 2, a.Min + 1);
-                var antall = Math.Max(1, mal - Math.Max(0, a.PaLager) - a.Bestilt - a.Utkast);
-                return new Forslag(a.Vare, a.PaLager, a.Bestilt, a.Utkast, a.Min, antall, kilder[a.Vare.Id]);
-            })
+            .Select(a => new Forslag(a.Vare, a.PaLager, a.Bestilt, a.Utkast, a.Min, a.Venter, a.Antall, kilder[a.Vare.Id]))
             .OrderBy(f => f.Kilde.LeverandorNavn).ThenBy(f => f.Vare.Navn)
             .ToList();
     }
@@ -110,7 +122,7 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailSe
         (await db.Innkjopsordrer.MaxAsync(o => (int?)o.Nummer) ?? 1000) + 1;
 
     public async Task<Innkjopsordre> OpprettAsync(int? leverandorId, string leverandorNavn, string? opprettetAv,
-        IEnumerable<(int ComponentId, int Antall)> linjer)
+        IEnumerable<(int ComponentId, int Antall)> linjer, int? prosjektId = null)
     {
         var lev = leverandorId is { } id ? await db.Leverandorer.AsNoTracking().FirstOrDefaultAsync(l => l.Id == id) : null;
         var hoved = await lager.HovedlagerAsync();
@@ -123,7 +135,8 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailSe
             LagerId = hoved.Id,
             Status = InnkjopStatus.Utkast,
             OpprettetAv = opprettetAv,
-            VarReferanse = opprettetAv
+            VarReferanse = opprettetAv,
+            ProsjektId = prosjektId
         };
 
         var liste = linjer.Where(l => l.Antall > 0).ToList();
@@ -263,10 +276,14 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailSe
 
     // Varemottak: antall per linje inn på ordrens lager, til ordrens innpris.
     // Det som ikke kommer, blir stående som restordre.
-    public async Task<int> MottaAsync(Innkjopsordre ordre, IReadOnlyDictionary<int, int> antallPerLinje, string? notat,
+    public sealed record Mottaksresultat(int Totalt, List<(string Til, string Vare, int Antall)> TilReservasjoner);
+
+    public async Task<Mottaksresultat> MottaAsync(Innkjopsordre ordre, IReadOnlyDictionary<int, int> antallPerLinje, string? notat,
         int? brukerId, string? brukerNavn)
     {
         var totalt = 0;
+        var tilReservasjoner = new List<(string, string, int)>();
+        var mottakslager = await db.Lagre.AsNoTracking().FirstOrDefaultAsync(x => x.Id == ordre.LagerId);
         var tekst = $"Mottak {ordre.Visningsnummer}" + (string.IsNullOrWhiteSpace(notat) ? "" : $" · {notat.Trim()}");
         foreach (var l in ordre.Linjer)
         {
@@ -280,6 +297,15 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailSe
                 brukerId, brukerNavn, l.Pris, innkjopsordreId: ordre.Id);
             l.Mottatt += antall;
             totalt += antall;
+
+            // Varer inn på hovedlager fyller reservasjoner som venter.
+            if (mottakslager?.Type == LagerType.Hovedlager)
+            {
+                foreach (var (r, n) in await reservasjoner.FordelMottakAsync(l.ComponentId, antall, ordre.ProsjektId))
+                {
+                    tilReservasjoner.Add((r.Prosjekt?.Navn ?? r.Arbeidsordre?.Tittel ?? "Reservasjon", l.Navn, n));
+                }
+            }
         }
 
         if (totalt > 0)
@@ -288,6 +314,6 @@ public class InnkjopService(ApplicationDbContext db, LagerService lager, EmailSe
             await db.SaveChangesAsync();
         }
 
-        return totalt;
+        return new Mottaksresultat(totalt, tilReservasjoner);
     }
 }

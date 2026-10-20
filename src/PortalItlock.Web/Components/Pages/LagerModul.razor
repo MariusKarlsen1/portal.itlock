@@ -11,6 +11,7 @@
 @inject ApplicationDbContext Db
 @inject LagerService LagerSvc
 @inject InnkjopService InnkjopSvc
+@inject ReservasjonService ResSvc
 @inject TilleggsmodulService Tilleggsmoduler
 @inject VisningPreferanseService VisningPref
 @inject NavigationManager Nav
@@ -20,8 +21,10 @@
 @* Lagerstyring (tilleggsmodul). Fase 1: lagre, beholdning regnet ut fra
    lagerbevegelser, lagerverdi, flytting mellom lagre og varetelling.
    Fase 2: innkjøpsforslag, innkjøpsordre (PDF på e-post), ordrebekreftelse
-   med avvikskontroll og varemottak med restordre. Reservasjoner og plukk
-   kommer i neste faser. *@
+   med avvikskontroll og varemottak med restordre.
+   Fase 3: prosjekt-behov fra dører og arbeidsordre, reservasjoner, innkjøp
+   av det som mangler og varsel om forsinket levering før montasje.
+   Plukk og montørbiler kommer i fase 4. *@
 <div class="lg-side @(_full ? "lg-full" : "")">
     <header class="side-header lg-header">
         <span class="side-header-ikon"><Icon Name="box" /></span>
@@ -76,6 +79,9 @@
                     case "varer":
                         @Varer()
                         break;
+                    case "behov":
+                        @Behov()
+                        break;
                     case "innkjop":
                         @Innkjop()
                         break;
@@ -113,6 +119,7 @@
     [
         ("oversikt", "Oversikt", "bar-chart", "Lager"),
         ("varer", "Varer og beholdning", "box", "Lager"),
+        ("behov", "Prosjekt-behov", "folder", "Innkjøp"),
         ("innkjop", "Innkjøp", "receipt", "Innkjøp"),
         ("ob", "Ordrebekreftelser", "mail", "Innkjøp"),
         ("mottak", "Varemottak", "download", "Innkjøp"),
@@ -125,6 +132,7 @@
     private (int Tall, string Klasse) MenyTall(string fane) => fane switch
     {
         "varer" => (UnderMinimum.Count, ""),
+        "behov" => Forsinkede.Count > 0 ? (Forsinkede.Count, "") : (_behov.Count(b => b.Aktiv && b.Behov.Count > 0 && !ReservasjonerFor(b.Kilde).Any()), "lg-meny-tall-n"),
         "innkjop" => (_forslag.Count, "lg-meny-tall-n"),
         "ob" => (VenterPaOb.Count + MedAvvik.Count, MedAvvik.Count > 0 ? "" : "lg-meny-tall-b"),
         "mottak" => (KlareForMottak.Count, "lg-meny-tall-b"),
@@ -190,6 +198,7 @@
         _prosjekter = await Db.Prosjekter.AsNoTracking()
             .Where(p => p.Status == null || (p.Status != ProsjektStatus.Avsluttet && p.Status != ProsjektStatus.TilbudAvslatt))
             .OrderBy(p => p.Navn).Take(500).ToListAsync();
+        await LastBehovAsync();
         await LastInnkjopAsync();
     }
 
@@ -253,8 +262,8 @@
         </div>
 
         <div class="lg-kpi">
-            <div><b>@Kr(Lagerverdi)</b><span>Lagerverdi (alle lagre)</span></div>
-            <div><b>@_varer.Sum(c => Math.Max(0, Totalt(c.Id))).ToString("#,##0", Kultur) stk</b><span>@_varer.Count lagerførte varer</span></div>
+            <div><b>@Kr(Lagerverdi)</b><span>Lagerverdi · @_varer.Sum(c => Math.Max(0, Totalt(c.Id))).ToString("#,##0", Kultur) stk</span></div>
+            <a href="/lager/behov"><b>@Kr(ReservertVerdi)</b><span>Reservert til prosjekter</span></a>
             <a href="/lager/innkjop"><b>@Kr(BestiltVerdi)</b><span>I bestilling (@ApneOrdrer.Count() åpne)</span></a>
             <a href="/lager/varer?min=1" class="@(UnderMinimum.Count > 0 ? "lg-kpi-rod" : "")"><b>@UnderMinimum.Count</b><span>Under minimumsbeholdning</span></a>
         </div>
@@ -264,6 +273,7 @@
             <a href="/lager/ob"><b class="@(VenterPaOb.Count > 0 ? "" : "lg-svak")">@VenterPaOb.Count</b><span>Venter på<br />ordrebekreftelse</span></a>
             <a href="/lager/ob"><b class="@(MedAvvik.Count > 0 ? "lg-rod" : "lg-svak")">@MedAvvik.Count</b><span>Ordrebekreftelser<br />med avvik</span></a>
             <a href="/lager/mottak"><b class="@(KlareForMottak.Count > 0 ? "lg-bla" : "lg-svak")">@KlareForMottak.Count</b><span>Bestillinger klare<br />for varemottak</span></a>
+            <a href="/lager/behov"><b class="@(Forsinkede.Count > 0 ? "lg-rod" : "lg-svak")">@Forsinkede.Count</b><span>Prosjekter som kan<br />bli forsinket</span></a>
         </div>
 
         <div class="lg-to">
@@ -357,6 +367,7 @@
         {
             _forrigeFane = AktivFane;
             _apenOrdreId = null;
+            _apenKilde = null;
             _bekreft = null;
         }
 
@@ -364,6 +375,11 @@
         if (query.TryGetValue("ordre", out var ordre) && int.TryParse(ordre, out var ordreId))
         {
             _apenOrdreId = ordreId;
+        }
+
+        if (query.TryGetValue("kilde", out var kilde))
+        {
+            _apenKilde = kilde.ToString();
         }
 
         if (query.TryGetValue("min", out var min) && min == "1")
@@ -441,7 +457,7 @@
                     var hovedId = AktiveLagre.FirstOrDefault(l => l.Type == LagerType.Hovedlager)?.Id ?? 0;
                     <table class="lg-tabell">
                         <thead>
-                            <tr><th>Vare</th><th>Hylle</th><th class="n">På lager</th><th class="n">Bestilt</th><th class="n">Min</th><th class="n">Snittkost</th><th class="n">Verdi</th></tr>
+                            <tr><th>Vare</th><th>Hylle</th><th class="n">På lager</th><th class="n">Reservert</th><th class="n">Bestilt</th><th class="n">Min</th><th class="n">Snittkost</th><th class="n">Verdi</th></tr>
                         </thead>
                         <tbody>
                             @foreach (var c in FiltrerteVarer)
@@ -453,6 +469,7 @@
                                     <td><b>@c.Navn</b><small>@c.Produktkode@(string.IsNullOrWhiteSpace(c.Leverandor) ? "" : $" · {c.Leverandor}")</small></td>
                                     <td class="mono">@(Hylle(c.Id, _filterLager ?? hovedId) ?? "–")</td>
                                     <td class="n"><b class="@(antall < 0 ? "lg-rod" : "")">@antall</b> <span class="lg-svak">@(c.Enhet ?? "stk")</span></td>
+                                    <td class="n">@(Reservert(c.Id) > 0 ? Reservert(c.Id).ToString() : "–")</td>
                                     <td class="n">@(Bestilt(c.Id) > 0 ? Bestilt(c.Id).ToString() : "–")</td>
                                     <td class="n">
                                         @if (c.Minimumsbeholdning is { } m)
@@ -608,12 +625,32 @@
             <button type="button" class="lg-lukk" title="Lukk" @onclick="@(() => _valgtVareId = null)"><Icon Name="x" /></button>
         </div>
 
-        <div class="lg-beh lg-beh-fire">
+        <div class="lg-beh">
             <div><b>@Totalt(c.Id)</b><span>På lager totalt</span></div>
+            <div><b class="@(Reservert(c.Id) > 0 ? "lg-lilla" : "")">@Reservert(c.Id)</b><span>Reservert</span></div>
+            <div><b class="@(Ledig(c.Id) <= 0 ? "lg-rod" : "lg-gronn")">@Ledig(c.Id)</b><span>Ledig (hovedlager)</span></div>
             <div><b class="@(Bestilt(c.Id) > 0 ? "lg-bla" : "")">@Bestilt(c.Id)</b><span>Bestilt</span></div>
             <div><b>@Kr(Kost(c))</b><span>Snittkost</span></div>
             <div><b>@Kr(Totalt(c.Id) * Kost(c))</b><span>Lagerverdi</span></div>
         </div>
+
+        @{
+            var vareReservasjoner = _reservasjoner.Where(r => r.ComponentId == c.Id).ToList();
+        }
+        @if (vareReservasjoner.Count > 0)
+        {
+            <div class="lg-bestillinger">
+                @foreach (var x in vareReservasjoner)
+                {
+                    var r = x;
+                    var nokkel = r.ProsjektId is { } p ? $"p{p}" : $"a{r.ArbeidsordreId}";
+                    <button type="button" class="lg-lagerrad lg-klikk lg-radknapp" @onclick="@(() => ApneKilde(nokkel))">
+                        <span class="lg-lagerrad-tekst"><b>@KildeNavn(r)</b><small>@(r.Antall > 0 ? $"{r.Antall} reservert" : "")@(r.Antall > 0 && r.Venter > 0 ? " · " : "")@(r.Venter > 0 ? $"{r.Venter} venter på innkjøp" : "")</small></span>
+                        <span class="lg-chip @(r.Venter > 0 ? "lg-chip-gul" : "lg-chip-lilla")">@(r.Venter > 0 ? "Venter" : "Reservert")</span>
+                    </button>
+                }
+            </div>
+        }
 
         @{
             var aapneLinjer = ApneOrdrer.Concat(_ordrer.Where(o => o.Status == InnkjopStatus.Utkast))
@@ -1076,6 +1113,7 @@
     private void Lukk()
     {
         _apenOrdreId = null;
+        _apenKilde = null;
         _bekreft = null;
     }
 
@@ -1327,7 +1365,8 @@
     {
         var antall = o.Linjer.Where(l => l.Rest > 0).ToDictionary(l => l.Id, MottakAntall);
         _jobber = true;
-        var totalt = await InnkjopSvc.MottaAsync(o, antall, _mottakNotat, _brukerId, _brukerNavn);
+        var resultat = await InnkjopSvc.MottaAsync(o, antall, _mottakNotat, _brukerId, _brukerNavn);
+        var totalt = resultat.Totalt;
         _jobber = false;
         if (totalt == 0)
         {
@@ -1342,6 +1381,10 @@
         await LastAsync();
         _melding = $"{totalt} stk mottatt på {LagerNavn(o.LagerId)} fra {o.LeverandorNavn}."
             + (rest > 0 ? $" {rest} {(rest == 1 ? "varelinje står" : "varelinjer står")} igjen som restordre på {o.Visningsnummer}." : $" {o.Visningsnummer} er fullt mottatt.");
+        if (resultat.TilReservasjoner.Count > 0)
+        {
+            _melding += " Satt av til: " + string.Join(", ", resultat.TilReservasjoner.GroupBy(t => t.Til).Select(g => $"{g.Key} ({g.Sum(t => t.Antall)} stk)")) + ".";
+        }
     }
 
     // ======================================================================
@@ -1388,7 +1431,7 @@
                     <div class="lg-boks-topp">
                         <h3>Innkjøpsforslag</h3>
                         <span class="lg-chip lg-chip-bla">Laget automatisk</span>
-                        <small class="lg-svak lg-hoyre">Varer der beholdning + bestilt er på eller under minimum. Foreslått antall fyller opp til 2 × minimum.</small>
+                        <small class="lg-svak lg-hoyre">Varer prosjekter venter på, og varer der ledig + bestilt er på eller under minimum (fylles opp til 2 × minimum).</small>
                     </div>
                     @foreach (var gruppe in ForslagGrupper)
                     {
@@ -1401,7 +1444,7 @@
                             </div>
                             <div class="lg-tabellwrap">
                                 <table class="lg-tabell lg-tabell-smal">
-                                    <thead><tr><th>Vare</th><th class="n">På lager</th><th class="n">Bestilt</th><th class="n">Min</th><th class="n">Antall</th><th class="n">Beløp</th></tr></thead>
+                                    <thead><tr><th>Vare</th><th class="n">På lager</th><th class="n">Bestilt</th><th class="n">Min</th><th>Grunn</th><th class="n">Antall</th><th class="n">Beløp</th></tr></thead>
                                     <tbody>
                                         @foreach (var f in g)
                                         {
@@ -1410,7 +1453,15 @@
                                                 <td><b>@f.Vare.Navn</b><small>@f.Kilde.Varenummer</small></td>
                                                 <td class="n @(f.PaLager <= 0 ? "lg-rod" : "")">@f.PaLager</td>
                                                 <td class="n">@(f.Bestilt + f.IUtkast > 0 ? (f.Bestilt + f.IUtkast).ToString() : "–")</td>
-                                                <td class="n">@f.Minimum</td>
+                                                <td class="n">@(f.Minimum?.ToString() ?? "–")</td>
+                                                <td>@if (f.Venter > 0)
+                                                    {
+                                                        <span class="lg-chip lg-chip-lilla">Prosjekt venter på @f.Venter</span>
+                                                    }
+                                                    @if (f.Minimum is not null)
+                                                    {
+                                                        <span class="lg-chip lg-chip-gul">Under minimum</span>
+                                                    }</td>
                                                 <td class="n"><input type="number" min="0" class="lg-tallfelt" value="@ForslagAntall(f)" @onchange="@(e => _forslagAntall[forslag.Vare.Id] = int.TryParse(e.Value?.ToString(), out var a) ? Math.Max(0, a) : 0)" aria-label="Antall å bestille" /></td>
                                                 <td class="n">@Kr(ForslagAntall(f) * f.Kilde.Pris)</td>
                                             </tr>
@@ -1942,6 +1993,384 @@
             <label class="lg-felt lg-felt-bred">Notat (pakkseddel, skade e.l.)<input @bind="_mottakNotat" placeholder="Valgfritt" /></label>
             <button type="button" class="lg-knapp lg-knapp-p lg-mottak-knapp" disabled="@(_jobber || valgt == 0)" @onclick="@(() => RegistrerMottak(o))"><Icon Name="check" />@(_jobber ? "Registrerer …" : $"Registrer mottak ({valgt} stk)")</button>
         </div>
+    </div>;
+
+    // ======================================================================
+    // Prosjekt-behov og reservasjoner (fase 3)
+    // ======================================================================
+    private List<ReservasjonService.Behovskilde> _behov = [];
+    private List<LagerReservasjon> _reservasjoner = [];
+    private Dictionary<int, Component> _behovVarer = [];
+    private Dictionary<int, int> _ledig = [];
+    private string? _apenKilde;
+    private string _behovSok = "";
+
+    private async Task LastBehovAsync()
+    {
+        _behov = await ResSvc.AlleBehovAsync();
+        _reservasjoner = await Db.LagerReservasjoner.AsNoTracking().ToListAsync();
+        _ledig = await ResSvc.LedigAsync();
+        var ider = _behov.SelectMany(b => b.Behov.Keys).Concat(_reservasjoner.Select(r => r.ComponentId)).Distinct().ToList();
+        _behovVarer = await Db.Components.AsNoTracking().Where(c => ider.Contains(c.Id))
+            .Select(c => new Component { Id = c.Id, Navn = c.Navn, Produktkode = c.Produktkode, Leverandor = c.Leverandor, ILagerstyring = c.ILagerstyring, Enhet = c.Enhet })
+            .ToDictionaryAsync(c => c.Id);
+    }
+
+    private enum BehovStatus { Ok, Venter, IkkeBestilt, ForSent }
+
+    private ReservasjonService.Behovskilde? ApenKilde => _behov.FirstOrDefault(b => b.Kilde.Nokkel == _apenKilde);
+    private int Reservert(int vare) => _reservasjoner.Where(r => r.ComponentId == vare).Sum(r => r.Antall);
+    private int Ledig(int vare) => _ledig.GetValueOrDefault(vare);
+    private IEnumerable<LagerReservasjon> ReservasjonerFor(ReservasjonService.Kilde k) =>
+        _reservasjoner.Where(r => k.ProsjektId is { } p ? r.ProsjektId == p : r.ArbeidsordreId == k.ArbeidsordreId);
+    private LagerReservasjon? ReservasjonFor(ReservasjonService.Kilde k, int vare) => ReservasjonerFor(k).FirstOrDefault(r => r.ComponentId == vare);
+    private decimal ReservertVerdi => _reservasjoner.Sum(r => r.Antall * KostForBehov(r.ComponentId));
+    private decimal KostForBehov(int vare) => _varer.FirstOrDefault(c => c.Id == vare) is { } c ? Kost(c) : 0m;
+    private string VareNavn(int vare) => _behovVarer.GetValueOrDefault(vare)?.Navn ?? _varer.FirstOrDefault(c => c.Id == vare)?.Navn ?? "Ukjent vare";
+
+    private string KildeNavn(LagerReservasjon r) =>
+        _behov.FirstOrDefault(b => r.ProsjektId is { } p ? b.Kilde.ProsjektId == p : b.Kilde.ArbeidsordreId == r.ArbeidsordreId)?.Navn ?? "Reservasjon";
+
+    // Tidligste forventede levering for varen på åpne bestillinger.
+    private DateTime? ForventetLevering(int vare) => ApneOrdrer
+        .SelectMany(o => o.Linjer.Where(l => l.ComponentId == vare && l.Rest > 0).Select(l => l.BekreftetLevering ?? o.OnsketLevering ?? o.Sendt?.AddDays(7)))
+        .Where(d => d is not null).Min();
+
+    private (BehovStatus Status, string Tekst) VareStatus(ReservasjonService.Behovskilde b, int vare)
+    {
+        var venter = ReservasjonFor(b.Kilde, vare)?.Venter ?? 0;
+        if (venter == 0)
+        {
+            return (BehovStatus.Ok, "Reservert");
+        }
+
+        var forventet = ForventetLevering(vare);
+        if (forventet is null)
+        {
+            if (_ordrer.FirstOrDefault(o => o.Status == InnkjopStatus.Utkast && o.Linjer.Any(l => l.ComponentId == vare)) is { } utkast)
+            {
+                return (BehovStatus.IkkeBestilt, $"I utkast {utkast.Visningsnummer} - ikke sendt");
+            }
+
+            return (BehovStatus.IkkeBestilt, b.Montasje is { } m && m.Date <= DateTime.Today.AddDays(14) ? $"Ikke bestilt - montasje {m:dd.MM}" : "Ikke bestilt ennå");
+        }
+
+        return b.Montasje is { } montasje && forventet.Value.Date > montasje.Date
+            ? (BehovStatus.ForSent, $"Kommer {forventet:dd.MM} - etter montasje {montasje:dd.MM}")
+            : (BehovStatus.Venter, $"Bestilt, kommer {forventet:dd.MM}");
+    }
+
+    private bool ErForsinket(ReservasjonService.Behovskilde b) =>
+        ReservasjonerFor(b.Kilde).Where(r => r.Venter > 0).Any(r =>
+        {
+            var (status, _) = VareStatus(b, r.ComponentId);
+            return status == BehovStatus.ForSent || (status == BehovStatus.IkkeBestilt && b.Montasje is { } m && m.Date <= DateTime.Today.AddDays(14));
+        });
+
+    private bool BehovEndret(ReservasjonService.Behovskilde b)
+    {
+        var res = ReservasjonerFor(b.Kilde).ToList();
+        return res.Count > 0 && b.Behov.Keys.Union(res.Select(r => r.ComponentId))
+            .Any(id => b.Behov.GetValueOrDefault(id) != (res.FirstOrDefault(r => r.ComponentId == id) is { } r ? r.Antall + r.Venter : 0));
+    }
+
+    private (string Tekst, string Klasse, int Rang) KildeStatus(ReservasjonService.Behovskilde b)
+    {
+        var res = ReservasjonerFor(b.Kilde).ToList();
+        if (!b.Aktiv)
+        {
+            return ("Kan frigis", "n", 2);
+        }
+
+        if (res.Count == 0)
+        {
+            return ("Ikke reservert", "n", 3);
+        }
+
+        if (ErForsinket(b))
+        {
+            return ("Forsinket", "rod", 0);
+        }
+
+        if (BehovEndret(b))
+        {
+            return ("Behov endret", "gul", 1);
+        }
+
+        return res.Any(r => r.Venter > 0) ? ("Venter på innkjøp", "bla", 4) : ("Reservert", "gronn", 5);
+    }
+
+    private List<ReservasjonService.Behovskilde> FiltrerteKilder => _behov
+        .Where(b => string.IsNullOrWhiteSpace(_behovSok) || b.Navn.Contains(_behovSok, StringComparison.OrdinalIgnoreCase)
+            || (b.Undertekst?.Contains(_behovSok, StringComparison.OrdinalIgnoreCase) ?? false))
+        .OrderBy(b => KildeStatus(b).Rang).ThenBy(b => b.Montasje ?? DateTime.MaxValue).ThenBy(b => b.Navn)
+        .ToList();
+
+    private List<ReservasjonService.Behovskilde> Forsinkede => _behov.Where(b => b.Aktiv && ErForsinket(b)).ToList();
+
+    private void ApneKilde(string nokkel)
+    {
+        _apenKilde = nokkel;
+        _bekreft = null;
+        if (AktivFane != "behov")
+        {
+            Nav.NavigateTo($"/lager/behov?kilde={nokkel}");
+        }
+    }
+
+    private async Task Reserver(ReservasjonService.Behovskilde b)
+    {
+        _jobber = true;
+        var r = await ResSvc.ReserverAsync(b.Kilde, b.Behov, _brukerNavn);
+        _jobber = false;
+        await LastAsync();
+        var deler = new List<string>();
+        if (r.Reservert > 0) deler.Add($"{r.Reservert} stk reservert fra lager");
+        if (r.Venter > 0) deler.Add($"{r.Venter} stk venter på innkjøp og er lagt i innkjøpsforslaget");
+        if (r.Frigitt > 0) deler.Add($"{r.Frigitt} stk frigitt fordi behovet er mindre");
+        _melding = $"{b.Navn}: " + (deler.Count == 0 ? "reservasjonen stemmer allerede med behovet." : string.Join(", ", deler) + ".");
+        _meldingLenke = r.Venter > 0 ? (_melding, "/lager/innkjop", "Til innkjøp →") : null;
+    }
+
+    // Reserverer for alle aktive prosjekter/arbeidsordre som ikke er
+    // reservert ennå eller der behovet er endret.
+    private async Task ReserverAlle()
+    {
+        _jobber = true;
+        int antallKilder = 0, reservert = 0, venter = 0, frigitt = 0;
+        foreach (var b in _behov.Where(b => b.Aktiv && b.Behov.Count > 0 && (!ReservasjonerFor(b.Kilde).Any() || BehovEndret(b))).ToList())
+        {
+            var r = await ResSvc.ReserverAsync(b.Kilde, b.Behov, _brukerNavn);
+            antallKilder++;
+            reservert += r.Reservert;
+            venter += r.Venter;
+            frigitt += r.Frigitt;
+        }
+
+        // Avsluttede prosjekter og ferdige arbeidsordre gir varene tilbake.
+        foreach (var b in _behov.Where(b => !b.Aktiv && ReservasjonerFor(b.Kilde).Any()).ToList())
+        {
+            frigitt += await ResSvc.FrigiAsync(b.Kilde);
+            antallKilder++;
+        }
+
+        _jobber = false;
+        await LastAsync();
+        _melding = antallKilder == 0
+            ? "Alle reservasjoner er oppdatert."
+            : $"{antallKilder} prosjekter/arbeidsordre oppdatert: {reservert} stk reservert, {venter} stk venter på innkjøp" + (frigitt > 0 ? $", {frigitt} stk frigitt." : ".");
+        _meldingLenke = venter > 0 ? (_melding, "/lager/innkjop", "Til innkjøp →") : null;
+    }
+
+    private async Task Frigi(ReservasjonService.Behovskilde b)
+    {
+        if (_bekreft != $"frigi-{b.Kilde.Nokkel}")
+        {
+            _bekreft = $"frigi-{b.Kilde.Nokkel}";
+            return;
+        }
+
+        var antall = await ResSvc.FrigiAsync(b.Kilde);
+        _bekreft = null;
+        await LastAsync();
+        _melding = $"{antall} stk er frigitt fra {b.Navn}.";
+    }
+
+    // Lager innkjøpsordre (utkast) for det som venter og ikke allerede er
+    // dekket av bestillinger - merket med prosjektet, så varemottaket går
+    // til dette prosjektet først.
+    private async Task BestillMangler(ReservasjonService.Behovskilde b)
+    {
+        var linjer = new List<(int Vare, int Antall)>();
+        foreach (var r in ReservasjonerFor(b.Kilde).Where(r => r.Venter > 0))
+        {
+            var forslag = _forslag.FirstOrDefault(f => f.Vare.Id == r.ComponentId);
+            var antall = forslag is null ? 0 : Math.Min(r.Venter, forslag.Antall);
+            if (antall > 0)
+            {
+                linjer.Add((r.ComponentId, antall));
+            }
+        }
+
+        if (linjer.Count == 0)
+        {
+            _melding = "Alt som venter er allerede bestilt eller ligger i et utkast.";
+            return;
+        }
+
+        var prosjektId = b.Kilde.ProsjektId;
+        if (prosjektId is null && b.Kilde.ArbeidsordreId is { } aoId)
+        {
+            prosjektId = await Db.Arbeidsordre.Where(a => a.Id == aoId).Select(a => a.ProsjektId).FirstOrDefaultAsync();
+        }
+
+        var varer = await Db.Components.AsNoTracking().Where(c => linjer.Select(l => l.Vare).Contains(c.Id)).ToListAsync();
+        var kilder = await InnkjopSvc.KilderAsync(varer);
+        var nye = new List<string>();
+        var medDato = false;
+        foreach (var gruppe in linjer.GroupBy(l => kilder[l.Vare].LeverandorNavn))
+        {
+            var ordre = await InnkjopSvc.OpprettAsync(kilder[gruppe.First().Vare].LeverandorId, gruppe.Key, _brukerNavn,
+                gruppe.Select(l => (l.Vare, l.Antall)), prosjektId);
+            if (b.Montasje is { } m)
+            {
+                ordre.OnsketLevering = m.Date.AddDays(-2) > DateTime.Today ? m.Date.AddDays(-2) : null;
+                medDato |= ordre.OnsketLevering is not null;
+            }
+
+            nye.Add(ordre.Visningsnummer);
+        }
+
+        await Db.SaveChangesAsync();
+        await LastAsync();
+        _melding = $"{string.Join(", ", nye)} er laget for {b.Navn}" + (medDato ? ", med ønsket levering to dager før montasje." : ".") + " Se over og send.";
+        _meldingLenke = (_melding, "/lager/innkjop", "Til innkjøp →");
+    }
+
+    // ======================================================================
+    // Prosjekt-behov - visning
+    // ======================================================================
+    private RenderFragment Behov() => @<div class="lg-fane">
+        @if (ApenKilde is { } k)
+        {
+            @BehovDetalj(k)
+        }
+        else
+        {
+            var aktive = _behov.Where(b => b.Aktiv && b.Behov.Count > 0).ToList();
+            var ikkeOppdatert = _behov.Count(b => (b.Aktiv && b.Behov.Count > 0 && (!ReservasjonerFor(b.Kilde).Any() || BehovEndret(b))) || (!b.Aktiv && ReservasjonerFor(b.Kilde).Any()));
+            <div class="lg-fane-topp">
+                <span><h2>Prosjekt-behov</h2><p>Materialbehov hentet fra dørenes varer (Levert av F, ikke montert) og arbeidsordrenes varer. Reserver det som er ledig - resten går til innkjøp.</p></span>
+                <button type="button" class="lg-knapp lg-knapp-p" disabled="@(_jobber || ikkeOppdatert == 0)" @onclick="ReserverAlle"><Icon Name="check" />@(ikkeOppdatert == 0 ? "Alt er reservert" : $"Kontroller og reserver alle ({ikkeOppdatert})")</button>
+            </div>
+
+            <div class="lg-kpi">
+                <div><b>@aktive.Count</b><span>Prosjekter og arbeidsordre med behov</span></div>
+                <div><b>@Kr(ReservertVerdi)</b><span>Reservert fra lager</span></div>
+                <div><b>@_reservasjoner.Sum(r => r.Venter) stk</b><span>Venter på innkjøp</span></div>
+                <div class="@(Forsinkede.Count > 0 ? "lg-kpi-rod" : "")"><b>@Forsinkede.Count</b><span>Kan bli forsinket før montasje</span></div>
+            </div>
+
+            <div class="lg-verktoy">
+                <label class="lg-sok"><Icon Name="search" /><input @bind="_behovSok" @bind:event="oninput" placeholder="Søk prosjekt, arbeidsordre eller kunde …" /></label>
+            </div>
+
+            <div class="lg-tabellramme">
+                @if (_behov.Count == 0)
+                {
+                    <p class="lg-tom lg-innrykk">Ingen aktive prosjekter eller arbeidsordre har varebehov. Behovet kommer fra varene på dørene (Levert av F) og varene på arbeidsordrene.</p>
+                }
+                else
+                {
+                    <table class="lg-tabell">
+                        <thead><tr><th>Prosjekt / arbeidsordre</th><th>Montasje</th><th class="n">Varer</th><th class="n">Behov</th><th class="n">Reservert</th><th class="n">Venter</th><th>Status</th></tr></thead>
+                        <tbody>
+                            @foreach (var x in FiltrerteKilder)
+                            {
+                                var kilde = x;
+                                var res = ReservasjonerFor(kilde.Kilde).ToList();
+                                var (tekst, klasse, _) = KildeStatus(kilde);
+                                <tr class="lg-klikkrad" @onclick="@(() => ApneKilde(kilde.Kilde.Nokkel))">
+                                    <td><b>@kilde.Navn</b><small>@(kilde.Undertekst ?? (kilde.Kilde.ProsjektId is not null ? "Prosjekt" : "Arbeidsordre"))</small></td>
+                                    <td class="@(kilde.Montasje is { } m && m.Date < DateTime.Today.AddDays(7) ? "lg-gul" : "")">@(kilde.Montasje?.ToString("dd.MM.yyyy") ?? "–")</td>
+                                    <td class="n">@kilde.Behov.Count</td>
+                                    <td class="n">@kilde.Behov.Values.Sum()</td>
+                                    <td class="n">@(res.Sum(r => r.Antall) is var a && a > 0 ? a.ToString() : "–")</td>
+                                    <td class="n @(res.Sum(r => r.Venter) > 0 ? "lg-gul" : "")">@(res.Sum(r => r.Venter) is var v && v > 0 ? v.ToString() : "–")</td>
+                                    <td><span class="lg-chip lg-chip-@klasse">@tekst</span></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        }
+    </div>;
+
+    private RenderFragment BehovDetalj(ReservasjonService.Behovskilde b) => @<div class="lg-fane">
+        @{
+            var res = ReservasjonerFor(b.Kilde).ToList();
+            var (statusTekst, statusKlasse, _) = KildeStatus(b);
+            var venterTotalt = res.Sum(r => r.Venter);
+            var kanBestilles = res.Where(r => r.Venter > 0).Sum(r => Math.Min(r.Venter, _forslag.FirstOrDefault(f => f.Vare.Id == r.ComponentId)?.Antall ?? 0));
+            var lenke = b.Kilde.ProsjektId is { } pid ? $"/prosjekter/{pid}" : $"/arbeidsordre/{b.Kilde.ArbeidsordreId}";
+        }
+        <div class="lg-fane-topp">
+            <span>
+                <button type="button" class="lg-lenkeknapp lg-tilbake" @onclick="@(() => { _apenKilde = null; _bekreft = null; })"><Icon Name="arrow-left" />Alle prosjekt-behov</button>
+                <h2>@b.Navn</h2>
+                <p>@(b.Undertekst ?? "Prosjekt")@(b.Montasje is { } m ? $" · montasje {m:dd.MM.yyyy}" : " · ingen planlagt montasje") · <a href="@lenke">Åpne @(b.Kilde.ProsjektId is not null ? "prosjektet" : "arbeidsordren") →</a></p>
+            </span>
+            <span class="lg-knapper">
+                <span class="lg-chip lg-chip-@statusKlasse">@statusTekst</span>
+                @if (b.Aktiv && b.Behov.Count > 0)
+                {
+                    <button type="button" class="lg-knapp lg-knapp-p" disabled="@_jobber" @onclick="@(() => Reserver(b))"><Icon Name="check" />@(res.Count == 0 ? "Kontroller lager og reserver" : "Oppdater reservasjon")</button>
+                }
+            </span>
+        </div>
+
+        @if (!b.Aktiv)
+        {
+            <p class="lg-hint lg-hint-boks">@(b.Kilde.ProsjektId is not null ? "Prosjektet er ikke lenger aktivt" : "Arbeidsordren er ferdig") - reserverte varer kan gis tilbake til lageret.</p>
+        }
+
+        <div class="lg-tabellramme">
+            <table class="lg-tabell">
+                <thead><tr><th>Vare</th><th class="n">Behov</th><th class="n">Ledig nå</th><th class="n">Reservert</th><th class="n">Venter</th><th>Status</th></tr></thead>
+                <tbody>
+                    @foreach (var id in b.Behov.Keys.Union(res.Select(r => r.ComponentId)).OrderBy(VareNavn))
+                    {
+                        var r = res.FirstOrDefault(x => x.ComponentId == id);
+                        var behov = b.Behov.GetValueOrDefault(id);
+                        var vare = _behovVarer.GetValueOrDefault(id);
+                        var (status, tekst) = r is null ? (BehovStatus.Ok, "") : VareStatus(b, id);
+                        var endret = r is not null && r.Antall + r.Venter != behov;
+                        <tr>
+                            <td><b>@VareNavn(id)</b><small>@vare?.Produktkode@(vare is { ILagerstyring: false } ? " · ikke lagerført" : "")</small></td>
+                            <td class="n">@behov</td>
+                            <td class="n @(Ledig(id) <= 0 ? "lg-rod" : "")">@Ledig(id)</td>
+                            <td class="n">@(r?.Antall > 0 ? r.Antall.ToString() : "–")</td>
+                            <td class="n @(r?.Venter > 0 ? "lg-gul" : "")">@(r?.Venter > 0 ? r.Venter.ToString() : "–")</td>
+                            <td>
+                                @if (r is null)
+                                {
+                                    <span class="lg-chip">@(Ledig(id) >= behov ? "Kan reserveres" : Ledig(id) > 0 ? $"{Ledig(id)} kan reserveres" : "Må bestilles")</span>
+                                }
+                                else if (endret)
+                                {
+                                    <span class="lg-chip lg-chip-gul">Behov endret (@(r.Antall + r.Venter) → @behov)</span>
+                                }
+                                else
+                                {
+                                    <span class="lg-chip lg-chip-@(status switch { BehovStatus.Ok => "gronn", BehovStatus.Venter => "bla", BehovStatus.ForSent => "rod", _ => b.Montasje is { } mm && mm.Date <= DateTime.Today.AddDays(14) ? "rod" : "gul" })">@tekst</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <p class="lg-fot">@b.Behov.Values.Sum() stk i behov · @res.Sum(r => r.Antall) reservert · @venterTotalt venter på innkjøp</p>
+        </div>
+
+        @if (venterTotalt > 0)
+        {
+            <section class="lg-boks">
+                <div class="lg-boks-topp"><h3>Det som mangler</h3></div>
+                <p class="lg-hint">@venterTotalt stk mangler på lager. De ligger i innkjøpsforslaget, og blir reservert til @(b.Kilde.ProsjektId is not null ? "prosjektet" : "arbeidsordren") automatisk når varene tas imot.@(kanBestilles == 0 ? " Alt er allerede bestilt eller ligger i et utkast." : "")</p>
+                @if (kanBestilles > 0)
+                {
+                    <span><button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => BestillMangler(b))"><Icon Name="receipt" />Bestill det som mangler (@kanBestilles stk)</button></span>
+                }
+            </section>
+        }
+
+        @if (res.Count > 0)
+        {
+            <div class="lg-farerad">
+                <button type="button" class="lg-lenkeknapp lg-lenkeknapp-fare" @onclick="@(() => Frigi(b))">@(_bekreft == $"frigi-{b.Kilde.Nokkel}" ? "Trykk igjen for å frigi alt" : "Frigi alle reservasjoner")</button>
+            </div>
+        }
     </div>;
 
     // ======================================================================
