@@ -472,14 +472,15 @@ app.Use(async (context, next) =>
         if (string.Equals(host, "admin.full-kontroll.no", StringComparison.OrdinalIgnoreCase))
         {
             // Rett til plattform-innlogging med itlock sin egen organisasjon
-            // forhåndsvalgt som retur-mål (organisasjon-id 3) - på eksplisitt
+            // (standardorganisasjonen) som retur-mål via /plattform/egen-organisasjon -
+            // ikke en fast id, som brakk da organisasjon 3 ikke fantes lenger - på eksplisitt
             // ønske fra bruker, i stedet for den generelle /plattform-
             // forsiden (som uansett ville sendt uinnloggede dit). Plattform-
             // innlogging bruker et eget schema/cookie (se "Plattform"-policy
             // lenger opp) og egen landingsside (ikke "/"), så den er ikke
             // berørt av bugen over - trenger derfor ingen tilsvarende
             // schema-spesifikk innlogget-sjekk her.
-            context.Response.Redirect("/plattform/logg-inn?ReturnUrl=%2Fplattform%2Forganisasjoner%2F3");
+            context.Response.Redirect("/plattform/logg-inn?ReturnUrl=%2Fplattform%2Fegen-organisasjon");
             return;
         }
         if (string.Equals(host, "full-kontroll.no", StringComparison.OrdinalIgnoreCase)
@@ -871,6 +872,16 @@ app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db
         _ => Results.Redirect("/")
     };
 }).RequireAuthorization();
+
+
+// Itlocks egen organisasjon (standardorganisasjonen) i plattform-admin -
+// brukes som landingsside etter innlogging på admin.full-kontroll.no.
+// Finnes den ikke, går man til oversikten med alle organisasjonene.
+app.MapGet("/plattform/egen-organisasjon", async (PlatformDbContext db) =>
+{
+    var id = await db.Tenants.Where(t => t.ErStandard).OrderBy(t => t.Id).Select(t => (int?)t.Id).FirstOrDefaultAsync();
+    return Results.Redirect(id is { } i ? $"/plattform/organisasjoner/{i}" : "/plattform");
+}).RequireAuthorization("Plattform");
 
 // Plattform-innlogging: helt egen cookie ("Plattform"-schemaet) og helt egen
 // konto-tabell (PlattformBruker i PlatformDbContext) - se kommentaren ved
