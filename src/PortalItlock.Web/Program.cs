@@ -144,6 +144,8 @@ builder.Services.AddScoped<TilleggsmodulService>();
 builder.Services.AddScoped<LagerService>();
 builder.Services.AddScoped<ReservasjonService>();
 builder.Services.AddScoped<PlukkService>();
+builder.Services.AddScoped<ProsjektOkonomiService>();
+builder.Services.AddScoped<EtterkalkylePdfService>();
 builder.Services.AddScoped<LagerRapportService>();
 builder.Services.AddScoped<InnkjopService>();
 builder.Services.AddScoped<InnkjopsordrePdfService>();
@@ -1441,6 +1443,20 @@ app.MapGet("/innkjop/fil/{id:int}", async (int id, HttpContext context, Applicat
     disposisjon.SetHttpFileName(fil.Filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(fil.Data, fil.ContentType ?? "application/octet-stream");
+}).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
+
+app.MapGet("/prosjekt/{id:int}/etterkalkyle/pdf", async (int id, HttpContext context, EtterkalkylePdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName($"Etterkalkyle-P{id}.pdf");
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
 }).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
 
 app.MapGet("/lager/eksport/beholdning.csv", async (TilleggsmodulService moduler, LagerRapportService rapport) =>

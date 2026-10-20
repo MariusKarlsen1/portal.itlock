@@ -119,6 +119,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<InnkjopsordreLinje> InnkjopsordreLinjer => Set<InnkjopsordreLinje>();
     public DbSet<InnkjopsordreFil> InnkjopsordreFiler => Set<InnkjopsordreFil>();
     public DbSet<LagerReservasjon> LagerReservasjoner => Set<LagerReservasjon>();
+    public DbSet<OkonomiInnstillinger> OkonomiInnstillinger => Set<OkonomiInnstillinger>();
+    public DbSet<TilbudBudsjett> TilbudBudsjetter => Set<TilbudBudsjett>();
+    public DbSet<ProsjektEtterkalkyle> ProsjektEtterkalkyler => Set<ProsjektEtterkalkyle>();
     public DbSet<Avvik> Avvik => Set<Avvik>();
     public DbSet<Tilvalg> Tilvalg => Set<Tilvalg>();
     public DbSet<TilvalgAlternativ> TilvalgAlternativer => Set<TilvalgAlternativ>();
@@ -215,6 +218,17 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             e.HasOne(o => o.Lager).WithMany().HasForeignKey(o => o.LagerId).OnDelete(DeleteBehavior.Restrict);
         });
         modelBuilder.Entity<LagerBevegelse>().HasIndex(b => b.InnkjopsordreId);
+        // Prosjektøkonomi og etterkalkyle
+        modelBuilder.Entity<TilbudBudsjett>(e =>
+        {
+            e.HasIndex(b => b.TilbudId).IsUnique();
+            e.HasOne(b => b.Tilbud).WithMany().HasForeignKey(b => b.TilbudId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ProsjektEtterkalkyle>(e =>
+        {
+            e.HasIndex(k => k.ProsjektId).IsUnique();
+            e.HasOne(k => k.Prosjekt).WithMany().HasForeignKey(k => k.ProsjektId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<LagerReservasjon>(e =>
         {
             e.HasIndex(r => r.ComponentId);

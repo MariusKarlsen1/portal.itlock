@@ -27,6 +27,15 @@ public class VarselTellerServiceTests
         return db;
     }
 
+    // Tilleggsmoduler og prosjektøkonomi brukes bare når visUtvidet er true,
+    // så en tom plattform-database holder her.
+    private static VarselTellerService LagService(ApplicationDbContext db, IMemoryCache cache, ITenantContext tenant)
+    {
+        var platform = new PlatformDbContext(new DbContextOptionsBuilder<PlatformDbContext>().UseSqlite("DataSource=:memory:").Options);
+        var tilleggsmoduler = new TilleggsmodulService(platform, tenant, cache);
+        return new VarselTellerService(db, cache, tenant, tilleggsmoduler, new ProsjektOkonomiService(db, tilleggsmoduler));
+    }
+
     private sealed class FastTenantContext(int? tenantId) : ITenantContext
     {
         public Tenant? Current { get; } = tenantId is int id ? new Tenant { Id = id, Navn = "Test", ConnectionString = "" } : null;
@@ -42,7 +51,7 @@ public class VarselTellerServiceTests
             db.Avvik.Add(new Avvik { DorId = 1, Beskrivelse = "Test 2", Status = AvvikStatus.Apent });
             await db.SaveChangesAsync();
 
-            var service = new VarselTellerService(db, new MemoryCache(new MemoryCacheOptions()), new FastTenantContext(1));
+            var service = LagService(db, new MemoryCache(new MemoryCacheOptions()), new FastTenantContext(1));
             var teller = await service.HentAsync(visUtvidet: false, erAdmin: false);
 
             Assert.Equal(1, teller.AvvikSomVenter);
@@ -63,7 +72,7 @@ public class VarselTellerServiceTests
             await db.SaveChangesAsync();
 
             var cache = new MemoryCache(new MemoryCacheOptions());
-            var service = new VarselTellerService(db, cache, new FastTenantContext(1));
+            var service = LagService(db, cache, new FastTenantContext(1));
 
             var forste = await service.HentAsync(visUtvidet: false, erAdmin: false);
             Assert.Equal(1, forste.AvvikSomVenter);
@@ -93,8 +102,8 @@ public class VarselTellerServiceTests
             await db.SaveChangesAsync();
 
             var cache = new MemoryCache(new MemoryCacheOptions());
-            var tenant1Service = new VarselTellerService(db, cache, new FastTenantContext(1));
-            var tenant2Service = new VarselTellerService(db, cache, new FastTenantContext(2));
+            var tenant1Service = LagService(db, cache, new FastTenantContext(1));
+            var tenant2Service = LagService(db, cache, new FastTenantContext(2));
 
             var tenant1Teller = await tenant1Service.HentAsync(visUtvidet: false, erAdmin: false);
             var tenant2Teller = await tenant2Service.HentAsync(visUtvidet: false, erAdmin: false);

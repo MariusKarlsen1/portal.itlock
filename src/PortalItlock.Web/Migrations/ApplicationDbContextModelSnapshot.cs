@@ -4630,6 +4630,29 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("Nyheter");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.OkonomiInnstillinger", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("GulFremdriftProsent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("GulProsentOverBudsjett")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("GulTimerBruktProsent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal?>("InternTimekost")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("OkonomiInnstillinger");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Package", b =>
                 {
                     b.Property<int>("Id")
@@ -5094,6 +5117,62 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ProsjektlederId");
 
                     b.ToTable("Prosjekter");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ProsjektEtterkalkyle", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Arsak")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal?>("BudsjettDekningsgrad")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("BudsjettKost")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("BudsjettTimer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("BudsjettVarer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("FaktiskDekningsgrad")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("FaktiskKost")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("FaktiskTimer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("FaktiskVarer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Inntekt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kommentar")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Kontrollert")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KontrollertAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProsjektId")
+                        .IsUnique();
+
+                    b.ToTable("ProsjektEtterkalkyler");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ProsjektMappe", b =>
@@ -6398,6 +6477,38 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ProsjektId");
 
                     b.ToTable("Tilbud");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TilbudBudsjett", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Laast")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Salgssum")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TilbudId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Timer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Timesats")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Varekost")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TilbudId")
+                        .IsUnique();
+
+                    b.ToTable("TilbudBudsjetter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TilbudForside", b =>
@@ -8223,6 +8334,17 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Prosjektleder");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ProsjektEtterkalkyle", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
+                        .WithMany()
+                        .HasForeignKey("ProsjektId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Prosjekt");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ProsjektMappe", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
@@ -8571,6 +8693,17 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("OpprinneligTilbud");
 
                     b.Navigation("Prosjekt");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TilbudBudsjett", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Tilbud", "Tilbud")
+                        .WithMany()
+                        .HasForeignKey("TilbudId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Tilbud");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.TilbudHendelse", b =>

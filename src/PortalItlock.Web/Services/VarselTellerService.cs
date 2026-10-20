@@ -17,16 +17,18 @@ public record VarselTeller(
     int CeGodkjenningerVarsel,
     int KlarTilFaktureringVarsel,
     int LisensVarsel,
-    int ForesporslerVarsel)
+    int ForesporslerVarsel,
+    int OkonomiVarsel = 0,
+    int EtterkalkyleVarsel = 0)
 {
     public int Totalt => AvvikSomVenter + ServiceavtalerVarsel + KunderTrengerOppfolging + VarerLavBeholdning
         + FravarSoknaderVenter + TilvalgVarsel + DriftsmeldingerVarsel + TicketerVarsel + CeGodkjenningerVarsel
-        + KlarTilFaktureringVarsel + LisensVarsel + ForesporslerVarsel;
+        + KlarTilFaktureringVarsel + LisensVarsel + ForesporslerVarsel + OkonomiVarsel + EtterkalkyleVarsel;
 }
 
 // Delt mellom NavMenu (venstremeny-badge) og TopBar (brukermeny-badge), slik at
 // begge viser samme varseltall uten å duplisere sporringene.
-public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, ITenantContext tenantCtx, TilleggsmodulService tilleggsmoduler)
+public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, ITenantContext tenantCtx, TilleggsmodulService tilleggsmoduler, ProsjektOkonomiService okonomi)
 {
     // NavMenu kaller HentAsync() på HVER sidenavigasjon i hele appen (se
     // NavMenu.razor OnLocationChanged) - uten denne korte cachen gjøres de
@@ -63,6 +65,8 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
         var klarTilFaktureringVarsel = 0;
         var lisensVarsel = 0;
         var foresporslerVarsel = 0;
+        var okonomiVarsel = 0;
+        var etterkalkyleVarsel = 0;
 
         if (visUtvidet)
         {
@@ -114,6 +118,11 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
             lisensVarsel = await db.KundeLisenser.CountAsync(l => l.UtlopsDato.Date <= lisensTerskel);
 
             foresporslerVarsel = await db.Foresporsler.CountAsync(f => !f.Lest);
+
+            // Prosjektøkonomi: aktive prosjekter med gult/rødt, og overleverte
+            // prosjekter som venter på etterkalkyle.
+            okonomiVarsel = await okonomi.AntallMedVarselAsync();
+            etterkalkyleVarsel = await okonomi.AntallTilGjennomgangAsync();
         }
 
         var fravarSoknaderVenter = erAdmin
@@ -123,6 +132,6 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
         return new VarselTeller(
             avvikSomVenter, serviceavtalerVarsel, kunderTrengerOppfolging, varerLavBeholdning,
             fravarSoknaderVenter, tilvalgVarsel, driftsmeldingerVarsel, ticketerVarsel, ceGodkjenningerVarsel,
-            klarTilFaktureringVarsel, lisensVarsel, foresporslerVarsel);
+            klarTilFaktureringVarsel, lisensVarsel, foresporslerVarsel, okonomiVarsel, etterkalkyleVarsel);
     }
 }

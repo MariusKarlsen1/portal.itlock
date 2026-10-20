@@ -1,0 +1,198 @@
+@using System.Globalization
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ProsjektOkonomiService OkonomiSvc
+
+@* Prosjektøkonomi: tilbudt mot faktisk mot prognose. Brukes i fanen
+   «Økonomi» i prosjektet og i Etterkalkyle. Regnes ut på nytt hver gang
+   panelet vises, så tallene alltid er oppdatert. *@
+@if (_o is null)
+{
+    <p class="po-tom">Regner ut …</p>
+}
+else if (_o.Status == ProsjektOkonomiService.OkonomiStatus.IkkeVunnet)
+{
+    <div class="po-ikke-vunnet">
+        <span class="po-ikon"><Icon Name="trend-up" /></span>
+        <div>
+            <b>Økonomien følges fra prosjektet er vunnet</b>
+            <p>Når et tilbud på prosjektet settes til <i>Godkjent</i>, låses budsjettet, og timer og varer følges opp mot det.</p>
+        </div>
+    </div>
+}
+else
+{
+    var o = _o;
+    <div class="po">
+        <div class="po-status po-@StatusKlasse(o.Status)">
+            <span class="po-prikk"></span>
+            <div>
+                <b>@StatusNavn(o.Status)</b>
+                <span>@o.StatusTekst</span>
+            </div>
+            <div class="po-fremdrift">
+                <span>@o.FremdriftTekst</span>
+                <span class="po-bar"><i style="width:@Pst(o.Fremdrift)"></i></span>
+            </div>
+        </div>
+
+        <div class="po-kpi">
+            <div>
+                <span>Tilbudt (inntekt)</span>
+                <b>@Kr(o.Inntekt)</b>
+                <small>@o.Tilbud.Count @(o.Tilbud.Count == 1 ? "godkjent tilbud" : "godkjente tilbud")</small>
+            </div>
+            <div>
+                <span>Kost hittil</span>
+                <b>@Kr(o.FaktiskKost)</b>
+                <small>av @Kr(o.BudsjettKost) i budsjett</small>
+            </div>
+            <div class="@(o.Status != ProsjektOkonomiService.OkonomiStatus.IRute ? "po-kpi-varsel" : "")">
+                <span>Prognose ved ferdig</span>
+                <b>@Kr(o.PrognoseKost)</b>
+                <small>@Avvik(o.PrognoseKost, o.BudsjettKost) mot budsjett</small>
+            </div>
+            <div>
+                <span>Dekningsgrad</span>
+                <b>@DG(o.PrognoseDekningsgrad)</b>
+                <small>tilbudt @DG(o.BudsjettDekningsgrad)</small>
+            </div>
+        </div>
+
+        <section class="po-boks">
+            <h3>Tilbudt mot faktisk</h3>
+            <div class="po-sammenlign">
+                @Rad("Timer", o.BudsjettTimer, o.FaktiskTimer, o.PrognoseTimer, v => $"{v.ToString("0.#", Kultur)} t",
+                    o.FaktiskTimerVenter > 0 ? $"{o.FaktiskTimerVenter.ToString("0.#", Kultur)} t venter på godkjenning" : null)
+                @Rad("Timekost", o.BudsjettTimekost, o.FaktiskTimekost, o.PrognoseTimekost, Kr, o.ManglerTimesats ? "Ingen timekost satt" : $"{Kr(o.FaktiskTimer > 0 && o.FaktiskTimekost > 0 ? o.FaktiskTimekost / o.FaktiskTimer : o.Timesats)} per time")
+                @Rad("Varer", o.BudsjettVarer, o.FaktiskVarer, o.PrognoseVarer, Kr,
+                    o.VarerFraLager ? "Faktisk forbruk fra lageret" : "Anslått fra tilbudets varer × fremdrift")
+                @Rad("Total kost", o.BudsjettKost, o.FaktiskKost, o.PrognoseKost, Kr, null)
+            </div>
+            @if (o.ManglerTimesats)
+            {
+                <p class="po-advarsel">Timer regnes ikke som kostnad ennå: sett intern timekost under <a href="/etterkalkyle/innstillinger">Etterkalkyle → Innstillinger</a>, eller montasje-innpris i tilbudet.</p>
+            }
+            <p class="po-forklaring"><i class="po-l-budsjett"></i>Budsjett <i class="po-l-faktisk"></i>Hittil <i class="po-l-prognose"></i>Prognose ved ferdig</p>
+        </section>
+
+        <div class="po-to">
+            <section class="po-boks">
+                <h3>Per arbeidsordre</h3>
+                @if (o.Arbeidsordre.Count == 0)
+                {
+                    <p class="po-tom">Ingen arbeidsordre på prosjektet ennå.</p>
+                }
+                else
+                {
+                    <table class="po-tabell">
+                        <thead><tr><th>Arbeidsordre</th><th class="n">Timer</th><th class="n">Timekost</th><th class="n">Varer</th></tr></thead>
+                        <tbody>
+                            @foreach (var a in o.Arbeidsordre)
+                            {
+                                <tr>
+                                    <td><a href="@($"/arbeidsordre/{a.Id}")">@a.Tittel</a><small>@a.Status.Visningsnavn()@(a.IkkeFakturert is not null ? " · ikke fakturert" : "")</small></td>
+                                    <td class="n">@a.Timer.ToString("0.#", Kultur)</td>
+                                    <td class="n">@Kr(a.Timekost)</td>
+                                    <td class="n">@(a.Varer != 0 ? Kr(a.Varer) : "–")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+
+            <section class="po-boks">
+                <h3>Grunnlag og fakturering</h3>
+                @foreach (var t in o.Tilbud)
+                {
+                    <a class="po-tilbud" href="@($"/tilbud/{t.Id}")">
+                        <span><b>@t.Tittel</b><small>@(t.ErEndring ? "Endringsmelding" : "Tilbud") · budsjett låst @t.Laast.ToString("dd.MM.yyyy")</small></span>
+                        <span class="n">@Kr(t.Salgssum)</span>
+                    </a>
+                }
+                <div class="po-fakturering @(o.AntallIkkeFakturert > 0 ? "po-fakturering-gul" : "")">
+                    @if (o.AntallIkkeFakturert > 0)
+                    {
+                        <b>@Kr(o.IkkeFakturert) ikke fakturert</b>
+                        <span>@o.AntallIkkeFakturert @(o.AntallIkkeFakturert == 1 ? "ferdigmeldt arbeidsordre venter" : "ferdigmeldte arbeidsordre venter") på fakturering.</span>
+                    }
+                    else
+                    {
+                        <b>Ingenting venter på fakturering</b>
+                        <span>Ferdigmeldte arbeidsordre er fakturert.</span>
+                    }
+                </div>
+            </section>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int ProsjektId { get; set; }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private ProsjektOkonomiService.Okonomi? _o;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_o?.ProsjektId != ProsjektId)
+        {
+            _o = await OkonomiSvc.BeregnAsync(ProsjektId);
+        }
+    }
+
+    public async Task OppdaterAsync()
+    {
+        _o = await OkonomiSvc.BeregnAsync(ProsjektId);
+        StateHasChanged();
+    }
+
+    private static string Kr(decimal v) => v.ToString("#,##0", Kultur) + " kr";
+    private static string DG(decimal? v) => v is { } d ? (d * 100).ToString("0.#", Kultur) + " %" : "–";
+    private static string Pst(decimal v) => Math.Clamp(v * 100, 0, 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+
+    private static string Avvik(decimal v, decimal mot)
+    {
+        if (mot <= 0) return "–";
+        var p = (v / mot - 1) * 100;
+        return (p > 0 ? "+" : "") + p.ToString("0", Kultur) + " %";
+    }
+
+    private static string StatusKlasse(ProsjektOkonomiService.OkonomiStatus s) => s switch
+    {
+        ProsjektOkonomiService.OkonomiStatus.OverBudsjett => "rod",
+        ProsjektOkonomiService.OkonomiStatus.FolgMed => "gul",
+        _ => "gronn"
+    };
+
+    public static string StatusNavn(ProsjektOkonomiService.OkonomiStatus s) => s switch
+    {
+        ProsjektOkonomiService.OkonomiStatus.OverBudsjett => "Over budsjett",
+        ProsjektOkonomiService.OkonomiStatus.FolgMed => "Følg med",
+        ProsjektOkonomiService.OkonomiStatus.IRute => "I rute",
+        _ => "Ikke vunnet"
+    };
+
+    // Én rad: budsjett som 100 %, «hittil» som fylt søyle og prognosen som
+    // en strek. Skalaen er den største av de tre, så overskridelser synes.
+    private RenderFragment Rad(string navn, decimal budsjett, decimal faktisk, decimal prognose, Func<decimal, string> fmt, string? merknad) => @<div class="po-rad">
+        @{
+            var maks = Math.Max(1m, Math.Max(budsjett, Math.Max(faktisk, prognose)));
+            var over = budsjett > 0 && prognose > budsjett * 1.001m;
+        }
+        <div class="po-rad-navn"><b>@navn</b>@if (merknad is not null) {<small>@merknad</small>}</div>
+        <div class="po-rad-bar">
+            <span class="po-skala">
+                <i class="po-budsjett" style="width:@Pst(budsjett / maks)"></i>
+                <i class="po-faktisk @(budsjett > 0 && faktisk > budsjett ? "over" : "")" style="width:@Pst(faktisk / maks)"></i>
+                <i class="po-prognose @(over ? "over" : "")" style="left:@Pst(prognose / maks)"></i>
+            </span>
+        </div>
+        <div class="po-rad-tall">
+            <span>@fmt(budsjett)</span>
+            <span><b>@fmt(faktisk)</b></span>
+            <span class="@(over ? "po-rod" : "")">@fmt(prognose)</span>
+        </div>
+    </div>;
+}
