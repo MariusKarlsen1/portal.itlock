@@ -62,7 +62,26 @@ window.theme = (function () {
         }
     }
 
+    // Skrifttype: «standard» (Fraunces i overskrifter) eller «vanlig» (en
+    // vanlig skrift overalt). Lagres i nettleseren, som temaet.
+    const fontKey = 'itlock-font';
+
+    function font() {
+        return localStorage.getItem(fontKey) === 'vanlig' ? 'vanlig' : 'standard';
+    }
+
+    function setFont(f) {
+        if (f === 'vanlig') {
+            localStorage.setItem(fontKey, 'vanlig');
+            document.documentElement.setAttribute('data-font', 'vanlig');
+        } else {
+            localStorage.removeItem(fontKey);
+            document.documentElement.removeAttribute('data-font');
+        }
+        return font();
+    }
+
     document.addEventListener('DOMContentLoaded', initButtons);
 
-    return { mode, isDark, apply, set, toggle, initButtons };
+    return { mode, isDark, apply, set, toggle, initButtons, font, setFont };
 })();
