@@ -12,6 +12,11 @@ public class Bruker
     public BrukerRolle Rolle { get; set; } = BrukerRolle.Montor;
     public bool Aktiv { get; set; } = true;
 
+    // Satt når brukeren er slettet, men har timer, arbeidsordre o.l. som må
+    // bli liggende. Personen er da fjernet (ingen innlogging, ingen e-post),
+    // og vises ikke i brukerlistene, men registreringene står fortsatt på navnet.
+    public DateTime? SlettetDato { get; set; }
+
     public int FerieKvote { get; set; } = 25;
     public int? SisteNyhetSettId { get; set; }
     public int? SisteKunngjoringSettId { get; set; }

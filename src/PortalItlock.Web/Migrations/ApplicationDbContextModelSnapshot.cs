@@ -829,6 +829,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("SkjulteNavLenker")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("SlettetDato")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Stilling")
                         .HasColumnType("TEXT");
 

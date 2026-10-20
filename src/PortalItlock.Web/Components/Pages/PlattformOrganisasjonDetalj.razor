@@ -15,6 +15,7 @@
 @inject AbonnementService AbonnementSvc
 @inject PlattformFakturaService FakturaSvc
 @inject OrganisasjonBackupService BackupSvc
+@inject BrukerTilgang Tilgang
 
 <PageTitle>@(_tenant?.Navn ?? "Organisasjon") - Plattform</PageTitle>
 
@@ -506,21 +507,35 @@ else
                 }
                 else
                 {
-                    <div class="pod-tabell-hode">
-                        <div>Navn</div>
-                        <div>E-post</div>
-                        <div>Rolle</div>
-                        <div>Status</div>
+                    <div class="pod-tabell-ramme">
+                        <table class="pod-varsel-tabell">
+                            <thead><tr><th>Navn</th><th>Rolle</th><th>Status</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var b in _brukere)
+                                {
+                                    var bruker = b;
+                                    <tr class="@(bruker.Aktiv ? "" : "pod-dempet")">
+                                        <td><b>@bruker.Navn</b><small>@bruker.Epost</small></td>
+                                        <td><span class="pod-rolle-pille">@bruker.Rolle.Visningsnavn()</span></td>
+                                        <td><span class="pod-badge pod-badge-@(bruker.Aktiv ? "aktiv" : "oppsagt")"><span class="pod-dot"></span>@(bruker.Aktiv ? (string.IsNullOrEmpty(bruker.PasswordHash) ? "Har ikke satt passord" : "Aktiv") : "Deaktivert")</span></td>
+                                        <td class="pod-n">
+                                            @if (_bekreftSlettBruker == bruker.Id)
+                                            {
+                                                <span class="pod-rod">Slette @bruker.Navn?</span>
+                                                <button type="button" class="pod-btn-slett pod-btn-liten" @onclick="@(() => SlettBrukerIOrg(bruker))">Ja, slett</button>
+                                                <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => _bekreftSlettBruker = null)">Avbryt</button>
+                                            }
+                                            else
+                                            {
+                                                <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => SettBrukerAktiv(bruker, !bruker.Aktiv))">@(bruker.Aktiv ? "Deaktiver" : "Aktiver")</button>
+                                                <button type="button" class="pod-btn-ghost pod-btn-liten" title="Slett brukeren" aria-label="@($"Slett {bruker.Navn}")" @onclick="@(() => _bekreftSlettBruker = bruker.Id)"><Icon Name="trash" /></button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
                     </div>
-                    @foreach (var b in _brukere)
-                    {
-                        <div class="pod-tabell-rad">
-                            <div>@b.Navn</div>
-                            <div>@b.Epost</div>
-                            <div><span class="pod-rolle-pille">@b.Rolle.Visningsnavn()</span></div>
-                            <div><span class="pod-badge pod-badge-@(b.Aktiv ? "aktiv" : "oppsagt")"><span class="pod-dot"></span>@(b.Aktiv ? (string.IsNullOrEmpty(b.PasswordHash) ? "Har ikke satt passord" : "Aktiv") : "Inaktiv")</span></div>
-                        </div>
-                    }
                 }
             </section>
         }
@@ -1110,7 +1125,7 @@ else
         if (_tenant is null) { return; }
         var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(_tenant.ConnectionString).Options;
         await using var db = new ApplicationDbContext(options);
-        _brukere = await db.Brukere.OrderBy(b => b.Navn).ToListAsync();
+        _brukere = await db.Brukere.Where(b => b.SlettetDato == null).OrderBy(b => !b.Aktiv).ThenBy(b => b.Navn).ToListAsync();
     }
 
     // ---------- Abonnement, fakturaer, notater og status ----------
@@ -1466,6 +1481,54 @@ else
         }
 
         return liste;
+    }
+
+    // ---------- Deaktivere og slette brukere ----------
+    private int? _bekreftSlettBruker;
+
+    private async Task SettBrukerAktiv(Bruker b, bool aktiv)
+    {
+        if (_tenant is null)
+        {
+            return;
+        }
+
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(_tenant.ConnectionString).Options;
+        await using var db = new ApplicationDbContext(options);
+        var feil = aktiv
+            ? await BrukerAdministrasjon.AktiverAsync(db, Tilgang, _tenant.Id, b.Id, null)
+            : await BrukerAdministrasjon.DeaktiverAsync(db, Tilgang, _tenant.Id, b.Id, null);
+        _brukerFeil = feil;
+        _brukerMelding = feil is null ? (aktiv ? $"{b.Navn} er aktivert." : $"{b.Navn} er deaktivert og logget ut.") : null;
+        if (feil is null)
+        {
+            await AbonnementSvc.LoggAsync(_tenant.Id, $"{b.Navn} {(aktiv ? "aktivert" : "deaktivert")}", "users", _plattformBruker);
+        }
+
+        await LastBrukereAsync();
+        await LastAbonnementAsync();
+    }
+
+    private async Task SlettBrukerIOrg(Bruker b)
+    {
+        _bekreftSlettBruker = null;
+        if (_tenant is null)
+        {
+            return;
+        }
+
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(_tenant.ConnectionString).Options;
+        await using var db = new ApplicationDbContext(options);
+        var (feil, helt) = await BrukerAdministrasjon.SlettAsync(db, Tilgang, _tenant.Id, b.Id, null);
+        _brukerFeil = feil;
+        _brukerMelding = feil is null ? (helt ? $"{b.Navn} er slettet og logget ut." : $"{b.Navn} er slettet og logget ut. Timer og arbeidsordre står fortsatt på navnet.") : null;
+        if (feil is null)
+        {
+            await AbonnementSvc.LoggAsync(_tenant.Id, $"{b.Navn} slettet", "trash", _plattformBruker);
+        }
+
+        await LastBrukereAsync();
+        await LastAbonnementAsync();
     }
 
     // ---------- Backup ----------

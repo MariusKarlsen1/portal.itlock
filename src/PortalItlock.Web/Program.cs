@@ -139,6 +139,7 @@ builder.Services.AddScoped<CeGodkjenningPdfService>();
 // Bakgrunnsjobbene kjører for hver organisasjon (se OrganisasjonKjorer), og
 // påminnelsene går til mottakerne som er satt opp i adminportalen.
 builder.Services.AddSingleton<OrganisasjonKjorer>();
+builder.Services.AddSingleton<BrukerTilgang>();
 builder.Services.AddScoped<VarselMottakerService>();
 builder.Services.AddScoped<LisensService>();
 builder.Services.AddScoped<AbonnementService>();
@@ -249,6 +250,19 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         options.AccessDeniedPath = "/login";
         options.ExpireTimeSpan = TimeSpan.FromDays(30);
         options.SlidingExpiration = true;
+        // Deaktiverte og slettede brukere mister tilgangen med en gang (se
+        // BrukerTilgang). Ved «Vis som» er det administratoren som sjekkes.
+        options.Events.OnValidatePrincipal = async ctx =>
+        {
+            var bruker = ctx.Principal?.FindFirst("AdminBrukerId")?.Value ?? ctx.Principal?.FindFirst("BrukerId")?.Value;
+            var tenant = ctx.Principal?.FindFirst("TenantId")?.Value;
+            if (int.TryParse(bruker, out var brukerId) && int.TryParse(tenant, out var tenantId)
+                && !await ctx.HttpContext.RequestServices.GetRequiredService<BrukerTilgang>().ErAktivAsync(tenantId, brukerId))
+            {
+                ctx.RejectPrincipal();
+                await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            }
+        };
     })
     .AddCookie("Plattform", options =>
     {

@@ -10,6 +10,7 @@
 @inject ITenantContext TenantCtx
 @inject TenantOppslagService Oppslag
 @inject LisensService Lisenser
+@inject BrukerTilgang Tilgang
 
 @inject VisningPreferanseService VisningPref
 
@@ -132,7 +133,7 @@
                     @foreach (var b in Synlige)
                     {
                         var apen = _apenId == b.Id;
-                        <div @key="b.Id" class="bruker-rad @(apen ? "apen" : "")">
+                        <div @key="b.Id" class="bruker-rad @(apen ? "apen" : "") @(b.Aktiv ? "" : "deaktivert")">
                             <button type="button" class="bruker-rad-topp" aria-expanded="@(apen ? "true" : "false")" @onclick="@(() => VelgRad(b))">
                                 <span class="avatar avatar-@RolleKlasse(b.Rolle)">@Initialer(b.Navn)</span>
                                 <span class="rad-info">
@@ -146,6 +147,10 @@
                                         <small><span class="venter">Venter på passord</span></small>
                                     }
                                 </span>
+                                @if (!b.Aktiv)
+                                {
+                                    <span class="deaktivert-merke">Deaktivert</span>
+                                }
                                 <span class="rolle-merke rolle-@RolleKlasse(b.Rolle)">@b.Rolle.Visningsnavn()</span>
                                 <span class="mer-knapp" title="@(apen ? "Lukk" : "Rediger")"><Icon Name="@(apen ? "chevron-down" : "more-horizontal")" /></span>
                             </button>
@@ -184,7 +189,22 @@
                                             {
                                                 <button type="button" class="lenke-knapp" @onclick="@(() => NullstillPassord(b))"><Icon Name="lock" />Nullstill passord</button>
                                             }
-                                            <button type="button" class="lenke-knapp farlig" @onclick="@(() => SlettBruker(b))"><Icon Name="trash" />Slett bruker</button>
+                                            @if (b.Aktiv)
+                                            {
+                                                <button type="button" class="lenke-knapp" @onclick="@(() => SettAktiv(b, false))"><Icon Name="x-circle" />Deaktiver</button>
+                                            }
+                                            else
+                                            {
+                                                <button type="button" class="lenke-knapp" @onclick="@(() => SettAktiv(b, true))"><Icon Name="check-circle" />Aktiver</button>
+                                            }
+                                            @if (_bekreftSlett == b.Id)
+                                            {
+                                                <span class="slett-bekreft">Slette @b.Navn? <button type="button" class="lenke-knapp farlig" @onclick="@(() => SlettBruker(b))">Ja, slett</button> <button type="button" class="lenke-knapp" @onclick="@(() => _bekreftSlett = null)">Avbryt</button></span>
+                                            }
+                                            else
+                                            {
+                                                <button type="button" class="lenke-knapp farlig" @onclick="@(() => _bekreftSlett = b.Id)"><Icon Name="trash" />Slett bruker</button>
+                                            }
                                         </span>
                                         <span class="rediger-knapper">
                                             <button type="button" class="knapp-sekundaer" @onclick="Avbryt">Avbryt</button>
@@ -203,6 +223,8 @@
 </div>
 
 @code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
     private static readonly BrukerRolle[] StabRoller = [BrukerRolle.Admin, BrukerRolle.Prosjektleder, BrukerRolle.Montor];
 
     private sealed class BrukerRad
@@ -214,6 +236,7 @@
         public BrukerRolle Rolle { get; set; }
         public bool HarPassord { get; set; }
         public int FerieKvote { get; set; }
+        public bool Aktiv { get; set; } = true;
     }
 
     private List<BrukerRad> _brukere = [];
@@ -322,8 +345,8 @@
     private async Task LoadAsync()
     {
         _brukere = await Db.Brukere
-            .Where(b => b.Rolle != BrukerRolle.Kunde)
-            .OrderBy(b => b.Navn)
+            .Where(b => b.Rolle != BrukerRolle.Kunde && b.SlettetDato == null)
+            .OrderBy(b => !b.Aktiv).ThenBy(b => b.Navn)
             .Select(b => new BrukerRad
             {
                 Id = b.Id,
@@ -333,6 +356,7 @@
                 Rolle = b.Rolle,
                 HarPassord = b.PasswordHash != null,
                 FerieKvote = b.FerieKvote
+                , Aktiv = b.Aktiv
             })
             .ToListAsync();
 
@@ -436,28 +460,47 @@
         await LoadAsync();
     }
 
+    private int? _bekreftSlett;
+
+    private async Task<int?> EgenIdAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return null;
+        }
+
+        var u = (await AuthStateTask).User;
+        return int.TryParse(u.FindFirst("AdminBrukerId")?.Value ?? u.FindFirst("BrukerId")?.Value, out var id) ? id : null;
+    }
+
+    // Deaktivert bruker logges ut med en gang og kan ikke logge inn, men
+    // beholdes med alt den har registrert. Aktivering krever ledig lisens.
+    private async Task SettAktiv(BrukerRad rad, bool aktiv)
+    {
+        var tenantId = TenantCtx.Current?.Id ?? 0;
+        var feil = aktiv
+            ? await BrukerAdministrasjon.AktiverAsync(Db, Tilgang, tenantId, rad.Id, (rolle, id) => Lisenser.SjekkLedigAsync(rolle, id))
+            : await BrukerAdministrasjon.DeaktiverAsync(Db, Tilgang, tenantId, rad.Id, await EgenIdAsync());
+        _feil = feil;
+        _melding = feil is null ? (aktiv ? $"«{rad.Navn}» er aktivert og kan logge inn igjen." : $"«{rad.Navn}» er deaktivert og logget ut.") : null;
+        await LoadAsync();
+    }
+
     private async Task SlettBruker(BrukerRad rad)
     {
-        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == rad.Id);
-        if (bruker is null)
+        _bekreftSlett = null;
+        var (feil, helt) = await BrukerAdministrasjon.SlettAsync(Db, Tilgang, TenantCtx.Current?.Id ?? 0, rad.Id, await EgenIdAsync());
+        if (feil is not null)
         {
+            _feil = feil;
             return;
         }
 
-        Db.Brukere.Remove(bruker);
-
-        try
-        {
-            await Db.SaveChangesAsync();
-            _melding = $"\"{rad.Navn}\" er slettet.";
-            _feil = null;
-            _apenId = null;
-            await LoadAsync();
-        }
-        catch (DbUpdateException)
-        {
-            Db.Entry(bruker).State = EntityState.Unchanged;
-            _feil = $"\"{rad.Navn}\" har registrerte timer eller arbeidsordre og kan ikke slettes.";
-        }
+        _feil = null;
+        _apenId = null;
+        _melding = helt
+            ? $"«{rad.Navn}» er slettet og logget ut."
+            : $"«{rad.Navn}» er slettet og logget ut. Timer og arbeidsordre de har registrert, står fortsatt på navnet.";
+        await LoadAsync();
     }
 }
