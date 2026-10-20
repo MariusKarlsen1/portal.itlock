@@ -43,6 +43,8 @@ public class PrisProdukt
     public string? Beskrivelse { get; set; }
     public PrisType Type { get; set; }
     public decimal Kr { get; set; }
+    // Selges i pakker på så mange (f.eks. 10 driftslisenser); prisen gjelder per pakke.
+    public int? PakkeStorrelse { get; set; }
     public int Rekkefolge { get; set; }
 
     public const string Grunnpakke = "grunnpakke";
@@ -87,6 +89,8 @@ public class TenantAbonnement
     public DateTime Startdato { get; set; } = DateTime.Today;
     public DateTime? BindingTil { get; set; }
     public bool Grunnpakke { get; set; } = true;
+    // Pakken (PrisPakke.Nokkel), f.eks. "komplett". Null = listeprisene.
+    public string? Pakke { get; set; }
     public FakturaIntervall Intervall { get; set; } = FakturaIntervall.Maned;
     public int BetalingsfristDager { get; set; } = 14;
     public string? FakturaEpost { get; set; }

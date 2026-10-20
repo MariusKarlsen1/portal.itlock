@@ -38,6 +38,47 @@ public static class ResendInboundParser
         }
     }
 
+    // Alle mottakeradresser (to og cc), som rene adresser med små bokstaver.
+    // Brukes til å finne hvilken organisasjon e-posten skal til.
+    public static List<string> HentMottakere(string rawJson)
+    {
+        var liste = new List<string>();
+        try
+        {
+            using var doc = JsonDocument.Parse(rawJson);
+            var root = doc.RootElement;
+            var data = root.TryGetProperty("data", out var d) ? d : root;
+            foreach (var felt in new[] { "to", "cc" })
+            {
+                if (!data.TryGetProperty(felt, out var verdi))
+                {
+                    continue;
+                }
+
+                var elementer = verdi.ValueKind == JsonValueKind.Array ? verdi.EnumerateArray().ToList() : [verdi];
+                foreach (var e in elementer)
+                {
+                    var tekst = e.ValueKind == JsonValueKind.String ? e.GetString()
+                        : e.ValueKind == JsonValueKind.Object && e.TryGetProperty("email", out var ep) ? ep.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(tekst))
+                    {
+                        continue;
+                    }
+
+                    var start = tekst.LastIndexOf('<');
+                    var slutt = tekst.LastIndexOf('>');
+                    var adresse = start >= 0 && slutt > start ? tekst[(start + 1)..slutt] : tekst;
+                    liste.Add(adresse.Trim().ToLowerInvariant());
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return liste;
+    }
+
     // HTML-delen fra selve webhooken (brukes hvis den ikke kan hentes fra Resend-API-et).
     public static string? HentHtml(string rawJson)
     {

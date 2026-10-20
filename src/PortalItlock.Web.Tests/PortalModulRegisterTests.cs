@@ -63,7 +63,7 @@ public class PortalModulRegisterTests
     public void NyeKategorier_GirSammeModulerSomFor_UtenomDeBevisstEndrede(BrukerRolle rolle)
     {
         var gamle = GamleModulerFor(rolle);
-        var nye = PortalModulRegister.BladLenkerFor(rolle).Select(l => l.Href).ToHashSet();
+        var nye = PortalModulRegister.BladLenkerFor(rolle, new HashSet<string> { TilleggsModuler.Ce }).Select(l => l.Href).ToHashSet();
 
         var mistet = gamle.Except(nye).Except(BevisstFjernet).OrderBy(h => h).ToList();
         var nyeEkstra = nye.Except(gamle).Except(BevisstLagtTil[rolle]).OrderBy(h => h).ToList();

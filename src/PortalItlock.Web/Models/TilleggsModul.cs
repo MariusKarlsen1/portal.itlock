@@ -19,11 +19,13 @@ public class TenantModul
 public static class TilleggsModuler
 {
     public const string Lager = "lager";
+    public const string Ce = "ce";
 
     public sealed record Info(string Nokkel, string Navn, string Beskrivelse);
 
     public static readonly Info[] Alle =
     [
         new(Lager, "Lagerstyring", "Lagre (hovedlager, biler og prosjektlager), beholdning, lagerbevegelser, lagerverdi og varetelling."),
+        new(Ce, "CE og risikovurdering", "CE-sertifisering av automatiske dører, risikovurdering, samsvarserklæring og varsel før CE går ut."),
     ];
 }

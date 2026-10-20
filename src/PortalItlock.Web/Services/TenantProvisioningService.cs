@@ -125,6 +125,8 @@ public class TenantProvisioningService(PlatformDbContext platformDb, IConfigurat
             new TenantLisens { TenantId = tenant.Id, Type = LisensType.Montor, AntallTildelt = 2 },
             new TenantLisens { TenantId = tenant.Id, Type = LisensType.Driftslisens, AntallTildelt = 0 },
             new TenantLisens { TenantId = tenant.Id, Type = LisensType.KundeTilgang, AntallTildelt = 10 });
+        // CE er en tilleggsmodul som slås på under Abonnement.
+        platformDb.TenantModuler.Add(new TenantModul { TenantId = tenant.Id, Modul = TilleggsModuler.Ce, Aktiv = false });
         await platformDb.SaveChangesAsync();
 
         // E-postadresse på full-kontroll.no, og admin får alle påminnelsene til

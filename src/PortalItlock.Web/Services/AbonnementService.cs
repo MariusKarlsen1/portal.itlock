@@ -8,15 +8,17 @@ namespace PortalItlock.Web.Services;
 // Abonnementet til hver organisasjon: hva de har (lisenser, moduler,
 // grunnpakke), hva det koster (prisliste eller avtalepris), og
 // fakturagrunnlaget for neste periode. Brukes av adminportalen.
-public class AbonnementService(PlatformDbContext db)
+public class AbonnementService(PlatformDbContext db, PlattformOppsettService oppsett)
 {
     private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
 
     public sealed record Linje(
         string Nokkel, string Navn, string? Beskrivelse, PrisType Type,
-        int Antall, decimal Listepris, decimal Pris, bool HarAvtalepris)
+        int Antall, decimal Listepris, decimal Pris, bool HarAvtalepris, int PakkeStorrelse = 1)
     {
-        public decimal Sum => Antall * Pris;
+        // Antall som faktureres: stykk, eller pakker (f.eks. 10 driftslisenser per pakke).
+        public int Enheter => PakkeStorrelse > 1 ? (Antall + PakkeStorrelse - 1) / PakkeStorrelse : Antall;
+        public decimal Sum => Enheter * Pris;
         public int? RabattProsent => Listepris > 0 && Pris < Listepris ? (int)Math.Round((1 - Pris / Listepris) * 100) : null;
     }
 
@@ -44,7 +46,8 @@ public class AbonnementService(PlatformDbContext db)
             standard.Add(new PrisProdukt
             {
                 Nokkel = PrisProdukt.ForLisens(type), Navn = type.Kortnavn(), Beskrivelse = type.Beskrivelse(), Type = PrisType.Lisens,
-                Kr = type == LisensType.Driftslisens ? Gammel(LisensType.KundeTilgang) : brukerPris, Rekkefolge = rek++
+                Kr = type == LisensType.Driftslisens ? Gammel(LisensType.KundeTilgang) * 10 : brukerPris, Rekkefolge = rek++,
+                PakkeStorrelse = type == LisensType.Driftslisens ? 10 : null
             });
         }
 
@@ -52,6 +55,30 @@ public class AbonnementService(PlatformDbContext db)
         foreach (var modul in TilleggsModuler.Alle)
         {
             standard.Add(new PrisProdukt { Nokkel = PrisProdukt.ForModul(modul.Nokkel), Navn = modul.Navn, Beskrivelse = modul.Beskrivelse, Type = PrisType.Modul, Kr = 0, Rekkefolge = nr++ });
+        }
+
+        // Driftslisenser selges i pakker à 10. Første gang: prisen per stykk blir pris per pakke.
+        var drift = await db.PrisProdukter.FirstOrDefaultAsync(p => p.Nokkel == PrisProdukt.ForLisens(LisensType.Driftslisens));
+        if (drift is not null && drift.PakkeStorrelse is null)
+        {
+            drift.PakkeStorrelse = 10;
+            drift.Kr *= 10;
+            drift.Beskrivelse = "Vaktmestere og driftsansvarlige. Pakker à 10, én lisens kan følge flere bygg";
+            foreach (var a in await db.TenantAvtalepriser.Where(a => a.Nokkel == drift.Nokkel).ToListAsync())
+            {
+                a.Kr *= 10;
+            }
+
+            await db.SaveChangesAsync();
+        }
+
+        if (!await db.PrisPakker.AnyAsync())
+        {
+            db.PrisPakker.AddRange(
+                new PrisPakke { Nokkel = "start", Navn = "Start", Beskrivelse = "For de som vil komme i gang med prosjekter og tilbud", Innhold = "Prosjekter og tilbud\nKunderegister og kundekort\nBefaring og dørpakker", Rekkefolge = 1 },
+                new PrisPakke { Nokkel = "pro", Navn = "Pro", Beskrivelse = "For firma med montører i felt", Innhold = "Alt i Start\nArbeidsordre og Min dag\nTimer, fravær og kalender", Rekkefolge = 2 },
+                new PrisPakke { Nokkel = "komplett", Navn = "Komplett", Beskrivelse = "Hele livsløpet, fra tilbud til service", Innhold = "Alt i Pro\nService, serviceavtaler og FDV\nProsjektøkonomi og etterkalkyle\nKundeportal og driftsportal", Rekkefolge = 3 });
+            await db.SaveChangesAsync();
         }
 
         var nye = standard.Where(p => !finnes.Contains(p.Nokkel)).ToList();
@@ -153,10 +180,11 @@ public class AbonnementService(PlatformDbContext db)
         var lisenser = await db.TenantLisenser.AsNoTracking().Where(l => l.TenantId == tenantId).ToListAsync();
         var moduler = await db.TenantModuler.AsNoTracking().Where(m => m.TenantId == tenantId && m.Aktiv).Select(m => m.Modul).ToListAsync();
         var avtale = await db.TenantAvtalepriser.AsNoTracking().Where(a => a.TenantId == tenantId).ToDictionaryAsync(a => a.Nokkel, a => a.Kr);
-        return Bygg(produkter, abo, lisenser, moduler, avtale);
+        var pakkePriser = await db.PakkePriser.AsNoTracking().ToListAsync();
+        return Bygg(produkter, abo, lisenser, moduler, avtale, pakkePriser);
     }
 
-    private static List<Linje> Bygg(List<PrisProdukt> produkter, TenantAbonnement? abo, List<TenantLisens> lisenser, List<string> moduler, Dictionary<string, decimal> avtale)
+    private static List<Linje> Bygg(List<PrisProdukt> produkter, TenantAbonnement? abo, List<TenantLisens> lisenser, List<string> moduler, Dictionary<string, decimal> avtale, List<PakkePris> pakkePriser)
     {
         var linjer = new List<Linje>();
         foreach (var p in produkter.Where(p => p.Type != PrisType.Engang))
@@ -168,14 +196,33 @@ public class AbonnementService(PlatformDbContext db)
                 PrisType.Modul => moduler.Any(m => PrisProdukt.ForModul(m) == p.Nokkel) ? 1 : 0,
                 _ => 0
             };
+            // Pris: avtalepris for kunden, ellers pakkens pris, ellers listeprisen.
+            var liste = pakkePriser.FirstOrDefault(x => x.PakkeNokkel == abo?.Pakke && x.ProduktNokkel == p.Nokkel)?.Kr ?? p.Kr;
             var harAvtale = avtale.TryGetValue(p.Nokkel, out var avtalepris);
-            linjer.Add(new Linje(p.Nokkel, p.Navn, p.Beskrivelse, p.Type, antall, p.Kr, harAvtale ? avtalepris : p.Kr, harAvtale));
+            linjer.Add(new Linje(p.Nokkel, p.Navn, p.Beskrivelse, p.Type, antall, liste, harAvtale ? avtalepris : liste, harAvtale, p.PakkeStorrelse ?? 1));
         }
 
         return linjer;
     }
 
-    public static decimal Maanedsbelop(IEnumerable<Linje> linjer) => linjer.Sum(l => l.Sum);
+    // Volumrabatt etter antall lisenser (stykk, ikke pakker), satt under Innstillinger.
+    public static int RabattProsent(IEnumerable<Linje> linjer, PlattformInnstillinger inn)
+    {
+        var antall = linjer.Where(l => l.Type == PrisType.Lisens && l.PakkeStorrelse <= 1).Sum(l => l.Antall);
+        return antall >= inn.Rabatt2FraAntall && inn.Rabatt2FraAntall > 0 ? inn.Rabatt2Prosent
+            : antall >= inn.Rabatt1FraAntall && inn.Rabatt1FraAntall > 0 ? inn.Rabatt1Prosent
+            : 0;
+    }
+
+    public static decimal Rabattgrunnlag(IEnumerable<Linje> linjer) =>
+        linjer.Where(l => l.Type == PrisType.Lisens && l.PakkeStorrelse <= 1 && !l.HarAvtalepris).Sum(l => l.Sum);
+
+    public static decimal Maanedsbelop(IEnumerable<Linje> linjer, PlattformInnstillinger? inn = null)
+    {
+        var liste = linjer.ToList();
+        var sum = liste.Sum(l => l.Sum);
+        return inn is null ? sum : sum - Math.Round(Rabattgrunnlag(liste) * RabattProsent(liste, inn) / 100m, 2);
+    }
 
     // Beløp per måned for alle organisasjoner (til oversiktene).
     public async Task<Dictionary<int, decimal>> MaanedsbelopForAlleAsync()
@@ -187,11 +234,13 @@ public class AbonnementService(PlatformDbContext db)
         var avtaler = await db.TenantAvtalepriser.AsNoTracking().ToListAsync();
         var ider = await db.Tenants.Select(t => t.Id).ToListAsync();
 
+        var pakkePriser = await db.PakkePriser.AsNoTracking().ToListAsync();
+        var inn = await oppsett.HentAsync();
         return ider.ToDictionary(id => id, id => Maanedsbelop(Bygg(produkter,
             aboer.FirstOrDefault(a => a.TenantId == id),
             lisenser.Where(l => l.TenantId == id).ToList(),
             moduler.Where(m => m.TenantId == id).Select(m => m.Modul).ToList(),
-            avtaler.Where(a => a.TenantId == id).ToDictionary(a => a.Nokkel, a => a.Kr))));
+            avtaler.Where(a => a.TenantId == id).ToDictionary(a => a.Nokkel, a => a.Kr), pakkePriser), inn));
     }
 
     // Endrer antall (lisens), slår modul eller grunnpakke av/på. Økninger
@@ -320,9 +369,22 @@ public class AbonnementService(PlatformDbContext db)
         var faktura = new PlattformFaktura { TenantId = tenant.Id, PeriodeFra = fra, PeriodeTil = til, Status = PlattformFakturaStatus.Utkast };
         var nr = 0;
 
-        foreach (var l in (await LinjerAsync(tenant.Id)).Where(l => l.Antall > 0 && l.Pris > 0))
+        var inn = await oppsett.HentAsync();
+        // Årlig forskudd: noen måneder gratis (Innstillinger).
+        var betalteManeder = abo.Intervall == FakturaIntervall.Ar ? Math.Max(1, 12 - inn.ArligGratisManeder) : maneder;
+        var aarsTekst = abo.Intervall == FakturaIntervall.Ar && inn.ArligGratisManeder > 0 ? $" (12 mnd, {inn.ArligGratisManeder} gratis)" : "";
+        var aktive = (await LinjerAsync(tenant.Id)).Where(l => l.Antall > 0 && l.Pris > 0).ToList();
+        foreach (var l in aktive)
         {
-            faktura.Linjer.Add(new PlattformFakturaLinje { Tekst = $"{l.Navn}, {periode}", Antall = l.Antall, Pris = l.Pris * maneder, Rekkefolge = nr++ });
+            var hva = l.PakkeStorrelse > 1 ? $"{l.Navn}, {l.Enheter} {(l.Enheter == 1 ? "pakke" : "pakker")} à {l.PakkeStorrelse}" : l.Navn;
+            faktura.Linjer.Add(new PlattformFakturaLinje { Tekst = $"{hva}, {periode}{aarsTekst}", Antall = l.Enheter, Pris = l.Pris * betalteManeder, Rekkefolge = nr++ });
+        }
+
+        var rabatt = RabattProsent(aktive, inn);
+        var grunnlag = Rabattgrunnlag(aktive);
+        if (rabatt > 0 && grunnlag > 0)
+        {
+            faktura.Linjer.Add(new PlattformFakturaLinje { Tekst = $"Volumrabatt {rabatt} % på lisenser", Antall = 1, Pris = -Math.Round(grunnlag * betalteManeder * rabatt / 100m, 2), Rekkefolge = nr++ });
         }
 
         if (!abo.EtableringFakturert)
@@ -358,7 +420,14 @@ public class AbonnementService(PlatformDbContext db)
                     continue;
                 }
 
-                var ekstra = e.TilAntall - e.FraAntall;
+                var ekstra = linje.PakkeStorrelse > 1
+                    ? (e.TilAntall + linje.PakkeStorrelse - 1) / linje.PakkeStorrelse - (e.FraAntall + linje.PakkeStorrelse - 1) / linje.PakkeStorrelse
+                    : e.TilAntall - e.FraAntall;
+                if (ekstra <= 0)
+                {
+                    continue;
+                }
+
                 var dagspris = Math.Round(linje.Pris * 12m / 365m * dager, 2);
                 var hva = linje.Type == PrisType.Lisens ? $"{linje.Navn}, {ekstra} ekstra" : linje.Navn;
                 faktura.Linjer.Add(new PlattformFakturaLinje

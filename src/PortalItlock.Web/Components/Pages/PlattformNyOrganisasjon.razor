@@ -1,0 +1,485 @@
+@page "/plattform/ny"
+@rendermode InteractiveServer
+@layout PortalItlock.Web.Components.Layout.PlattformLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "Plattform")]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject PlatformDbContext PlatformDb
+@inject TenantProvisioningService Provisioning
+@inject AbonnementService AbonnementSvc
+@inject PlattformOppsettService Oppsett
+@inject HemmelighetService Hemmelig
+@inject TripletexNokkelOppslag TripletexOppslag
+@inject InvitasjonService Invitasjon
+@inject TenantOppslagService Oppslag
+@inject Microsoft.Extensions.Caching.Memory.IMemoryCache Cache
+
+<PageTitle>Ny organisasjon - Plattform</PageTitle>
+
+@* Veiviser for en ny kunde: firma, administrator, pakke og lisenser,
+   e-post, Tripletex og avtale. Alt settes opp på én gang når du trykker
+   «Opprett», og administratoren kan få invitasjon med en gang. *@
+<div class="pa-side">
+    <div class="pa-topp">
+        <div>
+            <div class="pa-eyebrow">Adminportal</div>
+            <h1 class="pa-h1">Ny organisasjon</h1>
+        </div>
+    </div>
+
+    @if (_ferdig is { } ny)
+    {
+        <section class="pa-kort">
+            <div class="pa-ok-linje"><span class="pa-prikk pa-ok"></span><span><b>@ny.Navn</b> er opprettet og satt opp.</span></div>
+            <div class="pa-liste">
+                @foreach (var linje in _logg)
+                {
+                    <div><span class="pa-prikk @(linje.Ok ? "pa-ok" : "pa-gul")"></span><span class="pa-liste-tekst">@linje.Tekst</span></div>
+                }
+            </div>
+            <div class="pa-knapper">
+                <a class="pa-knapp pa-knapp-p" href="@($"/plattform/organisasjoner/{ny.Id}")">Åpne organisasjonen</a>
+                <a class="pa-knapp" href="@($"/plattform/organisasjoner/{ny.Id}/tilbud.pdf")" target="_blank">Last ned tilbud (PDF)</a>
+                <a class="pa-knapp" href="/plattform/ny" @onclick="Nullstill">Opprett en til</a>
+            </div>
+        </section>
+    }
+    else
+    {
+        <div class="pa-steg">
+            @for (var i = 1; i <= Steg.Length; i++)
+            {
+                var nr = i;
+                <span class="@(nr == _steg ? "na" : nr < _steg ? "ferdig" : "")">@nr @Steg[nr - 1]</span>
+            }
+        </div>
+
+        <div class="pa-rad2">
+            <section class="pa-kort">
+                @switch (_steg)
+                {
+                    case 1:
+                        <h2 class="pa-h2">1. Firma</h2>
+                        <label class="pa-felt">Firmanavn *<input @bind="_navn" @bind:event="oninput" placeholder="For eksempel Sørlandet Lås AS" /></label>
+                        <div class="pa-felt-rad">
+                            <label class="pa-felt">Org.nr.<input @bind="_orgNr" /></label>
+                            <label class="pa-felt">Telefon<input @bind="_telefon" /></label>
+                        </div>
+                        <label class="pa-felt">Adresse<input @bind="_adresse" /></label>
+                        <div class="pa-felt-rad">
+                            <label class="pa-felt">Postnr<input @bind="_postnr" /></label>
+                            <label class="pa-felt">Sted<input @bind="_sted" /></label>
+                        </div>
+                        <div class="pa-felt-rad">
+                            <label class="pa-felt">E-post til firmaet<input @bind="_firmaEpost" /></label>
+                            <label class="pa-felt">Kontaktperson<input @bind="_kontakt" /></label>
+                        </div>
+                        break;
+                    case 2:
+                        <h2 class="pa-h2">2. Administrator</h2>
+                        <p class="pa-hint">Den første brukeren i organisasjonen. Får invitasjon på e-post til slutt, hvis du vil.</p>
+                        <label class="pa-felt">Navn *<input @bind="_adminNavn" /></label>
+                        <label class="pa-felt">E-post *<input type="email" @bind="_adminEpost" /></label>
+                        break;
+                    case 3:
+                        <h2 class="pa-h2">3. Pakke og lisenser</h2>
+                        <div class="pa-pakker">
+                            @foreach (var p in _pakker)
+                            {
+                                var pakke = p;
+                                <button type="button" class="pa-pakke @(_pakke == pakke.Nokkel ? "valgt" : "")" @onclick="@(() => _pakke = pakke.Nokkel)">
+                                    <b>@pakke.Navn</b>
+                                    @foreach (var punkt in (pakke.Innhold ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                                    {
+                                        <small>@punkt</small>
+                                    }
+                                </button>
+                            }
+                            <button type="button" class="pa-pakke @(_pakke is null ? "valgt" : "")" @onclick="@(() => _pakke = null)"><b>Egendefinert</b><small>Listepriser, velg moduler selv</small></button>
+                        </div>
+                        <div class="pa-tabellramme">
+                            <table class="pa-tabell">
+                                <thead><tr><th>Lisens</th><th class="pa-n">Antall</th><th class="pa-n">Pris</th><th class="pa-n">Per mnd</th></tr></thead>
+                                <tbody>
+                                    @foreach (var t in LisensTypeExtensions.Aktive)
+                                    {
+                                        var type = t;
+                                        var produkt = _produkter.FirstOrDefault(x => x.Nokkel == PrisProdukt.ForLisens(type));
+                                        var pris = Pris(produkt);
+                                        var storrelse = produkt?.PakkeStorrelse ?? 1;
+                                        var enheter = storrelse > 1 ? (_antall[type] + storrelse - 1) / storrelse : _antall[type];
+                                        <tr>
+                                            <td><b>@type.Kortnavn()</b><small>@type.Beskrivelse()@(storrelse > 1 ? $" · pakker à {storrelse}" : "")</small></td>
+                                            <td class="pa-n"><input class="pa-tall-input" type="number" min="0" value="@_antall[type]" aria-label="@($"Antall {type.Kortnavn()}")" @onchange="@(e => _antall[type] = int.TryParse(e.Value?.ToString(), out var n) ? Math.Max(0, n) : 0)" /></td>
+                                            <td class="pa-n">@Kr(pris)@(storrelse > 1 ? " /pk" : "")</td>
+                                            <td class="pa-n">@Kr(enheter * pris)</td>
+                                        </tr>
+                                    }
+                                    @foreach (var m in TilleggsModuler.Alle)
+                                    {
+                                        var modul = m;
+                                        var produkt = _produkter.FirstOrDefault(x => x.Nokkel == PrisProdukt.ForModul(modul.Nokkel));
+                                        var pa = _moduler.Contains(modul.Nokkel);
+                                        <tr>
+                                            <td><b>@modul.Navn</b><small>Tilleggsmodul</small></td>
+                                            <td class="pa-n"><button type="button" class="pa-bryter" role="switch" aria-checked="@(pa ? "true" : "false")" aria-label="@modul.Navn" @onclick="@(() => VekslModul(modul.Nokkel))"></button></td>
+                                            <td class="pa-n">@Kr(Pris(produkt))</td>
+                                            <td class="pa-n">@(pa ? Kr(Pris(produkt)) : "–")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        break;
+                    case 4:
+                        <h2 class="pa-h2">4. E-post</h2>
+                        <label class="pa-felt">Adresse
+                            <span class="pa-nokkel"><input @bind="_epostNavn" @bind:event="oninput" /><span class="pa-hint">@("@" + OrganisasjonOppsett.EpostDomene)</span></span>
+                            <small>Brukes som avsender og innboks for organisasjonen</small>
+                        </label>
+                        <label class="pa-felt">Avsendernavn<input @bind="_avsenderNavn" placeholder="@_navn" /></label>
+                        @if (_epostFeil is not null)
+                        {
+                            <p class="pa-feil">@_epostFeil</p>
+                        }
+                        break;
+                    case 5:
+                        <h2 class="pa-h2">5. Tripletex (valgfritt)</h2>
+                        <p class="pa-hint">Firmaet lager en ansattnøkkel i Tripletex under Innstillinger → Integrasjoner → API-tilgang. Lim den inn her, eller legg den inn senere under Oppsett → Tripletex på organisasjonen.</p>
+                        <label class="pa-felt">Ansattnøkkel (employee token)<input type="password" autocomplete="off" @bind="_tripletexNokkel" /></label>
+                        <div class="pa-knapper"><button type="button" class="pa-knapp" disabled="@(_tester || string.IsNullOrWhiteSpace(_tripletexNokkel))" @onclick="TestTripletex">@(_tester ? "Tester …" : "Test nøkkelen")</button></div>
+                        @if (_tripletexSvar is not null)
+                        {
+                            <p class="@(_tripletexOk ? "pa-melding" : "pa-feil")">@_tripletexSvar</p>
+                        }
+                        break;
+                    default:
+                        <h2 class="pa-h2">6. Avtale og oppstart</h2>
+                        <div class="pa-felt-rad">
+                            <label class="pa-felt">Prøveperiode (dager)<input type="number" min="0" max="90" @bind="_proveDager" /><small>0 = ingen</small></label>
+                            <label class="pa-felt">Faktureres
+                                <select @bind="_intervall">
+                                    @foreach (var i in Enum.GetValues<FakturaIntervall>())
+                                    {
+                                        <option value="@i">@i.Visningsnavn()</option>
+                                    }
+                                </select>
+                            </label>
+                        </div>
+                        <label class="pa-felt">Etablering og opplæring (kr)<input type="number" min="0" @bind="_etablering" /></label>
+                        <div class="pa-bryter-rad">
+                            <button type="button" class="pa-bryter" role="switch" aria-checked="@(_sendInvitasjon ? "true" : "false")" aria-label="Send invitasjon" @onclick="@(() => _sendInvitasjon = !_sendInvitasjon)"></button>
+                            <span>Send invitasjon til @(string.IsNullOrWhiteSpace(_adminEpost) ? "administratoren" : _adminEpost) med en gang</span>
+                        </div>
+                        <div class="pa-bryter-rad">
+                            <button type="button" class="pa-bryter" role="switch" aria-checked="@(_avtaleSignert ? "true" : "false")" aria-label="Avtale signert" @onclick="@(() => _avtaleSignert = !_avtaleSignert)"></button>
+                            <span>Kunden har allerede godtatt vilkår og databehandleravtale</span>
+                        </div>
+                        break;
+                }
+
+                @if (_feil is not null)
+                {
+                    <p class="pa-feil">@_feil</p>
+                }
+
+                <div class="pa-knapper">
+                    @if (_steg > 1)
+                    {
+                        <button type="button" class="pa-knapp" disabled="@_oppretter" @onclick="@(() => { _feil = null; _steg--; })">Tilbake</button>
+                    }
+                    @if (_steg < Steg.Length)
+                    {
+                        <button type="button" class="pa-knapp pa-knapp-p" @onclick="Neste">Neste: @Steg[_steg]</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="pa-knapp pa-knapp-p" disabled="@_oppretter" @onclick="Opprett">@(_oppretter ? "Oppretter … (kan ta et minutt)" : "Opprett organisasjonen")</button>
+                    }
+                </div>
+            </section>
+
+            <section class="pa-kort">
+                <h2 class="pa-h2">Oppsummering</h2>
+                <div class="pa-liste">
+                    <div><span class="pa-liste-tekst">Firma<small>@(string.IsNullOrWhiteSpace(_navn) ? "–" : _navn)@(string.IsNullOrWhiteSpace(_orgNr) ? "" : $" · {_orgNr}")</small></span></div>
+                    <div><span class="pa-liste-tekst">Administrator<small>@(string.IsNullOrWhiteSpace(_adminNavn) ? "–" : $"{_adminNavn} · {_adminEpost}")</small></span></div>
+                    <div><span class="pa-liste-tekst">Pakke<small>@(_pakker.FirstOrDefault(p => p.Nokkel == _pakke)?.Navn ?? "Egendefinert")</small></span></div>
+                    <div><span class="pa-liste-tekst">Lisenser<small>@string.Join(" · ", LisensTypeExtensions.Aktive.Where(t => _antall[t] > 0).Select(t => $"{_antall[t]} {t.Kortnavn().ToLowerInvariant()}"))</small></span></div>
+                    <div><span class="pa-liste-tekst">E-post<small>@(string.IsNullOrWhiteSpace(_epostNavn) ? "–" : OrganisasjonOppsett.Adresse(_epostNavn))</small></span></div>
+                    <div><span class="pa-liste-tekst">Tripletex<small>@(_tripletexOk ? "Nøkkel testet" : string.IsNullOrWhiteSpace(_tripletexNokkel) ? "Legges inn senere" : "Nøkkel lagt inn, ikke testet")</small></span></div>
+                </div>
+                <div class="pa-ok-linje gul"><span class="pa-liste-tekst"><b>@Kr(PerManed)</b> per måned eks. mva@(Rabatt > 0 ? $", med {Rabatt} % volumrabatt" : "")<br /><small>Etablering @Kr(_etablering) · @(_proveDager > 0 ? $"{_proveDager} dager prøveperiode" : "ingen prøveperiode")</small></span></div>
+            </section>
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly string[] Steg = ["Firma", "Administrator", "Pakke og lisenser", "E-post", "Tripletex", "Avtale og oppstart"];
+
+    private int _steg = 1;
+    private string _navn = "", _orgNr = "", _adresse = "", _postnr = "", _sted = "", _telefon = "", _firmaEpost = "", _kontakt = "";
+    private string _adminNavn = "", _adminEpost = "";
+    private string? _pakke = "komplett";
+    private Dictionary<LisensType, int> _antall = new()
+    {
+        [LisensType.Admin] = 1, [LisensType.Prosjektleder] = 1, [LisensType.Montor] = 2, [LisensType.Driftslisens] = 0, [LisensType.KundeTilgang] = 10
+    };
+    private HashSet<string> _moduler = [];
+    private string _epostNavn = "", _avsenderNavn = "";
+    private string? _epostFeil;
+    private string _tripletexNokkel = "";
+    private string? _tripletexSvar;
+    private bool _tripletexOk, _tester;
+    private int _proveDager = 30;
+    private FakturaIntervall _intervall = FakturaIntervall.Maned;
+    private decimal _etablering;
+    private bool _sendInvitasjon = true;
+    private bool _avtaleSignert;
+    private bool _oppretter;
+    private string? _feil;
+    private Tenant? _ferdig;
+    private List<(bool Ok, string Tekst)> _logg = [];
+
+    private List<PrisPakke> _pakker = [];
+    private List<PrisProdukt> _produkter = [];
+    private List<PakkePris> _pakkePriser = [];
+    private PlattformInnstillinger _inn = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _produkter = await AbonnementSvc.PrislisteAsync();
+        _pakker = await PlatformDb.PrisPakker.AsNoTracking().OrderBy(p => p.Rekkefolge).ToListAsync();
+        _pakkePriser = await PlatformDb.PakkePriser.AsNoTracking().ToListAsync();
+        _inn = await Oppsett.HentAsync();
+        _etablering = _produkter.FirstOrDefault(p => p.Nokkel == PrisProdukt.Etablering)?.Kr ?? 0;
+    }
+
+    private void Nullstill() => _ferdig = null;
+
+    private decimal Pris(PrisProdukt? p) => p is null ? 0
+        : _pakkePriser.FirstOrDefault(x => x.PakkeNokkel == _pakke && x.ProduktNokkel == p.Nokkel)?.Kr ?? p.Kr;
+
+    private List<AbonnementService.Linje> Linjer()
+    {
+        var liste = new List<AbonnementService.Linje>();
+        foreach (var p in _produkter.Where(p => p.Type != PrisType.Engang))
+        {
+            var antall = p.Type switch
+            {
+                PrisType.Fast => 1,
+                PrisType.Lisens => LisensTypeExtensions.Aktive.FirstOrDefault(t => PrisProdukt.ForLisens(t) == p.Nokkel) is var t && PrisProdukt.ForLisens(t) == p.Nokkel ? _antall.GetValueOrDefault(t) : 0,
+                PrisType.Modul => _moduler.Any(m => PrisProdukt.ForModul(m) == p.Nokkel) ? 1 : 0,
+                _ => 0
+            };
+            var pris = Pris(p);
+            liste.Add(new AbonnementService.Linje(p.Nokkel, p.Navn, p.Beskrivelse, p.Type, antall, pris, pris, false, p.PakkeStorrelse ?? 1));
+        }
+
+        return liste;
+    }
+
+    private int Rabatt => AbonnementService.RabattProsent(Linjer(), _inn);
+    private decimal PerManed => AbonnementService.Maanedsbelop(Linjer(), _inn);
+
+    private void VekslModul(string nokkel)
+    {
+        if (!_moduler.Remove(nokkel))
+        {
+            _moduler.Add(nokkel);
+        }
+    }
+
+    private async Task Neste()
+    {
+        _feil = null;
+        if (_steg == 1 && string.IsNullOrWhiteSpace(_navn))
+        {
+            _feil = "Skriv inn firmanavnet.";
+            return;
+        }
+
+        if (_steg == 2)
+        {
+            if (string.IsNullOrWhiteSpace(_adminNavn) || !_adminEpost.Contains('@'))
+            {
+                _feil = "Skriv inn navn og en gyldig e-post til administratoren.";
+                return;
+            }
+
+            if (await Oppslag.FinnTenantForEpostAsync(_adminEpost.Trim()) is not null)
+            {
+                _feil = $"{_adminEpost} er allerede bruker i en annen organisasjon.";
+                return;
+            }
+        }
+
+        if (_steg == 3 && string.IsNullOrWhiteSpace(_epostNavn))
+        {
+            _epostNavn = OrganisasjonOppsett.Slug(_navn);
+            _avsenderNavn = _navn.Trim();
+        }
+
+        if (_steg == 4)
+        {
+            _epostNavn = _epostNavn.Trim().ToLowerInvariant();
+            _epostFeil = OrganisasjonOppsett.SjekkEpostNavn(PlatformDb, _epostNavn, 0);
+            if (_epostFeil is not null)
+            {
+                return;
+            }
+        }
+
+        _steg++;
+    }
+
+    private async Task TestTripletex()
+    {
+        _tester = true;
+        try
+        {
+            var (consumer, test) = Oppsett.ConsumerToken();
+            if (consumer is null)
+            {
+                _tripletexOk = false;
+                _tripletexSvar = "Full Kontroll sitt consumer token mangler. Legg det inn under Innstillinger først.";
+                return;
+            }
+
+            var svar = await TripletexOppslag.Lag(new TripletexService.Nokler(consumer, _tripletexNokkel.Trim(), test), 0).TestTilkoblingAsync();
+            _tripletexOk = svar.Ok;
+            _tripletexSvar = svar.Ok ? $"Koblet til {svar.FirmaNavn}." : $"Tripletex godtok ikke nøkkelen: {svar.Feilmelding}";
+        }
+        finally
+        {
+            _tester = false;
+        }
+    }
+
+    private async Task Opprett()
+    {
+        _feil = null;
+        _oppretter = true;
+        StateHasChanged();
+        try
+        {
+            var (ok, feil) = await Provisioning.OpprettKundeAsync(_navn.Trim(), null, _adminNavn.Trim(), _adminEpost.Trim());
+            if (!ok)
+            {
+                _feil = feil;
+                return;
+            }
+
+            var tenant = await PlatformDb.Tenants.Where(t => t.Navn == _navn.Trim()).OrderByDescending(t => t.Id).FirstAsync();
+            _logg = [(true, "Database og administrator opprettet")];
+
+            // Firma
+            tenant.OrgNr = NullOm(_orgNr);
+            tenant.Adresse = NullOm(_adresse);
+            tenant.Postnr = NullOm(_postnr);
+            tenant.Sted = NullOm(_sted);
+            tenant.Telefon = NullOm(_telefon);
+            tenant.Epost = NullOm(_firmaEpost) ?? _adminEpost.Trim();
+            tenant.Kundeansvarlig = NullOm(_kontakt) ?? _adminNavn.Trim();
+            tenant.SistOppdatert = DateTime.Now;
+
+            // Lisenser og moduler
+            foreach (var type in LisensTypeExtensions.Aktive)
+            {
+                var lisens = await PlatformDb.TenantLisenser.FirstOrDefaultAsync(l => l.TenantId == tenant.Id && l.Type == type);
+                if (lisens is null)
+                {
+                    lisens = new TenantLisens { TenantId = tenant.Id, Type = type };
+                    PlatformDb.TenantLisenser.Add(lisens);
+                }
+
+                lisens.AntallTildelt = _antall[type];
+            }
+
+            foreach (var modul in TilleggsModuler.Alle)
+            {
+                var rad = await PlatformDb.TenantModuler.FirstOrDefaultAsync(m => m.TenantId == tenant.Id && m.Modul == modul.Nokkel);
+                if (rad is null)
+                {
+                    rad = new TenantModul { TenantId = tenant.Id, Modul = modul.Nokkel };
+                    PlatformDb.TenantModuler.Add(rad);
+                }
+
+                rad.Aktiv = _moduler.Contains(modul.Nokkel);
+                rad.AktivertDato = rad.Aktiv ? DateTime.Now : null;
+            }
+
+            // E-post og Tripletex
+            var innst = await PlatformDb.TenantInnstillinger.FirstAsync(i => i.TenantId == tenant.Id);
+            innst.EpostNavn = _epostNavn;
+            innst.AvsenderNavn = NullOm(_avsenderNavn) ?? tenant.Navn;
+            if (!string.IsNullOrWhiteSpace(_tripletexNokkel))
+            {
+                innst.TripletexEmployeeTokenKryptert = Hemmelig.Krypter(_tripletexNokkel.Trim());
+            }
+
+            await PlatformDb.SaveChangesAsync();
+            TilleggsmodulService.Nullstill(Cache, tenant.Id);
+            _logg.Add((true, $"Lisenser: {string.Join(", ", LisensTypeExtensions.Aktive.Where(t => _antall[t] > 0).Select(t => $"{_antall[t]} {t.Kortnavn().ToLowerInvariant()}"))}"));
+            _logg.Add((true, $"E-postadresse {OrganisasjonOppsett.Adresse(_epostNavn)}"));
+            _logg.Add((!string.IsNullOrWhiteSpace(_tripletexNokkel), string.IsNullOrWhiteSpace(_tripletexNokkel) ? "Tripletex legges inn senere" : "Tripletex-nøkkel lagret kryptert"));
+
+            // Abonnement
+            var abo = await AbonnementSvc.SikreAbonnementAsync(tenant);
+            var aboRad = await PlatformDb.TenantAbonnementer.FirstAsync(a => a.Id == abo.Id);
+            aboRad.Pakke = _pakke;
+            aboRad.Intervall = _intervall;
+            aboRad.FakturaEpost = tenant.Epost;
+            aboRad.Etableringsgebyr = _etablering;
+            if (_proveDager > 0)
+            {
+                aboRad.ProveperiodeTil = DateTime.Today.AddDays(_proveDager);
+            }
+
+            if (_avtaleSignert)
+            {
+                aboRad.AvtaleSignert = DateTime.Today;
+                aboRad.DatabehandleravtaleSignert = DateTime.Today;
+            }
+
+            await PlatformDb.SaveChangesAsync();
+            await AbonnementSvc.LoggAsync(tenant.Id, $"Opprettet med pakke {_pakker.FirstOrDefault(p => p.Nokkel == _pakke)?.Navn ?? "Egendefinert"}, {Kr(PerManed)} per måned", "building", "Veiviser");
+            _logg.Add((true, $"Abonnement: {Kr(PerManed)} per måned{(_proveDager > 0 ? $", prøveperiode til {aboRad.ProveperiodeTil:dd.MM.yyyy}" : "")}"));
+
+            // Invitasjon
+            if (_sendInvitasjon)
+            {
+                var admin = await FinnAdminIdAsync(tenant);
+                var invFeil = admin is null ? "Fant ikke administratoren." : await Invitasjon.SendAsync(tenant, admin.Value);
+                _logg.Add((invFeil is null, invFeil is null ? $"Invitasjon sendt til {_adminEpost}" : $"Invitasjonen ble ikke sendt: {invFeil}"));
+            }
+
+            _ferdig = tenant;
+        }
+        catch (Exception ex)
+        {
+            _feil = $"Noe gikk galt: {ex.Message}";
+        }
+        finally
+        {
+            _oppretter = false;
+        }
+    }
+
+    private async Task<int?> FinnAdminIdAsync(Tenant tenant)
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options;
+        await using var db = new ApplicationDbContext(options);
+        return (await db.Brukere.AsNoTracking().Where(b => b.Rolle == BrukerRolle.Admin && b.Aktiv).ToListAsync())
+            .FirstOrDefault(b => EpostHjelper.ErLik(b.Epost, _adminEpost.Trim()))?.Id;
+    }
+
+    private static string? NullOm(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    private static string Kr(decimal v) => v.ToString("#,##0", Nb) + " kr";
+}

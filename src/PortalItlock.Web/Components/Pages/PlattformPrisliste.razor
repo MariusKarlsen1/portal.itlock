@@ -26,6 +26,10 @@
             <h1 class="ppl-h1">Prisliste</h1>
             <p class="ppl-hint">Standardpriser for alle organisasjoner, eks. mva. En egen avtalepris på organisasjonen går foran listeprisen.</p>
         </div>
+        <div class="ppl-knapper">
+            <a class="ppl-knapp" href="/plattform/prisliste.pdf" target="_blank">Last ned prisliste (PDF)</a>
+            <a class="ppl-knapp" href="/plattform/vilkar.pdf" target="_blank">Vilkår (PDF)</a>
+        </div>
     </div>
 
     <section class="ppl-card">
@@ -45,7 +49,7 @@
                             </td>
                             <td><span class="ppl-chip">@produkt.Type.Visningsnavn()</span></td>
                             <td class="ppl-n"><input class="ppl-input ppl-pris" type="number" min="0" step="1" @bind="produkt.Kr" @bind:after="@(() => Lagre(produkt))" aria-label="@($"Pris for {produkt.Navn}")" /> kr</td>
-                            <td class="ppl-enhet">@produkt.Type.Enhet()</td>
+                            <td class="ppl-enhet">@((produkt.PakkeStorrelse ?? 1) > 1 ? $"per pakke à {produkt.PakkeStorrelse} per måned" : produkt.Type.Enhet())</td>
                             <td class="ppl-n">@IBrukHos(produkt)</td>
                             <td class="ppl-n">@_avtalepriser.Count(a => a.Nokkel == produkt.Nokkel)</td>
                         </tr>
@@ -57,6 +61,57 @@
         {
             <p class="ppl-melding">@_melding</p>
         }
+    </section>
+
+    <section class="ppl-card">
+        <h2 class="ppl-h2">Pakker</h2>
+        <p class="ppl-hint">Pakken bestemmer prisen per lisens. Tom celle betyr listeprisen over. Velg pakke for hver kunde under Abonnement.</p>
+        <div class="ppl-pakker">
+            @foreach (var p in _pakker)
+            {
+                var pakke = p;
+                <div class="ppl-pakke">
+                    <input class="ppl-input ppl-pakkenavn" @bind="pakke.Navn" @bind:after="@(() => LagrePakke(pakke))" aria-label="Navn på pakken" />
+                    <input class="ppl-input ppl-beskrivelse" @bind="pakke.Beskrivelse" @bind:after="@(() => LagrePakke(pakke))" placeholder="Kort beskrivelse" aria-label="Beskrivelse av pakken" />
+                    <textarea class="ppl-input ppl-innhold" rows="4" @bind="pakke.Innhold" @bind:after="@(() => LagrePakke(pakke))" aria-label="Hva som er med, én linje per punkt"></textarea>
+                </div>
+            }
+        </div>
+        <div class="ppl-tabell-ramme">
+            <table class="ppl-tabell">
+                <thead>
+                    <tr>
+                        <th>Lisens</th>
+                        <th class="ppl-n">Listepris</th>
+                        @foreach (var p in _pakker)
+                        {
+                            <th class="ppl-n">@p.Navn</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var prod in _produkter.Where(x => x.Type is PrisType.Lisens or PrisType.Fast or PrisType.Modul))
+                    {
+                        var produkt = prod;
+                        <tr>
+                            <td><b>@produkt.Navn</b></td>
+                            <td class="ppl-n">@produkt.Kr.ToString("#,##0", System.Globalization.CultureInfo.GetCultureInfo("nb-NO")) kr</td>
+                            @foreach (var p in _pakker)
+                            {
+                                var pakke = p;
+                                var eksisterende = _pakkePriser.FirstOrDefault(x => x.PakkeNokkel == pakke.Nokkel && x.ProduktNokkel == produkt.Nokkel);
+                                <td class="ppl-n">
+                                    <input class="ppl-input ppl-pris" type="number" min="0" step="1" placeholder="@produkt.Kr.ToString("0", System.Globalization.CultureInfo.InvariantCulture)"
+                                           value="@(eksisterende?.Kr.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "")"
+                                           aria-label="@($"{produkt.Navn} i {pakke.Navn}")"
+                                           @onchange="@(e => LagrePakkePris(pakke.Nokkel, produkt.Nokkel, e.Value?.ToString()))" />
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
     </section>
 
     <section class="ppl-card ppl-info">
@@ -77,6 +132,8 @@
     private List<TenantModul> _moduler = [];
     private int _antallOrganisasjoner;
     private string? _melding;
+    private List<PrisPakke> _pakker = [];
+    private List<PakkePris> _pakkePriser = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -85,6 +142,8 @@
         _lisenser = await PlatformDb.TenantLisenser.AsNoTracking().ToListAsync();
         _moduler = await PlatformDb.TenantModuler.AsNoTracking().Where(m => m.Aktiv).ToListAsync();
         _antallOrganisasjoner = await PlatformDb.Tenants.CountAsync(t => t.Status == TenantStatus.Aktiv && !t.ErStandard);
+        _pakker = await PlatformDb.PrisPakker.OrderBy(p => p.Rekkefolge).ToListAsync();
+        _pakkePriser = await PlatformDb.PakkePriser.ToListAsync();
     }
 
     private string IBrukHos(PrisProdukt p) => p.Type switch
@@ -94,6 +153,36 @@
         PrisType.Fast => _antallOrganisasjoner.ToString(),
         _ => "–"
     };
+
+    private async Task LagrePakke(PrisPakke pakke)
+    {
+        await PlatformDb.SaveChangesAsync();
+        _melding = $"Pakken {pakke.Navn} er lagret.";
+    }
+
+    private async Task LagrePakkePris(string pakke, string produkt, string? verdi)
+    {
+        var rad = _pakkePriser.FirstOrDefault(x => x.PakkeNokkel == pakke && x.ProduktNokkel == produkt);
+        if (decimal.TryParse(verdi?.Replace(',', '.'), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var kr))
+        {
+            if (rad is null)
+            {
+                rad = new PakkePris { PakkeNokkel = pakke, ProduktNokkel = produkt };
+                PlatformDb.PakkePriser.Add(rad);
+                _pakkePriser.Add(rad);
+            }
+
+            rad.Kr = Math.Max(0, kr);
+        }
+        else if (rad is not null)
+        {
+            PlatformDb.PakkePriser.Remove(rad);
+            _pakkePriser.Remove(rad);
+        }
+
+        await PlatformDb.SaveChangesAsync();
+        _melding = "Pakkeprisen er lagret.";
+    }
 
     private async Task Lagre(PrisProdukt produkt)
     {

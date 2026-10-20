@@ -11,8 +11,7 @@ namespace PortalItlock.Web.Services;
 // mva, EHF, purring og bokføring. Betalingsstatus hentes tilbake hit.
 public class PlattformFakturaService(
     PlatformDbContext db,
-    IHttpClientFactory httpFactory,
-    IOptions<TripletexOptions> tripletexOptions,
+    TripletexNokkelOppslag tripletexOppslag,
     ILogger<PlattformFakturaService> logger)
 {
     // Tripletex for standard-organisasjonen (itlock), uansett hvem som spør.
@@ -24,7 +23,7 @@ public class PlattformFakturaService(
             return null;
         }
 
-        var tx = new TripletexService(httpFactory.CreateClient(nameof(TripletexService)), tripletexOptions, new FastTenantContext(itlock));
+        var tx = tripletexOppslag.Lag(itlock);
         return tx.ErKonfigurert ? tx : null;
     }
 

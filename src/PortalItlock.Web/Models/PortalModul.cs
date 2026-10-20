@@ -66,7 +66,7 @@ public static class PortalModulRegister
     [
         new Lenke("Prosjekter", "Prosjekter du er lagt til på.", "prosjekter", "folder"),
         new Lenke("Arbeidsordre", "Se arbeidsordre med info om jobben og ansvarlig montør.", "arbeidsordre", "receipt"),
-        new Lenke("CE-godkjenninger", "CE-sertifiseringer for dører med automatikk, på tvers av prosjekter.", "ce-godkjenninger", "check-circle"),
+        new Lenke("CE-godkjenninger", "CE-sertifiseringer for dører med automatikk, på tvers av prosjekter.", "ce-godkjenninger", "check-circle", KreverModul: TilleggsModuler.Ce),
     ];
 
     private static readonly List<Lenke> TimerFravarUndermoduler =
@@ -81,7 +81,7 @@ public static class PortalModulRegister
         new Lenke("Arbeidsordre", "Opprett arbeidsordre med info om jobben og ansvarlig montør.", "arbeidsordre", "check-circle"),
         new Lenke("Finn dørpakke", "Huk av krav og finn riktig dørpakke til prosjektet.", "finn-dorpakke", "box"),
         new Lenke("Systemregister", "Søk opp låssystem, kunde, adresse og rekvirenter.", "systemregister", "users"),
-        new Lenke("CE Modul", "Alle CE-sertifiseringer på tvers av prosjekter, med status, vilkår og gyldighet.", "ce-godkjenninger", "shield"),
+        new Lenke("CE Modul", "Alle CE-sertifiseringer på tvers av prosjekter, med status, vilkår og gyldighet.", "ce-godkjenninger", "shield", KreverModul: TilleggsModuler.Ce),
     ];
 
     private static readonly List<Lenke> KunderUndermoduler =
@@ -226,7 +226,7 @@ public static class PortalModulRegister
                     new Lenke("Finn dørpakke", "Velg krav og få riktig dørpakke.", "finn-dorpakke", "box"),
                     new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tilbud", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
-                    new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield"),
+                    new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield", KreverModul: TilleggsModuler.Ce),
                     new Lenke("Prosjektøkonomi", "Økonomien i pågående prosjekter, og etterkalkyle når de er overlevert.", "prosjektokonomi", "trend-up", null, ModulTilgang.FraProsjektleder),
                     // Begge ligger i venstremenyen og vises derfor ikke som
                     // egne kort i kategorien.
@@ -337,6 +337,7 @@ public static class PortalModulRegister
                         Lenker = g.Lenker
                             .Where(l => l.Tilgang.HasFlag(tilgang))
                             .Where(l => l.KreverModul is null || (aktiveModuler?.Contains(l.KreverModul) ?? false))
+                            .Select(l => l.Undermoduler is null ? l : l with { Undermoduler = l.Undermoduler.Where(u => u.KreverModul is null || (aktiveModuler?.Contains(u.KreverModul) ?? false)).ToList() })
                             .ToList()
                     })
                     .Where(g => g.Lenker.Count > 0)

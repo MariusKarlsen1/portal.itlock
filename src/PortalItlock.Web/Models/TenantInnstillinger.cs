@@ -22,6 +22,12 @@ public class TenantInnstillinger
     public bool SvarTilPortal { get; set; } = true;
     public string? SvarTilEpost { get; set; }
 
+    // Organisasjonens egen Tripletex: ansattnøkkelen (employee token) fra
+    // firmaet, kryptert. Consumer-tokenet er plattformens (PlattformInnstillinger).
+    public string? TripletexEmployeeTokenKryptert { get; set; }
+    public string? TripletexFirma { get; set; }
+    public DateTime? TripletexTestet { get; set; }
+
     // Når den ukentlige påminnelsen om prosjektøkonomi sist ble sendt.
     public DateTime? SistOkonomiVarsel { get; set; }
 

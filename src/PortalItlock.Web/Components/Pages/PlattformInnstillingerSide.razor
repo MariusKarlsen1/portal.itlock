@@ -1,0 +1,340 @@
+@page "/plattform/innstillinger"
+@rendermode InteractiveServer
+@layout PortalItlock.Web.Components.Layout.PlattformLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "Plattform")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject PlatformDbContext PlatformDb
+@inject PlattformOppsettService Oppsett
+@inject HemmelighetService Hemmelig
+@inject TripletexNokkelOppslag TripletexOppslag
+@inject EmailService Epost
+@inject OrganisasjonBackupService BackupSvc
+@inject IConfiguration Config
+
+<PageTitle>Innstillinger - Plattform</PageTitle>
+
+@* Innstillingene for hele plattformen. Nøkler legges inn her, lagres
+   kryptert og vises aldri igjen i klartekst. Mangler en nøkkel her, brukes
+   serveroppsettet (miljøvariabler) som før. *@
+<div class="pa-side">
+    <div class="pa-topp">
+        <div>
+            <div class="pa-eyebrow">Adminportal</div>
+            <h1 class="pa-h1">Innstillinger</h1>
+        </div>
+    </div>
+
+    @if (_inn is null)
+    {
+        <p class="pa-hint">Henter …</p>
+    }
+    else
+    {
+        <div class="pa-rad3">
+            <section class="pa-kort">
+                <div class="pa-kort-topp"><h2 class="pa-h2">Leverandøren (deg)</h2></div>
+                <p class="pa-hint">Står på tilbud, prisliste, vilkår og fakturagrunnlag.</p>
+                <label class="pa-felt">Firma<input @bind="_inn.Firmanavn" /></label>
+                <label class="pa-felt">Org.nr.<input @bind="_inn.OrgNr" placeholder="937 294 506 MVA" /></label>
+                <label class="pa-felt">Adresse<input @bind="_inn.Adresse" /></label>
+                <div class="pa-felt-rad">
+                    <label class="pa-felt">Postnr<input @bind="_inn.Postnr" /></label>
+                    <label class="pa-felt">Sted<input @bind="_inn.Sted" /></label>
+                </div>
+                <div class="pa-felt-rad">
+                    <label class="pa-felt">Telefon<input @bind="_inn.Telefon" /></label>
+                    <label class="pa-felt">E-post<input @bind="_inn.Epost" /></label>
+                </div>
+                <label class="pa-felt">Kontonummer<input @bind="_inn.Kontonummer" placeholder="3030.43.90375" /></label>
+                <label class="pa-felt">Kontaktperson<input @bind="_inn.Kontaktperson" /></label>
+                <label class="pa-felt">Nettside<input @bind="_inn.Nettside" placeholder="full-kontroll.no" /></label>
+                <label class="pa-felt">Portaladresse<input @bind="_inn.PortalAdresse" /><small>Brukes i lenker i invitasjoner</small></label>
+                <div class="pa-knapper"><button type="button" class="pa-knapp pa-knapp-p" @onclick="LagreLeverandor">Lagre</button></div>
+                @Melding("leverandor")
+            </section>
+
+            <section class="pa-kort">
+                <div class="pa-kort-topp">
+                    <h2 class="pa-h2">Tripletex</h2>
+                    <span class="pa-chip @(_tripletexOk ? "pa-chip-ok" : "pa-chip-gul")">@(_tripletexOk ? "Koblet" : "Ikke koblet")</span>
+                </div>
+                <p class="pa-hint">Consumer-tokenet er Full Kontroll sitt, og brukes også av kundene sammen med deres egen ansattnøkkel. Ansattnøkkelen her er itlock sin.</p>
+                <label class="pa-felt">Consumer token
+                    <span class="pa-nokkel"><input type="password" autocomplete="off" @bind="_nyConsumer" placeholder="@(HemmelighetService.Skjult(Hemmelig.Dekrypter(_inn.TripletexConsumerTokenKryptert)) is { Length: > 0 } s ? s : "Lim inn")" /></span>
+                </label>
+                <label class="pa-felt">Ansattnøkkel for itlock (employee token)
+                    <span class="pa-nokkel"><input type="password" autocomplete="off" @bind="_nyEmployee" placeholder="@(HemmelighetService.Skjult(Hemmelig.Dekrypter(_inn.TripletexEmployeeTokenKryptert)) is { Length: > 0 } s2 ? s2 : "Lim inn")" /></span>
+                </label>
+                <div class="pa-bryter-rad">
+                    <button type="button" class="pa-bryter" role="switch" aria-checked="@(_inn.TripletexTest ? "true" : "false")" aria-label="Testmiljø" @onclick="@(() => _inn.TripletexTest = !_inn.TripletexTest)"></button>
+                    <span>Bruk Tripletex sitt testmiljø</span>
+                </div>
+                <div class="pa-knapper">
+                    <button type="button" class="pa-knapp pa-knapp-p" disabled="@_tester" @onclick="LagreTripletex">@(_tester ? "Tester …" : "Lagre og test")</button>
+                </div>
+                @if (_tripletexKilde is not null)
+                {
+                    <p class="pa-hint">@_tripletexKilde</p>
+                }
+                @if (!string.IsNullOrEmpty(_inn.TripletexFirma))
+                {
+                    <div class="pa-ok-linje"><span class="pa-prikk pa-ok"></span><span>Koblet til <b>@_inn.TripletexFirma</b>@(_inn.TripletexTestet is { } tt ? $" · testet {tt:dd.MM.yyyy HH:mm}" : "")</span></div>
+                }
+                @Melding("tripletex")
+            </section>
+
+            <section class="pa-kort">
+                <div class="pa-kort-topp">
+                    <h2 class="pa-h2">E-post</h2>
+                    <span class="pa-chip @(_resendOk ? "pa-chip-ok" : "pa-chip-gul")">@(_resendOk ? "Klar" : "Mangler nøkkel")</span>
+                </div>
+                <label class="pa-felt">Resend API-nøkkel
+                    <span class="pa-nokkel"><input type="password" autocomplete="off" @bind="_nyResend" placeholder="@(HemmelighetService.Skjult(Hemmelig.Dekrypter(_inn.ResendApiKeyKryptert)) is { Length: > 0 } s3 ? s3 : (_resendFraOppsett ? "Hentet fra serveroppsettet" : "Lim inn"))" /></span>
+                </label>
+                <label class="pa-felt">Standardavsender<input @bind="_inn.StandardAvsender" placeholder="Full Kontroll <varsel@full-kontroll.no>" /><small>Brukes når e-posten ikke kommer fra en bestemt organisasjon</small></label>
+                <div class="pa-bryter-rad">
+                    <button type="button" class="pa-bryter" role="switch" aria-checked="@(_inn.EpostPerOrganisasjon ? "true" : "false")" aria-label="E-post per organisasjon" @onclick="@(() => _inn.EpostPerOrganisasjon = !_inn.EpostPerOrganisasjon)"></button>
+                    <span>Send fra organisasjonens egen adresse på full-kontroll.no</span>
+                </div>
+                <p class="pa-hint">Slå på når full-kontroll.no er verifisert hos Resend (SPF, DKIM og MX). Da kommer også svar og e-post til adressen inn i riktig organisasjon.</p>
+                <div class="pa-knapper">
+                    <button type="button" class="pa-knapp pa-knapp-p" @onclick="LagreEpost">Lagre</button>
+                    <button type="button" class="pa-knapp" disabled="@_tester" @onclick="SendTest">Send test-e-post</button>
+                </div>
+                @Melding("epost")
+            </section>
+        </div>
+
+        <div class="pa-rad2-lik">
+            <section class="pa-kort">
+                <div class="pa-kort-topp"><h2 class="pa-h2">Rabatt</h2></div>
+                <div class="pa-felt-rad">
+                    <label class="pa-felt">Rabatt 1 fra antall lisenser<input type="number" min="0" @bind="_inn.Rabatt1FraAntall" /></label>
+                    <label class="pa-felt">Rabatt 1 (%)<input type="number" min="0" max="100" @bind="_inn.Rabatt1Prosent" /></label>
+                </div>
+                <div class="pa-felt-rad">
+                    <label class="pa-felt">Rabatt 2 fra antall lisenser<input type="number" min="0" @bind="_inn.Rabatt2FraAntall" /></label>
+                    <label class="pa-felt">Rabatt 2 (%)<input type="number" min="0" max="100" @bind="_inn.Rabatt2Prosent" /></label>
+                </div>
+                <label class="pa-felt">Gratis måneder ved årlig forskudd<input type="number" min="0" max="6" @bind="_inn.ArligGratisManeder" /></label>
+                <p class="pa-hint">Volumrabatten gjelder lisenser per stykk uten egen avtalepris. Driftslisenspakker og moduler får ikke volumrabatt.</p>
+                <div class="pa-knapper"><button type="button" class="pa-knapp pa-knapp-p" @onclick="LagreRabatt">Lagre</button></div>
+                @Melding("rabatt")
+            </section>
+
+            <section class="pa-kort">
+                <div class="pa-kort-topp"><h2 class="pa-h2">Sikkerhet</h2></div>
+                <div class="pa-liste">
+                    <div>
+                        <span class="pa-prikk @(Hemmelig.NokkelFraOppsett ? "pa-ok" : "pa-gul")"></span>
+                        <span class="pa-liste-tekst">Nøkkel for lagrede nøkler<small>@(Hemmelig.NokkelFraOppsett ? "Satt i serveroppsettet (Plattform__Nokkel)" : "Laget automatisk og lagret på serveren (plattform-nokkel.txt). Legg en kopi i passordhvelvet.")</small></span>
+                    </div>
+                    <div>
+                        <span class="pa-prikk @(BackupSvc.NokkelFraOppsett ? "pa-ok" : "pa-gul")"></span>
+                        <span class="pa-liste-tekst">Nøkkel for backup<small>@(BackupSvc.NokkelFraOppsett ? "Satt i serveroppsettet (Backup__Nokkel)" : "Laget automatisk og lagret på serveren (backup-nokkel.txt). Legg en kopi i passordhvelvet.")</small></span>
+                    </div>
+                    <div>
+                        <span class="pa-prikk @(BackupSvc.Lagring.Type == BackupLagringType.Azure ? "pa-ok" : "pa-gul")"></span>
+                        <span class="pa-liste-tekst">Lagring av backup<small>@(BackupSvc.Lagring.Type == BackupLagringType.Azure ? "Azure Blob Storage" : "På serveren. Sett Backup__AzureSasUrl for å lagre utenfor serveren.")</small></span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <section class="pa-kort">
+            <div class="pa-kort-topp">
+                <h2 class="pa-h2">Vilkår, databehandleravtale og tilbudstekst</h2>
+                <a class="pa-knapp" href="/plattform/vilkar.pdf" target="_blank">Last ned vilkår (PDF)</a>
+            </div>
+            <p class="pa-hint">Linjer som starter med «## » blir overskrifter, «- » blir punkter. {Leverandor} byttes ut med firmanavnet. Øk versjonen når du endrer noe vesentlig, og send oppdaterte vilkår til kundene minst 30 dager før de gjelder.</p>
+            <div class="pa-felt-rad">
+                <label class="pa-felt">Versjon<input @bind="_inn.VilkarVersjon" /></label>
+                <label class="pa-felt">Gjelder fra<input type="date" @bind="_inn.VilkarGjelderFra" /></label>
+            </div>
+            <label class="pa-felt">Lisens- og tjenestevilkår<textarea rows="12" @bind="_inn.VilkarTekst"></textarea></label>
+            <label class="pa-felt">Databehandleravtale<textarea rows="10" @bind="_inn.DatabehandlerTekst"></textarea></label>
+            <label class="pa-felt">Innledning på tilbud<textarea rows="4" @bind="_inn.TilbudIntro"></textarea></label>
+            <div class="pa-knapper">
+                <button type="button" class="pa-knapp pa-knapp-p" @onclick="LagreVilkar">Lagre</button>
+                <button type="button" class="pa-knapp" @onclick="TilbakestillVilkar">Bruk standardtekstene</button>
+            </div>
+            @Melding("vilkar")
+        </section>
+    }
+</div>
+
+@code {
+    private PlattformInnstillinger? _inn;
+    private string _nyConsumer = "";
+    private string _nyEmployee = "";
+    private string _nyResend = "";
+    private bool _tester;
+    private bool _tripletexOk;
+    private string? _tripletexKilde;
+    private bool _resendOk;
+    private bool _resendFraOppsett;
+    private string? _meldingFor;
+    private string? _melding;
+    private bool _meldingErFeil;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Oppsett.HentAsync();
+        _inn = await PlatformDb.PlattformInnstillinger.FirstAsync();
+        await OppdaterStatusAsync();
+    }
+
+    private async Task OppdaterStatusAsync()
+    {
+        var tx = await Oppsett.ItlockTripletexAsync();
+        _tripletexOk = tx is not null;
+        _tripletexKilde = tx is { FraServeroppsett: true } ? "Nøklene hentes nå fra serveroppsettet. Lim dem inn her, så ligger de kryptert i portalen." : null;
+        _resendFraOppsett = string.IsNullOrWhiteSpace(Hemmelig.Dekrypter(_inn?.ResendApiKeyKryptert)) && !string.IsNullOrWhiteSpace(Config["Resend:ApiKey"]);
+        _resendOk = !string.IsNullOrWhiteSpace(await Oppsett.ResendNokkelAsync());
+    }
+
+    private RenderFragment Melding(string hvor) => @<span>
+        @if (_meldingFor == hvor && !string.IsNullOrEmpty(_melding))
+        {
+            <p class="@(_meldingErFeil ? "pa-feil" : "pa-melding")">@_melding</p>
+        }
+    </span>;
+
+    private void Vis(string hvor, string tekst, bool feil = false)
+    {
+        _meldingFor = hvor;
+        _melding = tekst;
+        _meldingErFeil = feil;
+    }
+
+    private async Task LagreAsync()
+    {
+        _inn!.SistEndret = DateTime.Now;
+        await PlatformDb.SaveChangesAsync();
+        Oppsett.Nullstill();
+    }
+
+    private async Task LagreLeverandor()
+    {
+        await LagreAsync();
+        Vis("leverandor", "Lagret.");
+    }
+
+    private async Task LagreTripletex()
+    {
+        if (_inn is null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_nyConsumer))
+        {
+            _inn.TripletexConsumerTokenKryptert = Hemmelig.Krypter(_nyConsumer.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(_nyEmployee))
+        {
+            _inn.TripletexEmployeeTokenKryptert = Hemmelig.Krypter(_nyEmployee.Trim());
+        }
+
+        _nyConsumer = "";
+        _nyEmployee = "";
+        await LagreAsync();
+
+        var nokler = await Oppsett.ItlockTripletexAsync();
+        if (nokler is null)
+        {
+            Vis("tripletex", "Lim inn både consumer token og ansattnøkkel.", true);
+            await OppdaterStatusAsync();
+            return;
+        }
+
+        _tester = true;
+        StateHasChanged();
+        try
+        {
+            var svar = await TripletexOppslag.Lag(new TripletexService.Nokler(nokler.ConsumerToken, nokler.EmployeeToken, nokler.Test), 0).TestTilkoblingAsync();
+            if (svar.Ok)
+            {
+                _inn.TripletexFirma = svar.FirmaNavn;
+                _inn.TripletexTestet = DateTime.Now;
+                await LagreAsync();
+                Vis("tripletex", $"Lagret og testet. Koblet til {svar.FirmaNavn}.");
+            }
+            else
+            {
+                Vis("tripletex", $"Lagret, men Tripletex godtok ikke nøklene: {svar.Feilmelding}", true);
+            }
+        }
+        finally
+        {
+            _tester = false;
+        }
+
+        await OppdaterStatusAsync();
+    }
+
+    private async Task LagreEpost()
+    {
+        if (_inn is null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_nyResend))
+        {
+            _inn.ResendApiKeyKryptert = Hemmelig.Krypter(_nyResend.Trim());
+            _nyResend = "";
+        }
+
+        await LagreAsync();
+        await OppdaterStatusAsync();
+        Vis("epost", "Lagret.");
+    }
+
+    private async Task SendTest()
+    {
+        if (_inn is null || string.IsNullOrWhiteSpace(_inn.Epost))
+        {
+            Vis("epost", "Fyll inn e-post under Leverandøren først. Testen sendes dit.", true);
+            return;
+        }
+
+        _tester = true;
+        try
+        {
+            var ok = await Epost.SendAsync(_inn.Epost, "Test fra Full Kontroll", "<p>Dette er en test fra adminportalen. E-post virker.</p>");
+            Vis("epost", ok ? $"Test sendt til {_inn.Epost}." : "Kunne ikke sende. Sjekk Resend-nøkkelen og avsenderen.", !ok);
+        }
+        finally
+        {
+            _tester = false;
+        }
+    }
+
+    private async Task LagreRabatt()
+    {
+        _inn!.Rabatt1Prosent = Math.Clamp(_inn.Rabatt1Prosent, 0, 100);
+        _inn.Rabatt2Prosent = Math.Clamp(_inn.Rabatt2Prosent, 0, 100);
+        _inn.ArligGratisManeder = Math.Clamp(_inn.ArligGratisManeder, 0, 6);
+        await LagreAsync();
+        Vis("rabatt", "Lagret. Gjelder fra neste faktura.");
+    }
+
+    private async Task LagreVilkar()
+    {
+        await LagreAsync();
+        Vis("vilkar", $"Lagret. Versjon {_inn!.VilkarVersjon}.");
+    }
+
+    private void TilbakestillVilkar()
+    {
+        _inn!.VilkarTekst = Vilkar.StandardVilkar;
+        _inn.DatabehandlerTekst = Vilkar.StandardDatabehandleravtale;
+        _inn.TilbudIntro = Vilkar.StandardTilbudIntro;
+        Vis("vilkar", "Standardtekstene er satt inn. Trykk Lagre for å ta dem i bruk.");
+    }
+}

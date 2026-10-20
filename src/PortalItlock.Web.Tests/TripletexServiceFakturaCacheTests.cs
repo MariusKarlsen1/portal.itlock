@@ -51,15 +51,14 @@ public class TripletexServiceFakturaCacheTests
     {
         var handler = new TellendeHandler();
         var http = new HttpClient(handler) { BaseAddress = new Uri("https://api-test.tripletex.tech/v2/") };
-        var options = Options.Create(new TripletexOptions { ConsumerToken = "c", EmployeeToken = "e" });
         var fraDato = new DateTime(2026, 3, 1);
         var tilDato = new DateTime(2026, 3, 31);
 
         // Fyll cachen som standard-organisasjonen.
-        await new TripletexService(http, options, new FastTenant(true)).HentFakturaerAsync(fraDato, tilDato);
+        await new TripletexService(http, new TripletexService.Nokler("c", "e", true), 1).HentFakturaerAsync(fraDato, tilDato);
         var kallForAnnen = handler.AntallKall;
 
-        var (fakturaer, feil) = await new TripletexService(http, options, new FastTenant(false)).HentFakturaerAsync(fraDato, tilDato);
+        var (fakturaer, feil) = await new TripletexService(http, null, 2).HentFakturaerAsync(fraDato, tilDato);
 
         Assert.Empty(fakturaer);
         Assert.Equal(TripletexService.IkkeSattOpp, feil);
@@ -71,8 +70,7 @@ public class TripletexServiceFakturaCacheTests
     {
         var handler = new TellendeHandler();
         var http = new HttpClient(handler) { BaseAddress = new Uri("https://api-test.tripletex.tech/v2/") };
-        var options = Options.Create(new TripletexOptions { ConsumerToken = "c", EmployeeToken = "e" });
-        var service = new TripletexService(http, options, new FastTenant(true));
+        var service = new TripletexService(http, new TripletexService.Nokler("c", "e", true), 1);
 
         var fraDato = new DateTime(2026, 1, 1);
         var tilDato = new DateTime(2026, 1, 31);
@@ -98,8 +96,7 @@ public class TripletexServiceFakturaCacheTests
     {
         var handler = new TellendeHandler();
         var http = new HttpClient(handler) { BaseAddress = new Uri("https://api-test.tripletex.tech/v2/") };
-        var options = Options.Create(new TripletexOptions { ConsumerToken = "c", EmployeeToken = "e" });
-        var service = new TripletexService(http, options, new FastTenant(true));
+        var service = new TripletexService(http, new TripletexService.Nokler("c", "e", true), 1);
 
         var fraDato = new DateTime(2026, 1, 1);
         var tilDato = new DateTime(2026, 1, 31);

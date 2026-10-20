@@ -34,6 +34,31 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.ToTable("LisensPriser");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.PakkePris", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Kr")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PakkeNokkel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProduktNokkel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PakkeNokkel", "ProduktNokkel")
+                        .IsUnique();
+
+                    b.ToTable("PakkePriser");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.PlattformBruker", b =>
                 {
                     b.Property<int>("Id")
@@ -166,6 +191,141 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.ToTable("PlattformFakturaLinjer");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.PlattformInnstillinger", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Adresse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ArligGratisManeder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DatabehandlerTekst")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Epost")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("EpostPerOrganisasjon")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Firmanavn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kontaktperson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kontonummer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Nettside")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OrgNr")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PortalAdresse")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Postnr")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rabatt1FraAntall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rabatt1Prosent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rabatt2FraAntall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rabatt2Prosent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ResendApiKeyKryptert")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("SistEndret")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StandardAvsender")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Sted")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Telefon")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TilbudIntro")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TripletexConsumerTokenKryptert")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TripletexEmployeeTokenKryptert")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TripletexFirma")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("TripletexTest")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("TripletexTestet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("VilkarGjelderFra")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("VilkarTekst")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("VilkarVersjon")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("PlattformInnstillinger");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PrisPakke", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Beskrivelse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Innhold")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Nokkel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Nokkel")
+                        .IsUnique();
+
+                    b.ToTable("PrisPakker");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.PrisProdukt", b =>
                 {
                     b.Property<int>("Id")
@@ -185,6 +345,9 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.Property<string>("Nokkel")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<int?>("PakkeStorrelse")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Rekkefolge")
                         .HasColumnType("INTEGER");
@@ -308,6 +471,9 @@ namespace PortalItlock.Web.Migrations.Platform
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("OppsagtDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Pakke")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("PauseFra")
@@ -498,6 +664,15 @@ namespace PortalItlock.Web.Migrations.Platform
 
                     b.Property<int>("TenantId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("TripletexEmployeeTokenKryptert")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TripletexFirma")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("TripletexTestet")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 

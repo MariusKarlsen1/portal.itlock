@@ -1,0 +1,133 @@
+@page "/plattform/organisasjoner"
+@rendermode InteractiveServer
+@layout PortalItlock.Web.Components.Layout.PlattformLayout
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "Plattform")]
+@using System.Globalization
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject OrganisasjonStatusService StatusSvc
+@inject NavigationManager Nav
+
+<PageTitle>Organisasjoner - Plattform</PageTitle>
+
+@* Alle organisasjoner med pris, lisenser, moduler og status for e-post,
+   Tripletex, backup og faktura. Grønn = i orden, gul = mangler noe,
+   rød = feiler. Klikk en rad for organisasjonssiden. *@
+<div class="pa-side">
+    <div class="pa-topp">
+        <div>
+            <div class="pa-eyebrow">Adminportal</div>
+            <h1 class="pa-h1">Organisasjoner</h1>
+        </div>
+        <a class="pa-knapp pa-knapp-p" href="/plattform/ny">+ Ny organisasjon</a>
+    </div>
+
+    <section class="pa-kort">
+        <div class="pa-kort-topp">
+            @foreach (var (nokkel, navn) in Filtre)
+            {
+                var n = nokkel;
+                <button type="button" class="pa-chip pa-chip-knapp @(_filter == n ? "aktiv" : "")" @onclick="@(() => _filter = n)">@navn (@Antall(n))</button>
+            }
+            <span style="flex:1"></span>
+            <input class="pa-sokefelt" type="search" placeholder="Søk etter navn …" aria-label="Søk etter organisasjon" @bind="_sok" @bind:event="oninput" />
+        </div>
+
+        @if (_alle is null)
+        {
+            <p class="pa-hint">Henter …</p>
+        }
+        else
+        {
+            <div class="pa-tabellramme">
+                <table class="pa-tabell">
+                    <thead>
+                        <tr>
+                            <th>Organisasjon</th>
+                            <th>Pakke</th>
+                            <th class="pa-n">Per mnd</th>
+                            <th title="Admin · Prosjektleder · Montør · Driftslisens · Kundetilgang">Lisenser A·PL·M·D·K</th>
+                            <th>Moduler</th>
+                            <th class="pa-c">E-post</th>
+                            <th class="pa-c">Tripletex</th>
+                            <th class="pa-c">Backup</th>
+                            <th>Faktura</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var s in Synlige)
+                        {
+                            var id = s.Tenant.Id;
+                            <tr class="pa-klikkrad" @onclick="@(() => Nav.NavigateTo($"/plattform/organisasjoner/{id}"))">
+                                <td>
+                                    <b>@s.Tenant.Navn</b>
+                                    <small>@(s.Tenant.ErStandard ? "Egen organisasjon" : s.EpostAdresse ?? "Ingen e-postadresse") · @s.Tenant.Status.Visningsnavn()</small>
+                                </td>
+                                <td>@(s.Pakke ?? "–")</td>
+                                <td class="pa-n">@(s.Tenant.ErStandard ? "–" : Kr(s.PerManed))</td>
+                                <td>@string.Join(" · ", LisensTypeExtensions.Aktive.Select(t => s.Lisenser.GetValueOrDefault(t)))</td>
+                                <td>
+                                    @foreach (var m in s.Moduler)
+                                    {
+                                        <span class="pa-chip">@m</span>
+                                    }
+                                </td>
+                                <td class="pa-c"><span class="pa-prikk @OrganisasjonStatusService.Klasse(s.Epost)" title="@(s.EpostAdresse ?? "Ingen adresse")"></span></td>
+                                <td class="pa-c"><span class="pa-prikk @OrganisasjonStatusService.Klasse(s.Tripletex)" title="@(s.Tripletex == OrganisasjonStatusService.Tilstand.Ok ? "Koblet" : "Ikke koblet")"></span></td>
+                                <td class="pa-c"><span class="pa-prikk @OrganisasjonStatusService.Klasse(s.Backup)" title="@s.BackupTekst"></span></td>
+                                <td><span class="pa-chip @FakturaKlasse(s.Faktura)">@s.FakturaTekst</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <p class="pa-hint">Grønn prikk: satt opp og virker. Gul: mangler noe. Rød: feiler. Hold musepekeren over en prikk for detaljer.</p>
+        }
+    </section>
+</div>
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+
+    private List<OrganisasjonStatusService.Status>? _alle;
+    private string _filter = "alle";
+    private string _sok = "";
+
+    private static readonly (string Nokkel, string Navn)[] Filtre =
+    [
+        ("alle", "Alle"),
+        ("aktive", "Aktive"),
+        ("prove", "Prøve"),
+        ("pause", "Pause"),
+        ("oppsagt", "Oppsagt"),
+        ("mangler", "Mangler oppsett")
+    ];
+
+    protected override async Task OnInitializedAsync() => _alle = await StatusSvc.AlleAsync();
+
+    private bool Passer(OrganisasjonStatusService.Status s, string filter) => filter switch
+    {
+        "aktive" => s.Tenant.Status == TenantStatus.Aktiv,
+        "prove" => s.ProveperiodeTil is { } p && p.Date >= DateTime.Today,
+        "pause" => s.Tenant.Status == TenantStatus.Suspendert,
+        "oppsagt" => s.Tenant.Status == TenantStatus.Oppsagt,
+        "mangler" => s.Epost != OrganisasjonStatusService.Tilstand.Ok || s.Tripletex != OrganisasjonStatusService.Tilstand.Ok || s.Backup != OrganisasjonStatusService.Tilstand.Ok,
+        _ => true
+    };
+
+    private int Antall(string filter) => _alle?.Count(s => Passer(s, filter)) ?? 0;
+
+    private IEnumerable<OrganisasjonStatusService.Status> Synlige =>
+        (_alle ?? []).Where(s => Passer(s, _filter))
+            .Where(s => string.IsNullOrWhiteSpace(_sok) || s.Tenant.Navn.Contains(_sok.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private static string Kr(decimal v) => v.ToString("#,##0", Nb) + " kr";
+
+    private static string FakturaKlasse(OrganisasjonStatusService.Tilstand t) => t switch
+    {
+        OrganisasjonStatusService.Tilstand.Ok => "pa-chip-ok",
+        OrganisasjonStatusService.Tilstand.Mangler => "pa-chip-gul",
+        OrganisasjonStatusService.Tilstand.Feil => "pa-chip-rod",
+        _ => ""
+    };
+}

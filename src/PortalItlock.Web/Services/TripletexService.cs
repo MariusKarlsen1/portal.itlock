@@ -21,21 +21,17 @@ namespace PortalItlock.Web.Services;
 //    derfor kun på nytt når det mangler eller snart utløper, ikke for hvert
 //    kall.
 //
-// Registrert som singleton (se Program.cs) siden session-tokenet er delt
-// for hele appen, ikke pr. bruker/forespørsel - _sessionLas hindrer at flere
-// samtidige forespørsler lager session-tokenet flere ganger.
-public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions> options, ITenantContext tenantContext)
+// Hver organisasjon bruker sin egen Tripletex: Full Kontroll sitt
+// consumer-token sammen med organisasjonens egen ansattnøkkel, lagt inn
+// kryptert i adminportalen (se TripletexNokkelOppslag). Har organisasjonen
+// ingen nøkkel, er Tripletex stengt for den. Session-token og fakturacache
+// holdes adskilt per nøkkel og per organisasjon.
+public sealed class TripletexService(HttpClient http, TripletexService.Nokler? nokler, int tenantId)
 {
-    private readonly TripletexOptions _options = options.Value;
+    public sealed record Nokler(string ConsumerToken, string EmployeeToken, bool Test);
 
-    // Nøklene i konfigurasjonen hører til itlock sin Tripletex. Inntil hver
-    // organisasjon har sin egen kobling (satt opp i adminportalen), er
-    // Tripletex derfor bare tilgjengelig for standard-organisasjonen, så ingen
-    // andre kan lese eller skrive i itlock sitt regnskap. Session-token og
-    // fakturacache er statiske og gjelder dermed bare den organisasjonen.
     private static readonly SemaphoreSlim _sessionLas = new(1, 1);
-    private static string? _sessionToken;
-    private static DateTime _sessionUtlopUtc = DateTime.MinValue;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Token, DateTime UtlopUtc)> _sessioner = new();
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
@@ -50,23 +46,25 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
 
     public const string IkkeSattOpp = "Tripletex er ikke satt opp for denne organisasjonen ennå.";
 
-    public bool ErTilgjengeligForOrganisasjonen => tenantContext.Current?.ErStandard == true;
+    public bool ErTilgjengeligForOrganisasjonen => nokler is not null;
 
-    public bool ErKonfigurert =>
-        ErTilgjengeligForOrganisasjonen
-        && !string.IsNullOrWhiteSpace(_options.ConsumerToken) && !string.IsNullOrWhiteSpace(_options.EmployeeToken);
+    public bool ErKonfigurert => nokler is not null;
+
+    private string SesjonsNokkel => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+        Encoding.UTF8.GetBytes($"{nokler!.ConsumerToken}|{nokler.EmployeeToken}|{nokler.Test}")));
 
     private async Task<string> HentSessionTokenAsync(CancellationToken ct)
     {
-        // Sperren må komme før det delte tokenet brukes.
-        if (!ErTilgjengeligForOrganisasjonen)
+        // Sperren må komme før noe delt brukes.
+        if (nokler is null)
         {
             throw new InvalidOperationException(IkkeSattOpp);
         }
 
-        if (_sessionToken is not null && DateTime.UtcNow < _sessionUtlopUtc)
+        var nokkel = SesjonsNokkel;
+        if (_sessioner.TryGetValue(nokkel, out var s) && DateTime.UtcNow < s.UtlopUtc)
         {
-            return _sessionToken;
+            return s.Token;
         }
 
         await _sessionLas.WaitAsync(ct);
@@ -74,36 +72,25 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
         {
             // Sjekk på nytt - en annen forespørsel kan ha rukket å opprette
             // et gyldig token mens vi ventet på låsen.
-            if (_sessionToken is not null && DateTime.UtcNow < _sessionUtlopUtc)
+            if (_sessioner.TryGetValue(nokkel, out s) && DateTime.UtcNow < s.UtlopUtc)
             {
-                return _sessionToken;
-            }
-
-            if (!ErKonfigurert)
-            {
-                throw new InvalidOperationException(
-                    "Tripletex er ikke konfigurert - mangler ConsumerToken/EmployeeToken (sett via user-secrets lokalt, eller Tripletex__ConsumerToken/Tripletex__EmployeeToken som miljøvariabler i prod).");
+                return s.Token;
             }
 
             // Be om et session-token som er gyldig i 90 dager fremover - det
             // koster ingenting å be om lenger varighet, og sparer unødvendige
-            // nye :create-kall. Fornyes automatisk før det faktisk utløper
-            // (sjekken over, med litt margin - se _sessionUtlopUtc under).
+            // nye :create-kall. Fornyes automatisk før det faktisk utløper.
             var utlopsdato = DateTime.UtcNow.AddDays(90).ToString("yyyy-MM-dd");
             var body = new
             {
-                consumerToken = _options.ConsumerToken,
-                employeeToken = _options.EmployeeToken,
+                consumerToken = nokler.ConsumerToken,
+                employeeToken = nokler.EmployeeToken,
                 expirationDate = utlopsdato
             };
 
             // MERK: ingen ledende skråstrek - HttpClient sin BaseAddress har
             // en sti (".../v2/"), og en relativ URI som starter med "/" blir
-            // tolket som absolutt fra host-roten, som DROPPER "/v2"-delen av
-            // BaseAddress helt (klassisk HttpClient-fallgruve). Uten dette
-            // traff kallet https://api-test.tripletex.tech/token/... (uten
-            // /v2), som ikke finnes - Tripletex sin vanlige nettside svarte
-            // da med en full HTML-404-side i stedet for en JSON-API-feil.
+            // tolket som absolutt fra host-roten, som DROPPER "/v2"-delen.
             using var resp = await http.PostAsJsonAsync("token/session/:create", body, JsonOpts, ct);
             var raw = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
@@ -117,9 +104,8 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
             var token = parsed.Value?.Token
                 ?? throw new InvalidOperationException("Tripletex-svaret manglet selve token-verdien.");
 
-            _sessionToken = token;
             // Litt margin (1 dag) i forhold til den faktiske utløpsdatoen vi ba om.
-            _sessionUtlopUtc = DateTime.UtcNow.AddDays(89);
+            _sessioner[nokkel] = (token, DateTime.UtcNow.AddDays(89));
             return token;
         }
         finally
@@ -403,7 +389,7 @@ public sealed class TripletexService(HttpClient http, IOptions<TripletexOptions>
             return ([], IkkeSattOpp);
         }
 
-        var cacheNokkel = $"{dateFrom:yyyy-MM-dd}|{dateTo:yyyy-MM-dd}|{kundeId}";
+        var cacheNokkel = $"{tenantId}|{SesjonsNokkel}|{dateFrom:yyyy-MM-dd}|{dateTo:yyyy-MM-dd}|{kundeId}";
         if (_fakturaCache.TryGetValue(cacheNokkel, out var cachet) && DateTime.UtcNow - cachet.HentetUtc < FakturaCacheLevetid)
         {
             return (cachet.Fakturaer, cachet.Feilmelding);

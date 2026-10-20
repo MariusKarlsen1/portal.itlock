@@ -140,8 +140,13 @@ builder.Services.AddScoped<CeGodkjenningPdfService>();
 // påminnelsene går til mottakerne som er satt opp i adminportalen.
 builder.Services.AddSingleton<OrganisasjonKjorer>();
 builder.Services.AddSingleton<BrukerTilgang>();
+builder.Services.AddSingleton<HemmelighetService>();
+builder.Services.AddSingleton<PlattformOppsettService>();
 builder.Services.AddScoped<VarselMottakerService>();
 builder.Services.AddScoped<LisensService>();
+builder.Services.AddScoped<InvitasjonService>();
+builder.Services.AddScoped<PlattformPdfService>();
+builder.Services.AddScoped<OrganisasjonStatusService>();
 builder.Services.AddScoped<AbonnementService>();
 builder.Services.AddScoped<PlattformFakturaService>();
 builder.Services.AddHostedService<PlattformFakturaBackgroundService>();
@@ -228,11 +233,9 @@ builder.Services.AddHttpClient(nameof(TripletexService), (sp, client) =>
     client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(20);
 });
+builder.Services.AddSingleton<TripletexNokkelOppslag>();
 builder.Services.AddScoped<TripletexService>(sp =>
-    new TripletexService(
-        sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(TripletexService)),
-        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TripletexOptions>>(),
-        sp.GetRequiredService<ITenantContext>()));
+    sp.GetRequiredService<TripletexNokkelOppslag>().Lag(sp.GetRequiredService<ITenantContext>().Current));
 builder.Services.AddScoped<TripletexSyncService>();
 // Ingen bakgrunnsjobb mot Tripletex. Synkroniseringen kjøres når noen trykker
 // "Synkroniser med Tripletex" i kunderegisteret - da vet man hva som skjer og
@@ -428,6 +431,12 @@ using (var seedScope = app.Services.CreateScope())
             PortalItlock.Web.Services.TenantSeedHelper.SeedNyheter(seedDb);
             PortalItlock.Web.Services.TenantSeedHelper.SeedTestbrukere(seedDb);
             PortalItlock.Web.Services.LisensOmlegging.Kjor(platformDb, seedDb, tenant);
+            // CE ble tilleggsmodul 2026-10-21: organisasjoner som fantes fra før, beholder den.
+            if (!platformDb.TenantModuler.Any(m => m.TenantId == tenant.Id && m.Modul == PortalItlock.Web.Models.TilleggsModuler.Ce))
+            {
+                platformDb.TenantModuler.Add(new PortalItlock.Web.Models.TenantModul { TenantId = tenant.Id, Modul = PortalItlock.Web.Models.TilleggsModuler.Ce, Aktiv = true, AktivertDato = DateTime.Now });
+                platformDb.SaveChanges();
+            }
 
             if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
             {
@@ -749,10 +758,10 @@ app.MapPost("/account/glemt-passord", async (HttpContext http, TenantOppslagServ
 
             var lenke = $"{http.Request.Scheme}://{http.Request.Host}/tilbakestill-passord?token={token}";
             var html = "<p>Hei,</p>" +
-                "<p>Du (eller noen andre) har bedt om å sette eller tilbakestille passordet for kontoen din hos itlock.</p>" +
+                $"<p>Du (eller noen andre) har bedt om å sette eller tilbakestille passordet for kontoen din i Full Kontroll hos {System.Net.WebUtility.HtmlEncode(tenant.PortalVisningsnavn ?? tenant.Navn)}.</p>" +
                 $"<p><a href=\"{lenke}\">Trykk her for å velge nytt passord</a></p>" +
                 "<p>Lenken er gyldig i 1 time. Har du ikke bedt om dette, kan du se bort fra denne e-posten.</p>";
-            await epost.SendAsync(bruker.Epost, "Tilbakestill passord - itlock", html);
+            await epost.SendAsync(bruker.Epost, "Sett nytt passord – Full Kontroll", html, fraOrganisasjonId: tenant.Id);
         }
     }
 
@@ -1858,6 +1867,18 @@ app.MapGet("/plattform/organisasjon/{id:int}/logo", async (int id, PlatformDbCon
         : Results.File(tenant.LogoData, FilSikkerhet.TryggContentType(tenant.LogoContentType ?? "image/png"));
 }).RequireAuthorization("Plattform");
 
+// PDF-ene fra adminportalen (bare plattformadmin).
+app.MapGet("/plattform/organisasjoner/{id:int}/tilbud.pdf", async (int id, PlattformPdfService pdf) =>
+    await pdf.TilbudAsync(id) is { } fil ? Results.File(fil, "application/pdf", $"tilbud-full-kontroll-{id}.pdf") : Results.NotFound())
+    .RequireAuthorization("Plattform");
+app.MapGet("/plattform/prisliste.pdf", async (PlattformPdfService pdf) =>
+    Results.File(await pdf.PrislisteAsync(), "application/pdf", "prisliste-full-kontroll.pdf")).RequireAuthorization("Plattform");
+app.MapGet("/plattform/vilkar.pdf", async (PlattformPdfService pdf) =>
+    Results.File(await pdf.VilkarAsync(), "application/pdf", "vilkar-full-kontroll.pdf")).RequireAuthorization("Plattform");
+app.MapGet("/plattform/faktura/{id:int}.pdf", async (int id, PlattformPdfService pdf) =>
+    await pdf.FakturaAsync(id) is { } fil ? Results.File(fil, "application/pdf", $"fakturagrunnlag-{id}.pdf") : Results.NotFound())
+    .RequireAuthorization("Plattform");
+
 // Last ned en backup som vanlig SQLite-fil (dekryptert og pakket ut). Bare
 // plattformadmin. Filen åpnes med f.eks. DB Browser for SQLite.
 app.MapGet("/plattform/backup/{id:int}/last-ned", async (int id, HttpContext http, PlatformDbContext platformDb, OrganisasjonBackupService backupSvc) =>
@@ -1953,7 +1974,7 @@ app.MapGet("/timeoversikt/eksport-pdf", async (DateTime fra, DateTime til, int? 
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
-app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, ApplicationDbContext db, IConfiguration config, ILogger<Program> logger, ResendReceivingClient receivingClient) =>
+app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, ApplicationDbContext standardDb, PlatformDbContext platformDb, IConfiguration config, ILogger<Program> logger, ResendReceivingClient receivingClient) =>
 {
     using var reader = new StreamReader(http.Request.Body);
     var body = await reader.ReadToEndAsync();
@@ -1986,6 +2007,28 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
 
     innholdHtml ??= ResendInboundParser.HentHtml(body);
 
+    // Hvilken organisasjon? Adressen den ble sendt til (navn@full-kontroll.no)
+    // avgjør. Ukjent adresse havner hos standard-organisasjonen, som før.
+    ApplicationDbContext db = standardDb;
+    ApplicationDbContext? egenDb = null;
+    var domene = "@" + PortalItlock.Web.Services.OrganisasjonOppsett.EpostDomene;
+    var navn = ResendInboundParser.HentMottakere(body)
+        .Where(a => a.EndsWith(domene, StringComparison.OrdinalIgnoreCase))
+        .Select(a => a[..^domene.Length])
+        .ToList();
+    if (navn.Count > 0)
+    {
+        var treff = await platformDb.TenantInnstillinger.AsNoTracking()
+            .Where(i => i.EpostNavn != null && navn.Contains(i.EpostNavn))
+            .Join(platformDb.Tenants.Where(t => t.Status == TenantStatus.Aktiv), i => i.TenantId, t => t.Id, (i, t) => t)
+            .FirstOrDefaultAsync();
+        if (treff is not null && !treff.ErStandard)
+        {
+            egenDb = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(treff.ConnectionString).Options);
+            db = egenDb;
+        }
+    }
+
     var foresporsel = new PortalItlock.Web.Models.Foresporsel
     {
         FraEpost = tolket.FraEpost,
@@ -2010,6 +2053,10 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
     }
 
     await db.SaveChangesAsync();
+    if (egenDb is not null)
+    {
+        await egenDb.DisposeAsync();
+    }
 
     return Results.Ok();
 }).AllowAnonymous();
