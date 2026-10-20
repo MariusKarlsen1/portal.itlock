@@ -188,6 +188,11 @@ builder.Services.AddHttpClient<AiAssistentService>(client =>
     client.BaseAddress = new Uri("https://api.anthropic.com/");
     client.Timeout = TimeSpan.FromSeconds(60);
 });
+builder.Services.AddHttpClient<DokumentTolkService>(client =>
+{
+    client.BaseAddress = new Uri("https://api.anthropic.com/");
+    client.Timeout = TimeSpan.FromSeconds(120);
+});
 builder.Services.AddHttpClient<DorImportService>(client =>
 {
     client.BaseAddress = new Uri("https://api.anthropic.com/");
@@ -1395,8 +1400,22 @@ app.MapGet("/innkjop/{id:int}/pdf", async (int id, HttpContext context, Applicat
 
 app.MapGet("/innkjop/{id:int}/ordrebekreftelse", async (int id, HttpContext context, ApplicationDbContext db) =>
 {
-    var fil = await db.InnkjopsordreFiler.AsNoTracking().Where(f => f.InnkjopsordreId == id)
+    var fil = await db.InnkjopsordreFiler.AsNoTracking().Where(f => f.InnkjopsordreId == id && f.Type == "ordrebekreftelse")
         .OrderByDescending(f => f.Id).FirstOrDefaultAsync();
+    if (fil is null)
+    {
+        return Results.NotFound();
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(fil.Filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(fil.Data, fil.ContentType ?? "application/octet-stream");
+}).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
+
+app.MapGet("/innkjop/fil/{id:int}", async (int id, HttpContext context, ApplicationDbContext db) =>
+{
+    var fil = await db.InnkjopsordreFiler.AsNoTracking().FirstOrDefaultAsync(f => f.Id == id);
     if (fil is null)
     {
         return Results.NotFound();

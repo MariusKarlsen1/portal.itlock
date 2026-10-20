@@ -3000,6 +3000,10 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime>("Lastet")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.HasIndex("InnkjopsordreId");

@@ -105,6 +105,8 @@ public class InnkjopsordreFil
     public Innkjopsordre? Innkjopsordre { get; set; }
     public required string Filnavn { get; set; }
     public string? ContentType { get; set; }
+    // «ordrebekreftelse» eller «pakkseddel» (DokumentTolkService).
+    public string Type { get; set; } = "ordrebekreftelse";
     public required byte[] Data { get; set; }
     public DateTime Lastet { get; set; } = DateTime.Now;
 }
