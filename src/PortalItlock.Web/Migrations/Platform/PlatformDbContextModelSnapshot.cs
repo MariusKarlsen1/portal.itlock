@@ -614,6 +614,33 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.ToTable("TenantBackuper");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantBrukerVarsel", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Aktiv")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Nokkel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "BrukerId", "Nokkel")
+                        .IsUnique();
+
+                    b.ToTable("TenantBrukerVarsler");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.TenantHendelse", b =>
                 {
                     b.Property<int>("Id")
@@ -815,6 +842,33 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.HasIndex("TenantId");
 
                     b.ToTable("TenantVarselMottakere");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.TenantVarselRolle", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Aktiv")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Nokkel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rolle")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TenantId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Nokkel", "Rolle")
+                        .IsUnique();
+
+                    b.ToTable("TenantVarselRoller");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PlattformBrukerPasswordResetToken", b =>

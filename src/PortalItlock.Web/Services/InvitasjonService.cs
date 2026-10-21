@@ -32,15 +32,28 @@ public class InvitasjonService(EmailService epost, PlattformOppsettService oppse
 
         var inn = await oppsett.HentAsync();
         var lenke = $"{inn.PortalAdresse.TrimEnd('/')}/tilbakestill-passord?token={token}";
-        var firma = WebUtility.HtmlEncode(tenant.PortalVisningsnavn ?? tenant.Navn);
-        var html =
-            $"<p>Hei {WebUtility.HtmlEncode(bruker.Navn.Split(' ')[0])},</p>" +
-            $"<p>Du er invitert til Full Kontroll hos {firma}. Full Kontroll samler prosjekter, tilbud, arbeidsordre, timer og service på ett sted.</p>" +
-            $"<p><a href=\"{lenke}\" style=\"display:inline-block;padding:10px 18px;background:#8A5A34;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:bold\">Sett passord og logg inn</a></p>" +
-            $"<p>Brukernavnet ditt er {WebUtility.HtmlEncode(bruker.Epost)}. Lenken virker i 7 dager. Etterpå logger du inn på {WebUtility.HtmlEncode(inn.PortalAdresse)}.</p>" +
-            "<p>Hilsen Full Kontroll</p>";
+        var firmanavn = tenant.PortalVisningsnavn ?? tenant.Navn;
+        var fornavn = bruker.Navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? bruker.Navn;
+        var utloper = DateTime.Now.AddDays(7);
+        var html = EpostMal.Lag(tenant, new EpostMal.Innhold
+        {
+            Farge = EpostMal.Brun,
+            Merke = "Velkommen",
+            Tittel = $"Velkommen, {fornavn}",
+            IntroHtml = $"Du har fått tilgang til {WebUtility.HtmlEncode(firmanavn)} i Full Kontroll. Her finner du ordre, timer, prosjekter og dokumentasjon på ett sted.",
+            Fakta =
+            [
+                ("Brukernavn", WebUtility.HtmlEncode(bruker.Epost)),
+                ("Rolle", WebUtility.HtmlEncode(bruker.Rolle.Visningsnavn())),
+                ("Lenken gjelder", WebUtility.HtmlEncode("Til " + utloper.ToString("dddd d. MMMM", EpostMal.Nb))),
+            ],
+            KnappTekst = "Sett passord",
+            KnappUrl = lenke,
+            Tips = $"Etterpå logger du inn på {inn.PortalAdresse}. På mobilen kan du legge portalen på hjemskjermen, så fungerer den som en app.",
+            Grunn = $"Du får denne e-posten fordi {firmanavn} har gitt deg tilgang. Har du ikke ventet den, kan du se bort fra den."
+        });
 
-        var sendt = await epost.SendAsync(bruker.Epost, $"Velkommen til Full Kontroll – {tenant.PortalVisningsnavn ?? tenant.Navn}", html, fraOrganisasjonId: tenant.Id);
+        var sendt = await epost.SendAsync(bruker.Epost, $"Du er invitert til {firmanavn} i Full Kontroll", html, fraOrganisasjonId: tenant.Id);
         return sendt ? null : "E-posten ble ikke sendt. Sjekk Resend-nøkkelen under Innstillinger.";
     }
 }

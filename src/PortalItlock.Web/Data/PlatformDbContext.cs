@@ -16,6 +16,8 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options) : Db
     public DbSet<TenantModul> TenantModuler => Set<TenantModul>();
     public DbSet<TenantInnstillinger> TenantInnstillinger => Set<TenantInnstillinger>();
     public DbSet<TenantVarselMottaker> TenantVarselMottakere => Set<TenantVarselMottaker>();
+    public DbSet<TenantVarselRolle> TenantVarselRoller => Set<TenantVarselRolle>();
+    public DbSet<TenantBrukerVarsel> TenantBrukerVarsler => Set<TenantBrukerVarsel>();
     public DbSet<PrisProdukt> PrisProdukter => Set<PrisProdukt>();
     public DbSet<TenantAvtalepris> TenantAvtalepriser => Set<TenantAvtalepris>();
     public DbSet<TenantAbonnement> TenantAbonnementer => Set<TenantAbonnement>();
@@ -36,6 +38,8 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options) : Db
         modelBuilder.Entity<TenantInnstillinger>().HasIndex(i => i.TenantId).IsUnique();
         modelBuilder.Entity<TenantInnstillinger>().HasIndex(i => i.EpostNavn).IsUnique();
         modelBuilder.Entity<TenantVarselMottaker>().HasIndex(m => m.TenantId);
+        modelBuilder.Entity<TenantVarselRolle>().HasIndex(v => new { v.TenantId, v.Nokkel, v.Rolle }).IsUnique();
+        modelBuilder.Entity<TenantBrukerVarsel>().HasIndex(v => new { v.TenantId, v.BrukerId, v.Nokkel }).IsUnique();
         modelBuilder.Entity<PrisProdukt>().HasIndex(p => p.Nokkel).IsUnique();
         modelBuilder.Entity<TenantAvtalepris>().HasIndex(a => new { a.TenantId, a.Nokkel }).IsUnique();
         modelBuilder.Entity<TenantAbonnement>().HasIndex(a => a.TenantId).IsUnique();

@@ -722,9 +722,36 @@ else
                                 {
                                     <button type="button" role="menuitem" @onclick="@(() => { _brMeny = null; return SendInvitasjon(bruker); })">Send lenke for nytt passord</button>
                                 }
+                                <button type="button" role="menuitem" @onclick="@(() => { _brMeny = null; _brVarselApen = bruker.Id; })">Varsler på e-post</button>
                                 <button type="button" role="menuitem" @onclick="@(() => { _brMeny = null; return SettBrukerAktiv(bruker, !bruker.Aktiv); })">@(bruker.Aktiv ? "Deaktiver" : "Aktiver")</button>
                                 <hr />
                                 <button type="button" role="menuitem" class="rod" @onclick="@(() => { _brMeny = null; _bekreftSlettBruker = bruker.Id; })">Slett brukeren</button>
+                            </div>
+                        }
+                        @if (_brVarselApen == bruker.Id)
+                        {
+                            var mulige = EpostVarsler.Alle.Where(v => v.Kan.Contains(bruker.Rolle)).ToList();
+                            var egne = _brukerVarsler.Where(v => v.BrukerId == bruker.Id).ToList();
+                            <div class="pod-br-varsler">
+                                <div class="pod-ab-topp"><b>E-postvarsler for @bruker.Navn</b><button type="button" class="pod-ab-lenke" @onclick="@(() => _brVarselApen = null)">Lukk</button></div>
+                                @if (mulige.Count == 0)
+                                {
+                                    <p class="pod-tom-tekst">Rollen @bruker.Rolle.Visningsnavn().ToLowerInvariant() får ingen e-postvarsler ennå.</p>
+                                }
+                                @foreach (var v in mulige)
+                                {
+                                    var def = v;
+                                    var paa = EpostVarsler.Gjelder(def.Nokkel, bruker.Rolle, bruker.Id, _varselRoller, _brukerVarsler);
+                                    var endret = egne.Any(e => e.Nokkel == def.Nokkel);
+                                    <div class="pod-br-varsel-rad">
+                                        <span><b>@def.Navn</b><small>@(endret ? "Endret for denne brukeren" : $"Som rollen {bruker.Rolle.Visningsnavn().ToLowerInvariant()}")</small></span>
+                                        <button type="button" class="pod-modul-bryter" role="switch" aria-checked="@(paa ? "true" : "false")" aria-label="@($"{def.Navn} for {bruker.Navn}")" @onclick="@(() => SettBrukerVarsel(bruker, def.Nokkel, !paa))"></button>
+                                    </div>
+                                }
+                                @if (egne.Count > 0)
+                                {
+                                    <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => TilbakeTilRollensVarsler(bruker))">Tilbake til rollens oppsett</button>
+                                }
                             </div>
                         }
                     </div>
@@ -871,6 +898,52 @@ else
                     }
                     @if (_oppsettFane == "epost")
                     {
+                        <section class="pod-card pod-va-kort">
+                            <div class="pod-ab-topp">
+                                <h3 class="pod-h3">E-postvarsler til brukerne</h3>
+                                <span class="pod-tom-tekst">Slå av og på per rolle. Unntak for én bruker setter du under Brukere → ⋯ → Varsler.</span>
+                            </div>
+                            <div class="pod-tabell-ramme">
+                                <table class="pod-va-tabell">
+                                    <thead>
+                                        <tr>
+                                            <th>Varsel</th>
+                                            @foreach (var r in VarselRoller)
+                                            {
+                                                <th>@r.Visningsnavn()</th>
+                                            }
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var d in EpostVarsler.Alle)
+                                        {
+                                            var def = d;
+                                            <tr>
+                                                <td><b>@def.Navn</b><small>@def.Beskrivelse</small></td>
+                                                @foreach (var r in VarselRoller)
+                                                {
+                                                    var rolle = r;
+                                                    @if (def.Kan.Contains(rolle))
+                                                    {
+                                                        var paa = EpostVarsler.RolleAktiv(def.Nokkel, rolle, _varselRoller);
+                                                        var antall = _brukere.Count(b => b.Aktiv && b.Rolle == rolle);
+                                                        <td>
+                                                            <button type="button" class="pod-modul-bryter" role="switch" aria-checked="@(paa ? "true" : "false")" aria-label="@($"{def.Navn} for {rolle.Visningsnavn()}")" @onclick="@(() => SettRolleVarsel(def.Nokkel, rolle, !paa))"></button>
+                                                            <small>@antall @(antall == 1 ? "bruker" : "brukere")</small>
+                                                        </td>
+                                                    }
+                                                    else
+                                                    {
+                                                        <td><span class="pod-va-ingen" title="Rollen har ikke tilgang til dette">–</span></td>
+                                                    }
+                                                }
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p class="pod-tom-tekst">E-postene sendes fra organisasjonens egen adresse. Påminnelse om tilbud velges på hvert tilbud når det sendes.</p>
+                        </section>
                         <div class="pod-midt-rad pod-midt-rad-to">
                             <section class="pod-card">
                                 <div class="pod-kort-header-rad">
@@ -1396,6 +1469,8 @@ else
         _moduler = await PlatformDb.TenantModuler.Where(m => m.TenantId == Id).ToListAsync();
         _innstillinger = OrganisasjonOppsett.SikreInnstillinger(PlatformDb, _tenant);
         _mottakere = await PlatformDb.TenantVarselMottakere.Where(m => m.TenantId == Id).OrderBy(m => m.Id).ToListAsync();
+        _varselRoller = await PlatformDb.TenantVarselRoller.Where(v => v.TenantId == Id).ToListAsync();
+        _brukerVarsler = await PlatformDb.TenantBrukerVarsler.Where(v => v.TenantId == Id).ToListAsync();
         _epostNavn = _innstillinger.EpostNavn ?? "";
         _avsenderNavn = _innstillinger.AvsenderNavn ?? "";
         _svarTil = _innstillinger.SvarTilPortal ? "portal" : "epost";
@@ -2564,6 +2639,63 @@ else
         {
             _brukerMelding = $"{navn} er opprettet. Send invitasjon når du er klar.";
         }
+    }
+
+    // ---------- E-postvarsler til brukerne ----------
+    private List<TenantVarselRolle> _varselRoller = [];
+    private List<TenantBrukerVarsel> _brukerVarsler = [];
+    private int? _brVarselApen;
+
+    private static readonly BrukerRolle[] VarselRoller = [BrukerRolle.Admin, BrukerRolle.Prosjektleder, BrukerRolle.Montor, BrukerRolle.Driftslisens, BrukerRolle.Kunde];
+
+    private async Task SettRolleVarsel(string nokkel, BrukerRolle rolle, bool aktiv)
+    {
+        var rad = _varselRoller.FirstOrDefault(v => v.Nokkel == nokkel && v.Rolle == rolle);
+        if (rad is null)
+        {
+            rad = new TenantVarselRolle { TenantId = Id, Nokkel = nokkel, Rolle = rolle };
+            PlatformDb.TenantVarselRoller.Add(rad);
+            _varselRoller.Add(rad);
+        }
+
+        rad.Aktiv = aktiv;
+        await PlatformDb.SaveChangesAsync();
+        await AbonnementSvc.LoggAsync(Id, $"E-postvarsel «{EpostVarsler.Finn(nokkel)?.Navn}» {(aktiv ? "slått på" : "slått av")} for {rolle.Visningsnavn().ToLowerInvariant()}", "mail", _plattformBruker);
+    }
+
+    private async Task SettBrukerVarsel(Bruker b, string nokkel, bool aktiv)
+    {
+        var rad = _brukerVarsler.FirstOrDefault(v => v.BrukerId == b.Id && v.Nokkel == nokkel);
+        if (EpostVarsler.RolleAktiv(nokkel, b.Rolle, _varselRoller) == aktiv)
+        {
+            // Samme som rollen: fjern unntaket, så endringer på rollen gjelder igjen.
+            if (rad is not null)
+            {
+                PlatformDb.TenantBrukerVarsler.Remove(rad);
+                _brukerVarsler.Remove(rad);
+            }
+        }
+        else
+        {
+            if (rad is null)
+            {
+                rad = new TenantBrukerVarsel { TenantId = Id, BrukerId = b.Id, Nokkel = nokkel };
+                PlatformDb.TenantBrukerVarsler.Add(rad);
+                _brukerVarsler.Add(rad);
+            }
+
+            rad.Aktiv = aktiv;
+        }
+
+        await PlatformDb.SaveChangesAsync();
+    }
+
+    private async Task TilbakeTilRollensVarsler(Bruker b)
+    {
+        var egne = _brukerVarsler.Where(v => v.BrukerId == b.Id).ToList();
+        PlatformDb.TenantBrukerVarsler.RemoveRange(egne);
+        _brukerVarsler.RemoveAll(v => v.BrukerId == b.Id);
+        await PlatformDb.SaveChangesAsync();
     }
 
     // ---------- Brukere: filter, rolle og lisens ----------

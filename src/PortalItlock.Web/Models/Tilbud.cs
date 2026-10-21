@@ -50,6 +50,13 @@ public class Tilbud
     // hvis status endres bort fra Avslatt igjen.
     public DateTime? AvslattDato { get; set; }
 
+    // Påminnelse på e-post om å følge opp tilbudet, et antall dager etter
+    // SendtDato. Null = ingen påminnelse. Sendes én gang, og bare mens
+    // tilbudet fortsatt står som sendt til kunden.
+    public int? OppfolgingDager { get; set; }
+    public int? OppfolgingBrukerId { get; set; }
+    public bool OppfolgingSendt { get; set; }
+
     public List<TilbudLinje> Linjer { get; set; } = [];
     public List<TilbudHendelse> Hendelser { get; set; } = [];
 }

@@ -186,13 +186,83 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         LastFilerForSlettedePlantegninger();
-        return base.SaveChanges(acceptAllChangesOnSuccess);
+        var varsler = FinnVarsler();
+        var resultat = base.SaveChanges(acceptAllChangesOnSuccess);
+        SendVarsler(varsler);
+        return resultat;
     }
 
-    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         LastFilerForSlettedePlantegninger();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        var varsler = FinnVarsler();
+        var resultat = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        SendVarsler(varsler);
+        return resultat;
+    }
+
+    // E-postvarsler: arbeidsordre som får ny ansvarlig montør, og nye
+    // forespørsler. Id-ene er ikke satt før lagring, så entitetene huskes og
+    // leses etterpå. Mange ordre i én lagring (import) gir ingen varsler.
+    private List<(string Nokkel, object Entitet, int? BrukerId)> FinnVarsler()
+    {
+        var liste = new List<(string, object, int?)>();
+        foreach (var e in ChangeTracker.Entries<Arbeidsordre>())
+        {
+            var montor = e.Entity.AnsvarligMontorId;
+            if (montor is null)
+            {
+                continue;
+            }
+
+            var ny = e.State == EntityState.Added
+                || (e.State == EntityState.Modified && e.Property(o => o.AnsvarligMontorId).IsModified
+                    && e.Property(o => o.AnsvarligMontorId).OriginalValue != montor);
+            if (ny)
+            {
+                liste.Add((EpostVarsler.OrdreTildelt, e.Entity, montor));
+            }
+        }
+
+        if (liste.Count > 10)
+        {
+            liste.Clear();
+        }
+
+        foreach (var e in ChangeTracker.Entries<Foresporsel>().Where(e => e.State == EntityState.Added))
+        {
+            liste.Add((EpostVarsler.ForesporselNy, e.Entity, null));
+        }
+
+        return liste;
+    }
+
+    private void SendVarsler(List<(string Nokkel, object Entitet, int? BrukerId)> varsler)
+    {
+        if (varsler.Count == 0)
+        {
+            return;
+        }
+
+        var tilkobling = Database.GetConnectionString();
+        if (string.IsNullOrWhiteSpace(tilkobling) || tilkobling.Contains(":memory:"))
+        {
+            return;
+        }
+
+        foreach (var (nokkel, entitet, brukerId) in varsler)
+        {
+            var id = entitet switch
+            {
+                Arbeidsordre o => o.Id,
+                Foresporsel f => f.Id,
+                _ => 0
+            };
+            if (id > 0)
+            {
+                PortalItlock.Web.Services.EpostVarselKo.Legg(new PortalItlock.Web.Services.EpostVarselKo.Hendelse(tilkobling, nokkel, id, brukerId));
+            }
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

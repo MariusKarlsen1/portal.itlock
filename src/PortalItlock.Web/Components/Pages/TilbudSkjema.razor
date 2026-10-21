@@ -189,6 +189,29 @@ else if (_tilbud is not null)
                                         }
                                     </select>
                                 </label>
+                                <div class="tk-felt tk-alle tk-oppfolging">
+                                    Påminnelse om oppfølging på e-post
+                                    <div class="tk-oppfolging-rad">
+                                        <select aria-label="Når påminnelsen skal komme" value="@(_tilbud.OppfolgingDager?.ToString() ?? "")" @onchange="SettOppfolgingDager">
+                                            <option value="">Ingen påminnelse</option>
+                                            @foreach (var d in OppfolgingValg(_tilbud.OppfolgingDager))
+                                            {
+                                                <option value="@d">@d @(d == 1 ? "dag" : "dager") etter at det er sendt</option>
+                                            }
+                                        </select>
+                                        @if (_tilbud.OppfolgingDager is not null)
+                                        {
+                                            <input type="number" min="1" max="365" aria-label="Antall dager" value="@_tilbud.OppfolgingDager" @onchange="SettOppfolgingDager" />
+                                            <select aria-label="Hvem som får påminnelsen" value="@(_tilbud.OppfolgingBrukerId?.ToString() ?? "")" @onchange="SettOppfolgingBruker">
+                                                @foreach (var b in _oppfolgingBrukere)
+                                                {
+                                                    <option value="@b.Id">Til @b.Navn</option>
+                                                }
+                                            </select>
+                                        }
+                                    </div>
+                                    <small class="tk-oppfolging-hint">@OppfolgingTekst</small>
+                                </div>
                                 <label class="tk-felt tk-alle">Forespørsel / beskrivelse<textarea rows="3" @bind="_tilbud.ForesporselBeskrivelse" @bind:event="oninput" @bind:after="AutoLagreDebounced"></textarea></label>
                             </div>
                         </div>
@@ -810,6 +833,9 @@ else if (_tilbud is not null)
 
         _notFound = _tilbud is null;
         _forsideMaler = await Db.TilbudForsider.OrderBy(f => f.Navn).ToListAsync();
+        _oppfolgingBrukere = await Db.Brukere.AsNoTracking()
+            .Where(b => b.Aktiv && b.SlettetDato == null && (b.Rolle == BrukerRolle.Admin || b.Rolle == BrukerRolle.Prosjektleder))
+            .OrderBy(b => b.Navn).ToListAsync();
 
         if (_tilbud is not null)
         {
@@ -862,6 +888,16 @@ else if (_tilbud is not null)
         {
             _tilbud.SendtDato = DateTime.Today;
             _tilbud.SendtSum = TotaltUtenMva;
+
+            // Påminnelse om å følge opp: 7 dager til den som sendte, med
+            // mindre det alt er valgt. Kan endres eller slås av rett under.
+            _tilbud.OppfolgingSendt = false;
+            if (_tilbud.OppfolgingDager is null && _tilbud.OppfolgingBrukerId is null)
+            {
+                _tilbud.OppfolgingDager = 7;
+            }
+
+            _tilbud.OppfolgingBrukerId ??= _oppfolgingBrukere.Any(b => b.Id == _naverendeBrukerId) ? _naverendeBrukerId : _oppfolgingBrukere.FirstOrDefault()?.Id;
         }
 
         // Starter 7-dagers-vinduet tilbudet vises i Avslått-kolonnen på
@@ -1062,6 +1098,62 @@ else if (_tilbud is not null)
     }
 
     private CancellationTokenSource? _autoLagreCts;
+
+    // ---------- Påminnelse om oppfølging ----------
+    private List<Bruker> _oppfolgingBrukere = [];
+
+    private static IEnumerable<int> OppfolgingValg(int? valgt) =>
+        new[] { 3, 7, 14, 21, 30 }.Concat(valgt is { } v ? [v] : []).Distinct().Order();
+
+    private string OppfolgingTekst
+    {
+        get
+        {
+            if (_tilbud?.OppfolgingDager is not { } dager)
+            {
+                return "Du får ingen e-post om å følge opp dette tilbudet.";
+            }
+
+            var til = _oppfolgingBrukere.FirstOrDefault(b => b.Id == _tilbud.OppfolgingBrukerId)?.Navn ?? "ingen";
+            if (_tilbud.OppfolgingSendt)
+            {
+                return $"Påminnelsen er sendt til {til}.";
+            }
+
+            return _tilbud.SendtDato is { } sendt
+                ? $"E-post til {til} {sendt.Date.AddDays(dager):dddd d. MMMM}, hvis tilbudet fortsatt står som sendt."
+                : $"E-post til {til} {dager} dager etter at status settes til «{EndringsmeldingStatus.SendtTilKunde.Visningsnavn()}».";
+        }
+    }
+
+    private async Task SettOppfolgingDager(ChangeEventArgs e)
+    {
+        if (_tilbud is null)
+        {
+            return;
+        }
+
+        _tilbud.OppfolgingDager = int.TryParse(e.Value?.ToString(), out var d) && d > 0 ? Math.Min(d, 365) : null;
+        _tilbud.OppfolgingSendt = false;
+        if (_tilbud.OppfolgingDager is not null && _tilbud.OppfolgingBrukerId is null)
+        {
+            _tilbud.OppfolgingBrukerId = _oppfolgingBrukere.Any(b => b.Id == _naverendeBrukerId) ? _naverendeBrukerId : _oppfolgingBrukere.FirstOrDefault()?.Id;
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SettOppfolgingBruker(ChangeEventArgs e)
+    {
+        if (_tilbud is null || !int.TryParse(e.Value?.ToString(), out var id))
+        {
+            return;
+        }
+
+        _tilbud.OppfolgingBrukerId = id;
+        _tilbud.OppfolgingSendt = false;
+        await Db.SaveChangesAsync();
+    }
 
     private async Task AutoLagreDebounced()
     {

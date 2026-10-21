@@ -6424,6 +6424,15 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("OppdatertDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("OppfolgingBrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("OppfolgingDager")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("OppfolgingSendt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("OpprettetDato")
                         .HasColumnType("TEXT");
 

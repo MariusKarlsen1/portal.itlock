@@ -159,6 +159,8 @@ builder.Services.AddScoped<LisensVarselService>();
 builder.Services.AddHostedService<LisensVarselBackgroundService>();
 builder.Services.AddScoped<KundeOppfolgingVarselService>();
 builder.Services.AddHostedService<KundeOppfolgingVarselBackgroundService>();
+builder.Services.AddScoped<EpostVarselTjeneste>();
+builder.Services.AddHostedService<EpostVarselSender>();
 builder.Services.AddScoped<TicketEskaleringService>();
 builder.Services.AddScoped<TilleggsmodulService>();
 builder.Services.AddScoped<LagerService>();
