@@ -33,7 +33,6 @@ public class AbonnementService(PlatformDbContext db, PlattformOppsettService opp
 
         var standard = new List<PrisProdukt>
         {
-            new() { Nokkel = PrisProdukt.Grunnpakke, Navn = "Grunnpakke", Beskrivelse = "Prosjekter, tilbud, service, kundeportal og Prosjektøkonomi", Type = PrisType.Fast, Kr = 0, Rekkefolge = 1 },
             new() { Nokkel = PrisProdukt.ForLisens(LisensType.KundeTilgang), Navn = "Kundetilganger", Beskrivelse = LisensType.KundeTilgang.Beskrivelse(), Type = PrisType.Lisens, Kr = Gammel(LisensType.KundeTilgang), Rekkefolge = 6 },
             new() { Nokkel = PrisProdukt.Etablering, Navn = "Etablering", Beskrivelse = "Oppsett, import og opplæring", Type = PrisType.Engang, Kr = 0, Rekkefolge = 20 },
         };
@@ -121,6 +120,22 @@ public class AbonnementService(PlatformDbContext db, PlattformOppsettService opp
             }
 
             db.PrisProdukter.Remove(gammelProdukt);
+            await db.SaveChangesAsync();
+        }
+
+        // Grunnpakken er fjernet: kunden betaler etablering én gang og
+        // deretter per lisens. Den fjernes fra prislisten, pakkene og avtalene.
+        var grunnpakke = await db.PrisProdukter.FirstOrDefaultAsync(p => p.Nokkel == PrisProdukt.Grunnpakke);
+        if (grunnpakke is not null)
+        {
+            db.PakkePriser.RemoveRange(await db.PakkePriser.Where(p => p.ProduktNokkel == PrisProdukt.Grunnpakke).ToListAsync());
+            db.TenantAvtalepriser.RemoveRange(await db.TenantAvtalepriser.Where(a => a.Nokkel == PrisProdukt.Grunnpakke).ToListAsync());
+            foreach (var e in await db.TenantAntallEndringer.Where(e => e.Nokkel == PrisProdukt.Grunnpakke && !e.Fakturert).ToListAsync())
+            {
+                e.Fakturert = true;
+            }
+
+            db.PrisProdukter.Remove(grunnpakke);
             await db.SaveChangesAsync();
         }
     }

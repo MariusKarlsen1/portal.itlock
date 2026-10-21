@@ -330,7 +330,7 @@ public class PlattformPdfService(PlatformDbContext db, AbonnementService abonnem
                 });
 
                 var tillegg = produkter.Where(p => p.Type is PrisType.Modul or PrisType.Fast or PrisType.Engang || (p.PakkeStorrelse ?? 1) > 1).ToList();
-                Overskrift(col, "Grunnpakke, driftslisenser og tillegg");
+                Overskrift(col, "Etablering, driftslisenser og tillegg");
                 col.Item().Table(t =>
                 {
                     t.ColumnsDefinition(c => { c.RelativeColumn(3.5f); c.RelativeColumn(1.4f); c.RelativeColumn(1.2f); });
