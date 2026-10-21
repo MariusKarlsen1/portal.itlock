@@ -119,7 +119,7 @@ public class PlattformOppsettService(IServiceScopeFactory scopeFactory, IMemoryC
         return inn;
     }
 
-    public TripletexNokler? ItlockTripletex() => TripletexFra(Hent());
+    public TripletexNokler? PlattformTripletex() => TripletexFra(Hent());
 
     public (string? Consumer, bool Test) ConsumerToken()
     {
@@ -158,13 +158,7 @@ public class PlattformOppsettService(IServiceScopeFactory scopeFactory, IMemoryC
     {
         var inn = new PlattformInnstillinger
         {
-            Firmanavn = "itlock AS",
-            Adresse = FirmaInfo.Adresse,
-            Postnr = FirmaInfo.Postnr,
-            Sted = FirmaInfo.Sted,
-            Telefon = FirmaInfo.Telefon,
-            Epost = "post@itlock.no",
-            Kontaktperson = FirmaInfo.Kontaktperson,
+            Firmanavn = "Full Kontroll",
             VilkarTekst = Vilkar.StandardVilkar,
             DatabehandlerTekst = Vilkar.StandardDatabehandleravtale,
             TilbudIntro = Vilkar.StandardTilbudIntro
@@ -177,8 +171,8 @@ public class PlattformOppsettService(IServiceScopeFactory scopeFactory, IMemoryC
 
     public sealed record TripletexNokler(string ConsumerToken, string EmployeeToken, bool Test, bool FraServeroppsett);
 
-    // Tripletex for itlock selv.
-    public async Task<TripletexNokler?> ItlockTripletexAsync() => TripletexFra(await HentAsync());
+    // Tripletex for Full Kontroll, der fakturaene til organisasjonene lages.
+    public async Task<TripletexNokler?> PlattformTripletexAsync() => TripletexFra(await HentAsync());
 
     // Consumer-tokenet identifiserer Full Kontroll hos Tripletex, og brukes
     // for alle kunder sammen med kundens egen ansattnøkkel.

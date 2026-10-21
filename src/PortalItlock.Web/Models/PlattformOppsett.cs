@@ -20,7 +20,7 @@ public class PlattformInnstillinger
     public string? Kontaktperson { get; set; }
     public string PortalAdresse { get; set; } = "https://full-kontroll.no";
 
-    // Tripletex for itlock (og consumer-tokenet som alle kunder bruker).
+    // Tripletex for Full Kontroll (og consumer-tokenet som alle kunder bruker).
     public string? TripletexConsumerTokenKryptert { get; set; }
     public string? TripletexEmployeeTokenKryptert { get; set; }
     public bool TripletexTest { get; set; }

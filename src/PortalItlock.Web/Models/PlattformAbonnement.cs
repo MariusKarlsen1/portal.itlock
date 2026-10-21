@@ -3,7 +3,7 @@ namespace PortalItlock.Web.Models;
 // ---------- Prisliste, abonnement og fakturaer for organisasjonene ----------
 // Alt ligger i PlatformDbContext. Prislisten er felles for alle; hver
 // organisasjon kan ha egen avtalepris. Fakturaene lages fra abonnementet og
-// sendes som ordre til itlock sin egen Tripletex.
+// sendes som ordre til Full Kontroll sin Tripletex.
 
 public enum PrisType
 {
@@ -111,7 +111,7 @@ public class TenantAbonnement
     public DateTime? OppsagtDato { get; set; }
     public DateTime? PauseFra { get; set; }
 
-    // Kunden i itlock sin Tripletex.
+    // Kunden i Full Kontroll sin Tripletex.
     public int? TripletexKundeId { get; set; }
 }
 

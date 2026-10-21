@@ -30,7 +30,7 @@ public class OrganisasjonStatusService(PlatformDbContext db, AbonnementService a
     {
         await abonnement.SikrePrislisteAsync();
         var inn = await oppsett.HentAsync();
-        var tenants = await db.Tenants.AsNoTracking().OrderByDescending(t => t.ErStandard).ThenBy(t => t.Navn).ToListAsync();
+        var tenants = await db.Tenants.AsNoTracking().OrderBy(t => t.Navn).ToListAsync();
         var perManed = await abonnement.MaanedsbelopForAlleAsync();
         var innstillinger = await db.TenantInnstillinger.AsNoTracking().ToDictionaryAsync(i => i.TenantId);
         var aboer = await db.TenantAbonnementer.AsNoTracking().ToDictionaryAsync(a => a.TenantId);
@@ -45,16 +45,13 @@ public class OrganisasjonStatusService(PlatformDbContext db, AbonnementService a
         var fakturaer = await db.PlattformFakturaer.AsNoTracking()
             .Select(f => new { f.TenantId, f.Status, f.Forfall, f.PeriodeFra })
             .ToListAsync();
-        var itlockTripletex = oppsett.ItlockTripletex() is not null;
 
         return tenants.Select(t =>
         {
             innstillinger.TryGetValue(t.Id, out var i);
             aboer.TryGetValue(t.Id, out var a);
 
-            var tripletex = t.ErStandard
-                ? itlockTripletex ? Tilstand.Ok : Tilstand.Mangler
-                : string.IsNullOrWhiteSpace(i?.TripletexEmployeeTokenKryptert) ? Tilstand.Mangler : Tilstand.Ok;
+            var tripletex = string.IsNullOrWhiteSpace(i?.TripletexEmployeeTokenKryptert) ? Tilstand.Mangler : Tilstand.Ok;
 
             var egne = backuper.Where(b => b.TenantId == t.Id).OrderByDescending(b => b.Tidspunkt).ToList();
             var sisteOk = egne.FirstOrDefault(b => b.Feil == null);
@@ -70,8 +67,7 @@ public class OrganisasjonStatusService(PlatformDbContext db, AbonnementService a
             var forfalt = egneFakturaer.Any(f => f.Status == PlattformFakturaStatus.Fakturert && f.Forfall is { } ff && ff.Date < DateTime.Today);
             var utkast = egneFakturaer.Any(f => f.Status == PlattformFakturaStatus.Utkast);
             var siste = egneFakturaer.OrderByDescending(f => f.PeriodeFra).FirstOrDefault();
-            var (fakturaTekst, faktura) = t.ErStandard ? ("Egen", Tilstand.Ikke)
-                : a?.ProveperiodeTil is { } p && p.Date >= DateTime.Today ? ("Prøve", Tilstand.Ikke)
+            var (fakturaTekst, faktura) = a?.ProveperiodeTil is { } p && p.Date >= DateTime.Today ? ("Prøve", Tilstand.Ikke)
                 : forfalt ? ("Forfalt", Tilstand.Feil)
                 : utkast ? ("Utkast", Tilstand.Mangler)
                 : siste is null ? ("Ingen ennå", Tilstand.Ikke)
@@ -82,7 +78,7 @@ public class OrganisasjonStatusService(PlatformDbContext db, AbonnementService a
                 t,
                 i?.EpostNavn is { Length: > 0 } navn ? OrganisasjonOppsett.Adresse(navn) : null,
                 a?.Pakke is { } pk && pakker.TryGetValue(pk, out var pakkeNavn) ? pakkeNavn : null,
-                t.ErStandard ? 0 : perManed.GetValueOrDefault(t.Id),
+                perManed.GetValueOrDefault(t.Id),
                 lisenser.Where(l => l.TenantId == t.Id).GroupBy(l => l.Type).ToDictionary(g => g.Key, g => g.Sum(l => l.AntallTildelt)),
                 moduler.Where(m => m.TenantId == t.Id).Select(m => TilleggsModuler.Alle.FirstOrDefault(x => x.Nokkel == m.Modul)?.Navn ?? m.Modul).ToList(),
                 epost,

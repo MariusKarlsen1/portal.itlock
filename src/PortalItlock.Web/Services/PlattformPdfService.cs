@@ -405,18 +405,32 @@ public class PlattformPdfService(PlatformDbContext db, AbonnementService abonnem
     public async Task<byte[]?> FakturaAsync(int fakturaId)
     {
         var f = await db.PlattformFakturaer.AsNoTracking().Include(x => x.Linjer).Include(x => x.Tenant).FirstOrDefaultAsync(x => x.Id == fakturaId);
-        if (f?.Tenant is not { } tenant)
+        return f?.Tenant is { } tenant ? await FakturaAsync(f, tenant, null) : null;
+    }
+
+    // Neste faktura slik den blir, før den er lagret som utkast.
+    public async Task<byte[]?> NesteFakturaAsync(int tenantId)
+    {
+        var tenant = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId);
+        if (tenant is null)
         {
             return null;
         }
 
+        var f = await abonnement.ForhandsvisNesteAsync(tenant);
+        f.Opprettet = DateTime.Now;
+        return await FakturaAsync(f, tenant, "FORHÅNDSVISNING");
+    }
+
+    private async Task<byte[]> FakturaAsync(PlattformFaktura f, Tenant tenant, string? overskrift)
+    {
         var inn = await oppsett.HentAsync();
         var abo = await db.TenantAbonnementer.AsNoTracking().FirstOrDefaultAsync(a => a.TenantId == tenant.Id);
         var dato = f.Fakturadato ?? f.Opprettet.Date;
         var forfall = f.Forfall ?? dato.AddDays(abo?.BetalingsfristDager ?? 14);
         var sumEks = f.Linjer.Sum(l => l.Belop);
         var mva = Math.Round(sumEks * 0.25m, 2);
-        var tittel = f.TripletexFakturaNummer is null ? "FAKTURAGRUNNLAG" : "FAKTURA";
+        var tittel = overskrift ?? (f.TripletexFakturaNummer is null ? "FAKTURAGRUNNLAG" : "FAKTURA");
 
         return Document.Create(d => d.Page(page =>
         {

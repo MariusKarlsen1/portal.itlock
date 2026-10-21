@@ -5,8 +5,7 @@ using PortalItlock.Web.Models;
 namespace PortalItlock.Web.Services;
 
 // Finner Tripletex-nøklene for en organisasjon og lager en TripletexService
-// for den. itlock (standard-organisasjonen) bruker nøklene under
-// Innstillinger i adminportalen. Andre organisasjoner bruker Full Kontroll sitt
+// for den. Alle organisasjoner, også itlock, bruker Full Kontroll sitt
 // consumer-token og sin egen ansattnøkkel fra Oppsett → Tripletex.
 public class TripletexNokkelOppslag(
     PlattformOppsettService oppsett,
@@ -21,20 +20,22 @@ public class TripletexNokkelOppslag(
             return null;
         }
 
-        if (tenant.ErStandard)
-        {
-            return oppsett.ItlockTripletex() is { } n ? new TripletexService.Nokler(n.ConsumerToken, n.EmployeeToken, n.Test) : null;
-        }
-
         using var scope = scopeFactory.CreateScope();
         var platformDb = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
         var kryptert = platformDb.TenantInnstillinger.AsNoTracking()
             .Where(i => i.TenantId == tenant.Id).Select(i => i.TripletexEmployeeTokenKryptert).FirstOrDefault();
         var employee = hemmelig.Dekrypter(kryptert);
         var (consumer, test) = oppsett.ConsumerToken();
-        return string.IsNullOrWhiteSpace(employee) || string.IsNullOrWhiteSpace(consumer)
-            ? null
-            : new TripletexService.Nokler(consumer, employee, test);
+        if (!string.IsNullOrWhiteSpace(employee) && !string.IsNullOrWhiteSpace(consumer))
+        {
+            return new TripletexService.Nokler(consumer, employee, test);
+        }
+
+        // itlock brukte nøklene under Innstillinger før den fikk egen nøkkel.
+        // Det fortsetter til egen ansattnøkkel er lagt inn under Oppsett → Tripletex.
+        return tenant.ErStandard && oppsett.PlattformTripletex() is { } n
+            ? new TripletexService.Nokler(n.ConsumerToken, n.EmployeeToken, n.Test)
+            : null;
     }
 
     public TripletexService Lag(Tenant? tenant) => Lag(For(tenant), tenant?.Id ?? 0);

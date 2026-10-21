@@ -5,29 +5,30 @@ using PortalItlock.Web.Models;
 
 namespace PortalItlock.Web.Services;
 
-// Fakturaene til organisasjonene sendes til itlock sin egen Tripletex som en
+// Fakturaene til organisasjonene sendes til Full Kontroll sin Tripletex som en
 // ordre «klar til fakturering», på samme måte som arbeidsordrene i portalen.
 // Der fakturerer du med ett klikk, og Tripletex står for fakturanummer, KID,
 // mva, EHF, purring og bokføring. Betalingsstatus hentes tilbake hit.
 public class PlattformFakturaService(
     PlatformDbContext db,
     TripletexNokkelOppslag tripletexOppslag,
+    PlattformOppsettService oppsett,
     ILogger<PlattformFakturaService> logger)
 {
-    // Tripletex for standard-organisasjonen (itlock), uansett hvem som spør.
-    private async Task<TripletexService?> ItlockTripletexAsync()
+    // Tripletex for plattformen (Full Kontroll), der fakturaene til alle
+    // organisasjonene lages. Nøklene ligger under Innstillinger.
+    private async Task<TripletexService?> PlattformTripletexAsync()
     {
-        var itlock = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.ErStandard);
-        if (itlock is null)
+        if (await oppsett.PlattformTripletexAsync() is not { } n)
         {
             return null;
         }
 
-        var tx = tripletexOppslag.Lag(itlock);
+        var tx = tripletexOppslag.Lag(new TripletexService.Nokler(n.ConsumerToken, n.EmployeeToken, n.Test), 0);
         return tx.ErKonfigurert ? tx : null;
     }
 
-    public async Task<bool> TripletexKlarAsync() => await ItlockTripletexAsync() is not null;
+    public async Task<bool> TripletexKlarAsync() => await PlattformTripletexAsync() is not null;
 
     public async Task<string?> SendTilTripletexAsync(int fakturaId, string? av)
     {
@@ -42,10 +43,10 @@ public class PlattformFakturaService(
             return "Fakturaen er allerede sendt.";
         }
 
-        var tx = await ItlockTripletexAsync();
+        var tx = await PlattformTripletexAsync();
         if (tx is null)
         {
-            return "Tripletex er ikke satt opp for itlock. Marker fakturaen som sendt hvis du fakturerer på annen måte.";
+            return "Tripletex er ikke satt opp under Innstillinger. Marker fakturaen som sendt hvis du fakturerer på annen måte.";
         }
 
         var abo = await db.TenantAbonnementer.FirstAsync(a => a.TenantId == tenant.Id);
@@ -152,7 +153,7 @@ public class PlattformFakturaService(
     // som er sendt dit.
     public async Task OppdaterFraTripletexAsync()
     {
-        var tx = await ItlockTripletexAsync();
+        var tx = await PlattformTripletexAsync();
         if (tx is null)
         {
             return;
@@ -238,9 +239,9 @@ public class PlattformFakturaBackgroundService(IServiceScopeFactory scopeFactory
                 var db = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
                 var abonnement = scope.ServiceProvider.GetRequiredService<AbonnementService>();
 
-                // itlock fakturerer ikke seg selv, og bare aktive kunder faktureres.
+                // Alle aktive organisasjoner faktureres, også itlock.
                 var kunder = await db.Tenants.AsNoTracking()
-                    .Where(t => !t.ErStandard && t.Status == TenantStatus.Aktiv)
+                    .Where(t => t.Status == TenantStatus.Aktiv)
                     .ToListAsync(stoppingToken);
                 foreach (var tenant in kunder)
                 {

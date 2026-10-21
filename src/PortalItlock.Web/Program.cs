@@ -1875,8 +1875,15 @@ app.MapGet("/plattform/prisliste.pdf", async (PlattformPdfService pdf) =>
     Results.File(await pdf.PrislisteAsync(), "application/pdf", "prisliste-full-kontroll.pdf")).RequireAuthorization("Plattform");
 app.MapGet("/plattform/vilkar.pdf", async (PlattformPdfService pdf) =>
     Results.File(await pdf.VilkarAsync(), "application/pdf", "vilkar-full-kontroll.pdf")).RequireAuthorization("Plattform");
-app.MapGet("/plattform/faktura/{id:int}.pdf", async (int id, PlattformPdfService pdf) =>
-    await pdf.FakturaAsync(id) is { } fil ? Results.File(fil, "application/pdf", $"fakturagrunnlag-{id}.pdf") : Results.NotFound())
+// Neste faktura før den er lagret, vist i forhåndsvisningen.
+app.MapGet("/plattform/organisasjoner/{id:int}/neste-faktura.pdf", async (int id, PlattformPdfService pdf) =>
+    await pdf.NesteFakturaAsync(id) is { } fil ? Results.File(fil, "application/pdf") : Results.NotFound())
+    .RequireAuthorization("Plattform");
+// ?vis=1 viser PDF-en i nettleseren (forhåndsvisning) i stedet for å laste den ned.
+app.MapGet("/plattform/faktura/{id:int}.pdf", async (int id, bool? vis, PlattformPdfService pdf) =>
+    await pdf.FakturaAsync(id) is { } fil
+        ? vis == true ? Results.File(fil, "application/pdf") : Results.File(fil, "application/pdf", $"fakturagrunnlag-{id}.pdf")
+        : Results.NotFound())
     .RequireAuthorization("Plattform");
 
 // Last ned en backup som vanlig SQLite-fil (dekryptert og pakket ut). Bare
