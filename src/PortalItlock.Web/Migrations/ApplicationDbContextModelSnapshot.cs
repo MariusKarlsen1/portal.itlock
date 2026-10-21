@@ -820,6 +820,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("Rolle")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("SistInnlogget")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("SisteKunngjoringSettId")
                         .HasColumnType("INTEGER");
 

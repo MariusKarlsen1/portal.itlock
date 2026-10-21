@@ -12,6 +12,9 @@ public class Bruker
     public BrukerRolle Rolle { get; set; } = BrukerRolle.Montor;
     public bool Aktiv { get; set; } = true;
 
+    // Sist brukeren logget inn med e-post og passord. Vises i adminportalen.
+    public DateTime? SistInnlogget { get; set; }
+
     // Satt når brukeren er slettet, men har timer, arbeidsordre o.l. som må
     // bli liggende. Personen er da fjernet (ingen innlogging, ingen e-post),
     // og vises ikke i brukerlistene, men registreringene står fortsatt på navnet.

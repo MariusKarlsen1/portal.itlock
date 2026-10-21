@@ -710,6 +710,17 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
         return Results.Redirect($"/login?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
     }
 
+    // Sist innlogget, vist i adminportalen. Skal aldri stoppe innloggingen.
+    try
+    {
+        await using var sistDb = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options);
+        await sistDb.Brukere.Where(b => b.Id == bruker.Id).ExecuteUpdateAsync(s => s.SetProperty(b => b.SistInnlogget, DateTime.Now));
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Kunne ikke lagre sist innlogget for bruker {BrukerId}", bruker.Id);
+    }
+
     var claims = new List<Claim>
     {
         new(ClaimTypes.Name, bruker.Navn),
