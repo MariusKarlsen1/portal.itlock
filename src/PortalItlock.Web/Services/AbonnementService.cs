@@ -208,6 +208,11 @@ public class AbonnementService(PlatformDbContext db, PlattformOppsettService opp
     // Volumrabatt etter antall lisenser (stykk, ikke pakker), satt under Innstillinger.
     public static int RabattProsent(IEnumerable<Linje> linjer, PlattformInnstillinger inn)
     {
+        if (!inn.VolumrabattAktiv)
+        {
+            return 0;
+        }
+
         var antall = linjer.Where(l => l.Type == PrisType.Lisens && l.PakkeStorrelse <= 1).Sum(l => l.Antall);
         return antall >= inn.Rabatt2FraAntall && inn.Rabatt2FraAntall > 0 ? inn.Rabatt2Prosent
             : antall >= inn.Rabatt1FraAntall && inn.Rabatt1FraAntall > 0 ? inn.Rabatt1Prosent
@@ -371,8 +376,8 @@ public class AbonnementService(PlatformDbContext db, PlattformOppsettService opp
 
         var inn = await oppsett.HentAsync();
         // Årlig forskudd: noen måneder gratis (Innstillinger).
-        var betalteManeder = abo.Intervall == FakturaIntervall.Ar ? Math.Max(1, 12 - inn.ArligGratisManeder) : maneder;
-        var aarsTekst = abo.Intervall == FakturaIntervall.Ar && inn.ArligGratisManeder > 0 ? $" (12 mnd, {inn.ArligGratisManeder} gratis)" : "";
+        var betalteManeder = abo.Intervall == FakturaIntervall.Ar ? Math.Max(1, 12 - inn.GratisManeder) : maneder;
+        var aarsTekst = abo.Intervall == FakturaIntervall.Ar && inn.GratisManeder > 0 ? $" (12 mnd, {inn.GratisManeder} gratis)" : "";
         var aktive = (await LinjerAsync(tenant.Id)).Where(l => l.Antall > 0 && l.Pris > 0).ToList();
         foreach (var l in aktive)
         {

@@ -1871,10 +1871,10 @@ app.MapGet("/plattform/organisasjon/{id:int}/logo", async (int id, PlatformDbCon
 app.MapGet("/plattform/organisasjoner/{id:int}/tilbud.pdf", async (int id, PlattformPdfService pdf) =>
     await pdf.TilbudAsync(id) is { } fil ? Results.File(fil, "application/pdf", $"tilbud-full-kontroll-{id}.pdf") : Results.NotFound())
     .RequireAuthorization("Plattform");
-app.MapGet("/plattform/prisliste.pdf", async (PlattformPdfService pdf) =>
-    Results.File(await pdf.PrislisteAsync(), "application/pdf", "prisliste-full-kontroll.pdf")).RequireAuthorization("Plattform");
-app.MapGet("/plattform/vilkar.pdf", async (PlattformPdfService pdf) =>
-    Results.File(await pdf.VilkarAsync(), "application/pdf", "vilkar-full-kontroll.pdf")).RequireAuthorization("Plattform");
+app.MapGet("/plattform/prisliste.pdf", async (bool? vis, PlattformPdfService pdf) =>
+    Results.File(await pdf.PrislisteAsync(), "application/pdf", vis == true ? null : "prisliste-full-kontroll.pdf")).RequireAuthorization("Plattform");
+app.MapGet("/plattform/vilkar.pdf", async (bool? vis, PlattformPdfService pdf) =>
+    Results.File(await pdf.VilkarAsync(), "application/pdf", vis == true ? null : "vilkar-full-kontroll.pdf")).RequireAuthorization("Plattform");
 // Neste faktura før den er lagret, vist i forhåndsvisningen.
 app.MapGet("/plattform/organisasjoner/{id:int}/neste-faktura.pdf", async (int id, PlattformPdfService pdf) =>
     await pdf.NesteFakturaAsync(id) is { } fil ? Results.File(fil, "application/pdf") : Results.NotFound())

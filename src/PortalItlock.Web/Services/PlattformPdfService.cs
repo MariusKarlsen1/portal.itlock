@@ -153,7 +153,7 @@ public class PlattformPdfService(PlatformDbContext db, AbonnementService abonnem
         var rabatt = AbonnementService.RabattProsent(linjer, inn);
         var rabattBelop = Math.Round(AbonnementService.Rabattgrunnlag(linjer) * rabatt / 100m, 2);
         var perManed = AbonnementService.Maanedsbelop(linjer, inn);
-        var arsGratis = abo.Intervall == FakturaIntervall.Ar ? inn.ArligGratisManeder : 0;
+        var arsGratis = abo.Intervall == FakturaIntervall.Ar ? inn.GratisManeder : 0;
 
         return Document.Create(d => d.Page(page =>
         {
@@ -348,10 +348,10 @@ public class PlattformPdfService(PlatformDbContext db, AbonnementService abonnem
                 });
 
                 Overskrift(col, "Rabatt");
-                col.Item().Text($"Volumrabatt på lisenser: {inn.Rabatt1Prosent} % fra {inn.Rabatt1FraAntall} lisenser, {inn.Rabatt2Prosent} % fra {inn.Rabatt2FraAntall} lisenser.");
-                if (inn.ArligGratisManeder > 0)
+                col.Item().Text(!inn.VolumrabattAktiv ? "Ingen volumrabatt." : $"Volumrabatt på lisenser: {inn.Rabatt1Prosent} % fra {inn.Rabatt1FraAntall} lisenser, {inn.Rabatt2Prosent} % fra {inn.Rabatt2FraAntall} lisenser.");
+                if (inn.GratisManeder > 0)
                 {
-                    col.Item().Text($"Årlig forskudd: {inn.ArligGratisManeder} måneder gratis.");
+                    col.Item().Text($"Årlig forskudd: {inn.GratisManeder} måneder gratis.");
                 }
 
                 col.Item().PaddingTop(12).Text($"Lisens- og tjenestevilkår for Full Kontroll versjon {inn.VilkarVersjon} gjelder. Prisene kan reguleres hvert år etter konsumprisindeksen.").FontSize(8.5f).FontColor(Dempet);

@@ -40,6 +40,13 @@ public class PlattformInnstillinger
     public int Rabatt2FraAntall { get; set; } = 50;
     public int Rabatt2Prosent { get; set; } = 15;
     public int ArligGratisManeder { get; set; } = 2;
+    // Av = ingen volumrabatt / ingen gratis måneder, uten å miste tallene.
+    public bool VolumrabattAktiv { get; set; } = true;
+    public bool ArligRabattAktiv { get; set; } = true;
+
+    // Gratis måneder som faktisk gis ved årlig forskudd.
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public int GratisManeder => ArligRabattAktiv ? Math.Max(0, ArligGratisManeder) : 0;
 
     // Vilkår og databehandleravtale, egne tekster med versjon.
     public string VilkarVersjon { get; set; } = "1.0";

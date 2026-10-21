@@ -203,6 +203,9 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.Property<int>("ArligGratisManeder")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("ArligRabattAktiv")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("DatabehandlerTekst")
                         .HasColumnType("TEXT");
 
@@ -289,6 +292,9 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.Property<string>("VilkarVersjon")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("VolumrabattAktiv")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
