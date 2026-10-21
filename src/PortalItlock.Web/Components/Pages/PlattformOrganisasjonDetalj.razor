@@ -20,6 +20,7 @@
 @inject TripletexNokkelOppslag TripletexOppslag
 @inject InvitasjonService Invitasjon
 @inject PlattformOppsettService Oppsett
+@inject EmailService Epost
 
 <PageTitle>@(_tenant?.Navn ?? "Organisasjon") - Plattform</PageTitle>
 
@@ -93,7 +94,7 @@ else
             <div class="pod-header-handlinger">
                 <a class="pod-btn-ghost" href="@($"/plattform/organisasjoner/{Id}/tilbud.pdf")" target="_blank"><Icon Name="file-text" /> Tilbud (PDF)</a>
                 <button type="button" class="pod-btn-ghost" @onclick="@(() => VisFane("logg"))"><Icon Name="clock" /> Nytt notat</button>
-                <button type="button" class="pod-btn-ghost" @onclick="@(() => VisFane("innstillinger"))"><Icon Name="edit" /> Rediger</button>
+                <button type="button" class="pod-btn-ghost" @onclick="@(() => VisFane("oppsett", "firma"))"><Icon Name="edit" /> Rediger</button>
             </div>
         </div>
 
@@ -116,7 +117,6 @@ else
                 }
             </button>
             <button type="button" role="tab" aria-selected="@(_fane == "logg" ? "true" : "false")" class="pod-fane @(_fane == "logg" ? "pod-fane-aktiv" : "")" @onclick="@(() => VisFane("logg"))"><Icon Name="clock" /> Logg og notater</button>
-            <button type="button" role="tab" aria-selected="@(_fane == "innstillinger" ? "true" : "false")" class="pod-fane @(_fane == "innstillinger" ? "pod-fane-aktiv" : "")" @onclick="@(() => VisFane("innstillinger"))"><Icon Name="edit" /> Innstillinger</button>
         </div>
         <div class="pod-innhold">
 
@@ -754,56 +754,120 @@ else
         @if (_fane == "oppsett" && _innstillinger is not null)
         {
             <div class="pod-under-faner">
-                <nav class="pod-under-meny" aria-label="Oppsett">
-                    @foreach (var (nokkel, navn) in new[] { ("oppstart", "Oppstart"), ("epost", "E-post og varsler"), ("tripletex", "Tripletex"), ("backup", "Backup") })
+                <nav class="pod-under-meny pod-op-meny" aria-label="Oppsett">
+                    @foreach (var d in OppsettDeler)
                     {
-                        var n = nokkel;
-                        <button type="button" class="@(_oppsettFane == n ? "aktiv" : "")" aria-current="@(_oppsettFane == n ? "true" : "false")" @onclick="@(() => _oppsettFane = n)">@navn</button>
+                        var del = d;
+                        var klar = DelKlar(del.Nokkel);
+                        @if (del.Nokkel is "firma" or "status")
+                        {
+                            <hr />
+                        }
+                        <button type="button" class="@(_oppsettFane == del.Nokkel ? "aktiv" : "")" aria-current="@(_oppsettFane == del.Nokkel ? "true" : "false")" @onclick="@(() => _oppsettFane = del.Nokkel)">
+                            <span class="pod-op-ik"><Icon Name="@del.Ikon" /></span>@del.Navn
+                            <span class="pod-op-prikk @(klar is null ? "" : klar.Value ? "ok" : "gul")"></span>
+                        </button>
                     }
                 </nav>
                 <div class="pod-under-innhold">
                     @if (_oppsettFane == "oppstart")
                     {
-                        <div class="pod-midt-rad pod-midt-rad-to">
-                            <section class="pod-card">
-                                <div class="pod-kort-header-rad">
-                                    <h3 class="pod-h3">Klar til bruk?</h3>
-                                    <span class="pod-oppstart-teller">@OppstartPunkter.Count(p => p.Klar) av @OppstartPunkter.Count klart</span>
+                        var punkter = OppstartPunkter;
+                        var ferdige = punkter.Count(p => p.Klar);
+                        var neste = punkter.FirstOrDefault(p => !p.Klar);
+                        var apent = _apentSteg ?? neste?.Tittel;
+                        <section class="pod-op-fremdrift">
+                            <div class="pod-op-fr-topp">
+                                <div>
+                                    <h3 class="pod-h3">@(neste is null ? "Alt er satt opp" : $"{ferdige} av {punkter.Count} steg er ferdige")</h3>
+                                    <p class="pod-tom-tekst">@(neste is null ? $"{_tenant.Navn} er klar til bruk." : $"Neste: {neste.Tittel}")</p>
                                 </div>
-                                <div class="pod-sjekk">
-                                    @foreach (var p in OppstartPunkter)
+                                @if (neste is not null)
+                                {
+                                    <button type="button" class="pod-btn-ghost" disabled="@_senderListe" @onclick="SendListeTilKunden"><Icon Name="send" /> Send liste til daglig leder</button>
+                                }
+                            </div>
+                            <div class="pod-op-bar"><i style="width:@(punkter.Count == 0 ? 0 : ferdige * 100 / punkter.Count)%"></i></div>
+                            @if (!string.IsNullOrEmpty(_listeMelding))
+                            {
+                                <p class="@(_listeFeil ? "pod-feilmelding" : "pod-suksessmelding")">@_listeMelding</p>
+                            }
+                        </section>
+
+                        <div class="pod-op-steg">
+                            @for (var i = 0; i < punkter.Count; i++)
+                            {
+                                var p = punkter[i];
+                                var nr = i + 1;
+                                var erApent = apent == p.Tittel;
+                                var erNeste = neste == p;
+                                <div class="pod-op-st @(p.Klar ? "ok" : "") @(erNeste ? "neste" : "")">
+                                    <button type="button" class="pod-op-hode" aria-expanded="@(erApent ? "true" : "false")" @onclick="@(() => _apentSteg = erApent ? "" : p.Tittel)">
+                                        <span class="pod-op-nr">@if (p.Klar) {<Icon Name="check" />} else {@nr}</span>
+                                        <span class="pod-op-tekst"><b>@p.Tittel</b><small>@p.Tekst</small></span>
+                                        <span class="pod-chip @(p.Klar ? "pod-chip-ok" : "pod-chip-gul")">@(p.Klar ? "Ferdig" : erNeste ? "Neste" : p.Status)</span>
+                                        <span class="pod-op-pil" aria-hidden="true">›</span>
+                                    </button>
+                                    @if (erApent)
                                     {
-                                        <div class="pod-sjekk-rad">
-                                            <span class="pod-sjekk-ikon @(p.Klar ? "pod-sjekk-ok" : "pod-sjekk-gul")"><Icon Name="@(p.Klar ? "check" : p.Ikon)" /></span>
-                                            <span class="pod-sjekk-tekst">@p.Tittel<small>@p.Tekst</small></span>
-                                            <span class="pod-chip @(p.Klar ? "pod-chip-ok" : "pod-chip-gul")">@p.Status</span>
+                                        <div class="pod-op-kropp">
+                                            @switch (p.Del)
+                                            {
+                                                case "avtale":
+                                                    <p class="pod-tom-tekst">Registrer når kunden har signert. Databehandleravtalen er påkrevd etter GDPR, siden du lagrer kundens data.</p>
+                                                    @if (_abo is not null)
+                                                    {
+                                                        <div class="pod-op-felter">
+                                                            <label class="pod-label" for="pod-avtale">Abonnementsavtale signert
+                                                                <input id="pod-avtale" class="pod-input" type="date" @bind="_abo.AvtaleSignert" @bind:after="LagreAbonnement" />
+                                                            </label>
+                                                            <label class="pod-label" for="pod-dba">Databehandleravtale signert
+                                                                <input id="pod-dba" class="pod-input" type="date" @bind="_abo.DatabehandleravtaleSignert" @bind:after="LagreAbonnement" />
+                                                            </label>
+                                                        </div>
+                                                    }
+                                                    <div class="pod-knapperad">
+                                                        <a class="pod-btn-ghost pod-btn-liten" href="/plattform/vilkar.pdf" target="_blank"><Icon Name="file-text" /> Vilkår og databehandleravtale (PDF)</a>
+                                                        <a class="pod-btn-ghost pod-btn-liten" href="@($"/plattform/organisasjoner/{Id}/tilbud.pdf")" target="_blank"><Icon Name="file-text" /> Tilbud (PDF)</a>
+                                                    </div>
+                                                    break;
+                                                case "admin":
+                                                    var admin = _brukere.FirstOrDefault(b => b.Rolle == BrukerRolle.Admin && b.Aktiv);
+                                                    <div class="pod-knapperad">
+                                                        @if (admin is not null && string.IsNullOrEmpty(admin.PasswordHash))
+                                                        {
+                                                            <button type="button" class="pod-btn-primary pod-btn-liten" @onclick="@(() => SendInvitasjon(admin))"><Icon Name="send" /> @(_invitert.ContainsKey(admin.Id) ? "Send invitasjon på nytt" : "Send invitasjon")</button>
+                                                        }
+                                                        <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => VisFane("brukere"))">@(admin is null ? "Legg til administrator under Brukere" : "Åpne Brukere")</button>
+                                                    </div>
+                                                    @if (!string.IsNullOrEmpty(_invMelding))
+                                                    {
+                                                        <p class="@(_invFeil ? "pod-feilmelding" : "pod-suksessmelding")">@_invMelding</p>
+                                                    }
+                                                    break;
+                                                case "lisenser":
+                                                    <p class="pod-tom-tekst">@string.Join(" · ", LisensTypeExtensions.Aktive.Where(t => Tildelt(t) > 0).Select(t => $"{t.Kortnavn()} {Tildelt(t)}"))</p>
+                                                    <div class="pod-knapperad"><button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => VisFane("abonnement"))">Åpne Abonnement →</button></div>
+                                                    break;
+                                                default:
+                                                    <div class="pod-knapperad"><button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => _oppsettFane = p.Del)">Åpne @(OppsettDeler.FirstOrDefault(d => d.Nokkel == p.Del).Navn) →</button></div>
+                                                    break;
+                                            }
                                         </div>
                                     }
                                 </div>
-                            </section>
-                            <section class="pod-card">
-                                <h3 class="pod-h3">Avtale og databehandleravtale</h3>
-                                <p class="pod-tom-tekst">Registrer når kunden har signert abonnementsvilkårene og databehandleravtalen. Databehandleravtalen er påkrevd etter GDPR, siden du lagrer kundens data.</p>
-                                @if (_abo is not null)
-                                {
-                                    <label class="pod-label" for="pod-avtale">Abonnementsavtale signert
-                                        <input id="pod-avtale" class="pod-input" type="date" @bind="_abo.AvtaleSignert" @bind:after="LagreAbonnement" />
-                                    </label>
-                                    <label class="pod-label" for="pod-dba">Databehandleravtale signert
-                                        <input id="pod-dba" class="pod-input" type="date" @bind="_abo.DatabehandleravtaleSignert" @bind:after="LagreAbonnement" />
-                                    </label>
-                                }
-                                <h3 class="pod-h3 pod-h3-mellom">Dette trenger du fra daglig leder</h3>
-                                <ul class="pod-innhent">
-                                    <li>Firmanavn, org.nr. og logo</li>
-                                    <li>Administrator: navn og e-post</li>
-                                    <li>Ønsket e-postnavn, for eksempel <b>@(_innstillinger.EpostNavn ?? "firmanavn")</b>@("@" + OrganisasjonOppsett.EpostDomene)</li>
-                                    <li>Hvem som skal få påminnelsene</li>
-                                    <li>Antall brukere, moduler og fakturaadresse</li>
-                                    <li>Tripletex-nøkkel, når koblingen per firma er klar</li>
-                                </ul>
-                            </section>
+                            }
                         </div>
+
+                        <section class="pod-op-kunde">
+                            <div class="pod-op-fr-topp"><h3 class="pod-h3">Dette trenger du fra daglig leder</h3><span class="pod-tom-tekst">Krysses av når det er på plass</span></div>
+                            <ul>
+                                @foreach (var (tekst, ok) in KundeListe)
+                                {
+                                    <li class="@(ok ? "ok" : "")">@tekst</li>
+                                }
+                            </ul>
+                        </section>
                     }
                     @if (_oppsettFane == "epost")
                     {
@@ -1038,72 +1102,8 @@ else
                             }
                         </section>
                     }
-                </div>
-            </div>
-        }
-
-        @* ================= LOGG OG NOTATER ================= *@
-        @if (_fane == "logg")
-        {
-            <div class="pod-midt-rad pod-midt-rad-to">
-                <section class="pod-card">
-                    <h3 class="pod-h3">Notater</h3>
-                    <div class="pod-notat-skjema">
-                        <label class="pod-label" for="pod-notat-type">Type
-                            <select id="pod-notat-type" class="pod-input" @bind="_nyNotatType">
-                                @foreach (var t in NotatTyper)
-                                {
-                                    <option value="@t">@t</option>
-                                }
-                            </select>
-                        </label>
-                        <label class="pod-label" for="pod-notat-oppf">Følg opp (valgfritt)
-                            <input id="pod-notat-oppf" class="pod-input" type="date" @bind="_nyNotatOppfolging" />
-                        </label>
-                        <label class="pod-label pod-notat-tekst" for="pod-notat-tekst">Notat
-                            <textarea id="pod-notat-tekst" class="pod-input" rows="3" @bind="_nyNotatTekst" placeholder="Hva ble sagt eller avtalt?"></textarea>
-                        </label>
-                    </div>
-                    <div class="pod-knapperad"><button type="button" class="pod-btn-primary" @onclick="LagreNotat">Lagre notat</button></div>
-                    @if (_notater.Count == 0)
+                    @if (_oppsettFane == "firma")
                     {
-                        <p class="pod-tom-tekst">Ingen notater ennå.</p>
-                    }
-                    @foreach (var n in _notater)
-                    {
-                        var notat = n;
-                        <div class="pod-notat @(notat.Utfort ? "pod-notat-utfort" : "")">
-                            <small>@notat.Dato.ToString("dd.MM.yyyy HH:mm") · @notat.Type@(notat.Av is { } av ? $" · {av}" : "")</small>
-                            <span>@notat.Tekst</span>
-                            @if (notat.Oppfolging is { } opp)
-                            {
-                                <span class="pod-notat-oppf">
-                                    <small class="@(!notat.Utfort && opp.Date <= DateTime.Today ? "pod-rod" : "")">@(notat.Utfort ? "Fulgt opp" : "Følg opp") @opp.ToString("dd.MM.yyyy")</small>
-                                    @if (!notat.Utfort)
-                                    {
-                                        <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => FullforNotat(notat))"><Icon Name="check" /> Fulgt opp</button>
-                                    }
-                                </span>
-                            }
-                        </div>
-                    }
-                </section>
-                <section class="pod-card">
-                    <h3 class="pod-h3">Logg</h3>
-                    <div class="pod-tidslinje">
-                        @foreach (var h in _hendelser.Take(40))
-                        {
-                            <div><time>@h.Tidspunkt.ToString("dd.MM.yy HH:mm")</time><span>@h.Tekst@(h.Av is { } av ? $" ({av})" : "")</span></div>
-                        }
-                        <div><time>@_tenant.OpprettetDato.ToString("dd.MM.yy HH:mm")</time><span>Organisasjonen opprettet</span></div>
-                    </div>
-                </section>
-            </div>
-        }
-
-        @* ================= INNSTILLINGER ================= *@
-        @if (_fane == "innstillinger")
-        {
             <section class="pod-card">
                 <h3 class="pod-h3">Grunninformasjon</h3>
                 <div class="pod-form-grid">
@@ -1180,7 +1180,9 @@ else
                     }
                 </div>
             </section>
-
+                    }
+                    @if (_oppsettFane == "status")
+                    {
                 <section class="pod-card">
                     <h3 class="pod-h3">Status for organisasjonen</h3>
                     <div class="pod-sjekk">
@@ -1260,6 +1262,68 @@ else
                     }
                 </section>
             }
+                    }
+                </div>
+            </div>
+        }
+
+        @* ================= LOGG OG NOTATER ================= *@
+        @if (_fane == "logg")
+        {
+            <div class="pod-midt-rad pod-midt-rad-to">
+                <section class="pod-card">
+                    <h3 class="pod-h3">Notater</h3>
+                    <div class="pod-notat-skjema">
+                        <label class="pod-label" for="pod-notat-type">Type
+                            <select id="pod-notat-type" class="pod-input" @bind="_nyNotatType">
+                                @foreach (var t in NotatTyper)
+                                {
+                                    <option value="@t">@t</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="pod-label" for="pod-notat-oppf">Følg opp (valgfritt)
+                            <input id="pod-notat-oppf" class="pod-input" type="date" @bind="_nyNotatOppfolging" />
+                        </label>
+                        <label class="pod-label pod-notat-tekst" for="pod-notat-tekst">Notat
+                            <textarea id="pod-notat-tekst" class="pod-input" rows="3" @bind="_nyNotatTekst" placeholder="Hva ble sagt eller avtalt?"></textarea>
+                        </label>
+                    </div>
+                    <div class="pod-knapperad"><button type="button" class="pod-btn-primary" @onclick="LagreNotat">Lagre notat</button></div>
+                    @if (_notater.Count == 0)
+                    {
+                        <p class="pod-tom-tekst">Ingen notater ennå.</p>
+                    }
+                    @foreach (var n in _notater)
+                    {
+                        var notat = n;
+                        <div class="pod-notat @(notat.Utfort ? "pod-notat-utfort" : "")">
+                            <small>@notat.Dato.ToString("dd.MM.yyyy HH:mm") · @notat.Type@(notat.Av is { } av ? $" · {av}" : "")</small>
+                            <span>@notat.Tekst</span>
+                            @if (notat.Oppfolging is { } opp)
+                            {
+                                <span class="pod-notat-oppf">
+                                    <small class="@(!notat.Utfort && opp.Date <= DateTime.Today ? "pod-rod" : "")">@(notat.Utfort ? "Fulgt opp" : "Følg opp") @opp.ToString("dd.MM.yyyy")</small>
+                                    @if (!notat.Utfort)
+                                    {
+                                        <button type="button" class="pod-btn-ghost pod-btn-liten" @onclick="@(() => FullforNotat(notat))"><Icon Name="check" /> Fulgt opp</button>
+                                    }
+                                </span>
+                            }
+                        </div>
+                    }
+                </section>
+                <section class="pod-card">
+                    <h3 class="pod-h3">Logg</h3>
+                    <div class="pod-tidslinje">
+                        @foreach (var h in _hendelser.Take(40))
+                        {
+                            <div><time>@h.Tidspunkt.ToString("dd.MM.yy HH:mm")</time><span>@h.Tekst@(h.Av is { } av ? $" ({av})" : "")</span></div>
+                        }
+                        <div><time>@_tenant.OpprettetDato.ToString("dd.MM.yy HH:mm")</time><span>Organisasjonen opprettet</span></div>
+                    </div>
+                </section>
+            </div>
         }
         </div>
         </div>
@@ -1674,7 +1738,97 @@ else
     }
 
     // ---------- Oppstart og oppfølging ----------
-    private sealed record Punkt(string Tittel, string Tekst, bool Klar, string Status, string Ikon);
+    private sealed record Punkt(string Tittel, string Tekst, bool Klar, string Status, string Ikon, string Del = "backup");
+
+    // ---------- Oppsett: meny, oppstartsguide og liste til kunden ----------
+    private static readonly (string Nokkel, string Navn, string Ikon)[] OppsettDeler =
+    [
+        ("oppstart", "Oppstart", "play"),
+        ("firma", "Firma og merkevare", "building"),
+        ("epost", "E-post og påminnelser", "mail"),
+        ("tripletex", "Tripletex", "link-ikon"),
+        ("backup", "Backup", "server"),
+        ("status", "Status og sletting", "settings"),
+    ];
+
+    private string? _apentSteg;
+    private bool _senderListe;
+    private string? _listeMelding;
+    private bool _listeFeil;
+
+    // Grønn eller gul prikk i menyen; null = ingen prikk.
+    private bool? DelKlar(string del)
+    {
+        var punkter = OppstartPunkter;
+        return del switch
+        {
+            "oppstart" => punkter.All(p => p.Klar),
+            "firma" => !string.IsNullOrWhiteSpace(_tenant?.OrgNr),
+            "status" => null,
+            _ => punkter.Where(p => p.Del == del).All(p => p.Klar)
+        };
+    }
+
+    private List<(string Tekst, bool Ok)> KundeListe
+    {
+        get
+        {
+            var punkter = OppstartPunkter;
+            bool Klar(string del) => punkter.Where(p => p.Del == del).All(p => p.Klar);
+            var pam = punkter.FirstOrDefault(p => p.Tittel == "Påminnelser")?.Klar ?? false;
+            return
+            [
+                ("Signert abonnementsavtale og databehandleravtale", Klar("avtale")),
+                ("Firmanavn, org.nr. og logo", !string.IsNullOrWhiteSpace(_tenant?.OrgNr) && _tenant?.LogoData is not null),
+                ("Administrator: navn og e-post, og at de setter passord", Klar("admin")),
+                ($"Ønsket e-postadresse, f.eks. {OrganisasjonOppsett.Adresse(_innstillinger?.EpostNavn ?? "firmanavn")}", !string.IsNullOrWhiteSpace(_innstillinger?.EpostNavn)),
+                ("Hvem som skal få påminnelsene", pam),
+                ("Ansattnøkkel fra Tripletex (Innstillinger → Integrasjoner → API-tilgang)", Klar("tripletex")),
+            ];
+        }
+    }
+
+    private async Task SendListeTilKunden()
+    {
+        if (_tenant is null)
+        {
+            return;
+        }
+
+        _listeMelding = null;
+        if (string.IsNullOrWhiteSpace(_tenant.Epost))
+        {
+            _listeFeil = true;
+            _listeMelding = "Organisasjonen har ingen e-postadresse. Fyll den inn under Firma og merkevare.";
+            return;
+        }
+
+        var mangler = KundeListe.Where(l => !l.Ok).Select(l => l.Tekst).ToList();
+        if (mangler.Count == 0)
+        {
+            _listeFeil = false;
+            _listeMelding = "Ingenting mangler fra daglig leder.";
+            return;
+        }
+
+        _senderListe = true;
+        try
+        {
+            var punkter = string.Concat(mangler.Select(m => $"<li>{System.Net.WebUtility.HtmlEncode(m)}</li>"));
+            var html = $"<p>Hei!</p><p>For å gjøre ferdig oppsettet av Full Kontroll for {System.Net.WebUtility.HtmlEncode(_tenant.Navn)} trenger vi dette fra dere:</p><ul>{punkter}</ul><p>Svar gjerne på denne e-posten.</p>";
+            var ok = await Epost.SendAsync(_tenant.Epost, $"Oppsett av Full Kontroll for {_tenant.Navn}", html);
+            _listeFeil = !ok;
+            _listeMelding = ok ? $"Listen med {mangler.Count} punkter er sendt til {_tenant.Epost}." : "Kunne ikke sende. Sjekk e-postoppsettet under Innstillinger.";
+            if (ok)
+            {
+                await AbonnementSvc.LoggAsync(_tenant.Id, $"Liste over det som mangler sendt til {_tenant.Epost}", "mail", _plattformBruker);
+            }
+        }
+        finally
+        {
+            _senderListe = false;
+        }
+    }
 
     private List<Punkt> OppstartPunkter
     {
@@ -1691,13 +1845,13 @@ else
             var signert = _abo?.AvtaleSignert is not null && _abo.DatabehandleravtaleSignert is not null;
             return
             [
-                new("Lisenser og moduler", $"{_lisenser.Sum(l => l.AntallTildelt)} lisenser · {Kr(Maanedsbelop)} per måned", harLisenser, harLisenser ? "Klar" : "Mangler", "credit-card"),
-                new("Administrator", admin is null ? "Ingen aktiv administrator" : $"{admin.Navn} · {admin.Epost}{(harPassord ? "" : " · har ikke satt passord")}", harPassord, admin is null ? "Mangler" : harPassord ? "Klar" : "Venter", "users"),
-                new("Påminnelser", _mottakere.Count > 0 ? $"{_mottakere.Count} {(_mottakere.Count == 1 ? "mottaker" : "mottakere")}" : "Ingen valgt, går til administratorene", _mottakere.Count > 0, _mottakere.Count > 0 ? "Klar" : "Velg", "bell"),
-                new("Avtale og databehandleravtale", signert ? $"Signert {_abo!.AvtaleSignert:dd.MM.yyyy} og {_abo.DatabehandleravtaleSignert:dd.MM.yyyy}" : "Ikke registrert som signert", signert, signert ? "Klar" : "Ikke signert", "file-text"),
-                new("E-postadresse", OrganisasjonOppsett.Adresse(_innstillinger.EpostNavn ?? ""), _plattform.EpostPerOrganisasjon, _plattform.EpostPerOrganisasjon ? "Klar" : "Reservert", "mail"),
+                new("Avtale og databehandleravtale", signert ? $"Signert {_abo!.AvtaleSignert:dd.MM.yyyy} og {_abo.DatabehandleravtaleSignert:dd.MM.yyyy}" : "Ikke registrert som signert", signert, signert ? "Klar" : "Ikke signert", "file-text", "avtale"),
+                new("Administrator", admin is null ? "Ingen aktiv administrator" : $"{admin.Navn} · {admin.Epost}{(harPassord ? "" : " · har ikke satt passord")}", harPassord, admin is null ? "Mangler" : harPassord ? "Klar" : "Venter", "users", "admin"),
+                new("Lisenser og moduler", $"{_lisenser.Sum(l => l.AntallTildelt)} lisenser · {Kr(Maanedsbelop)} per måned", harLisenser, harLisenser ? "Klar" : "Mangler", "credit-card", "lisenser"),
+                new("E-postadresse", OrganisasjonOppsett.Adresse(_innstillinger.EpostNavn ?? ""), _plattform.EpostPerOrganisasjon, _plattform.EpostPerOrganisasjon ? "Klar" : "Reservert", "mail", "epost"),
+                new("Påminnelser", _mottakere.Count > 0 ? $"{_mottakere.Count} {(_mottakere.Count == 1 ? "mottaker" : "mottakere")}" : "Ingen valgt, går til administratorene", _mottakere.Count > 0, _mottakere.Count > 0 ? "Klar" : "Velg", "bell", "epost"),
+                new("Tripletex", !string.IsNullOrWhiteSpace(_innstillinger.TripletexEmployeeTokenKryptert) ? $"Koblet{(_innstillinger.TripletexFirma is { } tf ? $" til {tf}" : "")}" : "Mangler ansattnøkkel fra firmaet", !string.IsNullOrWhiteSpace(_innstillinger.TripletexEmployeeTokenKryptert), !string.IsNullOrWhiteSpace(_innstillinger.TripletexEmployeeTokenKryptert) ? "Klar" : "Mangler", "link-ikon", "tripletex"),
                 BackupPunkt(),
-                new("Tripletex", !string.IsNullOrWhiteSpace(_innstillinger.TripletexEmployeeTokenKryptert) ? $"Koblet{(_innstillinger.TripletexFirma is { } tf ? $" til {tf}" : "")}" : "Mangler ansattnøkkel fra firmaet", !string.IsNullOrWhiteSpace(_innstillinger.TripletexEmployeeTokenKryptert), !string.IsNullOrWhiteSpace(_innstillinger.TripletexEmployeeTokenKryptert) ? "Klar" : "Mangler", "link-ikon"),
             ];
         }
     }
