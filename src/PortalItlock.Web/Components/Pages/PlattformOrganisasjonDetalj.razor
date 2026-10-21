@@ -252,131 +252,222 @@ else
         @* ================= ABONNEMENT ================= *@
         @if (_fane == "abonnement" && _abo is not null)
         {
-            <section class="pod-card">
-                <div class="pod-kort-header-rad">
-                    <h3 class="pod-h3">Lisenser og moduler</h3>
-                    <a class="pod-btn-ghost pod-btn-liten" href="@($"/plattform/organisasjoner/{Id}/tilbud.pdf")" target="_blank"><Icon Name="file-text" /> Tilbud (PDF)</a>
-                    <a class="pod-vis-alle" href="/plattform/prisliste">Prisliste →</a>
-                </div>
-                <div class="pod-pakkevalg" role="group" aria-label="Pakke">
-                    <span class="pod-tom-tekst">Pakke:</span>
-                    @foreach (var p in _pakker)
-                    {
-                        var pakke = p;
-                        <button type="button" class="pod-pakke-knapp @(_abo.Pakke == pakke.Nokkel ? "valgt" : "")" aria-pressed="@(_abo.Pakke == pakke.Nokkel ? "true" : "false")" title="@pakke.Beskrivelse" @onclick="@(() => VelgPakke(pakke.Nokkel))">@pakke.Navn</button>
-                    }
-                    <button type="button" class="pod-pakke-knapp @(_abo.Pakke is null ? "valgt" : "")" aria-pressed="@(_abo.Pakke is null ? "true" : "false")" @onclick="@(() => VelgPakke(null))">Egendefinert</button>
-                </div>
-                <p class="pod-tom-tekst">Endringer gjelder med en gang. Økninger midt i en periode faktureres forholdsmessig på neste faktura. Tom avtalepris betyr listepris.</p>
-                <div class="pod-tabell-ramme">
-                    <table class="pod-varsel-tabell pod-abo-tabell">
-                        <thead>
-                            <tr><th>Hva</th><th class="pod-n">I bruk</th><th class="pod-n">Antall</th><th class="pod-n">Listepris</th><th class="pod-n">Avtalepris</th><th class="pod-n">Rabatt</th><th class="pod-n">Per måned</th></tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var l in _linjer)
+            var visning = Forhandsvis;
+            var visSum = AbonnementService.Maanedsbelop(visning, _plattform);
+            var visRabattProsent = AbonnementService.RabattProsent(visning, _plattform);
+            var visRabatt = Math.Round(AbonnementService.Rabattgrunnlag(visning) * visRabattProsent / 100m, 2);
+            var ansattLinjer = visning.Where(l => l.Type == PrisType.Lisens && LisensFor(l) is { } t && LisensTypeExtensions.Ansatte.Contains(t)).ToList();
+            var aktivPakke = _pakkeEndret ? _utkastPakke : _abo.Pakke;
+            var aktivPakkeNavn = _pakker.FirstOrDefault(p => p.Nokkel == aktivPakke)?.Navn ?? "Egendefinert";
+
+            <div class="pod-ab-stripe">
+                <div><span class="pod-ab-eyebrow">Per måned, eks. mva</span><b>@Kr(visSum)</b><small>pakke @aktivPakkeNavn</small></div>
+                <div><span class="pod-ab-eyebrow">Per år</span><b>@Kr(visSum * 12)</b><small>faktureres @_abo.Intervall.Visningsnavn().ToLowerInvariant()</small></div>
+                <div><span class="pod-ab-eyebrow">Lisenser i bruk</span><b>@AnsatteIBruk av @ansattLinjer.Sum(l => l.Antall)</b><small>ansatte</small></div>
+                <div><span class="pod-ab-eyebrow">Neste faktura</span><b>@_abo.NesteFakturaFra.ToString("dd.MM.yyyy")</b><small>@(_forhandsvisning is { } nf ? $"{Kr(nf.BelopEksMva)} eks. mva" : _tenant.ErStandard ? "faktureres ikke" : "")</small></div>
+            </div>
+
+            <div class="pod-ab-oppsett">
+                <div class="pod-ab-venstre">
+                    <section class="pod-card pod-ab-kort">
+                        <div class="pod-ab-topp"><h3 class="pod-h3">Pakke</h3><span class="pod-tom-tekst">Pakken bestemmer prisen per lisens</span><a class="pod-vis-alle" href="/plattform/prisliste">Prisliste →</a></div>
+                        <div class="pod-ab-pakker">
+                            @foreach (var p in _pakker)
+                            {
+                                var pakke = p;
+                                var fra = _pakkePriserAlle.Where(x => x.PakkeNokkel == pakke.Nokkel && x.ProduktNokkel == PrisProdukt.ForLisens(LisensType.Montor)).Select(x => (decimal?)x.Kr).FirstOrDefault();
+                                <button type="button" class="pod-ab-pakke" aria-pressed="@(aktivPakke == pakke.Nokkel ? "true" : "false")" @onclick="@(() => VelgUtkastPakke(pakke.Nokkel))">
+                                    <b>@pakke.Navn</b>
+                                    <small>@pakke.Beskrivelse</small>
+                                    @if (fra is { } f)
+                                    {
+                                        <span>@Kr(f) per lisens</span>
+                                    }
+                                </button>
+                            }
+                            <button type="button" class="pod-ab-pakke" aria-pressed="@(aktivPakke is null ? "true" : "false")" @onclick="@(() => VelgUtkastPakke(null))">
+                                <b>Egendefinert</b>
+                                <small>Listepris og egne avtalepriser</small>
+                                <span>Egne priser</span>
+                            </button>
+                        </div>
+                    </section>
+
+                    <section class="pod-card pod-ab-kort">
+                        <div class="pod-ab-topp"><h3 class="pod-h3">Lisenser</h3><button type="button" class="pod-ab-lenke" @onclick="@(() => _visAvtalepris = !_visAvtalepris)">@(_visAvtalepris ? "Ferdig" : "Endre avtalepris")</button></div>
+                        <div class="pod-ab-lisenser">
+                            @foreach (var l in visning.Where(l => l.Type == PrisType.Lisens))
                             {
                                 var linje = l;
-                                <tr>
-                                    <td><b>@linje.Navn</b><small>@linje.Beskrivelse@(linje.PakkeStorrelse > 1 ? $" · {linje.Enheter} {(linje.Enheter == 1 ? "pakke" : "pakker")} à {linje.PakkeStorrelse}" : "")</small></td>
-                                    <td class="pod-n">@IBruk(linje)</td>
-                                    <td class="pod-n">
-                                        @if (linje.Type == PrisType.Lisens)
+                                var bruk = BrukTall(linje);
+                                var over = bruk is { } b1 && b1 > linje.Antall;
+                                var full = bruk is { } b2 && b2 >= linje.Antall && linje.Antall > 0;
+                                var bredde = bruk is null ? 0 : linje.Antall == 0 ? (bruk > 0 ? 100 : 0) : Math.Min(100, bruk.Value * 100 / linje.Antall);
+                                var endret = _utkast.ContainsKey(linje.Nokkel);
+                                <div class="pod-ab-lisens @(endret ? "endret" : "")">
+                                    <span class="pod-ab-ikon">@LisensKort(linje.Navn)</span>
+                                    <div class="pod-ab-info">
+                                        <b>@linje.Navn</b>
+                                        @if (bruk is not null)
                                         {
-                                            <input class="pod-input pod-tall-input" type="number" min="0" value="@linje.Antall" aria-label="@($"Antall {linje.Navn}")"
-                                                   @onchange="@(e => SettAntall(linje.Nokkel, e.Value?.ToString()))" />
+                                            <div class="pod-ab-bruk">
+                                                <span class="pod-ab-bar @(over ? "over" : full ? "full" : "")"><i style="width:@(bredde)%"></i></span>
+                                                @if (over)
+                                                {
+                                                    <span class="pod-ab-rod">@bruk i bruk, @(bruk - linje.Antall) for få</span>
+                                                }
+                                                else
+                                                {
+                                                    <span>@bruk av @linje.Antall i bruk</span>
+                                                }
+                                            </div>
                                         }
                                         else
                                         {
-                                            <button type="button" class="pod-modul-bryter" role="switch" aria-checked="@(linje.Antall > 0 ? "true" : "false")" aria-label="@linje.Navn"
-                                                    @onclick="@(() => SettAntall(linje.Nokkel, linje.Antall > 0 ? "0" : "1"))"></button>
+                                            <small>@linje.Beskrivelse</small>
                                         }
-                                    </td>
-                                    <td class="pod-n">@Kr(linje.Listepris)</td>
-                                    <td class="pod-n">
-                                        <input class="pod-input pod-tall-input" type="number" min="0" placeholder="@linje.Listepris.ToString("0", CultureInfo.InvariantCulture)"
-                                               value="@(linje.HarAvtalepris ? linje.Pris.ToString("0.##", CultureInfo.InvariantCulture) : "")" aria-label="@($"Avtalepris {linje.Navn}")"
-                                               @onchange="@(e => SettAvtalepris(linje.Nokkel, e.Value?.ToString()))" />
-                                    </td>
-                                    <td class="pod-n">@(linje.RabattProsent is { } r ? $"{r} %" : "–")</td>
-                                    <td class="pod-n"><b>@Kr(linje.Sum)</b></td>
-                                </tr>
-                            }
-                            @if (RabattProsent > 0 && RabattBelop > 0)
-                            {
-                                <tr><td colspan="6">Volumrabatt @RabattProsent % på lisenser</td><td class="pod-n">−@Kr(RabattBelop)</td></tr>
-                            }
-                            <tr class="pod-sumrad"><td colspan="6">Sum per måned, eks. mva</td><td class="pod-n">@Kr(Maanedsbelop)</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                @if (!string.IsNullOrEmpty(_aboMelding))
-                {
-                    <p class="pod-suksessmelding">@_aboMelding</p>
-                }
-            </section>
-
-            <div class="pod-midt-rad">
-                <section class="pod-card">
-                    <h3 class="pod-h3">Fakturering</h3>
-                    <label class="pod-label" for="pod-intervall">Faktureres
-                        <select id="pod-intervall" class="pod-input" @bind="_abo.Intervall" @bind:after="LagreAbonnement">
-                            @foreach (var i in Enum.GetValues<FakturaIntervall>())
-                            {
-                                <option value="@i">@i.Visningsnavn()</option>
-                            }
-                        </select>
-                    </label>
-                    <label class="pod-label" for="pod-frist">Betalingsfrist (dager)
-                        <input id="pod-frist" class="pod-input" type="number" min="0" max="90" @bind="_abo.BetalingsfristDager" @bind:after="LagreAbonnement" />
-                    </label>
-                    <label class="pod-label" for="pod-fakturaepost">Faktura sendes til
-                        <input id="pod-fakturaepost" class="pod-input" type="email" @bind="_abo.FakturaEpost" @bind:after="LagreAbonnement" placeholder="faktura@firma.no" />
-                    </label>
-                    <label class="pod-label" for="pod-etablering">Etableringsgebyr (tom = listepris)
-                        <input id="pod-etablering" class="pod-input" type="number" min="0" @bind="_abo.Etableringsgebyr" @bind:after="LagreAbonnement" disabled="@_abo.EtableringFakturert" />
-                    </label>
-                    @if (_abo.EtableringFakturert)
-                    {
-                        <p class="pod-tom-tekst">Etableringen er fakturert.</p>
-                    }
-                </section>
-
-                <section class="pod-card">
-                    <h3 class="pod-h3">Avtale</h3>
-                    <label class="pod-label" for="pod-start">Kunde siden
-                        <input id="pod-start" class="pod-input" type="date" @bind="_abo.Startdato" @bind:after="LagreAbonnement" />
-                    </label>
-                    <label class="pod-label" for="pod-binding">Binding til
-                        <input id="pod-binding" class="pod-input" type="date" @bind="_abo.BindingTil" @bind:after="LagreAbonnement" />
-                    </label>
-                    <label class="pod-label" for="pod-prove">Prøveperiode til (faktureres ikke før etter)
-                        <input id="pod-prove" class="pod-input" type="date" @bind="_abo.ProveperiodeTil" @bind:after="LagreAbonnement" />
-                    </label>
-                    <label class="pod-label" for="pod-neste">Neste faktura gjelder fra
-                        <input id="pod-neste" class="pod-input" type="date" @bind="_abo.NesteFakturaFra" @bind:after="LagreAbonnement" />
-                    </label>
-                </section>
-
-                <section class="pod-card">
-                    <h3 class="pod-h3">Endringer</h3>
-                    @{
-                        var endringer = _hendelser.Where(h => h.Ikon is "credit-card" or "tag").Take(8).ToList();
-                    }
-                    @if (endringer.Count == 0)
-                    {
-                        <p class="pod-tom-tekst">Ingen endringer ennå.</p>
-                    }
-                    else
-                    {
-                        <div class="pod-tidslinje">
-                            @foreach (var h in endringer)
-                            {
-                                <div><time>@h.Tidspunkt.ToString("dd.MM.yy")</time><span>@h.Tekst</span></div>
+                                    </div>
+                                    <div class="pod-ab-teller">
+                                        <button type="button" aria-label="@($"Færre {linje.Navn}")" disabled="@(linje.Antall <= 0)" @onclick="@(() => EndreUtkast(linje.Nokkel, -1))">−</button>
+                                        <span>@linje.Antall</span>
+                                        <button type="button" aria-label="@($"Flere {linje.Navn}")" @onclick="@(() => EndreUtkast(linje.Nokkel, 1))">+</button>
+                                    </div>
+                                    <div class="pod-ab-sum">
+                                        @if (_visAvtalepris)
+                                        {
+                                            <label>Avtalepris
+                                                <input class="pod-input" type="number" min="0" placeholder="@linje.Listepris.ToString("0", CultureInfo.InvariantCulture)"
+                                                       value="@(linje.HarAvtalepris ? linje.Pris.ToString("0.##", CultureInfo.InvariantCulture) : "")" aria-label="@($"Avtalepris {linje.Navn}")"
+                                                       @onchange="@(e => SettAvtalepris(linje.Nokkel, e.Value?.ToString()))" />
+                                            </label>
+                                        }
+                                        else
+                                        {
+                                            <b>@Kr(linje.Sum)</b>
+                                            <small class="@(linje.HarAvtalepris ? "avtale" : "")">@Kr(linje.Pris) @(linje.HarAvtalepris ? "avtalepris" : linje.PakkeStorrelse > 1 ? $"per pakke à {linje.PakkeStorrelse}" : "per stk")</small>
+                                        }
+                                    </div>
+                                </div>
                             }
                         </div>
-                    }
-                </section>
+                    </section>
+
+                    <section class="pod-card pod-ab-kort">
+                        <div class="pod-ab-topp"><h3 class="pod-h3">Grunnpakke og tilleggsmoduler</h3></div>
+                        <div class="pod-ab-moduler">
+                            @foreach (var l in visning.Where(l => l.Type is PrisType.Fast or PrisType.Modul))
+                            {
+                                var linje = l;
+                                <div class="pod-ab-modul @(_utkast.ContainsKey(linje.Nokkel) ? "endret" : "")">
+                                    <span><b>@linje.Navn</b><small>@(linje.Beskrivelse is { Length: > 0 } bs ? $"{bs} · " : "")@Kr(linje.Pris)/mnd</small></span>
+                                    <button type="button" class="pod-modul-bryter" role="switch" aria-checked="@(linje.Antall > 0 ? "true" : "false")" aria-label="@linje.Navn"
+                                            @onclick="@(() => SettUtkast(linje.Nokkel, linje.Antall > 0 ? 0 : 1))"></button>
+                                </div>
+                            }
+                        </div>
+                    </section>
+
+                    <section class="pod-card pod-ab-kort">
+                        <div class="pod-ab-topp"><h3 class="pod-h3">Fakturering og avtale</h3></div>
+                        <div class="pod-ab-segment" role="group" aria-label="Faktureres">
+                            @foreach (var i in Enum.GetValues<FakturaIntervall>())
+                            {
+                                var intervall = i;
+                                <button type="button" aria-pressed="@(_abo.Intervall == intervall ? "true" : "false")" @onclick="@(async () => { _abo.Intervall = intervall; await LagreAbonnement(); })">@intervall.Visningsnavn()</button>
+                            }
+                        </div>
+                        <div class="pod-ab-felter">
+                            <label class="pod-label" for="pod-fakturaepost">Faktura sendes til
+                                <input id="pod-fakturaepost" class="pod-input" type="email" @bind="_abo.FakturaEpost" @bind:after="LagreAbonnement" placeholder="faktura@firma.no" />
+                            </label>
+                            <label class="pod-label" for="pod-frist">Betalingsfrist (dager)
+                                <input id="pod-frist" class="pod-input" type="number" min="0" max="90" @bind="_abo.BetalingsfristDager" @bind:after="LagreAbonnement" />
+                            </label>
+                            <label class="pod-label" for="pod-etablering">Etablering (tom = listepris)
+                                <input id="pod-etablering" class="pod-input" type="number" min="0" @bind="_abo.Etableringsgebyr" @bind:after="LagreAbonnement" disabled="@_abo.EtableringFakturert" />
+                            </label>
+                            <label class="pod-label" for="pod-start">Kunde siden
+                                <input id="pod-start" class="pod-input" type="date" @bind="_abo.Startdato" @bind:after="LagreAbonnement" />
+                            </label>
+                            <label class="pod-label" for="pod-prove">Prøveperiode til
+                                <input id="pod-prove" class="pod-input" type="date" @bind="_abo.ProveperiodeTil" @bind:after="LagreAbonnement" />
+                            </label>
+                            <label class="pod-label" for="pod-binding">Binding til
+                                <input id="pod-binding" class="pod-input" type="date" @bind="_abo.BindingTil" @bind:after="LagreAbonnement" />
+                            </label>
+                            <label class="pod-label" for="pod-neste">Neste faktura gjelder fra
+                                <input id="pod-neste" class="pod-input" type="date" @bind="_abo.NesteFakturaFra" @bind:after="LagreAbonnement" />
+                            </label>
+                        </div>
+                        @if (_abo.EtableringFakturert)
+                        {
+                            <p class="pod-tom-tekst">Etableringen er fakturert.</p>
+                        }
+                    </section>
+
+                    <section class="pod-card pod-ab-kort">
+                        <div class="pod-ab-topp"><h3 class="pod-h3">Endringer</h3></div>
+                        @{
+                            var endringer = _hendelser.Where(h => h.Ikon is "credit-card" or "tag").Take(8).ToList();
+                        }
+                        @if (endringer.Count == 0)
+                        {
+                            <p class="pod-tom-tekst">Ingen endringer ennå.</p>
+                        }
+                        else
+                        {
+                            <div class="pod-tidslinje">
+                                @foreach (var h in endringer)
+                                {
+                                    <div><time>@h.Tidspunkt.ToString("dd.MM.yy")</time><span>@h.Tekst</span></div>
+                                }
+                            </div>
+                        }
+                    </section>
+                </div>
+
+                <aside class="pod-ab-sammendrag">
+                    <section class="pod-card pod-ab-kort">
+                        <div class="pod-ab-topp"><h3 class="pod-h3">Sammendrag</h3><span class="pod-ab-chip">@aktivPakkeNavn</span></div>
+                        <div class="pod-ab-kvittering">
+                            @foreach (var l in visning.Where(l => l.Antall > 0 && l.Sum > 0))
+                            {
+                                <div><span>@(l.Type == PrisType.Lisens ? $"{l.Antall} × {l.Navn}" : l.Navn)</span><span>@Kr(l.Sum)</span></div>
+                            }
+                            @if (visRabatt > 0)
+                            {
+                                <div class="rabatt"><span>Volumrabatt @visRabattProsent %</span><span>−@Kr(visRabatt)</span></div>
+                            }
+                            <div class="sum"><span>Per måned</span><span>@Kr(visSum)</span></div>
+                        </div>
+                        @if (HarUtkast)
+                        {
+                            var diff = visSum - Maanedsbelop;
+                            var iDag = DateTime.Today;
+                            var dagerIgjen = DateTime.DaysInMonth(iDag.Year, iDag.Month) - iDag.Day + 1;
+                            var prorata = Math.Round(diff * dagerIgjen / DateTime.DaysInMonth(iDag.Year, iDag.Month));
+                            <div class="pod-ab-endring">
+                                <b>@(diff >= 0 ? "+" : "−")@Kr(Math.Abs(diff)) per måned</b>
+                                <ul>
+                                    @foreach (var punkt in UtkastPunkter)
+                                    {
+                                        <li>@punkt</li>
+                                    }
+                                </ul>
+                                <small>@(diff > 0 && !_tenant.ErStandard ? $"Ca. {Kr(prorata)} legges på neste faktura for resten av perioden." : "Gjelder fra neste faktura.")</small>
+                            </div>
+                        }
+                        <div class="pod-ab-knapper">
+                            <button type="button" class="pod-btn-ghost" disabled="@(!HarUtkast)" @onclick="AngreUtkast">Angre</button>
+                            <button type="button" class="pod-btn-primary" disabled="@(!HarUtkast || _lagrerUtkast)" @onclick="LagreUtkast">@(_lagrerUtkast ? "Lagrer …" : "Lagre endringer")</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_aboMelding))
+                        {
+                            <p class="pod-suksessmelding">@_aboMelding</p>
+                        }
+                        <a class="pod-btn-ghost pod-ab-pdf" href="@($"/plattform/organisasjoner/{Id}/tilbud.pdf")" target="_blank"><Icon Name="file-text" /> Tilbud (PDF)</a>
+                    </section>
+                </aside>
             </div>
         }
 
@@ -1230,6 +1321,8 @@ else
         _plattform = await Oppsett.HentAsync();
         _pakker = await PlatformDb.PrisPakker.AsNoTracking().OrderBy(p => p.Rekkefolge).ToListAsync();
         _linjer = await AbonnementSvc.LinjerAsync(_tenant.Id);
+        _pakkePriserAlle = await PlatformDb.PakkePriser.AsNoTracking().ToListAsync();
+        _produktKr = (await AbonnementSvc.PrislisteAsync()).ToDictionary(p => p.Nokkel, p => p.Kr);
         _forhandsvisning = _tenant.ErStandard ? null : await AbonnementSvc.ForhandsvisNesteAsync(_tenant);
         _fakturaer = await PlatformDb.PlattformFakturaer.Include(f => f.Linjer)
             .Where(f => f.TenantId == _tenant.Id)
@@ -1649,18 +1742,141 @@ else
     private List<PrisPakke> _pakker = [];
     private PlattformInnstillinger _plattform = new();
 
-    private async Task VelgPakke(string? nokkel)
+    private List<PakkePris> _pakkePriserAlle = [];
+    private Dictionary<string, decimal> _produktKr = [];
+
+    // Endringer samles her og lagres først når man trykker «Lagre endringer».
+    private readonly Dictionary<string, int> _utkast = [];
+    private string? _utkastPakke;
+    private bool _pakkeEndret;
+    private bool _visAvtalepris;
+    private bool _lagrerUtkast;
+
+    private bool HarUtkast => _utkast.Count > 0 || _pakkeEndret;
+
+    // Linjene slik de blir med utkastet: nytt antall og pakkens priser.
+    private List<AbonnementService.Linje> Forhandsvis => _linjer.Select(l =>
     {
-        if (_abo is null || _tenant is null)
+        var antall = _utkast.TryGetValue(l.Nokkel, out var a) ? a : l.Antall;
+        if (!_pakkeEndret)
+        {
+            return l with { Antall = antall };
+        }
+
+        var liste = _pakkePriserAlle.FirstOrDefault(x => x.PakkeNokkel == _utkastPakke && x.ProduktNokkel == l.Nokkel)?.Kr
+            ?? _produktKr.GetValueOrDefault(l.Nokkel, l.Listepris);
+        return l with { Antall = antall, Listepris = liste, Pris = l.HarAvtalepris ? l.Pris : liste };
+    }).ToList();
+
+    private IEnumerable<string> UtkastPunkter
+    {
+        get
+        {
+            if (_pakkeEndret)
+            {
+                yield return $"Pakke {PakkeNavn(_abo?.Pakke)} → {PakkeNavn(_utkastPakke)}";
+            }
+
+            foreach (var l in _linjer.Where(l => _utkast.ContainsKey(l.Nokkel)))
+            {
+                var nytt = _utkast[l.Nokkel];
+                yield return l.Type == PrisType.Lisens
+                    ? $"{l.Navn} {l.Antall} → {nytt}"
+                    : $"{l.Navn} slås {(nytt > 0 ? "på" : "av")}";
+            }
+        }
+    }
+
+    private string PakkeNavn(string? nokkel) => _pakker.FirstOrDefault(p => p.Nokkel == nokkel)?.Navn ?? "Egendefinert";
+
+    private static LisensType? LisensFor(AbonnementService.Linje l) =>
+        LisensTypeExtensions.Aktive.Where(t => PrisProdukt.ForLisens(t) == l.Nokkel).Select(t => (LisensType?)t).FirstOrDefault();
+
+    private int? BrukTall(AbonnementService.Linje l) => LisensFor(l) is { } t && t.Rolle() is not null ? IBrukFor(t) : null;
+
+    private static string LisensKort(string navn)
+    {
+        var ord = navn.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return ord.Length switch
+        {
+            0 => "?",
+            1 => ord[0][..Math.Min(2, ord[0].Length)].ToUpperInvariant(),
+            _ => $"{char.ToUpperInvariant(ord[0][0])}{char.ToUpperInvariant(ord[1][0])}"
+        };
+    }
+
+    private void SettUtkast(string nokkel, int antall)
+    {
+        antall = Math.Max(0, antall);
+        var lagret = _linjer.FirstOrDefault(l => l.Nokkel == nokkel)?.Antall ?? 0;
+        if (antall == lagret)
+        {
+            _utkast.Remove(nokkel);
+        }
+        else
+        {
+            _utkast[nokkel] = antall;
+        }
+
+        _aboMelding = null;
+    }
+
+    private void EndreUtkast(string nokkel, int endring)
+    {
+        var na = _utkast.TryGetValue(nokkel, out var a) ? a : _linjer.FirstOrDefault(l => l.Nokkel == nokkel)?.Antall ?? 0;
+        SettUtkast(nokkel, na + endring);
+    }
+
+    private void VelgUtkastPakke(string? nokkel)
+    {
+        _utkastPakke = nokkel;
+        _pakkeEndret = nokkel != _abo?.Pakke;
+        _aboMelding = null;
+    }
+
+    private void AngreUtkast()
+    {
+        _utkast.Clear();
+        _pakkeEndret = false;
+        _utkastPakke = null;
+        _aboMelding = null;
+    }
+
+    private async Task LagreUtkast()
+    {
+        if (_abo is null || _tenant is null || !HarUtkast)
         {
             return;
         }
 
-        _abo.Pakke = string.IsNullOrEmpty(nokkel) ? null : nokkel;
-        await PlatformDb.SaveChangesAsync();
-        await AbonnementSvc.LoggAsync(_tenant.Id, $"Pakke: {_pakker.FirstOrDefault(p => p.Nokkel == _abo.Pakke)?.Navn ?? "Egendefinert"}", "credit-card", _plattformBruker);
-        _aboMelding = "Pakken er lagret. Prisene under er oppdatert.";
-        await LastAbonnementAsync();
+        _lagrerUtkast = true;
+        try
+        {
+            var punkter = UtkastPunkter.ToList();
+            if (_pakkeEndret)
+            {
+                _abo.Pakke = _utkastPakke;
+                await PlatformDb.SaveChangesAsync();
+                await AbonnementSvc.LoggAsync(_tenant.Id, $"Pakke: {PakkeNavn(_abo.Pakke)}", "credit-card", _plattformBruker);
+            }
+
+            foreach (var (nokkel, antall) in _utkast)
+            {
+                await AbonnementSvc.SettAntallAsync(_tenant.Id, nokkel, antall, _plattformBruker);
+                if (nokkel.StartsWith("modul:"))
+                {
+                    TilleggsmodulService.Nullstill(Cache, _tenant.Id);
+                }
+            }
+
+            AngreUtkast();
+            _aboMelding = $"Lagret: {string.Join(", ", punkter)}.";
+            await LastAbonnementAsync();
+        }
+        finally
+        {
+            _lagrerUtkast = false;
+        }
     }
 
     // ---------- Deaktivere og slette brukere ----------
