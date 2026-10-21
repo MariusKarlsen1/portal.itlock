@@ -2026,21 +2026,31 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
     innholdHtml ??= ResendInboundParser.HentHtml(body);
 
     // Hvilken organisasjon? Adressen den ble sendt til (navn@full-kontroll.no)
-    // avgjør. Ukjent adresse havner hos standard-organisasjonen, som før.
+    // avgjør, uansett store og små bokstaver. E-post til full-kontroll.no som
+    // ikke passer en aktiv organisasjon, leveres ikke til noen, så ingen ser
+    // e-post som var ment for en annen. Bare e-post til den gamle adressen
+    // (fullkontroll.itlock.no) går til standard-organisasjonen, som før.
     ApplicationDbContext db = standardDb;
     ApplicationDbContext? egenDb = null;
     var domene = "@" + PortalItlock.Web.Services.OrganisasjonOppsett.EpostDomene;
     var navn = ResendInboundParser.HentMottakere(body)
         .Where(a => a.EndsWith(domene, StringComparison.OrdinalIgnoreCase))
-        .Select(a => a[..^domene.Length])
+        .Select(a => a[..^domene.Length].Trim().ToLowerInvariant())
+        .Distinct()
         .ToList();
     if (navn.Count > 0)
     {
         var treff = await platformDb.TenantInnstillinger.AsNoTracking()
-            .Where(i => i.EpostNavn != null && navn.Contains(i.EpostNavn))
+            .Where(i => i.EpostNavn != null && navn.Contains(i.EpostNavn.ToLower()))
             .Join(platformDb.Tenants.Where(t => t.Status == TenantStatus.Aktiv), i => i.TenantId, t => t.Id, (i, t) => t)
             .FirstOrDefaultAsync();
-        if (treff is not null && !treff.ErStandard)
+        if (treff is null)
+        {
+            logger.LogWarning("Innkommende e-post til {Adresser} passer ingen aktiv organisasjon og er ikke levert", string.Join(", ", navn.Select(n => n + domene)));
+            return Results.Ok();
+        }
+
+        if (!treff.ErStandard)
         {
             egenDb = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(treff.ConnectionString).Options);
             db = egenDb;
