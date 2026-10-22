@@ -121,11 +121,14 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
 
             // Prosjektøkonomi: aktive prosjekter med gult/rødt, og overleverte
             // prosjekter som venter på etterkalkyle.
-            okonomiVarsel = await okonomi.AntallMedVarselAsync();
-            etterkalkyleVarsel = await okonomi.AntallTilGjennomgangAsync();
+            if (await tilleggsmoduler.HarAsync(TilleggsModuler.Okonomi))
+            {
+                okonomiVarsel = await okonomi.AntallMedVarselAsync();
+                etterkalkyleVarsel = await okonomi.AntallTilGjennomgangAsync();
+            }
         }
 
-        var fravarSoknaderVenter = erAdmin
+        var fravarSoknaderVenter = erAdmin && await tilleggsmoduler.HarAsync(TilleggsModuler.Timer)
             ? await db.FravarSoknader.CountAsync(f => f.Status == FravarStatus.Venter)
             : 0;
 
