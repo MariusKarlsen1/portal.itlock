@@ -234,6 +234,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             liste.Add((EpostVarsler.ForesporselNy, e.Entity, null));
         }
 
+        foreach (var e in ChangeTracker.Entries<Avvik>().Where(e => e.State == EntityState.Added))
+        {
+            liste.Add((EpostVarsler.AvvikNytt, e.Entity, e.Entity.OpprettetAvBrukerId));
+        }
+
         return liste;
     }
 
@@ -256,6 +261,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             {
                 Arbeidsordre o => o.Id,
                 Foresporsel f => f.Id,
+                Avvik a => a.Id,
                 _ => 0
             };
             if (id > 0)

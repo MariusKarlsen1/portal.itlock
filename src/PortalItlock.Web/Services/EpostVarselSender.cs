@@ -157,6 +157,79 @@ public class EpostVarselTjeneste(
         }
     }
 
+    // Nytt avvik på en dør: til prosjektlederen på prosjektet, eller til
+    // administratorene hvis prosjektet ikke har prosjektleder. Den som meldte
+    // avviket, får ikke e-posten selv.
+    public async Task AvvikNyttAsync(Tenant tenant, int avvikId, int? meldtAvId)
+    {
+        var avvik = await db.Avvik.AsNoTracking()
+            .Include(a => a.OpprettetAvBruker)
+            .Include(a => a.Dor).ThenInclude(d => d!.Prosjekt).ThenInclude(p => p!.Kunde)
+            .FirstOrDefaultAsync(a => a.Id == avvikId);
+        if (avvik?.Dor?.Prosjekt is not { } prosjekt)
+        {
+            return;
+        }
+
+        var (roller, brukere) = await ValgAsync(tenant.Id);
+        var aktive = await db.Brukere.AsNoTracking()
+            .Where(b => b.Aktiv && b.SlettetDato == null && b.Epost != "")
+            .ToListAsync();
+        var kandidater = prosjekt.ProsjektlederId is { } pl && aktive.FirstOrDefault(b => b.Id == pl) is { } leder
+            ? [leder]
+            : aktive.Where(b => b.Rolle == BrukerRolle.Admin).ToList();
+        var mottakere = kandidater
+            .Where(b => b.Id != meldtAvId)
+            .Where(b => EpostVarsler.Gjelder(EpostVarsler.AvvikNytt, b.Rolle, b.Id, roller, brukere))
+            .ToList();
+        if (mottakere.Count == 0)
+        {
+            return;
+        }
+
+        var dor = avvik.Dor!;
+        var dorTekst = string.Join(" · ", new[] { $"Dør {dor.Dornummer}", dor.Romnr is { Length: > 0 } r ? $"rom {r}" : null, dor.Etasje is { Length: > 0 } e ? $"{e}. etg." : null }.Where(s => s is not null));
+        var fakta = new List<(string, string)>
+        {
+            ("Prosjekt", E(prosjekt.Navn)),
+            ("Dør", E(dorTekst)),
+        };
+        if (prosjekt.Kunde is { } kunde)
+        {
+            fakta.Add(("Kunde", E(kunde.Navn)));
+        }
+
+        fakta.Add(("Meldt av", E(avvik.OpprettetAvBruker?.Navn ?? "Ukjent")));
+        fakta.Add(("Når", E(Dato(avvik.OpprettetDato))));
+        if (avvik.Pris is { } pris && pris > 0)
+        {
+            fakta.Add(("Pris for utbedring", $"{pris.ToString("#,##0", Nb)} kr eks. mva"));
+        }
+
+        var portal = await PortalAsync();
+        foreach (var b in mottakere)
+        {
+            var html = Lag(tenant, new Innhold
+            {
+                Farge = Rod,
+                Merke = "Nytt avvik",
+                Tittel = $"Avvik på dør {dor.Dornummer}",
+                IntroHtml = b.Id == prosjekt.ProsjektlederId
+                    ? $"Hei {E(Fornavn(b.Navn))}, det er meldt et avvik på prosjektet ditt."
+                    : $"Hei {E(Fornavn(b.Navn))}, det er meldt et avvik på et prosjekt som ikke har prosjektleder.",
+                Fakta = fakta,
+                Sitat = avvik.Beskrivelse,
+                KnappTekst = "Åpne døren",
+                KnappUrl = $"{portal}/dor/{dor.Id}",
+                Lenke2Tekst = "Åpne prosjektet",
+                Lenke2Url = $"{portal}/prosjekter/{prosjekt.Id}",
+                Tips = "Fra døren kan du sende avviket til kunden som tilbud på utbedring, med pris og signatur.",
+                Grunn = Grunn(tenant)
+            });
+            await epost.SendAsync(b.Epost, $"Nytt avvik: {prosjekt.Navn}, dør {dor.Dornummer}", html, fraOrganisasjonId: tenant.Id);
+        }
+    }
+
     // Kjøres jevnlig: tilbud som står som sendt, der oppfølgingsdagen er nådd.
     public async Task TilbudOppfolgingAsync(Tenant tenant)
     {
@@ -262,6 +335,10 @@ public class EpostVarselSender(IServiceScopeFactory scopeFactory, OrganisasjonKj
                 if (h.Nokkel == EpostVarsler.OrdreTildelt && h.BrukerId is { } brukerId)
                 {
                     await tjeneste.OrdreTildeltAsync(tenant, h.Id, brukerId);
+                }
+                else if (h.Nokkel == EpostVarsler.AvvikNytt)
+                {
+                    await tjeneste.AvvikNyttAsync(tenant, h.Id, h.BrukerId);
                 }
                 else if (h.Nokkel == EpostVarsler.ForesporselNy)
                 {

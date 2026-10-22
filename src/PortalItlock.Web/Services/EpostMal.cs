@@ -18,6 +18,7 @@ public static class EpostMal
     public static readonly Farge Gronn = new("#3C6E55", "#E3EEE6");
     public static readonly Farge Bla = new("#3B5A80", "#E3EAF3");
     public static readonly Farge Brun = new("#8A5A34", "#F4ECE2");
+    public static readonly Farge Rod = new("#A33A22", "#F8E5DF");
 
     public sealed class Innhold
     {

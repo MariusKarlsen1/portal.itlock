@@ -9,6 +9,7 @@ public static class EpostVarsler
     public const string OrdreTildelt = "ordre-tildelt";
     public const string ForesporselNy = "foresporsel-ny";
     public const string TilbudOppfolging = "tilbud-oppfolging";
+    public const string AvvikNytt = "avvik-nytt";
 
     public sealed record Definisjon(string Nokkel, string Navn, string Beskrivelse, BrukerRolle[] Kan, BrukerRolle[] Standard);
 
@@ -18,6 +19,9 @@ public static class EpostVarsler
             [BrukerRolle.Admin, BrukerRolle.Prosjektleder, BrukerRolle.Montor],
             [BrukerRolle.Prosjektleder, BrukerRolle.Montor]),
         new(ForesporselNy, "Ny forespørsel", "Når det kommer en forespørsel på e-post, fra kundeportalen eller driftsportalen",
+            [BrukerRolle.Admin, BrukerRolle.Prosjektleder],
+            [BrukerRolle.Admin, BrukerRolle.Prosjektleder]),
+        new(AvvikNytt, "Nytt avvik på mitt prosjekt", "Når noen melder avvik på en dør i et prosjekt der brukeren er prosjektleder",
             [BrukerRolle.Admin, BrukerRolle.Prosjektleder],
             [BrukerRolle.Admin, BrukerRolle.Prosjektleder]),
         new(TilbudOppfolging, "Følg opp tilbud", "Påminnelse et valgt antall dager etter at et tilbud er sendt",
