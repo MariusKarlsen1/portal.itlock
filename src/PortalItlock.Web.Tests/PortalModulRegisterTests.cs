@@ -63,7 +63,7 @@ public class PortalModulRegisterTests
     public void NyeKategorier_GirSammeModulerSomFor_UtenomDeBevisstEndrede(BrukerRolle rolle)
     {
         var gamle = GamleModulerFor(rolle);
-        var nye = PortalModulRegister.BladLenkerFor(rolle, new HashSet<string> { TilleggsModuler.Ce }).Select(l => l.Href).ToHashSet();
+        var nye = PortalModulRegister.BladLenkerFor(rolle, new HashSet<string> { TilleggsModuler.Ce, TilleggsModuler.Timer, TilleggsModuler.Okonomi }).Select(l => l.Href).ToHashSet();
 
         var mistet = gamle.Except(nye).Except(BevisstFjernet).OrderBy(h => h).ToList();
         var nyeEkstra = nye.Except(gamle).Except(BevisstLagtTil[rolle]).OrderBy(h => h).ToList();
@@ -153,5 +153,21 @@ public class PortalModulRegisterTests
                 Assert.True(lenke.Undermoduler is { Count: > 0 }, $"{lenke.Tittel} er en hub uten undermoduler.");
             }
         }
+    }
+
+    // Timer og fravær er en tilleggsmodul: uten den skal sidene ikke vises.
+    [Theory]
+    [InlineData(BrukerRolle.Montor)]
+    [InlineData(BrukerRolle.Prosjektleder)]
+    [InlineData(BrukerRolle.Admin)]
+    public void UtenTimerModul_VisesIkkeTimerFravarOgKalender(BrukerRolle rolle)
+    {
+        var uten = PortalModulRegister.BladLenkerFor(rolle, new HashSet<string>()).Select(l => l.Href).ToHashSet();
+        var med = PortalModulRegister.BladLenkerFor(rolle, new HashSet<string> { TilleggsModuler.Timer }).Select(l => l.Href).ToHashSet();
+
+        Assert.DoesNotContain("timeregistrering", uten);
+        Assert.DoesNotContain("fravar", uten);
+        Assert.DoesNotContain("kalender", uten);
+        Assert.Contains("fravar", med);
     }
 }

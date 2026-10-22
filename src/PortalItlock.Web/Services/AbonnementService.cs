@@ -71,14 +71,7 @@ public class AbonnementService(PlatformDbContext db, PlattformOppsettService opp
             await db.SaveChangesAsync();
         }
 
-        if (!await db.PrisPakker.AnyAsync())
-        {
-            db.PrisPakker.AddRange(
-                new PrisPakke { Nokkel = "start", Navn = "Start", Beskrivelse = "For de som vil komme i gang med prosjekter og tilbud", Innhold = "Prosjekter og tilbud\nKunderegister og kundekort\nBefaring og dørpakker", Rekkefolge = 1 },
-                new PrisPakke { Nokkel = "pro", Navn = "Pro", Beskrivelse = "For firma med montører i felt", Innhold = "Alt i Start\nArbeidsordre og Min dag\nTimer, fravær og kalender", Rekkefolge = 2 },
-                new PrisPakke { Nokkel = "komplett", Navn = "Komplett", Beskrivelse = "Hele livsløpet, fra tilbud til service", Innhold = "Alt i Pro\nService, serviceavtaler og FDV\nProsjektøkonomi og etterkalkyle\nKundeportal og driftsportal", Rekkefolge = 3 });
-            await db.SaveChangesAsync();
-        }
+        await FjernPakkerAsync();
 
         var nye = standard.Where(p => !finnes.Contains(p.Nokkel)).ToList();
         if (nye.Count > 0)
@@ -138,6 +131,42 @@ public class AbonnementService(PlatformDbContext db, PlattformOppsettService opp
             db.PrisProdukter.Remove(grunnpakke);
             await db.SaveChangesAsync();
         }
+    }
+
+    // Pakkene (Start, Pro, Komplett) er fjernet: alle har Standard, og
+    // tilleggsmoduler kjøpes i tillegg. En kunde som hadde en egen pakkepris,
+    // får den som avtalepris, så ingen får ny pris når pakkene forsvinner.
+    private async Task FjernPakkerAsync()
+    {
+        var pakker = await db.PrisPakker.ToListAsync();
+        var pakkePriser = await db.PakkePriser.ToListAsync();
+        var aboer = await db.TenantAbonnementer.Where(a => a.Pakke != null).ToListAsync();
+        if (pakker.Count == 0 && pakkePriser.Count == 0 && aboer.Count == 0)
+        {
+            return;
+        }
+
+        var avtaler = await db.TenantAvtalepriser.ToListAsync();
+        var liste = await db.PrisProdukter.AsNoTracking().ToDictionaryAsync(p => p.Nokkel, p => p.Kr);
+        foreach (var abo in aboer)
+        {
+            foreach (var pp in pakkePriser.Where(p => p.PakkeNokkel == abo.Pakke))
+            {
+                var harAvtale = avtaler.Any(a => a.TenantId == abo.TenantId && a.Nokkel == pp.ProduktNokkel);
+                if (!harAvtale && liste.TryGetValue(pp.ProduktNokkel, out var listepris) && listepris != pp.Kr)
+                {
+                    var ny = new TenantAvtalepris { TenantId = abo.TenantId, Nokkel = pp.ProduktNokkel, Kr = pp.Kr };
+                    db.TenantAvtalepriser.Add(ny);
+                    avtaler.Add(ny);
+                }
+            }
+
+            abo.Pakke = null;
+        }
+
+        db.PakkePriser.RemoveRange(pakkePriser);
+        db.PrisPakker.RemoveRange(pakker);
+        await db.SaveChangesAsync();
     }
 
     public async Task<List<PrisProdukt>> PrislisteAsync()

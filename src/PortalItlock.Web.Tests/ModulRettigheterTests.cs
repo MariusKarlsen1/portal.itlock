@@ -142,7 +142,7 @@ public class ModulRettigheterTests
     [Fact]
     public void Montor_HarFullTilgangBareTilEgneVerktoyOgEgneTimer()
     {
-        var medFullTilgang = PortalModulRegister.BladLenkerFor(BrukerRolle.Montor)
+        var medFullTilgang = PortalModulRegister.BladLenkerFor(BrukerRolle.Montor, new HashSet<string> { TilleggsModuler.Timer })
             .Select(l => l.Href)
             .Where(h => ModulRettigheter.KanRedigere(BrukerRolle.Montor, h))
             .OrderBy(h => h)

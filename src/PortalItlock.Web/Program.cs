@@ -434,10 +434,14 @@ using (var seedScope = app.Services.CreateScope())
             PortalItlock.Web.Services.TenantSeedHelper.SeedTestbrukere(seedDb);
             PortalItlock.Web.Services.LisensOmlegging.Kjor(platformDb, seedDb, tenant);
             // CE ble tilleggsmodul 2026-10-21: organisasjoner som fantes fra før, beholder den.
-            if (!platformDb.TenantModuler.Any(m => m.TenantId == tenant.Id && m.Modul == PortalItlock.Web.Models.TilleggsModuler.Ce))
+            // Timer og fravær og Prosjektøkonomi ble tilleggsmoduler 2026-10-22, på samme måte.
+            foreach (var modul in new[] { PortalItlock.Web.Models.TilleggsModuler.Ce, PortalItlock.Web.Models.TilleggsModuler.Timer, PortalItlock.Web.Models.TilleggsModuler.Okonomi })
             {
-                platformDb.TenantModuler.Add(new PortalItlock.Web.Models.TenantModul { TenantId = tenant.Id, Modul = PortalItlock.Web.Models.TilleggsModuler.Ce, Aktiv = true, AktivertDato = DateTime.Now });
-                platformDb.SaveChanges();
+                if (!platformDb.TenantModuler.Any(m => m.TenantId == tenant.Id && m.Modul == modul))
+                {
+                    platformDb.TenantModuler.Add(new PortalItlock.Web.Models.TenantModul { TenantId = tenant.Id, Modul = modul, Aktiv = true, AktivertDato = DateTime.Now });
+                    platformDb.SaveChanges();
+                }
             }
 
             if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))

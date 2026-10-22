@@ -20,11 +20,15 @@ public static class TilleggsModuler
 {
     public const string Lager = "lager";
     public const string Ce = "ce";
+    public const string Timer = "timer";
+    public const string Okonomi = "prosjektokonomi";
 
     public sealed record Info(string Nokkel, string Navn, string Beskrivelse);
 
     public static readonly Info[] Alle =
     [
+        new(Timer, "Timer og fravær", "Timeregistrering, fravær, kalender og planlegging, og godkjenning av timer."),
+        new(Okonomi, "Prosjektøkonomi", "Budsjett, etterkalkyle og lønnsomhet per prosjekt, med varsel før budsjettet er brukt opp."),
         new(Lager, "Lagerstyring", "Lagre (hovedlager, biler og prosjektlager), beholdning, lagerbevegelser, lagerverdi og varetelling."),
         new(Ce, "CE og risikovurdering", "CE-sertifisering av automatiske dører, risikovurdering, samsvarserklæring og varsel før CE går ut."),
     ];

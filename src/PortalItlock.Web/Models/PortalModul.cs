@@ -71,8 +71,8 @@ public static class PortalModulRegister
 
     private static readonly List<Lenke> TimerFravarUndermoduler =
     [
-        new Lenke("Fravær", "Søk om ferie eller meld fravær.", "fravar", "sun"),
-        new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock"),
+        new Lenke("Fravær", "Søk om ferie eller meld fravær.", "fravar", "sun", KreverModul: TilleggsModuler.Timer),
+        new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock", KreverModul: TilleggsModuler.Timer),
     ];
 
     private static readonly List<Lenke> ProsjekteringUndermoduler =
@@ -91,8 +91,8 @@ public static class PortalModulRegister
 
     private static readonly List<Lenke> DriftUndermoduler =
     [
-        new Lenke("Kalender", "Se planlagte arbeidsordre for alle montører.", "kalender", "calendar"),
-        new Lenke("Fravær", "Søknader, godkjenning og fraværskalender per person.", "fravar", "sun"),
+        new Lenke("Kalender", "Se planlagte arbeidsordre for alle montører.", "kalender", "calendar", KreverModul: TilleggsModuler.Timer),
+        new Lenke("Fravær", "Søknader, godkjenning og fraværskalender per person.", "fravar", "sun", KreverModul: TilleggsModuler.Timer),
         new Lenke("Forespørsler", "E-poster sendt til post@itlock.no.", "foresporsler", "mail"),
     ];
 
@@ -111,7 +111,7 @@ public static class PortalModulRegister
         new Lenke("Sjekkliste for servicerunder", "Punktene som automatisk legges til hver servicerunde.", "service-sjekklistemal", "clock"),
         new Lenke("Tilvalgsmaler", "Ferdige maler med alternativer, bilder og priser til gjenbruk.", "tilvalgmaler", "receipt"),
         new Lenke("Forsider", "Lag forside-/forbeholdstekster til bruk på tilbud.", "forsider", "folder"),
-        new Lenke("Godkjenninger", "Godkjenn innsendte timer og fraværssøknader, se sammendrag og eksporter til lønn.", "timegodkjenning", "check-circle"),
+        new Lenke("Godkjenninger", "Godkjenn innsendte timer og fraværssøknader, se sammendrag og eksporter til lønn.", "timegodkjenning", "check-circle", KreverModul: TilleggsModuler.Timer),
         new Lenke("CE-sertifisering", "Sett CE-kategori og standarddokument på beslagstyper, og grenseverdier for mål.", "ce-oppsett", "check-circle"),
         // Hjemmesidetekster, Nyheter og Notater er tatt ut av menyen/portalen
         // på ønske 2026-10-13. Hjemmesidetekster redigerte tittel/ingress og
@@ -164,7 +164,7 @@ public static class PortalModulRegister
                     new Lenke("Befaring", "Befaringsliste, utskiftning av lås og låskasse, og ABC-kalkulator", "befaringsmodul", "eye", BefaringUndermoduler),
                     new Lenke("Guider", "Kobling, dørmiljø og oppsett adgangskontroll", "guidermodul", "tool", GuiderUndermoduler),
                     new Lenke("Prosjekt", "Prosjekter og arbeidsordre", "prosjektmodul", "folder", ProsjektMontorUndermoduler),
-                    new Lenke("Timer og fravær", "Fravær og timeregistrering", "timerfravarmodul", "clock", TimerFravarUndermoduler),
+                    new Lenke("Timer og fravær", "Fravær og timeregistrering", "timerfravarmodul", "clock", TimerFravarUndermoduler, KreverModul: TilleggsModuler.Timer),
                 ]),
                 new LenkeGruppe("Kart og kalender", [
                     new Lenke("Min dag", "Dagens jobber, adresse og varer å pakke, samlet", "min-dag", "calendar"),
@@ -173,7 +173,7 @@ public static class PortalModulRegister
                     // ArbeidsordreKartvisning), så det var to veier til det
                     // samme. Siden ligger fortsatt under Drift.
                     // new Lenke("Kart", "Se dagens jobber geografisk", "kart", "map"),
-                    new Lenke("Kalender", "Se planlagte arbeidsordre", "kalender", "calendar"),
+                    new Lenke("Kalender", "Se planlagte arbeidsordre", "kalender", "calendar", KreverModul: TilleggsModuler.Timer),
                 ]),
             ]),
         new Rolle(
@@ -190,7 +190,7 @@ public static class PortalModulRegister
                     new Lenke("Service modul", "Serviceavtaler, serviceoppdrag og tilbud service samlet på ett sted", "servicemodul", "clock", ServiceUndermoduler),
                     // Prosjektlederne godkjenner timene og fraværssøknadene til
                     // montørene sine, og henter rapporten derfra.
-                    new Lenke("Godkjenninger", "Alle innsendte timer og fraværssøknader til godkjenning, med sammendrag og rapport", "timegodkjenning", "check-circle"),
+                    new Lenke("Godkjenninger", "Alle innsendte timer og fraværssøknader til godkjenning, med sammendrag og rapport", "timegodkjenning", "check-circle", KreverModul: TilleggsModuler.Timer),
                 ]),
             ]),
         new Rolle(
@@ -227,11 +227,11 @@ public static class PortalModulRegister
                     new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tilbud", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield", KreverModul: TilleggsModuler.Ce),
-                    new Lenke("Prosjektøkonomi", "Økonomien i pågående prosjekter, og etterkalkyle når de er overlevert.", "prosjektokonomi", "trend-up", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Prosjektøkonomi", "Økonomien i pågående prosjekter, og etterkalkyle når de er overlevert.", "prosjektokonomi", "trend-up", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Okonomi),
                     // Begge ligger i venstremenyen og vises derfor ikke som
                     // egne kort i kategorien.
-                    new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock", null, ModulTilgang.Alle, KunIMeny: true),
-                    new Lenke("Fravær", "Søk om ferie eller meld fravær.", "fravar", "sun", null, ModulTilgang.Alle, KunIMeny: true),
+                    new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock", null, ModulTilgang.Alle, KunIMeny: true, KreverModul: TilleggsModuler.Timer),
+                    new Lenke("Fravær", "Søk om ferie eller meld fravær.", "fravar", "sun", null, ModulTilgang.Alle, KunIMeny: true, KreverModul: TilleggsModuler.Timer),
                 ]),
             ]),
 
@@ -269,8 +269,8 @@ public static class PortalModulRegister
             "Kalender og godkjenning av timer og fravær",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Kalender", "Ressursplanlegging og oversikt", "kalender", "calendar"),
-                    new Lenke("Godkjenninger", "Godkjenning av timer og søknader", "timegodkjenning", "check-circle", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Kalender", "Ressursplanlegging og oversikt", "kalender", "calendar", KreverModul: TilleggsModuler.Timer),
+                    new Lenke("Godkjenninger", "Godkjenning av timer og søknader", "timegodkjenning", "check-circle", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Timer),
                 ]),
             ]),
 
