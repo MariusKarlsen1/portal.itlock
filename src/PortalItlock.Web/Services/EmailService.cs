@@ -63,9 +63,8 @@ public class EmailService(HttpClient http, PlattformOppsettService oppsett, ITen
     public async Task<(string Fra, string? SvarTil)> AvsenderAsync(int? organisasjonId = null)
     {
         var standard = await oppsett.StandardAvsenderAsync();
-        var inn = await oppsett.HentAsync();
         var tenantId = organisasjonId ?? tenantContext.Current?.Id;
-        if (!inn.EpostPerOrganisasjon || tenantId is null)
+        if (tenantId is null)
         {
             return (standard, null);
         }

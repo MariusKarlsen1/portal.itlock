@@ -61,7 +61,7 @@ public class OrganisasjonStatusService(PlatformDbContext db, AbonnementService a
             var backupTekst = sisteOk is null ? "Ingen kopi ennå" : $"Siste {sisteOk.Tidspunkt:dd.MM HH:mm}";
 
             var epost = string.IsNullOrWhiteSpace(i?.EpostNavn) ? Tilstand.Mangler
-                : inn.EpostPerOrganisasjon ? Tilstand.Ok : Tilstand.Mangler;
+                : Tilstand.Ok;
 
             var egneFakturaer = fakturaer.Where(f => f.TenantId == t.Id).ToList();
             var forfalt = egneFakturaer.Any(f => f.Status == PlattformFakturaStatus.Fakturert && f.Forfall is { } ff && ff.Date < DateTime.Today);

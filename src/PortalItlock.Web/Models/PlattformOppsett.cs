@@ -30,8 +30,8 @@ public class PlattformInnstillinger
     // E-post via Resend.
     public string? ResendApiKeyKryptert { get; set; }
     public string? StandardAvsender { get; set; }
-    // Sender fra organisasjonens egen adresse på full-kontroll.no. Slås på
-    // når domenet er verifisert hos Resend.
+    // Ikke i bruk lenger: organisasjoner med egen adresse sender alltid fra
+    // den (full-kontroll.no er godkjent hos Resend). Beholdt i databasen.
     public bool EpostPerOrganisasjon { get; set; }
 
     // Volumrabatt på lisenser, og rabatt ved årlig forskudd.
