@@ -23,8 +23,12 @@ public class TenantInnstillinger
     public string? SvarTilEpost { get; set; }
 
     // Organisasjonens egen Tripletex: ansattnøkkelen (employee token) fra
-    // firmaet, kryptert. Consumer-tokenet er plattformens (PlattformInnstillinger).
+    // firmaet, kryptert, én for produksjon og én for Tripletex sitt testmiljø.
+    // TripletexBrukTest velger hvilken som brukes. Consumer-tokenet for
+    // miljøet er plattformens (PlattformInnstillinger).
     public string? TripletexEmployeeTokenKryptert { get; set; }
+    public string? TripletexTestEmployeeTokenKryptert { get; set; }
+    public bool TripletexBrukTest { get; set; }
     public string? TripletexFirma { get; set; }
     public DateTime? TripletexTestet { get; set; }
 

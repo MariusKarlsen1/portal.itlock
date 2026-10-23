@@ -20,10 +20,14 @@ public class PlattformInnstillinger
     public string? Kontaktperson { get; set; }
     public string PortalAdresse { get; set; } = "https://full-kontroll.no";
 
-    // Tripletex for Full Kontroll (og consumer-tokenet som alle kunder bruker).
+    // Tripletex for Full Kontroll: consumer-tokenet (som alle kunder bruker) og
+    // din egen ansattnøkkel, ett sett for produksjon og ett for testmiljøet.
+    // TripletexTest = fakturaene til kundene lages i testmiljøet.
     public string? TripletexConsumerTokenKryptert { get; set; }
     public string? TripletexEmployeeTokenKryptert { get; set; }
     public bool TripletexTest { get; set; }
+    public string? TripletexTestConsumerTokenKryptert { get; set; }
+    public string? TripletexTestEmployeeTokenKryptert { get; set; }
     public string? TripletexFirma { get; set; }
     public DateTime? TripletexTestet { get; set; }
 

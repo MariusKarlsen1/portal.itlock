@@ -280,6 +280,12 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.Property<bool>("TripletexTest")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("TripletexTestConsumerTokenKryptert")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TripletexTestEmployeeTokenKryptert")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("TripletexTestet")
                         .HasColumnType("TEXT");
 
@@ -698,10 +704,16 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.Property<int>("TenantId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("TripletexBrukTest")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("TripletexEmployeeTokenKryptert")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TripletexFirma")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TripletexTestEmployeeTokenKryptert")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("TripletexTestet")

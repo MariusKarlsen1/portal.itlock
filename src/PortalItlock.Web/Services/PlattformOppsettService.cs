@@ -119,36 +119,42 @@ public class PlattformOppsettService(IServiceScopeFactory scopeFactory, IMemoryC
         return inn;
     }
 
-    public TripletexNokler? PlattformTripletex() => TripletexFra(Hent());
+    // Tripletex har to adskilte miljøer: testmiljøet og ekte Tripletex
+    // (produksjon). Hvert miljø har sitt eget consumer token og sine egne
+    // ansattnøkler. Nøklene i serveroppsettet (Railway) gjelder miljøet
+    // Tripletex:BaseUrl peker på (testmiljøet når den mangler), og brukes bare
+    // når adminportalen ikke har noen for det miljøet.
+    public TripletexNokler? PlattformTripletex() => TripletexFra(Hent(), Hent().TripletexTest);
 
-    public (string? Consumer, bool Test) ConsumerToken()
-    {
-        var inn = Hent();
-        var consumer = hemmelig.Dekrypter(inn.TripletexConsumerTokenKryptert);
-        if (!string.IsNullOrWhiteSpace(consumer))
-        {
-            return (consumer, inn.TripletexTest);
-        }
+    public TripletexNokler? PlattformTripletex(bool test) => TripletexFra(Hent(), test);
 
-        var cfg = config["Tripletex:ConsumerToken"];
-        return (string.IsNullOrWhiteSpace(cfg) ? null : cfg, CfgTest);
-    }
+    public (string? Consumer, bool Test) ConsumerToken() => (ConsumerFor(Hent(), Hent().TripletexTest), Hent().TripletexTest);
+
+    public string? ConsumerToken(bool test) => ConsumerFor(Hent(), test);
 
     private bool CfgTest => (config["Tripletex:BaseUrl"] ?? "api-test").Contains("api-test", StringComparison.OrdinalIgnoreCase);
 
-    private TripletexNokler? TripletexFra(PlattformInnstillinger inn)
+    private string? CfgFor(string nokkel, bool test) =>
+        CfgTest == test && config[$"Tripletex:{nokkel}"] is { Length: > 0 } verdi ? verdi : null;
+
+    private string? ConsumerFor(PlattformInnstillinger inn, bool test) =>
+        hemmelig.Dekrypter(test ? inn.TripletexTestConsumerTokenKryptert : inn.TripletexConsumerTokenKryptert) is { Length: > 0 } egen
+            ? egen
+            : CfgFor("ConsumerToken", test);
+
+    private TripletexNokler? TripletexFra(PlattformInnstillinger inn, bool test)
     {
-        var consumer = hemmelig.Dekrypter(inn.TripletexConsumerTokenKryptert);
-        var employee = hemmelig.Dekrypter(inn.TripletexEmployeeTokenKryptert);
+        var consumer = hemmelig.Dekrypter(test ? inn.TripletexTestConsumerTokenKryptert : inn.TripletexConsumerTokenKryptert);
+        var employee = hemmelig.Dekrypter(test ? inn.TripletexTestEmployeeTokenKryptert : inn.TripletexEmployeeTokenKryptert);
         if (!string.IsNullOrWhiteSpace(consumer) && !string.IsNullOrWhiteSpace(employee))
         {
-            return new TripletexNokler(consumer, employee, inn.TripletexTest, false);
+            return new TripletexNokler(consumer, employee, test, false);
         }
 
-        var cfgConsumer = config["Tripletex:ConsumerToken"];
-        var cfgEmployee = config["Tripletex:EmployeeToken"];
+        var cfgConsumer = string.IsNullOrWhiteSpace(consumer) ? CfgFor("ConsumerToken", test) : consumer;
+        var cfgEmployee = string.IsNullOrWhiteSpace(employee) ? CfgFor("EmployeeToken", test) : employee;
         return !string.IsNullOrWhiteSpace(cfgConsumer) && !string.IsNullOrWhiteSpace(cfgEmployee)
-            ? new TripletexNokler(cfgConsumer, cfgEmployee, CfgTest, true)
+            ? new TripletexNokler(cfgConsumer, cfgEmployee, test, true)
             : null;
     }
 
@@ -172,23 +178,13 @@ public class PlattformOppsettService(IServiceScopeFactory scopeFactory, IMemoryC
     public sealed record TripletexNokler(string ConsumerToken, string EmployeeToken, bool Test, bool FraServeroppsett);
 
     // Tripletex for Full Kontroll, der fakturaene til organisasjonene lages.
-    public async Task<TripletexNokler?> PlattformTripletexAsync() => TripletexFra(await HentAsync());
-
-    // Consumer-tokenet identifiserer Full Kontroll hos Tripletex, og brukes
-    // for alle kunder sammen med kundens egen ansattnøkkel.
-    public async Task<(string? Consumer, bool Test)> ConsumerTokenAsync()
+    public async Task<TripletexNokler?> PlattformTripletexAsync()
     {
         var inn = await HentAsync();
-        var consumer = hemmelig.Dekrypter(inn.TripletexConsumerTokenKryptert);
-        if (!string.IsNullOrWhiteSpace(consumer))
-        {
-            return (consumer, inn.TripletexTest);
-        }
-
-        var cfg = config["Tripletex:ConsumerToken"];
-        var test = (config["Tripletex:BaseUrl"] ?? "api-test").Contains("api-test", StringComparison.OrdinalIgnoreCase);
-        return (string.IsNullOrWhiteSpace(cfg) ? null : cfg, test);
+        return TripletexFra(inn, inn.TripletexTest);
     }
+
+    public async Task<TripletexNokler?> PlattformTripletexAsync(bool test) => TripletexFra(await HentAsync(), test);
 
     public async Task<string?> ResendNokkelAsync()
     {

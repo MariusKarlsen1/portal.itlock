@@ -433,6 +433,12 @@ using (var seedScope = app.Services.CreateScope())
             PortalItlock.Web.Services.TenantSeedHelper.SeedNyheter(seedDb);
             PortalItlock.Web.Services.TenantSeedHelper.SeedTestbrukere(seedDb);
             PortalItlock.Web.Services.LisensOmlegging.Kjor(platformDb, seedDb, tenant);
+            // Alle organisasjoner skal ha e-postadresse og innstillinger fra start, ikke
+            // først når noen åpner siden deres i adminportalen. Innkommende e-post
+            // finner organisasjonen ut fra adressen.
+            PortalItlock.Web.Services.OrganisasjonOppsett.SikreInnstillinger(platformDb, tenant);
+            platformDb.SaveChanges();
+
             // CE ble tilleggsmodul 2026-10-21: organisasjoner som fantes fra før, beholder den.
             // Timer og fravær og Prosjektøkonomi ble tilleggsmoduler 2026-10-22, på samme måte.
             foreach (var modul in new[] { PortalItlock.Web.Models.TilleggsModuler.Ce, PortalItlock.Web.Models.TilleggsModuler.Timer, PortalItlock.Web.Models.TilleggsModuler.Okonomi })
@@ -2011,6 +2017,7 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
     }
 
     var tolket = ResendInboundParser.Tolk(body);
+    logger.LogInformation("Innkommende e-post mottatt til {Mottakere}", string.Join(", ", ResendInboundParser.HentMottakere(body)));
     var innhold = tolket.Innhold;
     string? innholdHtml = null;
     var vedlegg = new List<ResendReceivingClient.VedleggData>();
@@ -2087,6 +2094,7 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
     }
 
     await db.SaveChangesAsync();
+    logger.LogInformation("Innkommende e-post til {Mottakere} lagret som forespørsel {Id} hos {Organisasjon}", string.Join(", ", ResendInboundParser.HentMottakere(body)), foresporsel.Id, egenDb is null ? "standard-organisasjonen" : "organisasjonen med adressen");
     if (egenDb is not null)
     {
         await egenDb.DisposeAsync();

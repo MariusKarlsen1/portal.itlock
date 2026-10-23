@@ -51,7 +51,8 @@ public class OrganisasjonStatusService(PlatformDbContext db, AbonnementService a
             innstillinger.TryGetValue(t.Id, out var i);
             aboer.TryGetValue(t.Id, out var a);
 
-            var tripletex = string.IsNullOrWhiteSpace(i?.TripletexEmployeeTokenKryptert) ? Tilstand.Mangler : Tilstand.Ok;
+            var txNokkel = i?.TripletexBrukTest == true ? i.TripletexTestEmployeeTokenKryptert : i?.TripletexEmployeeTokenKryptert;
+            var tripletex = string.IsNullOrWhiteSpace(txNokkel) ? Tilstand.Mangler : Tilstand.Ok;
 
             var egne = backuper.Where(b => b.TenantId == t.Id).OrderByDescending(b => b.Tidspunkt).ToList();
             var sisteOk = egne.FirstOrDefault(b => b.Feil == null);

@@ -22,10 +22,15 @@ public class TripletexNokkelOppslag(
 
         using var scope = scopeFactory.CreateScope();
         var platformDb = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
-        var kryptert = platformDb.TenantInnstillinger.AsNoTracking()
-            .Where(i => i.TenantId == tenant.Id).Select(i => i.TripletexEmployeeTokenKryptert).FirstOrDefault();
-        var employee = hemmelig.Dekrypter(kryptert);
-        var (consumer, test) = oppsett.ConsumerToken();
+        // Organisasjonen velger miljø (test eller produksjon), og har en
+        // ansattnøkkel for hvert. Consumer-tokenet for miljøet er plattformens.
+        var inn = platformDb.TenantInnstillinger.AsNoTracking()
+            .Where(i => i.TenantId == tenant.Id)
+            .Select(i => new { i.TripletexBrukTest, i.TripletexEmployeeTokenKryptert, i.TripletexTestEmployeeTokenKryptert })
+            .FirstOrDefault();
+        var test = inn?.TripletexBrukTest ?? oppsett.Hent().TripletexTest;
+        var employee = hemmelig.Dekrypter(test ? inn?.TripletexTestEmployeeTokenKryptert : inn?.TripletexEmployeeTokenKryptert);
+        var consumer = oppsett.ConsumerToken(test);
         if (!string.IsNullOrWhiteSpace(employee) && !string.IsNullOrWhiteSpace(consumer))
         {
             return new TripletexService.Nokler(consumer, employee, test);
@@ -33,7 +38,7 @@ public class TripletexNokkelOppslag(
 
         // itlock brukte nøklene under Innstillinger før den fikk egen nøkkel.
         // Det fortsetter til egen ansattnøkkel er lagt inn under Oppsett → Tripletex.
-        return tenant.ErStandard && oppsett.PlattformTripletex() is { } n
+        return tenant.ErStandard && oppsett.PlattformTripletex(test) is { } n
             ? new TripletexService.Nokler(n.ConsumerToken, n.EmployeeToken, n.Test)
             : null;
     }

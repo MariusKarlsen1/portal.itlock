@@ -38,7 +38,7 @@ public static class ResendInboundParser
         }
     }
 
-    // Alle mottakeradresser (to og cc), som rene adresser med små bokstaver.
+    // Alle mottakeradresser (to, cc, bcc og received_for), som rene adresser med små bokstaver.
     // Brukes til å finne hvilken organisasjon e-posten skal til.
     public static List<string> HentMottakere(string rawJson)
     {
@@ -48,7 +48,9 @@ public static class ResendInboundParser
             using var doc = JsonDocument.Parse(rawJson);
             var root = doc.RootElement;
             var data = root.TryGetProperty("data", out var d) ? d : root;
-            foreach (var felt in new[] { "to", "cc" })
+            // received_for er den faktiske mottakeren, også når adressen sto som
+            // kopi eller blindkopi.
+            foreach (var felt in new[] { "to", "cc", "bcc", "received_for" })
             {
                 if (!data.TryGetProperty(felt, out var verdi))
                 {
