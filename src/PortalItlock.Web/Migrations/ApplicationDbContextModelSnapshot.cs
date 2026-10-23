@@ -332,6 +332,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("ComponentId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("FraLagerId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal>("Kostpris")
                         .HasColumnType("TEXT");
 

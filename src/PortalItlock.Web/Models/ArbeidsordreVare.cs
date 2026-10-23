@@ -22,4 +22,8 @@ public class ArbeidsordreVare
     public DateTime? PlukketDato { get; set; }
     public int? PlukketAvBrukerId { get; set; }
     public Bruker? PlukketAvBruker { get; set; }
+
+    // Lageret varen ble tatt fra (montørens bil). Da er den allerede ført som
+    // forbruk på prosjektet, og endret antall eller fjerning justerer lageret.
+    public int? FraLagerId { get; set; }
 }

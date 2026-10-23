@@ -167,12 +167,12 @@ public class PlukkService(ApplicationDbContext db, LagerService lager)
     // Montøren registrerer at varer fra bilen er brukt. Er det valgt en
     // arbeidsordre som ikke er ferdig, legges varen også på arbeidsordren
     // (så den blir fakturert).
-    public async Task BruktAsync(int componentId, int bilLagerId, int antall, int? prosjektId, int? arbeidsordreId,
+    public async Task<ArbeidsordreVare?> BruktAsync(int componentId, int bilLagerId, int antall, int? prosjektId, int? arbeidsordreId,
         string? notat, int? brukerId, string? brukerNavn)
     {
         if (antall <= 0)
         {
-            return;
+            return null;
         }
 
         var vare = await db.Components.FirstAsync(c => c.Id == componentId);
@@ -201,25 +201,54 @@ public class PlukkService(ApplicationDbContext db, LagerService lager)
         await lager.RegistrerAsync(componentId, bilLagerId, -antall, LagerBevegelseType.Forbruk, tekst, brukerId, brukerNavn,
             prosjektId: prosjektId, arbeidsordreId: arbeidsordreId);
 
+        ArbeidsordreVare? aoVare = null;
         if (ao is not null && !FerdigeArbeidsordre.Contains(ao.Status))
         {
-            db.ArbeidsordreVarer.Add(new ArbeidsordreVare
+            aoVare = new ArbeidsordreVare
             {
                 ArbeidsordreId = ao.Id,
                 ComponentId = componentId,
                 Navn = vare.Navn,
                 Antall = antall,
                 Kostpris = LagerService.KostFor(vare),
-                Utpris = vare.PrisVeiledende ?? 0m,
+                Utpris = vare.PrisVeiledende ?? vare.PrisNetto ?? 0m,
                 LagtTilAvBrukerId = brukerId,
                 LagtTilDato = DateTime.Now,
                 Plukket = true,
                 PlukketDato = DateTime.Now,
-                PlukketAvBrukerId = brukerId
-            });
+                PlukketAvBrukerId = brukerId,
+                FraLagerId = bilLagerId
+            };
+            db.ArbeidsordreVarer.Add(aoVare);
         }
 
         await db.SaveChangesAsync();
+        return aoVare;
+    }
+
+    // Antallet på en vare som er tatt fra bilen, er endret på arbeidsordren
+    // (eller varen er fjernet: tilAntall = 0). Forskjellen føres som forbruk
+    // på samme lager og prosjekt, så bilen og prosjektets varekost stemmer.
+    public async Task EndreBruktAsync(int arbeidsordreVareId, int fraAntall, int tilAntall, int? brukerId, string? brukerNavn)
+    {
+        var endring = tilAntall - fraAntall;
+        if (endring == 0)
+        {
+            return;
+        }
+
+        var v = await db.ArbeidsordreVarer.Include(x => x.Arbeidsordre).FirstOrDefaultAsync(x => x.Id == arbeidsordreVareId);
+        if (v is not { FraLagerId: { } lagerId, ComponentId: { } componentId })
+        {
+            return;
+        }
+
+        var lagerNavn = (await db.Lagre.AsNoTracking().FirstOrDefaultAsync(l => l.Id == lagerId))?.Navn ?? "lageret";
+        var tekst = endring > 0
+            ? $"Brukt {endring} til på {v.Arbeidsordre?.Tittel}"
+            : $"Lagt tilbake i {lagerNavn} fra {v.Arbeidsordre?.Tittel}";
+        await lager.RegistrerAsync(componentId, lagerId, -endring, LagerBevegelseType.Forbruk, tekst, brukerId, brukerNavn,
+            prosjektId: v.Arbeidsordre?.ProsjektId, arbeidsordreId: v.ArbeidsordreId);
     }
 
     // Retur fra bil/prosjektlager til et annet lager (normalt hovedlageret).

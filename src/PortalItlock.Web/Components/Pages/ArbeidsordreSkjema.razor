@@ -18,6 +18,8 @@
 @inject TripletexSyncService TripletexSync
 @inject TripletexService Tripletex
 @inject TilleggsmodulService Tilleggsmoduler
+@inject PlukkService PlukkSvc
+@inject LagerService LagerSvc
 
 <PageTitle>@(_ordre?.Tittel ?? "Arbeidsordre")</PageTitle>
 
@@ -255,6 +257,7 @@ else if (_ordre is not null)
                     <p class="section-hint">Bruk denne dersom det beskrevne beslaget ikke passet, eller noe ekstra måtte brukes i felt - prosjektleder ser disse varene her for å ta dem med i fakturering.</p>
 
                     <div class="component-search">
+                        @BilHint()
                         <label>
                             Søk i komponentregisteret
                             <input @bind="_vareSok" @bind:event="oninput" @bind:after="SokVarer" placeholder="Navn eller artikkelnr..." />
@@ -267,7 +270,7 @@ else if (_ordre is not null)
                                     <li>
                                         <button type="button" class="search-result" @onclick="@(() => LeggTilVare(c))">
                                             <span class="search-result-name">@c.Navn</span>
-                                            <span class="search-result-meta">@c.Leverandor</span>
+                                            <span class="search-result-meta">@c.Leverandor</span>@if (IBilen(c) > 0) {<span class="ao-ibil">I bilen: @IBilen(c)</span>}
                                         </button>
                                     </li>
                                 }
@@ -294,7 +297,7 @@ else if (_ordre is not null)
                                 @foreach (var v in tilbudByttetVarer)
                                 {
                                     <tr @key="v.Id">
-                                        <td>@v.Navn</td>
+                                        <td>@v.Navn@if (v.FraLagerId is not null) {<span class="ao-frabil">fra bilen</span>}</td>
                                         <td><input type="number" min="1" class="antall-input" @bind="v.Antall" @bind:after="@(() => LagreVare(v))" /></td>
                                         <td>@(v.LagtTilAvBruker?.Navn ?? "Ukjent") @(v.LagtTilDato.HasValue ? $"- {v.LagtTilDato.Value:dd.MM.yyyy HH:mm}" : "")</td>
                                         <td><button type="button" class="remove-button" @onclick="@(() => FjernVare(v))">Fjern</button></td>
@@ -320,6 +323,7 @@ else if (_ordre is not null)
             @if (!_erMobilvisning)
             {
                 <div class="component-search">
+                    @BilHint()
                     <label>
                         Søk i komponentregisteret
                         <input @bind="_vareSok" @bind:event="oninput" @bind:after="SokVarer" placeholder="Navn eller artikkelnr..." />
@@ -332,7 +336,7 @@ else if (_ordre is not null)
                                 <li>
                                     <button type="button" class="search-result" @onclick="@(() => LeggTilVare(c))">
                                         <span class="search-result-name">@c.Navn</span>
-                                        <span class="search-result-meta">@c.Leverandor</span>
+                                        <span class="search-result-meta">@c.Leverandor</span>@if (IBilen(c) > 0) {<span class="ao-ibil">I bilen: @IBilen(c)</span>}
                                     </button>
                                 </li>
                             }
@@ -406,6 +410,7 @@ else if (_ordre is not null)
                     @if (_erMobilvisning)
                     {
                         <div class="component-search">
+                            @BilHint()
                             <label>
                                 Søk i komponentregisteret
                                 <input @bind="_vareSok" @bind:event="oninput" @bind:after="SokVarer" placeholder="Navn eller artikkelnr..." />
@@ -418,7 +423,7 @@ else if (_ordre is not null)
                                         <li>
                                             <button type="button" class="search-result" @onclick="@(() => LeggTilVare(c))">
                                                 <span class="search-result-name">@c.Navn</span>
-                                                <span class="search-result-meta">@c.Leverandor</span>
+                                                <span class="search-result-meta">@c.Leverandor</span>@if (IBilen(c) > 0) {<span class="ao-ibil">I bilen: @IBilen(c)</span>}
                                             </button>
                                         </li>
                                     }
@@ -446,7 +451,7 @@ else if (_ordre is not null)
                                 @foreach (var v in byttetVarer)
                                 {
                                     <tr @key="v.Id">
-                                        <td>@v.Navn</td>
+                                        <td>@v.Navn@if (v.FraLagerId is not null) {<span class="ao-frabil">fra bilen</span>}</td>
                                         <td><input type="number" min="1" class="antall-input" @bind="v.Antall" @bind:after="@(() => LagreVare(v))" /></td>
                                         <td>@(v.LagtTilAvBruker?.Navn ?? "Ukjent") @(v.LagtTilDato.HasValue ? $"- {v.LagtTilDato.Value:dd.MM.yyyy HH:mm}" : "")</td>
                                         <td><button type="button" class="remove-button" @onclick="@(() => FjernVare(v))">Fjern</button></td>
@@ -1309,6 +1314,7 @@ else if (_ordre is not null)
         }
 
         _opprinneligMontorId = _ordre.AnsvarligMontorId;
+        await LastBilAsync();
         _planlagtDato = _ordre.PlanlagtDato.HasValue ? DateOnly.FromDateTime(_ordre.PlanlagtDato.Value) : null;
         _fraKlokkeslett = _ordre.PlanlagtDato.HasValue ? TimeOnly.FromDateTime(_ordre.PlanlagtDato.Value) : null;
         _tilKlokkeslett = _ordre.PlanlagtSlutt.HasValue ? TimeOnly.FromDateTime(_ordre.PlanlagtSlutt.Value) : null;
@@ -1535,6 +1541,52 @@ else if (_ordre is not null)
             .ToListAsync();
     }
 
+    // ---------- Varer fra bilen ----------
+    // Har brukeren en bil i lagermodulen, tas varer som ligger i bilen derfra
+    // når de legges på arbeidsordren: de trekkes fra bilen og føres som
+    // forbruk på prosjektet med en gang, så ingenting registreres to ganger.
+    private int? _bilId;
+    private string? _bilNavn;
+    private Dictionary<int, int> _iBilen = [];
+    private string? _bilMelding;
+
+    private async Task LastBilAsync()
+    {
+        _bilId = null;
+        _bilNavn = null;
+        _iBilen = [];
+        if (_naverendeBrukerId is not { } bruker || !await Tilleggsmoduler.HarAsync(TilleggsModuler.Lager))
+        {
+            return;
+        }
+
+        var bil = await Db.Lagre.AsNoTracking()
+            .FirstOrDefaultAsync(l => l.Aktiv && l.Type == LagerType.Bil && l.AnsvarligBrukerId == bruker);
+        if (bil is null)
+        {
+            return;
+        }
+
+        _bilId = bil.Id;
+        _bilNavn = bil.Navn;
+        _iBilen = (await LagerSvc.BeholdningAsync(lagerId: bil.Id))
+            .Where(b => b.Antall > 0)
+            .ToDictionary(b => b.ComponentId, b => b.Antall);
+    }
+
+    private int IBilen(Component c) => c.ILagerstyring ? _iBilen.GetValueOrDefault(c.Id) : 0;
+
+    private RenderFragment BilHint() => @<text>
+        @if (_bilId is not null)
+        {
+            <p class="ao-bil-hint"><Icon Name="map-pin" />Varer som ligger i @_bilNavn, trekkes fra bilen og føres på prosjektet når du legger dem til.</p>
+        }
+        @if (!string.IsNullOrEmpty(_bilMelding))
+        {
+            <p class="ao-bil-melding" role="status">@_bilMelding</p>
+        }
+    </text>;
+
     private async Task LeggTilVare(Component c)
     {
         if (!KanEndreOrdre)
@@ -1542,6 +1594,26 @@ else if (_ordre is not null)
             return;
         }
 
+        if (_bilId is { } bil && IBilen(c) > 0)
+        {
+            var fraBil = await PlukkSvc.BruktAsync(c.Id, bil, 1, _ordre!.ProsjektId, _ordre.Id, null, _naverendeBrukerId, _naverendeBruker?.Navn);
+            if (fraBil is not null)
+            {
+                fraBil.LagtTilAvBruker = _naverendeBruker;
+                if (!_ordre.Varer.Contains(fraBil))
+                {
+                    _ordre.Varer.Add(fraBil);
+                }
+            }
+
+            _iBilen[c.Id] = IBilen(c) - 1;
+            _bilMelding = $"{c.Navn} er tatt fra {_bilNavn} og ført på prosjektet. {_iBilen[c.Id]} igjen i bilen.";
+            _vareSok = "";
+            _vareSokResultater = [];
+            return;
+        }
+
+        _bilMelding = null;
         var erMontorTillegg = _naverendeBruker?.Rolle == BrukerRolle.Montor;
         _ordre!.Varer.Add(new ArbeidsordreVare
         {
@@ -1560,7 +1632,25 @@ else if (_ordre is not null)
         await Db.SaveChangesAsync();
     }
 
-    private async Task LagreVare(ArbeidsordreVare v) => await AutoLagre();
+    private async Task LagreVare(ArbeidsordreVare v)
+    {
+        // Tatt fra bilen: endret antall trekkes fra eller legges tilbake i bilen.
+        if (v.FraLagerId is not null && KanEndreOrdre)
+        {
+            v.Antall = Math.Max(1, v.Antall);
+            var for_ = Db.Entry(v).Property(x => x.Antall).OriginalValue;
+            if (for_ != v.Antall)
+            {
+                await PlukkSvc.EndreBruktAsync(v.Id, for_, v.Antall, _naverendeBrukerId, _naverendeBruker?.Navn);
+                if (v.ComponentId is { } cid)
+                {
+                    _iBilen[cid] = _iBilen.GetValueOrDefault(cid) - (v.Antall - for_);
+                }
+            }
+        }
+
+        await AutoLagre();
+    }
 
     private async Task LagreVarePlukket(ArbeidsordreVare v)
     {
@@ -1648,6 +1738,19 @@ else if (_ordre is not null)
         if (!KanEndreOrdre)
         {
             return;
+        }
+
+        // Tatt fra bilen: legges tilbake i bilen og trekkes fra prosjektet.
+        if (v.FraLagerId is not null)
+        {
+            var antall = Db.Entry(v).Property(x => x.Antall).OriginalValue;
+            await PlukkSvc.EndreBruktAsync(v.Id, antall, 0, _naverendeBrukerId, _naverendeBruker?.Navn);
+            if (v.ComponentId is { } cid)
+            {
+                _iBilen[cid] = _iBilen.GetValueOrDefault(cid) + antall;
+            }
+
+            _bilMelding = $"{v.Navn} er lagt tilbake i {(v.FraLagerId == _bilId ? _bilNavn : "bilen")}.";
         }
 
         Db.ArbeidsordreVarer.Remove(v);
