@@ -138,6 +138,7 @@ public class EpostVarselTjeneste(
 
         var utdrag = f.Innhold.Length > 500 ? f.Innhold[..500].TrimEnd() + " …" : f.Innhold;
         var emne = string.IsNullOrWhiteSpace(f.Emne) ? "(uten emne)" : f.Emne;
+        var portal = await PortalAsync();
         var html = Lag(tenant, new Innhold
         {
             Farge = Bla,
@@ -147,7 +148,9 @@ public class EpostVarselTjeneste(
             Fakta = fakta,
             Sitat = string.IsNullOrWhiteSpace(utdrag) ? null : utdrag,
             KnappTekst = "Svar på forespørselen",
-            KnappUrl = $"{await PortalAsync()}/foresporsler",
+            KnappUrl = $"{portal}/foresporsler?id={f.Id}&svar=true",
+            Lenke2Tekst = "Gå til forespørselen",
+            Lenke2Url = $"{portal}/foresporsler?id={f.Id}",
             Tips = "Svarer du fra portalen, kommer svaret fra organisasjonens adresse, og hele samtalen lagres på forespørselen.",
             Grunn = Grunn(tenant)
         });

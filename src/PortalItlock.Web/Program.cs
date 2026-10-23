@@ -167,6 +167,7 @@ builder.Services.AddScoped<LagerService>();
 builder.Services.AddScoped<ReservasjonService>();
 builder.Services.AddScoped<PlukkService>();
 builder.Services.AddScoped<ProsjektOkonomiService>();
+builder.Services.AddScoped<ProsjektOppfolgingService>();
 builder.Services.AddScoped<ProsjektokonomiVarselService>();
 builder.Services.AddHostedService<ProsjektokonomiVarselBackgroundService>();
 builder.Services.AddScoped<EtterkalkylePdfService>();

@@ -57,6 +57,11 @@ public class Tilbud
     public int? OppfolgingBrukerId { get; set; }
     public bool OppfolgingSendt { get; set; }
 
+    // Endringsmeldinger: dager overleveringen flyttes når endringen godkjennes,
+    // og hvilke andre fag den berører.
+    public int? FristforlengelseDager { get; set; }
+    public string? BerorteFag { get; set; }
+
     public List<TilbudLinje> Linjer { get; set; } = [];
     public List<TilbudHendelse> Hendelser { get; set; } = [];
 }

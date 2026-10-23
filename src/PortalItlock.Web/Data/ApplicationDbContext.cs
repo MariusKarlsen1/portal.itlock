@@ -122,6 +122,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<OkonomiInnstillinger> OkonomiInnstillinger => Set<OkonomiInnstillinger>();
     public DbSet<TilbudBudsjett> TilbudBudsjetter => Set<TilbudBudsjett>();
     public DbSet<ProsjektEtterkalkyle> ProsjektEtterkalkyler => Set<ProsjektEtterkalkyle>();
+    public DbSet<ProsjektAkonto> ProsjektAkontoer => Set<ProsjektAkonto>();
+    public DbSet<ProsjektBudsjettJustering> ProsjektBudsjettJusteringer => Set<ProsjektBudsjettJustering>();
+    public DbSet<ProsjektplanAktivitet> ProsjektplanAktiviteter => Set<ProsjektplanAktivitet>();
+    public DbSet<ProsjektplanOppgave> ProsjektplanOppgaver => Set<ProsjektplanOppgave>();
+    public DbSet<ProsjektRolle> ProsjektRoller => Set<ProsjektRolle>();
+    public DbSet<AnsattTimekost> AnsattTimekost => Set<AnsattTimekost>();
     public DbSet<Avvik> Avvik => Set<Avvik>();
     public DbSet<Tilvalg> Tilvalg => Set<Tilvalg>();
     public DbSet<TilvalgAlternativ> TilvalgAlternativer => Set<TilvalgAlternativ>();
@@ -304,6 +310,34 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             e.HasIndex(k => k.ProsjektId).IsUnique();
             e.HasOne(k => k.Prosjekt).WithMany().HasForeignKey(k => k.ProsjektId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ProsjektAkonto>(e =>
+        {
+            e.HasIndex(a => a.ProsjektId);
+            e.HasOne(a => a.Prosjekt).WithMany().HasForeignKey(a => a.ProsjektId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ProsjektBudsjettJustering>(e =>
+        {
+            e.HasIndex(j => new { j.ProsjektId, j.Post }).IsUnique();
+            e.HasOne(j => j.Prosjekt).WithMany().HasForeignKey(j => j.ProsjektId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ProsjektplanAktivitet>(e =>
+        {
+            e.HasIndex(a => a.ProsjektId);
+            e.HasOne(a => a.Prosjekt).WithMany().HasForeignKey(a => a.ProsjektId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(a => a.Oppgaver).WithOne(o => o.Aktivitet).HasForeignKey(o => o.AktivitetId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ProsjektRolle>(e =>
+        {
+            e.HasIndex(r => new { r.ProsjektId, r.Rolle }).IsUnique();
+            e.HasOne(r => r.Prosjekt).WithMany().HasForeignKey(r => r.ProsjektId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.Bruker).WithMany().HasForeignKey(r => r.BrukerId).OnDelete(DeleteBehavior.SetNull);
+        });
+        modelBuilder.Entity<AnsattTimekost>(e =>
+        {
+            e.HasIndex(t => t.BrukerId).IsUnique();
+            e.HasOne(t => t.Bruker).WithMany().HasForeignKey(t => t.BrukerId).OnDelete(DeleteBehavior.Cascade);
+            e.Ignore(t => t.Timekost);
         });
         modelBuilder.Entity<LagerReservasjon>(e =>
         {

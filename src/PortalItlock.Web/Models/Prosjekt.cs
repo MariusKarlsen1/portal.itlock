@@ -43,6 +43,23 @@ public class Prosjekt
     public List<ProsjektVedlegg> Vedlegg { get; set; } = [];
     public List<Tilbud> Tilbud { get; set; } = [];
     public List<MonteringLinje> MonteringLinjer { get; set; } = [];
+
+    // Fristene i fremdriftsplanen (sjekklisten i økonomiarket). Fasene regnes
+    // fra dem, se FremdriftsplanBeregner. Godkjent fristforlengelse på
+    // endringsmeldingene legges til overleveringsfristen.
+    public DateTime? StartDato { get; set; }
+    public DateTime? TilbudsfristDato { get; set; }
+    public DateTime? MontasjestartDato { get; set; }
+    public DateTime? OverleveringsfristDato { get; set; }
+
+    // Fylles inn under Prosjektøkonomi: indeksregulering som legges til
+    // prosjektsummen, resterende timer når forslaget fra fremdriften ikke
+    // stemmer, og bankgaranti med påminnelse.
+    public decimal? Indeksregulering { get; set; }
+    public decimal? ResterendeTimer { get; set; }
+    public decimal? BankgarantiBelop { get; set; }
+    public DateTime? BankgarantiTil { get; set; }
+
     public decimal? ServiceTimepris { get; set; }
 
     // Hvor mange servicerunder avtalen skal ha i året (1 = årlig, 2 = halvårlig

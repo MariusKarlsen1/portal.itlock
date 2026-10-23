@@ -1,0 +1,969 @@
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject ProsjektOppfolgingService OppfolgingSvc
+@inject TripletexSyncService TripletexSync
+@inject TripletexService Tripletex
+@inject NavigationManager Nav
+
+@* Ett pågående prosjekt under Prosjektøkonomi: det som var arket
+   «Kalkulering og økonomi», med fanene Oversikt, Fremdriftsplan, Budsjett og
+   timer, Endringer og Fakturering. Tallene regnes ut av seg selv; feltene
+   med stiplet grønn ramme fylles inn, som de grønne cellene i arket.
+   Etterkalkylen ligger som før under Etterkalkyle. *@
+@if (_f is null || _p is null)
+{
+    <p class="pf-tom">Regner ut …</p>
+}
+else
+{
+    var f = _f;
+    var o = f.O;
+    <div class="pf">
+        <nav class="pf-faner" role="tablist" aria-label="Prosjektøkonomi">
+            @Fane("oversikt", "Oversikt", null, "")
+            @Fane("plan", "Fremdriftsplan", f.ForsinkedeAktiviteter > 0 ? $"{f.ForsinkedeAktiviteter} forsinket" : f.HarPlan ? $"{Math.Round(f.PlanAndel * 100):0} %" : null, f.ForsinkedeAktiviteter > 0 ? "rod" : "")
+            @Fane("budsjett", "Budsjett og timer", null, "")
+            @Fane("endringer", "Endringer", f.EndringerVenter > 0 ? $"{f.EndringerVenter} venter" : f.Endringsmeldinger.Count > 0 ? f.Endringsmeldinger.Count.ToString() : null, f.EndringerVenter > 0 ? "gul" : "")
+            @Fane("faktura", "Fakturering", f.KlarAkonto is not null ? "klar" : null, "gul")
+        </nav>
+
+        @if (!string.IsNullOrEmpty(_melding))
+        {
+            <p class="pf-melding @(_meldingFeil ? "pf-melding-feil" : "")">@_melding</p>
+        }
+
+        @switch (_fane)
+        {
+            case "plan":
+                @PlanFane()
+                break;
+            case "budsjett":
+                @BudsjettFane()
+                break;
+            case "endringer":
+                @EndringerFane()
+                break;
+            case "faktura":
+                @FakturaFane()
+                break;
+            default:
+                @OversiktFane()
+                break;
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public int ProsjektId { get; set; }
+
+    // All databasebruk går gjennom siden rundt, så den ikke kolliderer med
+    // oppdateringen i bakgrunnen.
+    [Parameter] public Func<Func<Task>, Task> Kjor { get; set; } = arbeid => arbeid();
+
+    // Settes av siden rundt hver gang tallene er regnet ut på nytt.
+    [Parameter] public DateTime Oppdatert { get; set; }
+    [Parameter] public string? BrukerNavn { get; set; }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private ProsjektOppfolgingService.Oppfolging? _f;
+    private Prosjekt? _p;
+    private List<ProsjektplanAktivitet> _aktiviteter = [];
+    private Dictionary<string, int?> _roller = [];
+    private List<(int Id, string Navn)> _brukere = [];
+    private Dictionary<BudsjettPost, decimal> _justering = [];
+    private List<(TimeAktivitet Aktivitet, decimal Timer)> _timerPerAktivitet = [];
+    private string _fane = "oversikt";
+    private string? _melding;
+    private bool _meldingFeil;
+    private int _lastetFor;
+    private DateTime _lastetTid;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_lastetFor != ProsjektId || _lastetTid != Oppdatert)
+        {
+            if (_lastetFor != ProsjektId)
+            {
+                _fane = "oversikt";
+                _melding = null;
+                _apne.Clear();
+                _vinduFra = FremdriftsplanBeregner.Mandag(DateTime.Today).AddDays(-7);
+                _vinduUker = 10;
+                _forsteLast = true;
+            }
+
+            _lastetFor = ProsjektId;
+            _lastetTid = Oppdatert;
+            await Kjor(LastAsync);
+        }
+    }
+
+    private bool _forsteLast = true;
+
+    private async Task LastAsync()
+    {
+        _f = await OppfolgingSvc.HentAsync(ProsjektId);
+        _p = await Db.Prosjekter.AsNoTracking().Include(p => p.Kunde).Include(p => p.Prosjektleder).FirstOrDefaultAsync(p => p.Id == ProsjektId);
+        _aktiviteter = await Db.ProsjektplanAktiviteter.AsNoTracking().Include(a => a.Oppgaver)
+            .Where(a => a.ProsjektId == ProsjektId).OrderBy(a => a.Fase).ThenBy(a => a.Rekkefolge).ToListAsync();
+        _roller = await Db.ProsjektRoller.AsNoTracking().Where(r => r.ProsjektId == ProsjektId).ToDictionaryAsync(r => r.Rolle, r => r.BrukerId);
+        _brukere = (await Db.Brukere.AsNoTracking()
+                .Where(b => b.Aktiv && b.SlettetDato == null && b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens)
+                .OrderBy(b => b.Navn).Select(b => new { b.Id, b.Navn }).ToListAsync())
+            .Select(b => (b.Id, b.Navn)).ToList();
+        _justering = await Db.ProsjektBudsjettJusteringer.AsNoTracking().Where(j => j.ProsjektId == ProsjektId).ToDictionaryAsync(j => j.Post, j => j.Belop);
+        _timerPerAktivitet = (await Db.Timeregistreringer.AsNoTracking()
+                .Where(t => t.Arbeidsordre!.ProsjektId == ProsjektId && t.Status != TimeregistreringStatus.Avslatt)
+                .Select(t => new { t.Aktivitet, t.Start, t.Slutt, t.PauseMinutter }).ToListAsync())
+            .GroupBy(t => t.Aktivitet)
+            .Select(g => (g.Key, Math.Round(g.Sum(t => Math.Max(0, (decimal)(t.Slutt - t.Start).TotalHours - t.PauseMinutter / 60m)), 1)))
+            .OrderByDescending(x => x.Item2).ToList();
+
+        // Første gang: åpne aktivitetene som er forsinket eller går denne uken.
+        if (_forsteLast)
+        {
+            _forsteLast = false;
+            foreach (var a in _f.AapneOppgaver.Select(x => x.Aktivitet.Id).Distinct())
+            {
+                _apne.Add(a);
+            }
+        }
+    }
+
+    private async Task Lagre(Func<Task> endring, string? melding = null)
+    {
+        await Kjor(async () =>
+        {
+            try
+            {
+                await endring();
+                await Db.SaveChangesAsync();
+                _melding = melding;
+                _meldingFeil = false;
+            }
+            catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
+            {
+                _melding = "Kunne ikke lagre. Prøv igjen.";
+                _meldingFeil = true;
+            }
+
+            await LastAsync();
+        });
+    }
+
+    private Task EndreProsjekt(Action<Prosjekt> endring, string? melding = null) =>
+        Lagre(async () => endring(await Db.Prosjekter.FirstAsync(p => p.Id == ProsjektId)), melding);
+
+    // ---------- Hjelpere ----------
+    private static string Kr(decimal v) => v.ToString("#,##0", Kultur) + " kr";
+    private static string KrKort(decimal v) => v.ToString("#,##0", Kultur);
+    private static string Pst(decimal v) => Math.Round(v * 100).ToString("0", Kultur) + " %";
+    private static string DG(decimal? v) => v is { } d ? (d * 100).ToString("0.0", Kultur) + " %" : "–";
+    private static string Css(double v) => Math.Clamp(v, 0, 100).ToString("0.###", CultureInfo.InvariantCulture) + "%";
+    private static string Dato(DateTime d) => d.ToString("dd.MM", Kultur);
+    private static string? DatoVerdi(DateTime? d) => d?.ToString("yyyy-MM-dd");
+    private static DateTime? LesDato(ChangeEventArgs e) => DateTime.TryParse(e.Value?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d.Date : null;
+    private static decimal? LesTall(ChangeEventArgs e) => decimal.TryParse(e.Value?.ToString()?.Replace(" ", "").Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : null;
+    private static string? LesTekst(ChangeEventArgs e) => string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value!.ToString()!.Trim();
+
+    private static string NivaKlasse(ProsjektOppfolgingService.Niva n) => n switch
+    {
+        ProsjektOppfolgingService.Niva.Gronn => "gronn",
+        ProsjektOppfolgingService.Niva.Gul => "gul",
+        ProsjektOppfolgingService.Niva.Rod => "rod",
+        _ => "noytral"
+    };
+
+    private string PersonFor(string? rolle) =>
+        rolle is not null && _roller.GetValueOrDefault(rolle) is int id && _brukere.FirstOrDefault(b => b.Id == id) is { Navn: { } navn } ? navn : "";
+
+    private RenderFragment Fane(string id, string tekst, string? teller, string tellerKlasse) => @<button type="button" role="tab" aria-selected="@(_fane == id ? "true" : "false")" class="@(_fane == id ? "aktiv" : "")" @onclick="@(() => { _fane = id; _melding = null; })">
+        @tekst
+        @if (teller is not null)
+        {
+            <small class="pf-teller @(string.IsNullOrEmpty(tellerKlasse) ? "" : "pf-teller-" + tellerKlasse)">@teller</small>
+        }
+    </button>;
+
+    // ======================================================================
+    // Oversikt
+    private RenderFragment OversiktFane() => @<div class="pf-fane">
+        @{
+            var f = _f!;
+            var o = f.O;
+        }
+        <div class="pf-svar">
+            @foreach (var s in f.Svar)
+            {
+                <div class="pf-svar-kort pf-niva-@NivaKlasse(s.Niva)">
+                    <span class="pf-svar-sp">@s.Sporsmal</span>
+                    <span class="pf-svar-ja"><i>@(s.Niva switch { ProsjektOppfolgingService.Niva.Gronn => "✓", ProsjektOppfolgingService.Niva.Noytral => "–", _ => "!" })</i>@s.Overskrift</span>
+                    <p>@s.Tekst</p>
+                    @if (s.Sporsmal.StartsWith("Har vi") && f.KlarAkonto is not null)
+                    {
+                        <span><button type="button" class="pf-knapp pf-knapp-ok" @onclick="@(() => _fane = "faktura")">Til faktureringen</button></span>
+                    }
+                    else if (s.Sporsmal.StartsWith("Er vi") && f.Frister is null)
+                    {
+                        <span><button type="button" class="pf-knapp" @onclick="@(() => _fane = "plan")">Legg inn frister</button></span>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="pf-tall">
+            <div><span>Prosjektsum</span><b>@Kr(f.Prosjektsum)</b><small>Kontrakt @KrKort(f.Kontrakt)@(f.Endringer != 0 ? $" + endringer {KrKort(f.Endringer)}" : "")@(f.Indeks != 0 ? $" + indeks {KrKort(f.Indeks)}" : "")</small></div>
+            @if (o is not null)
+            {
+                <div><span>Kost hittil</span><b>@Kr(o.FaktiskKost)</b><small>av budsjett @Kr(o.JustertKost)</small></div>
+                <div class="@(o.PrognoseKost > o.JustertKost ? "pf-tall-gul" : "")"><span>Prognose sluttkost</span><b>@Kr(o.PrognoseKost)</b><small>@(o.JustertKost > 0 ? $"{(o.PrognoseKost >= o.JustertKost ? "+" : "−")}{KrKort(Math.Abs(o.PrognoseKost - o.JustertKost))} mot budsjett" : "")</small></div>
+            }
+            <div><span>Fakturert</span><b>@Kr(f.Fakturert)</b><small>@(f.Prosjektsum > 0 ? Pst(f.Fakturert / f.Prosjektsum) : "–") av prosjektsummen · utført @Pst(f.Fremdrift)</small></div>
+        </div>
+
+        <div class="pf-to">
+            <section class="pf-boks">
+                <div class="pf-boks-topp">
+                    <h3>Denne uken</h3>
+                    <span class="pf-dempet">uke @FremdriftsplanBeregner.Ukenr(DateTime.Today) · @Dato(FremdriftsplanBeregner.Mandag(DateTime.Today))–@Dato(FremdriftsplanBeregner.Mandag(DateTime.Today).AddDays(6))</span>
+                </div>
+                @if (!f.HarPlan)
+                {
+                    <p class="pf-dempet">Oppgavene fra fremdriftsplanen vises her. <button type="button" class="pf-lenke" @onclick="@(() => _fane = "plan")">Lag fremdriftsplanen</button></p>
+                }
+                else if (f.AapneOppgaver.Count == 0)
+                {
+                    <p class="pf-dempet">Ingen åpne oppgaver denne uken.</p>
+                }
+                else
+                {
+                    @foreach (var g in f.AapneOppgaver.GroupBy(x => PersonFor(x.Oppgave.Rolle) is { Length: > 0 } n ? n : x.Oppgave.Rolle ?? "Uten rolle"))
+                    {
+                        <div class="pf-person">
+                            <b><span class="pf-av">@string.Concat(g.Key.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(s => s[0])).ToUpperInvariant()</span>@g.Key</b>
+                            <ul>
+                                @foreach (var x in g)
+                                {
+                                    <li>
+                                        @if (x.Forsinket)
+                                        {
+                                            <span class="pf-chip pf-chip-rod">Forsinket</span>
+                                        }
+                                        else if (x.Oppgave.Status == PlanOppgaveStatus.Utfordring)
+                                        {
+                                            <span class="pf-chip pf-chip-rod">Utfordring</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="pf-chip">innen @Dato(x.Frist)</span>
+                                        }
+                                        <span>@x.Oppgave.Tekst</span>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                }
+                <span><button type="button" class="pf-knapp" @onclick="@(() => _fane = "plan")">Åpne fremdriftsplanen</button></span>
+            </section>
+            <section class="pf-boks">
+                <div class="pf-boks-topp"><h3>Fremdrift og tid</h3></div>
+                @if (f.Frister is { } fr)
+                {
+                    var tid = f.Tidsandel ?? 0;
+                    <div class="pf-tidslinje">
+                        <div class="pf-tl-rad"><b>Utført @Pst(f.Fremdrift)</b><span>@(o?.FremdriftTekst)</span></div>
+                        <div class="pf-tl-bar"><span class="pf-tl-tid" style="width:@Css((double)tid * 100)"></span><span class="pf-tl-frem" style="left:@Css((double)f.Fremdrift * 100)"></span></div>
+                        <div class="pf-tl-rad"><span>Montasjestart @Dato(fr.Montasjestart)</span><span>@Pst(tid) av tiden brukt</span><span>Overlevering @Dato(fr.Overlevering)@(f.Fristforlengelse > 0 ? $" (+{f.Fristforlengelse} d)" : "")</span></div>
+                    </div>
+                }
+                else
+                {
+                    <p class="pf-dempet">Legg inn montasjestart og overleveringsfrist under Fremdriftsplan.</p>
+                }
+                @if (f.HarPlan)
+                {
+                    <div class="pf-faseliste">
+                        @foreach (var g in _aktiviteter.GroupBy(a => a.Fase))
+                        {
+                            var andel = g.Average(a => FremdriftsplanBeregner.Andel(a.Oppgaver.Select(t => t.Status)));
+                            <div><span>@FremdriftsplanBeregner.FaseNavn[Math.Clamp(g.Key, 0, 3)]</span><span class="pf-minibar"><i style="width:@Css((double)andel * 100)"></i></span><b>@Pst(andel)</b></div>
+                        }
+                    </div>
+                }
+            </section>
+        </div>
+
+        <ProsjektOkonomiPanel ProsjektId="@ProsjektId" Data="@o" UtenNokkeltall="true" />
+    </div>;
+
+    // ======================================================================
+    // Fremdriftsplan
+    private readonly HashSet<int> _apne = [];
+    private DateTime _vinduFra = FremdriftsplanBeregner.Mandag(DateTime.Today).AddDays(-7);
+    private int _vinduUker = 10;
+    private readonly Dictionary<int, string> _nyOppgave = [];
+
+    private void FlyttVindu(int uker) => _vinduFra = _vinduFra.AddDays(7 * uker);
+
+    private void DenneUken()
+    {
+        _vinduFra = FremdriftsplanBeregner.Mandag(DateTime.Today).AddDays(-7);
+        _vinduUker = 10;
+    }
+
+    private void HeleProsjektet()
+    {
+        if (_f?.Frister is { } fr)
+        {
+            _vinduFra = FremdriftsplanBeregner.Mandag(fr.Start);
+            _vinduUker = Math.Clamp(FremdriftsplanBeregner.UkerMellom(fr.Start, fr.Overlevering) + 1, 4, 80);
+        }
+    }
+
+    private double X(DateTime d) => (d - _vinduFra).TotalDays / (_vinduUker * 7) * 100;
+
+    private Task LagPlan()
+    {
+        _forsteLast = true;
+        return Lagre(() => OppfolgingSvc.LagPlanFraMalAsync(ProsjektId), "Fremdriftsplanen er laget fra malen. Oppgaver i aktiviteter som allerede er passert, er satt til avsluttet. Sjekk datoene, og velg personer til rollene nederst.");
+    }
+
+    private Task SettStatus(int oppgaveId, ChangeEventArgs e) => Lagre(async () =>
+    {
+        var t = await Db.ProsjektplanOppgaver.FirstAsync(x => x.Id == oppgaveId);
+        t.Status = Enum.TryParse<PlanOppgaveStatus>(e.Value?.ToString(), out var s) ? s : t.Status;
+        t.Endret = DateTime.Now;
+        t.EndretAv = BrukerNavn;
+    });
+
+    private Task LeggTilOppgave(ProsjektplanAktivitet a)
+    {
+        if (!_nyOppgave.TryGetValue(a.Id, out var tekst) || string.IsNullOrWhiteSpace(tekst))
+        {
+            return Task.CompletedTask;
+        }
+
+        _nyOppgave.Remove(a.Id);
+        return Lagre(() =>
+        {
+            Db.ProsjektplanOppgaver.Add(new ProsjektplanOppgave
+            {
+                AktivitetId = a.Id,
+                Tekst = tekst.Trim(),
+                Rolle = a.Rolle,
+                Rekkefolge = a.Oppgaver.Count == 0 ? 0 : a.Oppgaver.Max(x => x.Rekkefolge) + 1
+            });
+            return Task.CompletedTask;
+        });
+    }
+
+    private Task SlettOppgave(int oppgaveId) => Lagre(async () =>
+        Db.ProsjektplanOppgaver.Remove(await Db.ProsjektplanOppgaver.FirstAsync(x => x.Id == oppgaveId)));
+
+    private Task SettRolle(string rolle, ChangeEventArgs e) => Lagre(async () =>
+    {
+        int? brukerId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        var r = await Db.ProsjektRoller.FirstOrDefaultAsync(x => x.ProsjektId == ProsjektId && x.Rolle == rolle);
+        if (r is null)
+        {
+            Db.ProsjektRoller.Add(new ProsjektRolle { ProsjektId = ProsjektId, Rolle = rolle, BrukerId = brukerId });
+        }
+        else
+        {
+            r.BrukerId = brukerId;
+        }
+    });
+
+    private RenderFragment PlanFane() => @<div class="pf-fane">
+        @{
+            var f = _f!;
+            var p = _p!;
+            var fr = f.Frister;
+            var idag = DateTime.Today;
+        }
+        <div class="pf-fane-topp">
+            <div>
+                <h3>Fremdriftsplan</h3>
+                <p class="pf-dempet">Fasene regnes fra de fire datoene, som i sjekklisten i økonomiarket. Flytt en dato, så flytter fasene og oppgavene seg. Godkjent fristforlengelse på endringene legges til overleveringen.</p>
+            </div>
+        </div>
+        <div class="pf-frister">
+            <label class="pf-felt">Prosjektstart
+                <input type="date" class="pf-inn" value="@DatoVerdi(p.StartDato ?? fr?.Start)" @onchange="@(e => EndreProsjekt(x => x.StartDato = LesDato(e)))" />
+                <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Start)}" : "")</small>
+            </label>
+            <label class="pf-felt">Tilbudsfrist
+                <input type="date" class="pf-inn" value="@DatoVerdi(p.TilbudsfristDato)" @onchange="@(e => EndreProsjekt(x => x.TilbudsfristDato = LesDato(e)))" />
+                <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Tilbudsfrist)}" : "")</small>
+            </label>
+            <label class="pf-felt">Montasjestart
+                <input type="date" class="pf-inn" value="@DatoVerdi(p.MontasjestartDato)" @onchange="@(e => EndreProsjekt(x => x.MontasjestartDato = LesDato(e)))" />
+                <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Montasjestart)}" : "")</small>
+            </label>
+            <label class="pf-felt">Overleveringsfrist
+                <input type="date" class="pf-inn" value="@DatoVerdi(p.OverleveringsfristDato)" @onchange="@(e => EndreProsjekt(x => x.OverleveringsfristDato = LesDato(e)))" />
+                <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Overlevering)}{(f.Fristforlengelse > 0 ? $" · +{f.Fristforlengelse} d fra endringer" : "")}" : "")</small>
+            </label>
+            @if (fr is not null)
+            {
+                var inn = FremdriftsplanBeregner.UkerMellom(fr.Start, idag) + 1;
+                var igjen = FremdriftsplanBeregner.UkerMellom(idag, fr.Overlevering);
+                <div class="pf-ukeboks"><span>Uker</span><b>uke @inn av @(FremdriftsplanBeregner.UkerMellom(fr.Start, fr.Overlevering) + 1)</b><small>@(igjen >= 0 ? $"{igjen} uker til overlevering" : $"{-igjen} uker over fristen")</small></div>
+            }
+        </div>
+
+        @if (!f.HarPlan)
+        {
+            <div class="pf-tomboks">
+                <b>Ingen fremdriftsplan ennå</b>
+                <p>Malen har de fire fasene fra sjekklisten (tilbud og kontrakt, planlegging, gjennomføring og avslutning) med aktiviteter, oppgaver og roller. Datoer som mangler, fylles inn med forslag du kan endre.</p>
+                <span><button type="button" class="pf-knapp pf-knapp-p" @onclick="LagPlan">Lag fremdriftsplan fra malen</button></span>
+            </div>
+        }
+        else if (fr is not null)
+        {
+            var faser = FremdriftsplanBeregner.Faser(fr);
+            var vt = _vinduFra.AddDays(_vinduUker * 7);
+            var dagBredde = 100.0 / (_vinduUker * 7);
+            <div class="pf-plan-verktoy">
+                <span class="pf-ukevelger">
+                    <button type="button" aria-label="Forrige uke" @onclick="@(() => FlyttVindu(-1))">‹</button>
+                    <span>uke @FremdriftsplanBeregner.Ukenr(_vinduFra)–@FremdriftsplanBeregner.Ukenr(vt.AddDays(-1))</span>
+                    <button type="button" aria-label="Neste uke" @onclick="@(() => FlyttVindu(1))">›</button>
+                </span>
+                <button type="button" class="pf-knapp" @onclick="DenneUken">Denne uken</button>
+                <button type="button" class="pf-knapp" @onclick="HeleProsjektet">Hele prosjektet</button>
+                <span class="pf-vokser"></span>
+                <span class="pf-forklaring">
+                    <span><i class="pf-f-ferdig"></i>Ferdig</span>
+                    <span><i class="pf-f-gjen"></i>Gjenstår</span>
+                    <span><i class="pf-f-idag"></i>I dag</span>
+                    <span><i class="pf-f-frist"></i>Frist</span>
+                    <span><i class="pf-f-sen"></i>Forsinket</span>
+                </span>
+            </div>
+            <div class="pf-gantt-ramme">
+                <div class="pf-gantt">
+                    <div class="pf-g-etikett pf-g-hode">Fase og aktivitet</div>
+                    <div class="pf-g-uker">
+                        @for (var i = 0; i < _vinduUker; i++)
+                        {
+                            var m = _vinduFra.AddDays(i * 7);
+                            <div class="pf-g-uke @(idag >= m && idag < m.AddDays(7) ? "na" : "")" style="left:@Css(i * 100.0 / _vinduUker);width:@Css(100.0 / _vinduUker)"><b>uke @FremdriftsplanBeregner.Ukenr(m)</b>@Dato(m)</div>
+                        }
+                    </div>
+                    @foreach (var fase in faser)
+                    {
+                        var akter = _aktiviteter.Where(a => Math.Clamp(a.Fase, 0, 3) == fase.Nr).ToList();
+                        if (akter.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        var fAndel = akter.Average(a => FremdriftsplanBeregner.Andel(a.Oppgaver.Select(t => t.Status)));
+                        DateTime? frist = fase.Nr switch { 0 => fr.Tilbudsfrist, 1 => fr.Montasjestart, 3 => fr.Overlevering, _ => null };
+                        <div class="pf-g-etikett pf-g-fase"><span class="pf-g-tekst"><b>@fase.Navn</b><small>@Dato(fase.Fra)–@Dato(fase.Til) · uke @FremdriftsplanBeregner.Ukenr(fase.Fra)–@FremdriftsplanBeregner.Ukenr(fase.Til) · @Pst(fAndel)</small></span></div>
+                        <div class="pf-g-spor pf-g-fase">
+                            @Rutenett(dagBredde)
+                            @if (frist is { } fd && fd >= _vinduFra && fd < vt)
+                            {
+                                <span class="pf-g-frist" style="left:@Css(X(fd) + dagBredde / 2)" title="Frist @Dato(fd)"></span>
+                            }
+                            @Stolpe(fase.Fra, fase.Til, fAndel, "pf-g-bar-fase", false)
+                        </div>
+                        @foreach (var a in akter)
+                        {
+                            var akt = a;
+                            var (fra, til) = FremdriftsplanBeregner.AktivitetDatoer(fase, a.DelFra, a.DelTil);
+                            var andel = FremdriftsplanBeregner.Andel(a.Oppgaver.Select(t => t.Status));
+                            var sen = til < idag && andel < 1;
+                            var apen = _apne.Contains(a.Id);
+                            var ferdige = a.Oppgaver.Count(t => t.Status.ErFerdig());
+                            <button type="button" class="pf-g-etikett pf-g-akt @(apen ? "apen" : "")" aria-expanded="@(apen ? "true" : "false")" @onclick="@(() => { if (!_apne.Remove(akt.Id)) _apne.Add(akt.Id); })">
+                                <span class="pf-pil">▶</span>
+                                <span class="pf-g-tekst"><span>@a.Navn</span><small>@(PersonFor(a.Rolle) is { Length: > 0 } n ? n : a.Rolle) · @ferdige av @(a.Oppgaver.Count)@(sen ? " · forsinket" : "")</small></span>
+                            </button>
+                            <div class="pf-g-spor">
+                                @Rutenett(dagBredde)
+                                @Stolpe(fra, til, andel, sen ? "pf-g-bar-sen" : "", true)
+                            </div>
+                            @if (apen)
+                            {
+                                <div class="pf-oppgaver">
+                                    @foreach (var t in a.Oppgaver.OrderBy(x => x.Rekkefolge))
+                                    {
+                                        var oppg = t;
+                                        <div class="pf-oppg @(t.Status.ErFerdig() ? "ferdig" : "")">
+                                            <select class="pf-status pf-status-@((int)t.Status)" aria-label="Status" value="@t.Status" @onchange="@(e => SettStatus(oppg.Id, e))">
+                                                @foreach (var s in Enum.GetValues<PlanOppgaveStatus>())
+                                                {
+                                                    <option value="@s" selected="@(s == t.Status)">@s.Visningsnavn()</option>
+                                                }
+                                            </select>
+                                            <span class="pf-oppg-tekst">@t.Tekst</span>
+                                            <span class="pf-oppg-hvem">@(t.Rolle)@(PersonFor(t.Rolle) is { Length: > 0 } navn ? " · " + navn : "")</span>
+                                            <button type="button" class="pf-x" title="Fjern oppgaven" @onclick="@(() => SlettOppgave(oppg.Id))">×</button>
+                                        </div>
+                                    }
+                                    <div class="pf-oppg-ny">
+                                        <input class="pf-inn" placeholder="Ny oppgave i @a.Navn" value="@_nyOppgave.GetValueOrDefault(a.Id)" @oninput="@(e => _nyOppgave[akt.Id] = e.Value?.ToString() ?? "")" @onkeydown="@(e => e.Key == "Enter" ? LeggTilOppgave(akt) : Task.CompletedTask)" />
+                                        <button type="button" class="pf-knapp" @onclick="@(() => LeggTilOppgave(akt))">Legg til</button>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    }
+                </div>
+            </div>
+
+            <section class="pf-boks">
+                <div class="pf-boks-topp"><h3>Roller på prosjektet</h3><span class="pf-dempet">Velg en person per rolle, så vises oppgavene for rollen hos personen.</span></div>
+                <div class="pf-roller">
+                    @foreach (var r in FremdriftsplanBeregner.Roller)
+                    {
+                        var rolle = r;
+                        var valgt = _roller.GetValueOrDefault(r);
+                        <label class="pf-felt">@r
+                            <select class="pf-inn" @onchange="@(e => SettRolle(rolle, e))">
+                                <option value="" selected="@(valgt is null)">Ingen valgt</option>
+                                @foreach (var b in _brukere)
+                                {
+                                    <option value="@b.Id" selected="@(valgt == b.Id)">@b.Navn</option>
+                                }
+                            </select>
+                        </label>
+                    }
+                </div>
+            </section>
+        }
+    </div>;
+
+    private RenderFragment Rutenett(double dagBredde) => @<text>
+        @for (var i = 1; i < _vinduUker; i++)
+        {
+            <span class="pf-g-linje" style="left:@Css(i * 100.0 / _vinduUker)"></span>
+        }
+        @if (DateTime.Today >= _vinduFra && DateTime.Today < _vinduFra.AddDays(_vinduUker * 7))
+        {
+            <span class="pf-g-idag" style="left:@Css(X(DateTime.Today) + dagBredde / 2)"></span>
+        }
+    </text>;
+
+    private RenderFragment Stolpe(DateTime fra, DateTime til, decimal andel, string klasse, bool visTekstVedPlass) => @<text>
+        @{
+            var vt = _vinduFra.AddDays(_vinduUker * 7);
+            var slutt = til.AddDays(1);
+        }
+        @if (slutt <= _vinduFra)
+        {
+            <span class="pf-g-utenfor pf-g-venstre">‹ @Dato(fra)–@Dato(til)</span>
+        }
+        else if (fra >= vt)
+        {
+            <span class="pf-g-utenfor pf-g-hoyre">@Dato(fra)–@Dato(til) ›</span>
+        }
+        else
+        {
+            var l = Math.Max(0, X(fra));
+            var r = Math.Min(100, X(slutt));
+            <span class="pf-g-bar @klasse" style="left:@Css(l);width:@Css(Math.Max(r - l, 0.8))" title="@Dato(fra)–@Dato(til) · @Pst(andel)">
+                <i style="width:@Css((double)andel * 100)"></i>
+                @if (!visTekstVedPlass || andel > 0.25m)
+                {
+                    <span>@Pst(andel)</span>
+                }
+            </span>
+        }
+    </text>;
+
+    // ======================================================================
+    // Budsjett og timer
+    private Task SettJustering(BudsjettPost post, ChangeEventArgs e) => Lagre(async () =>
+    {
+        var belop = LesTall(e) ?? 0;
+        var j = await Db.ProsjektBudsjettJusteringer.FirstOrDefaultAsync(x => x.ProsjektId == ProsjektId && x.Post == post);
+        if (j is null)
+        {
+            Db.ProsjektBudsjettJusteringer.Add(new ProsjektBudsjettJustering { ProsjektId = ProsjektId, Post = post, Belop = belop });
+        }
+        else
+        {
+            j.Belop = belop;
+        }
+    });
+
+    private RenderFragment BudsjettFane() => @<div class="pf-fane">
+        @{
+            var f = _f!;
+            var o = f.O;
+        }
+        @if (o is null)
+        {
+            <div class="pf-tomboks"><b>Ingen budsjett ennå</b><p>Budsjettet låses når et tilbud på prosjektet settes til Godkjent.</p></div>
+        }
+        else
+        {
+            var jV = _justering.GetValueOrDefault(BudsjettPost.Varer);
+            var jT = _justering.GetValueOrDefault(BudsjettPost.Timer);
+            var jU = _justering.GetValueOrDefault(BudsjettPost.Uforutsett);
+            <div class="pf-to">
+                <section class="pf-boks">
+                    <div class="pf-boks-topp"><h3>Inntekt</h3></div>
+                    <div class="pf-sumboks">
+                        <div><span>Kontraktsum eks. mva</span><b>@Kr(f.Kontrakt)</b></div>
+                        <div><span>Godkjente endringer</span><b>@Kr(f.Endringer)</b></div>
+                        <div><span>Indeksregulering</span><input class="pf-inn pf-tal" inputmode="decimal" value="@(_p!.Indeksregulering?.ToString("0", CultureInfo.InvariantCulture))" placeholder="0" @onchange="@(e => EndreProsjekt(x => x.Indeksregulering = LesTall(e)))" aria-label="Indeksregulering" /></div>
+                        <div class="pf-sum"><span>Prosjektsum</span><span>@Kr(f.Prosjektsum)</span></div>
+                    </div>
+                </section>
+                <section class="pf-boks">
+                    <div class="pf-boks-topp"><h3>Resultat</h3></div>
+                    <div class="pf-sumboks">
+                        <div><span>Dekningsgrad tilbudt</span><b>@DG(o.BudsjettDekningsgrad)</b></div>
+                        <div><span>Dekningsgrad hittil</span><b>@DG(o.FaktiskDekningsgrad)</b></div>
+                        <div class="pf-sum"><span>Dekningsgrad prognose</span><span class="@((o.PrognoseDekningsgrad ?? 0) < (o.BudsjettDekningsgrad ?? 0) - 0.02m ? "pf-rod" : "pf-gronn")">@DG(o.PrognoseDekningsgrad)</span></div>
+                        <div><span>Fortjeneste per time, budsjett</span><b>@(o.BudsjettTimer > 0 ? Kr((o.Inntekt - o.BudsjettKost) / o.BudsjettTimer) : "–")</b></div>
+                        <div><span>Fortjeneste per time, prognose</span><b>@(o.PrognoseTimer > 0 ? Kr((o.Inntekt - o.PrognoseKost) / o.PrognoseTimer) : "–")</b></div>
+                    </div>
+                </section>
+            </div>
+
+            <section class="pf-boks">
+                <div class="pf-boks-topp"><h3>Kostnadsbudsjett</h3><span class="pf-dempet">Kontrakt er låst fra godkjente tilbud og endringer. Faktisk kommer fra timer og varer. Bare justeringer fylles inn.</span></div>
+                <div class="pf-tabellramme">
+                    <table class="pf-tabell">
+                        <thead><tr><th>Post</th><th class="n">Kontrakt</th><th class="n">Justering</th><th class="n">Justert</th><th class="n">Faktisk hittil</th><th class="n">Prognose</th><th class="n">Avvik</th></tr></thead>
+                        <tbody>
+                            @BudsjettRad("Varer", o.VarerFraLager ? "Faktisk forbruk fra lageret" : "Anslått fra tilbudets varer × fremdrift", BudsjettPost.Varer, o.BudsjettVarer, jV, o.FaktiskVarer, o.PrognoseVarer)
+                            @BudsjettRad("Timer", $"{o.BudsjettTimer.ToString("0.#", Kultur)} t i budsjett, inkl. rigg og drift", BudsjettPost.Timer, o.BudsjettTimekost, jT, o.FaktiskTimekost, o.PrognoseTimekost)
+                            @BudsjettRad("Uforutsett", "Reserve til det uforutsette", BudsjettPost.Uforutsett, 0, jU, 0, 0)
+                            <tr class="pf-sumrad">
+                                <td>Sum</td>
+                                <td class="n">@KrKort(o.BudsjettKost)</td>
+                                <td class="n">@KrKort(o.Justering)</td>
+                                <td class="n">@KrKort(o.JustertKost)</td>
+                                <td class="n">@KrKort(o.FaktiskKost)</td>
+                                <td class="n">@KrKort(o.PrognoseKost)</td>
+                                <td class="n @(o.PrognoseKost > o.JustertKost ? "pf-rod" : "pf-gronn")">@(o.PrognoseKost >= o.JustertKost ? "+" : "−")@KrKort(Math.Abs(o.PrognoseKost - o.JustertKost))</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            var forslagRest = Math.Max(0, (o.RestOverstyrt ? 0 : o.PrognoseTimer) - o.FaktiskTimer);
+            <section class="pf-boks">
+                <div class="pf-boks-topp"><h3>Arbeidstimer</h3><span class="pf-dempet">Medgått kommer fra timeføringen. Resterende foreslås ut fra fremdriften. Skriv inn ditt eget tall hvis forslaget ikke stemmer.</span></div>
+                <div class="pf-timer">
+                    <div><span>Budsjett</span><b>@o.BudsjettTimer.ToString("0.#", Kultur) t</b></div>
+                    <div><span>Medgått</span><b>@o.FaktiskTimer.ToString("0.#", Kultur) t</b>@if (o.FaktiskTimerVenter > 0) {<small>@o.FaktiskTimerVenter.ToString("0.#", Kultur) t venter på godkjenning</small>}</div>
+                    <div>
+                        <span>Resterende</span>
+                        <input class="pf-inn pf-tal" inputmode="decimal" value="@(_p!.ResterendeTimer?.ToString("0.#", CultureInfo.InvariantCulture))" placeholder="@forslagRest.ToString("0", CultureInfo.InvariantCulture)" @onchange="@(e => EndreProsjekt(x => x.ResterendeTimer = LesTall(e)))" aria-label="Resterende timer" />
+                        <small>@(o.RestOverstyrt ? "Ditt tall · tøm feltet for forslaget" : $"Forslag {forslagRest.ToString("0", Kultur)} t fra fremdriften")</small>
+                    </div>
+                    <div><span>Forventet</span><b>@o.PrognoseTimer.ToString("0.#", Kultur) t</b></div>
+                    <div class="@(o.PrognoseTimer > o.BudsjettTimer ? "pf-tall-gul" : "")"><span>Avvik</span><b>@((o.PrognoseTimer - o.BudsjettTimer) >= 0 ? "+" : "−")@Math.Abs(o.PrognoseTimer - o.BudsjettTimer).ToString("0.#", Kultur) t</b></div>
+                </div>
+                @if (_timerPerAktivitet.Count > 0)
+                {
+                    <div class="pf-aktiviteter">
+                        @foreach (var (akt, t) in _timerPerAktivitet)
+                        {
+                            <span class="pf-chip">@akt.Visningsnavn() @t.ToString("0.#", Kultur) t</span>
+                        }
+                    </div>
+                }
+                <p class="pf-dempet">Timekosten kommer fra <a href="/prosjektokonomi/innstillinger">Innstillinger → Timekost</a>: årslønn × sosiale kostnader + overhead, delt på fakturerbare timer, per ansatt.</p>
+            </section>
+        }
+    </div>;
+
+    private RenderFragment BudsjettRad(string navn, string merknad, BudsjettPost post, decimal kontrakt, decimal justering, decimal faktisk, decimal prognose) => @<tr>
+        @{
+            var justert = kontrakt + justering;
+            var avvik = prognose - justert;
+        }
+        <td><b>@navn</b><small>@merknad</small></td>
+        <td class="n">@KrKort(kontrakt)</td>
+        <td class="n"><input class="pf-inn pf-tal" inputmode="decimal" value="@(justering != 0 ? justering.ToString("0", CultureInfo.InvariantCulture) : "")" placeholder="0" @onchange="@(e => SettJustering(post, e))" aria-label="Justering @navn" /></td>
+        <td class="n">@KrKort(justert)</td>
+        <td class="n">@KrKort(faktisk)</td>
+        <td class="n">@KrKort(prognose)</td>
+        <td class="n @(Math.Abs(avvik) < 1 ? "" : avvik > 0 ? "pf-rod" : "pf-gronn")">@(Math.Abs(avvik) < 1 ? "0" : (avvik > 0 ? "+" : "−") + KrKort(Math.Abs(avvik)))</td>
+    </tr>;
+
+    // ======================================================================
+    // Endringer
+    private Task EndreTilbud(int tilbudId, Action<Tilbud> endring) => Lagre(async () =>
+        endring(await Db.Tilbud.FirstAsync(t => t.Id == tilbudId)));
+
+    private Task NyEndringsmelding() => Kjor(async () =>
+    {
+        var hoved = await Db.Tilbud.AsNoTracking()
+            .Where(t => t.ProsjektId == ProsjektId && t.Type == TilbudType.Tilbud)
+            .OrderByDescending(t => t.Status == EndringsmeldingStatus.Godkjent).ThenBy(t => t.Id)
+            .FirstOrDefaultAsync();
+        var tilbud = new Tilbud
+        {
+            ProsjektId = ProsjektId,
+            Tittel = "Endringsmelding/tillegg",
+            Type = TilbudType.Endringsmelding,
+            OpprinneligTilbudId = hoved?.Id,
+            ByggetrinnFilter = hoved?.ByggetrinnFilter,
+        };
+        Db.Tilbud.Add(tilbud);
+        await Db.SaveChangesAsync();
+        Db.TilbudHendelser.Add(new TilbudHendelse { TilbudId = tilbud.Id, Beskrivelse = "Tilbudet ble opprettet som endringsmelding/tillegg fra Prosjektøkonomi" });
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo($"/tilbud/{tilbud.Id}");
+    });
+
+    private static (string Tekst, string Klasse) EndringStatus(ProsjektOppfolgingService.Endring e) => e.Tilbud.Status switch
+    {
+        EndringsmeldingStatus.Godkjent => ("Godkjent", "gronn"),
+        EndringsmeldingStatus.Avslatt => ("Avslått", "rod"),
+        EndringsmeldingStatus.SendtTilKunde => (e.DagerVentet > 0 ? $"Venter, {e.DagerVentet} dager" : "Sendt til kunde", e.DagerVentet >= 7 ? "gul" : "bla"),
+        _ => ("Utkast", "")
+    };
+
+    private RenderFragment EndringerFane() => @<div class="pf-fane">
+        @{
+            var f = _f!;
+        }
+        <div class="pf-fane-topp">
+            <div>
+                <h3>Endringsmeldinger</h3>
+                <p class="pf-dempet">Godkjente endringer legges til prosjektsummen. Fristforlengelse flytter overleveringsfristen i fremdriftsplanen.</p>
+            </div>
+            <button type="button" class="pf-knapp pf-knapp-p" @onclick="NyEndringsmelding">+ Ny endringsmelding</button>
+        </div>
+        @if (f.Endringsmeldinger.Count == 0)
+        {
+            <div class="pf-tomboks"><b>Ingen endringsmeldinger</b><p>Tillegg og endringer underveis lages som endringsmeldinger, og havner her med beløp og status.</p></div>
+        }
+        else
+        {
+            <div class="pf-tabellramme">
+                <table class="pf-tabell">
+                    <thead><tr><th>Nr</th><th>Beskrivelse</th><th>Sendt</th><th>Status</th><th class="n">Beløp eks. mva</th><th class="n">Frist + dager</th><th>Berørte fag</th></tr></thead>
+                    <tbody>
+                        @foreach (var e in f.Endringsmeldinger)
+                        {
+                            var t = e.Tilbud;
+                            var (tekst, klasse) = EndringStatus(e);
+                            <tr>
+                                <td><b>E@(e.Nr)</b></td>
+                                <td><a href="@($"/tilbud/{t.Id}")">@t.Tittel</a></td>
+                                <td>@(t.SendtDato is { } s ? Dato(s) : "–")</td>
+                                <td><span class="pf-chip @(klasse.Length > 0 ? "pf-chip-" + klasse : "")">@tekst</span></td>
+                                <td class="n">@KrKort(e.Belop)</td>
+                                <td class="n"><input class="pf-inn pf-tal pf-smal" inputmode="numeric" value="@t.FristforlengelseDager" placeholder="0" @onchange="@(ev => EndreTilbud(t.Id, x => x.FristforlengelseDager = LesTall(ev) is { } d && d > 0 ? (int)d : null))" aria-label="Fristforlengelse i dager" /></td>
+                                <td><input class="pf-inn" value="@t.BerorteFag" placeholder="F.eks. elektro" @onchange="@(ev => EndreTilbud(t.Id, x => x.BerorteFag = LesTekst(ev)))" aria-label="Berørte fag" /></td>
+                            </tr>
+                        }
+                        <tr class="pf-sumrad">
+                            <td></td>
+                            <td>Sum godkjente</td>
+                            <td></td>
+                            <td></td>
+                            <td class="n">@KrKort(f.Endringsmeldinger.Where(e => e.Tilbud.Status == EndringsmeldingStatus.Godkjent).Sum(e => e.Belop))</td>
+                            <td class="n">@(f.Fristforlengelse > 0 ? $"{f.Fristforlengelse} d" : "–")</td>
+                            <td></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>;
+
+    // ======================================================================
+    // Fakturering
+    private int? _bekreftSend;
+    private bool _sender;
+
+    private Task ForeslaPlan() => Lagre(() => OppfolgingSvc.ForeslaAkontoplanAsync(ProsjektId), "Faktureringsplanen er lagt inn. Juster milepæler og prosent ved behov.");
+
+    private Task NyAkonto() => Lagre(async () =>
+    {
+        var nr = (await Db.ProsjektAkontoer.Where(a => a.ProsjektId == ProsjektId).MaxAsync(a => (int?)a.Nr) ?? 0) + 1;
+        Db.ProsjektAkontoer.Add(new ProsjektAkonto { ProsjektId = ProsjektId, Nr = nr, Milepael = $"Akonto {nr}", Prosent = 10 });
+    });
+
+    private Task EndreAkonto(int id, Action<ProsjektAkonto> endring) => Lagre(async () =>
+        endring(await Db.ProsjektAkontoer.FirstAsync(a => a.Id == id)));
+
+    private Task SlettAkonto(int id) => Lagre(async () =>
+    {
+        var a = await Db.ProsjektAkontoer.FirstAsync(x => x.Id == id);
+        if (a.Status == AkontoStatus.Planlagt)
+        {
+            Db.ProsjektAkontoer.Remove(a);
+        }
+    });
+
+    private Task MarkerFakturert(ProsjektOppfolgingService.AkontoRad r) => EndreAkonto(r.Akonto.Id, a =>
+    {
+        a.Status = AkontoStatus.Sendt;
+        a.SendtDato = DateTime.Now;
+        a.SendtBelop = r.Belop;
+    });
+
+    private Task SendTilTripletex(ProsjektOppfolgingService.AkontoRad r) => Kjor(async () =>
+    {
+        _sender = true;
+        try
+        {
+            var (ok, feil) = await TripletexSync.PushAkontoTilTripletexAsync(r.Akonto.Id, r.Belop);
+            _melding = ok ? $"Akonto {r.Akonto.Nr} på {Kr(r.Belop)} er sendt til Tripletex som ordre. Fakturer den der." : $"Tripletex: {feil}";
+            _meldingFeil = !ok;
+        }
+        finally
+        {
+            _sender = false;
+            _bekreftSend = null;
+        }
+
+        await LastAsync();
+    });
+
+    private RenderFragment FakturaFane() => @<div class="pf-fane">
+        @{
+            var f = _f!;
+            var p = _p!;
+            var harTripletex = Tripletex.ErKonfigurert;
+        }
+        <div class="pf-to pf-to-faktura">
+            <section class="pf-boks">
+                <div class="pf-boks-topp">
+                    <h3>Faktureringsplan</h3>
+                    @if (f.Akontoer.Count > 0)
+                    {
+                        <button type="button" class="pf-knapp" @onclick="NyAkonto">+ Akonto</button>
+                    }
+                </div>
+                @if (f.Akontoer.Count == 0)
+                {
+                    <div class="pf-tomboks">
+                        <b>Ingen faktureringsplan</b>
+                        <p>Lag planen én gang ved kontrakt. Forslaget er som i arket: 20, 30, 25 og 15 % av kontraktsummen, og resten i sluttoppgjøret. Hver akonto blir «klar» når fremdriften når milepælen eller datoen.</p>
+                        <span><button type="button" class="pf-knapp pf-knapp-p" @onclick="ForeslaPlan">Foreslå plan</button> <button type="button" class="pf-knapp" @onclick="NyAkonto">Legg til én akonto</button></span>
+                    </div>
+                }
+                else
+                {
+                    <div class="pf-tabellramme">
+                        <table class="pf-tabell pf-akonto">
+                            <thead><tr><th>Nr</th><th>Milepæl</th><th class="n">% av kontrakt</th><th class="n">Klar ved utført</th><th>Eller dato</th><th class="n">Beløp</th><th>Status</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var r in f.Akontoer)
+                                {
+                                    var rad = r;
+                                    var a = r.Akonto;
+                                    var laast = a.Status != AkontoStatus.Planlagt;
+                                    <tr class="@(r.Klar ? "pf-klar" : "")">
+                                        <td><b>@a.Nr</b></td>
+                                        <td><input class="pf-inn" value="@a.Milepael" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.Milepael = LesTekst(e) ?? x.Milepael))" aria-label="Milepæl" /></td>
+                                        <td class="n"><input class="pf-inn pf-tal pf-smal" inputmode="decimal" value="@(a.Prosent?.ToString("0.##", CultureInfo.InvariantCulture))" placeholder="fast" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.Prosent = LesTall(e)))" aria-label="Prosent av kontrakt" /></td>
+                                        <td class="n"><input class="pf-inn pf-tal pf-smal" inputmode="numeric" value="@a.FremdriftProsent" placeholder="–" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.FremdriftProsent = LesTall(e) is { } v ? (int)Math.Clamp(v, 0, 100) : null))" aria-label="Klar når så mange prosent er utført" /></td>
+                                        <td><input type="date" class="pf-inn" value="@DatoVerdi(a.PlanlagtDato)" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.PlanlagtDato = LesDato(e)))" aria-label="Planlagt dato" /></td>
+                                        <td class="n">
+                                            @if (a.Prosent is null && !laast)
+                                            {
+                                                <input class="pf-inn pf-tal" inputmode="decimal" value="@(a.Belop?.ToString("0", CultureInfo.InvariantCulture))" placeholder="Beløp" @onchange="@(e => EndreAkonto(a.Id, x => x.Belop = LesTall(e)))" aria-label="Fast beløp" />
+                                            }
+                                            else
+                                            {
+                                                <b>@KrKort(r.Belop)</b>
+                                            }
+                                        </td>
+                                        <td>
+                                            @switch (a.Status)
+                                            {
+                                                case AkontoStatus.Betalt:
+                                                    <span class="pf-chip pf-chip-gronn">Betalt @(a.BetaltDato is { } bd ? Dato(bd) : "")</span>
+                                                    break;
+                                                case AkontoStatus.Sendt:
+                                                    <span class="pf-chip pf-chip-bla">@(a.TripletexOrdreNummer is { } nr ? $"Ordre {nr}" : "Fakturert") @(a.SendtDato is { } sd ? Dato(sd) : "")</span>
+                                                    <button type="button" class="pf-lenke" @onclick="@(() => EndreAkonto(a.Id, x => { x.Status = AkontoStatus.Betalt; x.BetaltDato = DateTime.Today; }))">Marker betalt</button>
+                                                    break;
+                                                default:
+                                                    @if (_bekreftSend == a.Id)
+                                                    {
+                                                        <span class="pf-bekreft">Send @Kr(r.Belop) til Tripletex?
+                                                            <button type="button" class="pf-knapp pf-knapp-ok" disabled="@_sender" @onclick="@(() => SendTilTripletex(rad))">@(_sender ? "Sender …" : "Ja, send")</button>
+                                                            <button type="button" class="pf-lenke" @onclick="@(() => _bekreftSend = null)">Avbryt</button>
+                                                        </span>
+                                                    }
+                                                    else
+                                                    {
+                                                        @if (r.Klar)
+                                                        {
+                                                            <span class="pf-chip pf-chip-gul">Klar</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="pf-chip">Planlagt</span>
+                                                        }
+                                                        @if (harTripletex && r.Belop > 0)
+                                                        {
+                                                            <button type="button" class="pf-knapp @(r.Klar ? "pf-knapp-ok" : "")" @onclick="@(() => _bekreftSend = a.Id)">Send til Tripletex</button>
+                                                        }
+                                                        <button type="button" class="pf-lenke" @onclick="@(() => MarkerFakturert(rad))">Marker fakturert</button>
+                                                    }
+                                                    @if (!string.IsNullOrEmpty(a.TripletexFeil))
+                                                    {
+                                                        <small class="pf-rod">@a.TripletexFeil</small>
+                                                    }
+                                                    break;
+                                            }
+                                        </td>
+                                        <td>@if (!laast) {<button type="button" class="pf-x" title="Fjern akontoen" @onclick="@(() => SlettAkonto(a.Id))">×</button>}</td>
+                                    </tr>
+                                }
+                                <tr class="pf-sumrad">
+                                    <td></td>
+                                    <td>Sluttoppgjør<small>resten av prosjektsummen</small></td>
+                                    <td class="n">@(f.Kontrakt > 0 ? Pst(Math.Max(0, 1 - f.Akontoer.Where(a => a.Akonto.Prosent is not null).Sum(a => a.Akonto.Prosent!.Value) / 100m)) : "")</td>
+                                    <td class="n">100 %</td>
+                                    <td>@(f.Frister is { } fr ? Dato(fr.Overlevering) : "")</td>
+                                    <td class="n">@KrKort(f.Sluttoppgjor)</td>
+                                    <td></td>
+                                    <td></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    @if (!harTripletex)
+                    {
+                        <p class="pf-dempet">Tripletex er ikke koblet til. Fakturer akontoen der du pleier, og trykk «Marker fakturert».</p>
+                    }
+                }
+            </section>
+            <section class="pf-boks">
+                <div class="pf-boks-topp"><h3>Prosjektsum</h3></div>
+                <div class="pf-sumboks">
+                    <div><span>Kontraktsum eks. mva</span><b>@Kr(f.Kontrakt)</b></div>
+                    <div><span>Godkjente endringer</span><b>@Kr(f.Endringer)</b></div>
+                    <div><span>Indeksregulering</span><b>@Kr(f.Indeks)</b></div>
+                    <div class="pf-sum"><span>Sum eks. mva</span><span>@Kr(f.Prosjektsum)</span></div>
+                    <div><span>Fakturert</span><b>@Kr(f.Fakturert)</b></div>
+                    <div><span>Utført, ikke fakturert</span><b class="@(f.UtfortIkkeFakturert > 0 ? "pf-gul" : "")">@Kr(f.UtfortIkkeFakturert)</b></div>
+                    <div class="pf-rest"><span>Gjenstår å fakturere</span><span>@Kr(f.Gjenstar)</span></div>
+                </div>
+                <div class="pf-boks-topp"><h3>Bankgaranti</h3></div>
+                <div class="pf-sumboks">
+                    <div><span>Beløp</span><input class="pf-inn pf-tal" inputmode="decimal" value="@(p.BankgarantiBelop?.ToString("0", CultureInfo.InvariantCulture))" placeholder="@(f.Kontrakt > 0 ? Math.Round(f.Kontrakt * 0.1m).ToString("0", CultureInfo.InvariantCulture) : "")" @onchange="@(e => EndreProsjekt(x => x.BankgarantiBelop = LesTall(e)))" aria-label="Bankgaranti beløp" /></div>
+                    <div><span>Gyldig til</span><input type="date" class="pf-inn" value="@DatoVerdi(p.BankgarantiTil)" @onchange="@(e => EndreProsjekt(x => x.BankgarantiTil = LesDato(e)))" aria-label="Bankgaranti gyldig til" /></div>
+                </div>
+                <p class="pf-dempet">Vanlig er 10 % av kontraktsummen i byggetiden og 3 % i reklamasjonstiden. To uker før datoen vises den under «Venter noe på oss?».</p>
+            </section>
+        </div>
+    </div>;
+}

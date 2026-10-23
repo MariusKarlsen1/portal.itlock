@@ -46,9 +46,13 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         decimal PrognoseVarer,
         decimal Timesats,
         List<TilbudInfo> Tilbud,
-        List<AoLinje> Arbeidsordre)
+        List<AoLinje> Arbeidsordre,
+        decimal Justering = 0,
+        bool RestOverstyrt = false)
     {
         public decimal BudsjettKost => BudsjettTimekost + BudsjettVarer;
+        // Budsjettet med justeringene som er lagt inn underveis.
+        public decimal JustertKost => BudsjettKost + Justering;
         public decimal FaktiskKost => FaktiskTimekost + FaktiskVarer;
         public decimal PrognoseKost => PrognoseTimekost + PrognoseVarer;
         public decimal PrognoseTimekost => FaktiskTimer > 0 ? PrognoseTimer * (FaktiskTimekost / FaktiskTimer) : PrognoseTimer * Timesats;
@@ -140,9 +144,15 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         var ordreIder = ordre.Select(o => o.Id).ToList();
         var timer = (await db.Timeregistreringer.AsNoTracking()
                 .Where(t => ordreIder.Contains(t.ArbeidsordreId) && t.Status != TimeregistreringStatus.Avslatt)
-                .Select(t => new { t.ArbeidsordreId, t.Start, t.Slutt, t.PauseMinutter, t.Status }).ToListAsync())
-            .Select(t => new { t.ArbeidsordreId, t.Status, Timer = Math.Max(0, (decimal)(t.Slutt - t.Start).TotalHours - t.PauseMinutter / 60m) })
+                .Select(t => new { t.ArbeidsordreId, t.MontorId, t.Start, t.Slutt, t.PauseMinutter, t.Status }).ToListAsync())
+            .Select(t => new { t.ArbeidsordreId, t.MontorId, t.Status, Timer = Math.Max(0, (decimal)(t.Slutt - t.Start).TotalHours - t.PauseMinutter / 60m) })
             .ToList();
+        // Timekost per ansatt (Innstillinger → Timekost) går foran den felles timekosten.
+        var ansattKost = (await db.AnsattTimekost.AsNoTracking().ToListAsync())
+            .Where(k => k.Timekost > 0).ToDictionary(k => k.BrukerId, k => k.Timekost);
+        var justeringer = await db.ProsjektBudsjettJusteringer.AsNoTracking().Where(j => ider.Contains(j.ProsjektId)).ToListAsync();
+        var rester = await db.Prosjekter.AsNoTracking().Where(p => ider.Contains(p.Id) && p.ResterendeTimer != null)
+            .ToDictionaryAsync(p => p.Id, p => p.ResterendeTimer!.Value);
         var aoVarer = await db.ArbeidsordreVarer.AsNoTracking()
             .Where(v => ordreIder.Contains(v.ArbeidsordreId))
             .Select(v => new { v.ArbeidsordreId, v.ComponentId, v.Antall, v.Kostpris, v.Utpris, Lagerfort = v.Component != null && v.Component.ILagerstyring })
@@ -189,12 +199,12 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
             var aoLinjer = pOrdre.Select(o =>
             {
                 var t = timer.Where(x => x.ArbeidsordreId == o.Id).ToList();
-                var sats = o.KostprisTime ?? timesats;
                 var tSum = t.Sum(x => x.Timer);
+                var tKost = t.Sum(x => x.Timer * (o.KostprisTime ?? ansattKost.GetValueOrDefault(x.MontorId, timesats)));
                 var varer = aoVarer.Where(v => v.ArbeidsordreId == o.Id && !(harLager && v.Lagerfort)).Sum(v => v.Kostpris * v.Antall)
                     + (harLager ? -lagerForbruk.Where(f => f.ArbeidsordreId == o.Id).Sum(f => f.Antall * f.KostPerStk) : 0m);
                 return new AoLinje(o.Id, o.Tittel, o.Status, Math.Round(tSum, 2), Math.Round(t.Where(x => x.Status == TimeregistreringStatus.Venter).Sum(x => x.Timer), 2),
-                    Math.Round(tSum * sats, 2), Math.Round(varer, 2), ikkeFakturert.TryGetValue(o.Id, out var ikke) ? ikke : null);
+                    Math.Round(tKost, 2), Math.Round(varer, 2), ikkeFakturert.TryGetValue(o.Id, out var ikke) ? ikke : null);
             }).ToList();
 
             var fTimer = aoLinjer.Sum(a => a.Timer);
@@ -261,9 +271,17 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
                 progVarer = Math.Max(budVarer + direkteVarer, fVarer);
             }
 
+            // Prosjektlederen har lagt inn hvor mange timer som gjenstår.
+            var restOverstyrt = fremdrift < 0.999m && rester.ContainsKey(pid);
+            if (restOverstyrt)
+            {
+                progTimer = fTimer + Math.Max(0, rester[pid]);
+            }
+
             var o2 = new Okonomi(pid, OkonomiStatus.IkkeVunnet, "", inntekt, Math.Round(budTimer, 2), Math.Round(budTimekost, 2), Math.Round(budVarer, 2),
                 Math.Round(fTimer, 2), aoLinjer.Sum(a => a.TimerVenter), Math.Round(fTimekost, 2), Math.Round(fVarer, 2), fraLager,
-                fremdrift, fremdriftTekst, Math.Round(progTimer, 2), Math.Round(progVarer, 2), Math.Round(timesats, 2), pTilbud, aoLinjer);
+                fremdrift, fremdriftTekst, Math.Round(progTimer, 2), Math.Round(progVarer, 2), Math.Round(timesats, 2), pTilbud, aoLinjer,
+                justeringer.Where(j => j.ProsjektId == pid).Sum(j => j.Belop), restOverstyrt);
 
             resultat[pid] = o2 with { Status = Vurder(o2, inn, out var tekst), StatusTekst = tekst };
         }
@@ -281,9 +299,9 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
 
         static string P(decimal v) => $"{Math.Round(v * 100):0} %";
 
-        if (o.BudsjettKost > 0 && o.FaktiskKost > o.BudsjettKost)
+        if (o.JustertKost > 0 && o.FaktiskKost > o.JustertKost)
         {
-            tekst = $"Kostnaden er allerede {P(o.FaktiskKost / o.BudsjettKost - 1)} over budsjettet.";
+            tekst = $"Kostnaden er allerede {P(o.FaktiskKost / o.JustertKost - 1)} over budsjettet.";
             return OkonomiStatus.OverBudsjett;
         }
 
@@ -300,9 +318,9 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
             return OkonomiStatus.FolgMed;
         }
 
-        if (o.BudsjettKost > 0 && o.PrognoseKost > o.BudsjettKost * (1 + inn.GulProsentOverBudsjett / 100m))
+        if (o.JustertKost > 0 && o.PrognoseKost > o.JustertKost * (1 + inn.GulProsentOverBudsjett / 100m))
         {
-            tekst = $"Prognosen ender {P(o.PrognoseKost / o.BudsjettKost - 1)} over budsjettet.";
+            tekst = $"Prognosen ender {P(o.PrognoseKost / o.JustertKost - 1)} over budsjettet.";
             return OkonomiStatus.FolgMed;
         }
 
@@ -326,14 +344,27 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         await db.Prosjekter.CountAsync(p => p.Status == ProsjektStatus.Overlevert && !db.ProsjektEtterkalkyler.Any(k => k.ProsjektId == p.Id));
 
     // Signerer etterkalkylen: tallene lagres slik de er nå.
-    public async Task<ProsjektEtterkalkyle> KontrollerAsync(int prosjektId, EtterkalkyleArsak arsak, string? kommentar, string? brukerNavn)
+    // Svarene på spørsmålene fra etterkalkylen i økonomiarket.
+    public sealed record Evaluering(string? GikkBra, string? GikkDarlig, string? Forbedre, string? ForsinkelseEgne, string? ForsinkelseAndre);
+
+    public async Task<ProsjektEtterkalkyle> KontrollerAsync(int prosjektId, EtterkalkyleArsak arsak, string? kommentar, string? brukerNavn, Evaluering? evaluering = null)
     {
+        static string? Rens(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
         var o = await BeregnAsync(prosjektId);
         var k = await db.ProsjektEtterkalkyler.FirstOrDefaultAsync(x => x.ProsjektId == prosjektId) ?? new ProsjektEtterkalkyle { ProsjektId = prosjektId };
         k.Kontrollert = DateTime.Now;
         k.KontrollertAv = brukerNavn;
         k.Arsak = arsak;
-        k.Kommentar = string.IsNullOrWhiteSpace(kommentar) ? null : kommentar.Trim();
+        k.Kommentar = Rens(kommentar);
+        if (evaluering is not null)
+        {
+            k.GikkBra = Rens(evaluering.GikkBra);
+            k.GikkDarlig = Rens(evaluering.GikkDarlig);
+            k.Forbedre = Rens(evaluering.Forbedre);
+            k.ForsinkelseEgne = Rens(evaluering.ForsinkelseEgne);
+            k.ForsinkelseAndre = Rens(evaluering.ForsinkelseAndre);
+        }
+
         k.Inntekt = o.Inntekt;
         k.BudsjettTimer = o.BudsjettTimer;
         k.FaktiskTimer = o.FaktiskTimer;

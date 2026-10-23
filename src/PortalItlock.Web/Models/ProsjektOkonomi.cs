@@ -65,6 +65,13 @@ public class ProsjektEtterkalkyle
     public EtterkalkyleArsak Arsak { get; set; }
     public string? Kommentar { get; set; }
 
+    // Spørsmålene fra etterkalkylen i økonomiarket.
+    public string? GikkBra { get; set; }
+    public string? GikkDarlig { get; set; }
+    public string? Forbedre { get; set; }
+    public string? ForsinkelseEgne { get; set; }
+    public string? ForsinkelseAndre { get; set; }
+
     public decimal Inntekt { get; set; }
     public decimal BudsjettTimer { get; set; }
     public decimal FaktiskTimer { get; set; }

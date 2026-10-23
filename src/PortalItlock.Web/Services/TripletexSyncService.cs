@@ -177,59 +177,12 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
             return (false, ordre.TripletexOrdreFeil);
         }
 
-        // Sørg for at kunden faktisk finnes i Tripletex først - oppretter den
-        // der og gjenbruker koblingen (samme mekanisme som SynkroniserKunderAsync)
-        // hvis den ikke allerede er synkronisert.
-        if (string.IsNullOrWhiteSpace(kunde.TripletexKundenummer))
+        var (kundeId, kundeIdFeil) = await TripletexKundeIdAsync(kunde, ct);
+        if (kundeId is not { } tripletexKundeId)
         {
-            var (id, kundenummer, kundeFeil) = await tripletex.OpprettKundeAsync(TilKundeOppdatering(kunde), ct);
-            if (kundeFeil is not null)
-            {
-                ordre.TripletexOrdreFeil = $"Fikk ikke opprettet kunden \"{kunde.Navn}\" i Tripletex: {kundeFeil}";
-                await db.SaveChangesAsync(ct);
-                return (false, ordre.TripletexOrdreFeil);
-            }
-
-            kunde.TripletexKundenummer = kundenummer ?? id?.ToString();
+            ordre.TripletexOrdreFeil = kundeIdFeil;
             await db.SaveChangesAsync(ct);
-        }
-
-        // TripletexKundenummer lagres som Tripletex sitt "customerNumber"
-        // (visningsnummeret, f.eks. "10009") - IKKE den interne Tripletex-IDen
-        // som kreves i order.customer.id. De to er helt forskjellige tall i
-        // Tripletex sin datamodell (bekreftet i praksis: en tidligere versjon
-        // her antok feilaktig at et tallformat TripletexKundenummer VAR IDen,
-        // noe som sendte feil kunde-ID til Tripletex og ga 422 "Kunden finnes
-        // ikke"). Slår derfor alltid opp den ekte IDen via søk, og matcher på
-        // enten CustomerNumber (vanlig) eller Id (dekker det sjeldne
-        // unntakstilfellet der OpprettKundeAsync måtte falle tilbake til å
-        // lagre selve IDen fordi Tripletex ikke returnerte et kundenummer).
-        var (treff, sokFeil) = await tripletex.SokKunderAsync(kunde.Navn, ct);
-        var match = treff.FirstOrDefault(t =>
-            t.CustomerNumber == kunde.TripletexKundenummer || t.Id.ToString() == kunde.TripletexKundenummer);
-
-        int tripletexKundeId;
-        if (match is not null)
-        {
-            tripletexKundeId = match.Id;
-        }
-        else
-        {
-            // Kundenummeret stemmer ikke lenger med noen ekte kunde i
-            // Tripletex (f.eks. slettet der, eller feltet ble aldri korrekt
-            // satt) - oppretter kunden på nytt der i stedet for å feile, og
-            // reparerer koblingen for neste gang.
-            var (nyId, nyttKundenummer, opprettFeil) = await tripletex.OpprettKundeAsync(TilKundeOppdatering(kunde), ct);
-            if (opprettFeil is not null || nyId is null)
-            {
-                ordre.TripletexOrdreFeil = $"Fant ikke kunden \"{kunde.Navn}\" igjen i Tripletex (kundenummer {kunde.TripletexKundenummer}), og fikk heller ikke opprettet den på nytt: {opprettFeil ?? sokFeil}";
-                await db.SaveChangesAsync(ct);
-                return (false, ordre.TripletexOrdreFeil);
-            }
-
-            kunde.TripletexKundenummer = nyttKundenummer ?? nyId.Value.ToString();
-            await db.SaveChangesAsync(ct);
-            tripletexKundeId = nyId.Value;
+            return (false, ordre.TripletexOrdreFeil);
         }
 
         // Samme linjeberegning som portalens egne rapporter bruker (se
@@ -282,5 +235,114 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         ordre.TripletexOrdreFeil = null;
         await db.SaveChangesAsync(ct);
         return (true, null);
+    }
+
+    // Akonto fra faktureringsplanen under Prosjektøkonomi: én ordrelinje med
+    // beløpet, på prosjektets kunde. Sendes bare én gang.
+    public async Task<(bool Ok, string? Feilmelding)> PushAkontoTilTripletexAsync(int akontoId, decimal belop, CancellationToken ct = default)
+    {
+        var akonto = await db.ProsjektAkontoer.Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
+            .FirstOrDefaultAsync(a => a.Id == akontoId, ct);
+        if (akonto is null)
+        {
+            return (false, "Fant ikke akontoen.");
+        }
+
+        if (akonto.TripletexOrdreId is not null)
+        {
+            return (true, null);
+        }
+
+        if (belop <= 0)
+        {
+            return (false, "Akontoen har ikke noe beløp.");
+        }
+
+        if (akonto.Prosjekt?.Kunde is not { } kunde)
+        {
+            akonto.TripletexFeil = "Prosjektet har ingen kunde. Velg kunde på prosjektet først.";
+            await db.SaveChangesAsync(ct);
+            return (false, akonto.TripletexFeil);
+        }
+
+        var (kundeId, kundeFeil) = await TripletexKundeIdAsync(kunde, ct);
+        if (kundeId is null)
+        {
+            akonto.TripletexFeil = kundeFeil;
+            await db.SaveChangesAsync(ct);
+            return (false, kundeFeil);
+        }
+
+        var tekst = $"Akonto {akonto.Nr} - {akonto.Milepael}";
+        var (ordreId, ordreNummer, ordreFeil) = await tripletex.OpprettOrdreAsync(
+            kundeId.Value, $"{akonto.Prosjekt.Navn} - {tekst}", [new TripletexService.OrdreLinjeInput(tekst, 1, belop)], ct);
+        if (ordreFeil is not null)
+        {
+            akonto.TripletexFeil = ordreFeil;
+            await db.SaveChangesAsync(ct);
+            return (false, ordreFeil);
+        }
+
+        akonto.TripletexOrdreId = ordreId;
+        akonto.TripletexOrdreNummer = ordreNummer;
+        akonto.TripletexFeil = null;
+        akonto.Status = AkontoStatus.Sendt;
+        akonto.SendtDato = DateTime.Now;
+        akonto.SendtBelop = belop;
+        await db.SaveChangesAsync(ct);
+        return (true, null);
+    }
+
+    // Tripletex sin interne kunde-ID for kunden. Oppretter kunden i Tripletex
+    // hvis den ikke finnes der ennå, og reparerer koblingen hvis den er brutt.
+    private async Task<(int? KundeId, string? Feil)> TripletexKundeIdAsync(Kunde kunde, CancellationToken ct)
+    {
+        // Sørg for at kunden faktisk finnes i Tripletex først - oppretter den
+        // der og gjenbruker koblingen (samme mekanisme som SynkroniserKunderAsync)
+        // hvis den ikke allerede er synkronisert.
+        if (string.IsNullOrWhiteSpace(kunde.TripletexKundenummer))
+        {
+            var (id, kundenummer, kundeFeil) = await tripletex.OpprettKundeAsync(TilKundeOppdatering(kunde), ct);
+            if (kundeFeil is not null)
+            {
+                return (null, $"Fikk ikke opprettet kunden \"{kunde.Navn}\" i Tripletex: {kundeFeil}");
+            }
+
+            kunde.TripletexKundenummer = kundenummer ?? id?.ToString();
+            await db.SaveChangesAsync(ct);
+        }
+
+        // TripletexKundenummer lagres som Tripletex sitt "customerNumber"
+        // (visningsnummeret, f.eks. "10009") - IKKE den interne Tripletex-IDen
+        // som kreves i order.customer.id. De to er helt forskjellige tall i
+        // Tripletex sin datamodell (bekreftet i praksis: en tidligere versjon
+        // her antok feilaktig at et tallformat TripletexKundenummer VAR IDen,
+        // noe som sendte feil kunde-ID til Tripletex og ga 422 "Kunden finnes
+        // ikke"). Slår derfor alltid opp den ekte IDen via søk, og matcher på
+        // enten CustomerNumber (vanlig) eller Id (dekker det sjeldne
+        // unntakstilfellet der OpprettKundeAsync måtte falle tilbake til å
+        // lagre selve IDen fordi Tripletex ikke returnerte et kundenummer).
+        var (treff, sokFeil) = await tripletex.SokKunderAsync(kunde.Navn, ct);
+        var match = treff.FirstOrDefault(t =>
+            t.CustomerNumber == kunde.TripletexKundenummer || t.Id.ToString() == kunde.TripletexKundenummer);
+
+        if (match is not null)
+        {
+            return (match.Id, null);
+        }
+
+        // Kundenummeret stemmer ikke lenger med noen ekte kunde i
+        // Tripletex (f.eks. slettet der, eller feltet ble aldri korrekt
+        // satt) - oppretter kunden på nytt der i stedet for å feile, og
+        // reparerer koblingen for neste gang.
+        var (nyId, nyttKundenummer, opprettFeil) = await tripletex.OpprettKundeAsync(TilKundeOppdatering(kunde), ct);
+        if (opprettFeil is not null || nyId is null)
+        {
+            return (null, $"Fant ikke kunden \"{kunde.Navn}\" igjen i Tripletex (kundenummer {kunde.TripletexKundenummer}), og fikk heller ikke opprettet den på nytt: {opprettFeil ?? sokFeil}");
+        }
+
+        kunde.TripletexKundenummer = nyttKundenummer ?? nyId.Value.ToString();
+        await db.SaveChangesAsync(ct);
+        return (nyId.Value, null);
     }
 }
