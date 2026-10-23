@@ -420,6 +420,12 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
                 $"{dorer.Ferdig} av {dorer.Alle} dører"));
         }
 
+        if (f.O is null)
+        {
+            liste.Add(new(false, "Prosjektet har ikke noe godkjent tilbud",
+                "Etterkalkylen får ingen kalkyle å sammenligne med. Finnes det et tilbud, sett det til Godkjent først.", "tilbud"));
+        }
+
         if (f.O is { } o)
         {
             liste.Add(o.FaktiskTimerVenter > 0
