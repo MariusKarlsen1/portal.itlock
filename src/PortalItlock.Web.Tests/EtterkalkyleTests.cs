@@ -60,6 +60,21 @@ public class EtterkalkyleTests
     }
 
     [Fact]
+    public void KjoringOgTillegg_ErEgenPostOgGarOpp()
+    {
+        // 16 000 i kjøring og småmateriell fra kodelinjene, halvveis utført.
+        var tilbud = new List<ProsjektOkonomiService.TilbudInfo> { new(1, "Hovedtilbud", false, 100000, 30000, 40, DateTime.Today, 16000) };
+        var o = new ProsjektOkonomiService.Okonomi(1, ProsjektOkonomiService.OkonomiStatus.IRute, "", 100000,
+            40, 40 * 550m, 30000, 20, 0, 20 * 550m, 15000, false, 0.5m, "", 40, 30000, 550, tilbud, [], BudsjettAndre: 16000);
+        var ek = new ProsjektOppfolgingService.Etterkalkyle(1, o, 100000, 0, 0, 0, 0, null, null, 0, 0, []);
+
+        Assert.Equal(8000m, o.FaktiskAndre);
+        Assert.Equal(30000m + 22000m + 16000m, o.BudsjettKost);
+        Assert.Equal(ek.KalkVarer + ek.KalkLonn + 16000m, ek.KalkKost);
+        Assert.Equal(ek.FaktiskResultat, ek.Bidrag.First().Belop + ek.Bidrag.Where(b => !b.Total).Sum(b => b.Belop));
+    }
+
+    [Fact]
     public void DagerOverFrist_RegnesFraOverlevertDato()
     {
         Assert.Equal(3, Lag(faktiskVarer: 396000, faktiskTimer: 330).DagerOverFrist);

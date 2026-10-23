@@ -23,7 +23,7 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
 
     public enum OkonomiStatus { IkkeVunnet, IRute, FolgMed, OverBudsjett }
 
-    public sealed record TilbudInfo(int Id, string Tittel, bool ErEndring, decimal Salgssum, decimal Varekost, decimal Timer, DateTime Laast);
+    public sealed record TilbudInfo(int Id, string Tittel, bool ErEndring, decimal Salgssum, decimal Varekost, decimal Timer, DateTime Laast, decimal AndreKost = 0);
 
     public sealed record AoLinje(int Id, string Tittel, ArbeidsordreStatus Status, decimal Timer, decimal TimerVenter, decimal Timekost, decimal Varer, decimal? IkkeFakturert);
 
@@ -49,13 +49,18 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         List<AoLinje> Arbeidsordre,
         decimal Justering = 0,
         bool RestOverstyrt = false,
-        bool VarerManuell = false)
+        bool VarerManuell = false,
+        decimal BudsjettAndre = 0)
     {
-        public decimal BudsjettKost => BudsjettTimekost + BudsjettVarer;
+        // Kjøring, småmateriell og tillegg fra kodelinjene. Registreres ikke
+        // underveis, så faktisk anslås etter fremdriften.
+        public decimal FaktiskAndre => Math.Round(BudsjettAndre * Fremdrift, 2);
+        public decimal PrognoseAndre => BudsjettAndre;
+        public decimal BudsjettKost => BudsjettTimekost + BudsjettVarer + BudsjettAndre;
         // Budsjettet med justeringene som er lagt inn underveis.
         public decimal JustertKost => BudsjettKost + Justering;
-        public decimal FaktiskKost => FaktiskTimekost + FaktiskVarer;
-        public decimal PrognoseKost => PrognoseTimekost + PrognoseVarer;
+        public decimal FaktiskKost => FaktiskTimekost + FaktiskVarer + FaktiskAndre;
+        public decimal PrognoseKost => PrognoseTimekost + PrognoseVarer + PrognoseAndre;
         public decimal PrognoseTimekost => FaktiskTimer > 0 ? PrognoseTimer * (FaktiskTimekost / FaktiskTimer) : PrognoseTimer * Timesats;
         public bool ManglerTimesats => Timesats <= 0 && FaktiskTimekost <= 0;
         public decimal? BudsjettDekningsgrad => Inntekt > 0 ? (Inntekt - BudsjettKost) / Inntekt : null;
@@ -108,7 +113,7 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         var harLager = await tilleggsmoduler.HarAsync(TilleggsModuler.Lager);
 
         // ---- Budsjett: godkjente tilbud, låst ved første utregning ----
-        var tilbud = await db.Tilbud.Include(t => t.Linjer)
+        var tilbud = await db.Tilbud.Include(t => t.Linjer).Include(t => t.KodeLinjer)
             .Where(t => ider.Contains(t.ProsjektId) && t.Status == EndringsmeldingStatus.Godkjent)
             .ToListAsync();
         var tilbudIder = tilbud.Select(t => t.Id).ToList();
@@ -127,6 +132,19 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
                 Timer = Math.Round(estTimer, 2),
                 Timesats = t.MontasjeInnpris ?? inn.InternTimekost ?? 0m
             };
+
+            // Kodelinjer: timene og timekosten fra arbeidslinjene (time), og
+            // kjøring, småmateriell og tillegg som egen post.
+            if (t.BrukerKodelinjer && t.KodeLinjer.Count > 0)
+            {
+                var utprisVarer = t.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).Sum(l => l.Utpris * l.Antall);
+                var summer = t.KodeLinjer.Select(l => (Linje: l, Sum: KodeLinjeBeregner.Sum(l, t.KodeLinjer, utprisVarer))).ToList();
+                var arbeid = summer.Where(x => x.Linje.Type == PrisKodeType.Arbeid && x.Linje.Enhet == PrisKodeEnhet.Time).ToList();
+                var arbeidTimer = arbeid.Sum(x => x.Linje.Antall);
+                b.Timer = Math.Round(arbeidTimer, 2);
+                b.Timesats = arbeidTimer > 0 ? Math.Round(arbeid.Sum(x => x.Sum.Kost) / arbeidTimer, 2) : inn.InternTimekost ?? 0m;
+                b.AndreKost = Math.Round(summer.Except(arbeid).Sum(x => x.Sum.Kost), 2);
+            }
             db.TilbudBudsjetter.Add(b);
             budsjetter[t.Id] = b;
             nye = true;
@@ -189,7 +207,7 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         foreach (var pid in ider)
         {
             var pTilbud = tilbud.Where(t => t.ProsjektId == pid).OrderBy(t => t.Id)
-                .Select(t => { var b = budsjetter[t.Id]; return new TilbudInfo(t.Id, t.Tittel, t.Type == TilbudType.Endringsmelding, b.Salgssum, b.Varekost, b.Timer, b.Laast); })
+                .Select(t => { var b = budsjetter[t.Id]; return new TilbudInfo(t.Id, t.Tittel, t.Type == TilbudType.Endringsmelding, b.Salgssum, b.Varekost, b.Timer, b.Laast, b.AndreKost); })
                 .ToList();
             var pBudsjett = tilbud.Where(t => t.ProsjektId == pid).Select(t => budsjetter[t.Id]).ToList();
             var budTimer = pBudsjett.Sum(b => b.Timer);
@@ -292,7 +310,7 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
             var o2 = new Okonomi(pid, OkonomiStatus.IkkeVunnet, "", inntekt, Math.Round(budTimer, 2), Math.Round(budTimekost, 2), Math.Round(budVarer, 2),
                 Math.Round(fTimer, 2), aoLinjer.Sum(a => a.TimerVenter), Math.Round(fTimekost, 2), Math.Round(fVarer, 2), fraLager,
                 fremdrift, fremdriftTekst, Math.Round(progTimer, 2), Math.Round(progVarer, 2), Math.Round(timesats, 2), pTilbud, aoLinjer,
-                justeringer.Where(j => j.ProsjektId == pid).Sum(j => j.Belop), restOverstyrt, varerManuell);
+                justeringer.Where(j => j.ProsjektId == pid).Sum(j => j.Belop), restOverstyrt, varerManuell, Math.Round(pBudsjett.Sum(b => b.AndreKost), 2));
 
             resultat[pid] = o2 with { Status = Vurder(o2, inn, out var tekst), StatusTekst = tekst };
         }

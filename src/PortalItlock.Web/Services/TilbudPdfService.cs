@@ -325,7 +325,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
     }
 
     private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, decimal monteringTimer, decimal montasjekost, Color aksent,
-        List<(string Tekst, decimal Belop)> kodeRader)
+        List<(string Kode, string Navn, decimal Belop)> kodeRader)
     {
         var visVarenummer = !tilbud.SkjulVarenummerISammendrag;
         var visLevering = linjer.Any(l => l.LevertAv != LevertAv.F);
@@ -473,24 +473,53 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
                 if (kodeRader.Count > 0)
                 {
-                    foreach (var (tekst, belop) in kodeRader)
+                    // Som en vanlig varelinje: koden (Tripletex-varenummeret),
+                    // navnet, antall 1 og summen. Timer, km og timepris er
+                    // interne og vises ikke for kunden.
+                    foreach (var (kode, navn, belop) in kodeRader)
                     {
-                        MontRad(tekst, belop);
+                        if (!tilbud.VisEnhetspris)
+                        {
+                            MontRad(visVarenummer ? $"{kode}  {navn}" : navn, belop);
+                            continue;
+                        }
+
+                        if (visVarenummer)
+                        {
+                            Mont().Text(kode).Italic();
+                        }
+                        Mont().Text(navn).Italic();
+                        Mont().Text("");
+                        if (visOverflate)
+                        {
+                            Mont().Text("");
+                        }
+                        Mont().Text("1").Italic();
+                        if (visLevering)
+                        {
+                            Mont().Text("");
+                        }
+                        if (visRabatt)
+                        {
+                            Mont().Text("-");
+                        }
+                        Mont().AlignRight().Text(FormatKr(belop)).Italic();
+                        Mont().AlignRight().Text(FormatKr(belop)).Italic();
                     }
                 }
                 else
                 {
                     var navn = tilbud.BrukerKodelinjer ? "Montering og tillegg" : "Montering og igangsetting";
-                    MontRad(monteringTimer > 0 ? $"{navn} ({monteringTimer.ToString("0.#", Kultur)} t)" : navn, montasjekost);
+                    MontRad(monteringTimer > 0 && !tilbud.BrukerKodelinjer ? $"{navn} ({monteringTimer.ToString("0.#", Kultur)} t)" : navn, montasjekost);
                 }
             }
         });
     }
 
     // Én rad per kodelinje i PDF-en (når tilbudet bruker kodelinjer og det er
-    // valgt å vise dem). Prosentlinjene regnes av hele tilbudets varer, som i
-    // tilbudet.
-    private static List<(string Tekst, decimal Belop)> KodeRader(Tilbud tilbud)
+    // valgt å vise dem), med antall 1 og summen. Prosentlinjene regnes av hele
+    // tilbudets varer, som i tilbudet.
+    private static List<(string Kode, string Navn, decimal Belop)> KodeRader(Tilbud tilbud)
     {
         if (!tilbud.BrukerKodelinjer || !tilbud.VisKodelinjerIPdf || tilbud.KodeLinjer.Count == 0)
         {
@@ -499,8 +528,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
         var utprisVarer = tilbud.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).Sum(l => l.Utpris * l.Antall);
         return tilbud.KodeLinjer.OrderBy(l => l.Rekkefolge).ThenBy(l => l.Id)
-            .Select(l => (Tekst: l.Enhet.ErProsent() ? l.Navn : $"{l.Navn} ({l.Antall.ToString("0.#", Kultur)} {l.Enhet.Navn()})",
-                Belop: KodeLinjeBeregner.Sum(l, tilbud.KodeLinjer, utprisVarer).Salg))
+            .Select(l => (Kode: l.Kode, Navn: l.Navn, Belop: KodeLinjeBeregner.Sum(l, tilbud.KodeLinjer, utprisVarer).Salg))
             .Where(x => x.Belop != 0)
             .ToList();
     }

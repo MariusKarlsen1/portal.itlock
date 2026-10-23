@@ -490,7 +490,8 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         public decimal KalkInntekt => Kontrakt + Endringer;
         public decimal KalkVarer => O.BudsjettVarer;
         public decimal KalkLonn => O.BudsjettTimekost;
-        public decimal KalkKost => KalkVarer + KalkLonn;
+        public decimal KalkAndre => O.BudsjettAndre;
+        public decimal KalkKost => KalkVarer + KalkLonn + KalkAndre;
         public decimal KalkResultat => KalkInntekt - KalkKost;
         public decimal? KalkDG => KalkInntekt > 0 ? KalkResultat / KalkInntekt : null;
         // Det som ble regnet med da kontrakten ble signert, uten endringene.
@@ -500,7 +501,8 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         public decimal FaktiskInntekt => Kontrakt + Endringer + Indeks;
         public decimal FaktiskVarer => O.FaktiskVarer;
         public decimal FaktiskLonn => O.FaktiskTimekost;
-        public decimal FaktiskKost => FaktiskVarer + FaktiskLonn;
+        public decimal FaktiskAndre => O.FaktiskAndre;
+        public decimal FaktiskKost => FaktiskVarer + FaktiskLonn + FaktiskAndre;
         public decimal FaktiskResultat => FaktiskInntekt - FaktiskKost;
         public decimal? FaktiskDG => FaktiskInntekt > 0 ? FaktiskResultat / FaktiskInntekt : null;
 
@@ -509,6 +511,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         public decimal TimerAvvik => O.FaktiskTimer - O.BudsjettTimer;
         public decimal VarerAvvik => FaktiskVarer - KalkVarer;
         public decimal LonnAvvik => FaktiskLonn - KalkLonn;
+        public decimal AndreAvvik => FaktiskAndre - KalkAndre;
         public bool VarerAnslatt => !O.VarerFraLager && !O.VarerManuell;
         public int? DagerOverFrist => Frist is { } f && Overlevert is { } o ? (int)(o.Date - f.Date).TotalDays : null;
 
@@ -531,6 +534,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
                 if (Indeks != 0) liste.Add(new("Indeksregulering", Indeks));
                 liste.Add(new(Math.Abs(VarerAvvik) < 1 ? "Materiell som kalkulert" : VarerAvvik > 0 ? "Materiell over kalkyle" : "Materiell under kalkyle", -VarerAvvik));
                 liste.Add(new(Math.Abs(LonnAvvik) < 1 ? "Timer som kalkulert" : LonnAvvik > 0 ? $"Timer over kalkyle ({TimerTekst(TimerAvvik)})" : $"Timer under kalkyle ({TimerTekst(TimerAvvik)})", -LonnAvvik));
+                if (Math.Abs(AndreAvvik) >= 1) liste.Add(new(AndreAvvik > 0 ? "Kjøring og tillegg over kalkyle" : "Kjøring og tillegg under kalkyle", -AndreAvvik));
                 liste.Add(new("Faktisk resultat", FaktiskResultat, true));
                 return liste;
             }
@@ -645,7 +649,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
 
             // Kostnaden som var regnet inn i endringene, med samme timekost som resten av budsjettet.
             var sats = o.BudsjettTimer > 0 ? o.BudsjettTimekost / o.BudsjettTimer : o.Timesats;
-            var endringKost = o.Tilbud.Where(t => t.ErEndring).Sum(t => t.Varekost + t.Timer * sats);
+            var endringKost = o.Tilbud.Where(t => t.ErEndring).Sum(t => t.Varekost + t.Timer * sats + t.AndreKost);
             var (ferdig, alle) = plan.GetValueOrDefault(id);
             resultat[id] = new Etterkalkyle(id, o, f.Kontrakt, f.Endringer, f.Indeks, Math.Round(endringKost, 0), f.Fakturert,
                 f.Frister?.Overlevering, overlevert.GetValueOrDefault(id), ferdig, alle, f.Endringsmeldinger);

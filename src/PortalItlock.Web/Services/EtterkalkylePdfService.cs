@@ -68,6 +68,7 @@ public class EtterkalkylePdfService(ApplicationDbContext db, ProsjektOkonomiServ
                         if (ek.Indeks != 0) rader.Add(["Indeksregulering", Kr(0), Kr(ek.Indeks), Fortegn(ek.Indeks)]);
                         rader.Add(["Materiell" + (ek.VarerAnslatt ? " (anslått)" : ""), Kr(ek.KalkVarer), Kr(ek.FaktiskVarer), Fortegn(ek.VarerAvvik)]);
                         rader.Add(["Lønn", Kr(ek.KalkLonn), Kr(ek.FaktiskLonn), Fortegn(ek.LonnAvvik)]);
+                        if (ek.KalkAndre != 0 || ek.FaktiskAndre != 0) rader.Add(["Kjøring og tillegg", Kr(ek.KalkAndre), Kr(ek.FaktiskAndre), Fortegn(ek.AndreAvvik)]);
                         rader.Add(["Resultat", Kr(ek.KalkResultat), Kr(ek.FaktiskResultat), Fortegn(ek.ResultatAvvik)]);
                         rader.Add(["Dekningsgrad", DG(ek.KalkDG), DG(ek.FaktiskDG), $"{(ek.DgPoeng >= 0 ? "+" : "−")}{Math.Abs(ek.DgPoeng).ToString("0.0", Kultur)} poeng"]);
                         RapportMal.Tabell(col, "Faktisk mot kalkulert", org, ["", "Kalkyle", "Faktisk", "Avvik"], [-2, -1, -1, 80], rader, sisteHoyre: true);

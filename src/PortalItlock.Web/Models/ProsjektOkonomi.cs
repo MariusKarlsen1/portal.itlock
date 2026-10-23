@@ -39,6 +39,10 @@ public class TilbudBudsjett
     public decimal Varekost { get; set; }
     public decimal Timer { get; set; }
     public decimal Timesats { get; set; }
+
+    // Kjøring, småmateriell og tillegg fra kodelinjene (alt som ikke er
+    // timer). Følges som egen post, anslått etter fremdriften.
+    public decimal AndreKost { get; set; }
     public DateTime Laast { get; set; } = DateTime.Now;
 }
 

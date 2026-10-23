@@ -6807,6 +6807,9 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<decimal>("AndreKost")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("Laast")
                         .HasColumnType("TEXT");
 
