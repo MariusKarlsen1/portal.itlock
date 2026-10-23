@@ -152,6 +152,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer).ThenInclude(l => l.Component)
             .Include(a => a.Varer).ThenInclude(v => v.Component)
+            .Include(a => a.Tilbud!).ThenInclude(t => t.KodeLinjer).Include(a => a.KodeLinjer).Include(a => a.Timeregistreringer)
             .FirstOrDefaultAsync(a => a.Id == arbeidsordreId, ct);
 
         if (ordre is null)
@@ -192,6 +193,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         // Brukeren velger selv, i dialogen ved ferdigmelding, om alle linjene
         // skal med, om kun totalsummen skal overføres som én linje, eller om
         // dette er en akontofakturering med et manuelt beløp/kommentar.
+        var koder = await db.PrisKoder.AsNoTracking().ToListAsync(ct);
         List<TripletexService.OrdreLinjeInput> linjer;
         if (type == TripletexOverforingsType.Akonto)
         {
@@ -207,15 +209,15 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         }
         else if (type == TripletexOverforingsType.KunSum)
         {
-            var sum = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre).Sum(l => l.Belop);
+            var sum = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre, koder).Sum(l => l.Belop);
             var navn = ordre.Prosjekt?.Navn ?? ordre.Tittel;
             linjer = [new TripletexService.OrdreLinjeInput(navn, 1, sum)];
         }
         else
         {
-            linjer = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre)
+            linjer = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre, koder)
                 .Select(l => new TripletexService.OrdreLinjeInput(
-                    l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall))
+                    l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall, l.Varenummer))
                 .ToList();
         }
 

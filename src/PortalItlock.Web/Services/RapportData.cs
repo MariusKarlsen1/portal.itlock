@@ -34,11 +34,13 @@ public static class RapportData
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer).ThenInclude(l => l.Component).ThenInclude(c => c!.Inntektskonto)
             .Include(a => a.Varer).ThenInclude(v => v.Component).ThenInclude(c => c!.Inntektskonto)
+            .Include(a => a.Tilbud!).ThenInclude(t => t.KodeLinjer).Include(a => a.KodeLinjer).Include(a => a.Timeregistreringer)
             .AsSplitQuery()
             .ToListAsync();
 
+        var koder = await db.PrisKoder.AsNoTracking().ToListAsync();
         return ordrer
-            .Select(a => new OrdreLinjer(a.Kunde ?? a.Prosjekt?.Kunde, a.FullfortDato!.Value, ArbeidsordreOkonomiBeregner.BeregnLinjer(a)))
+            .Select(a => new OrdreLinjer(a.Kunde ?? a.Prosjekt?.Kunde, a.FullfortDato!.Value, ArbeidsordreOkonomiBeregner.BeregnLinjer(a, koder)))
             .ToList();
     }
 

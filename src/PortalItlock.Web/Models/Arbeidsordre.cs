@@ -67,4 +67,5 @@ public class Arbeidsordre
     public List<ArbeidsordreSjekkpunkt> Sjekkpunkter { get; set; } = [];
     public List<ArbeidsordreMedia> Media { get; set; } = [];
     public List<ArbeidsordreVare> Varer { get; set; } = [];
+    public List<ArbeidsordreKodeLinje> KodeLinjer { get; set; } = [];
 }

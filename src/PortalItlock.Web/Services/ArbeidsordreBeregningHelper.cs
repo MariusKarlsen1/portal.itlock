@@ -15,7 +15,8 @@ public static class ArbeidsordreBeregningHelper
 
         var vareSum = a.Varer.Sum(v => v.Utpris * v.Antall);
         var montasjeSum = (a.Timepris ?? 0) * a.Timeregistreringer.Sum(t => t.TotalTimer);
-        return vareSum + montasjeSum;
+        // Kjøring og tillegg montøren har ført på kodene (krever KodeLinjer lastet).
+        return vareSum + montasjeSum + a.KodeLinjer.Sum(k => k.Antall * k.Salgspris);
     }
 
     public static decimal BeregnVareKost(Arbeidsordre a)
@@ -27,6 +28,6 @@ public static class ArbeidsordreBeregningHelper
 
         var vareKost = a.Varer.Sum(v => v.Kostpris * v.Antall);
         var montasjeKost = (a.KostprisTime ?? 0) * a.Timeregistreringer.Sum(t => t.TotalTimer);
-        return vareKost + montasjeKost;
+        return vareKost + montasjeKost + a.KodeLinjer.Sum(k => k.Antall * k.Kostpris);
     }
 }

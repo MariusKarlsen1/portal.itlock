@@ -52,6 +52,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Tilbud> Tilbud => Set<Tilbud>();
     public DbSet<PrisKode> PrisKoder => Set<PrisKode>();
     public DbSet<TilbudKodeLinje> TilbudKodeLinjer => Set<TilbudKodeLinje>();
+    public DbSet<ArbeidsordreKodeLinje> ArbeidsordreKodeLinjer => Set<ArbeidsordreKodeLinje>();
     public DbSet<TilbudHendelse> TilbudHendelser => Set<TilbudHendelse>();
     public DbSet<TilbudLinje> TilbudLinjer => Set<TilbudLinje>();
     public DbSet<MonteringLinje> MonteringLinjer => Set<MonteringLinje>();
@@ -353,6 +354,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             e.HasIndex(l => l.TilbudId);
             e.HasOne(l => l.Tilbud).WithMany(t => t.KodeLinjer).HasForeignKey(l => l.TilbudId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ArbeidsordreKodeLinje>(e =>
+        {
+            e.HasIndex(l => l.ArbeidsordreId);
+            e.HasOne(l => l.Arbeidsordre).WithMany(a => a.KodeLinjer).HasForeignKey(l => l.ArbeidsordreId).OnDelete(DeleteBehavior.Cascade);
         });
         modelBuilder.Entity<ProsjektAkonto>(e =>
         {

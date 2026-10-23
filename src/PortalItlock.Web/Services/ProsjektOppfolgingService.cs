@@ -72,7 +72,9 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
             .Where(a => ider.Contains(a.ProsjektId)).ToListAsync();
 
         // Fakturert: akontoer som er sendt, og arbeidsordre som er fakturert eller sendt til Tripletex.
+        var koder = await db.PrisKoder.AsNoTracking().ToListAsync();
         var fakturerteAo = await db.Arbeidsordre.AsNoTracking().Include(a => a.Tilbud!).ThenInclude(t => t.Linjer).Include(a => a.Varer)
+            .Include(a => a.Tilbud!).ThenInclude(t => t.KodeLinjer).Include(a => a.KodeLinjer).Include(a => a.Timeregistreringer)
             .Where(a => a.ProsjektId != null && ider.Contains(a.ProsjektId.Value) && (a.FakturertDato != null || a.TripletexOrdreId != null))
             .ToListAsync();
 
@@ -93,7 +95,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
             var pAo = fakturerteAo.Where(a => a.ProsjektId == pid).Select(a => new
             {
                 Dato = a.FakturertDato ?? a.TripletexOrdreSendtDato,
-                Belop = ArbeidsordreOkonomiBeregner.BeregnLinjer(a).Sum(l => l.Belop)
+                Belop = ArbeidsordreOkonomiBeregner.BeregnLinjer(a, koder).Sum(l => l.Belop)
             }).ToList();
 
             // Akontoer: beløp fra prosent av kontrakten. Klar når milepælen er

@@ -289,11 +289,11 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         };
     }
 
-    // Ren fritekstlinje (beskrivelse + antall + pris) - portalen kobler
-    // bevisst IKKE varer mot Tripletex-produkter; inntektskonto/rapportering
-    // er portalens eget ansvar (se ArbeidsordreOkonomiBeregner), ordren i
-    // Tripletex er kun "klar til fakturering"-grunnlaget.
-    public sealed record OrdreLinjeInput(string Beskrivelse, decimal Antall, decimal EnhetsprisEksMva);
+    // Ordrelinje: beskrivelse + antall + pris. Varene er fritekst (inntektskonto
+    // og rapportering styres i portalen, se ArbeidsordreOkonomiBeregner). Linjer
+    // med Varenummer (priskodene: arbeid, kjøring, tillegg) kobles til produktet
+    // med samme nummer i Tripletex, så fakturaen får riktig vare og konto der.
+    public sealed record OrdreLinjeInput(string Beskrivelse, decimal Antall, decimal EnhetsprisEksMva, string? Varenummer = null);
 
     // Oppretter en ordre i Tripletex "klar til fakturering" - IKKE det samme som
     // å fakturere den (det er et eget, separat :invoice-kall som denne
@@ -337,16 +337,43 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
             var ordreParsed = JsonSerializer.Deserialize<ResponseWrapper<OrderSvar>>(ordreRaw, JsonOpts);
             var opprettetOrdre = ordreParsed?.Value ?? throw new InvalidOperationException("Tomt svar fra Tripletex ved oppretting av ordre.");
 
-            var linjerBody = linjer.Select(l => new
+            // Priskodene slås opp mot produktene i Tripletex. Finnes ikke
+            // varenummeret der, sendes linjen som fritekst med koden foran.
+            var produkter = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (linjer.Any(l => !string.IsNullOrWhiteSpace(l.Varenummer)))
             {
-                order = new { id = opprettetOrdre.Id },
-                description = l.Beskrivelse,
-                count = l.Antall,
-                unitPriceExcludingVatCurrency = l.EnhetsprisEksMva,
-                // itlock bruker 25% mva på alt (samme kode som den eksisterende
-                // TripletexOrdreCsvService sitt CSV-importformat bruker) - se
-                // MVA-kodeoversikten i Tripletex hvis dette ikke stemmer.
-                vatType = new { id = 3 }
+                var (liste, _) = await HentProdukterAsync(ct);
+                foreach (var p in liste)
+                {
+                    produkter.TryAdd(p.Nummer, p.Id);
+                }
+            }
+
+            var linjerBody = linjer.Select(l =>
+            {
+                var linje = new Dictionary<string, object?>
+                {
+                    ["order"] = new { id = opprettetOrdre.Id },
+                    ["description"] = l.Beskrivelse,
+                    ["count"] = l.Antall,
+                    ["unitPriceExcludingVatCurrency"] = l.EnhetsprisEksMva,
+                    // itlock bruker 25% mva på alt (samme kode som den eksisterende
+                    // TripletexOrdreCsvService sitt CSV-importformat bruker) - se
+                    // MVA-kodeoversikten i Tripletex hvis dette ikke stemmer.
+                    ["vatType"] = new { id = 3 }
+                };
+                if (!string.IsNullOrWhiteSpace(l.Varenummer))
+                {
+                    if (produkter.TryGetValue(l.Varenummer.Trim(), out var produktId))
+                    {
+                        linje["product"] = new { id = produktId };
+                    }
+                    else
+                    {
+                        linje["description"] = $"{l.Varenummer} {l.Beskrivelse}";
+                    }
+                }
+                return linje;
             }).ToList();
 
             using var linjerReq = await LagAutorisertForespurselAsync(HttpMethod.Post, "order/orderline/list", ct);

@@ -482,6 +482,11 @@ else if (_ordre is not null)
             </section>
         }
     }
+
+    @if (!_harTimer)
+    {
+        @if (VisKjoringOgTillegg) { @KjoringOgTillegg() }
+    }
     </div>
 
     <div class="@FaneKlasse("detaljer")">
@@ -691,7 +696,10 @@ else if (_ordre is not null)
                         <th>Montør</th>
                         <th>Type</th>
                         <th>Timer</th>
-                        <th>Km</th>
+                        @if (ArbeidKoder().Count > 0)
+                        {
+                            <th>Kode</th>
+                        }
                         <th>Kommentar</th>
                     </tr>
                 </thead>
@@ -703,7 +711,25 @@ else if (_ordre is not null)
                             <td>@r.MontorNavn</td>
                             <td>@r.Type.Visningsnavn()</td>
                             <td class="timer-cell">@r.Timer.ToString("N1", Kultur) t</td>
-                            <td>@(r.Kilometer > 0 ? r.Kilometer.ToString("N0", Kultur) : "")</td>
+                            @if (ArbeidKoder().Count > 0)
+                            {
+                                <td>
+                                    @if (ErAdminEllerPl && ArbeidKoder().Count > 1)
+                                    {
+                                        <select class="aok-timekode" value="@(r.PrisKodeId is { } pk && pk != ArbeidsordreOkonomiBeregner.Montasjekode(_prisKoder)?.Id ? pk.ToString() : "0")" @onchange="@(e => SettTimeKode(r, e))" aria-label="Kode for timene">
+                                            <option value="0">@KodeTekst(null)</option>
+                                            @foreach (var k in ArbeidKoder().Where(k => k.Id != ArbeidsordreOkonomiBeregner.Montasjekode(_prisKoder)?.Id))
+                                            {
+                                                <option value="@k.Id">@k.Kode @k.Navn</option>
+                                            }
+                                        </select>
+                                    }
+                                    else
+                                    {
+                                        @KodeTekst(r.PrisKodeId)
+                                    }
+                                </td>
+                            }
                             <td>@r.Kommentar</td>
                         </tr>
                     }
@@ -711,6 +737,7 @@ else if (_ordre is not null)
             </table>
         }
     </section>
+    @if (VisKjoringOgTillegg) { @KjoringOgTillegg() }
     </div>
     }
 
@@ -1080,7 +1107,7 @@ else if (_ordre is not null)
         public TimeregistreringType Type { get; set; }
         public decimal Timer { get; set; }
         public string? Kommentar { get; set; }
-        public decimal Kilometer { get; set; }
+        public int? PrisKodeId { get; set; }
     }
 
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
@@ -1382,10 +1409,11 @@ else if (_ordre is not null)
             Type = t.Type,
             Timer = t.TotalTimer,
             Kommentar = t.Kommentar,
-            Kilometer = t.Kilometer
+            PrisKodeId = t.PrisKodeId
         }).ToList();
 
         _sumTimer = _registreringer.Sum(r => r.Timer);
+        await LastKoderAsync();
 
         _maler = await Db.SjekklisteMaler.OrderBy(m => m.Dortype).ToListAsync();
         _sjekkpunkter = await Db.ArbeidsordreSjekkpunkter
@@ -2267,5 +2295,142 @@ else if (_ordre is not null)
         Db.Arbeidsordre.Remove(_ordre!);
         await Db.SaveChangesAsync();
         Nav.NavigateTo("/arbeidsordre");
+    }
+}
+
+@code {
+    // ---------- Priskoder: arbeidskoden på timene, kjøring og tillegg ----------
+
+    private List<PrisKode> _prisKoder = [];
+    private List<ArbeidsordreKodeLinje> _aoKoder = [];
+    private int _nyKodeId;
+    private decimal _nyKodeAntall = 1;
+
+    private bool VisKjoringOgTillegg => TilleggKoder().Count > 0 || _aoKoder.Count > 0;
+
+    private RenderFragment KjoringOgTillegg() => @<section class="ordre-section">
+            <h2>Kjøring og tillegg</h2>
+            <p class="section-hint">@(_ordre!.TilbudId.HasValue
+                ? "Før kilometer og tillegg på riktig kode. Jobben har fastpris fra tilbudet, så dette brukes i etterkalkylen og faktureres ikke ekstra."
+                : "Før kilometer og tillegg på riktig kode. Det kommer med på fakturaen med koden som varenummer.")</p>
+
+            @if (_aoKoder.Count > 0)
+            {
+                <ul class="aok-liste">
+                    @foreach (var l in _aoKoder)
+                    {
+                        <li @key="l.Id">
+                            <span class="aok-kode">@l.Kode</span>
+                            <span class="aok-navn">@l.Navn<small>@(_montorer.FirstOrDefault(m => m.Id == l.LagtTilAvBrukerId)?.Navn ?? "") · @l.LagtTilDato.ToString("dd.MM HH:mm")</small></span>
+                            <span class="aok-antall">
+                                <input type="number" min="0" step="any" inputmode="decimal" value="@l.Antall.ToString("0.##", CultureInfo.InvariantCulture)"
+                                       @onchange="@(e => EndreKodeAntall(l, e))" aria-label="Antall @l.Navn" />
+                                <span>@l.Enhet.Navn()</span>
+                            </span>
+                            <button type="button" class="remove-button" @onclick="@(() => FjernKode(l))">Fjern</button>
+                        </li>
+                    }
+                </ul>
+            }
+
+            @if (TilleggKoder().Count > 0)
+            {
+                <div class="aok-ny">
+                    <select @bind="_nyKodeId" aria-label="Kode">
+                        <option value="0">Velg kode …</option>
+                        @foreach (var k in TilleggKoder())
+                        {
+                            <option value="@k.Id">@k.Kode @k.Navn (@k.Enhet.Navn())</option>
+                        }
+                    </select>
+                    <input type="number" min="0" step="any" inputmode="decimal" @bind="_nyKodeAntall" placeholder="Antall" aria-label="Antall" />
+                    <button type="button" class="aok-legg-til" disabled="@(_nyKodeId == 0 || _nyKodeAntall <= 0)" @onclick="LeggTilKode"><Icon Name="plus" />Legg til</button>
+                </div>
+            }
+        </section>;
+
+    private async Task LastKoderAsync()
+    {
+        _prisKoder = await Db.PrisKoder.AsNoTracking().OrderBy(k => k.Rekkefolge).ThenBy(k => k.Kode).ToListAsync();
+        _aoKoder = await Db.ArbeidsordreKodeLinjer.Where(l => l.ArbeidsordreId == Id).OrderBy(l => l.LagtTilDato).ToListAsync();
+    }
+
+    // Det montøren kan føre her: kjøring og tillegg med antall (km, stk,
+    // dag). Timer føres i timeføringen, prosentlinjene regnes ut av seg selv.
+    private List<PrisKode> TilleggKoder() => _prisKoder
+        .Where(k => k.Aktiv && k.Type != PrisKodeType.Arbeid && !k.Enhet.ErProsent() && k.Enhet != PrisKodeEnhet.Time)
+        .ToList();
+
+    // Arbeidskodene timene kan føres på. Velges bare når det er flere.
+    private List<PrisKode> ArbeidKoder() => _prisKoder
+        .Where(k => k.Aktiv && k.Type == PrisKodeType.Arbeid && k.Enhet == PrisKodeEnhet.Time)
+        .ToList();
+
+    private string KodeTekst(int? prisKodeId)
+    {
+        var k = _prisKoder.FirstOrDefault(x => x.Id == prisKodeId)
+            ?? (_prisKoder.Count > 0 ? ArbeidsordreOkonomiBeregner.Montasjekode(_prisKoder) : null);
+        return k is null ? "" : $"{k.Kode} {k.Navn}";
+    }
+
+    private async Task LeggTilKode()
+    {
+        var k = _prisKoder.FirstOrDefault(x => x.Id == _nyKodeId);
+        if (k is null || _nyKodeAntall <= 0)
+        {
+            return;
+        }
+
+        var linje = new ArbeidsordreKodeLinje
+        {
+            ArbeidsordreId = Id,
+            PrisKodeId = k.Id,
+            Kode = k.Kode,
+            Navn = k.Navn,
+            Type = k.Type,
+            Enhet = k.Enhet,
+            Antall = _nyKodeAntall,
+            Kostpris = k.Kostpris,
+            Salgspris = k.Salgspris,
+            LagtTilAvBrukerId = _naverendeBrukerId
+        };
+        Db.ArbeidsordreKodeLinjer.Add(linje);
+        await Db.SaveChangesAsync();
+        _aoKoder.Add(linje);
+        _nyKodeId = 0;
+        _nyKodeAntall = 1;
+    }
+
+    private async Task EndreKodeAntall(ArbeidsordreKodeLinje l, ChangeEventArgs e)
+    {
+        var tekst = (e.Value?.ToString() ?? "").Replace(',', '.').Trim();
+        if (!decimal.TryParse(tekst, NumberStyles.Number, CultureInfo.InvariantCulture, out var antall) || antall < 0)
+        {
+            return;
+        }
+
+        l.Antall = antall;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task FjernKode(ArbeidsordreKodeLinje l)
+    {
+        Db.ArbeidsordreKodeLinjer.Remove(l);
+        await Db.SaveChangesAsync();
+        _aoKoder.Remove(l);
+    }
+
+    private async Task SettTimeKode(RegistreringRad r, ChangeEventArgs e)
+    {
+        var id = int.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : (int?)null;
+        var t = await Db.Timeregistreringer.FirstOrDefaultAsync(x => x.Id == r.Id);
+        if (t is null)
+        {
+            return;
+        }
+
+        t.PrisKodeId = id;
+        await Db.SaveChangesAsync();
+        r.PrisKodeId = id;
     }
 }

@@ -647,11 +647,13 @@ public partial class KundeSkjema
             .Where(a => (a.KundeId == Id || a.Prosjekt!.KundeId == Id) && a.FakturertDato != null && a.FakturertDato >= fra)
             .Include(a => a.Tilbud!).ThenInclude(t => t.Linjer).ThenInclude(l => l.Component!).ThenInclude(c => c.Inntektskonto)
             .Include(a => a.Varer).ThenInclude(v => v.Component!).ThenInclude(c => c.Inntektskonto)
+            .Include(a => a.Tilbud!).ThenInclude(t => t.KodeLinjer).Include(a => a.KodeLinjer).Include(a => a.Timeregistreringer)
             .AsSplitQuery()
             .ToListAsync();
 
+        var koder = await Db.PrisKoder.AsNoTracking().ToListAsync();
         decimal Sum(int ar) => ordrer.Where(o => o.FakturertDato!.Value.Year == ar)
-            .Sum(o => ArbeidsordreOkonomiBeregner.BeregnLinjer(o).Sum(l => l.Belop));
+            .Sum(o => ArbeidsordreOkonomiBeregner.BeregnLinjer(o, koder).Sum(l => l.Belop));
         _fakturertIAr = Sum(iAr);
         _fakturertIFjor = Sum(iAr - 1);
     }

@@ -29,6 +29,10 @@ public class Timeregistrering
     public string? Kommentar { get; set; }
     public decimal Kilometer { get; set; }
 
+    // Arbeidskoden timene føres på (Montasje, Overtid, Programmering ...).
+    // Tom betyr montasjekoden.
+    public int? PrisKodeId { get; set; }
+
     public TimeregistreringStatus Status { get; set; } = TimeregistreringStatus.Venter;
     public DateTime? BehandletDato { get; set; }
     public int? BehandletAvBrukerId { get; set; }

@@ -95,3 +95,25 @@ public class TilbudKodeLinje
     // Montasjelinjen følger varenes beregnede montasjetid til antallet endres for hånd.
     public bool FraMontasjetid { get; set; }
 }
+
+// Kjøring og tillegg montøren fører på arbeidsordren (utkjøringstillegg,
+// parkering, døgntillegg osv.). Prisene kopieres fra koden, så de står fast
+// selv om koden endres senere. Montøren ser bare kode, navn og antall.
+public class ArbeidsordreKodeLinje
+{
+    public int Id { get; set; }
+    public int ArbeidsordreId { get; set; }
+    public Arbeidsordre? Arbeidsordre { get; set; }
+    public int? PrisKodeId { get; set; }
+
+    public required string Kode { get; set; }
+    public required string Navn { get; set; }
+    public PrisKodeType Type { get; set; }
+    public PrisKodeEnhet Enhet { get; set; }
+    public decimal Antall { get; set; } = 1;
+    public decimal Kostpris { get; set; }
+    public decimal Salgspris { get; set; }
+
+    public int? LagtTilAvBrukerId { get; set; }
+    public DateTime LagtTilDato { get; set; } = DateTime.Now;
+}

@@ -43,6 +43,10 @@ public class TilbudBudsjett
     // Kjøring, småmateriell og tillegg fra kodelinjene (alt som ikke er
     // timer). Følges som egen post, anslått etter fremdriften.
     public decimal AndreKost { get; set; }
+
+    // Delen av AndreKost som er prosentlinjer (småmateriell, rigg og drift).
+    // Den registreres ikke underveis og anslås alltid etter fremdriften.
+    public decimal AndreProsentKost { get; set; }
     public DateTime Laast { get; set; } = DateTime.Now;
 }
 
