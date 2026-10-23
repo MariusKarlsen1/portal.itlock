@@ -88,6 +88,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             .Include(t => t.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(t => t.Prosjekt).ThenInclude(p => p!.Prosjektleder)
             .Include(t => t.Linjer).ThenInclude(l => l.Component).ThenInclude(c => c!.Type)
+            .Include(t => t.KodeLinjer)
             .FirstOrDefaultAsync(t => t.Id == tilbudId);
 
         if (tilbud is null)
@@ -289,7 +290,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
                     if (visSammendrag)
                     {
-                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, arbeidstidTimer, montasjekost, org.Aksent);
+                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, arbeidstidTimer, montasjekost, org.Aksent, KodeRader(tilbud));
                     }
 
                     if (visDorer)
@@ -323,7 +324,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         return document.GeneratePdf();
     }
 
-    private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, decimal monteringTimer, decimal montasjekost, Color aksent)
+    private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, decimal monteringTimer, decimal montasjekost, Color aksent,
+        List<(string Tekst, decimal Belop)> kodeRader)
     {
         var visVarenummer = !tilbud.SkjulVarenummerISammendrag;
         var visLevering = linjer.Any(l => l.LevertAv != LevertAv.F);
@@ -445,30 +447,62 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                 }
             }
 
-            // Montering som egen linje nederst i sammendraget.
+            // Montering som egen linje nederst i sammendraget, eller én linje
+            // per kode (arbeid, kjøring, småmateriell osv.) når det er valgt.
             if (montasjekost > 0)
             {
-                var tekst = monteringTimer > 0
-                    ? $"Montering og igangsetting ({monteringTimer.ToString("0.#", Kultur)} t)"
-                    : "Montering og igangsetting";
                 IContainer Mont(uint span = 1) => table.Cell().ColumnSpan(span).Background(Color.FromHex("#FBF8F3"))
                     .BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(5).PaddingHorizontal(6);
 
-                if (tilbud.VisEnhetspris)
+                void MontRad(string tekst, decimal belop)
                 {
-                    Mont((uint)(totaltAntallKolonner - 1)).Text(tekst).Italic();
-                    Mont().AlignRight().Text(FormatKr(montasjekost)).Italic();
+                    if (tilbud.VisEnhetspris)
+                    {
+                        Mont((uint)(totaltAntallKolonner - 1)).Text(tekst).Italic();
+                        Mont().AlignRight().Text(FormatKr(belop)).Italic();
+                    }
+                    else
+                    {
+                        Mont((uint)totaltAntallKolonner).Row(r =>
+                        {
+                            r.RelativeItem().Text(tekst).Italic();
+                            r.AutoItem().Text(FormatKr(belop)).Italic();
+                        });
+                    }
+                }
+
+                if (kodeRader.Count > 0)
+                {
+                    foreach (var (tekst, belop) in kodeRader)
+                    {
+                        MontRad(tekst, belop);
+                    }
                 }
                 else
                 {
-                    Mont((uint)totaltAntallKolonner).Row(r =>
-                    {
-                        r.RelativeItem().Text(tekst).Italic();
-                        r.AutoItem().Text(FormatKr(montasjekost)).Italic();
-                    });
+                    var navn = tilbud.BrukerKodelinjer ? "Montering og tillegg" : "Montering og igangsetting";
+                    MontRad(monteringTimer > 0 ? $"{navn} ({monteringTimer.ToString("0.#", Kultur)} t)" : navn, montasjekost);
                 }
             }
         });
+    }
+
+    // Én rad per kodelinje i PDF-en (når tilbudet bruker kodelinjer og det er
+    // valgt å vise dem). Prosentlinjene regnes av hele tilbudets varer, som i
+    // tilbudet.
+    private static List<(string Tekst, decimal Belop)> KodeRader(Tilbud tilbud)
+    {
+        if (!tilbud.BrukerKodelinjer || !tilbud.VisKodelinjerIPdf || tilbud.KodeLinjer.Count == 0)
+        {
+            return [];
+        }
+
+        var utprisVarer = tilbud.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).Sum(l => l.Utpris * l.Antall);
+        return tilbud.KodeLinjer.OrderBy(l => l.Rekkefolge).ThenBy(l => l.Id)
+            .Select(l => (Tekst: l.Enhet.ErProsent() ? l.Navn : $"{l.Navn} ({l.Antall.ToString("0.#", Kultur)} {l.Enhet.Navn()})",
+                Belop: KodeLinjeBeregner.Sum(l, tilbud.KodeLinjer, utprisVarer).Salg))
+            .Where(x => x.Belop != 0)
+            .ToList();
     }
 
     private static void RenderDorer(ColumnDescriptor col, Tilbud tilbud, List<Dor> dorer, Dictionary<int, decimal> utprisPerComponent)

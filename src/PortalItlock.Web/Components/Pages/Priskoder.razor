@@ -1,0 +1,283 @@
+@page "/priskoder"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject PrisKodeService PrisKodeSvc
+@inject TripletexService Tripletex
+
+<PageTitle>Priskoder - Full Kontroll</PageTitle>
+
+@* Priskoder: arbeid, kjøring, småmateriell og tillegg med kode, kostpris og
+   salgspris. Brukes som linjer i tilbudet. Kodene er de samme som
+   varenumrene i Tripletex, og kan hentes derfra. Endringer her påvirker
+   bare nye linjer; linjer som allerede ligger på et tilbud, beholder sine
+   priser. *@
+<a class="back-link" href="/komponentprismodul"><Icon Name="arrow-left" />Til komponenter og priser</a>
+
+<div class="pk">
+    <header class="pk-topp">
+        <div>
+            <h1>Priskoder</h1>
+            <p>Arbeid, kjøring, småmateriell og tillegg som linjer i tilbudet. Bruk de samme kodene som varenumrene i Tripletex, så havner fakturaen på riktig produkt. Endringer her gjelder nye linjer. Tilbud som allerede er laget, beholder sine priser.</p>
+        </div>
+        <span class="pk-knapper">
+            @if (Tripletex.ErKonfigurert)
+            {
+                <button type="button" class="pk-knapp" @onclick="ApneTripletex" disabled="@_henter"><Icon Name="download" />@(_henter ? "Henter …" : "Hent fra Tripletex")</button>
+            }
+            <button type="button" class="pk-knapp pk-knapp-p" @onclick="NyKode"><Icon Name="plus" />Ny kode</button>
+        </span>
+    </header>
+
+    @if (!string.IsNullOrEmpty(_melding))
+    {
+        <p class="pk-melding @(_feil ? "pk-melding-feil" : "")" role="status">@_melding</p>
+    }
+
+    @if (_produkter is not null)
+    {
+        <section class="pk-boks">
+            <div class="pk-boks-topp">
+                <h2>Produkter i Tripletex</h2>
+                <button type="button" class="pk-lukk" title="Lukk" @onclick="@(() => _produkter = null)"><Icon Name="x" /></button>
+            </div>
+            @if (_produkter.Count == 0)
+            {
+                <p class="pk-dempet">Fant ingen aktive produkter med varenummer i Tripletex.</p>
+            }
+            else
+            {
+                <p class="pk-dempet">Velg produktene som skal bli priskoder. Varenummeret blir koden, og pris og kost hentes med. Sett type og enhet etterpå.</p>
+                <div class="pk-tabellramme">
+                    <table class="pk-tabell">
+                        <thead><tr><th></th><th>Varenummer</th><th>Navn</th><th class="n">Kost</th><th class="n">Salgspris</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var p in _produkter)
+                            {
+                                var produkt = p;
+                                var finnes = _koder.Any(k => k.Kode == p.Nummer);
+                                <tr class="@(finnes ? "pk-finnes" : "")">
+                                    <td><input type="checkbox" checked="@_valgte.Contains(p.Nummer)" disabled="@finnes" aria-label="Velg @p.Navn" @onchange="@(e => Velg(produkt.Nummer, e))" /></td>
+                                    <td><span class="pk-kode">@p.Nummer</span></td>
+                                    <td>@p.Navn</td>
+                                    <td class="n">@(p.Kostpris?.ToString("N2", Kultur) ?? "–")</td>
+                                    <td class="n">@(p.Salgspris?.ToString("N2", Kultur) ?? "–")</td>
+                                    <td>@if (finnes) {<span class="pk-chip">Finnes</span>}</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <span><button type="button" class="pk-knapp pk-knapp-p" disabled="@(_valgte.Count == 0)" @onclick="LeggTilValgte">Legg til @_valgte.Count @(_valgte.Count == 1 ? "kode" : "koder")</button></span>
+            }
+        </section>
+    }
+
+    @if (_koder.Count == 0)
+    {
+        <section class="pk-tomboks">
+            <b>Ingen priskoder ennå</b>
+            <p>Start med standardkodene (montasje, overtid, programmering, prosjektledelse, kjøring, utkjøringstillegg, småmateriell og rigg og drift), eller hent produktene fra Tripletex.</p>
+            <span class="pk-knapper">
+                <button type="button" class="pk-knapp pk-knapp-p" @onclick="BrukStandard">Bruk standardkodene</button>
+                @if (Tripletex.ErKonfigurert)
+                {
+                    <button type="button" class="pk-knapp" @onclick="ApneTripletex">Hent fra Tripletex</button>
+                }
+            </span>
+        </section>
+    }
+    else
+    {
+        <div class="pk-tabellramme">
+            <table class="pk-tabell pk-koder">
+                <thead><tr><th>Kode</th><th>Navn</th><th>Type</th><th>Enhet</th><th class="n">Kostpris</th><th class="n">Salgspris</th><th class="n">DG</th><th title="Timene fra varenes montasjetid legges på denne koden">Montasje</th><th>Aktiv</th></tr></thead>
+                <tbody>
+                    @foreach (var k in _koder)
+                    {
+                        var kode = k;
+                        var prosent = k.Enhet.ErProsent();
+                        <tr class="@(k.Aktiv ? "" : "pk-inaktiv")">
+                            <td><input class="pk-inn pk-kodefelt" value="@k.Kode" aria-label="Kode" @onchange="@(e => Endre(kode, x => x.Kode = (e.Value?.ToString() ?? "").Trim()))" /></td>
+                            <td><input class="pk-inn" value="@k.Navn" aria-label="Navn" @onchange="@(e => Endre(kode, x => x.Navn = (e.Value?.ToString() ?? "").Trim()))" /></td>
+                            <td>
+                                <select class="pk-inn" aria-label="Type" @onchange="@(e => Endre(kode, x => x.Type = Enum.Parse<PrisKodeType>(e.Value!.ToString()!)))">
+                                    @foreach (var t in Enum.GetValues<PrisKodeType>())
+                                    {
+                                        <option value="@t" selected="@(t == k.Type)">@t.Navn()</option>
+                                    }
+                                </select>
+                            </td>
+                            <td>
+                                <select class="pk-inn" aria-label="Enhet" @onchange="@(e => Endre(kode, x => x.Enhet = Enum.Parse<PrisKodeEnhet>(e.Value!.ToString()!)))">
+                                    @foreach (var en in Enum.GetValues<PrisKodeEnhet>())
+                                    {
+                                        <option value="@en" selected="@(en == k.Enhet)">@en.Navn()</option>
+                                    }
+                                </select>
+                            </td>
+                            <td class="n"><span class="pk-med-enhet"><input class="pk-inn pk-tal" inputmode="decimal" value="@k.Kostpris.ToString("0.##", CultureInfo.InvariantCulture)" aria-label="Kostpris" @onchange="@(e => Endre(kode, x => x.Kostpris = Tall(e) ?? x.Kostpris))" />@(prosent ? "%" : "kr")</span></td>
+                            <td class="n"><span class="pk-med-enhet"><input class="pk-inn pk-tal" inputmode="decimal" value="@k.Salgspris.ToString("0.##", CultureInfo.InvariantCulture)" aria-label="Salgspris" @onchange="@(e => Endre(kode, x => x.Salgspris = Tall(e) ?? x.Salgspris))" />@(prosent ? "%" : "kr")</span></td>
+                            <td class="n">@(k.Salgspris > 0 && !prosent ? ((k.Salgspris - k.Kostpris) / k.Salgspris * 100).ToString("0", Kultur) + " %" : "–")</td>
+                            <td><input type="radio" name="montasje" checked="@k.ErMontasje" disabled="@(k.Type != PrisKodeType.Arbeid || k.Enhet != PrisKodeEnhet.Time)" aria-label="Montasjekode" @onchange="@(() => SettMontasje(kode))" /></td>
+                            <td><input type="checkbox" checked="@k.Aktiv" aria-label="Aktiv" @onchange="@(e => Endre(kode, x => x.Aktiv = e.Value is true))" /></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="pk-dempet">Prosentkoder regner seg selv i tilbudet: «% av varer» av varenes utpris (som småmateriell), og «% av arbeid» av arbeidslinjene (som rigg og drift). Koden merket Montasje får timene fra varenes montasjetid.</p>
+    }
+</div>
+
+@code {
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private List<PrisKode> _koder = [];
+    private List<TripletexService.TripletexProdukt>? _produkter;
+    private readonly HashSet<string> _valgte = [];
+    private string? _melding;
+    private bool _feil;
+    private bool _henter;
+
+    protected override async Task OnInitializedAsync() => _koder = await PrisKodeSvc.AlleAsync();
+
+    private static decimal? Tall(ChangeEventArgs e) =>
+        decimal.TryParse(e.Value?.ToString()?.Replace(" ", "").Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) && v >= 0 ? v : null;
+
+    private async Task Endre(PrisKode k, Action<PrisKode> endring)
+    {
+        var forKode = k.Kode;
+        endring(k);
+        if (string.IsNullOrWhiteSpace(k.Kode) || string.IsNullOrWhiteSpace(k.Navn))
+        {
+            _melding = "Kode og navn må fylles ut.";
+            _feil = true;
+            Db.Entry(k).Reload();
+            return;
+        }
+
+        if (k.Kode != forKode && _koder.Any(x => x != k && x.Kode == k.Kode))
+        {
+            _melding = $"Koden {k.Kode} finnes allerede.";
+            _feil = true;
+            k.Kode = forKode;
+            return;
+        }
+
+        if (k.ErMontasje && (k.Type != PrisKodeType.Arbeid || k.Enhet != PrisKodeEnhet.Time))
+        {
+            k.ErMontasje = false;
+        }
+
+        await Db.SaveChangesAsync();
+        _melding = null;
+        _feil = false;
+    }
+
+    private async Task SettMontasje(PrisKode valgt)
+    {
+        foreach (var k in _koder)
+        {
+            k.ErMontasje = k == valgt;
+        }
+
+        await Db.SaveChangesAsync();
+        _melding = $"Timene fra varenes montasjetid legges nå på {valgt.Kode} {valgt.Navn}.";
+        _feil = false;
+    }
+
+    private async Task NyKode()
+    {
+        var k = new PrisKode
+        {
+            Kode = PrisKodeService.NesteKode(_koder),
+            Navn = "Ny kode",
+            Type = PrisKodeType.Arbeid,
+            Enhet = PrisKodeEnhet.Time,
+            Rekkefolge = _koder.Count == 0 ? 0 : _koder.Max(x => x.Rekkefolge) + 1
+        };
+        Db.PrisKoder.Add(k);
+        await Db.SaveChangesAsync();
+        _koder = await PrisKodeSvc.AlleAsync();
+        _melding = $"Kode {k.Kode} er lagt til nederst. Gi den navn og priser.";
+        _feil = false;
+    }
+
+    private async Task BrukStandard()
+    {
+        _koder = await PrisKodeSvc.SikreStandardAsync();
+        _melding = "Standardkodene er lagt inn. Juster prisene så de stemmer med deres.";
+        _feil = false;
+    }
+
+    private async Task ApneTripletex()
+    {
+        _henter = true;
+        try
+        {
+            var (produkter, feil) = await Tripletex.HentProdukterAsync();
+            if (feil is not null)
+            {
+                _melding = $"Fikk ikke hentet produktene fra Tripletex: {feil}";
+                _feil = true;
+                return;
+            }
+
+            _produkter = produkter;
+            _valgte.Clear();
+            _melding = null;
+        }
+        finally
+        {
+            _henter = false;
+        }
+    }
+
+    private void Velg(string nummer, ChangeEventArgs e)
+    {
+        if (e.Value is true)
+        {
+            _valgte.Add(nummer);
+        }
+        else
+        {
+            _valgte.Remove(nummer);
+        }
+    }
+
+    private async Task LeggTilValgte()
+    {
+        if (_produkter is null)
+        {
+            return;
+        }
+
+        var rekkefolge = _koder.Count == 0 ? 0 : _koder.Max(x => x.Rekkefolge) + 1;
+        var nye = _produkter.Where(p => _valgte.Contains(p.Nummer) && _koder.All(k => k.Kode != p.Nummer)).ToList();
+        foreach (var p in nye)
+        {
+            Db.PrisKoder.Add(new PrisKode
+            {
+                Kode = p.Nummer,
+                Navn = p.Navn,
+                Type = PrisKodeType.Annet,
+                Enhet = PrisKodeEnhet.Stk,
+                Kostpris = p.Kostpris ?? 0,
+                Salgspris = p.Salgspris ?? 0,
+                Rekkefolge = rekkefolge++
+            });
+        }
+
+        await Db.SaveChangesAsync();
+        _koder = await PrisKodeSvc.AlleAsync();
+        _produkter = null;
+        _valgte.Clear();
+        _melding = $"{nye.Count} {(nye.Count == 1 ? "kode" : "koder")} er hentet fra Tripletex. Sett type og enhet på dem (for eksempel Arbeid og time).";
+        _feil = false;
+    }
+}

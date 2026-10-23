@@ -64,4 +64,11 @@ public class Tilbud
 
     public List<TilbudLinje> Linjer { get; set; } = [];
     public List<TilbudHendelse> Hendelser { get; set; } = [];
+
+    // Arbeid og tillegg som linjer med kode (se PrisKode). Når BrukerKodelinjer
+    // er på, regnes Timepris, EstimertTimerOverride, Montasjekost og
+    // MontasjeInnpris ut fra linjene, så resten av portalen virker som før.
+    public bool BrukerKodelinjer { get; set; }
+    public bool VisKodelinjerIPdf { get; set; } = true;
+    public List<TilbudKodeLinje> KodeLinjer { get; set; } = [];
 }

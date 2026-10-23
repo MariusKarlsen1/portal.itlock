@@ -443,7 +443,48 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         }
     }
 
+    public sealed record TripletexProdukt(int Id, string Nummer, string Navn, decimal? Kostpris, decimal? Salgspris);
+
+    // Produktene i Tripletex (aktive, med varenummer). Brukes til å hente
+    // priskodene, så kodene i portalen er de samme som varenumrene der.
+    public async Task<(List<TripletexProdukt> Produkter, string? Feilmelding)> HentProdukterAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            const string sti = "product?count=1000&isInactive=false&fields=id,number,name,costExcludingVatCurrency,priceExcludingVatCurrency";
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, sti, ct);
+            using var resp = await http.SendAsync(req, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return ([], $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
+            }
+
+            var parsed = JsonSerializer.Deserialize<ListResponse<ProductSvar>>(raw, JsonOpts);
+            var produkter = (parsed?.Values ?? [])
+                .Where(p => !string.IsNullOrWhiteSpace(p.Number))
+                .Select(p => new TripletexProdukt(p.Id, p.Number!.Trim(), string.IsNullOrWhiteSpace(p.Name) ? p.Number!.Trim() : p.Name.Trim(),
+                    p.CostExcludingVatCurrency, p.PriceExcludingVatCurrency))
+                .OrderBy(p => p.Nummer)
+                .ToList();
+            return (produkter, null);
+        }
+        catch (Exception ex)
+        {
+            return ([], ex.Message);
+        }
+    }
+
     // --- Interne DTO-er for deserialisering (kun feltene vi faktisk bruker) ---
+
+    private sealed class ProductSvar
+    {
+        public int Id { get; set; }
+        public string? Number { get; set; }
+        public string? Name { get; set; }
+        public decimal? CostExcludingVatCurrency { get; set; }
+        public decimal? PriceExcludingVatCurrency { get; set; }
+    }
 
     private sealed class ResponseWrapper<T>
     {

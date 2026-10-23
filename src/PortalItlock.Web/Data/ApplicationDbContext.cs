@@ -50,6 +50,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<DorKomponent> DorKomponenter => Set<DorKomponent>();
     public DbSet<DorFunksjon> DorFunksjoner => Set<DorFunksjon>();
     public DbSet<Tilbud> Tilbud => Set<Tilbud>();
+    public DbSet<PrisKode> PrisKoder => Set<PrisKode>();
+    public DbSet<TilbudKodeLinje> TilbudKodeLinjer => Set<TilbudKodeLinje>();
     public DbSet<TilbudHendelse> TilbudHendelser => Set<TilbudHendelse>();
     public DbSet<TilbudLinje> TilbudLinjer => Set<TilbudLinje>();
     public DbSet<MonteringLinje> MonteringLinjer => Set<MonteringLinje>();
@@ -192,6 +194,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         LastFilerForSlettedePlantegninger();
+        SynkKodelinjer();
         var varsler = FinnVarsler();
         var resultat = base.SaveChanges(acceptAllChangesOnSuccess);
         SendVarsler(varsler);
@@ -201,10 +204,28 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         LastFilerForSlettedePlantegninger();
+        SynkKodelinjer();
         var varsler = FinnVarsler();
         var resultat = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         SendVarsler(varsler);
         return resultat;
+    }
+
+    // Tilbud med kodelinjer: montasjefeltene regnes ut fra linjene (og varenes
+    // utpris for prosentkodene) hver gang tilbudet lagres med linjene lastet,
+    // så summen alltid stemmer, uansett hvor endringen ble gjort.
+    private void SynkKodelinjer()
+    {
+        foreach (var e in ChangeTracker.Entries<Tilbud>().Where(e => e.State != EntityState.Deleted && e.Entity.BrukerKodelinjer))
+        {
+            if (!e.Collection(t => t.KodeLinjer).IsLoaded || !e.Collection(t => t.Linjer).IsLoaded)
+            {
+                continue;
+            }
+
+            var utprisVarer = e.Entity.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).Sum(l => l.Utpris * l.Antall);
+            PortalItlock.Web.Services.KodeLinjeBeregner.Synk(e.Entity, utprisVarer);
+        }
     }
 
     // E-postvarsler: arbeidsordre som får ny ansvarlig montør, og nye
@@ -323,6 +344,15 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             e.HasIndex(k => k.ProsjektId).IsUnique();
             e.HasOne(k => k.Prosjekt).WithMany().HasForeignKey(k => k.ProsjektId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<PrisKode>(e =>
+        {
+            e.HasIndex(k => k.Kode).IsUnique();
+        });
+        modelBuilder.Entity<TilbudKodeLinje>(e =>
+        {
+            e.HasIndex(l => l.TilbudId);
+            e.HasOne(l => l.Tilbud).WithMany(t => t.KodeLinjer).HasForeignKey(l => l.TilbudId).OnDelete(DeleteBehavior.Cascade);
         });
         modelBuilder.Entity<ProsjektAkonto>(e =>
         {
