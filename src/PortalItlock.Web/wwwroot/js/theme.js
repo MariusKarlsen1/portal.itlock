@@ -81,7 +81,41 @@ window.theme = (function () {
         return font();
     }
 
-    document.addEventListener('DOMContentLoaded', initButtons);
+    // Blazor sin raske sidenavigasjon bytter ut attributtene på <html> med det
+    // serveren sender, så valgene i nettleseren (tema, skrift, biler, meny)
+    // forsvant ved første klikk i menyen. Settes tilbake fra localStorage
+    // etter hver navigasjon, og om noe annet fjerner dem.
+    function gjenopprett() {
+        const root = document.documentElement;
+        const m = mode();
+        const tema = m === 'auto' ? (systemDark() ? 'dark' : 'light') : m;
+        if (root.getAttribute('data-theme') !== tema) root.setAttribute('data-theme', tema);
+        const valg = [
+            ['data-font', localStorage.getItem(fontKey) === 'vanlig' ? 'vanlig' : null],
+            ['data-biler', localStorage.getItem('itlock-biler') === 'kjorer' ? 'kjorer' : null],
+            ['data-sidebar', localStorage.getItem('itlock-sidebar') === 'collapsed' ? 'collapsed' : null],
+        ];
+        valg.forEach(function (v) {
+            if (v[1] && root.getAttribute(v[0]) !== v[1]) root.setAttribute(v[0], v[1]);
+        });
+    }
 
-    return { mode, isDark, apply, set, toggle, initButtons, font, setFont };
+    new MutationObserver(function () {
+        if (!document.documentElement.hasAttribute('data-theme')) {
+            gjenopprett();
+        }
+    }).observe(document.documentElement, { attributes: true });
+
+    function lyttEtterNavigasjon() {
+        if (window.Blazor && window.Blazor.addEventListener) {
+            window.Blazor.addEventListener('enhancedload', gjenopprett);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        initButtons();
+        lyttEtterNavigasjon();
+    });
+
+    return { mode, isDark, apply, set, toggle, initButtons, font, setFont, gjenopprett };
 })();
