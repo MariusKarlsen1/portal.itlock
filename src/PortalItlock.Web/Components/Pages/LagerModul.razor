@@ -850,8 +850,19 @@
     private RenderFragment Lagre() => @<div class="lg-fane">
         <div class="lg-fane-topp">
             <span><h2>Lagre og biler</h2><p>Hovedlager, montørbiler og prosjektlager. Varer i bil og prosjektlager er fortsatt bedriftens lagerverdi.</p></span>
-            <button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => _visNyttLager = !_visNyttLager)"><Icon Name="plus" />Nytt lager</button>
+            <span class="lg-knapper">
+                @if (AktiveLagre.Any(l => l.Type == LagerType.Bil) && AktiveLagre.Any(l => l.Type == LagerType.Hovedlager))
+                {
+                    <button type="button" class="lg-knapp" @onclick="@(() => ApneOverfor(null))"><Icon Name="arrow-right" />Overfør til bil</button>
+                }
+                <button type="button" class="lg-knapp lg-knapp-p" @onclick="@(() => _visNyttLager = !_visNyttLager)"><Icon Name="plus" />Nytt lager</button>
+            </span>
         </div>
+
+        @if (_overforTil is not null)
+        {
+            @OverforVisning()
+        }
 
         @if (_visNyttLager)
         {
@@ -923,6 +934,11 @@
                         @if (lager.Type == LagerType.Bil)
                         {
                             <button type="button" class="lg-lenkeknapp" @onclick="@(() => ApnePafyll(lager.Id))">Påfyll@(_pafyllTall.GetValueOrDefault(lager.Id) > 0 ? $" ({_pafyllTall[lager.Id]})" : "")</button>
+                            <button type="button" class="lg-lenkeknapp" @onclick="@(() => ApneOverfor(lager.Id))">Overfør varer</button>
+                        }
+                        else if (lager.Type == LagerType.Hovedlager && AktiveLagre.Any(x => x.Type == LagerType.Bil))
+                        {
+                            <button type="button" class="lg-lenkeknapp" @onclick="@(() => ApneOverfor(null, lager.Id))">Overfør til bil</button>
                         }
                         <button type="button" class="lg-lenkeknapp lg-lenkeknapp-fare" @onclick="@(() => DeaktiverLager(lager))">Legg bort</button>
                     </div>
@@ -2477,6 +2493,7 @@
     private async Task ApnePafyll(int bilId)
     {
         _pafyllLagerId = bilId;
+        _overforTil = null;
         _pafyll = await PlukkSvc.PafyllAsync(bilId, _ledig);
         _pafyllAntall = _pafyll.ToDictionary(p => p.Vare.Id, p => Math.Max(0, Math.Min(p.Antall, p.LedigHovedlager)));
     }
@@ -2633,6 +2650,170 @@
             <p class="lg-hint">Er det ikke opprettet bil for montøren ennå, gjøres det under <a href="/lager/lagre">Lagre og biler</a>.</p>
         </div>
     </div>;
+
+    // ---------- Overfør fra hovedlager til bil ----------
+    // Velg bil og varer fritt, med antall. Hver linje føres som en flytting
+    // (ut av hovedlageret, inn i bilen), så beholdningen og historikken stemmer.
+    private int? _overforTil;
+    private int _overforFra;
+    private string _overforSok = "";
+    private readonly Dictionary<int, int> _overforLinjer = [];
+
+    private void ApneOverfor(int? bilId, int? fraId = null)
+    {
+        var biler = AktiveLagre.Where(l => l.Type == LagerType.Bil).ToList();
+        _overforTil = bilId ?? biler.FirstOrDefault()?.Id;
+        _overforFra = fraId ?? AktiveLagre.FirstOrDefault(l => l.Type == LagerType.Hovedlager)?.Id ?? 0;
+        _overforSok = "";
+        _overforLinjer.Clear();
+        _pafyllLagerId = null;
+    }
+
+    private List<Component> OverforTreff()
+    {
+        var sok = _overforSok.Trim();
+        if (sok.Length < 2)
+        {
+            return [];
+        }
+
+        return _varer
+            .Where(c => !_overforLinjer.ContainsKey(c.Id))
+            .Where(c => c.Navn.Contains(sok, StringComparison.OrdinalIgnoreCase)
+                || (c.Produktkode?.Contains(sok, StringComparison.OrdinalIgnoreCase) ?? false))
+            .OrderByDescending(c => Antall(c.Id, _overforFra) > 0)
+            .ThenBy(c => c.Navn)
+            .Take(8)
+            .ToList();
+    }
+
+    private void LeggTilOverfor(Component c)
+    {
+        _overforLinjer[c.Id] = 1;
+        _overforSok = "";
+    }
+
+    private async Task Overfor()
+    {
+        if (_overforTil is not { } bil || _overforFra == 0)
+        {
+            return;
+        }
+
+        var linjer = _overforLinjer.Where(l => l.Value > 0).ToList();
+        if (linjer.Count == 0)
+        {
+            _melding = "Legg til minst én vare med antall.";
+            return;
+        }
+
+        _jobber = true;
+        var totalt = 0;
+        foreach (var (vare, antall) in linjer)
+        {
+            await LagerSvc.FlyttAsync(vare, _overforFra, bil, antall, $"Overført til {LagerNavn(bil)}", _brukerId, _brukerNavn);
+            totalt += antall;
+        }
+
+        _jobber = false;
+        _overforTil = null;
+        _overforLinjer.Clear();
+        await LastAsync();
+        _melding = $"{totalt} stk ({linjer.Count} {(linjer.Count == 1 ? "vare" : "varer")}) er overført fra {LagerNavn(_overforFra)} til {LagerNavn(bil)}.";
+    }
+
+    private RenderFragment OverforVisning() => @<section class="lg-boks lg-overfor">
+        @{
+            var biler = AktiveLagre.Where(l => l.Type == LagerType.Bil).ToList();
+            var fraLagre = AktiveLagre.Where(l => l.Type != LagerType.Bil).ToList();
+            var treff = OverforTreff();
+            var forMange = _overforLinjer.Count(l => l.Value > Antall(l.Key, _overforFra));
+        }
+        <div class="lg-boks-topp">
+            <h3>Overfør varer til bil</h3>
+            <button type="button" class="lg-lukk lg-hoyre" title="Lukk" @onclick="@(() => _overforTil = null)"><Icon Name="x" /></button>
+        </div>
+        <p class="lg-hint">Velg varer og antall. De trekkes fra @LagerNavn(_overforFra) og legges i bilen. Overføringen vises under Bevegelser.</p>
+        <div class="lg-overfor-valg">
+            <label class="lg-felt">Fra
+                <select value="@_overforFra" @onchange="@(e => _overforFra = int.TryParse(e.Value?.ToString(), out var id) ? id : _overforFra)">
+                    @foreach (var l in fraLagre)
+                    {
+                        <option value="@l.Id" selected="@(l.Id == _overforFra)">@l.Navn</option>
+                    }
+                </select>
+            </label>
+            <span class="lg-overfor-pil"><Icon Name="arrow-right" /></span>
+            <label class="lg-felt">Til bil
+                <select value="@_overforTil" @onchange="@(e => _overforTil = int.TryParse(e.Value?.ToString(), out var id) ? id : _overforTil)">
+                    @foreach (var b in biler)
+                    {
+                        <option value="@b.Id" selected="@(b.Id == _overforTil)">@b.Navn@(b.AnsvarligBrukerId is { } a && _montorer.FirstOrDefault(m => m.Id == a) is { } m ? $" ({m.Navn})" : "")</option>
+                    }
+                </select>
+            </label>
+        </div>
+
+        <div class="lg-overfor-sok">
+            <label class="lg-felt lg-felt-bred">Finn vare
+                <input value="@_overforSok" @oninput="@(e => _overforSok = e.Value?.ToString() ?? "")" placeholder="Skriv navn eller varenummer" autocomplete="off" />
+            </label>
+            @if (treff.Count > 0)
+            {
+                <ul class="lg-overfor-treff">
+                    @foreach (var c in treff)
+                    {
+                        var vare = c;
+                        var paLager = Antall(c.Id, _overforFra);
+                        <li>
+                            <button type="button" @onclick="@(() => LeggTilOverfor(vare))" disabled="@(paLager <= 0)">
+                                <span><b>@c.Navn</b><small>@c.Produktkode</small></span>
+                                <span class="@(paLager > 0 ? "" : "lg-rod")">@(paLager > 0 ? $"{paLager} på lager" : "Tomt")</span>
+                                <span class="lg-overfor-legg">+ Legg til</span>
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+            else if (_overforSok.Trim().Length >= 2)
+            {
+                <p class="lg-tom">Ingen varer passer «@_overforSok».</p>
+            }
+        </div>
+
+        @if (_overforLinjer.Count > 0)
+        {
+            <div class="lg-tabellwrap">
+                <table class="lg-tabell lg-tabell-smal">
+                    <thead><tr><th>Vare</th><th class="n">På @LagerNavn(_overforFra)</th><th class="n">I bilen nå</th><th class="n">Overfør</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var (vareId, antall) in _overforLinjer.ToList())
+                        {
+                            var id = vareId;
+                            var c = _varer.FirstOrDefault(v => v.Id == vareId);
+                            var paLager = Antall(vareId, _overforFra);
+                            <tr>
+                                <td><b>@(c?.Navn ?? $"Vare {vareId}")</b><small>@c?.Produktkode</small></td>
+                                <td class="n @(antall > paLager ? "lg-rod" : "")">@paLager</td>
+                                <td class="n">@Antall(vareId, _overforTil ?? 0)</td>
+                                <td class="n"><input type="number" min="0" class="lg-tallfelt" value="@antall" @onchange="@(e => _overforLinjer[id] = int.TryParse(e.Value?.ToString(), out var a) ? Math.Max(0, a) : 0)" aria-label="Antall å overføre" /></td>
+                                <td class="n"><button type="button" class="lg-lukk" title="Fjern" @onclick="@(() => _overforLinjer.Remove(id))"><Icon Name="x" /></button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (forMange > 0)
+            {
+                <p class="lg-hint lg-rod">@forMange @(forMange == 1 ? "vare har" : "varer har") mer enn det som er på @LagerNavn(_overforFra). Beholdningen der blir negativ hvis du overfører likevel.</p>
+            }
+            <span><button type="button" class="lg-knapp lg-knapp-p" disabled="@_jobber" @onclick="Overfor"><Icon Name="arrow-right" />Overfør @_overforLinjer.Values.Sum() stk til @LagerNavn(_overforTil ?? 0)</button></span>
+        }
+        else
+        {
+            <p class="lg-tom">Søk opp varene som skal i bilen, og legg dem til.</p>
+        }
+    </section>;
 
     private RenderFragment PafyllVisning() => @<section class="lg-boks">
         <div class="lg-boks-topp">
