@@ -188,6 +188,10 @@
         if (query.TryGetValue("prosjekt", out var pid) && int.TryParse(pid, out var prosjektId))
         {
             await ApneIntern(prosjektId);
+            if (query.ContainsKey("overlevert") && _apenProsjekt is { } apen)
+            {
+                _melding = $"{apen.Navn} er satt som overlevert. Her er hvordan det gikk.";
+            }
         }
 
         _klar = true;
@@ -269,15 +273,28 @@
     {
         _tilGjennomgang = await OkonomiSvc.TilGjennomgangAsync();
         _kontrollerte = await Db.ProsjektEtterkalkyler.AsNoTracking().Include(k => k.Prosjekt!).ThenInclude(p => p.Kunde)
+            .Where(k => !k.ErUtkast)
             .OrderByDescending(k => k.Kontrollert).ToListAsync();
+        // Til gjennomgang: slik gikk det, med det som gikk dårligst øverst.
+        _etterkalkyler = _tilGjennomgang.Count == 0 ? [] : await OppfolgingSvc.EtterkalkyleFlereAsync(_tilGjennomgang.Select(p => p.Id).ToList());
+        _utkast = (await Db.ProsjektEtterkalkyler.AsNoTracking().Where(k => k.ErUtkast).Select(k => k.ProsjektId).ToListAsync()).ToHashSet();
+        _tilGjennomgang = _tilGjennomgang
+            .OrderBy(p => _etterkalkyler.TryGetValue(p.Id, out var e) ? e.DgPoeng : 999)
+            .ThenBy(p => p.OverlevertDato)
+            .ToList();
         // Pågående: alle som er registrert eller under arbeid, også de som
         // mangler godkjent tilbud, så de ikke glemmes.
         var prosjekter = await Db.Prosjekter.AsNoTracking().Include(p => p.Kunde).Include(p => p.Prosjektleder)
             .Where(p => p.Status == ProsjektStatus.Registrert || p.Status == ProsjektStatus.UnderArbeid)
             .ToListAsync();
         _oppfolging = prosjekter.Count == 0 ? [] : await OppfolgingSvc.HentFlereAsync(prosjekter.Select(p => p.Id).ToList());
-        var gjennomgang = _tilGjennomgang.Select(p => p.Id).Where(id => !_oppfolging.ContainsKey(id)).ToList();
+        var gjennomgang = _tilGjennomgang.Select(p => p.Id).Where(id => !_oppfolging.ContainsKey(id) && !_etterkalkyler.ContainsKey(id)).ToList();
         _okonomi = gjennomgang.Count == 0 ? [] : await OkonomiSvc.BeregnFlereAsync(gjennomgang);
+        foreach (var (id, e) in _etterkalkyler)
+        {
+            _okonomi[id] = e.O;
+        }
+
         foreach (var (id, f) in _oppfolging)
         {
             if (f.O is { } ok)
@@ -331,16 +348,58 @@
     {
         _apenOkonomi = await OkonomiSvc.BeregnAsync(prosjektId);
         _apenProsjekt = await Db.Prosjekter.AsNoTracking().Include(p => p.Kunde).Include(p => p.Prosjektleder).FirstOrDefaultAsync(p => p.Id == prosjektId);
-        _apenKontroll = await Db.ProsjektEtterkalkyler.AsNoTracking().FirstOrDefaultAsync(k => k.ProsjektId == prosjektId);
-        _arsak = _apenKontroll?.Arsak ?? EtterkalkyleArsak.IngenAvvik;
-        _kommentar = _apenKontroll?.Kommentar ?? "";
-        _gikkBra = _apenKontroll?.GikkBra;
-        _gikkDarlig = _apenKontroll?.GikkDarlig;
-        _forbedre = _apenKontroll?.Forbedre;
-        _forsinkelseEgne = _apenKontroll?.ForsinkelseEgne;
-        _forsinkelseAndre = _apenKontroll?.ForsinkelseAndre;
+        // Et utkast er ikke signert; feltene fylles fra det, og ellers med forslag.
+        var lagret = await Db.ProsjektEtterkalkyler.AsNoTracking().FirstOrDefaultAsync(k => k.ProsjektId == prosjektId);
+        _apenKontroll = lagret is { ErUtkast: false } ? lagret : null;
+        _apenUtkast = lagret is { ErUtkast: true };
+        var ek = _apenProsjekt?.Status == ProsjektStatus.Overlevert && lagret is null ? await OppfolgingSvc.EtterkalkyleAsync(prosjektId) : null;
+        _arsak = lagret?.Arsak ?? ek?.ForeslattArsak ?? EtterkalkyleArsak.IngenAvvik;
+        _arsakForeslatt = lagret is null && ek is not null;
+        _kommentar = lagret?.Kommentar ?? "";
+        _gikkBra = lagret?.GikkBra;
+        _gikkDarlig = lagret?.GikkDarlig;
+        _forbedre = lagret?.Forbedre;
+        _forsinkelseEgne = lagret?.ForsinkelseEgne;
+        _forsinkelseAndre = lagret?.ForsinkelseAndre ?? ek?.ForslagForsinkelseAndre;
         _melding = null;
     }
+
+    private bool _apenUtkast;
+    private bool _arsakForeslatt;
+    private Dictionary<int, ProsjektOppfolgingService.Etterkalkyle> _etterkalkyler = [];
+    private HashSet<int> _utkast = [];
+
+    // Gjennomgangen i tre trinn: se tallene, årsak og lærdom, signer.
+    private int GjennomgangTrinn => string.IsNullOrWhiteSpace(_kommentar) && string.IsNullOrWhiteSpace(_gikkBra) && string.IsNullOrWhiteSpace(_gikkDarlig) && string.IsNullOrWhiteSpace(_forbedre) ? 2 : 3;
+
+    private Task LagreUtkast() => Kjor(async () =>
+    {
+        if (_apenProsjekt is not { } p)
+        {
+            return;
+        }
+
+        await OkonomiSvc.LagreUtkastAsync(p.Id, _arsak, _kommentar, _brukerNavn,
+            new ProsjektOkonomiService.Evaluering(_gikkBra, _gikkDarlig, _forbedre, _forsinkelseEgne, _forsinkelseAndre));
+        _apenUtkast = true;
+        _utkast.Add(p.Id);
+        _melding = "Utkastet er lagret. Prosjektet står fortsatt under Til gjennomgang.";
+    });
+
+    // Prosjektet er satt som overlevert under Pågående: vis etterkalkylen med en
+    // gang. Siden kan bli laget på nytt når adressen endres, så prosjektet sendes
+    // med i adressen og åpnes derfra.
+    private void VedOverlevert(int prosjektId) =>
+        Nav.NavigateTo($"/prosjektokonomi/etterkalkyle?prosjekt={prosjektId}&overlevert=1", forceLoad: true);
+
+    private Task EtterkalkyleEndret() => Kjor(async () =>
+    {
+        await LastAsync();
+        if (_apenProsjekt is { } p)
+        {
+            _apenOkonomi = await OkonomiSvc.BeregnAsync(p.Id);
+        }
+    });
 
     private async Task KontrollerIntern()
     {
@@ -404,25 +463,6 @@
         return (p > 0 ? "+" : "") + p.ToString("0", Kultur) + " %";
     }
 
-    // Avvik i prosentpoeng for dekningsgrad.
-    private static string PoengAvvik(decimal? faktisk, decimal? kalkulert) =>
-        faktisk is { } f && kalkulert is { } k ? ((f - k) * 100 >= 0 ? "+" : "") + ((f - k) * 100).ToString("0.#", Kultur) + " poeng" : "–";
-
-    // Én rad i «Faktisk mot kalkulert». For kost er høyere faktisk dårlig
-    // (rødt), for resultat er høyere bra.
-    private RenderFragment AvvikRad(string navn, decimal kalkulert, decimal faktisk, Func<decimal, string> fmt, bool hoyereErBra) => @<tr class="@(navn is "Total kost" or "Resultat (inntekt − kost)" ? "ek-sumrad" : "")">
-        @{
-            var diff = faktisk - kalkulert;
-            var darlig = hoyereErBra ? diff < 0 : diff > 0;
-            var klasse = Math.Abs(diff) < 0.5m ? "" : darlig ? "ek-rod" : "ek-gronn";
-        }
-        <td><b>@navn</b></td>
-        <td class="n">@fmt(kalkulert)</td>
-        <td class="n"><b>@fmt(faktisk)</b></td>
-        <td class="n @klasse">@(diff > 0 ? "+" : diff < 0 ? "−" : "")@fmt(Math.Abs(diff))</td>
-        <td class="n @klasse">@(kalkulert != 0 ? ((diff / Math.Abs(kalkulert)) * 100 > 0 ? "+" : "") + ((diff / Math.Abs(kalkulert)) * 100).ToString("0", Kultur) + " %" : "–")</td>
-    </tr>;
-
     private static string Klasse(ProsjektOkonomiService.OkonomiStatus s) => s switch
     {
         ProsjektOkonomiService.OkonomiStatus.OverBudsjett => "rod",
@@ -439,10 +479,19 @@
         <a class="@(Visning == "laerdom" ? "aktiv" : "")" href="/prosjektokonomi/laerdom">Lærdom<small>@_laerdom.Count</small></a>
     </nav>;
 
+    private static string DomKlasse(ProsjektOppfolgingService.Dom d) => d switch
+    {
+        ProsjektOppfolgingService.Dom.Bedre => "ek-chip-gronn",
+        ProsjektOppfolgingService.Dom.Darligere => "ek-chip-rod",
+        _ => "ek-chip-gronn"
+    };
+
+    private static string Fortegn(decimal v) => Math.Abs(v) < 1 ? "0" : (v > 0 ? "+" : "−") + Math.Abs(v).ToString("#,##0", Kultur);
+
     private RenderFragment Gjennomgang() => @<div class="ek-fane">
         @EtterkalkyleMeny()
         <div class="ek-fane-topp">
-            <span><h2>Til gjennomgang</h2><p>Prosjekter som er satt til <i>Overlevert</i> havner her automatisk. Åpne prosjektet, gå gjennom faktisk mot kalkulert, skriv en kort kommentar og marker som kontrollert.</p></span>
+            <span><h2>Til gjennomgang</h2><p>Prosjekter som er satt som overlevert havner her. Lista viser med en gang hvordan det gikk mot kalkylen, med det som gikk dårligst øverst. Åpne prosjektet for å se hvor avviket kom fra, skriv årsak og lærdom, og signer.</p></span>
         </div>
         @if (_tilGjennomgang.Count == 0)
         {
@@ -452,28 +501,28 @@
         {
             <div class="ek-tabellramme">
                 <table class="ek-tabell">
-                    <thead><tr><th>Prosjekt</th><th>Overlevert</th><th class="n">Tilbudt</th><th class="n">Faktisk kost</th><th class="n">Dekningsgrad</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Prosjekt</th><th>Overlevert</th><th class="n">Resultat mot kalkyle</th><th class="n">Dekningsgrad</th><th>Største avvik</th><th>Slik gikk det</th></tr></thead>
                     <tbody>
                         @foreach (var x in _tilGjennomgang)
                         {
                             var p = x;
-                            var o = _okonomi.GetValueOrDefault(p.Id);
+                            var e = _etterkalkyler.GetValueOrDefault(p.Id);
                             <tr class="ek-klikkrad" @onclick="@(() => ApneAsync(p.Id))">
-                                <td><b>@p.Navn</b><small>@(p.Kunde?.Navn ?? "Ingen kunde")</small></td>
-                                <td>@(p.OverlevertDato?.ToString("dd.MM.yyyy") ?? "–")</td>
-                                <td class="n">@(o is { Tilbud.Count: > 0 } ? Kr(o.Inntekt) : "–")</td>
-                                <td class="n">@(o is { Tilbud.Count: > 0 } ? Kr(o.FaktiskKost) : "–")</td>
-                                <td class="n">@(o is { Tilbud.Count: > 0 } ? $"{DG(o.FaktiskDekningsgrad)} (tilbudt {DG(o.BudsjettDekningsgrad)})" : "–")</td>
-                                <td>
-                                    @if (o is null || o.Status == ProsjektOkonomiService.OkonomiStatus.IkkeVunnet)
-                                    {
-                                        <span class="ek-chip">Mangler godkjent tilbud</span>
-                                    }
-                                    else
-                                    {
-                                        <span title="@o.StatusTekst" class="ek-chip ek-chip-@Klasse(o.Status)">@(o.FaktiskKost > o.BudsjettKost && o.BudsjettKost > 0 ? $"{Avvik(o.FaktiskKost, o.BudsjettKost)} over" : o.Status == ProsjektOkonomiService.OkonomiStatus.FolgMed ? "Følg med" : "Innenfor budsjett")</span>
-                                    }
-                                </td>
+                                <td><b>@p.Navn</b><small>@(p.Kunde?.Navn ?? "Ingen kunde")@(_utkast.Contains(p.Id) ? " · utkast lagret" : "")</small></td>
+                                <td>@(p.OverlevertDato?.ToString("dd.MM.yyyy") ?? "–")<small>@(e?.DagerOverFrist is { } dager ? dager > 0 ? $"{dager} dager over fristen" : dager == 0 ? "på fristen" : $"{-dager} dager før fristen" : "")</small></td>
+                                @if (e is null)
+                                {
+                                    <td colspan="3"><small>Ingen godkjent kalkyle å sammenligne med.</small></td>
+                                    <td><span class="ek-chip">Mangler kalkyle</span></td>
+                                }
+                                else
+                                {
+                                    var (avvikTekst, avvikNiva) = e.StorsteAvvik;
+                                    <td class="n"><b class="@(e.ResultatAvvik < -0.5m ? "ek-rod" : "ek-gronn")">@Fortegn(e.ResultatAvvik)</b><small>kalkulert @Kr(e.KalkResultat)</small></td>
+                                    <td class="n"><b class="@(e.DgPoeng <= -3 ? "ek-rod" : e.DgPoeng >= 2 ? "ek-gronn" : "")">@DG(e.FaktiskDG)</b><small>kalkulert @DG(e.KalkDG)</small></td>
+                                    <td><span class="ek-chip @NivaKlasse(avvikNiva)">@avvikTekst</span>@if (e.VarerAnslatt) {<small>varer anslått</small>}</td>
+                                    <td><span class="ek-chip @DomKlasse(e.Dom)">@e.DomTekst</span></td>
+                                }
                             </tr>
                         }
                     </tbody>
@@ -755,39 +804,17 @@
             </span>
         </div>
 
-        @if (erEtterkalkyle && o is { Inntekt: > 0 })
-        {
-            <section class="ek-avvik">
-                <h3>Faktisk mot kalkulert</h3>
-                <div class="ek-tabellramme">
-                    <table class="ek-tabell">
-                        <thead><tr><th></th><th class="n">Kalkulert</th><th class="n">Faktisk</th><th class="n">Avvik</th><th class="n">Avvik %</th></tr></thead>
-                        <tbody>
-                            @AvvikRad("Timer", o.BudsjettTimer, o.FaktiskTimer, v => v.ToString("0.#", Kultur) + " t", false)
-                            @AvvikRad("Timekost", o.BudsjettTimekost, o.FaktiskTimekost, Kr, false)
-                            @AvvikRad("Varer", o.BudsjettVarer, o.FaktiskVarer, Kr, false)
-                            @AvvikRad("Total kost", o.BudsjettKost, o.FaktiskKost, Kr, false)
-                            @AvvikRad("Resultat (inntekt − kost)", o.Inntekt - o.BudsjettKost, o.Inntekt - o.FaktiskKost, Kr, true)
-                            <tr class="ek-sumrad">
-                                <td><b>Dekningsgrad</b></td>
-                                <td class="n">@DG(o.BudsjettDekningsgrad)</td>
-                                <td class="n"><b>@DG(o.FaktiskDekningsgrad)</b></td>
-                                <td class="n @((o.FaktiskDekningsgrad ?? 0) < (o.BudsjettDekningsgrad ?? 0) ? "ek-rod" : "ek-gronn")">@PoengAvvik(o.FaktiskDekningsgrad, o.BudsjettDekningsgrad)</td>
-                                <td class="n"></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-        }
-
         @if (erEtterkalkyle)
         {
-            <ProsjektOkonomiPanel ProsjektId="@p.Id" Data="@o" Etterkalkyle="@(o is { Inntekt: > 0 })" />
+            <EtterkalkyleVisning ProsjektId="@p.Id" Kjor="@Kjor" Oppdatert="@_lastet" Endret="@EtterkalkyleEndret" />
+            <details class="ek-grunnlag">
+                <summary>Per arbeidsordre og grunnlag</summary>
+                <ProsjektOkonomiPanel ProsjektId="@p.Id" Data="@o" Etterkalkyle="@(o is { Inntekt: > 0 })" UtenNokkeltall="true" />
+            </details>
         }
         else
         {
-            <ProsjektOppfolgingVisning ProsjektId="@p.Id" Kjor="@Kjor" Oppdatert="@_lastet" BrukerNavn="@_brukerNavn" />
+            <ProsjektOppfolgingVisning ProsjektId="@p.Id" Kjor="@Kjor" Oppdatert="@_lastet" BrukerNavn="@_brukerNavn" Overlevert="@VedOverlevert" />
         }
 
         @if (erEtterkalkyle)
@@ -812,26 +839,39 @@
             }
             else
             {
-                <h3>Gjennomgang</h3>
-                <p class="ek-hint">Hva var årsaken til avviket? Kommentaren lagres sammen med tallene, og brukes i Lærdom.</p>
-                <div class="ek-arsaker">
-                    @foreach (var a in Enum.GetValues<EtterkalkyleArsak>())
-                    {
-                        var arsak = a;
-                        <button type="button" class="ek-arsak @(_arsak == arsak ? "aktiv" : "")" @onclick="@(() => _arsak = arsak)">@arsak.Visningsnavn()</button>
-                    }
+                var trinn = GjennomgangTrinn;
+                <div class="ek-gjennomgang-topp">
+                    <h3>Gjennomgang</h3>
+                    <ol class="ek-trinn" aria-label="Trinn i gjennomgangen">
+                        <li class="ferdig">1 Se tallene</li>
+                        <li class="@(trinn == 2 ? "na" : "ferdig")">2 Årsak og lærdom</li>
+                        <li class="@(trinn == 3 ? "na" : "")">3 Signer</li>
+                    </ol>
                 </div>
-                <label class="ek-felt">Kommentar
-                    <textarea rows="2" @bind="_kommentar" placeholder="Kort om årsaken til avviket"></textarea>
+                <div class="ek-felt-gruppe">
+                    <p class="ek-hint">Hva var hovedårsaken? @(_arsakForeslatt ? "Portalen har foreslått en ut fra det største avviket." : "")@(_apenUtkast ? " Utkastet ditt er hentet fram." : "")</p>
+                    <div class="ek-arsaker">
+                        @foreach (var a in Enum.GetValues<EtterkalkyleArsak>())
+                        {
+                            var arsak = a;
+                            <button type="button" class="ek-arsak @(_arsak == arsak ? "aktiv" : "")" aria-pressed="@(_arsak == arsak ? "true" : "false")" @onclick="@(() => { _arsak = arsak; _arsakForeslatt = false; })">@arsak.Visningsnavn()</button>
+                        }
+                    </div>
+                </div>
+                <label class="ek-felt">Kommentar @(_arsak != EtterkalkyleArsak.IngenAvvik ? "(må fylles ut)" : "")
+                    <textarea rows="2" @bind="_kommentar" @bind:event="oninput" placeholder="Kort om årsaken til avviket"></textarea>
                 </label>
                 <div class="ek-sporsmal">
-                    <label class="ek-felt">Hva gikk bra?<textarea rows="2" @bind="_gikkBra"></textarea></label>
-                    <label class="ek-felt">Hva gikk dårlig?<textarea rows="2" @bind="_gikkDarlig"></textarea></label>
-                    <label class="ek-felt">Hva må vi forbedre?<textarea rows="2" @bind="_forbedre"></textarea></label>
+                    <label class="ek-felt">Hva gikk bra?<textarea rows="2" @bind="_gikkBra" @bind:event="oninput"></textarea></label>
+                    <label class="ek-felt">Hva gikk dårlig?<textarea rows="2" @bind="_gikkDarlig" @bind:event="oninput"></textarea></label>
+                    <label class="ek-felt">Hva må vi forbedre?<textarea rows="2" @bind="_forbedre" @bind:event="oninput"></textarea>@if (_laerdom.Count > 0) {<small class="ek-forslag">Se <a href="/prosjektokonomi/laerdom">Lærdom</a> for varer der montasjetiden bør justeres.</small>}</label>
                     <label class="ek-felt">Forsinkelser, egne forhold<textarea rows="2" @bind="_forsinkelseEgne" placeholder="Dager og årsak"></textarea></label>
-                    <label class="ek-felt">Forsinkelser, andre<textarea rows="2" @bind="_forsinkelseAndre" placeholder="Dager og årsak"></textarea></label>
+                    <label class="ek-felt">Forsinkelser, andre<textarea rows="2" @bind="_forsinkelseAndre" placeholder="Dager og årsak"></textarea>@if (!string.IsNullOrEmpty(_forsinkelseAndre) && !_apenUtkast) {<small class="ek-forslag">Hentet fra fristforlengelsene på endringene</small>}</label>
                 </div>
-                <span><button type="button" class="ek-knapp ek-knapp-ok" @onclick="Kontroller"><Icon Name="check" />Marker som kontrollert</button></span>
+                <span class="ek-knapper ek-knapper-hoyre">
+                    <button type="button" class="ek-knapp" @onclick="LagreUtkast">Lagre utkast</button>
+                    <button type="button" class="ek-knapp ek-knapp-ok" @onclick="Kontroller"><Icon Name="check" />Signer som kontrollert</button>
+                </span>
             }
         </section>
         }

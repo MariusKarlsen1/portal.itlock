@@ -1,0 +1,250 @@
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject ProsjektOppfolgingService OppfolgingSvc
+
+@* Etterkalkylen på et overlevert prosjekt: svaret øverst («Slik gikk det»),
+   faktisk mot kalkulert satt opp som Etterkalkyle-arket, og hvor avviket
+   kom fra, fra kalkulert resultat ved kontrakt til faktisk resultat. *@
+@if (!_lastet)
+{
+    <p class="ekv-tom">Regner ut …</p>
+}
+else if (_ek is null)
+{
+    <div class="ekv-tomboks"><b>Ingen kalkyle å sammenligne med</b><p>Prosjektet har ikke noe godkjent tilbud med beløp, så det finnes ingen kalkyle. Gjennomgangen kan likevel fylles ut under.</p></div>
+}
+else
+{
+    var ek = _ek;
+    var (avvikTekst, avvikNiva) = ek.StorsteAvvik;
+    <div class="ekv">
+        <section class="ekv-dom ekv-dom-@DomKlasse(ek.Dom)">
+            <div class="ekv-dom-tittel">
+                <span class="ekv-merke">Slik gikk det</span>
+                <span class="ekv-ord">@ek.DomTekst</span>
+                <p>@ek.Forklaring</p>
+            </div>
+            <div class="ekv-dom-tall">
+                <div><span>Resultat</span><b>@KrKort(ek.FaktiskResultat)</b><small class="@Farge(ek.ResultatAvvik)">@Fortegn(ek.ResultatAvvik) mot kalkyle</small></div>
+                <div><span>Dekningsgrad</span><b>@DG(ek.FaktiskDG)</b><small class="@Farge(ek.DgPoeng)">@(ek.DgPoeng >= 0 ? "+" : "−")@Math.Abs(ek.DgPoeng).ToString("0.0", Kultur) poeng</small></div>
+                <div><span>Timer</span><b>@ek.O.FaktiskTimer.ToString("0", Kultur) t</b><small class="@Farge(-ek.TimerAvvik)">@(ek.TimerAvvik >= 0 ? "+" : "−")@Math.Abs(ek.TimerAvvik).ToString("0", Kultur) t@(ek.O.BudsjettTimer > 0 ? $" ({(ek.TimerAvvik >= 0 ? "+" : "−")}{Math.Abs(ek.TimerAvvik / ek.O.BudsjettTimer * 100):0} %)" : "")</small></div>
+                <div>
+                    <span>Overlevert</span><b>@(ek.Overlevert?.ToString("dd.MM", Kultur) ?? "–")</b>
+                    @if (ek.DagerOverFrist is { } dager)
+                    {
+                        <small class="@(dager > 0 ? "ekv-rod" : "ekv-gronn")">@(dager > 0 ? $"{dager} dager over fristen" : dager == 0 ? "på fristen" : $"{-dager} dager før fristen")</small>
+                    }
+                    else
+                    {
+                        <small>ingen frist lagt inn</small>
+                    }
+                </div>
+            </div>
+        </section>
+
+        @if (ek.VarerAnslatt)
+        {
+            <div class="ekv-varsel">
+                <span class="ekv-varsel-ik">!</span>
+                <div>
+                    <b>Varene er anslått fra tilbudet, ikke registrert.</b>
+                    Uten lager eller innkjøp i portalen settes faktisk varekost lik kalkylen, og da ser det ut som varene traff perfekt. Legg inn det varene faktisk kostet, for eksempel fra prosjektrapporten i Tripletex.
+                    <span class="ekv-varsel-felt">
+                        <input class="ekv-inn" inputmode="decimal" placeholder="Faktisk varekost" value="@(_varekost?.ToString("0", CultureInfo.InvariantCulture))" @onchange="@(e => _varekost = LesTall(e))" aria-label="Faktisk varekost" />
+                        <button type="button" class="ekv-knapp" @onclick="LagreVarekost">Lagre</button>
+                    </span>
+                </div>
+            </div>
+        }
+        else if (ek.O.VarerManuell)
+        {
+            <div class="ekv-varekost">
+                <span>Varekost lagt inn for hånd</span>
+                <input class="ekv-inn" inputmode="decimal" value="@(_varekost?.ToString("0", CultureInfo.InvariantCulture))" @onchange="@(e => _varekost = LesTall(e))" aria-label="Faktisk varekost" />
+                <button type="button" class="ekv-knapp" @onclick="LagreVarekost">Lagre</button>
+                <small>Tøm feltet og lagre for å gå tilbake til anslaget fra tilbudet.</small>
+            </div>
+        }
+
+        <div class="ekv-to">
+            <section class="ekv-boks">
+                <div class="ekv-boks-topp"><h3>Faktisk mot kalkulert</h3><span>som Etterkalkyle-arket</span></div>
+                <div class="ekv-tabellramme">
+                    <table class="ekv-tabell">
+                        <thead><tr><th></th><th class="n">Kalkyle</th><th class="n">Faktisk</th><th class="n">Avvik</th></tr></thead>
+                        <tbody>
+                            <tr class="ekv-gruppe"><td colspan="4">Inntekter</td></tr>
+                            @Rad("Kontrakt", null, ek.Kontrakt, ek.Kontrakt, true)
+                            @if (ek.Endringer != 0)
+                            {
+                                @Rad("Endringer og tilvalg", $"{ek.Endringsmeldinger.Count(e => e.Tilbud.Status == EndringsmeldingStatus.Godkjent)} godkjente", ek.Endringer, ek.Endringer, true)
+                            }
+                            @if (ek.Indeks != 0)
+                            {
+                                @Rad("Indeksregulering", null, 0, ek.Indeks, true)
+                            }
+                            <tr class="ekv-gruppe"><td colspan="4">Kostnader</td></tr>
+                            @Rad("Materiell", ek.O.VarerFraLager ? "faktisk forbruk fra lageret" : ek.O.VarerManuell ? "lagt inn" : "anslått, ikke registrert", ek.KalkVarer, ek.FaktiskVarer, false)
+                            @Rad("Lønn", $"{ek.O.BudsjettTimer.ToString("0", Kultur)} t kalkulert, {ek.O.FaktiskTimer.ToString("0", Kultur)} t faktisk", ek.KalkLonn, ek.FaktiskLonn, false)
+                            <tr class="ekv-sum">
+                                <td>Resultat</td>
+                                <td class="n">@KrKort(ek.KalkResultat)</td>
+                                <td class="n">@KrKort(ek.FaktiskResultat)</td>
+                                <td class="n @Farge(ek.ResultatAvvik)">@Fortegn(ek.ResultatAvvik)</td>
+                            </tr>
+                            <tr class="ekv-sum">
+                                <td>Dekningsgrad</td>
+                                <td class="n">@DG(ek.KalkDG)</td>
+                                <td class="n">@DG(ek.FaktiskDG)</td>
+                                <td class="n @Farge(ek.DgPoeng)">@(ek.DgPoeng >= 0 ? "+" : "−")@Math.Abs(ek.DgPoeng).ToString("0.0", Kultur) poeng</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="ekv-fot">Kalkylen er de godkjente tilbudene og endringene, slik budsjettet ble låst. Avvik i rødt trakk resultatet ned.</p>
+            </section>
+
+            <section class="ekv-boks">
+                <div class="ekv-boks-topp"><h3>Hvor ble avviket av?</h3><span>fra kalkulert til faktisk resultat</span></div>
+                @Fossefall(ek)
+                <p class="ekv-fot">Grønt trakk resultatet opp, rødt trakk det ned. Største avvik: <b class="ekv-@NivaKlasse(avvikNiva)">@avvikTekst</b>.</p>
+            </section>
+        </div>
+
+        <div class="ekv-fakta">
+            <div><span>Fakturert</span><b>@KrKort(ek.Fakturert)</b><small>@(ek.FaktiskInntekt > 0 ? $"{Math.Round(ek.Fakturert / ek.FaktiskInntekt * 100):0} % av prosjektsummen" : "")</small></div>
+            <div><span>Fremdriftsplanen</span><b>@(ek.PlanTotal > 0 ? $"{ek.PlanFerdig} av {ek.PlanTotal}" : "Ingen plan")</b><small>@(ek.PlanTotal > 0 ? "oppgaver avsluttet" : "ble ikke laget")</small></div>
+            <div><span>Endringer</span><b>@ek.Endringsmeldinger.Count(e => e.Tilbud.Status == EndringsmeldingStatus.Godkjent) godkjent</b><small>@KrKort(ek.Endringer)@(ek.Endringsmeldinger.Where(e => e.Tilbud.Status == EndringsmeldingStatus.Godkjent).Sum(e => e.Tilbud.FristforlengelseDager ?? 0) is > 0 and var d ? $" · +{d} dager" : "")</small></div>
+            <div><span>Timer per aktivitet</span><b>@(_timer.FirstOrDefault() is { Timer: > 0 } forste ? $"{forste.Aktivitet.Visningsnavn()} {forste.Timer:0} t" : "–")</b><small>@string.Join(" · ", _timer.Skip(1).Take(3).Select(t => $"{t.Aktivitet.Visningsnavn()} {t.Timer:0} t"))</small></div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int ProsjektId { get; set; }
+    [Parameter] public Func<Func<Task>, Task> Kjor { get; set; } = arbeid => arbeid();
+    [Parameter] public DateTime Oppdatert { get; set; }
+
+    // Kalles når tallene er endret her (faktisk varekost), så siden rundt kan regne om.
+    [Parameter] public EventCallback Endret { get; set; }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    private ProsjektOppfolgingService.Etterkalkyle? _ek;
+    private List<(TimeAktivitet Aktivitet, decimal Timer)> _timer = [];
+    private decimal? _varekost;
+    private bool _lastet;
+    private int _lastetFor;
+    private DateTime _lastetTid;
+
+    public ProsjektOppfolgingService.Etterkalkyle? Tall => _ek;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_lastetFor != ProsjektId || _lastetTid != Oppdatert)
+        {
+            _lastetFor = ProsjektId;
+            _lastetTid = Oppdatert;
+            await Kjor(LastAsync);
+        }
+    }
+
+    private async Task LastAsync()
+    {
+        _ek = await OppfolgingSvc.EtterkalkyleAsync(ProsjektId);
+        _varekost = (await Db.Prosjekter.AsNoTracking().Where(p => p.Id == ProsjektId).Select(p => p.FaktiskVarekost).FirstOrDefaultAsync());
+        _timer = (await Db.Timeregistreringer.AsNoTracking()
+                .Where(t => t.Arbeidsordre!.ProsjektId == ProsjektId && t.Status != TimeregistreringStatus.Avslatt)
+                .Select(t => new { t.Aktivitet, t.Start, t.Slutt, t.PauseMinutter }).ToListAsync())
+            .GroupBy(t => t.Aktivitet)
+            .Select(g => (g.Key, g.Sum(t => Math.Max(0, (decimal)(t.Slutt - t.Start).TotalHours - t.PauseMinutter / 60m))))
+            .OrderByDescending(x => x.Item2).ToList();
+        _lastet = true;
+    }
+
+    private async Task LagreVarekost()
+    {
+        await Kjor(async () =>
+        {
+            await OppfolgingSvc.SettFaktiskVarekostAsync(ProsjektId, _varekost);
+            await LastAsync();
+        });
+        await Endret.InvokeAsync();
+    }
+
+    private static decimal? LesTall(ChangeEventArgs e) =>
+        decimal.TryParse(e.Value?.ToString()?.Replace(" ", "").Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : null;
+
+    private static string KrKort(decimal v) => v.ToString("#,##0", Kultur) + " kr";
+    private static string Fortegn(decimal v) => Math.Abs(v) < 1 ? "0" : (v > 0 ? "+" : "−") + Math.Abs(v).ToString("#,##0", Kultur);
+    private static string DG(decimal? v) => v is { } d ? (d * 100).ToString("0.0", Kultur) + " %" : "–";
+    private static string Farge(decimal v) => Math.Abs(v) < 0.5m ? "" : v > 0 ? "ekv-gronn" : "ekv-rod";
+    private static string Css(double v) => Math.Clamp(v, 0, 100).ToString("0.###", CultureInfo.InvariantCulture) + "%";
+
+    private static string DomKlasse(ProsjektOppfolgingService.Dom d) => d switch
+    {
+        ProsjektOppfolgingService.Dom.Bedre => "bedre",
+        ProsjektOppfolgingService.Dom.Darligere => "darligere",
+        _ => "som"
+    };
+
+    private static string NivaKlasse(ProsjektOppfolgingService.Niva n) => n switch
+    {
+        ProsjektOppfolgingService.Niva.Rod => "rod",
+        ProsjektOppfolgingService.Niva.Gul => "gul",
+        _ => "gronn"
+    };
+
+    // En rad i «Faktisk mot kalkulert». For inntekter er mer bra, for kostnader dårlig.
+    private RenderFragment Rad(string navn, string? merknad, decimal kalkyle, decimal faktisk, bool inntekt) => @<tr>
+        @{
+            var avvik = faktisk - kalkyle;
+        }
+        <td><b>@navn</b>@if (merknad is not null) {<small>@merknad</small>}</td>
+        <td class="n">@KrKort(kalkyle)</td>
+        <td class="n">@KrKort(faktisk)</td>
+        <td class="n @Farge(inntekt ? avvik : -avvik)">@Fortegn(avvik)</td>
+    </tr>;
+
+    // Fossefall: første og siste stolpe er resultatet, de andre er det som trakk opp eller ned.
+    private RenderFragment Fossefall(ProsjektOppfolgingService.Etterkalkyle ek) => @<div class="ekv-foss">
+        @{
+            var bidrag = ek.Bidrag;
+            var nivaer = new List<(decimal Fra, decimal Til)>();
+            var lop = 0m;
+            foreach (var b in bidrag)
+            {
+                if (b.Total)
+                {
+                    nivaer.Add((0, b.Belop));
+                    lop = b.Belop;
+                }
+                else
+                {
+                    nivaer.Add((lop, lop + b.Belop));
+                    lop += b.Belop;
+                }
+            }
+
+            var min = Math.Min(0, nivaer.Min(n => Math.Min(n.Fra, n.Til)));
+            var maks = Math.Max(1, nivaer.Max(n => Math.Max(n.Fra, n.Til)));
+            var spenn = maks - min;
+        }
+        @for (var i = 0; i < bidrag.Count; i++)
+        {
+            var b = bidrag[i];
+            var (fra, til) = nivaer[i];
+            var venstre = (double)((Math.Min(fra, til) - min) / spenn * 100);
+            var bredde = Math.Max(0.6, (double)(Math.Abs(til - fra) / spenn * 100));
+            <div class="ekv-foss-rad @(b.Total ? (i == 0 ? "start" : "slutt") : b.Belop >= 0 ? "pluss" : "minus")">
+                <span class="ekv-foss-navn">@(b.Total ? (MarkupString)$"<b>{System.Net.WebUtility.HtmlEncode(b.Tekst)}</b>" : (MarkupString)System.Net.WebUtility.HtmlEncode(b.Tekst))</span>
+                <span class="ekv-foss-spor"><span style="left:@Css(venstre);width:@Css(bredde)"></span></span>
+                <span class="ekv-foss-tall @(b.Total ? "" : b.Belop >= 0 ? "ekv-gronn" : "ekv-rod")">@(b.Total ? KrKort(b.Belop) : Fortegn(b.Belop))</span>
+            </div>
+        }
+    </div>;
+}

@@ -72,6 +72,10 @@ public class ProsjektEtterkalkyle
     public string? ForsinkelseEgne { get; set; }
     public string? ForsinkelseAndre { get; set; }
 
+    // Gjennomgangen er lagret, men ikke signert. Prosjektet står fortsatt
+    // under Til gjennomgang.
+    public bool ErUtkast { get; set; }
+
     public decimal Inntekt { get; set; }
     public decimal BudsjettTimer { get; set; }
     public decimal FaktiskTimer { get; set; }

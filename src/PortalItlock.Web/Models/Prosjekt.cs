@@ -56,6 +56,11 @@ public class Prosjekt
     // stemmer, og bankgaranti med påminnelse.
     public decimal? Indeksregulering { get; set; }
     public decimal? ResterendeTimer { get; set; }
+
+    // Faktisk varekost lagt inn for hånd (for eksempel fra Tripletex) når
+    // varene ikke tas ut fra lageret. Ellers anslås varene fra tilbudet.
+    public decimal? FaktiskVarekost { get; set; }
+
     public decimal? BankgarantiBelop { get; set; }
     public DateTime? BankgarantiTil { get; set; }
 

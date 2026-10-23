@@ -23,6 +23,26 @@ else
     var f = _f;
     var o = f.O;
     <div class="pf">
+        @Prosesslinje()
+
+        @if (_visOverlevering)
+        {
+            @OverleveringPanel()
+        }
+        else if (KomIGang() is { Count: > 0 } mangler)
+        {
+            <section class="pf-komigang">
+                <div><b>Kom i gang</b><span>@mangler.Count av 4 gjenstår før prosjektet følges opp fullt ut</span></div>
+                <div class="pf-komigang-liste">
+                    @foreach (var (tekst, fane) in mangler)
+                    {
+                        var til = fane;
+                        <button type="button" class="pf-komigang-punkt" @onclick="@(() => { _fane = til; _melding = null; })"><i></i>@tekst</button>
+                    }
+                </div>
+            </section>
+        }
+
         <nav class="pf-faner" role="tablist" aria-label="Prosjektøkonomi">
             @Fane("oversikt", "Oversikt", null, "")
             @Fane("plan", "Fremdriftsplan", f.ForsinkedeAktiviteter > 0 ? $"{f.ForsinkedeAktiviteter} forsinket" : f.HarPlan ? $"{Math.Round(f.PlanAndel * 100):0} %" : null, f.ForsinkedeAktiviteter > 0 ? "rod" : "")
@@ -68,7 +88,143 @@ else
     [Parameter] public DateTime Oppdatert { get; set; }
     [Parameter] public string? BrukerNavn { get; set; }
 
+    // Kalles når prosjektet er satt som overlevert, så siden rundt kan åpne etterkalkylen.
+    [Parameter] public EventCallback<int> Overlevert { get; set; }
+
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    // ======================================================================
+    // Prosessen: Registrert → Under arbeid → Overlevert → Kontrollert
+    private int ProsessSteg => _p?.Status switch
+    {
+        ProsjektStatus.UnderArbeid => 2,
+        ProsjektStatus.Overlevert => 3,
+        _ => KomIGang().Count > 0 ? 1 : 2
+    };
+
+    // Det som mangler før prosjektet følges opp fullt ut, med fanen det gjøres i.
+    private List<(string Tekst, string Fane)> KomIGang()
+    {
+        var liste = new List<(string, string)>();
+        if (_f is null)
+        {
+            return liste;
+        }
+
+        if (_f.Frister is null) liste.Add(("Legg inn montasjestart og overlevering", "plan"));
+        if (!_f.HarPlan) liste.Add(("Lag fremdriftsplan", "plan"));
+        if (_f.Akontoer.Count == 0 && _f.Gjenstar > 1) liste.Add(("Lag faktureringsplan", "faktura"));
+        if (_f.HarPlan && !_roller.Values.Any(v => v is not null)) liste.Add(("Velg personer til rollene", "plan"));
+        return liste;
+    }
+
+    private RenderFragment Prosesslinje() => @<ol class="pf-prosess" aria-label="Prosessen">
+        @{
+            var steg = ProsessSteg;
+            var navn = new[] { ("Registrert", "Kom i gang"), ("Under arbeid", "Følg med"), ("Overlevert", "Etterkalkyle"), ("Kontrollert", "Signert") };
+        }
+        @for (var i = 0; i < navn.Length; i++)
+        {
+            var nr = i + 1;
+            <li class="@(nr < steg ? "ferdig" : nr == steg ? "na" : "")" aria-current="@(nr == steg ? "step" : null)">
+                <span class="pf-prosess-nr">@(nr < steg ? "✓" : nr.ToString())</span>
+                <span><b>@navn[i].Item1</b><small>@navn[i].Item2</small></span>
+            </li>
+        }
+        <li class="pf-prosess-knapp">
+            <button type="button" class="pf-knapp pf-knapp-p" @onclick="ApneOverlevering">Sett som overlevert</button>
+        </li>
+    </ol>;
+
+    // ---------- Sett som overlevert ----------
+    private bool _visOverlevering;
+    private bool _overleverer;
+    private List<ProsjektOppfolgingService.SjekkPunkt> _sjekk = [];
+    private DateTime _overlevertDato = DateTime.Today;
+    private decimal? _varekost;
+
+    private Task ApneOverlevering() => Kjor(async () =>
+    {
+        _sjekk = await OppfolgingSvc.OverleveringSjekkAsync(ProsjektId);
+        _overlevertDato = DateTime.Today;
+        _varekost = _p?.FaktiskVarekost;
+        _visOverlevering = true;
+        _melding = null;
+    });
+
+    private Task LagreVarekost() => Kjor(async () =>
+    {
+        await OppfolgingSvc.SettFaktiskVarekostAsync(ProsjektId, _varekost);
+        _sjekk = await OppfolgingSvc.OverleveringSjekkAsync(ProsjektId);
+        await LastAsync();
+    });
+
+    private async Task SettOverlevert()
+    {
+        var ok = false;
+        await Kjor(async () =>
+        {
+            _overleverer = true;
+            try
+            {
+                await OppfolgingSvc.SettOverlevertAsync(ProsjektId, _overlevertDato);
+                _visOverlevering = false;
+                ok = true;
+            }
+            finally
+            {
+                _overleverer = false;
+            }
+        });
+
+        if (ok)
+        {
+            await Overlevert.InvokeAsync(ProsjektId);
+        }
+    }
+
+    private RenderFragment OverleveringPanel() => @<section class="pf-overlevering" aria-label="Sett som overlevert">
+        @{
+            var mangler = _sjekk.Count(s => !s.Ok);
+        }
+        <div class="pf-boks-topp">
+            <div><h3>Sett prosjektet som overlevert</h3><p class="pf-dempet">Prosjektet flyttes til Etterkalkyle, og prosjektleder og administratorene får e-post med hvordan det gikk. @(mangler > 0 ? $"{mangler} ting bør sjekkes først, men du kan overlevere likevel." : "Alt ser ut til å være på plass.")</p></div>
+        </div>
+        <div class="pf-sjekk">
+            @foreach (var s in _sjekk)
+            {
+                <div class="pf-sjekk-rad @(s.Ok ? "ok" : "gul")">
+                    <span class="pf-sjekk-ik">@(s.Ok ? "✓" : "!")</span>
+                    <span class="pf-sjekk-tekst">
+                        <b>@s.Tittel</b><small>@s.Tekst</small>
+                        @if (s.Handling == "varer")
+                        {
+                            <span class="pf-sjekk-felt">
+                                <input class="pf-inn pf-tal" inputmode="decimal" placeholder="Faktisk varekost" value="@(_varekost?.ToString("0", CultureInfo.InvariantCulture))" @onchange="@(e => _varekost = LesTall(e))" aria-label="Faktisk varekost" />
+                                <button type="button" class="pf-knapp" @onclick="LagreVarekost">Lagre</button>
+                            </span>
+                        }
+                    </span>
+                    @if (s.Handling == "faktura")
+                    {
+                        <button type="button" class="pf-knapp" @onclick="@(() => { _visOverlevering = false; _fane = "faktura"; })">Til fakturering</button>
+                    }
+                    else if (s.Handling == "timer")
+                    {
+                        <a class="pf-knapp" href="/timegodkjenning">Godkjenn timer</a>
+                    }
+                </div>
+            }
+        </div>
+        <div class="pf-overlevering-bunn">
+            <label class="pf-felt">Overlevert dato
+                <input type="date" class="pf-inn" value="@DatoVerdi(_overlevertDato)" @onchange="@(e => _overlevertDato = LesDato(e) ?? DateTime.Today)" />
+            </label>
+            <span class="pf-vokser"></span>
+            <button type="button" class="pf-knapp" @onclick="@(() => _visOverlevering = false)">Avbryt</button>
+            <button type="button" class="pf-knapp pf-knapp-p" disabled="@_overleverer" @onclick="SettOverlevert">@(_overleverer ? "Overleverer …" : "Sett som overlevert")</button>
+        </div>
+    </section>;
 
     private ProsjektOppfolgingService.Oppfolging? _f;
     private Prosjekt? _p;

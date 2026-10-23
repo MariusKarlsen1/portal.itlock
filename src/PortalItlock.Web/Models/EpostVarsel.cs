@@ -10,6 +10,7 @@ public static class EpostVarsler
     public const string ForesporselNy = "foresporsel-ny";
     public const string TilbudOppfolging = "tilbud-oppfolging";
     public const string AvvikNytt = "avvik-nytt";
+    public const string ProsjektOverlevert = "prosjekt-overlevert";
 
     public sealed record Definisjon(string Nokkel, string Navn, string Beskrivelse, BrukerRolle[] Kan, BrukerRolle[] Standard);
 
@@ -22,6 +23,9 @@ public static class EpostVarsler
             [BrukerRolle.Admin, BrukerRolle.Prosjektleder],
             [BrukerRolle.Admin, BrukerRolle.Prosjektleder]),
         new(AvvikNytt, "Nytt avvik på mitt prosjekt", "Når noen melder avvik på en dør i et prosjekt der brukeren er prosjektleder",
+            [BrukerRolle.Admin, BrukerRolle.Prosjektleder],
+            [BrukerRolle.Admin, BrukerRolle.Prosjektleder]),
+        new(ProsjektOverlevert, "Prosjekt overlevert", "Når et prosjekt settes som overlevert: til prosjektlederen på prosjektet og til administratorene, med slik gikk det mot kalkylen",
             [BrukerRolle.Admin, BrukerRolle.Prosjektleder],
             [BrukerRolle.Admin, BrukerRolle.Prosjektleder]),
         new(TilbudOppfolging, "Følg opp tilbud", "Påminnelse et valgt antall dager etter at et tilbud er sendt",

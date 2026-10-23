@@ -5070,6 +5070,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Epost")
                         .HasColumnType("TEXT");
 
+                    b.Property<decimal?>("FaktiskVarekost")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("FdvForside")
                         .HasColumnType("TEXT");
 
@@ -5274,6 +5277,9 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<decimal>("BudsjettVarer")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("ErUtkast")
+                        .HasColumnType("INTEGER");
 
                     b.Property<decimal?>("FaktiskDekningsgrad")
                         .HasColumnType("TEXT");

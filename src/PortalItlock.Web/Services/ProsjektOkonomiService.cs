@@ -48,7 +48,8 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         List<TilbudInfo> Tilbud,
         List<AoLinje> Arbeidsordre,
         decimal Justering = 0,
-        bool RestOverstyrt = false)
+        bool RestOverstyrt = false,
+        bool VarerManuell = false)
     {
         public decimal BudsjettKost => BudsjettTimekost + BudsjettVarer;
         // Budsjettet med justeringene som er lagt inn underveis.
@@ -96,7 +97,7 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
     public async Task<List<Prosjekt>> TilGjennomgangAsync() =>
         await db.Prosjekter.AsNoTracking().Include(p => p.Kunde)
             .Where(p => p.Status == ProsjektStatus.Overlevert)
-            .Where(p => !db.ProsjektEtterkalkyler.Any(k => k.ProsjektId == p.Id))
+            .Where(p => !db.ProsjektEtterkalkyler.Any(k => k.ProsjektId == p.Id && !k.ErUtkast))
             .OrderBy(p => p.OverlevertDato ?? p.OpprettetDato)
             .ToListAsync();
 
@@ -151,6 +152,8 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         var ansattKost = (await db.AnsattTimekost.AsNoTracking().ToListAsync())
             .Where(k => k.Timekost > 0).ToDictionary(k => k.BrukerId, k => k.Timekost);
         var justeringer = await db.ProsjektBudsjettJusteringer.AsNoTracking().Where(j => ider.Contains(j.ProsjektId)).ToListAsync();
+        var manuelleVarer = await db.Prosjekter.AsNoTracking().Where(p => ider.Contains(p.Id) && p.FaktiskVarekost != null)
+            .ToDictionaryAsync(p => p.Id, p => p.FaktiskVarekost!.Value);
         var rester = await db.Prosjekter.AsNoTracking().Where(p => ider.Contains(p.Id) && p.ResterendeTimer != null)
             .ToDictionaryAsync(p => p.Id, p => p.ResterendeTimer!.Value);
         var aoVarer = await db.ArbeidsordreVarer.AsNoTracking()
@@ -278,10 +281,18 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
                 progTimer = fTimer + Math.Max(0, rester[pid]);
             }
 
+            // Faktisk varekost lagt inn for hånd går foran anslaget fra tilbudet.
+            var varerManuell = !fraLager && manuelleVarer.ContainsKey(pid);
+            if (varerManuell)
+            {
+                fVarer = manuelleVarer[pid];
+                progVarer = fremdrift >= 0.999m ? fVarer : Math.Max(fVarer, budVarer + direkteVarer);
+            }
+
             var o2 = new Okonomi(pid, OkonomiStatus.IkkeVunnet, "", inntekt, Math.Round(budTimer, 2), Math.Round(budTimekost, 2), Math.Round(budVarer, 2),
                 Math.Round(fTimer, 2), aoLinjer.Sum(a => a.TimerVenter), Math.Round(fTimekost, 2), Math.Round(fVarer, 2), fraLager,
                 fremdrift, fremdriftTekst, Math.Round(progTimer, 2), Math.Round(progVarer, 2), Math.Round(timesats, 2), pTilbud, aoLinjer,
-                justeringer.Where(j => j.ProsjektId == pid).Sum(j => j.Belop), restOverstyrt);
+                justeringer.Where(j => j.ProsjektId == pid).Sum(j => j.Belop), restOverstyrt, varerManuell);
 
             resultat[pid] = o2 with { Status = Vurder(o2, inn, out var tekst), StatusTekst = tekst };
         }
@@ -341,17 +352,26 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
     }
 
     public async Task<int> AntallTilGjennomgangAsync() =>
-        await db.Prosjekter.CountAsync(p => p.Status == ProsjektStatus.Overlevert && !db.ProsjektEtterkalkyler.Any(k => k.ProsjektId == p.Id));
+        await db.Prosjekter.CountAsync(p => p.Status == ProsjektStatus.Overlevert && !db.ProsjektEtterkalkyler.Any(k => k.ProsjektId == p.Id && !k.ErUtkast));
 
-    // Signerer etterkalkylen: tallene lagres slik de er nå.
     // Svarene på spørsmålene fra etterkalkylen i økonomiarket.
     public sealed record Evaluering(string? GikkBra, string? GikkDarlig, string? Forbedre, string? ForsinkelseEgne, string? ForsinkelseAndre);
 
-    public async Task<ProsjektEtterkalkyle> KontrollerAsync(int prosjektId, EtterkalkyleArsak arsak, string? kommentar, string? brukerNavn, Evaluering? evaluering = null)
+    // Signerer etterkalkylen: tallene lagres slik de er nå.
+    public Task<ProsjektEtterkalkyle> KontrollerAsync(int prosjektId, EtterkalkyleArsak arsak, string? kommentar, string? brukerNavn, Evaluering? evaluering = null) =>
+        LagreGjennomgangAsync(prosjektId, arsak, kommentar, brukerNavn, evaluering, utkast: false);
+
+    // Lagrer gjennomgangen uten å signere. Prosjektet blir stående under Til
+    // gjennomgang. En signert gjennomgang blir ikke gjort om til utkast.
+    public Task<ProsjektEtterkalkyle> LagreUtkastAsync(int prosjektId, EtterkalkyleArsak arsak, string? kommentar, string? brukerNavn, Evaluering? evaluering) =>
+        LagreGjennomgangAsync(prosjektId, arsak, kommentar, brukerNavn, evaluering, utkast: true);
+
+    private async Task<ProsjektEtterkalkyle> LagreGjennomgangAsync(int prosjektId, EtterkalkyleArsak arsak, string? kommentar, string? brukerNavn, Evaluering? evaluering, bool utkast)
     {
         static string? Rens(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
         var o = await BeregnAsync(prosjektId);
-        var k = await db.ProsjektEtterkalkyler.FirstOrDefaultAsync(x => x.ProsjektId == prosjektId) ?? new ProsjektEtterkalkyle { ProsjektId = prosjektId };
+        var k = await db.ProsjektEtterkalkyler.FirstOrDefaultAsync(x => x.ProsjektId == prosjektId) ?? new ProsjektEtterkalkyle { ProsjektId = prosjektId, ErUtkast = true };
+        k.ErUtkast = utkast && k.ErUtkast;
         k.Kontrollert = DateTime.Now;
         k.KontrollertAv = brukerNavn;
         k.Arsak = arsak;
@@ -393,7 +413,7 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
     // arbeidsordre, ikke per vare.
     public async Task<List<Laerdom>> LaerdomAsync(decimal terskel = 0.15m)
     {
-        var kontrollerte = await db.ProsjektEtterkalkyler.AsNoTracking().Where(k => k.BudsjettTimer > 0 && k.FaktiskTimer > 0).ToListAsync();
+        var kontrollerte = await db.ProsjektEtterkalkyler.AsNoTracking().Where(k => !k.ErUtkast && k.BudsjettTimer > 0 && k.FaktiskTimer > 0).ToListAsync();
         if (kontrollerte.Count == 0)
         {
             return [];

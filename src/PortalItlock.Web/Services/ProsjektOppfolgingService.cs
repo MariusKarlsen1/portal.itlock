@@ -398,6 +398,255 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
             new ProsjektAkonto { ProsjektId = prosjektId, Nr = 4, Milepael = "Overlevering", Prosent = 15, FremdriftProsent = 100 });
         await db.SaveChangesAsync();
     }
+
+    // ======================================================================
+    // Overlevering og etterkalkyle
+
+    public sealed record SjekkPunkt(bool Ok, string Tittel, string Tekst, string? Handling = null);
+
+    // Det som bør være på plass før prosjektet settes som overlevert. Ingen av
+    // punktene stopper overleveringen; de vises som en påminnelse.
+    public async Task<List<SjekkPunkt>> OverleveringSjekkAsync(int prosjektId)
+    {
+        var f = await HentAsync(prosjektId);
+        var p = await db.Prosjekter.AsNoTracking().FirstAsync(x => x.Id == prosjektId);
+        var dorer = await db.Dorer.AsNoTracking().Where(d => d.ProsjektId == prosjektId)
+            .GroupBy(d => 1).Select(g => new { Alle = g.Count(), Ferdig = g.Count(d => d.Status == MontasjeStatus.FerdigMontert) }).FirstOrDefaultAsync();
+        var liste = new List<SjekkPunkt>();
+
+        if (dorer is { Alle: > 0 })
+        {
+            liste.Add(new(dorer.Ferdig == dorer.Alle, dorer.Ferdig == dorer.Alle ? "Alle dører er ferdig montert" : "Ikke alle dører er ferdig montert",
+                $"{dorer.Ferdig} av {dorer.Alle} dører"));
+        }
+
+        if (f.O is { } o)
+        {
+            liste.Add(o.FaktiskTimerVenter > 0
+                ? new(false, "Noen timer venter på godkjenning", $"{o.FaktiskTimerVenter.ToString("0.#", ProsjektplanTekst.Kultur)} t venter. De er tatt med i tallene.", "timer")
+                : new(true, "Alle timer er godkjent", $"{o.FaktiskTimer.ToString("0.#", ProsjektplanTekst.Kultur)} t på prosjektet"));
+            liste.Add(o.VarerFraLager || o.VarerManuell
+                ? new(true, "Varekost er registrert", o.VarerFraLager ? "Faktisk forbruk fra lageret" : $"Lagt inn: {Kr(o.FaktiskVarer)}")
+                : new(false, "Varer er anslått, ikke registrert", "Legg inn faktisk varekost, for eksempel fra Tripletex, så blir etterkalkylen riktig.", "varer"));
+        }
+
+        if (f.Prosjektsum > 0)
+        {
+            liste.Add(f.Gjenstar <= 1
+                ? new(true, "Prosjektsummen er fakturert", $"{Kr(f.Fakturert)} av {Kr(f.Prosjektsum)}")
+                : new(false, "Ikke alt er fakturert", $"{Kr(f.Gjenstar)} gjenstår av prosjektsummen {Kr(f.Prosjektsum)}", "faktura"));
+        }
+
+        if (p.BankgarantiBelop is > 0)
+        {
+            liste.Add(new(true, "Husk å nedskrive bankgarantien", "Vanlig er 3 % av kontraktsummen i reklamasjonstiden."));
+        }
+
+        return liste;
+    }
+
+    // Prosjektet flyttes til Etterkalkyle. E-posten til prosjektleder og
+    // administratorene sendes fra ApplicationDbContext når statusen lagres.
+    public async Task SettOverlevertAsync(int prosjektId, DateTime dato)
+    {
+        var p = await db.Prosjekter.FirstAsync(x => x.Id == prosjektId);
+        p.Status = ProsjektStatus.Overlevert;
+        p.OverlevertDato = dato.Date;
+        await db.SaveChangesAsync();
+    }
+
+    public async Task SettFaktiskVarekostAsync(int prosjektId, decimal? belop)
+    {
+        var p = await db.Prosjekter.FirstAsync(x => x.Id == prosjektId);
+        p.FaktiskVarekost = belop is >= 0 ? belop : null;
+        await db.SaveChangesAsync();
+    }
+
+    public enum Dom { Bedre, Som, Darligere }
+
+    public sealed record AvvikBidrag(string Tekst, decimal Belop, bool Total = false);
+
+    public sealed record Etterkalkyle(
+        int ProsjektId,
+        ProsjektOkonomiService.Okonomi O,
+        decimal Kontrakt,
+        decimal Endringer,
+        decimal Indeks,
+        decimal EndringKost,
+        decimal Fakturert,
+        DateTime? Frist,
+        DateTime? Overlevert,
+        int PlanFerdig,
+        int PlanTotal,
+        List<ProsjektOppfolgingService.Endring> Endringsmeldinger)
+    {
+        // Kalkyle = godkjente tilbud og endringer, slik budsjettet ble låst.
+        public decimal KalkInntekt => Kontrakt + Endringer;
+        public decimal KalkVarer => O.BudsjettVarer;
+        public decimal KalkLonn => O.BudsjettTimekost;
+        public decimal KalkKost => KalkVarer + KalkLonn;
+        public decimal KalkResultat => KalkInntekt - KalkKost;
+        public decimal? KalkDG => KalkInntekt > 0 ? KalkResultat / KalkInntekt : null;
+        // Det som ble regnet med da kontrakten ble signert, uten endringene.
+        public decimal KontraktResultat => Kontrakt - (KalkKost - EndringKost);
+        public decimal EndringResultat => Endringer - EndringKost;
+
+        public decimal FaktiskInntekt => Kontrakt + Endringer + Indeks;
+        public decimal FaktiskVarer => O.FaktiskVarer;
+        public decimal FaktiskLonn => O.FaktiskTimekost;
+        public decimal FaktiskKost => FaktiskVarer + FaktiskLonn;
+        public decimal FaktiskResultat => FaktiskInntekt - FaktiskKost;
+        public decimal? FaktiskDG => FaktiskInntekt > 0 ? FaktiskResultat / FaktiskInntekt : null;
+
+        public decimal ResultatAvvik => FaktiskResultat - KalkResultat;
+        public decimal DgPoeng => ((FaktiskDG ?? 0) - (KalkDG ?? 0)) * 100;
+        public decimal TimerAvvik => O.FaktiskTimer - O.BudsjettTimer;
+        public decimal VarerAvvik => FaktiskVarer - KalkVarer;
+        public decimal LonnAvvik => FaktiskLonn - KalkLonn;
+        public bool VarerAnslatt => !O.VarerFraLager && !O.VarerManuell;
+        public int? DagerOverFrist => Frist is { } f && Overlevert is { } o ? (int)(o.Date - f.Date).TotalDays : null;
+
+        public Dom Dom => FaktiskResultat < 0 || DgPoeng <= -3 ? Dom.Darligere : DgPoeng >= 2 ? Dom.Bedre : Dom.Som;
+
+        public string DomTekst => Dom switch
+        {
+            Dom.Bedre => "Bedre enn kalkulert",
+            Dom.Darligere => "Dårligere enn kalkulert",
+            _ => "Som kalkulert"
+        };
+
+        // Fra kalkulert resultat ved kontrakt til faktisk resultat.
+        public List<AvvikBidrag> Bidrag
+        {
+            get
+            {
+                var liste = new List<AvvikBidrag> { new("Kalkulert ved kontrakt", KontraktResultat, true) };
+                if (Endringer != 0 || EndringKost != 0) liste.Add(new("Endringer", EndringResultat));
+                if (Indeks != 0) liste.Add(new("Indeksregulering", Indeks));
+                liste.Add(new(Math.Abs(VarerAvvik) < 1 ? "Materiell som kalkulert" : VarerAvvik > 0 ? "Materiell over kalkyle" : "Materiell under kalkyle", -VarerAvvik));
+                liste.Add(new(Math.Abs(LonnAvvik) < 1 ? "Timer som kalkulert" : LonnAvvik > 0 ? $"Timer over kalkyle ({TimerTekst(TimerAvvik)})" : $"Timer under kalkyle ({TimerTekst(TimerAvvik)})", -LonnAvvik));
+                liste.Add(new("Faktisk resultat", FaktiskResultat, true));
+                return liste;
+            }
+        }
+
+        // Det største avviket på kostnadene, til lista og forklaringen.
+        public (string Tekst, Niva Niva) StorsteAvvik
+        {
+            get
+            {
+                var timer = (Belop: -LonnAvvik, Tekst: $"Timer {(TimerAvvik >= 0 ? "+" : "−")}{Math.Abs(TimerAvvik).ToString("0", ProsjektplanTekst.Kultur)} t");
+                var varer = (Belop: -VarerAvvik, Tekst: $"Varer {(VarerAvvik >= 0 ? "+" : "−")}{Math.Abs(VarerAvvik).ToString("#,##0", ProsjektplanTekst.Kultur)}");
+                var storst = Math.Abs(timer.Belop) >= Math.Abs(varer.Belop) ? timer : varer;
+                if (Math.Abs(storst.Belop) < Math.Max(1000, KalkInntekt * 0.005m))
+                {
+                    return ("Ingen vesentlige", Niva.Gronn);
+                }
+
+                return (storst.Tekst, storst.Belop > 0 ? Niva.Gronn : -storst.Belop > KalkInntekt * 0.03m ? Niva.Rod : Niva.Gul);
+            }
+        }
+
+        public string Forklaring
+        {
+            get
+            {
+                var deler = new List<string>
+                {
+                    Math.Abs(ResultatAvvik) < 1000
+                        ? "Resultatet ble som kalkulert."
+                        : $"Resultatet ble {Kr(Math.Abs(ResultatAvvik))} {(ResultatAvvik > 0 ? "bedre" : "dårligere")} enn kalkylen."
+                };
+                if (Math.Abs(TimerAvvik) >= 1)
+                {
+                    deler.Add($"Jobben brukte {TimerTekst(Math.Abs(TimerAvvik))} {(TimerAvvik > 0 ? "mer" : "mindre")} enn beregnet ({(LonnAvvik > 0 ? "−" : "+")}{Kr(Math.Abs(LonnAvvik))}).");
+                }
+
+                if (Math.Abs(VarerAvvik) >= 1000)
+                {
+                    deler.Add($"Materiell kostet {Kr(Math.Abs(VarerAvvik))} {(VarerAvvik > 0 ? "mer" : "mindre")} enn kalkulert.");
+                }
+
+                if (Endringer != 0)
+                {
+                    deler.Add($"Endringene ga {Kr(Endringer)} i tillegg.");
+                }
+
+                if (VarerAnslatt)
+                {
+                    deler.Add("Varene er anslått, så avviket på varer er ikke kjent.");
+                }
+
+                return string.Join(" ", deler);
+            }
+        }
+
+        // Forslag til årsak ut fra det største avviket.
+        public EtterkalkyleArsak ForeslattArsak
+        {
+            get
+            {
+                if (Dom == Dom.Som && (DagerOverFrist ?? 0) <= 0)
+                {
+                    return EtterkalkyleArsak.IngenAvvik;
+                }
+
+                if (LonnAvvik <= 0 && VarerAvvik <= 0)
+                {
+                    return (DagerOverFrist ?? 0) > 0 ? EtterkalkyleArsak.Ventetid : EtterkalkyleArsak.IngenAvvik;
+                }
+
+                return VarerAvvik > LonnAvvik ? EtterkalkyleArsak.Varekostnad
+                    : Endringer > 0 ? EtterkalkyleArsak.Ekstraarbeid : EtterkalkyleArsak.FeilITilbud;
+            }
+        }
+
+        // Forsinkelser som skyldes andre, fra fristforlengelsene på endringene.
+        public string? ForslagForsinkelseAndre
+        {
+            get
+            {
+                var med = Endringsmeldinger.Where(e => e.Tilbud.Status == EndringsmeldingStatus.Godkjent && e.Tilbud.FristforlengelseDager is > 0).ToList();
+                return med.Count == 0 ? null : string.Join("; ", med.Select(e =>
+                    $"E{e.Nr}: {e.Tilbud.FristforlengelseDager} dager{(string.IsNullOrWhiteSpace(e.Tilbud.BerorteFag) ? "" : $" ({e.Tilbud.BerorteFag})")}"));
+            }
+        }
+
+        private static string TimerTekst(decimal t) => $"{Math.Abs(t).ToString("0", ProsjektplanTekst.Kultur)} t";
+    }
+
+    public async Task<Etterkalkyle?> EtterkalkyleAsync(int prosjektId) =>
+        (await EtterkalkyleFlereAsync([prosjektId])).GetValueOrDefault(prosjektId);
+
+    public async Task<Dictionary<int, Etterkalkyle>> EtterkalkyleFlereAsync(IReadOnlyCollection<int> prosjektIder)
+    {
+        var oppfolging = await HentFlereAsync(prosjektIder);
+        var ider = oppfolging.Keys.ToList();
+        var overlevert = await db.Prosjekter.AsNoTracking().Where(p => ider.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.OverlevertDato);
+        var plan = (await db.ProsjektplanOppgaver.AsNoTracking()
+                .Where(t => ider.Contains(t.Aktivitet!.ProsjektId))
+                .Select(t => new { t.Aktivitet!.ProsjektId, t.Status }).ToListAsync())
+            .GroupBy(t => t.ProsjektId)
+            .ToDictionary(g => g.Key, g => (Ferdig: g.Count(t => t.Status.ErFerdig()), Alle: g.Count()));
+
+        var resultat = new Dictionary<int, Etterkalkyle>();
+        foreach (var (id, f) in oppfolging)
+        {
+            if (f.O is not { Inntekt: > 0 } o)
+            {
+                continue;
+            }
+
+            // Kostnaden som var regnet inn i endringene, med samme timekost som resten av budsjettet.
+            var sats = o.BudsjettTimer > 0 ? o.BudsjettTimekost / o.BudsjettTimer : o.Timesats;
+            var endringKost = o.Tilbud.Where(t => t.ErEndring).Sum(t => t.Varekost + t.Timer * sats);
+            var (ferdig, alle) = plan.GetValueOrDefault(id);
+            resultat[id] = new Etterkalkyle(id, o, f.Kontrakt, f.Endringer, f.Indeks, Math.Round(endringKost, 0), f.Fakturert,
+                f.Frister?.Overlevering, overlevert.GetValueOrDefault(id), ferdig, alle, f.Endringsmeldinger);
+        }
+
+        return resultat;
+    }
 }
 
 public static class ProsjektplanTekst

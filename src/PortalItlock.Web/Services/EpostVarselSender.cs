@@ -233,6 +233,64 @@ public class EpostVarselTjeneste(
         }
     }
 
+    // Prosjekt satt som overlevert: til prosjektlederen og administratorene,
+    // med slik gikk det mot kalkylen og lenke rett til etterkalkylen.
+    public async Task ProsjektOverlevertAsync(Tenant tenant, int prosjektId, ProsjektOppfolgingService.Etterkalkyle? ek)
+    {
+        var prosjekt = await db.Prosjekter.AsNoTracking().Include(p => p.Kunde).FirstOrDefaultAsync(p => p.Id == prosjektId);
+        if (prosjekt is null)
+        {
+            return;
+        }
+
+        var (roller, brukere) = await ValgAsync(tenant.Id);
+        var mottakere = (await db.Brukere.AsNoTracking()
+                .Where(b => b.Aktiv && b.SlettetDato == null && b.Epost != "")
+                .ToListAsync())
+            .Where(b => b.Id == prosjekt.ProsjektlederId || b.Rolle == BrukerRolle.Admin)
+            .Where(b => EpostVarsler.Gjelder(EpostVarsler.ProsjektOverlevert, b.Rolle, b.Id, roller, brukere))
+            .ToList();
+        if (mottakere.Count == 0)
+        {
+            return;
+        }
+
+        string KrN(decimal v) => v.ToString("#,##0", Nb) + " kr";
+        string Pst(decimal? v) => v is { } d ? (d * 100).ToString("0.0", Nb) + " %" : "–";
+        var fakta = new List<(string, string)> { ("Prosjekt", E(prosjekt.Navn)) };
+        if (prosjekt.Kunde is { } kunde)
+        {
+            fakta.Add(("Kunde", E(kunde.Navn)));
+        }
+
+        fakta.Add(("Overlevert", E((prosjekt.OverlevertDato ?? DateTime.Today).ToString("dd.MM.yyyy", Nb))));
+        if (ek is not null)
+        {
+            fakta.Add(("Resultat", $"{KrN(ek.FaktiskResultat)} (kalkulert {KrN(ek.KalkResultat)})"));
+            fakta.Add(("Dekningsgrad", $"{Pst(ek.FaktiskDG)} (kalkulert {Pst(ek.KalkDG)})"));
+            fakta.Add(("Timer", $"{ek.O.FaktiskTimer.ToString("0", Nb)} t (kalkulert {ek.O.BudsjettTimer.ToString("0", Nb)} t)"));
+        }
+
+        var portal = await PortalAsync();
+        foreach (var b in mottakere)
+        {
+            var html = Lag(tenant, new Innhold
+            {
+                Farge = ek?.Dom == ProsjektOppfolgingService.Dom.Darligere ? Rod : Gronn,
+                Merke = ek is null ? "Overlevert" : ek.DomTekst,
+                Tittel = $"{prosjekt.Navn} er overlevert",
+                IntroHtml = $"Hei {E(Fornavn(b.Navn))}, prosjektet er satt som overlevert og venter på etterkalkyle.",
+                Fakta = fakta,
+                Sitat = ek?.Forklaring,
+                KnappTekst = "Åpne etterkalkylen",
+                KnappUrl = $"{portal}/prosjektokonomi/etterkalkyle?prosjekt={prosjekt.Id}",
+                Tips = "I etterkalkylen ser du faktisk mot kalkulert og hvor avviket kom fra. Skriv årsak og lærdom, og signer.",
+                Grunn = Grunn(tenant)
+            });
+            await epost.SendAsync(b.Epost, $"Overlevert: {prosjekt.Navn}{(ek is null ? "" : $" · {ek.DomTekst.ToLowerInvariant()}")}", html, fraOrganisasjonId: tenant.Id);
+        }
+    }
+
     // Kjøres jevnlig: tilbud som står som sendt, der oppfølgingsdagen er nådd.
     public async Task TilbudOppfolgingAsync(Tenant tenant)
     {
@@ -342,6 +400,11 @@ public class EpostVarselSender(IServiceScopeFactory scopeFactory, OrganisasjonKj
                 else if (h.Nokkel == EpostVarsler.AvvikNytt)
                 {
                     await tjeneste.AvvikNyttAsync(tenant, h.Id, h.BrukerId);
+                }
+                else if (h.Nokkel == EpostVarsler.ProsjektOverlevert)
+                {
+                    var ek = await scope.ServiceProvider.GetRequiredService<ProsjektOppfolgingService>().EtterkalkyleAsync(h.Id);
+                    await tjeneste.ProsjektOverlevertAsync(tenant, h.Id, ek);
                 }
                 else if (h.Nokkel == EpostVarsler.ForesporselNy)
                 {

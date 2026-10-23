@@ -245,6 +245,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             liste.Add((EpostVarsler.AvvikNytt, e.Entity, e.Entity.OpprettetAvBrukerId));
         }
 
+        // Prosjekt satt til Overlevert, fra Prosjektøkonomi eller fra prosjektet.
+        foreach (var e in ChangeTracker.Entries<Prosjekt>())
+        {
+            var ny = e.Entity.Status == ProsjektStatus.Overlevert
+                && (e.State == EntityState.Added
+                    || (e.State == EntityState.Modified && e.Property(p => p.Status).IsModified && e.Property(p => p.Status).OriginalValue != ProsjektStatus.Overlevert));
+            if (ny)
+            {
+                liste.Add((EpostVarsler.ProsjektOverlevert, e.Entity, null));
+            }
+        }
+
         return liste;
     }
 
@@ -268,6 +280,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 Arbeidsordre o => o.Id,
                 Foresporsel f => f.Id,
                 Avvik a => a.Id,
+                Prosjekt p => p.Id,
                 _ => 0
             };
             if (id > 0)
