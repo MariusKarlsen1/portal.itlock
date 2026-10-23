@@ -48,7 +48,6 @@ public class Prosjekt
     // fra dem, se FremdriftsplanBeregner. Godkjent fristforlengelse på
     // endringsmeldingene legges til overleveringsfristen.
     public DateTime? StartDato { get; set; }
-    public DateTime? TilbudsfristDato { get; set; }
     public DateTime? MontasjestartDato { get; set; }
     public DateTime? OverleveringsfristDato { get; set; }
 

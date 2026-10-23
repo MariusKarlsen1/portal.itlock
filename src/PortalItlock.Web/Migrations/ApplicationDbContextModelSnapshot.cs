@@ -5161,9 +5161,6 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Telefon")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTime?>("TilbudsfristDato")
-                        .HasColumnType("TEXT");
-
                     b.Property<int>("Type")
                         .HasColumnType("INTEGER");
 

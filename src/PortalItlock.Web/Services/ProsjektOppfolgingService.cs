@@ -149,7 +149,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
                 var sondag = mandag.AddDays(6);
                 foreach (var a in pAkt)
                 {
-                    var (fra, til) = FremdriftsplanBeregner.AktivitetDatoer(faser[Math.Clamp(a.Fase, 0, 3)], a.DelFra, a.DelTil);
+                    var (fra, til) = FremdriftsplanBeregner.AktivitetDatoer(FremdriftsplanBeregner.FaseFor(faser, a.Fase), a.DelFra, a.DelTil);
                     var andel = FremdriftsplanBeregner.Andel(a.Oppgaver.Select(t => t.Status));
                     var sen = til < idag && andel < 1;
                     if (sen) forsinkede++;
@@ -339,8 +339,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         var p = await db.Prosjekter.FirstAsync(x => x.Id == prosjektId);
         var idag = DateTime.Today;
         p.StartDato ??= p.OpprettetDato.ToLocalTime().Date;
-        p.TilbudsfristDato ??= p.StartDato.Value.AddDays(14);
-        p.MontasjestartDato ??= p.TilbudsfristDato.Value > idag ? p.TilbudsfristDato.Value.AddDays(21) : FremdriftsplanBeregner.Mandag(idag);
+        p.MontasjestartDato ??= p.StartDato.Value.AddDays(21) > idag ? p.StartDato.Value.AddDays(21) : FremdriftsplanBeregner.Mandag(idag);
         p.OverleveringsfristDato ??= p.MontasjestartDato.Value.AddDays(56);
 
         // Lages planen på et prosjekt som er i gang, regnes det som allerede
@@ -349,7 +348,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         var rekkefolge = 0;
         foreach (var m in FremdriftsplanBeregner.Mal)
         {
-            var passert = FremdriftsplanBeregner.AktivitetDatoer(faser[m.Fase], m.DelFra, m.DelTil).Til < idag;
+            var passert = FremdriftsplanBeregner.AktivitetDatoer(FremdriftsplanBeregner.FaseFor(faser, m.Fase), m.DelFra, m.DelTil).Til < idag;
             var a = new ProsjektplanAktivitet
             {
                 ProsjektId = prosjektId,

@@ -8,24 +8,24 @@ namespace PortalItlock.Web.Tests;
 public class FremdriftsplanBeregnerTests
 {
     private static readonly FremdriftsplanBeregner.Frister Frister = new(
-        new DateTime(2026, 8, 10), new DateTime(2026, 8, 21), new DateTime(2026, 9, 7), new DateTime(2026, 12, 15));
+        new DateTime(2026, 8, 10), new DateTime(2026, 9, 7), new DateTime(2026, 12, 15));
 
     [Fact]
-    public void Faser_FolgerReglaneFraArket()
+    public void Faser_StarterVedRegistreringOgFolgerArket()
     {
         var faser = FremdriftsplanBeregner.Faser(Frister);
 
-        Assert.Equal((new DateTime(2026, 8, 10), new DateTime(2026, 8, 19)), (faser[0].Fra, faser[0].Til)); // start → tilbudsfrist − 2
-        Assert.Equal((new DateTime(2026, 8, 21), new DateTime(2026, 8, 31)), (faser[1].Fra, faser[1].Til)); // tilbudsfrist → montasje − 7
-        Assert.Equal((new DateTime(2026, 9, 7), new DateTime(2026, 12, 8)), (faser[2].Fra, faser[2].Til));  // montasje → overlevering − 7
-        Assert.Equal((new DateTime(2026, 12, 8), new DateTime(2026, 12, 15)), (faser[3].Fra, faser[3].Til)); // overlevering − 7 → overlevering
+        Assert.Equal(3, faser.Count);
+        Assert.Equal((new DateTime(2026, 8, 10), new DateTime(2026, 9, 6)), (faser[0].Fra, faser[0].Til));   // start → dagen før montasje
+        Assert.Equal((new DateTime(2026, 9, 7), new DateTime(2026, 12, 8)), (faser[1].Fra, faser[1].Til));   // montasje → overlevering − 7
+        Assert.Equal((new DateTime(2026, 12, 8), new DateTime(2026, 12, 15)), (faser[2].Fra, faser[2].Til)); // overlevering − 7 → overlevering
     }
 
     [Fact]
     public void Aktivitet_FlytterSegMedFristen()
     {
-        var for_ = FremdriftsplanBeregner.AktivitetDatoer(FremdriftsplanBeregner.Faser(Frister)[2], .5m, 1m);
-        var etter = FremdriftsplanBeregner.AktivitetDatoer(FremdriftsplanBeregner.Faser(Frister with { Overlevering = Frister.Overlevering.AddDays(28) })[2], .5m, 1m);
+        var for_ = FremdriftsplanBeregner.AktivitetDatoer(FremdriftsplanBeregner.Faser(Frister)[1], .5m, 1m);
+        var etter = FremdriftsplanBeregner.AktivitetDatoer(FremdriftsplanBeregner.Faser(Frister with { Overlevering = Frister.Overlevering.AddDays(28) })[1], .5m, 1m);
 
         Assert.True(etter.Fra > for_.Fra);
         Assert.Equal(for_.Til.AddDays(28), etter.Til);
@@ -59,7 +59,7 @@ public class FremdriftsplanBeregnerTests
     [Fact]
     public void Malen_HarAlleFaserOgOppgaver()
     {
-        Assert.Equal([0, 1, 2, 3], FremdriftsplanBeregner.Mal.Select(a => a.Fase).Distinct().Order());
+        Assert.Equal([0, 1, 2], FremdriftsplanBeregner.Mal.Select(a => a.Fase).Distinct().Order());
         Assert.All(FremdriftsplanBeregner.Mal, a => Assert.NotEmpty(a.Oppgaver));
         Assert.All(FremdriftsplanBeregner.Mal.SelectMany(a => a.Oppgaver), o => Assert.Contains(o.Rolle, FremdriftsplanBeregner.Roller));
     }
