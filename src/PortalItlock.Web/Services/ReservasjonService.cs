@@ -51,11 +51,14 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
             .Select(g => new { g.Key.ProsjektId, g.Key.ComponentId, Antall = g.Sum(k => k.Antall) })
             .ToListAsync();
 
-        var aoBehov = await db.ArbeidsordreVarer.AsNoTracking()
+        var aoBehov = (await db.ArbeidsordreVarer.AsNoTracking()
             .Where(v => v.ComponentId != null && !v.Plukket && v.Antall > 0 && AapneArbeidsordre.Contains(v.Arbeidsordre!.Status))
-            .GroupBy(v => new { v.ArbeidsordreId, ComponentId = v.ComponentId!.Value })
+            .Select(v => new { v.ArbeidsordreId, ComponentId = v.ComponentId!.Value, v.Antall })
+            .ToListAsync())
+            .Concat((await TilbudBehovAsync(null)).Select(t => new { t.ArbeidsordreId, t.ComponentId, t.Antall }))
+            .GroupBy(v => new { v.ArbeidsordreId, v.ComponentId })
             .Select(g => new { g.Key.ArbeidsordreId, g.Key.ComponentId, Antall = g.Sum(v => v.Antall) })
-            .ToListAsync();
+            .ToList();
 
         // Kilder som har reservasjoner, men ikke lenger behov (avsluttet,
         // montert, fjernet) - de skal med så de kan frigis.
@@ -110,6 +113,75 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
             .Select(a => new { ProsjektId = a.ProsjektId!.Value, Dato = a.PlanlagtDato!.Value })
             .ToListAsync();
         return ao.GroupBy(a => a.ProsjektId).ToDictionary(g => g.Key, g => g.Min(a => a.Dato));
+    }
+
+
+    // ---------- Arbeidsordre ----------
+
+    // Varene fra tilbudet på åpne arbeidsordre som ikke er plukket. Har
+    // prosjektet dører med varer, reserveres de via prosjektet, så da telles
+    // ikke tilbudet med (ellers ble varene satt av to ganger).
+    private async Task<List<(int ArbeidsordreId, int ComponentId, int Antall)>> TilbudBehovAsync(int? arbeidsordreId)
+    {
+        var ordre = await db.Arbeidsordre.AsNoTracking()
+            .Where(a => a.TilbudId != null && AapneArbeidsordre.Contains(a.Status))
+            .Where(a => arbeidsordreId == null || a.Id == arbeidsordreId)
+            .Where(a => a.ProsjektId == null || !db.DorKomponenter.Any(k => k.Dor!.ProsjektId == a.ProsjektId && k.LevertAv == LevertAv.F && k.ComponentId != 0))
+            .Select(a => new { a.Id, TilbudId = a.TilbudId!.Value })
+            .ToListAsync();
+        if (ordre.Count == 0)
+        {
+            return [];
+        }
+
+        var tilbudIder = ordre.Select(o => o.TilbudId).Distinct().ToList();
+        var linjer = await db.TilbudLinjer.AsNoTracking()
+            .Where(l => tilbudIder.Contains(l.TilbudId) && l.ComponentId != null && !l.ErGruppering && !l.Plukket && l.Antall > 0 && l.LevertAv == LevertAv.F)
+            .Select(l => new { l.TilbudId, ComponentId = l.ComponentId!.Value, l.Antall })
+            .ToListAsync();
+
+        return ordre
+            .SelectMany(o => linjer.Where(l => l.TilbudId == o.TilbudId).Select(l => (o.Id, l.ComponentId, l.Antall)))
+            .GroupBy(x => (x.Id, x.ComponentId))
+            .Select(g => (g.Key.Id, g.Key.ComponentId, g.Sum(x => x.Antall)))
+            .ToList();
+    }
+
+    // Det arbeidsordren trenger fra lageret: varer på ordren og fra tilbudet
+    // som ikke er plukket ennå.
+    public async Task<Dictionary<int, int>> ArbeidsordreBehovAsync(int arbeidsordreId)
+    {
+        var status = await db.Arbeidsordre.AsNoTracking().Where(a => a.Id == arbeidsordreId).Select(a => (ArbeidsordreStatus?)a.Status).FirstOrDefaultAsync();
+        if (status is null || !AapneArbeidsordre.Contains(status.Value))
+        {
+            return [];
+        }
+
+        var varer = await db.ArbeidsordreVarer.AsNoTracking()
+            .Where(v => v.ArbeidsordreId == arbeidsordreId && v.ComponentId != null && !v.Plukket && v.Antall > 0)
+            .Select(v => new { ComponentId = v.ComponentId!.Value, v.Antall })
+            .ToListAsync();
+
+        return varer.Select(v => (v.ComponentId, v.Antall))
+            .Concat((await TilbudBehovAsync(arbeidsordreId)).Select(t => (t.ComponentId, t.Antall)))
+            .GroupBy(x => x.Item1)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.Item2));
+    }
+
+    // Setter av det arbeidsordren trenger: det som er ledig på hovedlageret
+    // reserveres, resten venter (og kommer med i innkjøpsforslaget). Frigir
+    // det som ikke trengs lenger (tilbudet koblet fra, vare fjernet).
+    // Ingenting bestilles herfra. Ferdigmeldte ordre røres ikke: der fører
+    // PlukkService.SynkForbrukAsync det som er satt av, som forbruk.
+    public async Task<Resultat?> SikreArbeidsordreAsync(int arbeidsordreId, string? brukerNavn)
+    {
+        var status = await db.Arbeidsordre.AsNoTracking().Where(a => a.Id == arbeidsordreId).Select(a => (ArbeidsordreStatus?)a.Status).FirstOrDefaultAsync();
+        if (status is null || !AapneArbeidsordre.Contains(status.Value))
+        {
+            return null;
+        }
+
+        return await ReserverAsync(new Kilde(null, arbeidsordreId), await ArbeidsordreBehovAsync(arbeidsordreId), brukerNavn);
     }
 
     // ---------- Beholdning ----------

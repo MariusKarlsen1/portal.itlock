@@ -97,9 +97,12 @@ public class PlukkService(ApplicationDbContext db, LagerService lager)
     // Telles mot det som allerede er ført som forbruk på samme prosjekt eller
     // arbeidsordre, så ingenting trekkes to ganger (heller ikke når montøren
     // har registrert «Brukt» fra bilen først). Returnerer antall stk ført.
-    public async Task<int> SynkForbrukAsync()
+    // arbeidsordreId: bare reservasjonene til den arbeidsordren (brukes når
+    // noe hakes av som plukket på ordren, så lageret oppdateres med en gang).
+    public async Task<int> SynkForbrukAsync(int? arbeidsordreId = null)
     {
-        var reservasjoner = await db.LagerReservasjoner.Include(r => r.Arbeidsordre).ToListAsync();
+        var reservasjoner = await db.LagerReservasjoner.Include(r => r.Arbeidsordre)
+            .Where(r => arbeidsordreId == null || r.ArbeidsordreId == arbeidsordreId).ToListAsync();
         if (reservasjoner.Count == 0)
         {
             return 0;
@@ -107,6 +110,7 @@ public class PlukkService(ApplicationDbContext db, LagerService lager)
 
         var forbrukt = (await db.LagerBevegelser.AsNoTracking()
                 .Where(b => b.Type == LagerBevegelseType.Forbruk && (b.ProsjektId != null || b.ArbeidsordreId != null))
+                .Where(b => arbeidsordreId == null || b.ArbeidsordreId == arbeidsordreId)
                 .Select(b => new { b.ProsjektId, b.ArbeidsordreId, b.ComponentId, b.Antall, b.Tidspunkt }).ToListAsync());
 
         var totalt = 0;
@@ -139,6 +143,11 @@ public class PlukkService(ApplicationDbContext db, LagerService lager)
                 montert = await db.ArbeidsordreVarer.AsNoTracking()
                     .Where(v => v.ArbeidsordreId == r.ArbeidsordreId && v.ComponentId == r.ComponentId && v.Plukket && v.PlukketDato >= fra)
                     .SumAsync(v => (int?)v.Antall) ?? 0;
+                // Varene fra tilbudet som er hakt av som plukket på arbeidsordren.
+                var tilbudId = r.Arbeidsordre?.TilbudId;
+                montert += tilbudId is null ? 0 : await db.TilbudLinjer.AsNoTracking()
+                    .Where(l => l.TilbudId == tilbudId && l.ComponentId == r.ComponentId && l.Plukket && l.PlukketDato >= fra)
+                    .SumAsync(l => (int?)l.Antall) ?? 0;
                 tekst = "Plukket på arbeidsordren";
             }
 
