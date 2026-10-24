@@ -93,7 +93,56 @@ public static class RapportMal
         col.Item().Column(c =>
         {
             Overskrift(c, tittel, org);
-            c.Item().PaddingTop(4).Text(tekst);
+            Tekst(c.Item().PaddingTop(4), tekst);
+        });
+    }
+
+    // Ren tekst som før, eller formatert tekst fra sluttrapporten (RikTekst):
+    // stor tekst, overskrift, fet/kursiv/understrek og lister.
+    private static void Tekst(IContainer container, string tekst)
+    {
+        if (!RikTekst.ErFormatert(tekst))
+        {
+            container.Text(tekst);
+            return;
+        }
+
+        container.Column(c =>
+        {
+            c.Spacing(3);
+            foreach (var b in RikTekst.Blokker(tekst))
+            {
+                void Biter(TextDescriptor t)
+                {
+                    foreach (var bit in b.Biter)
+                    {
+                        var span = t.Span(bit.Tekst);
+                        if (bit.Fet) span.Bold();
+                        if (bit.Kursiv) span.Italic();
+                        if (bit.Understrek) span.Underline();
+                    }
+                }
+
+                switch (b.Type)
+                {
+                    case RikTekst.BlokkType.Overskrift:
+                        c.Item().PaddingTop(2).Text(t => { t.DefaultTextStyle(s => s.FontSize(13).Bold()); Biter(t); });
+                        break;
+                    case RikTekst.BlokkType.Stor:
+                        c.Item().Text(t => { t.DefaultTextStyle(s => s.FontSize(11.5f).SemiBold()); Biter(t); });
+                        break;
+                    case RikTekst.BlokkType.Punkt or RikTekst.BlokkType.Nummer:
+                        c.Item().PaddingLeft(6).Row(r =>
+                        {
+                            r.ConstantItem(14).Text(b.Type == RikTekst.BlokkType.Punkt ? "•" : $"{b.Nummer}.");
+                            r.RelativeItem().Text(Biter);
+                        });
+                        break;
+                    default:
+                        c.Item().Text(Biter);
+                        break;
+                }
+            }
         });
     }
 
@@ -107,8 +156,8 @@ public static class RapportMal
         col.Item().Column(c =>
         {
             Overskrift(c, "Anbefalinger", org);
-            c.Item().PaddingTop(5).Background(GulLys).BorderLeft(3).BorderColor(Gul)
-                .PaddingVertical(8).PaddingHorizontal(11).Text(tekst);
+            Tekst(c.Item().PaddingTop(5).Background(GulLys).BorderLeft(3).BorderColor(Gul)
+                .PaddingVertical(8).PaddingHorizontal(11), tekst);
         });
     }
 
