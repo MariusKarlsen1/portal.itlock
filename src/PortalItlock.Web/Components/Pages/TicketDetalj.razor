@@ -9,6 +9,8 @@
 @inject NavigationManager Nav
 @inject PortalItlock.Web.Services.EmailService Epost
 @inject PortalItlock.Web.Services.TicketRapportPdfService RapportPdf
+@inject VisningPreferanseService VisningPref
+@inject TilleggsmodulService Tilleggsmoduler
 
 <PageTitle>@(_ticket?.Tittel ?? "Ticket")</PageTitle>
 
@@ -22,9 +24,9 @@ else if (_ticket is null)
 }
 else
 {
-    @* .ticket-side gjør at siden slipper 1200px-begrensningen i MainLayout og
-       i stedet følger fane-/vindusbredden - se MainLayout.razor.css. *@
-    <div class="ticket-side">
+    @* .ticket-side: venstrestilt og like bredt som arbeidsordren (1320 px) til
+       utvid-knappen er trykket inn (.tk-full) - se MainLayout.razor.css. *@
+    <div class="ticket-side @(_full ? "tk-full" : "")">
 
     <a class="back-link" href="/tickets">&larr; Tilbake til tickets</a>
 
@@ -39,6 +41,7 @@ else
         {
             <span class="tk-pill tk-pill-brun">Reklamasjon</span>
         }
+        <button type="button" class="tk-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" aria-label="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
     </div>
 
     <div class="tk-kort">
@@ -66,10 +69,10 @@ else
         </div>
 
         <nav class="tk-faner">
-            <button type="button" class="tk-fane @(_aktivFane == "oversikt" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "oversikt")"><Icon Name="grid" />Oversikt</button>
-            <button type="button" class="tk-fane @(_aktivFane == "kobling" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "kobling")"><Icon Name="folder" />Kobling @if (AntallKoblinger > 0) {<span class="fane-teller">@AntallKoblinger</span>}</button>
-            <button type="button" class="tk-fane @(_aktivFane == "vedlegg" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "vedlegg")"><Icon Name="camera" />Vedlegg @if (_ticket.Media.Count > 0) {<span class="fane-teller">@_ticket.Media.Count</span>}</button>
-            <button type="button" class="tk-fane tk-fane-hoyre @(_aktivFane == "detaljer" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "detaljer")"><Icon Name="list" />Detaljer</button>
+            <button type="button" class="tk-fane @(_aktivFane == "oversikt" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "oversikt")">Oversikt</button>
+            <button type="button" class="tk-fane @(_aktivFane == "kobling" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "kobling")">Koblinger @if (KoblingRader.Count > 0) {<span class="fane-teller">@KoblingRader.Count</span>}</button>
+            <button type="button" class="tk-fane @(_aktivFane == "vedlegg" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "vedlegg")">Vedlegg @if (_ticket.Media.Count > 0) {<span class="fane-teller">@_ticket.Media.Count</span>}</button>
+            <button type="button" class="tk-fane tk-fane-hoyre @(_aktivFane == "detaljer" ? "aktiv" : "")" @onclick="@(() => _aktivFane = "detaljer")">Detaljer</button>
         </nav>
 
         <div class="tk-kropp">
@@ -77,20 +80,6 @@ else
 
                 @if (_aktivFane == "oversikt")
                 {
-                    var neste = NesteSteg();
-                    <div class="tk-neste">
-                        <span class="tk-neste-ik"><Icon Name="@neste.Ikon" /></span>
-                        <span class="tk-neste-tekst"><b>@neste.Tittel</b><small>@neste.Undertekst</small></span>
-                        @if (neste.Lenke is not null)
-                        {
-                            <a class="tk-knapp tk-knapp-p" href="@neste.Lenke">@neste.Knapp →</a>
-                        }
-                        else if (neste.Handling is not null)
-                        {
-                            <button type="button" class="tk-knapp tk-knapp-p" @onclick="neste.Handling">@neste.Knapp →</button>
-                        }
-                    </div>
-
                     @if (_godkjennerModus)
                     {
                         <div class="tk-godkjenn">
@@ -111,277 +100,265 @@ else
                         </div>
                     }
 
-                    <div class="tk-kpi">
-                        <div class="@(SlaErForfalt ? "rod" : "")"><small><Icon Name="clock" />SLA-frist</small><b>@SlaKort</b><em>@(_ticket.SlaFrist?.ToString("dd.MM 'kl.' HH:mm") ?? "Ingen frist")</em></div>
-                        <div class="@(_ticket.Prioritet is TicketPrioritet.Hoy or TicketPrioritet.Kritisk ? "rod" : "")"><small><Icon Name="alert-triangle" />Prioritet</small><b>@_ticket.Prioritet.Visningsnavn()</b><em>@(_ticket.ErReklamasjon ? "Reklamasjon" : "Vanlig sak")</em></div>
-                        <div><small><Icon Name="mail" />Samtale</small><b>@_ticket.Hendelser.Count</b><em>@_ticket.Hendelser.Count(h => h.ErKundeSynlig) synlige for kunden</em></div>
-                        <div><small><Icon Name="calendar" />@(_ticket.Status == TicketStatus.Lukket ? "Var åpen i" : "Åpen i")</small><b>@AapenTekst</b><em>siden @_ticket.OpprettetDato.ToString("dd.MM 'kl.' HH:mm")</em></div>
-                    </div>
+                    <section class="tk-blokk tk-saken">
+                        <div class="tk-blokk-t"><h3>Saken</h3><button type="button" class="tk-lenke" @onclick="@(() => _aktivFane = "detaljer")">Endre</button></div>
+                        @if (_ticket.Status == TicketStatus.Lukket)
+                        {
+                            <div class="tk-fakta">
+                                <span class="tk-ik tk-ik-gronn"><Icon Name="check-circle" /></span>
+                                <span><b>Lukket @(_ticket.LukketDato?.ToString("dd.MM.yyyy"))</b><small>Godkjent av @(_ticket.GodkjentAvBruker?.Navn ?? "ukjent")</small></span>
+                            </div>
+                        }
+                        else if (_ticket.SlaFrist.HasValue)
+                        {
+                            <div class="tk-fakta">
+                                <span class="tk-ik @(SlaErForfalt || SlaSnart ? "tk-ik-rod" : "tk-ik-brun")"><Icon Name="clock" /></span>
+                                <span><b class="@(SlaErForfalt || SlaSnart ? "tk-rod" : "")">@FristTekst</b><small>@_ticket.SlaFrist.Value.ToString("dd.MM 'kl.' HH:mm") · @_ticket.Prioritet.Visningsnavn().ToLowerInvariant() prioritet</small></span>
+                            </div>
+                        }
+                        <div class="tk-fakta">
+                            <span class="tk-ik tk-ik-brun"><Icon Name="users" /></span>
+                            <span>
+                                <b>@(string.IsNullOrWhiteSpace(_ticket.Kontaktperson) ? (_ticket.Kunde?.Navn ?? "Ingen kunde satt") : _ticket.Kontaktperson)</b>
+                                <small>@string.Join(" · ", new[] { string.IsNullOrWhiteSpace(_ticket.Kontaktperson) ? null : _ticket.Kunde?.Navn, _ticket.Lokasjon }.Where(s => !string.IsNullOrWhiteSpace(s)))</small>
+                            </span>
+                            <span class="tk-rund-rad">
+                                @if (!string.IsNullOrWhiteSpace(_ticket.Kunde?.Telefon))
+                                {
+                                    <a class="tk-rund" href="@($"tel:{_ticket.Kunde!.Telefon}")" title="Ring @_ticket.Kunde.Telefon" aria-label="Ring kunden"><Icon Name="phone" /></a>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(_ticket.Kunde?.Epost))
+                                {
+                                    <a class="tk-rund" href="@($"mailto:{_ticket.Kunde!.Epost}")" title="Send e-post til @_ticket.Kunde.Epost" aria-label="Send e-post til kunden"><Icon Name="mail" /></a>
+                                }
+                            </span>
+                        </div>
+                        <div class="tk-fakta">
+                            <span class="tk-av">@Initialer(_ticket.AnsvarligBruker?.Navn)</span>
+                            <span><b>@(_ticket.AnsvarligBruker?.Navn ?? "Ikke tildelt")</b><small>Ansvarlig@(string.IsNullOrWhiteSpace(KategoriTekst) ? "" : $" · {KategoriTekst}")</small></span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(_ticket.Beskrivelse))
+                        {
+                            <p class="tk-beskr">@_ticket.Beskrivelse</p>
+                        }
+                        @if (Bilder.Any())
+                        {
+                            <div class="tk-bilder">
+                                @foreach (var m in Bilder)
+                                {
+                                    <a href="@($"/ticketmedia/{m.Id}/fil")" target="_blank"><img src="@($"/ticketmedia/{m.Id}/fil")" alt="@m.Filnavn" loading="lazy" /></a>
+                                }
+                            </div>
+                        }
+                    </section>
 
-                    <div class="tk-to">
-                        <div class="tk-kol">
-                            <section class="tk-blokk">
-                                <div class="tk-blokk-t"><h3>Samtale</h3><span class="tk-dempet">@_ticket.Hendelser.Count hendelser</span></div>
-                                <div class="tk-samtale">
-                                    <div class="tk-skriv">
-                                        <textarea rows="2" @bind="_nyKommentar" @bind:event="oninput" placeholder="Skriv en kommentar eller et svar..."></textarea>
-                                        <div class="tk-skriv-bunn">
-                                            <button type="button" class="tk-bryter @(_nyKommentarKundeSynlig ? "pa" : "")" @onclick="@(() => _nyKommentarKundeSynlig = !_nyKommentarKundeSynlig)"><i></i>Synlig for kunden</button>
-                                            <span class="tk-dempet">@(_nyKommentarKundeSynlig ? "Kunden ser dette i kundeportalen" : "Bare internt")</span>
-                                            <button type="button" class="tk-knapp tk-knapp-p" @onclick="LeggTilKommentar" disabled="@string.IsNullOrWhiteSpace(_nyKommentar)"><Icon Name="send" />Legg til</button>
-                                        </div>
+                    var viktigst = KoblingRader.FirstOrDefault();
+                    <button type="button" class="tk-blokk tk-kob-sammen" @onclick="@(() => _aktivFane = "kobling")">
+                        @if (viktigst is null)
+                        {
+                            <span class="tk-ik tk-ik-brun"><Icon Name="plus" /></span>
+                            <span><b>Ikke koblet til noe ennå</b><small>Koble til prosjekt, arbeidsordre eller tilbud</small></span>
+                            <span class="tk-lenke">Koble til</span>
+                        }
+                        else
+                        {
+                            <span class="tk-ik @viktigst.IkonKlasse"><Icon Name="@viktigst.Ikon" /></span>
+                            <span><b>@viktigst.Type: @viktigst.Navn</b><small>@viktigst.Status@(viktigst.Naar is null ? "" : $" · {viktigst.Naar}")@(KoblingRader.Count > 1 ? $" · + {KoblingRader.Count - 1} til" : "")</small></span>
+                            <span class="tk-lenke">@(KoblingRader.Count > 1 ? $"Se alle {KoblingRader.Count}" : "Se kobling")</span>
+                        }
+                    </button>
+
+                    <section class="tk-blokk">
+                        <div class="tk-blokk-t">
+                            <h3>Samtale</h3>
+                            <span class="tk-filter" role="group" aria-label="Vis meldinger">
+                                @foreach (var (nokkel, navn) in new[] { ("alle", "Alle"), ("kunde", "Kunden"), ("intern", "Intern") })
+                                {
+                                    <button type="button" class="@(_samtaleFilter == nokkel ? "pa" : "")" aria-pressed="@(_samtaleFilter == nokkel ? "true" : "false")" @onclick="@(() => _samtaleFilter = nokkel)">@navn@(nokkel == "alle" ? $" {_ticket.Hendelser.Count}" : "")</button>
+                                }
+                            </span>
+                        </div>
+                        <div class="tk-samtale">
+                            @if (_ticket.Status != TicketStatus.Lukket)
+                            {
+                                <div class="tk-skriv">
+                                    <textarea rows="2" @bind="_nyKommentar" @bind:event="oninput" placeholder="Skriv et svar eller en intern kommentar..."></textarea>
+                                    <div class="tk-skriv-bunn">
+                                        <button type="button" class="tk-bryter @(_nyKommentarKundeSynlig ? "pa" : "")" @onclick="@(() => _nyKommentarKundeSynlig = !_nyKommentarKundeSynlig)"><i></i>Synlig for kunden</button>
+                                        <span class="tk-dempet">@(_nyKommentarKundeSynlig ? "Kunden ser dette i kundeportalen" : "Bare internt")</span>
+                                        <button type="button" class="tk-knapp tk-knapp-p" @onclick="LeggTilKommentar" disabled="@string.IsNullOrWhiteSpace(_nyKommentar)"><Icon Name="send" />Send</button>
                                     </div>
-                                    @if (_ticket.Hendelser.Count == 0)
-                                    {
-                                        <p class="tk-tom">Ingen hendelser registrert ennå.</p>
-                                    }
-                                    @foreach (var h in _ticket.Hendelser.OrderByDescending(h => h.Tidspunkt))
-                                    {
-                                        @if (ErMelding(h))
-                                        {
-                                            var fraKunde = h.UtfortAvBruker?.Rolle is BrukerRolle.Kunde or BrukerRolle.Driftslisens;
-                                            <div class="tk-melding @(fraKunde ? "kunde" : "")">
-                                                <span class="tk-av @(fraKunde ? "tk-av-gronn" : "")">@Initialer(h.UtfortAvBruker?.Navn)</span>
-                                                <div class="tk-boble">
-                                                    <div class="tk-boble-topp">
-                                                        <b>@(h.UtfortAvBruker?.Navn ?? "Ukjent")</b>
-                                                        @if (fraKunde)
-                                                        {
-                                                            <span class="tk-merke-kunde">kunden</span>
-                                                        }
-                                                        else if (h.ErKundeSynlig)
-                                                        {
-                                                            <span class="kunde-synlig-badge">Synlig for kunde</span>
-                                                        }
-                                                        else
-                                                        {
-                                                            <span class="tk-dempet">intern</span>
-                                                        }
-                                                        <time>@Naar(h.Tidspunkt)</time>
-                                                    </div>
-                                                    <div class="tk-boble-tekst">@h.Beskrivelse</div>
-                                                </div>
-                                            </div>
-                                        }
-                                        else
-                                        {
-                                            <div class="tk-system">
-                                                <Icon Name="@SystemIkon(h.Beskrivelse)" />
-                                                <span>@h.Beskrivelse@(h.UtfortAvBruker is null ? "" : $" · {h.UtfortAvBruker.Navn}")</span>
+                                </div>
+                            }
+                            @{ var synlige = SamtaleHendelser().ToList(); }
+                            @if (synlige.Count == 0)
+                            {
+                                <p class="tk-tom">@(_samtaleFilter == "alle" ? "Ingen hendelser registrert ennå." : "Ingen meldinger her.")</p>
+                            }
+                            @foreach (var h in synlige)
+                            {
+                                @if (ErMelding(h))
+                                {
+                                    var fraKunde = ErFraKunde(h);
+                                    <div class="tk-melding @(fraKunde ? "kunde" : "")">
+                                        <span class="tk-av @(fraKunde ? "tk-av-gronn" : "")">@Initialer(h.UtfortAvBruker?.Navn)</span>
+                                        <div class="tk-boble">
+                                            <div class="tk-boble-topp">
+                                                <b>@(h.UtfortAvBruker?.Navn ?? "Ukjent")</b>
+                                                @if (fraKunde)
+                                                {
+                                                    <span class="tk-merke-kunde">kunden</span>
+                                                }
+                                                else if (h.ErKundeSynlig)
+                                                {
+                                                    <span class="kunde-synlig-badge">Synlig for kunde</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="tk-dempet">intern</span>
+                                                }
                                                 <time>@Naar(h.Tidspunkt)</time>
                                             </div>
-                                        }
-                                    }
-                                </div>
-                            </section>
-
-                            <section class="tk-blokk">
-                                <div class="tk-blokk-t"><h3>Beskrivelse</h3><button type="button" class="tk-lenke" @onclick="@(() => _aktivFane = "detaljer")">Endre</button></div>
-                                @if (string.IsNullOrWhiteSpace(_ticket.Beskrivelse))
-                                {
-                                    <p class="tk-tom">Ingen beskrivelse lagt inn.</p>
+                                            <div class="tk-boble-tekst">@h.Beskrivelse</div>
+                                        </div>
+                                    </div>
                                 }
                                 else
                                 {
-                                    <p class="tk-beskr">@_ticket.Beskrivelse</p>
-                                }
-                                @if (Bilder.Any())
-                                {
-                                    <div class="tk-bilder">
-                                        @foreach (var m in Bilder)
-                                        {
-                                            <a href="@($"/ticketmedia/{m.Id}/fil")" target="_blank"><img src="@($"/ticketmedia/{m.Id}/fil")" alt="@m.Filnavn" loading="lazy" /></a>
-                                        }
+                                    <div class="tk-system">
+                                        <Icon Name="@SystemIkon(h.Beskrivelse)" />
+                                        <span>@h.Beskrivelse@(h.UtfortAvBruker is null ? "" : $" · {h.UtfortAvBruker.Navn}")</span>
+                                        <time>@Naar(h.Tidspunkt)</time>
                                     </div>
                                 }
-                            </section>
+                            }
                         </div>
-
-                        <div class="tk-kol">
-                            <section class="tk-blokk">
-                                <div class="tk-blokk-t"><h3>Koblet til</h3><button type="button" class="tk-lenke" @onclick="@(() => _aktivFane = "kobling")">Endre</button></div>
-                                @if (_ticket.Prosjekt is not null)
-                                {
-                                    <a class="tk-kobl" href="@ProsjektLenke"><span class="tk-ik tk-ik-brun"><Icon Name="folder" /></span><span><b>@_ticket.Prosjekt.Navn</b><small>@(_ticket.Prosjekt.Status == ProsjektStatus.Serviceavtale ? "Serviceavtale" : "Prosjekt")</small></span><Icon Name="chevron-right" /></a>
-                                }
-                                @foreach (var t in _prosjektTilbud)
-                                {
-                                    <a class="tk-kobl" href="@($"/tilbud/{t.Id}")"><span class="tk-ik tk-ik-brun"><Icon Name="file-text" /></span><span><b>Tilbud: @t.Tittel</b><small>@t.Status.Visningsnavn()</small></span><Icon Name="chevron-right" /></a>
-                                }
-                                @if (_ticket.Arbeidsordre is not null)
-                                {
-                                    <a class="tk-kobl" href="@($"/arbeidsordre/{_ticket.ArbeidsordreId}")"><span class="tk-ik tk-ik-gronn"><Icon Name="tool" /></span><span><b>@_ticket.Arbeidsordre.Tittel</b><small>@_ticket.Arbeidsordre.Status.Visningsnavn()<HvisModul Modul="@PortalItlock.Web.Models.TilleggsModuler.Timer">@(_arbeidsordreTimer is > 0 ? $" · {_arbeidsordreTimer.Value:N1} t registrert" : "")</HvisModul></small></span><Icon Name="chevron-right" /></a>
-                                }
-                                @if (_ticket.Dor is not null)
-                                {
-                                    <a class="tk-kobl" href="@($"/dor/{_ticket.DorId}")"><span class="tk-ik tk-ik-bla"><Icon Name="door" /></span><span><b>Dør @_ticket.Dor.Dornummer</b><small>@GarantiStatusTekst</small></span><Icon Name="chevron-right" /></a>
-                                }
-                                @if (_ticket.Foresporsel is not null)
-                                {
-                                    <a class="tk-kobl" href="@($"/foresporsel/{_ticket.ForesporselId}")"><span class="tk-ik tk-ik-gul"><Icon Name="mail" /></span><span><b>@_ticket.Foresporsel.Emne</b><small>Forespørsel fra @(_ticket.Foresporsel.FraNavn ?? _ticket.Foresporsel.FraEpost)</small></span><Icon Name="chevron-right" /></a>
-                                }
-                                @if (_ticket.DriftsmeldingId is not null)
-                                {
-                                    <a class="tk-kobl" href="@($"/driftsmelding/{_ticket.DriftsmeldingId}")"><span class="tk-ik tk-ik-gul"><Icon Name="mail" /></span><span><b>Driftsmelding</b><small>Kilde til ticketen</small></span><Icon Name="chevron-right" /></a>
-                                }
-                                @if (AntallKoblinger == 0 && _ticket.DriftsmeldingId is null)
-                                {
-                                    <p class="tk-tom">Saken er ikke koblet til noe ennå.</p>
-                                }
-                                <div class="tk-opprett">
-                                    <span>Gjør saken om til en jobb</span>
-                                    <div>@OpprettKnapper("tk-knapp")</div>
-                                </div>
-                            </section>
-                        </div>
-                    </div>
+                    </section>
                 }
                 else if (_aktivFane == "kobling")
                 {
-                    <div class="tk-kobl-grid">
-                        <section class="tk-koblkort">
-                            <div class="tk-koblkort-t"><span class="tk-ik tk-ik-brun"><Icon Name="folder" /></span><div><h3>Prosjekt / serviceavtale</h3><small>Hvor timer og kost havner</small></div></div>
-                            @if (_ticket.ProsjektId is null)
-                            {
-                                <div class="tk-velg">
-                                    <select @bind="_valgtProsjektId">
-                                        <option value="">Velg prosjekt/serviceavtale...</option>
-                                        @foreach (var p in _prosjekter)
-                                        {
-                                            <option value="@p.Id">@p.Visningsnavn</option>
-                                        }
-                                    </select>
-                                    <button type="button" class="tk-knapp" @onclick="KnyttTilProsjekt" disabled="@(_valgtProsjektId is null)">Knytt</button>
-                                </div>
-                                <div class="tk-opprett-rad"><span class="tk-dempet">eller</span>@OpprettKnapper("tk-knapp")</div>
-                            }
-                            else
-                            {
-                                <div class="tk-valgt"><Icon Name="check" /><b>@_ticket.Prosjekt?.Navn</b><span><a href="@ProsjektLenke">Åpne</a><button type="button" @onclick="@(() => _ticket.ProsjektId = null)">Endre</button></span></div>
-                            }
-                        </section>
+                    <section class="tk-blokk">
+                        <div class="tk-blokk-t">
+                            <h3>Koblinger</h3>
+                            <button type="button" class="tk-knapp @(_visKobleTil ? "tk-knapp-pa" : "")" @onclick="@(() => _visKobleTil = !_visKobleTil)"><Icon Name="plus" />Koble til</button>
+                        </div>
 
-                        <section class="tk-koblkort">
-                            <div class="tk-koblkort-t"><span class="tk-ik tk-ik-gronn"><Icon Name="tool" /></span><div><h3>Arbeidsordre</h3><small>Jobben montøren gjør</small></div></div>
-                            @if (_ticket.ProsjektId is null)
-                            {
-                                <p class="tk-dempet">Knytt et prosjekt først.</p>
-                            }
-                            else if (_ticket.ArbeidsordreId is null)
-                            {
-                                <div class="tk-velg">
-                                    <select @bind="_valgtArbeidsordreId">
-                                        <option value="">Velg arbeidsordre...</option>
-                                        @foreach (var a in _prosjektArbeidsordre)
-                                        {
-                                            <option value="@a.Id">@a.Tittel (@a.Status.Visningsnavn())</option>
-                                        }
-                                    </select>
-                                    <button type="button" class="tk-knapp" @onclick="KnyttTilArbeidsordre" disabled="@(_valgtArbeidsordreId is null)">Knytt</button>
-                                </div>
-                            }
-                            else
-                            {
-                                <div class="tk-valgt"><Icon Name="check" /><b>@_ticket.Arbeidsordre?.Tittel</b><span><a href="@($"/arbeidsordre/{_ticket.ArbeidsordreId}")">Åpne</a><button type="button" @onclick="@(() => _ticket.ArbeidsordreId = null)">Endre</button></span></div>
-                                <small class="tk-dempet">@_ticket.Arbeidsordre?.Status.Visningsnavn()<HvisModul Modul="@PortalItlock.Web.Models.TilleggsModuler.Timer">@(_arbeidsordreTimer.HasValue ? $" · {_arbeidsordreTimer.Value:N1} t registrert" : "")</HvisModul></small>
-                            }
-                        </section>
-
-                        <section class="tk-koblkort">
-                            <div class="tk-koblkort-t"><span class="tk-ik tk-ik-bla"><Icon Name="door" /></span><div><h3>Dør</h3><small>Hvilken dør det gjelder</small></div></div>
-                            @if (_ticket.ProsjektId is null)
-                            {
-                                <p class="tk-dempet">Knytt et prosjekt først.</p>
-                            }
-                            else if (_ticket.DorId is null)
-                            {
-                                <div class="tk-velg">
-                                    <select @bind="_valgtDorId">
-                                        <option value="">Velg dør...</option>
-                                        @foreach (var d in _prosjektDorer)
-                                        {
-                                            <option value="@d.Id">Dør @d.Dornummer</option>
-                                        }
-                                    </select>
-                                    <button type="button" class="tk-knapp" @onclick="KnyttTilDor" disabled="@(_valgtDorId is null)">Knytt</button>
-                                </div>
-                            }
-                            else
-                            {
-                                <div class="tk-valgt"><Icon Name="check" /><b>Dør @_ticket.Dor?.Dornummer</b><span><a href="@($"/dor/{_ticket.DorId}")">Åpne</a><button type="button" @onclick="@(() => _ticket.DorId = null)">Endre</button></span></div>
-                                <span class="@GarantiStatusKlasse">@GarantiStatusTekst</span>
-                            }
-                        </section>
-
-                        <section class="tk-koblkort">
-                            <div class="tk-koblkort-t"><span class="tk-ik tk-ik-gul"><Icon Name="mail" /></span><div><h3>Forespørsel</h3><small>E-post/forespørsel fra kunden</small></div></div>
-                            @if (_ticket.ForesporselId is null)
-                            {
-                                <div class="tk-velg">
-                                    <select @bind="_valgtForesporselId">
-                                        <option value="">Velg forespørsel...</option>
-                                        @foreach (var f in _ledigeForesporsler)
-                                        {
-                                            <option value="@f.Id">@f.Emne - @(f.FraNavn ?? f.FraEpost) (@f.MottattDato.ToString("dd.MM.yyyy"))</option>
-                                        }
-                                    </select>
-                                    <button type="button" class="tk-knapp" @onclick="KnyttTilForesporsel" disabled="@(_valgtForesporselId is null)">Knytt</button>
-                                </div>
-                            }
-                            else
-                            {
-                                <div class="tk-valgt"><Icon Name="check" /><b>@_ticket.Foresporsel?.Emne</b><span><a href="@($"/foresporsel/{_ticket.ForesporselId}")">Åpne</a><button type="button" @onclick="@(() => _ticket.ForesporselId = null)">Fjern</button></span></div>
-                                <small class="tk-dempet">Fra @(_ticket.Foresporsel?.FraNavn ?? _ticket.Foresporsel?.FraEpost)</small>
-                            }
-                        </section>
-                    </div>
-
-                    @if (_ticket.ProsjektId is not null)
-                    {
-                        <section class="tk-blokk">
-                            <div class="tk-blokk-t"><h3>Tilbud på prosjektet</h3>@OpprettKnapper("tk-knapp")</div>
-                            @if (_prosjektTilbud.Count == 0)
-                            {
-                                <p class="tk-tom">Ingen tilbud på prosjektet ennå.</p>
-                            }
-                            @foreach (var t in _prosjektTilbud)
-                            {
-                                <div class="tk-kobl">
-                                    <span class="tk-ik tk-ik-brun"><Icon Name="file-text" /></span>
-                                    <span><a class="kobling-link" href="@($"/tilbud/{t.Id}")">@t.Tittel</a><small>@t.Status.Visningsnavn()</small></span>
-                                    @if (_ticket.ForesporselId is not null && string.IsNullOrWhiteSpace(t.ForesporselBeskrivelse))
+                        @if (_visKobleTil || KoblingRader.Count == 0)
+                        {
+                            <div class="tk-koble">
+                                @if (_ticket.ProsjektId is null)
+                                {
+                                    <div class="tk-koble-rad">
+                                        <span class="tk-ik tk-ik-brun"><Icon Name="folder" /></span>
+                                        <select @bind="_valgtProsjektId" aria-label="Prosjekt eller serviceavtale">
+                                            <option value="">Velg prosjekt/serviceavtale...</option>
+                                            @foreach (var p in _prosjekter)
+                                            {
+                                                <option value="@p.Id">@p.Visningsnavn</option>
+                                            }
+                                        </select>
+                                        <button type="button" class="tk-knapp" @onclick="KnyttTilProsjekt" disabled="@(_valgtProsjektId is null)">Koble</button>
+                                    </div>
+                                }
+                                else
+                                {
+                                    @if (_ticket.ArbeidsordreId is null && _prosjektArbeidsordre.Count > 0)
                                     {
-                                        <button type="button" class="tk-knapp" @onclick="@(() => KopierForesporselTilTilbud(t))">Kopier forespørsel-tekst hit</button>
+                                        <div class="tk-koble-rad">
+                                            <span class="tk-ik tk-ik-gronn"><Icon Name="tool" /></span>
+                                            <select @bind="_valgtArbeidsordreId" aria-label="Arbeidsordre">
+                                                <option value="">Velg arbeidsordre på prosjektet...</option>
+                                                @foreach (var a in _prosjektArbeidsordre)
+                                                {
+                                                    <option value="@a.Id">@a.Tittel (@a.Status.Visningsnavn())</option>
+                                                }
+                                            </select>
+                                            <button type="button" class="tk-knapp" @onclick="KnyttTilArbeidsordre" disabled="@(_valgtArbeidsordreId is null)">Koble</button>
+                                        </div>
                                     }
-                                    else
+                                    @if (_ticket.DorId is null && _prosjektDorer.Count > 0)
                                     {
-                                        <span></span>
+                                        <div class="tk-koble-rad">
+                                            <span class="tk-ik tk-ik-bla"><Icon Name="door" /></span>
+                                            <select @bind="_valgtDorId" aria-label="Dør">
+                                                <option value="">Velg dør...</option>
+                                                @foreach (var d in _prosjektDorer)
+                                                {
+                                                    <option value="@d.Id">Dør @d.Dornummer</option>
+                                                }
+                                            </select>
+                                            <button type="button" class="tk-knapp" @onclick="KnyttTilDor" disabled="@(_valgtDorId is null)">Koble</button>
+                                        </div>
                                     }
+                                }
+                                @if (_ticket.ForesporselId is null && _ledigeForesporsler.Count > 0)
+                                {
+                                    <div class="tk-koble-rad">
+                                        <span class="tk-ik tk-ik-gul"><Icon Name="mail" /></span>
+                                        <select @bind="_valgtForesporselId" aria-label="Forespørsel">
+                                            <option value="">Velg forespørsel...</option>
+                                            @foreach (var f in _ledigeForesporsler)
+                                            {
+                                                <option value="@f.Id">@f.Emne - @(f.FraNavn ?? f.FraEpost) (@f.MottattDato.ToString("dd.MM.yyyy"))</option>
+                                            }
+                                        </select>
+                                        <button type="button" class="tk-knapp" @onclick="KnyttTilForesporsel" disabled="@(_valgtForesporselId is null)">Koble</button>
+                                    </div>
+                                }
+                                <div class="tk-koble-ny">
+                                    <span class="tk-dempet">Eller lag nytt:</span>
+                                    @if (_ticket.ProsjektId is not null && _ticket.ArbeidsordreId is null)
+                                    {
+                                        <button type="button" class="tk-knapp" @onclick="OpprettArbeidsordre"><Icon Name="tool" />Opprett arbeidsordre</button>
+                                    }
+                                    @OpprettKnapper("tk-knapp")
                                 </div>
-                            }
-                        </section>
-                    }
+                            </div>
+                        }
 
-                    @if (_ticket.Foresporsel is not null)
-                    {
-                        <section class="tk-blokk">
-                            <div class="tk-blokk-t"><h3>Knyttet forespørsel</h3></div>
-                            @if (!string.IsNullOrWhiteSpace(_ticket.Foresporsel.Innhold))
-                            {
-                                <p class="foresporsel-tekst-visning">@_ticket.Foresporsel.Innhold</p>
-                            }
-                            @if (_ticket.Foresporsel.Media.Count > 0)
-                            {
-                                <p class="tk-tom">Vedlegg fra forespørselen (kopieres til prosjektets Grunnlag-mappe når knyttet til et vanlig prosjekt):</p>
-                                <ul class="vedlegg-liste">
-                                    @foreach (var m in _ticket.Foresporsel.Media)
+                        @if (KoblingRader.Count > 0)
+                        {
+                            <table class="tk-kob-tab">
+                                <thead><tr><th><span class="tk-skjult">Type</span></th><th>Navn</th><th>Status</th><th class="tk-kol-valg">Når</th><th class="tk-kol-valg">Ansvarlig</th><th><span class="tk-skjult">Handlinger</span></th></tr></thead>
+                                <tbody>
+                                    @foreach (var r in KoblingRader)
                                     {
-                                        <li>@m.Filnavn</li>
+                                        <tr>
+                                            <td><span class="tk-ik @r.IkonKlasse" title="@r.Type"><Icon Name="@r.Ikon" /></span></td>
+                                            <td>
+                                                @if (r.Lenke is not null)
+                                                {
+                                                    <a class="tk-kob-navn" href="@r.Lenke">@r.Navn</a>
+                                                }
+                                                else
+                                                {
+                                                    <b class="tk-kob-navn">@r.Navn</b>
+                                                }
+                                                <small>@r.Type@(r.Under is null ? "" : $" · {r.Under}")</small>
+                                            </td>
+                                            <td><span class="tk-status @r.StatusKlasse">@r.Status</span></td>
+                                            <td class="tk-kol-valg">@(r.Naar ?? "–")</td>
+                                            <td class="tk-kol-valg">@(r.Ansvarlig ?? "–")</td>
+                                            <td class="tk-kob-hand">
+                                                @if (r.Tilbud is { } kt && _ticket.ForesporselId is not null && string.IsNullOrWhiteSpace(kt.ForesporselBeskrivelse))
+                                                {
+                                                    <button type="button" class="tk-lenke" @onclick="@(() => KopierForesporselTilTilbud(kt))">Kopier forespørsel-tekst</button>
+                                                }
+                                                @if (r.Lenke is not null)
+                                                {
+                                                    <a class="tk-lenke" href="@r.Lenke">Åpne</a>
+                                                }
+                                                @if (r.Fjern is not null)
+                                                {
+                                                    <button type="button" class="tk-fjern" title="Fjern koblingen" aria-label="Fjern koblingen til @r.Navn" @onclick="r.Fjern"><Icon Name="x" /></button>
+                                                }
+                                            </td>
+                                        </tr>
                                     }
-                                </ul>
-                            }
-                        </section>
-                    }
+                                </tbody>
+                            </table>
+                        }
+                    </section>
                 }
                 else if (_aktivFane == "vedlegg")
                 {
@@ -414,165 +391,168 @@ else
                 }
                 else if (_aktivFane == "detaljer")
                 {
-                    <section class="tk-blokk">
-                        <div class="tk-blokk-t"><h3>Saken</h3></div>
-                        <div class="tk-skjema">
-                            <div class="felt span-3"><label>Tittel</label><input @bind="_ticket.Tittel" @bind:event="oninput" /></div>
-                            <div class="felt span-3"><label>Beskrivelse</label><textarea rows="3" @bind="_ticket.Beskrivelse" @bind:after="AutoLagre"></textarea></div>
-                            <div class="felt">
-                                <label>Kunde</label>
-                                <select @bind="_ticket.KundeId">
-                                    <option value="">Ingen kunde satt</option>
-                                    @foreach (var k in _kunder)
+                    <div class="tk-dt">
+                        <section class="tk-blokk">
+                            <div class="tk-blokk-t"><h3>Saken</h3></div>
+                            <div class="tk-skjema">
+                                <div class="felt span-3"><label for="tk-tittel">Tittel</label><input id="tk-tittel" @bind="_ticket.Tittel" @bind:after="AutoLagre" /></div>
+                                <div class="felt span-3"><label for="tk-beskr">Beskrivelse</label><textarea id="tk-beskr" rows="3" @bind="_ticket.Beskrivelse" @bind:after="AutoLagre"></textarea></div>
+                                <label class="checkbox-row span-3">
+                                    <input type="checkbox" @bind="_ticket.ErReklamasjon" @bind:after="AutoLagre" />
+                                    Dette er en reklamasjon
+                                    @if (_ticket.ErReklamasjon)
                                     {
-                                        <option value="@k.Id">@k.Navn</option>
+                                        <span class="@GarantiStatusKlasse">@GarantiStatusTekst</span>
                                     }
-                                </select>
+                                </label>
                             </div>
-                            <div class="felt"><label>Kontaktperson</label><input @bind="_ticket.Kontaktperson" @bind:event="oninput" /></div>
-                            <div class="felt"><label>Lokasjon</label><input @bind="_ticket.Lokasjon" @bind:event="oninput" placeholder="F.eks. Industriveien 10" /></div>
-                        </div>
-                        <div class="tk-blokk-t tk-skille"><h3>Klassifisering og ansvar</h3></div>
-                        <div class="tk-skjema">
-                            <div class="felt">
-                                <label>Board</label>
-                                <select @bind="_ticket.Board">
-                                    <option value="">Ikke satt</option>
-                                    @foreach (var b in _boardAlternativer)
-                                    {
-                                        <option value="@b">@b</option>
-                                    }
-                                </select>
-                            </div>
-                            <div class="felt">
-                                <label>Type</label>
-                                <select @bind="_ticket.Type">
-                                    <option value="">Ikke satt</option>
-                                    @foreach (var t in _typeAlternativer)
-                                    {
-                                        <option value="@t">@t</option>
-                                    }
-                                </select>
-                            </div>
-                            <div class="felt">
-                                <label>Subtype</label>
-                                <select @bind="_ticket.Subtype">
-                                    <option value="">Ikke satt</option>
-                                    @foreach (var sub in _subtypeAlternativer)
-                                    {
-                                        <option value="@sub">@sub</option>
-                                    }
-                                </select>
-                            </div>
-                            <div class="felt"><label>Produkt/anlegg</label><input @bind="_ticket.ProduktAnlegg" @bind:event="oninput" /></div>
-                            <div class="felt">
-                                <label>Prioritet</label>
-                                <select @bind="_ticket.Prioritet" @bind:after="OppdaterSlaFrist">
-                                    @foreach (var p in Enum.GetValues<TicketPrioritet>())
-                                    {
-                                        <option value="@p">@p.Visningsnavn()</option>
-                                    }
-                                </select>
-                            </div>
-                            <div class="felt">
-                                <label>Ansvarlig</label>
-                                <select @bind="_ticket.AnsvarligBrukerId">
-                                    <option value="">Ikke tildelt</option>
-                                    @foreach (var b in _brukere)
-                                    {
-                                        <option value="@b.Id">@b.Navn</option>
-                                    }
-                                </select>
-                            </div>
-                            <div class="felt">
-                                <label>Status</label>
-                                <select value="@_ticket.Status" @onchange="EndreStatus">
-                                    @foreach (var s in TicketStatusExtensions.Rekkefolge)
-                                    {
-                                        <option value="@s">@s.Visningsnavn()</option>
-                                    }
-                                </select>
-                            </div>
-                            <label class="checkbox-row span-3">
-                                <input type="checkbox" @bind="_ticket.ErReklamasjon" @bind:after="AutoLagre" />
-                                Dette er en reklamasjon
-                                @if (_ticket.ErReklamasjon)
-                                {
-                                    <span class="@GarantiStatusKlasse">@GarantiStatusTekst</span>
-                                }
-                            </label>
-                            <div class="span-3 tk-lagre-rad">
-                                <button type="button" class="tk-knapp tk-knapp-p" @onclick="LagreInfo"><Icon Name="check" />Lagre</button>
-                                @if (!string.IsNullOrEmpty(_lagretMelding))
-                                {
-                                    <span class="save-success">@_lagretMelding</span>
-                                }
-                            </div>
-                        </div>
-                    </section>
+                        </section>
 
-                    <section class="tk-faresone">
-                        <div><b>Slett ticket</b><small>Sletter ticketen med samtale og vedlegg.</small></div>
-                        <button type="button" class="tk-knapp tk-knapp-rod" @onclick="SlettTicket"><Icon Name="trash" />Slett ticket</button>
-                    </section>
+                        <section class="tk-blokk">
+                            <div class="tk-blokk-t"><h3>Hvem</h3></div>
+                            <div class="tk-skjema">
+                                <div class="felt">
+                                    <label for="tk-kunde">Kunde</label>
+                                    <select id="tk-kunde" @bind="_ticket.KundeId" @bind:after="AutoLagre">
+                                        <option value="">Ingen kunde satt</option>
+                                        @foreach (var k in _kunder)
+                                        {
+                                            <option value="@k.Id">@k.Navn</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="felt"><label for="tk-kontakt">Kontaktperson</label><input id="tk-kontakt" @bind="_ticket.Kontaktperson" @bind:after="AutoLagre" /></div>
+                                <div class="felt">
+                                    <label for="tk-ansvarlig">Ansvarlig</label>
+                                    <select id="tk-ansvarlig" @bind="_ticket.AnsvarligBrukerId" @bind:after="LagreInfo">
+                                        <option value="">Ikke tildelt</option>
+                                        @foreach (var b in _brukere)
+                                        {
+                                            <option value="@b.Id">@b.Navn</option>
+                                        }
+                                    </select>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="tk-blokk">
+                            <div class="tk-blokk-t"><h3>Hvor</h3></div>
+                            <div class="tk-skjema">
+                                <div class="felt"><label for="tk-lok">Lokasjon</label><input id="tk-lok" @bind="_ticket.Lokasjon" @bind:after="AutoLagre" placeholder="F.eks. Industriveien 10" /></div>
+                                <div class="felt"><label for="tk-anlegg">Produkt/anlegg</label><input id="tk-anlegg" @bind="_ticket.ProduktAnlegg" @bind:after="AutoLagre" /></div>
+                            </div>
+                        </section>
+
+                        <section class="tk-blokk">
+                            <div class="tk-blokk-t"><h3>Sporing</h3></div>
+                            <div class="tk-skjema">
+                                <div class="felt">
+                                    <label for="tk-board">Board</label>
+                                    <select id="tk-board" @bind="_ticket.Board" @bind:after="AutoLagre">
+                                        <option value="">Ikke satt</option>
+                                        @foreach (var b in _boardAlternativer)
+                                        {
+                                            <option value="@b">@b</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="felt">
+                                    <label for="tk-type">Type</label>
+                                    <select id="tk-type" @bind="_ticket.Type" @bind:after="AutoLagre">
+                                        <option value="">Ikke satt</option>
+                                        @foreach (var t in _typeAlternativer)
+                                        {
+                                            <option value="@t">@t</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="felt">
+                                    <label for="tk-subtype">Subtype</label>
+                                    <select id="tk-subtype" @bind="_ticket.Subtype" @bind:after="AutoLagre">
+                                        <option value="">Ikke satt</option>
+                                        @foreach (var sub in _subtypeAlternativer)
+                                        {
+                                            <option value="@sub">@sub</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="felt">
+                                    <label for="tk-prio">Prioritet</label>
+                                    <select id="tk-prio" @bind="_ticket.Prioritet" @bind:after="PrioritetEndret">
+                                        @foreach (var p in Enum.GetValues<TicketPrioritet>())
+                                        {
+                                            <option value="@p">@p.Visningsnavn()</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="felt">
+                                    <label for="tk-status">Status</label>
+                                    <select id="tk-status" value="@_ticket.Status" @onchange="EndreStatus">
+                                        @foreach (var s in TicketStatusExtensions.Rekkefolge)
+                                        {
+                                            <option value="@s">@s.Visningsnavn()</option>
+                                        }
+                                    </select>
+                                </div>
+                            </div>
+                        </section>
+
+                        <div class="tk-dt-fot">
+                            <span class="tk-dempet">Endringer lagres automatisk · opprettet @_ticket.OpprettetDato.ToString("dd.MM.yyyy")</span>
+                            @if (_bekreftSlett)
+                            {
+                                <span class="tk-slett-bekreft">
+                                    Slette ticketen med samtale og vedlegg?
+                                    <button type="button" class="tk-knapp" @onclick="@(() => _bekreftSlett = false)">Avbryt</button>
+                                    <button type="button" class="tk-knapp tk-knapp-rod" @onclick="SlettTicket"><Icon Name="trash" />Slett</button>
+                                </span>
+                            }
+                            else
+                            {
+                                <button type="button" class="tk-slett-lenke" @onclick="@(() => _bekreftSlett = true)">Slett ticket</button>
+                            }
+                        </div>
+                    </div>
                 }
             </div>
 
             <aside class="tk-side">
                 <div class="tk-side-blokk">
                     <h4>Handlinger</h4>
-                    <button type="button" class="tk-sk tk-sk-p" @onclick="LagreInfo"><Icon Name="check" />Lagre</button>
-                    @if (_ticket.Status is TicketStatus.Ny or TicketStatus.UnderBehandling)
-                    {
-                        <button type="button" class="tk-sk" @onclick="SendTilGodkjenning"><Icon Name="arrow-right" />Send til godkjenning</button>
-                    }
-                    @if (_ticket.Status != TicketStatus.Lukket && !_godkjennerModus)
-                    {
-                        <button type="button" class="tk-sk tk-sk-g" @onclick="StartGodkjenning"><Icon Name="check-circle" />Godkjenn og lukk</button>
-                    }
                     @if (_ticket.Status == TicketStatus.Lukket)
                     {
                         <button type="button" class="tk-sk" @onclick="Gjenapne"><Icon Name="arrow-left" />Gjenåpne ticket</button>
                     }
-                    @OpprettKnapper("tk-sk")
-                    <button type="button" class="tk-sk tk-sk-r" @onclick="@(() => _aktivFane = "detaljer")"><Icon Name="trash" />Slett ticket</button>
-                    @if (!string.IsNullOrEmpty(_lagretMelding))
+                    else
                     {
-                        <span class="save-success">@_lagretMelding</span>
+                        @if (!_godkjennerModus)
+                        {
+                            <button type="button" class="tk-sk tk-sk-g" @onclick="StartGodkjenning"><Icon Name="check-circle" />Godkjenn og lukk</button>
+                        }
+                        @if (_ticket.Arbeidsordre is not null)
+                        {
+                            <a class="tk-sk" href="@($"/arbeidsordre/{_ticket.ArbeidsordreId}")"><Icon Name="tool" />Åpne arbeidsordre</a>
+                        }
+                        else if (_ticket.ProsjektId is not null)
+                        {
+                            <button type="button" class="tk-sk" @onclick="OpprettArbeidsordre"><Icon Name="tool" />Opprett arbeidsordre</button>
+                        }
+                        else
+                        {
+                            <button type="button" class="tk-sk" @onclick="@(() => { _aktivFane = "kobling"; _visKobleTil = true; })"><Icon Name="folder" />Koble til prosjekt</button>
+                        }
                     }
-                </div>
-
-                @if (_ticket.SlaFrist.HasValue && _ticket.Status != TicketStatus.Lukket)
-                {
-                    <div class="tk-side-blokk">
-                        <h4>SLA</h4>
-                        <div class="tk-sla @(SlaErForfalt ? "forfalt" : "")">
-                            <b>@(SlaErForfalt ? "Forfalt" : SlaKort + " igjen")</b>
-                            <small>Frist @_ticket.SlaFrist.Value.ToString("dd.MM 'kl.' HH:mm") · @_ticket.Prioritet.Visningsnavn().ToLowerInvariant() prioritet</small>
-                            <span class="tk-bar"><i style="width:@SlaBrukt%"></i></span>
+                    <details class="tk-mer">
+                        <summary class="tk-sk"><Icon Name="more-horizontal" />Mer</summary>
+                        <div class="tk-mer-liste">
+                            @if (_ticket.Status is TicketStatus.Ny or TicketStatus.UnderBehandling)
+                            {
+                                <button type="button" @onclick="SendTilGodkjenning"><Icon Name="arrow-right" />Send til godkjenning</button>
+                            }
+                            @OpprettKnapper("")
+                            <button type="button" class="tk-mer-rod" @onclick="@(() => { _aktivFane = "detaljer"; _bekreftSlett = true; })"><Icon Name="trash" />Slett ticket</button>
                         </div>
-                    </div>
-                }
-
-                <div class="tk-side-blokk">
-                    <h4>Ansvarlig</h4>
-                    <div class="tk-ansvar">
-                        <span class="tk-av">@Initialer(_ticket.AnsvarligBruker?.Navn)</span>
-                        <div><b>@(_ticket.AnsvarligBruker?.Navn ?? "Ikke tildelt")</b><button type="button" class="tk-lenke" @onclick="@(() => _aktivFane = "detaljer")">Bytt</button></div>
-                    </div>
-                </div>
-
-                <div class="tk-side-blokk">
-                    <h4>Egenskaper</h4>
-                    <div class="tk-egen"><span>Opprettet</span><span>@_ticket.OpprettetDato.ToString("dd.MM.yyyy")</span></div>
-                    <div class="tk-egen"><span>Prosjekt</span><span>@(_ticket.Prosjekt?.Navn ?? "Ingen")</span></div>
-                    <div class="tk-egen"><span>Arbeidsordre</span><span>@(_ticket.Arbeidsordre?.Tittel ?? "Ingen")</span></div>
-                    <div class="tk-egen"><span>Forespørsel</span><span>@(_ticket.Foresporsel is null ? "Ingen" : "Knyttet")</span></div>
-                    <div class="tk-egen"><span>Vedlegg</span><span>@_ticket.Media.Count</span></div>
-                    @if (_ticket.Status == TicketStatus.Lukket)
-                    {
-                        <div class="tk-egen"><span>Lukket</span><span>@(_ticket.LukketDato?.ToString("dd.MM.yyyy")) · @(_ticket.GodkjentAvBruker?.Navn ?? "ukjent")</span></div>
-                    }
+                    </details>
                 </div>
             </aside>
         </div>
@@ -587,7 +567,6 @@ else
 
     private Ticket? _ticket;
     private bool _notFound;
-    private string? _lagretMelding;
     private int? _naverendeBrukerId;
     private string _aktivFane = "oversikt";
 
@@ -630,6 +609,12 @@ else
     private List<string> _subtypeAlternativer = [];
     private bool _godkjennerModus;
     private string _sluttoppsummering = "";
+    private bool _full;
+    private bool _fullLastet;
+    private bool _harTimerModul;
+    private string _samtaleFilter = "alle";
+    private bool _visKobleTil;
+    private bool _bekreftSlett;
 
     private bool SlaErForfalt => _ticket?.SlaFrist is { } frist && frist < DateTime.Now && _ticket.Status != TicketStatus.Lukket;
 
@@ -722,7 +707,7 @@ else
             .Include(t => t.AnsvarligBruker)
             .Include(t => t.GodkjentAvBruker)
             .Include(t => t.Prosjekt)
-            .Include(t => t.Arbeidsordre)
+            .Include(t => t.Arbeidsordre).ThenInclude(a => a!.AnsvarligMontor)
             .Include(t => t.Dor).ThenInclude(d => d!.Komponenter).ThenInclude(dk => dk.Component)
             .Include(t => t.Foresporsel).ThenInclude(f => f!.Media)
             .Include(t => t.Hendelser).ThenInclude(h => h.UtfortAvBruker)
@@ -739,6 +724,13 @@ else
         {
             _notFound = true;
             return;
+        }
+
+        if (!_fullLastet)
+        {
+            _full = await VisningPref.HentAsync("ticket-detalj-bredde", "normal") == "full";
+            _harTimerModul = await Tilleggsmoduler.HarAsync(PortalItlock.Web.Models.TilleggsModuler.Timer);
+            _fullLastet = true;
         }
 
         if (_ticket.SlaFrist is null && _ticket.Status != TicketStatus.Lukket)
@@ -856,7 +848,6 @@ else
         }
 
         await Db.SaveChangesAsync();
-        _lagretMelding = "Lagret.";
     }
 
     private async Task AutoLagre() => await Db.SaveChangesAsync();
@@ -1138,31 +1129,6 @@ else
 
     // ---------- Visning (ticket-oppsett oktober 2026) ----------
 
-    private sealed record Steg(string Ikon, string Tittel, string Undertekst, string Knapp, string? Lenke = null, Func<Task>? Handling = null);
-
-    private Steg NesteSteg()
-    {
-        var t = _ticket!;
-        if (t.Status == TicketStatus.Lukket)
-        {
-            return new Steg("check-circle", "Ticketen er lukket", $"Lukket {t.LukketDato:dd.MM.yyyy} av {t.GodkjentAvBruker?.Navn ?? "ukjent"}", "Gjenåpne", Handling: Gjenapne);
-        }
-        if (t.Status == TicketStatus.VenterGodkjenning)
-        {
-            return new Steg("check-circle", "Klar til godkjenning", "Arbeidet er gjort - skriv en kort oppsummering og lukk saken", "Godkjenn og lukk", Handling: StartGodkjenning);
-        }
-        if (t.ProsjektId is null)
-        {
-            return new Steg("folder", "Koble saken til et prosjekt", "Knytt til et eksisterende prosjekt/serviceavtale, eller opprett prosjekt eller tilbud", "Kobling", Handling: () => { _aktivFane = "kobling"; return Task.CompletedTask; });
-        }
-        if (t.Arbeidsordre is null)
-        {
-            return new Steg("tool", "Knytt en arbeidsordre", "Så montøren får jobben og timene havner på riktig sted", "Kobling", Handling: () => { _aktivFane = "kobling"; return Task.CompletedTask; });
-        }
-        var plan = t.Arbeidsordre.PlanlagtDato is { } d ? $" - planlagt {d:dd.MM}" : "";
-        return new Steg("tool", $"Arbeidsordre: {t.Arbeidsordre.Tittel}{plan}", "Når jobben er gjort: send ticketen til godkjenning", "Åpne arbeidsordre", Lenke: $"/arbeidsordre/{t.ArbeidsordreId}");
-    }
-
     private Task StartGodkjenning()
     {
         _aktivFane = "oversikt";
@@ -1176,68 +1142,207 @@ else
     private string KategoriTekst => string.Join(" · ",
         new[] { _ticket?.Board, _ticket?.Type, _ticket?.Subtype }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
-    private int AntallKoblinger =>
-        (_ticket?.ProsjektId is null ? 0 : 1) + (_ticket?.ArbeidsordreId is null ? 0 : 1)
-        + (_ticket?.DorId is null ? 0 : 1) + (_ticket?.ForesporselId is null ? 0 : 1);
-
     private IEnumerable<TicketMedia> Bilder =>
         _ticket?.Media.Where(m => m.ContentType.StartsWith("image/")) ?? [];
 
-    private string SlaKort
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("ticket-detalj-bredde", _full ? "full" : "normal");
+    }
+
+    // Under fire timer igjen regnes som "snart" og vises i rødt.
+    private bool SlaSnart => _ticket?.SlaFrist is { } frist && _ticket.Status != TicketStatus.Lukket
+        && frist >= DateTime.Now && (frist - DateTime.Now).TotalHours < 4;
+
+    private string FristTekst
     {
         get
         {
             if (_ticket?.SlaFrist is not { } frist)
             {
-                return "-";
-            }
-            if (_ticket.Status == TicketStatus.Lukket)
-            {
-                return "Lukket";
+                return "Ingen frist";
             }
 
             var diff = frist - DateTime.Now;
             if (diff.TotalMinutes < 0)
             {
-                return "Forfalt";
+                var over = -diff;
+                return over.TotalHours >= 24 ? $"Frist passert for {(int)over.TotalDays} d siden" : $"Frist passert for {Math.Max(1, (int)over.TotalHours)} t siden";
             }
             return diff.TotalHours >= 24
-                ? $"{(int)diff.TotalDays} d {diff.Hours} t"
-                : $"{(int)diff.TotalHours} t {diff.Minutes} min";
+                ? $"Frist om {(int)diff.TotalDays} d {diff.Hours} t"
+                : diff.TotalHours >= 1 ? $"Frist om {(int)diff.TotalHours} t" : $"Frist om {Math.Max(1, diff.Minutes)} min";
         }
     }
 
-    // Hvor mye av SLA-tiden som er brukt, i prosent (for streken i sidepanelet).
-    private int SlaBrukt
+    private static bool ErFraKunde(TicketHendelse h) =>
+        h.UtfortAvBruker?.Rolle is BrukerRolle.Kunde or BrukerRolle.Driftslisens;
+
+    private IEnumerable<TicketHendelse> SamtaleHendelser()
+    {
+        var alle = _ticket!.Hendelser.OrderByDescending(h => h.Tidspunkt);
+        return _samtaleFilter switch
+        {
+            "kunde" => alle.Where(h => ErMelding(h) && (ErFraKunde(h) || h.ErKundeSynlig)),
+            "intern" => alle.Where(h => ErMelding(h) && !ErFraKunde(h) && !h.ErKundeSynlig),
+            _ => alle
+        };
+    }
+
+    private async Task PrioritetEndret()
+    {
+        OppdaterSlaFrist();
+        await Db.SaveChangesAsync();
+    }
+
+    // ---------- Koblinger ----------
+
+    private sealed record KobRad(string Type, string Ikon, string IkonKlasse, string Navn, string? Under,
+        string Status, string StatusKlasse, string? Naar, string? Ansvarlig, string? Lenke,
+        Func<Task>? Fjern = null, Tilbud? Tilbud = null);
+
+    // Rekkefølgen er viktigst først - den første vises som sammendrag i Oversikt.
+    private List<KobRad> KoblingRader
     {
         get
         {
-            if (_ticket?.SlaFrist is not { } frist)
+            var rader = new List<KobRad>();
+            var t = _ticket;
+            if (t is null)
             {
-                return 0;
+                return rader;
             }
-            var total = (frist - _ticket.OpprettetDato).TotalMinutes;
-            if (total <= 0)
+
+            if (t.Arbeidsordre is { } ao)
             {
-                return 100;
+                var klasse = ao.Status switch
+                {
+                    ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert => "gronn",
+                    ArbeidsordreStatus.Ny => "gra",
+                    _ => "brun"
+                };
+                var timer = _arbeidsordreTimer is > 0 && _harTimerModul ? $"{_arbeidsordreTimer.Value:N1} t registrert" : null;
+                rader.Add(new KobRad("Arbeidsordre", "tool", "tk-ik-gronn", ao.Tittel, timer, ao.Status.Visningsnavn(), klasse,
+                    ao.PlanlagtDato?.ToString("dd.MM HH:mm"), ao.AnsvarligMontor?.Navn, $"/arbeidsordre/{ao.Id}",
+                    () => FjernKobling("arbeidsordre")));
             }
-            return (int)Math.Clamp((DateTime.Now - _ticket.OpprettetDato).TotalMinutes / total * 100, 0, 100);
+
+            foreach (var tb in _prosjektTilbud)
+            {
+                var klasse = tb.Status switch
+                {
+                    EndringsmeldingStatus.Godkjent => "gronn",
+                    EndringsmeldingStatus.Avslatt => "rod",
+                    EndringsmeldingStatus.SendtTilKunde => "gul",
+                    _ => "gra"
+                };
+                var naar = tb.SendtDato is { } sendt ? $"Sendt {sendt:dd.MM}" : $"Laget {tb.OpprettetDato.ToLocalTime():dd.MM}";
+                rader.Add(new KobRad("Tilbud", "file-text", "tk-ik-brun", tb.Tittel, "via prosjektet", tb.Status.Visningsnavn(), klasse,
+                    naar, null, $"/tilbud/{tb.Id}", Tilbud: tb));
+            }
+
+            if (t.Prosjekt is { } p)
+            {
+                var service = p.Status == ProsjektStatus.Serviceavtale;
+                var status = p.Status?.Visningsnavn() ?? "Prosjekt";
+                var klasse = p.Status is ProsjektStatus.Avsluttet or ProsjektStatus.TilbudAvslatt ? "gra" : "gronn";
+                rader.Add(new KobRad(service ? "Serviceavtale" : "Prosjekt", "folder", "tk-ik-brun", p.Navn, null,
+                    service ? "Aktiv" : status.Split(" (")[0], klasse, null, null, ProsjektLenke, () => FjernKobling("prosjekt")));
+            }
+
+            if (t.Dor is { } d)
+            {
+                var utlopt = GarantiStatusKlasse == "garanti-utlopt";
+                rader.Add(new KobRad("Dør", "door", "tk-ik-bla", $"Dør {d.Dornummer}", null,
+                    t.Prosjekt?.OverlevertDato is null ? "Ikke overlevert" : utlopt ? "Utenfor garanti" : "Innenfor garanti",
+                    utlopt ? "rod" : "gronn", null, null, $"/dor/{d.Id}", () => FjernKobling("dor")));
+            }
+
+            if (t.Foresporsel is { } f)
+            {
+                rader.Add(new KobRad("Forespørsel", "mail", "tk-ik-gul", f.Emne, f.FraNavn ?? f.FraEpost, "Mottatt", "gra",
+                    f.MottattDato.ToString("dd.MM"), null, $"/foresporsel/{f.Id}", () => FjernKobling("foresporsel")));
+            }
+
+            if (t.DriftsmeldingId is int dm)
+            {
+                rader.Add(new KobRad("Driftsmelding", "mail", "tk-ik-gul", "Driftsmelding", "kilde til ticketen", "Kilde", "gra",
+                    null, null, $"/driftsmelding/{dm}"));
+            }
+
+            return rader;
         }
     }
 
-    private string AapenTekst
+    private async Task FjernKobling(string hva)
     {
-        get
+        if (_ticket is null)
         {
-            var slutt = _ticket?.Status == TicketStatus.Lukket && _ticket.LukketDato is { } l ? l : DateTime.Now;
-            var tid = slutt - _ticket!.OpprettetDato;
-            if (tid.TotalHours < 24)
-            {
-                return $"{Math.Max(0, (int)tid.TotalHours)} timer";
-            }
-            var dager = (int)tid.TotalDays;
-            return dager == 1 ? "1 dag" : $"{dager} dager";
+            return;
         }
+
+        switch (hva)
+        {
+            case "arbeidsordre":
+                LoggHendelse($"Fjernet kobling til arbeidsordre: {_ticket.Arbeidsordre?.Tittel}");
+                _ticket.ArbeidsordreId = null;
+                _ticket.Arbeidsordre = null;
+                break;
+            case "prosjekt":
+                // Dør og tilbud hører til prosjektet og følger med ut.
+                LoggHendelse($"Fjernet kobling til prosjekt: {_ticket.Prosjekt?.Navn}");
+                _ticket.ProsjektId = null;
+                _ticket.Prosjekt = null;
+                _ticket.DorId = null;
+                _ticket.Dor = null;
+                _prosjektTilbud = [];
+                break;
+            case "dor":
+                LoggHendelse($"Fjernet kobling til dør: {_ticket.Dor?.Dornummer}");
+                _ticket.DorId = null;
+                _ticket.Dor = null;
+                break;
+            case "foresporsel":
+                LoggHendelse($"Fjernet kobling til forespørsel: {_ticket.Foresporsel?.Emne}");
+                _ticket.ForesporselId = null;
+                _ticket.Foresporsel = null;
+                break;
+        }
+
+        await Db.SaveChangesAsync();
+        await OnParametersSetAsync();
+    }
+
+    // Lager en arbeidsordre på prosjektet ut fra ticketen, kobler den og åpner den.
+    private async Task OpprettArbeidsordre()
+    {
+        if (_ticket?.ProsjektId is not int prosjektId || _ticket.ArbeidsordreId is not null)
+        {
+            return;
+        }
+
+        var ordre = new Arbeidsordre
+        {
+            Tittel = _ticket.Tittel,
+            Beskrivelse = _ticket.Beskrivelse,
+            ProsjektId = prosjektId,
+            KundeId = _ticket.KundeId ?? _ticket.Prosjekt?.KundeId,
+            AnsvarligMontorId = _ticket.AnsvarligBrukerId,
+            Adresse = _ticket.Lokasjon
+        };
+        Db.Arbeidsordre.Add(ordre);
+        await Db.SaveChangesAsync();
+
+        _ticket.ArbeidsordreId = ordre.Id;
+        if (_ticket.Status == TicketStatus.Ny)
+        {
+            _ticket.Status = TicketStatus.UnderBehandling;
+        }
+        LoggHendelse($"Opprettet arbeidsordre: {ordre.Tittel}");
+        await Db.SaveChangesAsync();
+
+        Nav.NavigateTo($"/arbeidsordre/{ordre.Id}");
     }
 
     // Hendelser som er skrevet av en person (kommentarer) vises som meldinger;
@@ -1246,7 +1351,7 @@ else
     [
         "Status endret", "Knyttet til", "Kopierte", "La til vedlegg", "Godkjent og lukket", "Gjenåpnet",
         "E-post sendt", "Klarte ikke", "Arbeidsordre ferdigstilt", "Ticket opprettet", "Opprettet",
-        "Tildelt til", "Tildeling fjernet", "Automatisk"
+        "Tildelt til", "Tildeling fjernet", "Automatisk", "Fjernet kobling"
     ];
 
     private static bool ErMelding(TicketHendelse h) =>
