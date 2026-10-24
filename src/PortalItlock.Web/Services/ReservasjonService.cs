@@ -173,6 +173,8 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
     // det som ikke trengs lenger (tilbudet koblet fra, vare fjernet).
     // Ingenting bestilles herfra. Ferdigmeldte ordre røres ikke: der fører
     // PlukkService.SynkForbrukAsync det som er satt av, som forbruk.
+    // Med automatisk reservasjon av (LagerInnstillinger) settes ingenting nytt
+    // av herfra - bare det som ikke trengs lenger, frigis.
     public async Task<Resultat?> SikreArbeidsordreAsync(int arbeidsordreId, string? brukerNavn)
     {
         var status = await db.Arbeidsordre.AsNoTracking().Where(a => a.Id == arbeidsordreId).Select(a => (ArbeidsordreStatus?)a.Status).FirstOrDefaultAsync();
@@ -181,7 +183,49 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
             return null;
         }
 
-        return await ReserverAsync(new Kilde(null, arbeidsordreId), await ArbeidsordreBehovAsync(arbeidsordreId), brukerNavn);
+        var behov = await ArbeidsordreBehovAsync(arbeidsordreId);
+        if (!await ReserverAutomatiskAsync())
+        {
+            var har = await Reservasjoner(new Kilde(null, arbeidsordreId)).AsNoTracking()
+                .GroupBy(r => r.ComponentId).Select(g => new { g.Key, Antall = g.Sum(r => r.Antall + r.Venter) }).ToDictionaryAsync(x => x.Key, x => x.Antall);
+            behov = har.ToDictionary(h => h.Key, h => Math.Min(h.Value, behov.GetValueOrDefault(h.Key)));
+        }
+
+        return await ReserverAsync(new Kilde(null, arbeidsordreId), behov, brukerNavn);
+    }
+
+    public async Task<bool> ReserverAutomatiskAsync() =>
+        await db.LagerInnstillinger.AsNoTracking().Select(i => (bool?)i.ReserverAutomatisk).FirstOrDefaultAsync() ?? true;
+
+    public async Task SettReserverAutomatiskAsync(bool verdi)
+    {
+        var inn = await db.LagerInnstillinger.FirstOrDefaultAsync();
+        if (inn is null)
+        {
+            inn = new LagerInnstillinger();
+            db.LagerInnstillinger.Add(inn);
+        }
+
+        inn.ReserverAutomatisk = verdi;
+        await db.SaveChangesAsync();
+    }
+
+    // «Reserver»-knappen: setter av det arbeidsordren trenger av én vare
+    // (componentId) eller alle (null). Andre varer beholder det de har.
+    public async Task<Resultat?> ReserverArbeidsordreAsync(int arbeidsordreId, int? componentId, string? brukerNavn)
+    {
+        var status = await db.Arbeidsordre.AsNoTracking().Where(a => a.Id == arbeidsordreId).Select(a => (ArbeidsordreStatus?)a.Status).FirstOrDefaultAsync();
+        if (status is null || !AapneArbeidsordre.Contains(status.Value))
+        {
+            return null;
+        }
+
+        var behov = await ArbeidsordreBehovAsync(arbeidsordreId);
+        var har = await Reservasjoner(new Kilde(null, arbeidsordreId)).AsNoTracking()
+            .GroupBy(r => r.ComponentId).Select(g => new { g.Key, Antall = g.Sum(r => r.Antall + r.Venter) }).ToDictionaryAsync(x => x.Key, x => x.Antall);
+        var maal = behov.Keys.Union(har.Keys).ToDictionary(k => k,
+            k => componentId is null || k == componentId ? behov.GetValueOrDefault(k) : Math.Min(har.GetValueOrDefault(k), behov.GetValueOrDefault(k)));
+        return await ReserverAsync(new Kilde(null, arbeidsordreId), maal, brukerNavn);
     }
 
     // ---------- Beholdning ----------

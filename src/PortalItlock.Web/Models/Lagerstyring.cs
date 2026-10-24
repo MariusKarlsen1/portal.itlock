@@ -161,3 +161,13 @@ public class LagerReservasjon
     public DateTime SistEndret { get; set; } = DateTime.Now;
     public string? OpprettetAv { get; set; }
 }
+
+// Lagerinnstillinger for organisasjonen (én rad).
+public class LagerInnstillinger
+{
+    public int Id { get; set; }
+
+    // På: varene på en arbeidsordre settes av på lageret med en gang.
+    // Av: de reserveres med «Reserver»-knappen på arbeidsordren.
+    public bool ReserverAutomatisk { get; set; } = true;
+}

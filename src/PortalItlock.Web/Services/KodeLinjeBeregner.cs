@@ -64,7 +64,8 @@ public static class KodeLinjeBeregner
     public static List<PrisKode> Standardkoder(decimal timekost, decimal timepris) =>
     [
         new() { Kode = "100", Navn = "Montasje", Type = PrisKodeType.Arbeid, Enhet = PrisKodeEnhet.Time, Kostpris = timekost, Salgspris = timepris, ErMontasje = true, Rekkefolge = 0 },
-        new() { Kode = "110", Navn = "Montasje, overtid 50 %", Type = PrisKodeType.Arbeid, Enhet = PrisKodeEnhet.Time, Kostpris = Math.Round(timekost * 1.35m), Salgspris = Math.Round(timepris * 1.5m), Rekkefolge = 1 },
+        new() { Kode = "110", Navn = "Montasje, overtid 50 %", Type = PrisKodeType.Arbeid, Enhet = PrisKodeEnhet.Time, Kostpris = Math.Round(timekost * 1.35m), Salgspris = Math.Round(timepris * 1.5m), Timetype = TimeregistreringType.Overtid50, Rekkefolge = 1 },
+        new() { Kode = "111", Navn = "Montasje, overtid 100 %", Type = PrisKodeType.Arbeid, Enhet = PrisKodeEnhet.Time, Kostpris = Math.Round(timekost * 1.7m), Salgspris = Math.Round(timepris * 2m), Timetype = TimeregistreringType.Overtid100, Rekkefolge = 1 },
         new() { Kode = "120", Navn = "Programmering", Type = PrisKodeType.Arbeid, Enhet = PrisKodeEnhet.Time, Kostpris = timekost, Salgspris = timepris, Rekkefolge = 2 },
         new() { Kode = "130", Navn = "Prosjektledelse", Type = PrisKodeType.Arbeid, Enhet = PrisKodeEnhet.Time, Kostpris = timekost, Salgspris = timepris, Rekkefolge = 3 },
         new() { Kode = "200", Navn = "Kjøring", Beskrivelse = "Per kilometer", Type = PrisKodeType.Kjoring, Enhet = PrisKodeEnhet.Km, Kostpris = 4.5m, Salgspris = 9m, Rekkefolge = 4 },

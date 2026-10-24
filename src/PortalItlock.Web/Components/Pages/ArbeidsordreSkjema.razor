@@ -210,6 +210,10 @@ else if (_ordre is not null)
                 {
                     <a class="db-lenke" href="/lager/innkjop"><Icon Name="receipt" />Bestill det som mangler</a>
                 }
+                @if (!_reserverAuto && KanEndreOrdre && dbRader.Count(r => !r.Plukket && VareStatus(r.ComponentId, false)?.Klasse == "ledig") > 1)
+                {
+                    <button type="button" class="db-knapp" @onclick="@(() => ReserverVare(null))"><Icon Name="lock" />Reserver alle</button>
+                }
                 <button type="button" class="db-knapp" @onclick="ApneSkanner"><Icon Name="camera" />Skann</button>
                 @if (KanEndreOrdre)
                 {
@@ -300,6 +304,10 @@ else if (_ordre is not null)
                             else
                             {
                                 @StatusChip(r.ComponentId, r.Antall, r.Plukket)
+                                @if (!_reserverAuto && KanEndreOrdre && !r.Plukket && VareStatus(r.ComponentId, false)?.Klasse == "ledig")
+                                {
+                                    <button type="button" class="db-reserver" @onclick="@(() => ReserverVare(r.ComponentId))">Reserver</button>
+                                }
                             }
                         </span>
                         @if (r.Vare is { } v && KanEndreOrdre && !_erMobilvisning)
@@ -950,9 +958,10 @@ else if (_ordre is not null)
                 </div>
             </div>
 
-            <div class="tf-rad @(ArbeidKoder().Count > 1 ? "tf-rad-2" : "")">
+            <div class="tf-rad tf-rad-2">
                 @if (ArbeidKoder().Count > 1)
                 {
+                    @* Koden bestemmer timetypen (normal, 50 % eller 100 % overtid). *@
                     <label class="tf-felt"><span>Kode</span>
                         <select id="tf-kode" @bind="_tf.PrisKodeId">
                             @foreach (var k in ArbeidKoder())
@@ -961,6 +970,17 @@ else if (_ordre is not null)
                             }
                         </select>
                     </label>
+                }
+                else
+                {
+                <label class="tf-felt"><span>Type</span>
+                    <select id="tf-type" @bind="_tf.Type">
+                        @foreach (var t in Enum.GetValues<TimeregistreringType>())
+                        {
+                            <option value="@t">@t.Visningsnavn()</option>
+                        }
+                    </select>
+                </label>
                 }
                 <label class="tf-felt"><span>Aktivitet</span>
                     <select id="tf-aktivitet" @bind="_tf.Aktivitet">
@@ -1599,6 +1619,7 @@ else if (_ordre is not null)
         await Db.SaveChangesAsync();
         if (v.Plukket)
         {
+            await TrekkUtUtenReservasjonAsync(v.ComponentId, v.Antall, v.Component);
             await SikreVarerAsync();
         }
     }
@@ -1615,6 +1636,7 @@ else if (_ordre is not null)
         await Db.SaveChangesAsync();
         if (l.Plukket)
         {
+            await TrekkUtUtenReservasjonAsync(l.ComponentId, l.Antall, l.Component);
             await SikreVarerAsync();
         }
     }
@@ -2399,6 +2421,7 @@ else if (_ordre is not null)
         // Først forbruket for det som er plukket, så reservasjonene - ellers
         // ville det plukkede blitt frigitt i stedet for trukket fra lageret.
         await PlukkSvc.SynkForbrukAsync(Id);
+        _reserverAuto = await ResSvc.ReserverAutomatiskAsync();
         await ResSvc.SikreArbeidsordreAsync(Id, _naverendeBruker?.Navn);
 
         _res = (await Db.LagerReservasjoner.AsNoTracking().Where(r => r.ArbeidsordreId == Id)
@@ -2415,7 +2438,10 @@ else if (_ordre is not null)
             .GroupBy(l => l.ComponentId)
             .ToDictionary(g => g.Key, g => { var l = g.OrderBy(x => x.Dato ?? DateTime.MaxValue).First(); return (l.Nummer, l.Dato); });
 
-        var satt = _res.Keys.ToList();
+        var satt = _res.Keys
+            .Concat(_tilbudVarer.Where(l => l.ComponentId is not null).Select(l => l.ComponentId!.Value))
+            .Concat(_ordre.Varer.Where(v => v.ComponentId is not null).Select(v => v.ComponentId!.Value))
+            .Distinct().ToList();
         _hylle = satt.Count == 0 ? [] : (await Db.VareLagerplasser.AsNoTracking()
                 .Where(p => satt.Contains(p.ComponentId) && p.Hylle != null && p.Hylle != "" && p.Lager!.Type == LagerType.Hovedlager)
                 .Select(p => new { p.ComponentId, p.Hylle }).ToListAsync())
@@ -2429,9 +2455,22 @@ else if (_ordre is not null)
     // får ingen merkelapp.
     private Vstatus? VareStatus(int? componentId, bool plukket)
     {
-        if (!_harLager || plukket || componentId is not { } cid || !_res.TryGetValue(cid, out var r))
+        if (!_harLager || plukket || componentId is not { } cid)
         {
             return null;
+        }
+
+        if (!_res.TryGetValue(cid, out var r))
+        {
+            // Manuell reservasjon: vis om varen finnes, så den kan reserveres.
+            if (_reserverAuto)
+            {
+                return null;
+            }
+
+            return _ledig.GetValueOrDefault(cid) > 0
+                ? new(_hylle.TryGetValue(cid, out var hl) ? $"På lager · {hl}" : "På lager", "ledig")
+                : new("Ikke på lager", "ikke");
         }
 
         if (r.Venter == 0)
@@ -2498,6 +2537,7 @@ else if (_ordre is not null)
         public int Pause { get; set; }
         public int? PrisKodeId { get; set; }
         public TimeAktivitet Aktivitet { get; set; } = TimeAktivitet.Montering;
+        public TimeregistreringType Type { get; set; } = TimeregistreringType.NormalArbeidstid;
         public string? Kommentar { get; set; }
         public bool Fakturerbar { get; set; } = true;
         public string? Feil { get; set; }
@@ -2579,6 +2619,7 @@ else if (_ordre is not null)
             Slutt = _tf.Til.ToTimeSpan(),
             PauseMinutter = _tf.Pause,
             Aktivitet = _tf.Aktivitet,
+            Type = ArbeidKoder().Count > 1 && ArbeidKoder().FirstOrDefault(k => k.Id == _tf.PrisKodeId) is { } tk ? tk.Timetype : _tf.Type,
             PrisKodeId = ArbeidKoder().Count > 1 ? _tf.PrisKodeId : null,
             Fakturerbar = _tf.Fakturerbar,
             Kommentar = string.IsNullOrWhiteSpace(_tf.Kommentar) ? null : _tf.Kommentar.Trim()
@@ -2761,7 +2802,7 @@ else if (_ordre is not null)
         dato is { } d ? $"plukket {(brukerId is { } b ? Initialer(_montorer.FirstOrDefault(m => m.Id == b)?.Navn) + " " : "")}{(d.Date == DateTime.Today ? d.ToString("HH:mm") : d.ToString("dd.MM"))}" : "plukket";
 
     private bool Mangler(int? componentId, bool plukket) =>
-        !plukket && VareStatus(componentId, false)?.Klasse is "bestill" or "bestilt";
+        !plukket && VareStatus(componentId, false)?.Klasse is "bestill" or "bestilt" or "ikke";
 
     // Varene fra tilbudet, varene lagt inn
     // på ordren og tilleggene montøren har lagt til - i én liste.
@@ -2808,5 +2849,41 @@ else if (_ordre is not null)
             v.Plukket = !v.Plukket;
             await LagreVarePlukket(v);
         }
+    }
+
+    // ---------- Manuell reservasjon (Lagerinnstillinger) ----------
+
+    private bool _reserverAuto = true;
+
+    private async Task ReserverVare(int? componentId)
+    {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+
+        await ResSvc.ReserverArbeidsordreAsync(Id, componentId, _naverendeBruker?.Navn);
+        await SikreVarerAsync();
+    }
+
+    // Uten automatisk reservasjon: hakes en vare som ikke er reservert av som
+    // plukket, trekkes den rett fra hovedlageret (så langt det er nok der).
+    private async Task TrekkUtUtenReservasjonAsync(int? componentId, int antall, Component? c)
+    {
+        if (!_harLager || _reserverAuto || componentId is not { } cid || c is not { ILagerstyring: true } || _res.ContainsKey(cid))
+        {
+            return;
+        }
+
+        var ant = Math.Min(antall, _ledig.GetValueOrDefault(cid));
+        if (ant <= 0)
+        {
+            return;
+        }
+
+        var hoved = await LagerSvc.HovedlagerAsync();
+        await LagerSvc.RegistrerAsync(cid, hoved.Id, -ant, LagerBevegelseType.Forbruk, $"Plukket på {_ordre!.Tittel}",
+            _naverendeBrukerId, _naverendeBruker?.Navn, prosjektId: _ordre.ProsjektId, arbeidsordreId: Id);
+        _ledig[cid] = _ledig.GetValueOrDefault(cid) - ant;
     }
 }

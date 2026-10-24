@@ -4078,6 +4078,20 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("LagerBevegelser");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.LagerInnstillinger", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ReserverAutomatisk")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("LagerInnstillinger");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.LagerReservasjon", b =>
                 {
                     b.Property<int>("Id")
@@ -5051,6 +5065,9 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<decimal>("Salgspris")
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("Timetype")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Type")
                         .HasColumnType("INTEGER");

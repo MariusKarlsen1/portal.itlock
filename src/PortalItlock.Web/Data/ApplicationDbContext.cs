@@ -122,6 +122,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<InnkjopsordreLinje> InnkjopsordreLinjer => Set<InnkjopsordreLinje>();
     public DbSet<InnkjopsordreFil> InnkjopsordreFiler => Set<InnkjopsordreFil>();
     public DbSet<LagerReservasjon> LagerReservasjoner => Set<LagerReservasjon>();
+    public DbSet<LagerInnstillinger> LagerInnstillinger => Set<LagerInnstillinger>();
     public DbSet<OkonomiInnstillinger> OkonomiInnstillinger => Set<OkonomiInnstillinger>();
     public DbSet<TilbudBudsjett> TilbudBudsjetter => Set<TilbudBudsjett>();
     public DbSet<ProsjektEtterkalkyle> ProsjektEtterkalkyler => Set<ProsjektEtterkalkyle>();

@@ -69,6 +69,11 @@ public class PrisKode
 
     // Koden som timene fra varenes montasjetid legges på.
     public bool ErMontasje { get; set; }
+
+    // Arbeidskoder: hvilken timetype timene på koden er (normal, 50 % eller
+    // 100 % overtid). Velges koden ved timeføring, følger typen med, så lønn
+    // og timegodkjenning bruker samme koder som tilbudet og fakturaen.
+    public TimeregistreringType Timetype { get; set; }
     public bool Aktiv { get; set; } = true;
     public int Rekkefolge { get; set; }
 }
