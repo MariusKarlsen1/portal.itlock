@@ -404,15 +404,26 @@ else if (_tilbud is not null)
 
         <div class="varer-legg-til-rad">
         <div class="component-search">
-            <span class="varer-sok-tittel">Legg til vare - søk i komponentregisteret</span>
+            <span class="varer-sok-tittel">Legg til vare, timer, kjøring eller tillegg</span>
             <label class="varer-sok-felt">
                 <Icon Name="search" />
-                <input @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged" placeholder="Søk på navn, leverandør eller produktkode" />
+                <input @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged" placeholder="Søk på vare, leverandør, produktkode eller priskode (f.eks. 200 Kjøring)" />
             </label>
 
-            @if (_searchResults.Count > 0)
+            @{ var kodeTreff = KodeTreff(); }
+            @if (_searchResults.Count > 0 || kodeTreff.Count > 0)
             {
                 <ul class="search-results">
+                    @foreach (var k in kodeTreff)
+                    {
+                        var kode = k;
+                        <li @key="@($"kode-{k.Id}")" class="search-result-item">
+                            <button type="button" class="search-result" @onclick="@(() => LeggTilKodeFraSok(kode))">
+                                <span class="search-result-name"><span class="tk-kode @KodeTypeKlasse(k.Type)">@k.Kode</span> @k.Navn</span>
+                                <span class="search-result-meta">@k.Salgspris.ToString("N0", Kultur) @(k.Enhet.ErProsent() ? "%" : "kr/" + k.Enhet.Navn())</span>
+                            </button>
+                        </li>
+                    }
                     @foreach (var r in _searchResults)
                     {
                         <li @key="r.Id" class="search-result-item" @onmouseenter="@(() => VisBildeForhandsvisning(r))" @onmouseleave="SkjulBildeForhandsvisning">
@@ -443,7 +454,7 @@ else if (_tilbud is not null)
         </div>
         </div>
 
-        @if (_tilbud.Linjer.Count > 0)
+        @if (_tilbud.Linjer.Count > 0 || _tilbud.KodeLinjer.Count > 0)
         {
             <div class="varer-tabell-kort">
             <div class="varer-tabell-scroll">
@@ -590,6 +601,7 @@ else if (_tilbud is not null)
                             <td><button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => FjernLinje(l))"><Icon Name="x" /></button></td>
                         </tr>
                     }
+                    @KodeRader()
                 </tbody>
             </table>
             </div>
@@ -621,7 +633,17 @@ else if (_tilbud is not null)
             <button type="button" class="cancel-button" @onclick="LeggTilGruppering"><Icon Name="plus" />Ny gruppering</button>
         </div>
 
-        @ArbeidOgTillegg()
+        @if (_tilbud.BrukerKodelinjer && _tilbud.KodeLinjer.Count > 0)
+        {
+            <label class="tk-kode-pdf">
+                <input type="checkbox" checked="@_tilbud.VisKodelinjerIPdf" @onchange="SettVisIPdf" />
+                Vis hver kode som egen linje i PDF-en (kode, antall 1 og sum). Ellers én sum: «Montering og tillegg». <a href="/priskoder">Rediger priskodene</a>
+            </label>
+        }
+        @if (_prisKoder.Count == 0)
+        {
+            <p class="tk-kode-dempet">Ingen aktive priskoder for timer og kjøring. <a href="/priskoder">Sett opp priskodene</a>.</p>
+        }
                         </div>
                         break;
                 }
@@ -866,7 +888,11 @@ else if (_tilbud is not null)
                 .ToListAsync();
             _byggetrinnListe = ByggetrinnHelper.Sorter(byggetrinnFraPlantegninger).ToList();
 
-            _prisKoder = await PrisKodeSvc.AlleAsync(bareAktive: true);
+            _prisKoder = (await PrisKodeSvc.SikreStandardAsync()).Where(k => k.Aktiv).OrderBy(k => k.Rekkefolge).ThenBy(k => k.Kode).ToList();
+            if (KonverterTilKodelinjerAutomatisk())
+            {
+                await Db.SaveChangesAsync();
+            }
             OppdaterMontasjekostAutomatisk();
         }
 
@@ -1315,6 +1341,7 @@ else if (_tilbud is not null)
 
     private void OppdaterMontasjekostAutomatisk()
     {
+        KonverterTilKodelinjerAutomatisk();
         if (_tilbud!.BrukerKodelinjer)
         {
             OppdaterKodelinjer();
@@ -1442,6 +1469,7 @@ else if (_tilbud is not null)
             Db.TilbudHendelser.Add(NyHendelse($"Vare lagt til: {linje.Navn}"));
         }
 
+        OppdaterMontasjekostAutomatisk();
         await Db.SaveChangesAsync();
         await OppdaterHendelser();
         _componentSearch = "";
@@ -1613,6 +1641,7 @@ else if (_tilbud is not null)
         OppdaterLinjePris(linje);
 
         Db.TilbudHendelser.Add(NyHendelse($"Vare lagt til: {linje.Navn}"));
+        OppdaterMontasjekostAutomatisk();
         await Db.SaveChangesAsync();
         await OppdaterHendelser();
         LukkProduktVelger();
@@ -1745,7 +1774,6 @@ else if (_tilbud is not null)
     // (KodeLinjeBeregner.Synk), så PDF, totaler og Prosjektøkonomi virker
     // som før.
     private List<PrisKode> _prisKoder = [];
-    private string _kodeSok = "";
 
     private IReadOnlyList<TilbudKodeLinje> KodeLinjer => _tilbud?.KodeLinjer.OrderBy(l => l.Rekkefolge).ThenBy(l => l.Id).ToList() ?? [];
 
@@ -1778,10 +1806,58 @@ else if (_tilbud is not null)
         }
     }
 
+    // Et utkast med varer som har montasjetid får montasjetimene som en egen
+    // linje blant varene (standard montasjekode) av seg selv. Skjer bare én
+    // gang per tilbud: fjerner man linjen etterpå, kommer den ikke tilbake.
+    private bool KonverterTilKodelinjerAutomatisk()
+    {
+        var t = _tilbud!;
+        if (t.BrukerKodelinjer || t.Status != EndringsmeldingStatus.Utkast || BeregnetMontasjetimer <= 0 || _prisKoder.Count == 0)
+        {
+            return false;
+        }
+
+        LagKodelinjerFraMontasje();
+        Db.TilbudHendelser.Add(NyHendelse("Montasjetimene er lagt inn som egen linje."));
+        return true;
+    }
+
+    // Arbeid og tillegg legges til fra samme søkefelt som varene.
+    private List<PrisKode> KodeTreff()
+    {
+        var sok = _componentSearch.Trim();
+        if (sok.Length == 0)
+        {
+            return [];
+        }
+
+        return _prisKoder
+            .Where(k => k.Kode.StartsWith(sok, StringComparison.OrdinalIgnoreCase) || k.Navn.Contains(sok, StringComparison.OrdinalIgnoreCase))
+            .Take(6)
+            .ToList();
+    }
+
+    private async Task LeggTilKodeFraSok(PrisKode k)
+    {
+        if (!_tilbud!.BrukerKodelinjer)
+        {
+            LagKodelinjerFraMontasje();
+        }
+
+        _componentSearch = "";
+        _searchResults = [];
+        await LeggTilKode(k);
+    }
+
     // Gjør dagens timepris × timer (og rigg/drift) om til kodelinjer, uten at summen endres.
     private async Task BrukKodelinjer()
     {
-        _prisKoder = (await PrisKodeSvc.SikreStandardAsync()).Where(k => k.Aktiv).ToList();
+        LagKodelinjerFraMontasje();
+        await LagreKodelinjer("Arbeid og montering er gjort om til kodelinjer.");
+    }
+
+    private void LagKodelinjerFraMontasje()
+    {
         var montasje = _prisKoder.FirstOrDefault(k => k.ErMontasje)
             ?? _prisKoder.FirstOrDefault(k => k.Type == PrisKodeType.Arbeid && k.Enhet == PrisKodeEnhet.Time);
         var t = _tilbud!;
@@ -1808,7 +1884,7 @@ else if (_tilbud is not null)
         }
 
         t.BrukerKodelinjer = true;
-        await LagreKodelinjer("Arbeid og montering er gjort om til kodelinjer.");
+        KodeLinjeBeregner.Synk(t, UtprisVarer);
     }
 
     private async Task LeggTilKode(PrisKode k)
@@ -1818,7 +1894,6 @@ else if (_tilbud is not null)
         linje.FraMontasjetid = forsteTimer && k.ErMontasje;
         linje.Rekkefolge = _tilbud!.KodeLinjer.Count == 0 ? 0 : _tilbud.KodeLinjer.Max(l => l.Rekkefolge) + 1;
         _tilbud.KodeLinjer.Add(linje);
-        _kodeSok = "";
         await LagreKodelinjer($"La til {k.Kode} {k.Navn}.");
     }
 
@@ -1871,18 +1946,6 @@ else if (_tilbud is not null)
         await Db.SaveChangesAsync();
     }
 
-    private List<PrisKode> KodeForslag()
-    {
-        var sok = _kodeSok.Trim();
-        var liste = _prisKoder.AsEnumerable();
-        if (sok.Length > 0)
-        {
-            liste = liste.Where(k => k.Kode.Contains(sok, StringComparison.OrdinalIgnoreCase) || k.Navn.Contains(sok, StringComparison.OrdinalIgnoreCase));
-        }
-
-        return liste.Take(sok.Length > 0 ? 12 : 8).ToList();
-    }
-
     private static string KodeTypeKlasse(PrisKodeType t) => t switch
     {
         PrisKodeType.Arbeid => "tk-kode-arbeid",
@@ -1892,110 +1955,115 @@ else if (_tilbud is not null)
         _ => ""
     };
 
-    private RenderFragment ArbeidOgTillegg() => @<section class="tk-kodelinjer">
-        @{
-            var t = _tilbud!;
-        }
-        <div class="tk-kode-topp">
-            <div>
-                <h3>Arbeid og tillegg</h3>
-                <p>Timer, kjøring, småmateriell og andre koder som egne linjer, med kostpris og salgspris. <a href="/priskoder">Rediger priskodene</a></p>
-            </div>
-        </div>
-        @if (!t.BrukerKodelinjer)
+    // Arbeid og tillegg vises som egne rader nederst i varetabellen: kode og
+    // navn, antall 1 og summen. Timer/antall og pris per enhet endres i den
+    // lille linjen under navnet.
+    private RenderFragment KodeRader() => __builder =>
+    {
+        var t = _tilbud!;
+        var tomKolonnerFoerAntall = 2;
+        var tomKolonnerEtterAntall = 3;
+        if (!t.BrukerKodelinjer)
         {
-            <div class="tk-kode-tom">
-                <p>Montering beregnes nå som timepris × timer@(t.RiggDriftProsent is > 0 ? $" + {t.RiggDriftProsent:0.#} % rigg og drift" : ""): <b>@FormatKrHel(Montasjekost)</b>. Gjør det om til kodelinjer for å legge til kjøring, småmateriell og andre koder med egne priser. Summen blir den samme.</p>
-                <span><button type="button" class="add-button" @onclick="BrukKodelinjer"><Icon Name="plus" />Bruk kodelinjer</button></span>
-            </div>
-        }
-        else
-        {
-            var linjer = KodeLinjer;
-            if (linjer.Count > 0)
+            if (Montasjekost <= 0)
             {
-                <div class="tk-kode-tabell-ramme">
-                    <table class="tk-kode-tabell">
-                        <thead><tr><th>Kode</th><th>Beskrivelse</th><th class="n">Antall</th><th>Enhet</th><th class="n">Kostpris</th><th class="n">Salgspris</th><th class="n">Sum</th><th class="n">DB</th><th></th></tr></thead>
-                        <tbody>
-                            @foreach (var l in linjer)
+                return;
+            }
+
+            <tr class="kode-rad">
+                <td></td>
+                <td>
+                    <div class="vare-navn-celle">
+                        <span class="tk-kode tk-kode-arbeid">–</span>
+                        <span class="vare-navn">Montering</span>
+                    </div>
+                    <small class="kode-hint">@FormatTimer(EstimertArbeidstidTimerMedRigg) × @t.Timepris.ToString("N0", Kultur) kr/t · <button type="button" class="tk-lenkeknapp" @onclick="BrukKodelinjer">Gjør om til kodelinje</button></small>
+                </td>
+                <td class="kode-tall">@FormatKrHel(MontasjeInnpris)</td>
+                @for (var i = 1; i < tomKolonnerFoerAntall; i++)
+                {
+                    <td></td>
+                }
+                <td class="kode-tall">1</td>
+                @for (var i = 0; i < tomKolonnerEtterAntall; i++)
+                {
+                    <td></td>
+                }
+                <td class="kode-tall">@FormatKr(Montasjekost)</td>
+                @if (!ErServiceTilbud)
+                {
+                    <td></td>
+                }
+                <td class="totalt-cell">@FormatKr(Montasjekost)</td>
+                @if (!ErServiceTilbud)
+                {
+                    <td></td>
+                }
+                <td></td>
+            </tr>
+            return;
+        }
+
+        foreach (var l in KodeLinjer)
+        {
+            var linje = l;
+            var sum = KodeLinjeBeregner.Sum(l, t.KodeLinjer, UtprisVarer);
+            var prosent = l.Enhet.ErProsent();
+            <tr @key="@($"kode-{l.Id}")" class="kode-rad">
+                <td></td>
+                <td>
+                    <div class="vare-navn-celle">
+                        <span class="tk-kode @KodeTypeKlasse(l.Type)">@l.Kode</span>
+                        <input class="kode-navn-inn" value="@l.Navn" aria-label="Beskrivelse for kode @l.Kode" @onchange="@(e => EndreKodelinje(linje, e, "navn"))" />
+                    </div>
+                    <small class="kode-hint">
+                        @if (prosent)
+                        {
+                            <input class="kode-inn" inputmode="decimal" value="@l.Salgspris.ToString("0.##", CultureInfo.InvariantCulture)" aria-label="Prosent" @onchange="@(e => EndreKodelinje(linje, e, "salg"))" />
+                            <span>% av @(l.Enhet == PrisKodeEnhet.ProsentVarer ? "varene" : "arbeidet")</span>
+                        }
+                        else
+                        {
+                            <input class="kode-inn" inputmode="decimal" value="@l.Antall.ToString("0.##", CultureInfo.InvariantCulture)" aria-label="Antall @l.Enhet.Navn()" @onchange="@(e => EndreKodelinje(linje, e, "antall"))" />
+                            <span>@l.Enhet.Navn() ×</span>
+                            <input class="kode-inn kode-inn-pris" inputmode="decimal" value="@l.Salgspris.ToString("0.##", CultureInfo.InvariantCulture)" aria-label="Pris per @l.Enhet.Navn()" @onchange="@(e => EndreKodelinje(linje, e, "salg"))" />
+                            <span>kr</span>
+                        }
+                        @if (l.Type == PrisKodeType.Arbeid && l.Enhet == PrisKodeEnhet.Time && KalkulertArbeidstidTimer > 0)
+                        {
+                            if (l.FraMontasjetid)
                             {
-                                var linje = l;
-                                var sum = KodeLinjeBeregner.Sum(l, t.KodeLinjer, UtprisVarer);
-                                var prosent = l.Enhet.ErProsent();
-                                <tr>
-                                    <td><span class="tk-kode @KodeTypeKlasse(l.Type)">@l.Kode</span></td>
-                                    <td>
-                                        <input class="tk-kode-inn" value="@l.Navn" aria-label="Beskrivelse" @onchange="@(e => EndreKodelinje(linje, e, "navn"))" />
-                                        @if (l.Type == PrisKodeType.Arbeid && l.Enhet == PrisKodeEnhet.Time && KalkulertArbeidstidTimer > 0)
-                                        {
-                                            if (l.FraMontasjetid)
-                                            {
-                                                <small class="tk-kode-hint">Følger varenes montasjetid</small>
-                                            }
-                                            else if (Math.Abs(l.Antall - BeregnetMontasjetimer) >= 0.5m)
-                                            {
-                                                <small class="tk-kode-hint">Varenes montasjetid: @FormatTimer(BeregnetMontasjetimer) · <button type="button" class="tk-lenkeknapp" @onclick="@(() => BrukBeregnetTid(linje))">Bruk den</button></small>
-                                            }
-                                        }
-                                    </td>
-                                    <td class="n">
-                                        @if (prosent)
-                                        {
-                                            <span class="tk-kode-dempet">–</span>
-                                        }
-                                        else
-                                        {
-                                            <input class="tk-kode-inn tk-kode-tal" inputmode="decimal" value="@l.Antall.ToString("0.##", CultureInfo.InvariantCulture)" aria-label="Antall" @onchange="@(e => EndreKodelinje(linje, e, "antall"))" />
-                                        }
-                                    </td>
-                                    <td>@l.Enhet.Navn()</td>
-                                    <td class="n"><input class="tk-kode-inn tk-kode-tal" inputmode="decimal" value="@l.Kostpris.ToString("0.##", CultureInfo.InvariantCulture)" aria-label="Kostpris" @onchange="@(e => EndreKodelinje(linje, e, "kost"))" />@(prosent ? " %" : "")</td>
-                                    <td class="n"><input class="tk-kode-inn tk-kode-tal" inputmode="decimal" value="@l.Salgspris.ToString("0.##", CultureInfo.InvariantCulture)" aria-label="Salgspris" @onchange="@(e => EndreKodelinje(linje, e, "salg"))" />@(prosent ? " %" : "")</td>
-                                    <td class="n"><b>@FormatKrHel(sum.Salg)</b></td>
-                                    <td class="n">@(sum.Salg > 0 ? ((sum.Salg - sum.Kost) / sum.Salg * 100).ToString("0", Kultur) + " %" : "–")</td>
-                                    <td><button type="button" class="tk-kode-fjern" title="Fjern linjen" @onclick="@(() => FjernKodelinje(linje))">×</button></td>
-                                </tr>
+                                <span class="kode-dempet">· følger varenes montasjetid</span>
                             }
-                        </tbody>
-                        <tfoot>
-                            <tr>
-                                <td colspan="6">Sum arbeid og tillegg · @FormatTimer(t.EstimertTimerOverride ?? 0)</td>
-                                <td class="n"><b>@FormatKrHel(Montasjekost)</b></td>
-                                <td class="n">@DekningsbidragMonteringProsent.ToString("0", Kultur) %</td>
-                                <td></td>
-                            </tr>
-                        </tfoot>
-                    </table>
-                </div>
-            }
-            else
-            {
-                <p class="tk-kode-dempet">Ingen linjer ennå. Legg til en kode under.</p>
-            }
-
-            <div class="tk-kode-legg-til">
-                <label class="tk-kode-sok">
-                    <Icon Name="search" />
-                    <input value="@_kodeSok" @oninput="@(e => _kodeSok = e.Value?.ToString() ?? "")" placeholder="Legg til kode: søk på nummer eller navn" aria-label="Søk etter kode" />
-                </label>
-                <div class="tk-kode-forslag">
-                    @foreach (var k in KodeForslag())
-                    {
-                        var kode = k;
-                        <button type="button" class="tk-kode-knapp" @onclick="@(() => LeggTilKode(kode))"><span class="tk-kode @KodeTypeKlasse(k.Type)">@k.Kode</span>@k.Navn</button>
-                    }
-                    @if (_prisKoder.Count == 0)
-                    {
-                        <span class="tk-kode-dempet">Ingen aktive priskoder. <a href="/priskoder">Sett opp priskodene</a>.</span>
-                    }
-                </div>
-            </div>
-
-            <label class="tk-kode-pdf">
-                <input type="checkbox" checked="@t.VisKodelinjerIPdf" @onchange="SettVisIPdf" />
-                Vis hver kode som egen linje i PDF-en (kode, antall 1 og sum – timer og timepris vises ikke). Ellers én sum: «Montering og tillegg»
-            </label>
+                            else if (Math.Abs(l.Antall - BeregnetMontasjetimer) >= 0.5m)
+                            {
+                                <span class="kode-dempet">· varene: @FormatTimer(BeregnetMontasjetimer)</span>
+                                <button type="button" class="tk-lenkeknapp" @onclick="@(() => BrukBeregnetTid(linje))">Bruk den</button>
+                            }
+                        }
+                    </small>
+                </td>
+                <td class="kode-tall">@FormatKrHel(sum.Kost)</td>
+                @for (var i = 1; i < tomKolonnerFoerAntall; i++)
+                {
+                    <td></td>
+                }
+                <td class="kode-tall">1</td>
+                <td></td>
+                <td class="kode-tall kode-dempet">@(sum.Salg > 0 ? ((sum.Salg - sum.Kost) / sum.Salg * 100).ToString("0", Kultur) + " %" : "")</td>
+                <td></td>
+                <td class="kode-tall">@FormatKr(sum.Salg)</td>
+                @if (!ErServiceTilbud)
+                {
+                    <td></td>
+                }
+                <td class="totalt-cell">@FormatKr(sum.Salg)</td>
+                @if (!ErServiceTilbud)
+                {
+                    <td></td>
+                }
+                <td><button type="button" class="ikon-btn" title="Fjern @l.Kode @l.Navn" aria-label="Fjern @l.Kode @l.Navn" @onclick="@(() => FjernKodelinje(linje))"><Icon Name="x" /></button></td>
+            </tr>
         }
-    </section>;
+    };
 }
