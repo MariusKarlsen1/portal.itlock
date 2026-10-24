@@ -70,5 +70,9 @@ public class Tilbud
     // MontasjeInnpris ut fra linjene, så resten av portalen virker som før.
     public bool BrukerKodelinjer { get; set; }
     public bool VisKodelinjerIPdf { get; set; } = true;
+
+    // Når en kodelinje er flyttet blant varene (dra og slipp), deler varelinjene
+    // og kodelinjene samme Rekkefolge. Før det står kodelinjene under varene.
+    public bool FellesRekkefolge { get; set; }
     public List<TilbudKodeLinje> KodeLinjer { get; set; } = [];
 }

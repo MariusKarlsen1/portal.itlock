@@ -6760,6 +6760,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<decimal?>("EstimertTimerOverride")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("FellesRekkefolge")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("ForesporselBeskrivelse")
                         .HasColumnType("TEXT");
 
