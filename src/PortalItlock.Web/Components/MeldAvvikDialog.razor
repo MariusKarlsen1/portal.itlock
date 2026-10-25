@@ -1,0 +1,252 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+@* «Meld avvik»: tittel, beskrivelse, bilder, ansvarlig, prioritet, arbeidsordre
+   og synlighet. Brukes fra dørkortet (DorId satt) og fra prosjektet (velg dør). *@
+<div class="ma-overlay" @onclick="Lukk">
+    <div class="ma-dialog" role="dialog" aria-modal="true" aria-labelledby="ma-tittel" @onclick:stopPropagation="true">
+        <div class="ma-topp">
+            <span class="ma-ikon">!</span>
+            <div class="ma-tittel">
+                <small>@_undertittel</small>
+                <h2 id="ma-tittel">Meld avvik</h2>
+            </div>
+            <button type="button" class="ma-lukk" title="Lukk" aria-label="Lukk" @onclick="Lukk"><Icon Name="x" /></button>
+        </div>
+
+        <div class="ma-kropp">
+            @if (DorId is null)
+            {
+                <label class="ma-felt ma-hel">
+                    Dør <span class="ma-krav">*</span>
+                    <select @bind="_valgtDorId">
+                        <option value="">Velg dør …</option>
+                        @foreach (var d in Dorer.OrderBy(d => d.Dornummer))
+                        {
+                            <option value="@d.Id">@d.Dornummer</option>
+                        }
+                    </select>
+                </label>
+            }
+            <label class="ma-felt ma-hel">
+                Hva er galt? <span class="ma-krav">*</span>
+                <input @bind="_tittel" @bind:event="oninput" placeholder="F.eks. trekkevei til nøkkelbryter er for lav" maxlength="120" />
+                <small>Kort tittel – vises i lister og i e-posten</small>
+            </label>
+            <label class="ma-felt ma-hel">
+                Beskrivelse
+                <textarea rows="3" @bind="_beskrivelse" @bind:event="oninput" placeholder="Hva er feil, og hva må gjøres?"></textarea>
+            </label>
+
+            <div class="ma-felt ma-hel">
+                Bilder
+                <div class="ma-bilder">
+                    @for (var i = 0; i < _bilder.Count; i++)
+                    {
+                        var indeks = i;
+                        var b = _bilder[i];
+                        <span class="ma-bilde">
+                            <img src="@b.Forhandsvisning" alt="@b.Filnavn" />
+                            <button type="button" title="Fjern bildet" aria-label="Fjern @b.Filnavn" @onclick="@(() => _bilder.RemoveAt(indeks))">×</button>
+                        </span>
+                    }
+                    <label class="ma-bilde ma-bilde-ny">
+                        <b>+</b><small>Ta bilde eller<br />last opp</small>
+                        <InputFile OnChange="LeggTilBilder" multiple accept="image/*" capture="environment" />
+                    </label>
+                </div>
+                @if (!string.IsNullOrEmpty(_bildeFeil))
+                {
+                    <small class="ma-feil">@_bildeFeil</small>
+                }
+            </div>
+
+            <label class="ma-felt">
+                Ansvarlig for oppfølging
+                <select @bind="_ansvarligId">
+                    <option value="">Prosjektleder</option>
+                    @foreach (var b in _brukere)
+                    {
+                        <option value="@b.Id">@b.Navn@(b.Id == _prosjektlederId ? " (prosjektleder)" : "")</option>
+                    }
+                </select>
+            </label>
+            <div class="ma-felt">
+                Prioritet
+                <span class="ma-seg" role="group" aria-label="Prioritet">
+                    @foreach (var p in Enum.GetValues<AvvikPrioritet>())
+                    {
+                        var prioritet = p;
+                        <button type="button" class="@(_prioritet == p ? "pa " + (p == AvvikPrioritet.Hoy ? "hoy" : "") : "")" aria-pressed="@(_prioritet == p ? "true" : "false")" @onclick="@(() => _prioritet = prioritet)">@p.Visningsnavn()</button>
+                    }
+                </span>
+            </div>
+            <label class="ma-felt">
+                Arbeidsordre (valgfritt)
+                <select @bind="_arbeidsordreId">
+                    <option value="">Ingen</option>
+                    @foreach (var a in _arbeidsordre)
+                    {
+                        <option value="@a.Id">#@a.Id · @a.Navn</option>
+                    }
+                </select>
+            </label>
+            <div class="ma-felt">
+                Synlig for kunden
+                <button type="button" role="switch" aria-checked="@(_synlig ? "true" : "false")" class="ma-bryter @(_synlig ? "pa" : "")" @onclick="@(() => _synlig = !_synlig)"><i></i>@(_synlig ? "Ja" : "Nei – bare internt")</button>
+            </div>
+        </div>
+
+        <div class="ma-fot">
+            <small>@MottakerTekst</small>
+            @if (!string.IsNullOrEmpty(_feil))
+            {
+                <small class="ma-feil">@_feil</small>
+            }
+            <button type="button" class="ma-knapp" @onclick="Lukk">Avbryt</button>
+            <button type="button" class="ma-knapp ma-knapp-rod" disabled="@_lagrer" @onclick="Meld">@(_lagrer ? "Melder …" : "Meld avvik")</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int ProsjektId { get; set; }
+    [Parameter] public int? DorId { get; set; }
+    [Parameter] public List<Dor> Dorer { get; set; } = [];
+    [Parameter] public EventCallback<Avvik> OnMeldt { get; set; }
+    [Parameter] public EventCallback OnLukk { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Bilde(string Filnavn, string ContentType, byte[] Data, string Forhandsvisning);
+    private sealed record Valg(int Id, string Navn);
+
+    private const long MaksBildestorrelse = 15_000_000;
+
+    private string _tittel = "";
+    private string _beskrivelse = "";
+    private int? _valgtDorId;
+    private int? _ansvarligId;
+    private int? _arbeidsordreId;
+    private AvvikPrioritet _prioritet = AvvikPrioritet.Normal;
+    private bool _synlig;
+    private readonly List<Bilde> _bilder = [];
+    private string? _feil;
+    private string? _bildeFeil;
+    private bool _lagrer;
+    private int? _brukerId;
+    private int? _prosjektlederId;
+    private string _undertittel = "";
+    private List<Valg> _brukere = [];
+    private List<Valg> _arbeidsordre = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            if (int.TryParse(state.User.FindFirst("BrukerId")?.Value, out var id))
+            {
+                _brukerId = id;
+            }
+        }
+
+        var prosjekt = await Db.Prosjekter.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProsjektId);
+        _prosjektlederId = prosjekt?.ProsjektlederId;
+        _valgtDorId = DorId;
+
+        var dorNummer = DorId is int d ? (Dorer.FirstOrDefault(x => x.Id == d)?.Dornummer ?? await Db.Dorer.Where(x => x.Id == d).Select(x => x.Dornummer).FirstOrDefaultAsync()) : null;
+        _undertittel = string.Join(" · ", new[] { prosjekt?.Navn, dorNummer is null ? null : $"Dør {dorNummer}" }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+        _brukere = await Db.Brukere.AsNoTracking()
+            .Where(b => b.Aktiv && b.SlettetDato == null && b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens)
+            .OrderBy(b => b.Navn)
+            .Select(b => new Valg(b.Id, b.Navn))
+            .ToListAsync();
+
+        _arbeidsordre = await Db.Arbeidsordre.AsNoTracking()
+            .Where(a => a.ProsjektId == ProsjektId && a.Status != ArbeidsordreStatus.Fakturert)
+            .OrderByDescending(a => a.Id)
+            .Select(a => new Valg(a.Id, a.Tittel))
+            .ToListAsync();
+    }
+
+    private string MottakerTekst
+    {
+        get
+        {
+            var id = _ansvarligId ?? _prosjektlederId;
+            var navn = _brukere.FirstOrDefault(b => b.Id == id)?.Navn;
+            if (navn is null)
+            {
+                return "Administratorene får e-post om avviket.";
+            }
+
+            return id == _brukerId ? "Du er satt som ansvarlig." : $"{navn} får e-post med lenke til avviket.";
+        }
+    }
+
+    private async Task LeggTilBilder(InputFileChangeEventArgs e)
+    {
+        _bildeFeil = null;
+        foreach (var fil in e.GetMultipleFiles(10))
+        {
+            if (fil.Size > MaksBildestorrelse)
+            {
+                _bildeFeil = $"{fil.Name} er for stort (maks 15 MB).";
+                continue;
+            }
+
+            using var strom = fil.OpenReadStream(MaksBildestorrelse);
+            using var ms = new MemoryStream();
+            await strom.CopyToAsync(ms);
+            var data = ms.ToArray();
+            var type = string.IsNullOrWhiteSpace(fil.ContentType) ? "image/jpeg" : fil.ContentType;
+            _bilder.Add(new Bilde(fil.Name, type, data, $"data:{type};base64,{Convert.ToBase64String(data)}"));
+        }
+    }
+
+    private async Task Meld()
+    {
+        _feil = null;
+        if (_valgtDorId is null)
+        {
+            _feil = "Velg døren avviket gjelder.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_tittel))
+        {
+            _feil = "Skriv kort hva som er galt.";
+            return;
+        }
+
+        _lagrer = true;
+        var tittel = _tittel.Trim();
+        var avvik = new Avvik
+        {
+            DorId = _valgtDorId.Value,
+            Tittel = tittel,
+            Beskrivelse = string.IsNullOrWhiteSpace(_beskrivelse) ? tittel : _beskrivelse.Trim(),
+            Prioritet = _prioritet,
+            SynligForKunde = _synlig,
+            AnsvarligBrukerId = _ansvarligId ?? _prosjektlederId,
+            ArbeidsordreId = _arbeidsordreId,
+            OpprettetAvBrukerId = _brukerId
+        };
+        foreach (var b in _bilder)
+        {
+            avvik.Media.Add(new AvvikMedia { Data = b.Data, ContentType = b.ContentType, Filnavn = b.Filnavn });
+        }
+
+        avvik.Kommentarer.Add(new AvvikKommentar { Tekst = "Avviket ble meldt.", ErHendelse = true, BrukerId = _brukerId });
+        Db.Avvik.Add(avvik);
+        await Db.SaveChangesAsync();
+        _lagrer = false;
+        await OnMeldt.InvokeAsync(avvik);
+    }
+
+    private Task Lukk() => OnLukk.InvokeAsync();
+}

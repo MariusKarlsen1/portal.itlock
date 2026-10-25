@@ -133,6 +133,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ProsjektRolle> ProsjektRoller => Set<ProsjektRolle>();
     public DbSet<AnsattTimekost> AnsattTimekost => Set<AnsattTimekost>();
     public DbSet<Avvik> Avvik => Set<Avvik>();
+    public DbSet<AvvikMedia> AvvikMedia => Set<AvvikMedia>();
+    public DbSet<AvvikKommentar> AvvikKommentarer => Set<AvvikKommentar>();
     public DbSet<Tilvalg> Tilvalg => Set<Tilvalg>();
     public DbSet<TilvalgAlternativ> TilvalgAlternativer => Set<TilvalgAlternativ>();
     public DbSet<TilvalgMal> TilvalgMaler => Set<TilvalgMal>();
@@ -196,6 +198,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         LastFilerForSlettedePlantegninger();
+        NummererAvvik();
         SynkKodelinjer();
         var varsler = FinnVarsler();
         var resultat = base.SaveChanges(acceptAllChangesOnSuccess);
@@ -206,11 +209,28 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         LastFilerForSlettedePlantegninger();
+        NummererAvvik();
         SynkKodelinjer();
         var varsler = FinnVarsler();
         var resultat = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         SendVarsler(varsler);
         return resultat;
+    }
+
+    // Nye avvik får neste løpenummer (AVV-0001, AVV-0002 …) i organisasjonen.
+    private void NummererAvvik()
+    {
+        var nye = ChangeTracker.Entries<Avvik>().Where(e => e.State == EntityState.Added && e.Entity.Nummer == 0).ToList();
+        if (nye.Count == 0)
+        {
+            return;
+        }
+
+        var neste = (Avvik.Max(a => (int?)a.Nummer) ?? 0) + 1;
+        foreach (var e in nye)
+        {
+            e.Entity.Nummer = neste++;
+        }
     }
 
     // Tilbud med kodelinjer: montasjefeltene regnes ut fra linjene (og varenes
@@ -777,6 +797,36 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasOne(a => a.OpprettetAvBruker)
             .WithMany()
             .HasForeignKey(a => a.OpprettetAvBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Avvik>()
+            .HasOne(a => a.AnsvarligBruker)
+            .WithMany()
+            .HasForeignKey(a => a.AnsvarligBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Avvik>()
+            .HasOne(a => a.Arbeidsordre)
+            .WithMany()
+            .HasForeignKey(a => a.ArbeidsordreId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<AvvikMedia>()
+            .HasOne(m => m.Avvik)
+            .WithMany(a => a.Media)
+            .HasForeignKey(m => m.AvvikId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<AvvikKommentar>()
+            .HasOne(k => k.Avvik)
+            .WithMany(a => a.Kommentarer)
+            .HasForeignKey(k => k.AvvikId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<AvvikKommentar>()
+            .HasOne(k => k.Bruker)
+            .WithMany()
+            .HasForeignKey(k => k.BrukerId)
             .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<DorMedia>()

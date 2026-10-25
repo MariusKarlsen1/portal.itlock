@@ -4,7 +4,10 @@ public enum AvvikStatus
 {
     Apent,
     SendtTilKunde,
-    Godkjent
+    Godkjent,
+
+    // Lagt til sist så lagrede tallverdier ikke endrer betydning.
+    Lukket
 }
 
 public static class AvvikStatusExtensions
@@ -14,6 +17,7 @@ public static class AvvikStatusExtensions
         AvvikStatus.Apent => "Åpent",
         AvvikStatus.SendtTilKunde => "Sendt til kunde",
         AvvikStatus.Godkjent => "Godkjent av kunde",
+        AvvikStatus.Lukket => "Lukket",
         _ => status.ToString()
     };
 }

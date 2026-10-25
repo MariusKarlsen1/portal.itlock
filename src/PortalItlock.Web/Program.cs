@@ -1357,6 +1357,14 @@ app.MapGet("/ticketmedia/{id:int}/fil", async (int id, ApplicationDbContext db) 
         : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), enableRangeProcessing: true);
 }).RequireAuthorization();
 
+app.MapGet("/avvikmedia/{id:int}/fil", async (int id, ApplicationDbContext db) =>
+{
+    var media = await db.AvvikMedia.FindAsync(id);
+    return media is null
+        ? Results.NotFound()
+        : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), enableRangeProcessing: true);
+}).RequireAuthorization();
+
 app.MapGet("/foresporselmedia/{id:int}/fil", async (int id, ApplicationDbContext db) =>
 {
     var media = await db.ForesporselMedia.FindAsync(id);

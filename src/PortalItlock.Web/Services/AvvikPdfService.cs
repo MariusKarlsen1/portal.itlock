@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using PortalItlock.Web.Data;
+using PortalItlock.Web.Models;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -16,6 +17,9 @@ public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     {
         var avvik = await db.Avvik
             .Include(a => a.Dor).ThenInclude(d => d!.Prosjekt)
+            .Include(a => a.AnsvarligBruker)
+            .Include(a => a.Media)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(a => a.Id == avvikId);
 
         if (avvik is null)
@@ -25,6 +29,7 @@ public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
         var dor = avvik.Dor;
         var prosjektNavn = dor?.Prosjekt?.Navn ?? "";
+        var bilder = avvik.Media.Where(m => m.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)).OrderBy(m => m.Id).ToList();
 
         var document = Document.Create(doc =>
         {
@@ -41,10 +46,50 @@ public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     col.Spacing(10);
 
                     PdfStil.InfoBoks(col, 3,
-                        ("Prosjekt", prosjektNavn), ("Dør", dor?.Dornummer),
-                        ("Dato", avvik.OpprettetDato.ToString("dd.MM.yyyy")));
+                        ("Avvik", avvik.NummerTekst), ("Prosjekt", prosjektNavn), ("Dør", dor?.Dornummer),
+                        ("Dato", avvik.OpprettetDato.ToString("dd.MM.yyyy")), ("Prioritet", avvik.Prioritet.Visningsnavn()),
+                        ("Ansvarlig", avvik.AnsvarligBruker?.Navn ?? "-"));
+
+                    if (!string.IsNullOrWhiteSpace(avvik.Tittel))
+                    {
+                        col.Item().Text(avvik.Tittel).FontSize(13).SemiBold();
+                    }
 
                     PdfStil.FriSeksjon(col, "Beskrivelse av avvik", avvik.Beskrivelse);
+
+                    // Bildene to og to, rotert slik de er satt på avvikssiden.
+                    if (bilder.Count > 0)
+                    {
+                        col.Item().Column(inner =>
+                        {
+                            PdfStil.SeksjonTittel(inner, "Bilder");
+                            foreach (var par in bilder.Chunk(2))
+                            {
+                                inner.Item().PaddingTop(6).Row(row =>
+                                {
+                                    row.Spacing(8);
+                                    foreach (var b in par)
+                                    {
+                                        var celle = row.RelativeItem().Height(190).Border(1).BorderColor(PdfStil.SandBorder).Padding(3).AlignCenter().AlignMiddle();
+                                        var rotert = b.Rotasjon switch
+                                        {
+                                            90 => celle.RotateRight(),
+                                            180 => celle.RotateRight().RotateRight(),
+                                            270 => celle.RotateLeft(),
+                                            _ => celle
+                                        };
+                                        rotert.Image(b.Data).FitArea();
+                                    }
+
+                                    if (par.Length == 1)
+                                    {
+                                        row.RelativeItem();
+                                    }
+                                });
+                            }
+                        });
+                    }
+
                     PdfStil.FriSeksjon(col, "Foreslått utbedring", avvik.UtbedringBeskrivelse);
 
                     if (avvik.Pris.HasValue)

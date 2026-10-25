@@ -193,6 +193,7 @@ else
             {
                 <button type="button" class="@TabClass("montering") mobil-admin-fane" @onclick="@(() => _activeTab = "montering")">Montering</button>
             }
+            <button type="button" class="@TabClass("avvik")" @onclick="@(() => _activeTab = "avvik")">Avvik @if (_prosjektAvvik.Any(a => a.Status == AvvikStatus.Apent)) {<span class="tab-antall tab-antall-rod">@_prosjektAvvik.Count(a => a.Status == AvvikStatus.Apent)</span>}</button>
             <span class="tab-skille mobil-admin-fane"></span>
             <button type="button" class="@TabClass("fdv") mobil-admin-fane" @onclick="@(() => _activeTab = "fdv")">FDV</button>
             <button type="button" class="@TabClass("beslagsliste") mobil-admin-fane" @onclick="@(() => _activeTab = "beslagsliste")">Beslagsliste</button>
@@ -1149,6 +1150,69 @@ else
                 <p class="list-empty">Ingen plantegninger lastet opp ennå.</p>
             }
         </div>
+    }
+    else if (_activeTab == "avvik")
+    {
+        @* Avvik på prosjektets dører. Hvert avvik har egen side (/avvik/{id}). *@
+        var avvikVis = _prosjektAvvik.Where(a => _avvikFilter switch
+        {
+            "sendt" => a.Status is AvvikStatus.SendtTilKunde or AvvikStatus.Godkjent,
+            "lukket" => a.Status == AvvikStatus.Lukket,
+            _ => a.Status == AvvikStatus.Apent
+        }).ToList();
+        <div class="prosjekt-layout pa-layout">
+            <div class="p5-topp">
+                <span class="pa-filter" role="group" aria-label="Filter">
+                    @foreach (var (nokkel, navn, antall) in new[]
+                    {
+                        ("apne", "Åpne", _prosjektAvvik.Count(a => a.Status == AvvikStatus.Apent)),
+                        ("sendt", "Sendt til kunde", _prosjektAvvik.Count(a => a.Status is AvvikStatus.SendtTilKunde or AvvikStatus.Godkjent)),
+                        ("lukket", "Lukket", _prosjektAvvik.Count(a => a.Status == AvvikStatus.Lukket))
+                    })
+                    {
+                        var n = nokkel;
+                        <button type="button" class="@(_avvikFilter == nokkel ? "pa" : "")" aria-pressed="@(_avvikFilter == nokkel ? "true" : "false")" @onclick="@(() => _avvikFilter = n)">@navn <span>@antall</span></button>
+                    }
+                </span>
+                <button type="button" class="ph-knapp ph-knapp-liten ph-knapp-primar p5-hoyre" @onclick="@(() => _visMeldAvvik = true)" disabled="@(_dorer.Count == 0)"><Icon Name="plus" />Meld avvik</button>
+            </div>
+
+            @if (avvikVis.Count == 0)
+            {
+                <p class="list-empty">@(_prosjektAvvik.Count == 0 ? "Ingen avvik meldt på prosjektet." : "Ingen avvik her.")</p>
+            }
+            else
+            {
+                <div class="pa-tabell-kort">
+                    <table class="pa-tabell">
+                        <thead><tr><th>Nr.</th><th>Avvik</th><th>Dør</th><th class="pa-valg">Ansvarlig</th><th>Prioritet</th><th class="pa-valg">Meldt</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var a in avvikVis)
+                            {
+                                var avvikId = a.Id;
+                                <tr @key="a.Id" class="pa-rad" @onclick="@(() => Nav.NavigateTo($"/avvik/{avvikId}"))">
+                                    <td class="pa-nr">@a.NummerTekst</td>
+                                    <td>
+                                        <a class="pa-tittel" href="@($"/avvik/{a.Id}")" @onclick:stopPropagation="true">@a.Overskrift</a>
+                                        <small>@(a.OpprettetAvBruker?.Navn ?? "Ukjent")@(_avvikBilder.GetValueOrDefault(a.Id) is > 0 and var nb ? $" · {nb} bilde{(nb == 1 ? "" : "r")}" : "")</small>
+                                    </td>
+                                    <td>@a.Dor?.Dornummer</td>
+                                    <td class="pa-valg">@(a.AnsvarligBruker?.Navn ?? "–")</td>
+                                    <td><span class="pa-prio @(a.Prioritet == AvvikPrioritet.Hoy ? "hoy" : "")">@a.Prioritet.Visningsnavn()</span></td>
+                                    <td class="pa-valg">@a.OpprettetDato.ToString("dd.MM")</td>
+                                    <td class="pa-pil"><Icon Name="chevron-right" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        @if (_visMeldAvvik && Id is int pid)
+        {
+            <MeldAvvikDialog ProsjektId="pid" Dorer="_dorer" OnLukk="@(() => _visMeldAvvik = false)" OnMeldt="ProsjektAvvikMeldt" />
+        }
     }
     else if (_activeTab == "vedlegg")
     {
@@ -2519,6 +2583,10 @@ else
     }
     private List<DorIdMal> _dorIdMaler = [];
     private DorIdMal? _aapenDorIdMal;
+    private List<Avvik> _prosjektAvvik = [];
+    private Dictionary<int, int> _avvikBilder = [];
+    private string _avvikFilter = "apne";
+    private bool _visMeldAvvik;
     private string _nyDorIdKode = "";
     // Prosjektet åpner på Oversikt (nøkkeltall og status). Skjemaet med
     // prosjektopplysningene ligger under "Prosjektinfo" (nøkkel "oversikt").
@@ -2738,6 +2806,7 @@ else
                 .Where(m => m.ProsjektId == Id.Value)
                 .OrderBy(m => m.Kode)
                 .ToListAsync();
+            await LastProsjektAvvikAsync();
 
             _dorer = await Db.Dorer
                 .Where(d => d.ProsjektId == Id.Value)
@@ -2911,6 +2980,7 @@ else
             .Where(m => m.ProsjektId == Id.Value)
             .OrderBy(m => m.Kode)
             .ToListAsync();
+        await LastProsjektAvvikAsync();
 
         StateHasChanged();
     }
@@ -3650,6 +3720,36 @@ else
         _dorIdMaler.Add(mal);
         _dorIdMaler = _dorIdMaler.OrderBy(m => m.Kode).ToList();
         _nyDorIdKode = "";
+    }
+
+    // Avvik på prosjektets dører (fanen Avvik). Bildene telles for seg, så
+    // bildedataene ikke lastes.
+    private async Task LastProsjektAvvikAsync()
+    {
+        if (Id is not int pid)
+        {
+            return;
+        }
+
+        _prosjektAvvik = await Db.Avvik.AsNoTracking()
+            .Include(a => a.Dor)
+            .Include(a => a.OpprettetAvBruker)
+            .Include(a => a.AnsvarligBruker)
+            .Where(a => a.Dor!.ProsjektId == pid)
+            .OrderByDescending(a => a.OpprettetDato)
+            .ToListAsync();
+        var ider = _prosjektAvvik.Select(a => a.Id).ToList();
+        _avvikBilder = await Db.AvvikMedia.Where(m => ider.Contains(m.AvvikId))
+            .GroupBy(m => m.AvvikId)
+            .Select(g => new { g.Key, Antall = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.Antall);
+    }
+
+    private async Task ProsjektAvvikMeldt(Avvik avvik)
+    {
+        _visMeldAvvik = false;
+        await LastProsjektAvvikAsync();
+        _avvikFilter = "apne";
     }
 
     // Dør-ID-kortet lagrer hvert felt med en gang.

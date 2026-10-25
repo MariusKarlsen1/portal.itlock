@@ -11,8 +11,6 @@
 @inject ApplicationDbContext Db
 @inject IJSRuntime JS
 @inject NavigationManager Nav
-@inject AvvikPdfService AvvikPdfService
-@inject LagretPdfService LagretPdfService
 
 @if (!IModal)
 {
@@ -66,7 +64,7 @@ else
                         <button type="button" disabled="@(!OnNeste.HasDelegate)" @onclick="@(() => OnNeste.InvokeAsync())">@NesteNavn ›</button>
                     </span>
                 }
-                <button type="button" class="ds-kn" @onclick="@(() => VelgFane("avvik"))"><Icon Name="alert" />Meld avvik</button>
+                <button type="button" class="ds-kn" @onclick="@(async () => { await VelgFane("avvik"); _visMeldAvvik = true; })"><Icon Name="alert" />Meld avvik</button>
                 <button type="button" class="ds-kn" @onclick="@(() => VelgFane("logg"))"><Icon Name="camera" />Bilde</button>
                 @if (IModal && OnTilbake.HasDelegate)
                 {
@@ -332,64 +330,36 @@ else
                     break;
 
                 case "avvik":
+                    @* Avvik: hvert avvik har sin egen side (/avvik/{id}) med bilder,
+                       logg, pris og PDF. Her vises listen og «Meld avvik». *@
                     <div class="ds-seksjon">
-                        <h4>Avvik</h4>
-                        <div class="ds-rad">
-                            <textarea class="ds-inp ds-flex" @bind="_nyAvvikBeskrivelse" placeholder="Beskriv avviket..."></textarea>
-                            <button type="button" class="ds-kn ds-kn-p" @onclick="MeldAvvik"><Icon Name="plus" />Meld avvik</button>
+                        <div class="ds-rad ds-mellom">
+                            <h4>Avvik</h4>
+                            <button type="button" class="ds-kn ds-kn-p" @onclick="@(() => _visMeldAvvik = true)"><Icon Name="plus" />Meld avvik</button>
                         </div>
-                        @if (!string.IsNullOrEmpty(_avvikFeil))
-                        {
-                            <p class="form-error">@_avvikFeil</p>
-                        }
                         @if (_avvik.Count == 0)
                         {
                             <p class="list-empty">Ingen avvik registrert på denne døren.</p>
                         }
-                        @foreach (var a in _avvik)
+                        else
                         {
-                            <div @key="a.Id" class="ds-avv">
-                                <div class="ds-rad ds-mellom">
-                                    <span class="avvik-status avvik-status-@a.Status">@a.Status.Visningsnavn()</span>
-                                    <span class="ds-sm">@a.OpprettetDato.ToString("dd.MM.yyyy HH:mm") @(a.OpprettetAvBruker is not null ? $"· {a.OpprettetAvBruker.Navn}" : "")</span>
-                                </div>
-                                <span>@a.Beskrivelse</span>
-
-                                <AuthorizeView Roles="Admin,Prosjektleder">
-                                    <Authorized>
-                                        @if (a.Status == AvvikStatus.Apent)
-                                        {
-                                            <div class="avvik-prisform">
-                                                <textarea @bind="a.UtbedringBeskrivelse" placeholder="Foreslått utbedring (valgfritt)"></textarea>
-                                                <input @bind="a.Pris" placeholder="Pris eks. mva" class="price-input" />
-                                                <button type="button" class="save-button" @onclick="@(() => LagreAvvikPris(a))">Lagre</button>
-                                                <button type="button" class="edit-button" @onclick="@(() => VisAvvikPdf(a.Id))">Forhåndsvis PDF</button>
-                                                <button type="button" class="edit-button" disabled="@(!a.Pris.HasValue)" @onclick="@(() => SendTilKunde(a))">Send til kunde</button>
-                                            </div>
-                                        }
-                                        else
-                                        {
-                                            @if (a.Pris.HasValue)
-                                            {
-                                                <p><strong>Pris for utbedring:</strong> @a.Pris.Value.ToString("N2", Kultur) kr eks. mva</p>
-                                            }
-                                            <button type="button" class="edit-button" @onclick="@(() => VisAvvikPdf(a.Id))">Vis PDF</button>
-                                        }
-                                    </Authorized>
-                                </AuthorizeView>
-
-                                @if (a.Status == AvvikStatus.Godkjent)
+                            <div class="ds-avvik-liste">
+                                @foreach (var a in _avvik)
                                 {
-                                    <p class="save-success">Godkjent av @a.SignertAvNavn - @a.SignertDato?.ToString("dd.MM.yyyy HH:mm")</p>
+                                    <a @key="a.Id" class="ds-avvik-rad" href="@($"/avvik/{a.Id}")">
+                                        <span class="ds-avvik-nr">@a.NummerTekst</span>
+                                        <span class="ds-avvik-tekst">
+                                            <b>@a.Overskrift</b>
+                                            <small>@a.OpprettetDato.ToString("dd.MM.yyyy") @(a.OpprettetAvBruker is not null ? $"· {a.OpprettetAvBruker.Navn}" : "")</small>
+                                        </span>
+                                        @if (a.Prioritet == AvvikPrioritet.Hoy)
+                                        {
+                                            <span class="ds-pill ds-rod">Høy</span>
+                                        }
+                                        <span class="avvik-status avvik-status-@a.Status">@a.Status.Visningsnavn()</span>
+                                        <Icon Name="chevron-right" />
+                                    </a>
                                 }
-
-                                <AuthorizeView Roles="Admin,Prosjektleder">
-                                    <Authorized>
-                                        <div class="avvik-pdfliste">
-                                            <LagredePdfListe Pdfer="@_lagredePdfer.GetValueOrDefault(a.Id, [])" />
-                                        </div>
-                                    </Authorized>
-                                </AuthorizeView>
                             </div>
                         }
                     </div>
@@ -599,8 +569,10 @@ else
         </div>
     </div>
 
-    <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Avvik" SaveMessage="@_pdfSavedMessage"
-                      OnSave="LagreAvvikPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
+    @if (_visMeldAvvik)
+    {
+        <MeldAvvikDialog ProsjektId="_dor.ProsjektId" DorId="_dor.Id" OnLukk="@(() => _visMeldAvvik = false)" OnMeldt="AvvikMeldt" />
+    }
 }
 
 @code {
@@ -713,12 +685,7 @@ else
     private int? _apenCeId;
     private DorMediaTidspunkt _nyMediaTidspunkt = DorMediaTidspunkt.For;
     private string? _mediaFeil;
-    private string _nyAvvikBeskrivelse = "";
-    private string? _avvikFeil;
-    private string? _pdfPreviewUrl;
-    private string? _pdfSavedMessage;
-    private int? _aktivAvvikId;
-    private Dictionary<int, List<LagretPdf>> _lagredePdfer = [];
+    private bool _visMeldAvvik;
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     private int? _naverendeBrukerId;
@@ -824,7 +791,6 @@ else
         // (N+1-mønster, se CODE_REVIEW.md 2026-10-08) - samme data/sortering
         // som før, siden lesestedet (LagredePdfListe) allerede bruker
         // GetValueOrDefault(id, []) for avvik uten lagrede PDF-er.
-        _lagredePdfer = await LagretPdfService.HentForFlereAsync("Avvik", _avvik.Select(a => a.Id).ToList());
 
         var sylinderKomponenter = _dor.Komponenter.Where(k => k.Component?.ErSylinder == true).ToList();
         var componentIder = sylinderKomponenter.Select(k => k.ComponentId).ToList();
@@ -1054,72 +1020,12 @@ else
         _media.Remove(media);
     }
 
-    private async Task MeldAvvik()
+    // Nytt avvik fra «Meld avvik»: øverst i listen. E-posten til ansvarlig sendes ved lagring.
+    private async Task AvvikMeldt(Avvik avvik)
     {
-        _avvikFeil = null;
-        if (string.IsNullOrWhiteSpace(_nyAvvikBeskrivelse))
-        {
-            _avvikFeil = "Skriv en beskrivelse av avviket.";
-            return;
-        }
-
-        var avvik = new Avvik
-        {
-            DorId = Id,
-            Beskrivelse = _nyAvvikBeskrivelse.Trim(),
-            OpprettetAvBrukerId = _naverendeBrukerId
-        };
-        Db.Avvik.Add(avvik);
-        await Db.SaveChangesAsync();
-
-        avvik.OpprettetAvBruker = _naverendeBrukerId.HasValue ? await Db.Brukere.FindAsync(_naverendeBrukerId.Value) : null;
+        _visMeldAvvik = false;
+        avvik.OpprettetAvBruker = avvik.OpprettetAvBrukerId is int b ? await Db.Brukere.FindAsync(b) : null;
         _avvik.Insert(0, avvik);
-        _nyAvvikBeskrivelse = "";
-    }
-
-    private async Task LagreAvvikPris(Avvik avvik)
-    {
-        var entitet = await Db.Avvik.FindAsync(avvik.Id);
-        if (entitet is null)
-        {
-            return;
-        }
-
-        entitet.UtbedringBeskrivelse = string.IsNullOrWhiteSpace(avvik.UtbedringBeskrivelse) ? null : avvik.UtbedringBeskrivelse.Trim();
-        entitet.Pris = avvik.Pris;
-        await Db.SaveChangesAsync();
-    }
-
-    private void VisAvvikPdf(int avvikId)
-    {
-        _aktivAvvikId = avvikId;
-        _pdfSavedMessage = null;
-        _pdfPreviewUrl = $"/avvik/{avvikId}/pdf";
-    }
-
-    private async Task LagreAvvikPdf()
-    {
-        if (_aktivAvvikId is not { } avvikId)
-        {
-            return;
-        }
-
-        var bytes = await AvvikPdfService.GenerateAsync(avvikId);
-        if (bytes is null)
-        {
-            return;
-        }
-
-        var pdf = await LagretPdfService.LagreAsync(
-            "Avvik", avvikId, $"Avvik - {_dor?.Dornummer} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes);
-
-        if (!_lagredePdfer.TryGetValue(avvikId, out var liste))
-        {
-            liste = [];
-            _lagredePdfer[avvikId] = liste;
-        }
-        liste.Add(pdf);
-        _pdfSavedMessage = "PDF-en er lagret nedenfor.";
     }
 
     private async Task StartCeGodkjenning()
@@ -1187,19 +1093,4 @@ else
             .ToListAsync();
     }
 
-    private async Task SendTilKunde(Avvik avvik)
-    {
-        var entitet = await Db.Avvik.FindAsync(avvik.Id);
-        if (entitet is null || !entitet.Pris.HasValue)
-        {
-            return;
-        }
-
-        entitet.Status = AvvikStatus.SendtTilKunde;
-        entitet.SendtTilKundeDato = DateTime.Now;
-        await Db.SaveChangesAsync();
-
-        avvik.Status = AvvikStatus.SendtTilKunde;
-        avvik.SendtTilKundeDato = entitet.SendtTilKundeDato;
-    }
 }

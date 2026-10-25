@@ -160,9 +160,10 @@ public class EpostVarselTjeneste(
         }
     }
 
-    // Nytt avvik på en dør: til prosjektlederen på prosjektet, eller til
-    // administratorene hvis prosjektet ikke har prosjektleder. Den som meldte
-    // avviket, får ikke e-posten selv.
+    // Nytt avvik på en dør: til den som er satt som ansvarlig på avviket, ellers
+    // prosjektlederen, eller administratorene hvis prosjektet ikke har
+    // prosjektleder. Den som meldte avviket, får ikke e-posten selv. Knappen
+    // går rett til avvikssiden.
     public async Task AvvikNyttAsync(Tenant tenant, int avvikId, int? meldtAvId)
     {
         var avvik = await db.Avvik.AsNoTracking()
@@ -178,9 +179,12 @@ public class EpostVarselTjeneste(
         var aktive = await db.Brukere.AsNoTracking()
             .Where(b => b.Aktiv && b.SlettetDato == null && b.Epost != "")
             .ToListAsync();
-        var kandidater = prosjekt.ProsjektlederId is { } pl && aktive.FirstOrDefault(b => b.Id == pl) is { } leder
+        var kandidater = avvik.AnsvarligBrukerId is { } ans && aktive.FirstOrDefault(b => b.Id == ans) is { } ansvarlig
+            ? [ansvarlig]
+            : prosjekt.ProsjektlederId is { } pl && aktive.FirstOrDefault(b => b.Id == pl) is { } leder
             ? [leder]
             : aktive.Where(b => b.Rolle == BrukerRolle.Admin).ToList();
+        var antallBilder = await db.AvvikMedia.CountAsync(m => m.AvvikId == avvikId);
         var mottakere = kandidater
             .Where(b => b.Id != meldtAvId)
             .Where(b => EpostVarsler.Gjelder(EpostVarsler.AvvikNytt, b.Rolle, b.Id, roller, brukere))
@@ -194,9 +198,19 @@ public class EpostVarselTjeneste(
         var dorTekst = string.Join(" · ", new[] { $"Dør {dor.Dornummer}", dor.Romnr is { Length: > 0 } r ? $"rom {r}" : null, dor.Etasje is { Length: > 0 } e ? $"{e}. etg." : null }.Where(s => s is not null));
         var fakta = new List<(string, string)>
         {
+            ("Avvik", E(avvik.NummerTekst)),
             ("Prosjekt", E(prosjekt.Navn)),
             ("Dør", E(dorTekst)),
         };
+        if (avvik.Prioritet == AvvikPrioritet.Hoy)
+        {
+            fakta.Add(("Prioritet", "Høy"));
+        }
+
+        if (antallBilder > 0)
+        {
+            fakta.Add(("Bilder", $"{antallBilder} – se avvikssiden"));
+        }
         if (prosjekt.Kunde is { } kunde)
         {
             fakta.Add(("Kunde", E(kunde.Navn)));
@@ -215,21 +229,23 @@ public class EpostVarselTjeneste(
             var html = Lag(tenant, new Innhold
             {
                 Farge = Rod,
-                Merke = "Nytt avvik",
-                Tittel = $"Avvik på dør {dor.Dornummer}",
-                IntroHtml = b.Id == prosjekt.ProsjektlederId
+                Merke = avvik.Prioritet == AvvikPrioritet.Hoy ? "Nytt avvik · høy prioritet" : "Nytt avvik",
+                Tittel = avvik.Overskrift,
+                IntroHtml = b.Id == avvik.AnsvarligBrukerId
+                    ? $"Hei {E(Fornavn(b.Navn))}, det er meldt et avvik på dør {E(dor.Dornummer)}, og du er satt som ansvarlig."
+                    : b.Id == prosjekt.ProsjektlederId
                     ? $"Hei {E(Fornavn(b.Navn))}, det er meldt et avvik på prosjektet ditt."
                     : $"Hei {E(Fornavn(b.Navn))}, det er meldt et avvik på et prosjekt som ikke har prosjektleder.",
                 Fakta = fakta,
-                Sitat = avvik.Beskrivelse,
-                KnappTekst = "Åpne døren",
-                KnappUrl = $"{portal}/dor/{dor.Id}",
-                Lenke2Tekst = "Åpne prosjektet",
-                Lenke2Url = $"{portal}/prosjekter/{prosjekt.Id}",
-                Tips = "Fra døren kan du sende avviket til kunden som tilbud på utbedring, med pris og signatur.",
+                Sitat = avvik.Beskrivelse != avvik.Tittel ? avvik.Beskrivelse : null,
+                KnappTekst = "Åpne avviket",
+                KnappUrl = $"{portal}/avvik/{avvik.Id}",
+                Lenke2Tekst = "Åpne døren",
+                Lenke2Url = $"{portal}/dor/{dor.Id}",
+                Tips = "På avvikssiden ser du bildene, kan opprette arbeidsordre og sende tilbud på utbedring til kunden.",
                 Grunn = Grunn(tenant)
             });
-            await epost.SendAsync(b.Epost, $"Nytt avvik: {prosjekt.Navn}, dør {dor.Dornummer}", html, fraOrganisasjonId: tenant.Id);
+            await epost.SendAsync(b.Epost, $"Nytt avvik {avvik.NummerTekst}: {prosjekt.Navn}, dør {dor.Dornummer}", html, fraOrganisasjonId: tenant.Id);
         }
     }
 

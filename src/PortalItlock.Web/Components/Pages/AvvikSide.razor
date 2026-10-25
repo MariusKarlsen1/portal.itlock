@@ -1,0 +1,450 @@
+@page "/avvik/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+@inject AvvikPdfService AvvikPdfService
+@inject LagretPdfService LagretPdfService
+
+<PageTitle>@(_avvik is null ? "Avvik" : $"{_avvik.NummerTekst} {_avvik.Overskrift}")</PageTitle>
+
+@if (_ikkeFunnet)
+{
+    <p class="form-error">Fant ikke avviket. Det kan være slettet.</p>
+}
+else if (_avvik is null)
+{
+    <p>Laster...</p>
+}
+else
+{
+    var dor = _avvik.Dor!;
+    var prosjekt = dor.Prosjekt;
+    var lukket = _avvik.Status == AvvikStatus.Lukket;
+
+    @* Avvikssiden: her lander man fra e-posten om nytt avvik. Beskrivelse, bilder
+       og logg til venstre, fakta og tilbud på utbedring til høyre. *@
+    <div class="av-side">
+        <a class="av-tilbake" href="@($"/prosjekter/{dor.ProsjektId}")">‹ @prosjekt?.Navn</a>
+
+        <div class="av-kort">
+            <div class="av-topp">
+                <span class="av-ikon">!</span>
+                <div class="av-tittel">
+                    <small>@prosjekt?.Navn · <a href="@($"/dor/{dor.Id}")">Dør @dor.Dornummer</a></small>
+                    <h1><span>@_avvik.NummerTekst</span> @_avvik.Overskrift</h1>
+                </div>
+                <span class="av-pill @StatusKlasse(_avvik.Status)">@_avvik.Status.Visningsnavn()</span>
+                @if (_avvik.Prioritet == AvvikPrioritet.Hoy)
+                {
+                    <span class="av-pill av-pill-rodlys">Høy prioritet</span>
+                }
+            </div>
+
+            <div class="av-handl">
+                @if (_avvik.ArbeidsordreId is int aoId)
+                {
+                    <a class="av-kn" href="@($"/arbeidsordre/{aoId}")"><Icon Name="tool" />Åpne arbeidsordre</a>
+                }
+                else if (_erLeder)
+                {
+                    <button type="button" class="av-kn" @onclick="OpprettArbeidsordre"><Icon Name="tool" />Opprett arbeidsordre</button>
+                }
+                @if (_erLeder)
+                {
+                    <button type="button" class="av-kn" @onclick="VisPdf"><Icon Name="file-text" />PDF</button>
+                }
+                @if (lukket)
+                {
+                    <button type="button" class="av-kn" @onclick="Gjenapne"><Icon Name="arrow-left" />Gjenåpne</button>
+                }
+                else
+                {
+                    <button type="button" class="av-kn av-kn-g" @onclick="Lukk"><Icon Name="check" />Lukk avvik</button>
+                }
+            </div>
+
+            <div class="av-grid">
+                <div class="av-kol">
+                    <section class="av-boks">
+                        <h3>Avviket</h3>
+                        <label class="av-felt">Tittel<input @bind="_avvik.Tittel" @bind:after="Lagre" placeholder="Kort hva som er galt" /></label>
+                        <label class="av-felt">Beskrivelse<textarea rows="4" @bind="_avvik.Beskrivelse" @bind:after="Lagre"></textarea></label>
+                    </section>
+
+                    <section class="av-boks">
+                        <h3>Bilder <span class="av-teller">@_avvik.Media.Count</span></h3>
+                        <div class="av-bilder">
+                            @foreach (var m in _avvik.Media)
+                            {
+                                var media = m;
+                                <button type="button" class="av-bilde" title="Vis stort" @onclick="@(() => _visBilde = media)">
+                                    <img src="@($"/avvikmedia/{m.Id}/fil")" alt="@m.Filnavn" loading="lazy" style="transform:rotate(@(m.Rotasjon)deg)" />
+                                </button>
+                            }
+                            <label class="av-bilde av-bilde-ny">
+                                <b>+</b><small>Legg til</small>
+                                <InputFile OnChange="LeggTilBilder" multiple accept="image/*" capture="environment" />
+                            </label>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_bildeFeil))
+                        {
+                            <small class="av-feil">@_bildeFeil</small>
+                        }
+                    </section>
+
+                    <section class="av-boks">
+                        <h3>Logg</h3>
+                        @foreach (var k in _avvik.Kommentarer.OrderBy(k => k.Tidspunkt))
+                        {
+                            <div class="av-logg @(k.ErHendelse ? "hendelse" : "")">
+                                <span>@k.Tidspunkt.ToString("dd.MM HH:mm")</span>
+                                <span>@(k.Bruker is not null ? (k.ErHendelse ? $"{k.Tekst} · {k.Bruker.Navn}" : $"{k.Bruker.Navn}: {k.Tekst}") : k.Tekst)</span>
+                            </div>
+                        }
+                        <div class="av-kommenter">
+                            <input @bind="_nyKommentar" @bind:event="oninput" placeholder="Skriv en kommentar …" @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilKommentar(); } })" />
+                            <button type="button" class="av-kn" disabled="@string.IsNullOrWhiteSpace(_nyKommentar)" @onclick="LeggTilKommentar"><Icon Name="send" />Send</button>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="av-kol">
+                    <section class="av-boks av-fakta">
+                        <div><span>Avviksnr.</span><b>@_avvik.NummerTekst</b></div>
+                        <div><span>Prosjekt</span><a href="@($"/prosjekter/{dor.ProsjektId}")">@prosjekt?.Navn</a></div>
+                        <div><span>Dør</span><a href="@($"/dor/{dor.Id}")">@dor.Dornummer</a></div>
+                        <div>
+                            <span>Ansvarlig</span>
+                            <select @bind="_avvik.AnsvarligBrukerId" @bind:after="Lagre" aria-label="Ansvarlig">
+                                <option value="">Ikke satt</option>
+                                @foreach (var b in _brukere)
+                                {
+                                    <option value="@b.Id">@b.Navn</option>
+                                }
+                            </select>
+                        </div>
+                        <div>
+                            <span>Prioritet</span>
+                            <select @bind="_avvik.Prioritet" @bind:after="Lagre" aria-label="Prioritet">
+                                @foreach (var p in Enum.GetValues<AvvikPrioritet>())
+                                {
+                                    <option value="@p">@p.Visningsnavn()</option>
+                                }
+                            </select>
+                        </div>
+                        <div><span>Meldt av</span><b>@(_avvik.OpprettetAvBruker?.Navn ?? "Ukjent")</b></div>
+                        <div><span>Opprettet</span><b>@_avvik.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</b></div>
+                        <div>
+                            <span>Synlig for kunde</span>
+                            <button type="button" role="switch" aria-checked="@(_avvik.SynligForKunde ? "true" : "false")" class="av-bryter @(_avvik.SynligForKunde ? "pa" : "")" @onclick="VekslSynlig"><i></i>@(_avvik.SynligForKunde ? "Ja" : "Nei")</button>
+                        </div>
+                        <div>
+                            <span>Arbeidsordre</span>
+                            @if (_avvik.ArbeidsordreId is int ao)
+                            {
+                                <a href="@($"/arbeidsordre/{ao}")">#@ao</a>
+                            }
+                            else
+                            {
+                                <b>Ingen</b>
+                            }
+                        </div>
+                        @if (_avvik.LukketDato is { } ld)
+                        {
+                            <div><span>Lukket</span><b>@ld.ToString("dd.MM.yyyy HH:mm")</b></div>
+                        }
+                    </section>
+
+                    @if (_erLeder)
+                    {
+                        <section class="av-boks">
+                            <h3>Tilbud på utbedring</h3>
+                            <label class="av-felt">Utbedring<textarea rows="2" @bind="_avvik.UtbedringBeskrivelse" @bind:after="Lagre" placeholder="Hva skal gjøres?"></textarea></label>
+                            <label class="av-felt">Pris eks. mva<input inputmode="decimal" @bind="_avvik.Pris" @bind:after="Lagre" placeholder="0" /></label>
+                            @if (_avvik.Status == AvvikStatus.Godkjent)
+                            {
+                                <p class="av-ok">Godkjent av @_avvik.SignertAvNavn @_avvik.SignertDato?.ToString("dd.MM.yyyy HH:mm")</p>
+                            }
+                            else if (_avvik.Status == AvvikStatus.SendtTilKunde)
+                            {
+                                <p class="av-info">Sendt til kunden @_avvik.SendtTilKundeDato?.ToString("dd.MM.yyyy") – venter på signatur.</p>
+                            }
+                            <div class="av-rad">
+                                <button type="button" class="av-kn" @onclick="VisPdf">Forhåndsvis PDF</button>
+                                @if (_avvik.Status == AvvikStatus.Apent)
+                                {
+                                    <button type="button" class="av-kn av-kn-p" disabled="@(!_avvik.Pris.HasValue)" @onclick="SendTilKunde">Send til kunde</button>
+                                }
+                            </div>
+                            <LagredePdfListe Pdfer="_lagredePdfer" />
+                        </section>
+                    }
+                </div>
+            </div>
+
+            <div class="av-fot">
+                <span>Endringer lagres automatisk</span>
+                @if (_erLeder)
+                {
+                    @if (_bekreftSlett)
+                    {
+                        <span class="av-rad">Slette avviket? <button type="button" class="av-kn" @onclick="@(() => _bekreftSlett = false)">Avbryt</button><button type="button" class="av-kn av-kn-rod" @onclick="Slett">Slett</button></span>
+                    }
+                    else
+                    {
+                        <button type="button" class="av-slett" @onclick="@(() => _bekreftSlett = true)">Slett avvik</button>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (_visBilde is { } vb)
+    {
+        <div class="av-lys" @onclick="@(() => _visBilde = null)">
+            <div class="av-lys-innhold" @onclick:stopPropagation="true">
+                <img src="@($"/avvikmedia/{vb.Id}/fil")" alt="@vb.Filnavn" style="transform:rotate(@(vb.Rotasjon)deg)" />
+                <div class="av-lys-knapper">
+                    <button type="button" class="av-kn" @onclick="@(() => Roter(vb, -90))">↺ Roter venstre</button>
+                    <button type="button" class="av-kn" @onclick="@(() => Roter(vb, 90))">Roter høyre ↻</button>
+                    <a class="av-kn" href="@($"/avvikmedia/{vb.Id}/fil")" target="_blank">Åpne original</a>
+                    <button type="button" class="av-kn av-kn-rod" @onclick="@(() => SlettBilde(vb))">Slett bildet</button>
+                    <button type="button" class="av-kn" @onclick="@(() => _visBilde = null)">Lukk</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    <PdfPreviewModal Url="@_pdfUrl" Tittel="Avvik" SaveMessage="@_pdfMelding"
+                     OnSave="LagrePdf" OnClose="@(() => _pdfUrl = null)" />
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Valg(int Id, string Navn);
+
+    private Avvik? _avvik;
+    private bool _ikkeFunnet;
+    private bool _erLeder;
+    private int? _brukerId;
+    private List<Valg> _brukere = [];
+    private List<LagretPdf> _lagredePdfer = [];
+    private string _nyKommentar = "";
+    private AvvikMedia? _visBilde;
+    private string? _bildeFeil;
+    private string? _pdfUrl;
+    private string? _pdfMelding;
+    private bool _bekreftSlett;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var state = await AuthStateTask;
+            _erLeder = state.User.IsInRole("Admin") || state.User.IsInRole("Prosjektleder");
+            if (int.TryParse(state.User.FindFirst("BrukerId")?.Value, out var id))
+            {
+                _brukerId = id;
+            }
+        }
+
+        _avvik = await Db.Avvik
+            .Include(a => a.Dor).ThenInclude(d => d!.Prosjekt)
+            .Include(a => a.OpprettetAvBruker)
+            .Include(a => a.AnsvarligBruker)
+            .Include(a => a.Media.OrderBy(m => m.Id))
+            .Include(a => a.Kommentarer).ThenInclude(k => k.Bruker)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(a => a.Id == Id);
+        _ikkeFunnet = _avvik is null;
+        if (_avvik is null)
+        {
+            return;
+        }
+
+        _brukere = await Db.Brukere.AsNoTracking()
+            .Where(b => b.Aktiv && b.SlettetDato == null && b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens)
+            .OrderBy(b => b.Navn)
+            .Select(b => new Valg(b.Id, b.Navn))
+            .ToListAsync();
+        _lagredePdfer = await LagretPdfService.HentAsync("Avvik", _avvik.Id);
+    }
+
+    private static string StatusKlasse(AvvikStatus s) => s switch
+    {
+        AvvikStatus.Apent => "av-pill-rod",
+        AvvikStatus.SendtTilKunde => "av-pill-gul",
+        AvvikStatus.Godkjent => "av-pill-gronn",
+        _ => "av-pill-gra"
+    };
+
+    private void Logg(string tekst, bool hendelse = true) =>
+        _avvik!.Kommentarer.Add(new AvvikKommentar { Tekst = tekst, ErHendelse = hendelse, BrukerId = _brukerId });
+
+    private async Task Lagre()
+    {
+        if (string.IsNullOrWhiteSpace(_avvik!.Beskrivelse))
+        {
+            _avvik.Beskrivelse = _avvik.Tittel ?? "";
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task VekslSynlig()
+    {
+        _avvik!.SynligForKunde = !_avvik.SynligForKunde;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LeggTilKommentar()
+    {
+        var tekst = _nyKommentar.Trim();
+        if (tekst.Length == 0)
+        {
+            return;
+        }
+
+        Logg(tekst, hendelse: false);
+        _nyKommentar = "";
+        await Db.SaveChangesAsync();
+        await LastKommentarBrukere();
+    }
+
+    private async Task LastKommentarBrukere()
+    {
+        foreach (var k in _avvik!.Kommentarer.Where(k => k.Bruker is null && k.BrukerId is not null))
+        {
+            k.Bruker = await Db.Brukere.FindAsync(k.BrukerId);
+        }
+    }
+
+    private async Task LeggTilBilder(InputFileChangeEventArgs e)
+    {
+        _bildeFeil = null;
+        foreach (var fil in e.GetMultipleFiles(10))
+        {
+            if (fil.Size > 15_000_000)
+            {
+                _bildeFeil = $"{fil.Name} er for stort (maks 15 MB).";
+                continue;
+            }
+
+            using var strom = fil.OpenReadStream(15_000_000);
+            using var ms = new MemoryStream();
+            await strom.CopyToAsync(ms);
+            _avvik!.Media.Add(new AvvikMedia
+            {
+                Data = ms.ToArray(),
+                ContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "image/jpeg" : fil.ContentType,
+                Filnavn = fil.Name
+            });
+        }
+
+        Logg("La til bilde.");
+        await Db.SaveChangesAsync();
+        await LastKommentarBrukere();
+    }
+
+    private async Task Roter(AvvikMedia m, int grader)
+    {
+        m.Rotasjon = ((m.Rotasjon + grader) % 360 + 360) % 360;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SlettBilde(AvvikMedia m)
+    {
+        _avvik!.Media.Remove(m);
+        Db.AvvikMedia.Remove(m);
+        _visBilde = null;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task Lukk()
+    {
+        _avvik!.Status = AvvikStatus.Lukket;
+        _avvik.LukketDato = DateTime.Now;
+        Logg("Avviket ble lukket.");
+        await Db.SaveChangesAsync();
+        await LastKommentarBrukere();
+    }
+
+    private async Task Gjenapne()
+    {
+        _avvik!.Status = AvvikStatus.Apent;
+        _avvik.LukketDato = null;
+        Logg("Avviket ble åpnet igjen.");
+        await Db.SaveChangesAsync();
+        await LastKommentarBrukere();
+    }
+
+    private async Task SendTilKunde()
+    {
+        if (!_avvik!.Pris.HasValue)
+        {
+            return;
+        }
+
+        _avvik.Status = AvvikStatus.SendtTilKunde;
+        _avvik.SendtTilKundeDato = DateTime.Now;
+        Logg("Sendt til kunden som tilbud på utbedring.");
+        await Db.SaveChangesAsync();
+        await LastKommentarBrukere();
+    }
+
+    // Lager en arbeidsordre på prosjektet ut fra avviket og kobler dem.
+    private async Task OpprettArbeidsordre()
+    {
+        var dor = _avvik!.Dor!;
+        var ordre = new Arbeidsordre
+        {
+            Tittel = $"{_avvik.NummerTekst}: {_avvik.Overskrift}",
+            Beskrivelse = $"Dør {dor.Dornummer}. {_avvik.Beskrivelse}",
+            ProsjektId = dor.ProsjektId,
+            KundeId = dor.Prosjekt?.KundeId
+        };
+        Db.Arbeidsordre.Add(ordre);
+        await Db.SaveChangesAsync();
+
+        _avvik.ArbeidsordreId = ordre.Id;
+        Logg($"Arbeidsordre #{ordre.Id} ble opprettet.");
+        await Db.SaveChangesAsync();
+        await LastKommentarBrukere();
+    }
+
+    private void VisPdf()
+    {
+        _pdfMelding = null;
+        _pdfUrl = $"/avvik/{Id}/pdf";
+    }
+
+    private async Task LagrePdf()
+    {
+        var bytes = await AvvikPdfService.GenerateAsync(Id);
+        if (bytes is null)
+        {
+            return;
+        }
+
+        var pdf = await LagretPdfService.LagreAsync("Avvik", Id, $"{_avvik!.NummerTekst} - Dør {_avvik.Dor?.Dornummer} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes);
+        _lagredePdfer.Insert(0, pdf);
+        _pdfMelding = "PDF-en er lagret.";
+    }
+
+    private async Task Slett()
+    {
+        var prosjektId = _avvik!.Dor!.ProsjektId;
+        Db.Avvik.Remove(_avvik);
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo($"/prosjekter/{prosjektId}");
+    }
+}
