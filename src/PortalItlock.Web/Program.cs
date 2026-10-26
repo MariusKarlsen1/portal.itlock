@@ -1389,6 +1389,14 @@ app.MapGet("/komponent/fdvdokument/{id:int}", async (int id, ApplicationDbContex
         : Results.File(dokument.Data, FilSikkerhet.TryggContentType(dokument.ContentType), dokument.Filnavn);
 }).RequireAuthorization();
 
+app.MapGet("/fdvvedlegg/{id:int}/fil", async (int id, ApplicationDbContext db) =>
+{
+    var vedlegg = await db.FdvVedlegg.FindAsync(id);
+    return vedlegg is null
+        ? Results.NotFound()
+        : Results.File(vedlegg.Data, FilSikkerhet.TryggContentType(vedlegg.ContentType), vedlegg.Filnavn);
+}).RequireAuthorization();
+
 app.MapGet("/komponent/{id:int}/montasjeblad", async (int id, ApplicationDbContext db) =>
 {
     var komponent = await db.LastFilerAsync(db.Components.FirstOrDefaultAsync(c => c.Id == id));

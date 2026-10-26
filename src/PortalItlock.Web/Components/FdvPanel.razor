@@ -6,172 +6,361 @@
 @inject FdvPdfService FdvPdfService
 @inject LagretPdfService LagretPdfService
 
-<div class="prosjekt-layout fdv-layout">
-    <div class="fdv-header">
-        <span class="fdv-header-ikon"><Icon Name="check-circle" /></span>
-        <h1>FDV</h1>
+@* FDV E (fdv-e.html): forside, «Legg ved PDF» og «Generer FDV» øverst, så søk
+   og filter, og alle varene fra dørene i én tabell der de som mangler FDV
+   får sin egen «Legg ved». Lagrede PDF-er nederst. *@
+<section class="fe">
+    <div class="fe-topp">
+        <div class="fe-tittel">
+            @if (_prosjekt is not null)
+            {
+                <small>@_prosjekt.Navn</small>
+            }
+            <h2>FDV-dokumentasjon</h2>
+        </div>
+        <span class="fe-sp"></span>
+        @if (_prosjekt is not null)
+        {
+            <button type="button" class="fe-knapp" @onclick="ApneForside"><Icon Name="file-text" />@ForsideTekst</button>
+        }
+        <button type="button" class="fe-knapp" @onclick="@(() => ApneVedlegg(null))"><Icon Name="plus" />Legg ved PDF</button>
+        <button type="button" class="fe-knapp fe-hoved" @onclick="GenererFdv" disabled="@(!KanGenerere)"><Icon Name="file-text" />Generer FDV</button>
     </div>
-    <p class="section-hint fdv-intro">Samler FDV-dokumentasjonen for alle varer som er lagt på dørene, i én PDF. Hver vare kommer med kun én gang selv om den er brukt på flere dører.</p>
 
-    @if (_prosjekt is not null)
+    <div class="fe-filter">
+        <input class="fe-sok" type="search" @bind="_sok" @bind:event="oninput" placeholder="Søk vare eller kode …" aria-label="Søk vare eller kode" />
+        <button type="button" class="fe-chip" aria-pressed="@(_filter == "alle" ? "true" : "false")" @onclick="@(() => _filter = "alle")">Alle<em>@(VarerIUtvalg.Count + EkstraVedlegg.Count)</em></button>
+        <button type="button" class="fe-chip" aria-pressed="@(_filter == "mangler" ? "true" : "false")" @onclick="@(() => _filter = "mangler")">Mangler<em>@AntallMangler</em></button>
+        <button type="button" class="fe-chip" aria-pressed="@(_filter == "har" ? "true" : "false")" @onclick="@(() => _filter = "har")">Har FDV<em>@(VarerIUtvalg.Count - AntallMangler)</em></button>
+        <button type="button" class="fe-chip" aria-pressed="@(_filter == "ved" ? "true" : "false")" @onclick="@(() => _filter = "ved")">Vedlegg<em>@EkstraVedlegg.Count</em></button>
+        @if (_byggetrinnListe.Count > 1)
+        {
+            <select class="fe-velg" @bind="_trinn" @bind:after="TrinnEndret" aria-label="Byggetrinn">
+                <option value="">Alle byggetrinn</option>
+                @foreach (var b in _byggetrinnListe)
+                {
+                    <option value="@b">Byggetrinn @b</option>
+                }
+            </select>
+        }
+        @if (VarerIUtvalg.Count > 0)
+        {
+            var prosent = 100 * (VarerIUtvalg.Count - AntallMangler) / VarerIUtvalg.Count;
+            <span class="fe-status">
+                <span><b>@(VarerIUtvalg.Count - AntallMangler) av @VarerIUtvalg.Count</b> har FDV</span>
+                <span class="fe-mal"><i class="@(AntallMangler > 0 ? "delvis" : "")" style="width:@(prosent)%"></i></span>
+            </span>
+        }
+    </div>
+
+    @if (!_visVedlegg && !string.IsNullOrEmpty(_feil))
     {
-        <div class="fdv-panel">
-            <div class="fdv-panel-header">
-                <span class="fdv-panel-ikon"><Icon Name="file-text" /></span>
-                <h2>Forside</h2>
-            </div>
-            <div class="field-grid">
-                <label class="span-2">
-                    Forside-mal
-                    <div class="forside-mal-rad">
+        <p class="form-error">@_feil</p>
+    }
+
+    @{ var rader = Rader(); }
+    @if (_vareRader.Count == 0 && _fdvVedlegg.Count == 0)
+    {
+        <p class="fe-tom">Ingen varer er lagt på dørene ennå. Når dørene har beslag, vises de her med FDV-status.</p>
+    }
+    else
+    {
+        <div class="fe-tabell">
+            <table>
+                <thead>
+                    <tr>
+                        <th><button type="button" @onclick="@(() => Sorter("navn"))">Vare<Icon Name="@SortIkon("navn")" /></button></th>
+                        <th>Kode</th>
+                        <th class="t"><button type="button" @onclick="@(() => Sorter("dorer"))">Dører<Icon Name="@SortIkon("dorer")" /></button></th>
+                        @if (_byggetrinnListe.Count > 0)
+                        {
+                            <th>Byggetrinn</th>
+                        }
+                        <th><button type="button" @onclick="@(() => Sorter("status"))">FDV<Icon Name="@SortIkon("status")" /></button></th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (rader.Count == 0)
+                    {
+                        <tr><td colspan="6" class="fe-tom">Ingen treff. Prøv et annet søk eller filter.</td></tr>
+                    }
+                    @foreach (var r in rader)
+                    {
+                        <tr @key="r.Nokkel" class="@(r.Mangler ? "mangler" : "")">
+                            <td class="fe-navn">@r.Navn@if (r.Vedlagt is not null) {<small>@r.Vedlagt.Filnavn</small>}</td>
+                            <td class="fe-kode">@(r.ErVedlegg ? "Ekstra vedlegg" : r.Kode)</td>
+                            <td class="t">@(r.ErVedlegg ? "–" : r.Dorer.ToString())</td>
+                            @if (_byggetrinnListe.Count > 0)
+                            {
+                                <td>@(r.ErVedlegg ? "–" : string.Join(", ", r.Byggetrinn))</td>
+                            }
+                            <td>@Status(r)</td>
+                            <td class="t fe-hand">@Handling(r)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="fe-mobil">
+            @if (rader.Count == 0)
+            {
+                <p class="fe-tom">Ingen treff.</p>
+            }
+            @foreach (var r in rader)
+            {
+                <div @key="r.Nokkel" class="fe-mkort @(r.Mangler ? "mangler" : "")">
+                    <span class="fe-navn">@r.Navn</span>
+                    @Status(r)
+                    <span class="fe-kode">@(r.ErVedlegg ? "Ekstra vedlegg" : $"{r.Kode} · {r.Dorer} {(r.Dorer == 1 ? "dør" : "dører")}")</span>
+                    <span class="fe-mhand">@Handling(r)</span>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="fe-lagret">
+        <span class="fe-kol-t">Lagrede PDF-er</span>
+        <span class="fe-lagret-kort">
+            @if (_lagredeFdvPdfer.Count == 0)
+            {
+                <text>Ingen ennå – trykk «Generer FDV».</text>
+            }
+            else
+            {
+                @string.Join(" · ", _lagredeFdvPdfer.Take(3).Select(p => p.OpprettetDato.ToString("dd.MM.yyyy")))
+            }
+        </span>
+        @if (_lagredeFdvPdfer.Count > 0)
+        {
+            <button type="button" class="fe-lenke" @onclick="@(() => _visAlleLagrede = !_visAlleLagrede)">@(_visAlleLagrede ? "Skjul" : "Vis alle")</button>
+        }
+    </div>
+    @if (_visAlleLagrede && _lagredeFdvPdfer.Count > 0)
+    {
+        <LagredePdfListe Pdfer="_lagredeFdvPdfer" />
+    }
+</section>
+
+@if (_visForside && _prosjekt is not null)
+{
+    <div class="fe-overlay" @onclick="LukkForside">
+        <div class="fe-modal" role="dialog" aria-modal="true" aria-label="Forside" @onclick:stopPropagation="true">
+            <div class="fe-mhode"><h3>Forside</h3><button type="button" class="fe-lukk" aria-label="Lukk" @onclick="LukkForside"><Icon Name="x" /></button></div>
+            <div class="fe-mkropp">
+                <label class="fe-felt">Forside-mal
+                    <span class="fe-rad2">
                         <select @bind="_valgtFdvForsideMalId">
-                            <option value="">Velg forside...</option>
+                            <option value="">Velg forside …</option>
                             @foreach (var f in _forsideMaler)
                             {
                                 <option value="@f.Id">@f.Navn</option>
                             }
                         </select>
-                        <button type="button" class="cancel-button" @onclick="BrukFdvForsideMal" disabled="@(_valgtFdvForsideMalId is null)">Bruk</button>
-                    </div>
+                        <button type="button" class="fe-knapp" @onclick="BrukFdvForsideMal" disabled="@(_valgtFdvForsideMalId is null)">Bruk mal</button>
+                    </span>
                 </label>
-
-                <label class="span-2">
-                    Forside / forbehold
-                    <ForsideTekstRedigering @bind-Value="_prosjekt.FdvForside" Rows="8" Placeholder="Tekst til forsiden av FDV-samlingen." />
+                <label class="fe-felt">Forside / forbehold
+                    <ForsideTekstRedigering @bind-Value="_forsideUtkast" Rows="8" Placeholder="Tekst til forsiden av FDV-samlingen." />
                 </label>
             </div>
-
-            <div class="form-actions">
-                <button type="button" class="save-button" @onclick="LagreFdvForside">Lagre forside</button>
-                @if (!string.IsNullOrEmpty(_savedMessage))
-                {
-                    <span class="save-success">@_savedMessage</span>
-                }
+            <div class="fe-mfot">
+                <button type="button" class="fe-knapp" @onclick="LukkForside">Avbryt</button>
+                <button type="button" class="fe-knapp fe-hoved" @onclick="LagreFdvForside">Lagre forside</button>
             </div>
         </div>
-    }
-
-    <div class="fdv-panel">
-        <div class="fdv-panel-header">
-            <span class="fdv-panel-ikon"><Icon Name="folder" /></span>
-            <h2>Ekstra PDF-vedlegg</h2>
-        </div>
-        <p class="section-hint">Legg til en PDF (f.eks. for en vare uten registrert FDV) som blir med når du genererer FDV.</p>
-
-        @if (_fdvVedlegg.Count > 0)
-        {
-            <div class="fdv-fil-liste">
-                @foreach (var v in _fdvVedlegg)
-                {
-                    <div @key="v.Id" class="fdv-fil-rad">
-                        <span class="fdv-fil-ikon"><Icon Name="file-text" /></span>
-                        <span class="fdv-fil-navn">@v.Navn</span>
-                        <button type="button" class="icon-button" title="Fjern" @onclick="@(() => RemoveFdvVedlegg(v))"><Icon Name="x" /></button>
-                    </div>
-                }
-            </div>
-        }
-
-        <label class="fdv-dropzone">
-            <span class="fdv-dropzone-ikon"><Icon Name="upload" /></span>
-            <span class="fdv-dropzone-tekst">
-                <strong>Last opp PDF-vedlegg</strong>
-                <span>Dra og slipp, eller velg fra maskinen din</span>
-            </span>
-            <InputFile OnChange="OnFdvVedleggSelected" accept="application/pdf" multiple />
-        </label>
-        @if (_uploadingFdvVedlegg)
-        {
-            <p class="list-empty">Laster opp...</p>
-        }
-        @if (!string.IsNullOrEmpty(_fdvVedleggFeil))
-        {
-            <p class="form-error">@_fdvVedleggFeil</p>
-        }
     </div>
+}
 
-    <div class="fdv-panel">
-        <div class="fdv-panel-header">
-            <span class="fdv-panel-ikon"><Icon Name="folder" /></span>
-            <h2>Varer med FDV-dokumentasjon</h2>
-        </div>
-
-        @if (_byggetrinnListe.Count > 1)
-        {
-            <div class="fdv-byggetrinn-chips">
-                <span class="fdv-byggetrinn-lbl">Byggetrinn</span>
-                <button type="button" class="fdv-chip @(_valgteByggetrinn.Count == 0 ? "aktiv" : "")" @onclick="@(() => VelgAlleByggetrinn(true))">Alle</button>
-                @foreach (var b in _byggetrinnListe)
+@if (_visVedlegg)
+{
+    <div class="fe-overlay" @onclick="@(() => _visVedlegg = false)">
+        <div class="fe-modal" role="dialog" aria-modal="true" aria-label="Legg ved PDF" @onclick:stopPropagation="true">
+            <div class="fe-mhode"><h3>@(_vedleggFor is null ? "Legg ved ekstra PDF" : "Legg ved FDV for vare")</h3><button type="button" class="fe-lukk" aria-label="Lukk" @onclick="@(() => _visVedlegg = false)"><Icon Name="x" /></button></div>
+            <div class="fe-mkropp">
+                <p class="fe-hint">
+                    @if (_vedleggFor is null)
+                    {
+                        <text>PDF-en legges bakerst i FDV-en, f.eks. brannattester eller driftsinstrukser.</text>
+                    }
+                    else
+                    {
+                        <b>@_vedleggFor.Navn</b> <text>har ikke FDV i vareregisteret. PDF-en du legger ved kommer med i FDV-en der varen står.</text>
+                    }
+                </p>
+                <label class="fe-slipp">
+                    <Icon Name="upload" />
+                    <b>Dra og slipp PDF her</b>
+                    <span>eller trykk for å velge fra maskinen</span>
+                    <InputFile OnChange="OnFdvVedleggSelected" accept="application/pdf" multiple="@(_vedleggFor is null)" />
+                </label>
+                @if (_uploading)
                 {
-                    <button type="button" class="fdv-chip @(_valgteByggetrinn.Contains(b) ? "aktiv" : "")" @onclick="@(() => ToggleByggetrinn(b, !_valgteByggetrinn.Contains(b)))">@b</button>
+                    <p class="fe-melding">Laster opp …</p>
+                }
+                @if (!string.IsNullOrEmpty(_feil))
+                {
+                    <p class="form-error">@_feil</p>
                 }
             </div>
-        }
-
-        @if (FdvKomponenterFiltrert.Count > 0)
-        {
-            <div class="fdv-komponent-liste">
-                @foreach (var k in FdvKomponenterFiltrert)
-                {
-                    <div @key="k.Id" class="fdv-komponent-rad">
-                        <span class="fdv-komponent-ikon"><Icon Name="check-circle" /></span>
-                        <span class="fdv-komponent-navn">@k.Navn</span>
-                        <span class="fdv-komponent-kode">@k.Produktkode</span>
-                    </div>
-                }
-            </div>
-        }
-        else
-        {
-            <p class="list-empty">Ingen av varene på dørene har FDV-dokumentasjon registrert ennå.</p>
-        }
-    </div>
-
-    @if (FdvKomponenterFiltrert.Count > 0 || _fdvVedlegg.Count > 0)
-    {
-        <div class="fdv-generer-rad">
-            <button type="button" class="add-button fdv-generer-knapp" @onclick="GenererFdv"><Icon Name="file-text" />Generer FDV</button>
         </div>
-    }
-
-    <div class="fdv-panel">
-        <div class="fdv-panel-header">
-            <span class="fdv-panel-ikon"><Icon Name="folder" /></span>
-            <h2>Lagrede PDF-er</h2>
-        </div>
-        <LagredePdfListe Pdfer="_lagredeFdvPdfer" />
     </div>
+}
 
-    <PdfPreviewModal Url="@_fdvPreviewUrl" Tittel="Forhåndsvisning av FDV" SaveMessage="@_fdvPdfSavedMessage"
-                      OnSave="LagreFdvPdf" OnClose="@(() => _fdvPreviewUrl = null)" />
-</div>
+<PdfPreviewModal Url="@_fdvPreviewUrl" Tittel="Forhåndsvisning av FDV" SaveMessage="@_fdvPdfSavedMessage"
+                 OnSave="LagreFdvPdf" OnClose="@(() => _fdvPreviewUrl = null)" />
 
 @code {
     [Parameter, EditorRequired] public int ProsjektId { get; set; }
 
+    /// Kalles når noe er lagret (forside, vedlegg eller PDF), så siden rundt kan oppdatere seg.
+    [Parameter] public EventCallback OnEndret { get; set; }
+
+    private sealed class VareRad
+    {
+        public required Component Komponent { get; init; }
+        public int Dorer { get; set; }
+        public SortedSet<string> Byggetrinn { get; } = new(StringComparer.CurrentCultureIgnoreCase);
+    }
+
+    private sealed record Rad(string Nokkel, string Navn, string? Kode, int Dorer, IReadOnlyCollection<string> Byggetrinn,
+        Component? Komponent, FdvVedlegg? Vedlagt, FdvVedlegg? Ekstra)
+    {
+        public bool ErVedlegg => Ekstra is not null;
+        public bool HarFdv => Komponent?.FdvFilnavn != null || Vedlagt is not null;
+        public bool Mangler => !ErVedlegg && !HarFdv;
+    }
+
     private int? _loadedProsjektId;
     private Prosjekt? _prosjekt;
-    private List<Dor> _dorer = [];
+    private List<VareRad> _vareRader = [];
     private List<string> _byggetrinnListe = [];
-    private HashSet<string> _valgteByggetrinn = [];
     private List<FdvVedlegg> _fdvVedlegg = [];
-    private bool _uploadingFdvVedlegg;
-    private string? _fdvVedleggFeil;
     private List<LagretPdf> _lagredeFdvPdfer = [];
-    private string? _fdvPreviewUrl;
-    private string? _fdvPdfSavedMessage;
-    private string? _savedMessage;
     private List<TilbudForside> _forsideMaler = [];
     private int? _valgtFdvForsideMalId;
+    private string? _forsideUtkast;
+    private bool _visForside;
+    private bool _visVedlegg;
+    private Component? _vedleggFor;
+    private bool _uploading;
+    private string? _feil;
+    private bool _visAlleLagrede;
+    private string? _fdvPreviewUrl;
+    private string? _fdvPdfSavedMessage;
 
-    private List<Component> FdvKomponenterFiltrert => _dorer
-        .Where(d => _valgteByggetrinn.Count == 0 || (d.Plantegning?.Byggetrinn is not null && _valgteByggetrinn.Contains(d.Plantegning.Byggetrinn)))
-        .SelectMany(d => d.Komponenter)
-        .Select(dk => dk.Component!)
-        .Where(c => c.FdvFilnavn != null) // filnavnet settes alltid sammen med FDV-filen (som ikke lastes her)
-        .DistinctBy(c => c.Id)
-        .OrderBy(c => c.Navn)
+    private string _sok = "";
+    private string _filter = "alle";
+    private string _trinn = "";
+    private string _sortKol = "status";
+    private bool _sortOpp = true;
+
+    private string ForsideTekst => string.IsNullOrWhiteSpace(_prosjekt?.FdvForside) ? "Legg til forside" : "Forside";
+
+    private List<VareRad> VarerIUtvalg => _vareRader
+        .Where(v => _trinn == "" || v.Byggetrinn.Contains(_trinn))
         .ToList();
+
+    private List<FdvVedlegg> EkstraVedlegg => _fdvVedlegg.Where(v => v.ComponentId == null).ToList();
+
+    private FdvVedlegg? VedleggFor(int komponentId) => _fdvVedlegg.FirstOrDefault(v => v.ComponentId == komponentId);
+
+    private int AntallMangler => VarerIUtvalg.Count(v => v.Komponent.FdvFilnavn == null && VedleggFor(v.Komponent.Id) is null);
+
+    private bool KanGenerere => VarerIUtvalg.Count > AntallMangler || EkstraVedlegg.Count > 0;
+
+    private List<Rad> Rader()
+    {
+        var rader = VarerIUtvalg
+            .Select(v => new Rad($"k{v.Komponent.Id}", v.Komponent.Navn, v.Komponent.Produktkode, v.Dorer, v.Byggetrinn, v.Komponent, VedleggFor(v.Komponent.Id), null))
+            .Concat(_trinn == "" ? EkstraVedlegg.Select(v => new Rad($"v{v.Id}", v.Navn, null, 0, Array.Empty<string>(), null, null, v)) : [])
+            .Where(r => _filter switch
+            {
+                "mangler" => r.Mangler,
+                "har" => !r.ErVedlegg && r.HarFdv,
+                "ved" => r.ErVedlegg,
+                _ => true
+            });
+
+        if (!string.IsNullOrWhiteSpace(_sok))
+        {
+            var s = _sok.Trim();
+            rader = rader.Where(r => r.Navn.Contains(s, StringComparison.CurrentCultureIgnoreCase)
+                || (r.Kode?.Contains(s, StringComparison.CurrentCultureIgnoreCase) ?? false));
+        }
+
+        // Status: mangler først, så de med FDV, så ekstra vedlegg.
+        var sortert = _sortKol switch
+        {
+            "navn" => rader.OrderBy(r => r.Navn, StringComparer.CurrentCultureIgnoreCase),
+            "dorer" => rader.OrderBy(r => r.ErVedlegg ? -1 : r.Dorer).ThenBy(r => r.Navn, StringComparer.CurrentCultureIgnoreCase),
+            _ => rader.OrderBy(r => r.ErVedlegg ? 2 : r.HarFdv ? 1 : 0).ThenBy(r => r.Navn, StringComparer.CurrentCultureIgnoreCase)
+        };
+        var liste = sortert.ToList();
+        if (!_sortOpp)
+        {
+            liste.Reverse();
+        }
+        return liste;
+    }
+
+    private void Sorter(string kol)
+    {
+        if (_sortKol == kol)
+        {
+            _sortOpp = !_sortOpp;
+        }
+        else
+        {
+            _sortKol = kol;
+            _sortOpp = kol != "dorer";
+        }
+    }
+
+    private string SortIkon(string kol) => _sortKol != kol ? "chevron-down" : _sortOpp ? "arrow-up" : "arrow-down";
+
+    private RenderFragment Status(Rad r) => __builder =>
+    {
+        if (r.ErVedlegg)
+        {
+            <span class="fe-tag ved">Vedlegg</span>
+        }
+        else if (r.Vedlagt is not null)
+        {
+            <span class="fe-tag ved">Lagt ved</span>
+        }
+        else if (r.HarFdv)
+        {
+            <span class="fe-tag ja">FDV</span>
+        }
+        else
+        {
+            <span class="fe-tag nei">Mangler</span>
+        }
+    };
+
+    private RenderFragment Handling(Rad r) => __builder =>
+    {
+        if (r.Ekstra is not null)
+        {
+            <a class="fe-lenke" href="@($"/fdvvedlegg/{r.Ekstra.Id}/fil")" target="_blank" rel="noopener">Vis</a>
+            <button type="button" class="fe-lenke fe-fjern" @onclick="@(() => RemoveFdvVedlegg(r.Ekstra))">Fjern</button>
+        }
+        else if (r.Vedlagt is not null)
+        {
+            <a class="fe-lenke" href="@($"/fdvvedlegg/{r.Vedlagt.Id}/fil")" target="_blank" rel="noopener">Vis</a>
+            <button type="button" class="fe-lenke fe-fjern" @onclick="@(() => RemoveFdvVedlegg(r.Vedlagt))">Fjern</button>
+        }
+        else if (r.HarFdv)
+        {
+            <a class="fe-lenke" href="@($"/komponent/{r.Komponent!.Id}/fdv")" target="_blank" rel="noopener">Vis</a>
+        }
+        else
+        {
+            <button type="button" class="fe-lenke" @onclick="@(() => ApneVedlegg(r.Komponent))"><Icon Name="plus" />Legg ved</button>
+        }
+    };
 
     protected override async Task OnParametersSetAsync()
     {
@@ -181,113 +370,152 @@
         }
 
         _loadedProsjektId = ProsjektId;
-        _savedMessage = null;
-
         _prosjekt = await Db.Prosjekter.FirstOrDefaultAsync(p => p.Id == ProsjektId);
 
-        _dorer = await Db.Dorer
+        var dorer = await Db.Dorer
             .Where(d => d.ProsjektId == ProsjektId)
             .Include(d => d.Plantegning)
             .Include(d => d.Komponenter).ThenInclude(dk => dk.Component)
             .ToListAsync();
 
-        _byggetrinnListe = ByggetrinnHelper.Sorter(_dorer
+        var varer = new Dictionary<int, VareRad>();
+        foreach (var dor in dorer)
+        {
+            var trinn = dor.Plantegning?.Byggetrinn?.Trim();
+            foreach (var komponent in dor.Komponenter.Select(dk => dk.Component).Where(c => c is not null).DistinctBy(c => c!.Id))
+            {
+                if (!varer.TryGetValue(komponent!.Id, out var rad))
+                {
+                    rad = new VareRad { Komponent = komponent };
+                    varer[komponent.Id] = rad;
+                }
+                rad.Dorer++;
+                if (!string.IsNullOrWhiteSpace(trinn))
+                {
+                    rad.Byggetrinn.Add(trinn);
+                }
+            }
+        }
+        _vareRader = varer.Values.ToList();
+
+        _byggetrinnListe = ByggetrinnHelper.Sorter(dorer
             .Where(d => !string.IsNullOrWhiteSpace(d.Plantegning?.Byggetrinn))
             .Select(d => d.Plantegning!.Byggetrinn!.Trim())
             .Distinct()).ToList();
 
-        _fdvVedlegg = await Db.FdvVedlegg
-            .Where(v => v.ProsjektId == ProsjektId)
-            .OrderBy(v => v.Navn)
-            .ToListAsync();
-
+        await LastVedleggAsync();
         _forsideMaler = await Db.TilbudForsider.OrderBy(f => f.Navn).ToListAsync();
         _lagredeFdvPdfer = await LagretPdfService.HentAsync("Fdv", ProsjektId);
     }
 
+    // Uten filinnholdet - det hentes først når PDF-en vises eller FDV genereres.
+    private async Task LastVedleggAsync()
+    {
+        _fdvVedlegg = await Db.FdvVedlegg
+            .Where(v => v.ProsjektId == ProsjektId)
+            .OrderBy(v => v.Navn)
+            .Select(v => new FdvVedlegg
+            {
+                Id = v.Id,
+                ProsjektId = v.ProsjektId,
+                ComponentId = v.ComponentId,
+                Navn = v.Navn,
+                Filnavn = v.Filnavn,
+                ContentType = v.ContentType,
+                Data = Array.Empty<byte>(),
+                OpprettetDato = v.OpprettetDato
+            })
+            .AsNoTracking()
+            .ToListAsync();
+    }
+
+    private void TrinnEndret()
+    {
+        _fdvPdfSavedMessage = null;
+    }
+
     private void GenererFdv()
     {
-        var byggetrinnParam = _valgteByggetrinn.Count == 0 ? "" : $"&byggetrinn={Uri.EscapeDataString(string.Join(",", _valgteByggetrinn))}";
+        var byggetrinnParam = _trinn == "" ? "" : $"&byggetrinn={Uri.EscapeDataString(_trinn)}";
         _fdvPdfSavedMessage = null;
         _fdvPreviewUrl = $"/prosjekt/{ProsjektId}/fdv/pdf?v={DateTime.UtcNow.Ticks}{byggetrinnParam}";
     }
 
     private async Task LagreFdvPdf()
     {
-        var byggetrinn = _valgteByggetrinn.Count == 0 ? null : string.Join(",", _valgteByggetrinn);
+        var byggetrinn = _trinn == "" ? null : _trinn;
         var bytes = await FdvPdfService.GenerateAsync(ProsjektId, byggetrinn);
         if (bytes is null)
         {
             return;
         }
 
-        var etikett = _valgteByggetrinn.Count == 0 ? "" : $" ({string.Join(", ", _valgteByggetrinn)})";
+        var etikett = byggetrinn is null ? "" : $" (byggetrinn {byggetrinn})";
         var pdf = await LagretPdfService.LagreAsync(
             "Fdv", ProsjektId, $"FDV - {_prosjekt?.Navn}{etikett} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes);
 
-        _lagredeFdvPdfer.Add(pdf);
-        _fdvPdfSavedMessage = "PDF-en er lagret nedenfor.";
+        _lagredeFdvPdfer.Insert(0, pdf);
+        _fdvPdfSavedMessage = "PDF-en er lagret under Lagrede PDF-er.";
+        await OnEndret.InvokeAsync();
     }
 
-    private void VelgAlleByggetrinn(bool valgt)
+    private void ApneForside()
     {
-        if (valgt)
-        {
-            _valgteByggetrinn.Clear();
-        }
+        _forsideUtkast = _prosjekt?.FdvForside;
+        _valgtFdvForsideMalId = null;
+        _visForside = true;
     }
 
-    private void ToggleByggetrinn(string byggetrinn, bool valgt)
-    {
-        if (valgt)
-        {
-            _valgteByggetrinn.Add(byggetrinn);
-        }
-        else
-        {
-            _valgteByggetrinn.Remove(byggetrinn);
-        }
-    }
+    private void LukkForside() => _visForside = false;
 
     private void BrukFdvForsideMal()
     {
-        if (_valgtFdvForsideMalId is null || _prosjekt is null)
-        {
-            return;
-        }
-
         var mal = _forsideMaler.FirstOrDefault(f => f.Id == _valgtFdvForsideMalId);
-        if (mal is null)
+        if (mal is not null)
         {
-            return;
+            _forsideUtkast = mal.Innhold;
         }
-
-        _prosjekt.FdvForside = mal.Innhold;
     }
 
     private async Task LagreFdvForside()
     {
-        await Db.SaveChangesAsync();
-        _savedMessage = "Forside lagret.";
-    }
-
-    private async Task OnFdvVedleggSelected(InputFileChangeEventArgs e)
-    {
-        if (_uploadingFdvVedlegg)
+        if (_prosjekt is null)
         {
             return;
         }
 
-        _fdvVedleggFeil = null;
-        _uploadingFdvVedlegg = true;
+        _prosjekt.FdvForside = _forsideUtkast;
+        await Db.SaveChangesAsync();
+        _visForside = false;
+        await OnEndret.InvokeAsync();
+    }
+
+    private void ApneVedlegg(Component? komponent)
+    {
+        _vedleggFor = komponent;
+        _feil = null;
+        _visVedlegg = true;
+    }
+
+    private async Task OnFdvVedleggSelected(InputFileChangeEventArgs e)
+    {
+        if (_uploading)
+        {
+            return;
+        }
+
+        _feil = null;
+        _uploading = true;
+        var komponentId = _vedleggFor?.Id;
+        var vareNavn = _vedleggFor?.Navn;
 
         try
         {
-            foreach (var file in e.GetMultipleFiles(10))
+            foreach (var file in e.GetMultipleFiles(komponentId is null ? 10 : 1))
             {
                 if (file.Size > 20_000_000)
                 {
-                    _fdvVedleggFeil = $"\"{file.Name}\" er for stor (maks 20 MB) og ble hoppet over.";
+                    _feil = $"«{file.Name}» er for stor (maks 20 MB) og ble hoppet over.";
                     continue;
                 }
 
@@ -297,34 +525,48 @@
                     await stream.CopyToAsync(buffer);
                 }
 
-                var vedlegg = new FdvVedlegg
+                // En vare har bare ett vedlegg - et nytt erstatter det gamle.
+                if (komponentId is not null)
+                {
+                    var gamle = await Db.FdvVedlegg.Where(v => v.ProsjektId == ProsjektId && v.ComponentId == komponentId).ToListAsync();
+                    Db.FdvVedlegg.RemoveRange(gamle);
+                }
+
+                Db.FdvVedlegg.Add(new FdvVedlegg
                 {
                     ProsjektId = ProsjektId,
-                    Navn = Path.GetFileNameWithoutExtension(file.Name),
+                    ComponentId = komponentId,
+                    Navn = vareNavn ?? Path.GetFileNameWithoutExtension(file.Name),
                     Filnavn = file.Name,
                     ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/pdf" : file.ContentType,
                     Data = buffer.ToArray()
-                };
-
-                Db.FdvVedlegg.Add(vedlegg);
+                });
             }
 
             await Db.SaveChangesAsync();
-            _fdvVedlegg = await Db.FdvVedlegg
-                .Where(v => v.ProsjektId == ProsjektId)
-                .OrderBy(v => v.Navn)
-                .ToListAsync();
+            await LastVedleggAsync();
+            _visVedlegg = false;
+            await OnEndret.InvokeAsync();
+        }
+        catch (Exception)
+        {
+            _feil = "Kunne ikke laste opp filen. Prøv igjen.";
         }
         finally
         {
-            _uploadingFdvVedlegg = false;
+            _uploading = false;
         }
     }
 
     private async Task RemoveFdvVedlegg(FdvVedlegg v)
     {
-        Db.FdvVedlegg.Remove(v);
-        await Db.SaveChangesAsync();
-        _fdvVedlegg.Remove(v);
+        var lagret = await Db.FdvVedlegg.FindAsync(v.Id);
+        if (lagret is not null)
+        {
+            Db.FdvVedlegg.Remove(lagret);
+            await Db.SaveChangesAsync();
+        }
+        _fdvVedlegg.RemoveAll(x => x.Id == v.Id);
+        await OnEndret.InvokeAsync();
     }
 }

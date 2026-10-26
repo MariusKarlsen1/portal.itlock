@@ -2666,6 +2666,9 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("ComponentId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasColumnType("TEXT");

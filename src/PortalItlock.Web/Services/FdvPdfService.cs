@@ -42,12 +42,30 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantCont
     {
         var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
         var komponenter = await HentKomponenterMedFdvAsync(prosjektId, byggetrinn);
-        var ekstraVedlegg = await db.FdvVedlegg
+        var alleVedlegg = await db.FdvVedlegg
             .Where(v => v.ProsjektId == prosjektId)
             .OrderBy(v => v.Navn)
             .ToListAsync();
+        var ekstraVedlegg = alleVedlegg.Where(v => v.ComponentId == null).ToList();
 
-        if (komponenter.Count == 0 && ekstraVedlegg.Count == 0)
+        // PDF-er lagt ved en vare som mangler FDV i vareregisteret. De tas med
+        // bare når varen står på en dør i utvalget (byggetrinn-filteret).
+        var vareIder = await db.DorKomponenter
+            .Where(dk => dk.Dor!.ProsjektId == prosjektId
+                && (valgteByggetrinn == null || (dk.Dor!.Plantegning != null && valgteByggetrinn.Contains(dk.Dor!.Plantegning!.Byggetrinn))))
+            .Select(dk => dk.ComponentId)
+            .Distinct()
+            .ToListAsync();
+        var vareVedlegg = alleVedlegg
+            .Where(v => v.ComponentId is int cid && vareIder.Contains(cid) && komponenter.All(k => k.Id != cid))
+            .ToList();
+        var vedleggVareIder = vareVedlegg.Select(v => v.ComponentId!.Value).Distinct().ToList();
+        var vedleggVarer = await db.Components
+            .Where(c => vedleggVareIder.Contains(c.Id))
+            .Select(c => new { c.Id, c.Navn, c.Produsent, c.Produktkode })
+            .ToDictionaryAsync(c => c.Id);
+
+        if (komponenter.Count == 0 && ekstraVedlegg.Count == 0 && vareVedlegg.Count == 0)
         {
             return null;
         }
@@ -68,16 +86,32 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantCont
 
         // Alle dokumentene som skal inn, i rekkefølge - hvert med egen seksjon
         // slik at innholdsfortegnelsen kan vise sidetallet det starter på.
-        var deler = new List<(string Seksjon, string Tittel, string? Undertittel, byte[] Data)>();
-        var nr = 0;
+        // Varene med FDV og varene med vedlagt PDF flettes i navnerekkefølge.
+        var vareDeler = new List<(string Navn, string Tittel, string? Undertittel, byte[] Data)>();
         foreach (var komponent in komponenter)
         {
             var undertittel = string.Join(" · ", new[] { komponent.Produsent, komponent.Produktkode }.Where(s => !string.IsNullOrWhiteSpace(s)));
-            deler.Add(($"fdv-{nr++}", komponent.Navn, undertittel, komponent.FdvData!));
+            vareDeler.Add((komponent.Navn, komponent.Navn, undertittel, komponent.FdvData!));
             foreach (var ekstraDokument in komponent.FdvDokumenter)
             {
-                deler.Add(($"fdv-{nr++}", $"{komponent.Navn} – {ekstraDokument.Filnavn}", undertittel, ekstraDokument.Data));
+                vareDeler.Add((komponent.Navn, $"{komponent.Navn} – {ekstraDokument.Filnavn}", undertittel, ekstraDokument.Data));
             }
+        }
+        foreach (var vedlegg in vareVedlegg)
+        {
+            if (!vedleggVarer.TryGetValue(vedlegg.ComponentId!.Value, out var vare))
+            {
+                continue;
+            }
+            var undertittel = string.Join(" · ", new[] { vare.Produsent, vare.Produktkode }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            vareDeler.Add((vare.Navn, vare.Navn, undertittel, vedlegg.Data));
+        }
+
+        var deler = new List<(string Seksjon, string Tittel, string? Undertittel, byte[] Data)>();
+        var nr = 0;
+        foreach (var del in vareDeler.OrderBy(d => d.Navn, StringComparer.CurrentCultureIgnoreCase))
+        {
+            deler.Add(($"fdv-{nr++}", del.Tittel, del.Undertittel, del.Data));
         }
         var forsteVedlegg = nr;
         foreach (var vedlegg in ekstraVedlegg)
