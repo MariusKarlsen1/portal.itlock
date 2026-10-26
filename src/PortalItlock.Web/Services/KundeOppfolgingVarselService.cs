@@ -30,7 +30,7 @@ public class KundeOppfolgingVarselService(ApplicationDbContext db, EmailService 
         {
             var kunde = WebUtility.HtmlEncode(o.Kunde?.Navn ?? "kunde");
             var html = $"<p>Hei {WebUtility.HtmlEncode(o.AnsvarligBruker!.Navn)},</p>"
-                + $"<p>Påminnelse: <b>{o.Type.Emoji()} {WebUtility.HtmlEncode(o.Tittel)}</b><br>"
+                + $"<p>Påminnelse: <b>{o.Type.Visningsnavn()}: {WebUtility.HtmlEncode(o.Tittel)}</b><br>"
                 + $"Kunde: {kunde}<br>Når: {o.Frist:dd.MM.yyyy HH:mm}"
                 + (string.IsNullOrWhiteSpace(o.Kontaktperson) ? "" : $"<br>Kontaktperson: {WebUtility.HtmlEncode(o.Kontaktperson)}")
                 + (string.IsNullOrWhiteSpace(o.Notat) ? "" : $"<br>Notat: {WebUtility.HtmlEncode(o.Notat)}")

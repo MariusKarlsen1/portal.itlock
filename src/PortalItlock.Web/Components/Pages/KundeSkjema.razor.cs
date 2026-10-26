@@ -31,8 +31,8 @@ public partial class KundeSkjema
     }
 
     private sealed record ServiceavtaleRad(int Id, string Navn, int Dorer, DateTime? SisteRunde, DateTime? NesteService);
-    private sealed record AktivitetRad(string Emoji, string Bakgrunn, string Tittel, string? Tekst, string? Hvem, DateTime Dato, string? Lenke);
-    private sealed record UtfortRad(DateTime Dato, string Emoji, string Tittel, string? Hvem, string? Tekst, bool ErNotat);
+    private sealed record AktivitetRad(string Ikon, string Bakgrunn, string Tittel, string? Tekst, string? Hvem, DateTime Dato, string? Lenke);
+    private sealed record UtfortRad(DateTime Dato, string Ikon, string Tittel, string? Hvem, string? Tekst, bool ErNotat);
 
     private const int TilbudPerSide = 10;
     private static readonly CultureInfo Kultur = new("nb-NO");
@@ -167,24 +167,24 @@ public partial class KundeSkjema
         {
             var liste = new List<AktivitetRad>();
             liste.AddRange(_oppfolginger.Where(o => o.Utfort && o.UtfortDato.HasValue).Select(o =>
-                new AktivitetRad(o.Type.Emoji(), o.Type == KundeOppfolgingType.Ring ? "var(--k-bla-l)" : "var(--k-gul-l)", o.Tittel, o.UtfortKommentar ?? o.Notat, o.UtfortAvBruker?.Navn, o.UtfortDato!.Value, null)));
+                new AktivitetRad(o.Type.Ikon(), o.Type == KundeOppfolgingType.Ring ? "var(--k-bla-l)" : "var(--k-gul-l)", o.Tittel, o.UtfortKommentar ?? o.Notat, o.UtfortAvBruker?.Navn, o.UtfortDato!.Value, null)));
             liste.AddRange(_notater.Select(n =>
-                new AktivitetRad("📝", "var(--k-gra-l)", "Kontakt logget", n.Tekst.Length > 140 ? n.Tekst[..140] + "…" : n.Tekst, n.OpprettetAvBruker?.Navn, n.OpprettetDato, null)));
+                new AktivitetRad("edit", "var(--k-gra-l)", "Kontakt logget", n.Tekst.Length > 140 ? n.Tekst[..140] + "…" : n.Tekst, n.OpprettetAvBruker?.Navn, n.OpprettetDato, null)));
             liste.AddRange(_tickets.Select(t =>
-                new AktivitetRad("🎫", "var(--k-rod-l)", $"Ticket #{t.Id} – {t.Tittel}", TicketSted(t) == "–" ? null : TicketSted(t), t.Kontaktperson, t.OpprettetDato.ToLocalTime(), $"/ticket/{t.Id}")));
+                new AktivitetRad("tag", "var(--k-rod-l)", $"Ticket #{t.Id} – {t.Tittel}", TicketSted(t) == "–" ? null : TicketSted(t), t.Kontaktperson, t.OpprettetDato.ToLocalTime(), $"/ticket/{t.Id}")));
             liste.AddRange(_tilbudListe.Select(t => t.SendtDato is { } sendt
-                ? new AktivitetRad("📄", "var(--k-gul-l)", $"Tilbud sendt – {t.Tittel}", string.Join(" · ", new[] { t.SendtSum is { } s ? $"{Kr(s)} eks. mva" : null, t.GyldigTil is { } g ? $"gyldig til {g:d. MMM}" : null }.Where(x => x is not null)), null, sendt, $"/tilbud/{t.Id}")
-                : new AktivitetRad("📄", "var(--k-gul-l)", $"Tilbud opprettet – {t.Tittel}", t.Prosjekt?.Navn, null, t.OpprettetDato.ToLocalTime(), $"/tilbud/{t.Id}")));
+                ? new AktivitetRad("file-text", "var(--k-gul-l)", $"Tilbud sendt – {t.Tittel}", string.Join(" · ", new[] { t.SendtSum is { } s ? $"{Kr(s)} eks. mva" : null, t.GyldigTil is { } g ? $"gyldig til {g:d. MMM}" : null }.Where(x => x is not null)), null, sendt, $"/tilbud/{t.Id}")
+                : new AktivitetRad("file-text", "var(--k-gul-l)", $"Tilbud opprettet – {t.Tittel}", t.Prosjekt?.Navn, null, t.OpprettetDato.ToLocalTime(), $"/tilbud/{t.Id}")));
             liste.AddRange(_arbeidsordrer.Select(a => a.FakturertDato is { } fd
-                ? new AktivitetRad("🧾", "var(--k-ok-l)", $"AO-{a.Id:0000} fakturert", a.Tittel, null, fd, $"/arbeidsordre/{a.Id}")
-                : new AktivitetRad("🔧", "var(--k-bla-l)", $"Arbeidsordre AO-{a.Id:0000} – {a.Tittel}", $"{OrdreStatusTekst(a.Status)}{(a.Prosjekt is null ? "" : $" · {a.Prosjekt.Navn}")}", a.AnsvarligMontor?.Navn, a.OpprettetDato.ToLocalTime(), $"/arbeidsordre/{a.Id}")));
+                ? new AktivitetRad("receipt", "var(--k-ok-l)", $"AO-{a.Id:0000} fakturert", a.Tittel, null, fd, $"/arbeidsordre/{a.Id}")
+                : new AktivitetRad("tool", "var(--k-bla-l)", $"Arbeidsordre AO-{a.Id:0000} – {a.Tittel}", $"{OrdreStatusTekst(a.Status)}{(a.Prosjekt is null ? "" : $" · {a.Prosjekt.Navn}")}", a.AnsvarligMontor?.Navn, a.OpprettetDato.ToLocalTime(), $"/arbeidsordre/{a.Id}")));
             return liste.OrderByDescending(a => a.Dato).Take(8).ToList();
         }
     }
 
     private List<UtfortRad> UtfortLogg =>
-        _oppfolginger.Where(o => o.Utfort).Select(o => new UtfortRad(o.UtfortDato ?? o.Frist, o.Type.Emoji(), o.Tittel, $"Utført av {o.UtfortAvBruker?.Navn ?? "ukjent"}", o.UtfortKommentar, false))
-            .Concat(_notater.Select(n => new UtfortRad(n.OpprettetDato, "📝", n.Tekst.Length > 80 ? n.Tekst[..80] + "…" : n.Tekst, n.OpprettetAvBruker?.Navn ?? "", null, true)))
+        _oppfolginger.Where(o => o.Utfort).Select(o => new UtfortRad(o.UtfortDato ?? o.Frist, o.Type.Ikon(), o.Tittel, $"Utført av {o.UtfortAvBruker?.Navn ?? "ukjent"}", o.UtfortKommentar, false))
+            .Concat(_notater.Select(n => new UtfortRad(n.OpprettetDato, "edit", n.Tekst.Length > 80 ? n.Tekst[..80] + "…" : n.Tekst, n.OpprettetAvBruker?.Navn ?? "", null, true)))
             .OrderByDescending(u => u.Dato)
             .ToList();
 
@@ -481,8 +481,24 @@ public partial class KundeSkjema
 
     // ---------------- Lasting ----------------
 
+    // Utvid-knappen øverst til høyre - lagres per bruker, som på tilbud og dørpakker.
+    private bool _full;
+    private bool _fullLastet;
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("kundekort-bredde", _full ? "full" : "normal");
+    }
+
     protected override async Task OnParametersSetAsync()
     {
+        if (!_fullLastet)
+        {
+            _fullLastet = true;
+            _full = await VisningPref.HentAsync("kundekort-bredde", "normal") == "full";
+        }
+
         if (AuthStateTask is not null && _naverendeBrukerId is null)
         {
             var state = await AuthStateTask;

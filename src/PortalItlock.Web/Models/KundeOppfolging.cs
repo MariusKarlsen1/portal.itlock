@@ -49,13 +49,14 @@ public enum KundeOppfolgingGjenta { Ikke, Maaned, Kvartal, Aar }
 
 public static class KundeOppfolgingExtensions
 {
-    public static string Emoji(this KundeOppfolgingType t) => t switch
+    // Navn på ikonet (Icon.razor) for typen.
+    public static string Ikon(this KundeOppfolgingType t) => t switch
     {
-        KundeOppfolgingType.Ring => "📞",
-        KundeOppfolgingType.Epost => "✉️",
-        KundeOppfolgingType.Mote => "🤝",
-        KundeOppfolgingType.Befaring => "🔍",
-        _ => "📝"
+        KundeOppfolgingType.Ring => "phone",
+        KundeOppfolgingType.Epost => "mail",
+        KundeOppfolgingType.Mote => "users",
+        KundeOppfolgingType.Befaring => "search",
+        _ => "edit"
     };
 
     public static string Visningsnavn(this KundeOppfolgingType t) => t switch
