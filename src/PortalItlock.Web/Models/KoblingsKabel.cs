@@ -15,6 +15,11 @@ public sealed class KoblingsLeder
     public string Klemme { get; set; } = "";
     public string Til { get; set; } = "";
     public string Merknad { get; set; } = "";
+
+    // Egen vei for lederen i hver ende når montøren har dratt den (prosentpunkter
+    // fra der lederen forlater kabelen og ut til der den kobles). Null = standard vifte.
+    public List<KoblingsStrekPunkt>? Start { get; set; }
+    public List<KoblingsStrekPunkt>? Slutt { get; set; }
 }
 
 // Flerlederkabel på koblingsskjema: en tykk sort kabel som deler seg i
@@ -95,7 +100,23 @@ public static class KoblingsKabel
 
     public static string Type(int antall) => $"{antall}-leder";
 
-    public sealed record LederLinje(KoblingsLeder Leder, List<KoblingsStrekPunkt> Punkter);
+    // Punkter går fra kabelen og ut. Indeks/ErStart sier hvilken leder og ende det er.
+    public sealed record LederLinje(KoblingsLeder Leder, List<KoblingsStrekPunkt> Punkter, int Indeks, bool ErStart);
+
+    // Id for en lederende på lerretet (negativ, så den ikke kolliderer med strek-id-er).
+    public static int LederId(int strekId, bool erStart, int indeks) => -(strekId * 100 + (erStart ? 0 : 50) + indeks + 1);
+
+    public static (int StrekId, bool ErStart, int Indeks)? LesLederId(int id)
+    {
+        if (id >= 0)
+        {
+            return null;
+        }
+        var v = -id;
+        var rest = v % 100;
+        var erStart = rest <= 50;
+        return (v / 100, erStart, rest - (erStart ? 0 : 50) - 1);
+    }
 
     // Området rundt en kabelende der den tykke kabelen skjules og lederne tar over.
     public sealed record Ende(KoblingsStrekPunkt Senter, double Rx, double Ry);
@@ -191,12 +212,12 @@ public static class KoblingsKabel
             var y1 = ay + ny * o;
             var x2 = x1 + dx * lengde * 0.4;
             var y2 = y1 + dy * lengde * 0.4;
-            linjer.Add(new LederLinje(ledere[i],
-            [
-                new KoblingsStrekPunkt { X = x1, Y = y1 / aspekt },
-                new KoblingsStrekPunkt { X = x2, Y = y2 / aspekt },
-                new KoblingsStrekPunkt { X = cx, Y = cy / aspekt },
-            ]));
+            var fra = new KoblingsStrekPunkt { X = cx, Y = cy / aspekt };
+            var egen = fraStart ? ledere[i].Start : ledere[i].Slutt;
+            List<KoblingsStrekPunkt> vei = egen is { Count: > 0 }
+                ? [fra, .. egen]
+                : [fra, new KoblingsStrekPunkt { X = x2, Y = y2 / aspekt }, new KoblingsStrekPunkt { X = x1, Y = y1 / aspekt }];
+            linjer.Add(new LederLinje(ledere[i], vei, i, fraStart));
         }
 
         kroppStart = new KoblingsStrekPunkt { X = cx, Y = cy / aspekt };

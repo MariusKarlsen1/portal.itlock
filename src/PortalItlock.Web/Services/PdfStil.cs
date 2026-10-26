@@ -4,16 +4,15 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-// Delt visuelt sprak for genererte PDF-er - samme palett som allerede ble
-// etablert i CeGodkjenningPdfService (sand-bakgrunn, aksentkant, hvit-pa-
-// aksent for det viktigste), gjenbrukt her sa alle rapporter/dokumenter i
-// portalen far konsekvent merkevarebygging i stedet for at hver enkelt
-// *PdfService finner opp sin egen gra standard-stil.
+// Delt visuelt språk for genererte PDF-er: nøytral, kommersiell palett
+// (lys grå flate, tynne grå linjer og mørk skifergrå aksent) som alle
+// rapporter og dokumenter i portalen bruker, i stedet for at hver enkelt
+// *PdfService finner opp sin egen stil.
 public static class PdfStil
 {
-    public static readonly Color Sand = Color.FromHex("#F2EBE1");
-    public static readonly Color SandBorder = Color.FromHex("#E4D9C8");
-    public static readonly Color Accent = Color.FromHex("#835E41");
+    public static readonly Color Sand = Color.FromHex("#F4F5F7");
+    public static readonly Color SandBorder = Color.FromHex("#E1E4E8");
+    public static readonly Color Accent = Color.FromHex("#2F3A45");
     public static readonly Color Ink = Color.FromHex("#292927");
 
     public static void Header(ColumnDescriptor col, PdfLogo logo, string tittel, string? undertittel = null)

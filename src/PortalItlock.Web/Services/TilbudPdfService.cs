@@ -11,9 +11,9 @@ namespace PortalItlock.Web.Services;
 public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
-    private static readonly Color Sand = Color.FromHex("#F2EBE1");
-    private static readonly Color SandBorder = Color.FromHex("#E4D9C8");
-    private static readonly Color Accent = Color.FromHex("#835E41");
+    private static readonly Color Sand = PdfStil.Sand;
+    private static readonly Color SandBorder = PdfStil.SandBorder;
+    private static readonly Color Accent = PdfStil.Accent;
     private static readonly Color Ink = Color.FromHex("#292927");
 
     private const decimal MvaSats = 0.25m;

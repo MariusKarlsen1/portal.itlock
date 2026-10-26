@@ -10,9 +10,9 @@ namespace PortalItlock.Web.Services;
 public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
 
-    private static readonly Color Sand = Color.FromHex("#F2EBE1");
-    private static readonly Color SandBorder = Color.FromHex("#E4D9C8");
-    private static readonly Color Accent = Color.FromHex("#835E41");
+    private static readonly Color Sand = PdfStil.Sand;
+    private static readonly Color SandBorder = PdfStil.SandBorder;
+    private static readonly Color Accent = PdfStil.Accent;
     private static readonly Color Ink = Color.FromHex("#292927");
 
     public async Task<byte[]?> GenerateAsync(int ceGodkjenningId)

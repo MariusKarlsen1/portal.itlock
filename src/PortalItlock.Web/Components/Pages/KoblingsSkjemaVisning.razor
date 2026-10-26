@@ -42,9 +42,9 @@ else if (_skjema is not null)
     }
 
     <div class="ks-faner">
-        <button type="button" class="ks-fane @(_fane == "rediger" ? "ks-fane-aktiv" : "")" @onclick='@(() => _fane = "rediger")'>Rediger koblingsskjema</button>
+        <button type="button" class="ks-fane @(_fane == "rediger" ? "ks-fane-aktiv" : "")" @onclick='@(() => ByttFane("rediger"))'>Rediger koblingsskjema</button>
         <button type="button" class="ks-fane @(_fane == "pdf" ? "ks-fane-aktiv" : "")" @onclick="VisPdfFane">Forhåndsvisning PDF</button>
-        <button type="button" class="ks-fane @(_fane == "lagrede" ? "ks-fane-aktiv" : "")" @onclick='@(() => _fane = "lagrede")'>Lagrede PDF-er</button>
+        <button type="button" class="ks-fane @(_fane == "lagrede" ? "ks-fane-aktiv" : "")" @onclick='@(() => ByttFane("lagrede"))'>Lagrede PDF-er</button>
     </div>
 
     @if (_fane == "lagrede")
@@ -281,8 +281,12 @@ else if (_skjema is not null)
                 <p class="ks-hint">
                     @if (_tegnStrekModus)
                     {
-                        <span><b>Tegn strek:</b> klikk for å starte – gjerne på et blått tilkoblingspunkt. Klikk der streken skal <b>svinge</b>, og klikk på et tilkoblingspunkt for å koble. <b>Dobbeltklikk</b> eller Enter stopper streken der du er. Shift = fri vinkel · Backspace = angre siste sving · Esc = avbryt.</span>
+                        <span><b>Tegn strek:</b> klikk for å starte – gjerne på et blått tilkoblingspunkt. Klikk der streken skal <b>svinge</b>, og klikk på et tilkoblingspunkt for å koble. <b>Esc</b>, Enter eller dobbeltklikk avslutter streken der du er. Shift = fri vinkel · Backspace = angre siste sving.</span>
                         <button type="button" class="ks-knapp ks-knapp-hvit ks-knapp-liten" @onclick="FullforStrek">Fullfør strek</button>
+                    }
+                    else if (_valgtStrek is { ErKabel: true })
+                    {
+                        <span><b>Kabel valgt:</b> klikk på en farget leder i enden og dra den dit den skal kobles. Dra prikken midt på en bit for å lage sving, og dobbeltklikk et knekkpunkt for å fjerne svingen.</span>
                     }
                     else if (_valgtStrek is not null)
                     {
@@ -326,12 +330,14 @@ else if (_skjema is not null)
                                     @foreach (var l in vifte.Ledere)
                                     {
                                         var pts = Pts(l.Punkter);
+                                        var lederId = KoblingsKabel.LederId(s.Id, l.ErStart, l.Indeks);
                                         @if (l.Leder.Farge == "Hvit")
                                         {
                                             <polyline points="@pts" fill="none" stroke="#9a948c" stroke-width="3.6"
                                                       stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
                                         }
                                         <polyline points="@pts" fill="none" stroke="@KoblingsKabel.Hex(l.Leder.Farge)" stroke-width="2.2"
+                                                  data-strekid="@lederId" class="@(_valgtLederId == lederId ? "ks-strek-valgt" : null)"
                                                   stroke-linejoin="round" stroke-linecap="round"
                                                   stroke-dasharray="@(l.Leder.Stiplet ? "4,3" : null)"
                                                   vector-effect="non-scaling-stroke" />
@@ -512,7 +518,11 @@ else if (_skjema is not null)
                                 </div>
                             }
                         </div>
-                        <p class="ks-panel-hint">Klemme og hvor hver leder skal fyller du ut i kabeljournalen under skjemaet.</p>
+                        <p class="ks-panel-hint">Klikk en leder på tegningen og dra den dit den skal kobles. Klemme og hvor hver leder skal fyller du ut i kabeljournalen under skjemaet.</p>
+                        @if (ledere.Any(l => l.Start is not null || l.Slutt is not null))
+                        {
+                            <button type="button" class="cancel-button" @onclick="@(() => NullstillLederVeier(kabelStrek))">Legg lederne tilbake i vifte</button>
+                        }
                         <div class="kobling-symbol-panel-actions">
                             <button type="button" class="cancel-button" @onclick="@(() => RettOppStrek(kabelStrek))">Rett opp</button>
                             <button type="button" class="cancel-button" @onclick="@(() => GjorTilStrek(kabelStrek))">Vanlig strek</button>
@@ -793,6 +803,7 @@ else if (_skjema is not null)
     // Fanene øverst: "rediger" (editoren), "pdf" (forhåndsvisning) og
     // "lagrede" (tidligere lagrede PDF-er).
     private string _fane = "rediger";
+    private bool _lerretKoblet;
 
     private bool _visRutenettMeny;
     private bool _visFlereValg;
@@ -882,26 +893,39 @@ else if (_skjema is not null)
     {
         if (firstRender)
         {
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=14");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=15");
             _dotNetRef = DotNetObjectReference.Create(this);
         }
 
-        if (_module is not null && _dotNetRef is not null && _skjema is not null)
+        if (_module is not null && _dotNetRef is not null && _skjema is not null && _fane == "rediger")
         {
-            await _module.InvokeVoidAsync("attachSymbolMarkers", _canvasRef, _dotNetRef, !(_redigerModus && !_tegnStrekModus));
-
-            if (firstRender)
+            // Lerretet kobles til én gang per gang Rediger-fanen vises. Flagget
+            // settes før første await, så en rendring midt i et fanebytte ikke
+            // kobler til et lerret som er i ferd med å forsvinne.
+            var kobleTil = !_lerretKoblet;
+            _lerretKoblet = true;
+            try
             {
-                await _module.InvokeVoidAsync("initZoomPan", _canvasWrapRef, _canvasRef);
-                await _module.InvokeVoidAsync("enableKeyboardShortcuts", _canvasRef, _dotNetRef);
-                await _module.InvokeVoidAsync("enableRubberBandSelect", _canvasRef, _dotNetRef);
-                await _module.InvokeVoidAsync("initStrekRedigering", _canvasRef, _dotNetRef);
-                await _module.InvokeVoidAsync("enableEditorSnarveier", _canvasRef, _dotNetRef);
-            }
+                await _module.InvokeVoidAsync("attachSymbolMarkers", _canvasRef, _dotNetRef, !(_redigerModus && !_tegnStrekModus));
 
-            // Knekkpunktene til valgt strek tegnes av JS etter hver rendring.
-            await _module.InvokeVoidAsync("oppdaterEditorUi", _canvasRef,
-                _redigerModus ? _valgtStrek?.Id ?? 0 : 0, _skjema.SnapTilRutenett);
+                if (kobleTil)
+                {
+                    await _module.InvokeVoidAsync("initZoomPan", _canvasWrapRef, _canvasRef);
+                    await _module.InvokeVoidAsync("enableKeyboardShortcuts", _canvasRef, _dotNetRef);
+                    await _module.InvokeVoidAsync("enableRubberBandSelect", _canvasRef, _dotNetRef);
+                    await _module.InvokeVoidAsync("initStrekRedigering", _canvasRef, _dotNetRef);
+                    await _module.InvokeVoidAsync("enableEditorSnarveier", _canvasRef, _dotNetRef);
+                }
+
+                // Knekkpunktene til valgt strek tegnes av JS etter hver rendring.
+                await _module.InvokeVoidAsync("oppdaterEditorUi", _canvasRef,
+                    _redigerModus ? ValgtJsStrekId() : 0, _skjema.SnapTilRutenett);
+            }
+            catch (JSException) when (_fane != "rediger")
+            {
+                // Fanen ble byttet mens vi koblet til - lerretet finnes ikke lenger.
+                _lerretKoblet = false;
+            }
         }
     }
 
@@ -1476,7 +1500,10 @@ else if (_skjema is not null)
     [JSInvokable]
     public void OnStrekValgt(int strekId)
     {
-        _valgtStrek = _streker.FirstOrDefault(s => s.Id == strekId);
+        // En leder i en kabel: kabelen blir valgt, og lederen får håndtakene.
+        var leder = KoblingsKabel.LesLederId(strekId);
+        _valgtLederId = leder is null ? null : strekId;
+        _valgtStrek = _streker.FirstOrDefault(s => s.Id == (leder?.StrekId ?? strekId));
         if (_valgtStrek is not null)
         {
             _selectedSymbol = null;
@@ -1489,6 +1516,17 @@ else if (_skjema is not null)
     [JSInvokable]
     public async Task OnStrekFlyttet(int strekId, string punkterJson)
     {
+        if (strekId < 0)
+        {
+            PushUndo();
+            if (SettLederVei(strekId, punkterJson))
+            {
+                await Db.SaveChangesAsync();
+            }
+            StateHasChanged();
+            return;
+        }
+
         var strek = _streker.FirstOrDefault(s => s.Id == strekId);
         if (strek is null)
         {
@@ -1582,6 +1620,11 @@ else if (_skjema is not null)
         var endringer = JsonSerializer.Deserialize<List<StrekEndring>>(streker) ?? [];
         foreach (var e in endringer)
         {
+            if (e.Id < 0 && !string.IsNullOrWhiteSpace(e.PunkterJson))
+            {
+                SettLederVei(e.Id, e.PunkterJson);
+                continue;
+            }
             var strek = _streker.FirstOrDefault(s => s.Id == e.Id);
             if (strek is not null && !string.IsNullOrWhiteSpace(e.PunkterJson))
             {
@@ -1621,7 +1664,31 @@ else if (_skjema is not null)
         StateHasChanged();
     }
 
-    private void VisPdfFane() => _fane = "pdf";
+    private Task VisPdfFane() => ByttFane("pdf");
+
+    // Lerretet finnes bare på Rediger-fanen. Forlater vi den, kobles de globale
+    // tastelytterne fra; kommer vi tilbake, kobles lerretet til på nytt i
+    // OnAfterRenderAsync (ellers virket verken dra, zoom eller hurtigtaster).
+    private async Task ByttFane(string fane)
+    {
+        if (_fane == fane)
+        {
+            return;
+        }
+        if (_fane == "rediger" && _lerretKoblet && _module is not null)
+        {
+            try
+            {
+                await _module.InvokeVoidAsync("disableKeyboardShortcuts", _canvasRef);
+                await _module.InvokeVoidAsync("disableEditorSnarveier", _canvasRef);
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            _lerretKoblet = false;
+        }
+        _fane = fane;
+    }
 
     private void ZoomInn() => _zoom = Math.Min(MaxZoom, _zoom + 25);
 
@@ -1692,6 +1759,13 @@ else if (_skjema is not null)
         Db.KoblingsStreker.Add(strek);
         await Db.SaveChangesAsync();
         _streker.Add(strek);
+
+        // En ny kabel velges med en gang, så lederne kan dras dit de skal.
+        if (strek.ErKabel && _tegnStrekModus)
+        {
+            await ToggleTegnStrekModus();
+            _valgtStrek = strek;
+        }
         StateHasChanged();
     }
 
@@ -2032,8 +2106,11 @@ else if (_skjema is not null)
                 // ble lytteren værende på document for alltid (én ny per
                 // besøk på et koblingsskjema i samme økt), se CODE_REVIEW.md
                 // 2026-10-08 (bekreftet minnelekkasje).
-                await _module.InvokeVoidAsync("disableKeyboardShortcuts", _canvasRef);
-                await _module.InvokeVoidAsync("disableEditorSnarveier", _canvasRef);
+                if (_lerretKoblet)
+                {
+                    await _module.InvokeVoidAsync("disableKeyboardShortcuts", _canvasRef);
+                    await _module.InvokeVoidAsync("disableEditorSnarveier", _canvasRef);
+                }
                 await _module.DisposeAsync();
             }
             catch (JSDisconnectedException)
@@ -2146,5 +2223,56 @@ else if (_skjema is not null)
                 l.Farge = navn!;
                 l.Stiplet = stiplet;
             }
+        });
+
+    // Valgt leder (negativ id fra KoblingsKabel.LederId), eller null.
+    private int? _valgtLederId;
+
+    private int ValgtJsStrekId() =>
+        _valgtStrek is null ? 0
+        : _valgtLederId is { } l && KoblingsKabel.LesLederId(l)?.StrekId == _valgtStrek.Id ? l
+        : _valgtStrek.Id;
+
+    // Lagrer veien til én leder etter at den er dratt. Første punkt er der lederen
+    // forlater kabelen; det regnes ut på nytt hver gang og lagres ikke.
+    private bool SettLederVei(int lederId, string punkterJson)
+    {
+        if (KoblingsKabel.LesLederId(lederId) is not { } l)
+        {
+            return false;
+        }
+        var strek = _streker.FirstOrDefault(s => s.Id == l.StrekId && s.ErKabel);
+        var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(punkterJson) ?? [];
+        if (strek is null || punkter.Count < 2)
+        {
+            return false;
+        }
+        var ledere = KoblingsKabel.Les(strek.LedereJson);
+        if (l.Indeks < 0 || l.Indeks >= ledere.Count)
+        {
+            return false;
+        }
+        var vei = punkter.Skip(1).ToList();
+        if (l.ErStart)
+        {
+            ledere[l.Indeks].Start = vei;
+        }
+        else
+        {
+            ledere[l.Indeks].Slutt = vei;
+        }
+        strek.LedereJson = KoblingsKabel.Skriv(ledere);
+        return true;
+    }
+
+    private Task NullstillLederVeier(KoblingsStrek strek) =>
+        EndreLedere(strek, ledere =>
+        {
+            foreach (var l in ledere)
+            {
+                l.Start = null;
+                l.Slutt = null;
+            }
+            return ledere;
         });
 }

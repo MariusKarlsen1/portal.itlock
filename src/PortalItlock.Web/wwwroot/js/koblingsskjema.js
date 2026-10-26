@@ -552,7 +552,9 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet)
         }
         if (e.key === 'Escape') {
             e.preventDefault();
-            if (pts.length) {
+            if (pts.length >= 2) {
+                ferdig();
+            } else if (pts.length) {
                 pts = [];
                 tegnUi();
             } else {

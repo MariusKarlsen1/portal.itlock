@@ -12,7 +12,7 @@ namespace PortalItlock.Web.Services;
 
 public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
-    private const string ItlockAksent = "#835e41";
+    private const string ItlockAksent = "#2f3a45";
 
     private static readonly Dictionary<MontasjeStatus, string> StatusFarge = new()
     {
