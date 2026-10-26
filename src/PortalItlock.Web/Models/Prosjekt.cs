@@ -83,6 +83,13 @@ public class Prosjekt
 
     public decimal? ServiceTimepris { get; set; }
 
+    // Prising på serviceavtalen: 0 = service-minutter (standard), 1 = kategorisert årspris.
+    public int ServicePrismodell { get; set; }
+    /// Avtaleteksten i tilbudet på serviceavtalen (rik tekst). Tom = standardtekst.
+    public string? ServiceavtaleTekst { get; set; }
+    /// JSON: prislinjene i tilbudet (tjeneste + pris som tekst).
+    public string? ServicePrislinjer { get; set; }
+
     // Hvor mange servicerunder avtalen skal ha i året (1 = årlig, 2 = halvårlig
     // osv.). Null = ikke satt; da leses intervallet fra rundene i stedet.
     public int? ServiceGangerPerAr { get; set; }

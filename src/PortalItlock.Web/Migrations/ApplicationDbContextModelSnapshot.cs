@@ -5380,10 +5380,19 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("ServiceGangerPerAr")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ServicePrislinjer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ServicePrismodell")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("ServiceSjekklisteId")
                         .HasColumnType("INTEGER");
 
                     b.Property<decimal?>("ServiceTimepris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ServiceavtaleTekst")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("StartDato")

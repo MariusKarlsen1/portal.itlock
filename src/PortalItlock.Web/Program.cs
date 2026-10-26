@@ -120,6 +120,7 @@ builder.Services.AddScoped<ProduktsammendragPdfService>();
 builder.Services.AddScoped<DorpakkePdfService>();
 builder.Services.AddScoped<LasplanPdfService>();
 builder.Services.AddScoped<LasplanGodkjenningService>();
+builder.Services.AddScoped<ServiceavtaleTilbudPdfService>();
 builder.Services.AddScoped<TripletexOrdreCsvService>();
 builder.Services.AddScoped<PrisimportService>();
 builder.Services.AddScoped<PrisoppdateringService>();
@@ -1466,6 +1467,28 @@ app.MapGet("/komponent/{id:int}/bilde", async (int id, int? w, ApplicationDbCont
     }
 
     return Results.File(komponent.BildeData, FilSikkerhet.TryggContentType(komponent.BildeContentType ?? "image/jpeg"), komponent.BildeFilnavn);
+}).RequireAuthorization();
+
+// Tilbud på serviceavtale (Prising-fanen): forside, avtaletekst, priser og signaturer.
+app.MapGet("/serviceavtale/{id:int}/tilbud/pdf", async (int id, HttpContext context, ApplicationDbContext db, ServiceavtaleTilbudPdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var prosjekt = await db.Prosjekter.FindAsync(id);
+    var filnavn = $"Tilbud serviceavtale - {prosjekt?.Navn} - {DateTime.Now:dd.MM.yyyy}.pdf";
+    foreach (var ugyldig in Path.GetInvalidFileNameChars())
+    {
+        filnavn = filnavn.Replace(ugyldig, '-');
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName(filnavn);
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
 app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, string? byggetrinn, HttpContext context, ApplicationDbContext db, FdvPdfService fdvService) =>
