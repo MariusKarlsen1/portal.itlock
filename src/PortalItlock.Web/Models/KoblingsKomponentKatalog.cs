@@ -75,12 +75,54 @@ public static class KoblingsKomponentKatalog
         Tegning("dorautomatikk", "Dørautomatikk", 14, 194, 82),
     ];
 
+    // Komponentene paletten viser: illustrasjoner (PNG med gjennomsiktig
+    // bakgrunn) i wwwroot/img/kobling/egne.
+    public static readonly List<KoblingsKomponent> LaserOgSluttstykker =
+    [
+        Illustrasjon("sluttstykke-kompakt", "El-sluttstykke kompakt", 4.5, 103, 232),
+        Illustrasjon("sluttstykke", "El-sluttstykke", 5, 107, 289),
+        Illustrasjon("sluttstykke-dobbel", "El-sluttstykke dobbel", 4.5, 98, 330),
+        Illustrasjon("sluttstykke-kraftig", "El-sluttstykke kraftig", 5.5, 135, 372),
+        Illustrasjon("motorlas-kabel-hvit", "Motorlås med kabel", 8, 198, 338),
+        Illustrasjon("motorlas-kabel-sort", "Motorlås med kabel, sort", 8, 209, 337),
+        Illustrasjon("krokfallas-vrider", "Krokfallås (vrider)", 7, 159, 335),
+        Illustrasjon("krokfallas-sylinder", "Krokfallås (sylinder)", 7.5, 178, 340),
+    ];
+
+    public static readonly List<KoblingsKomponent> LesereOgSentraler =
+    [
+        Illustrasjon("kodeleser-stal", "Kodeleser (stål)", 6, 269, 638),
+        Illustrasjon("kodeleser-sort", "Kodeleser (sort)", 6, 270, 639),
+        Illustrasjon("dorsentral-boks", "Dørsentral i boks", 22, 758, 676),
+    ];
+
+    public static readonly List<KoblingsKomponent> UtstyrVedDora =
+    [
+        Illustrasjon("apneknapp", "Åpneknapp", 4.5, 142, 315),
+        Illustrasjon("beroringsfri", "Berøringsfri åpneknapp", 3, 93, 321),
+        Illustrasjon("radar", "Radar / bevegelsessensor", 9, 279, 166),
+        Illustrasjon("nodapner", "Nødåpner", 7, 237, 260),
+        Illustrasjon("magnetkontakt", "Magnetkontakt", 10, 473, 110),
+        Illustrasjon("dorautomatikk", "Dørautomatikk", 14, 429, 194),
+        Illustrasjon("exit-knapp", "Exit-knapp", 6, 185, 190),
+        Illustrasjon("nokkelbryter-vippe", "Nøkkelbryter (vippe)", 6, 178, 197),
+        Illustrasjon("nokkelbryter-sylinder", "Nøkkelbryter (sylinder)", 6, 198, 202),
+        Illustrasjon("magnetlas", "Magnetlås", 13, 384, 227),
+    ];
+
     public static readonly List<KoblingsKomponentGruppe> Grupper =
     [
-        new("Sentraler og dørmoduler", Sentraler),
-        new("Ved døra", VedDora),
-        new("Enkle symboler", Elektronikk),
+        new("Låser og sluttstykker", LaserOgSluttstykker),
+        new("Lesere og sentraler", LesereOgSentraler),
+        new("Ved døra", UtstyrVedDora),
     ];
+
+    // Eldre komponenter vises ikke lenger i paletten, men koblingsskjemaer som
+    // allerede bruker dem skal fortsatt tegnes riktig.
+    private static readonly List<KoblingsKomponent> Utgatte = [.. Sentraler, .. VedDora, .. Elektronikk];
+
+    private static KoblingsKomponent Illustrasjon(string nokkel, string navn, double bredde, double w, double h) =>
+        new($"b-{nokkel}", navn, "box", $"/img/kobling/egne/{nokkel}.png", bredde, h / w);
 
     private static KoblingsKomponent Tegning(string nokkel, string navn, double bredde, double w, double h) =>
         new($"p-{nokkel}", navn, "box", $"/img/kobling/{nokkel}.svg", bredde, h / w);
@@ -96,5 +138,5 @@ public static class KoblingsKomponentKatalog
     ];
 
     public static KoblingsKomponent? Finn(string? nokkel) =>
-        nokkel is null ? null : Grupper.SelectMany(g => g.Komponenter).FirstOrDefault(k => k.Nokkel == nokkel);
+        nokkel is null ? null : Grupper.SelectMany(g => g.Komponenter).Concat(Utgatte).FirstOrDefault(k => k.Nokkel == nokkel);
 }

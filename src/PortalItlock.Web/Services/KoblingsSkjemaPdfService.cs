@@ -12,7 +12,8 @@ namespace PortalItlock.Web.Services;
 
 public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, IWebHostEnvironment env)
 {
-    // Produktlike tegninger (wwwroot/img/kobling) legges inn som innebygd SVG.
+    // Komponenttegninger (wwwroot/img/kobling) legges inn som innebygd SVG.
+    // PNG-illustrasjoner pakkes inn i en SVG med bildet som data-URI.
     private string? LesTegning(string? sti)
     {
         if (sti is null || !sti.StartsWith("/img/kobling/", StringComparison.Ordinal))
@@ -20,7 +21,25 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             return null;
         }
         var fil = Path.Combine(env.WebRootPath, sti.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
-        return File.Exists(fil) ? File.ReadAllText(fil) : null;
+        if (!File.Exists(fil))
+        {
+            return null;
+        }
+        if (!fil.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            return File.ReadAllText(fil);
+        }
+        var data = File.ReadAllBytes(fil);
+        if (data.Length < 24)
+        {
+            return null;
+        }
+        // Bredde og høyde står i IHDR-blokken (big-endian, byte 16-23).
+        var w = (data[16] << 24) | (data[17] << 16) | (data[18] << 8) | data[19];
+        var h = (data[20] << 24) | (data[21] << 16) | (data[22] << 8) | data[23];
+        var b64 = Convert.ToBase64String(data);
+        return $"<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 {w} {h}'>" +
+               $"<image width='{w}' height='{h}' xlink:href='data:image/png;base64,{b64}' href='data:image/png;base64,{b64}' /></svg>";
     }
 
     public async Task<byte[]?> GenerateAsync(int skjemaId)
