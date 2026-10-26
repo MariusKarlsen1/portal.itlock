@@ -94,6 +94,10 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("kodeleser-stal", "Kodeleser (stål)", 6, 269, 638),
         Illustrasjon("kodeleser-sort", "Kodeleser (sort)", 6, 270, 639),
         Illustrasjon("dorsentral-boks", "Dørsentral i boks", 22, 758, 676),
+        Illustrasjon("salto-cu42e0", "SALTO CU42E0", 20, 371, 436),
+        Illustrasjon("salto-kodeleser", "SALTO kodeleser", 7, 293, 316),
+        Illustrasjon("iloq-kodeleser", "iLOQ kodeleser", 6, 377, 677),
+        Illustrasjon("iloq-leser-slank", "iLOQ leser (slank)", 4, 130, 298),
     ];
 
     public static readonly List<KoblingsKomponent> UtstyrVedDora =
