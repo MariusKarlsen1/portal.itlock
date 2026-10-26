@@ -110,6 +110,7 @@ builder.Services.AddScoped<TenantOppslagService>();
 builder.Services.AddScoped<PackageMatchingService>();
 builder.Services.AddScoped<MobilVerktoylinjeService>();
 builder.Services.AddScoped<VisningPreferanseService>();
+builder.Services.AddScoped<SletteService>();
 builder.Services.AddScoped<TilbudPdfService>();
 builder.Services.AddScoped<TimeoversiktService>();
 builder.Services.AddScoped<FdvPdfService>();
