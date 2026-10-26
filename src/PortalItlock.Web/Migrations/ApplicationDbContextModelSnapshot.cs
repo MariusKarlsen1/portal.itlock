@@ -3437,8 +3437,17 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("KabelType")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("KoblingsSkjemaId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("LedereJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Navn")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PunkterJson")
                         .IsRequired()

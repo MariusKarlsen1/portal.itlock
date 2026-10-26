@@ -10,8 +10,18 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, IWebHostEnvironment env)
 {
+    // Produktlike tegninger (wwwroot/img/kobling) legges inn som innebygd SVG.
+    private string? LesTegning(string? sti)
+    {
+        if (sti is null || !sti.StartsWith("/img/kobling/", StringComparison.Ordinal))
+        {
+            return null;
+        }
+        var fil = Path.Combine(env.WebRootPath, sti.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+        return File.Exists(fil) ? File.ReadAllText(fil) : null;
+    }
 
     public async Task<byte[]?> GenerateAsync(int skjemaId)
     {
@@ -40,7 +50,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             .Where(b => bibliotekIds.Contains(b.Id))
             .ToDictionaryAsync(b => b.Id);
 
-        var svg = BuildSvg(symboler, streker, bibliotek);
+        var svg = BuildSvg(symboler, streker, bibliotek, LesTegning);
         var navngitte = symboler.Where(s => !string.IsNullOrWhiteSpace(s.Navn)).ToList();
 
         var document = Document.Create(doc =>
@@ -84,6 +94,20 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
                 page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
+
+            var kabler = streker.Where(s => s.ErKabel).OrderBy(s => s.Navn).ThenBy(s => s.Id).ToList();
+            if (kabler.Count > 0)
+            {
+                doc.Page(page =>
+                {
+                    page.Size(PageSizes.A4.Landscape());
+                    page.Margin(1.5f, Unit.Centimetre);
+                    page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
+                    page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Kabeljournal", skjema.Navn));
+                    page.Content().PaddingTop(10).Column(col => Kabeljournal(col, kabler));
+                    page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                });
+            }
         });
 
         return document.GeneratePdf();
@@ -107,7 +131,8 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
     private static string BuildSvg(
         List<KoblingsSymbol> symboler,
         List<KoblingsStrek> streker,
-        Dictionary<int, KoblingsSymbolBibliotek> bibliotek)
+        Dictionary<int, KoblingsSymbolBibliotek> bibliotek,
+        Func<string?, string?> lesTegning)
     {
         var sb = new StringBuilder();
         sb.Append(CultureInfo.InvariantCulture,
@@ -120,6 +145,12 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(strek.PunkterJson) ?? [];
             if (punkter.Count == 0)
             {
+                continue;
+            }
+
+            if (strek.ErKabel)
+            {
+                TegnKabel(sb, strek, punkter);
                 continue;
             }
 
@@ -137,6 +168,19 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             var h = s.Hoyde * (ViewBoxHoyde / 100.0);
             var cx = x + w / 2;
             var cy = y + h / 2;
+
+            if (s.ElementType == KoblingsElementType.Komponent
+                && lesTegning(KoblingsKomponentKatalog.Finn(s.KomponentNokkel)?.Bilde) is { } tegning)
+            {
+                // Bytt ut rot-elementets width/height med plassen på skjemaet.
+                var start = tegning.IndexOf("<svg", StringComparison.Ordinal);
+                var slutt = tegning.IndexOf('>', start);
+                var rotTag = tegning[start..slutt];
+                var viewBox = System.Text.RegularExpressions.Regex.Match(rotTag, "viewBox='([^']*)'").Groups[1].Value;
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"<svg x='{Inv(x)}' y='{Inv(y)}' width='{Inv(w)}' height='{Inv(h)}' viewBox='{viewBox}' preserveAspectRatio='xMidYMid meet'>");
+                sb.Append(tegning[(slutt + 1)..]);
+            }
 
             switch (s.ElementType)
             {
@@ -185,6 +229,93 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
         sb.Append("</svg>");
         return sb.ToString();
+    }
+
+    // Kabel med ledere: tykk sort kabel som deler seg i fargede ledere i hver ende.
+    private static void TegnKabel(StringBuilder sb, KoblingsStrek strek, List<KoblingsStrekPunkt> punkter)
+    {
+        var vifte = KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(strek.LedereJson), ViewBoxHoyde / ViewBoxBredde);
+        if (vifte is null)
+        {
+            return;
+        }
+
+        static string Pts(IEnumerable<KoblingsStrekPunkt> p) => string.Join(" ", p.Select(q => $"{Inv(q.X)},{Inv(YtilVb(q.Y))}"));
+
+        sb.Append(CultureInfo.InvariantCulture,
+            $"<polyline points='{Pts(vifte.Kropp)}' fill='none' stroke='{KoblingsKabel.KabelFarge}' stroke-width='0.9' stroke-linejoin='round' stroke-linecap='round' />");
+        foreach (var l in vifte.Ledere)
+        {
+            var pts = Pts(l.Punkter);
+            if (l.Leder.Farge == "Hvit")
+            {
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"<polyline points='{pts}' fill='none' stroke='#9a948c' stroke-width='0.5' stroke-linejoin='round' stroke-linecap='round' />");
+            }
+            var dash = l.Leder.Stiplet ? "stroke-dasharray='0.6,0.45'" : "";
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<polyline points='{pts}' fill='none' stroke='{KoblingsKabel.Hex(l.Leder.Farge)}' stroke-width='0.32' stroke-linejoin='round' stroke-linecap='round' {dash} />");
+        }
+
+        if (!string.IsNullOrWhiteSpace(strek.Navn))
+        {
+            var etikett = $"{strek.Navn} · {(string.IsNullOrWhiteSpace(strek.KabelType) ? KoblingsKabel.MalNavn(KoblingsKabel.Les(strek.LedereJson)) : strek.KabelType)}";
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<text x='{Inv(vifte.Merke.X)}' y='{Inv(YtilVb(vifte.Merke.Y) - 1.1)}' font-size='1.3' font-weight='bold' font-family='Arial, sans-serif' text-anchor='middle' fill='#2a2622'>{System.Net.WebUtility.HtmlEncode(etikett)}</text>");
+        }
+    }
+
+    // Kabeljournal: én rad per leder - klemme, funksjon, leder, hvor den skal og merknad.
+    private static void Kabeljournal(ColumnDescriptor col, List<KoblingsStrek> kabler)
+    {
+        PdfStil.SeksjonTittel(col, "Kabeljournal");
+        col.Item().PaddingBottom(2).Text("Én rad = én leder. Les fra venstre: klemme → leder → hvor den skal.").FontSize(8.5f).FontColor(Colors.Grey.Darken1);
+
+        foreach (var k in kabler)
+        {
+            var ledere = KoblingsKabel.Les(k.LedereJson);
+            var tittel = string.IsNullOrWhiteSpace(k.Navn) ? "Kabel" : k.Navn;
+            var type = string.IsNullOrWhiteSpace(k.KabelType) ? KoblingsKabel.MalNavn(ledere) : $"{k.KabelType} · {KoblingsKabel.MalNavn(ledere)}";
+
+            col.Item().PaddingTop(6).Text(t =>
+            {
+                t.Span(tittel).Bold().FontSize(10);
+                t.Span("  " + type).FontSize(9).FontColor(Colors.Grey.Darken1);
+            });
+
+            col.Item().PaddingTop(3).Table(table =>
+            {
+                table.ColumnsDefinition(c =>
+                {
+                    c.ConstantColumn(52);
+                    c.RelativeColumn(3);
+                    c.RelativeColumn(2.4f);
+                    c.RelativeColumn(3);
+                    c.RelativeColumn(3);
+                });
+                table.Header(h =>
+                {
+                    foreach (var tekst in new[] { "Klemme", "Funksjon", "Leder", "Kobles til", "Merknad" })
+                    {
+                        h.Cell().Element(PdfStil.TabellHode).Text(tekst).FontColor(Colors.White).Bold().FontSize(8.5f);
+                    }
+                });
+                for (var i = 0; i < ledere.Count; i++)
+                {
+                    var l = ledere[i];
+                    var alt = i % 2 == 1;
+                    table.Cell().Element(c => PdfStil.TabellRad(c, alt)).Text(string.IsNullOrWhiteSpace(l.Klemme) ? "–" : l.Klemme).Bold();
+                    table.Cell().Element(c => PdfStil.TabellRad(c, alt)).Text(l.Funksjon);
+                    table.Cell().Element(c => PdfStil.TabellRad(c, alt)).Row(r =>
+                    {
+                        r.ConstantItem(8).AlignMiddle().Height(8).Background(Color.FromHex(KoblingsKabel.Hex(l.Farge))).Border(0.5f).BorderColor(Colors.Grey.Medium);
+                        r.RelativeItem().PaddingLeft(5).Text(KoblingsKabel.LederTekst(l));
+                    });
+                    table.Cell().Element(c => PdfStil.TabellRad(c, alt)).Text(l.Til);
+                    table.Cell().Element(c => PdfStil.TabellRad(c, alt)).Text(l.Merknad).FontColor(Colors.Grey.Darken2);
+                }
+            });
+        }
     }
 
     private static double YtilVb(double prosentY) => prosentY * (ViewBoxHoyde / 100.0);

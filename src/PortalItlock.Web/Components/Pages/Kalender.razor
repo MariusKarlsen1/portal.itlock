@@ -229,8 +229,9 @@
                                                 <button type="button" @key="b.Nokkel"
                                                         class="kal-ukeblokk kal-manedsblokk"
                                                         style="background:@b.Farge.Flate; border-left-color:@b.Farge.Kant; color:@b.Farge.Blekk"
-                                                        draggable="@(b.ArbeidsordreId is not null && KanPlanlegge)"
-                                                        @ondragstart="@(() => _draggingOrdreId = b.ArbeidsordreId)"
+                                                        draggable="@(KanDras(b) ? "true" : "false")"
+                                                        @ondragstart="@(() => StartDra(b))"
+                                                        @ondragend="AvsluttDra"
                                                         @onclick="@(() => VelgAktivitet(b))"
                                                         @oncontextmenu="@(() => AapneRedigerHendelse(b))"
                                                         @oncontextmenu:preventDefault="true"
@@ -282,9 +283,12 @@
                                             <span class="kal-ansatt-rolle">@ansatt.Stilling</span>
                                         </span>
                                     </div>
-                                    <div class="kal-spor"
+                                    <div class="kal-spor @(_dragOverCelle == CelleNokkel(ansatt.Id, _valgtDato) ? "dragover" : "")"
                                          @oncontextmenu="@(() => AapneNyHendelse(ansatt.Id, _valgtDato))"
-                                         @oncontextmenu:preventDefault="true">
+                                         @oncontextmenu:preventDefault="true"
+                                         @ondragover="@(() => { })" @ondragover:preventDefault="true"
+                                         @ondragenter="@(() => _dragOverCelle = CelleNokkel(ansatt.Id, _valgtDato))"
+                                         @ondrop="@(() => OnDropCelleAsync(ansatt.Id, _valgtDato))">
                                         @for (var t = DagStartTime; t <= DagSluttTime; t++)
                                         {
                                             <span class="kal-sporlinje" style="left:@TimeProsent(t).ToString(Invariant)%"></span>
@@ -298,6 +302,9 @@
                                             <button type="button" @key="b.Nokkel"
                                                     class="kal-akt @(_valgtAktivitet?.Nokkel == b.Nokkel ? "valgt" : "")"
                                                     style="left:@TimeProsent(b.FraTimer).ToString(Invariant)%; width:@BreddeProsent(b).ToString(Invariant)%; background:@b.Farge.Flate; border-left-color:@b.Farge.Kant; color:@b.Farge.Blekk"
+                                                    draggable="@(b.RessursplanId is not null && KanPlanlegge ? "true" : "false")"
+                                                    @ondragstart="@(() => StartDra(b))"
+                                                    @ondragend="AvsluttDra"
                                                     @onclick="@(() => VelgAktivitet(b))"
                                                     @oncontextmenu="@(() => AapneRedigerHendelse(b))"
                                                     @oncontextmenu:preventDefault="true"
@@ -358,9 +365,12 @@
                                     </div>
                                     @foreach (var dag in UkensDager)
                                     {
-                                        <div class="kal-ukecelle @(dag.Date == NorskTid.Idag ? "idag" : "")"
+                                        <div class="kal-ukecelle @(dag.Date == NorskTid.Idag ? "idag" : "") @(_dragOverCelle == CelleNokkel(ansatt.Id, dag) ? "dragover" : "")"
                                              @oncontextmenu="@(() => AapneNyHendelse(ansatt.Id, dag))"
-                                             @oncontextmenu:preventDefault="true">
+                                             @oncontextmenu:preventDefault="true"
+                                             @ondragover="@(() => { })" @ondragover:preventDefault="true"
+                                             @ondragenter="@(() => _dragOverCelle = CelleNokkel(ansatt.Id, dag))"
+                                             @ondrop="@(() => OnDropCelleAsync(ansatt.Id, dag))">
                                             @foreach (var b in BlokkerFor(ansatt.Id, dag))
                                             {
                                                 @* Brikka og "..."-knappen er sosken og ikke nostet, for en
@@ -369,6 +379,9 @@
                                                     <button type="button"
                                                             class="kal-ukeblokk @(_valgtAktivitet?.Nokkel == b.Nokkel ? "valgt" : "")"
                                                             style="background:@b.Farge.Flate; border-left-color:@b.Farge.Kant; color:@b.Farge.Blekk"
+                                                            draggable="@(KanDras(b) ? "true" : "false")"
+                                                            @ondragstart="@(() => StartDra(b))"
+                                                            @ondragend="AvsluttDra"
                                                             @onclick="@(() => VelgAktivitet(b))"
                                                             @oncontextmenu="@(() => AapneRedigerHendelse(b))"
                                                             @oncontextmenu:preventDefault="true"
@@ -1613,6 +1626,12 @@
     {
         _dragOverDato = null;
 
+        if (KanPlanlegge && _draggingRessursplanId is { } rpId)
+        {
+            await FlyttRessursplanAsync(rpId, nyDato, null);
+            return;
+        }
+
         if (!KanPlanlegge || _draggingOrdreId is null)
         {
             _draggingOrdreId = null;
@@ -1647,4 +1666,63 @@
 
     private string FargeForMontor(int montorId) => _fargekart.GetValueOrDefault(montorId, "#6b6b63");
 
+
+    // Dra og slipp: arbeidsordrer og hendelser fra høyreklikk (ressursplan) kan
+    // flyttes til en ny dag. I uke- og dagsvisningen kan en hendelse også flyttes
+    // til en annen ansatt ved å slippe den på raden deres.
+    private int? _draggingRessursplanId;
+    private string? _dragOverCelle;
+
+    private static string CelleNokkel(int ansattId, DateTime dag) => $"{ansattId}|{dag:yyyyMMdd}";
+
+    private bool KanDras(AktivitetBlokk b) => KanPlanlegge && (b.ArbeidsordreId is not null || b.RessursplanId is not null);
+
+    private void StartDra(AktivitetBlokk b)
+    {
+        _draggingOrdreId = b.RessursplanId is null ? b.ArbeidsordreId : null;
+        _draggingRessursplanId = b.RessursplanId;
+    }
+
+    private void AvsluttDra()
+    {
+        _dragOverDato = null;
+        _dragOverCelle = null;
+    }
+
+    private async Task OnDropCelleAsync(int ansattId, DateTime dag)
+    {
+        _dragOverCelle = null;
+        if (!KanPlanlegge)
+        {
+            return;
+        }
+        if (_draggingRessursplanId is { } rpId)
+        {
+            await FlyttRessursplanAsync(rpId, dag, ansattId);
+            return;
+        }
+        // Arbeidsordrer flyttes bare i tid her - montørene settes på ordren.
+        await OnDropAsync(dag);
+    }
+
+    private async Task FlyttRessursplanAsync(int id, DateTime nyDato, int? nyMontorId)
+    {
+        _draggingRessursplanId = null;
+        var rp = await Db.Ressursplaner.FindAsync(id);
+        if (rp is null)
+        {
+            return;
+        }
+        if (rp.Dato.Date == nyDato.Date && (nyMontorId is null || rp.MontorId == nyMontorId))
+        {
+            return;
+        }
+        rp.Dato = nyDato.Date;
+        if (nyMontorId is { } m)
+        {
+            rp.MontorId = m;
+        }
+        await Db.SaveChangesAsync();
+        await LastAsync();
+    }
 }
