@@ -565,6 +565,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(a => a.FullfortAvBrukerId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        // Lenken kunden får for å godkjenne låsplanen slås opp på token.
+        modelBuilder.Entity<Prosjekt>()
+            .HasIndex(p => p.LasplanToken)
+            .IsUnique();
+
         modelBuilder.Entity<Prosjekt>()
             .HasOne(p => p.Kunde)
             .WithMany(k => k.Prosjekter)

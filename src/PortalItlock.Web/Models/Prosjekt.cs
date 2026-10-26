@@ -28,6 +28,23 @@ public class Prosjekt
     public string? LasplanProsjektnummer { get; set; }
     public string? LasplanUtarbeidetAv { get; set; }
     public bool LasplanLast { get; set; } = true;
+
+    // Godkjenning av låsplanen: sendes til kunden med en lenke (token), kunden
+    // kan endre kryss og godkjenner med navn og signatur. Se LasplanGodkjenningService.
+    public LasplanStatus LasplanStatus { get; set; }
+    public string? LasplanSendtTil { get; set; }
+    public DateTime? LasplanSendtDato { get; set; }
+    public string? LasplanToken { get; set; }
+    public DateTime? LasplanTokenUtloper { get; set; }
+    public string? LasplanGodkjentAv { get; set; }
+    public string? LasplanGodkjentFirma { get; set; }
+    public DateTime? LasplanGodkjentDato { get; set; }
+    /// Signaturen som PNG data-URL.
+    public string? LasplanSignatur { get; set; }
+    /// JSON: kryss kunden endret før godkjenning, vises gult i matrisen.
+    public string? LasplanKundeEndringer { get; set; }
+    /// JSON: historikk (tid + tekst).
+    public string? LasplanLogg { get; set; }
     public double? Latitude { get; set; }
     public double? Longitude { get; set; }
 

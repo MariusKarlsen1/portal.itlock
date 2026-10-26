@@ -119,6 +119,7 @@ builder.Services.AddScoped<TicketRapportPdfService>();
 builder.Services.AddScoped<ProduktsammendragPdfService>();
 builder.Services.AddScoped<DorpakkePdfService>();
 builder.Services.AddScoped<LasplanPdfService>();
+builder.Services.AddScoped<LasplanGodkjenningService>();
 builder.Services.AddScoped<TripletexOrdreCsvService>();
 builder.Services.AddScoped<PrisimportService>();
 builder.Services.AddScoped<PrisoppdateringService>();
@@ -1389,6 +1390,25 @@ app.MapGet("/komponent/fdvdokument/{id:int}", async (int id, ApplicationDbContex
         : Results.File(dokument.Data, FilSikkerhet.TryggContentType(dokument.ContentType), dokument.Filnavn);
 }).RequireAuthorization();
 
+// Kundens side for å se, endre og godkjenne låsplanen. Kunden er ikke innlogget -
+// lenken (token) er tilgangen, og organisasjonen finnes fra vertsnavnet.
+app.MapGet("/lasplan/g/{token}", async (string token, LasplanGodkjenningService tjeneste, ITenantContext tenantContext) =>
+{
+    var org = tenantContext.Current is { } t ? t.PortalVisningsnavn ?? t.Navn : "Full Kontroll";
+    var p = await tjeneste.FinnForTokenAsync(token);
+    var html = p is null
+        ? LasplanKundeSide.Melding(org, "Fant ikke låsplanen", "Lenken er ugyldig eller ikke lenger i bruk. Ta kontakt med den som sendte deg låsplanen.")
+        : LasplanKundeSide.Side(org, p, await tjeneste.HentMatriseAsync(p.Id), token);
+    return Results.Content(html, "text/html; charset=utf-8");
+}).AllowAnonymous().RequireRateLimiting("login");
+
+app.MapPost("/lasplan/g/{token}/godkjenn", async (string token, LasplanGodkjenningBody body, HttpContext http, LasplanGodkjenningService tjeneste) =>
+{
+    var baseUrl = $"{http.Request.Scheme}://{http.Request.Host}";
+    var feil = await tjeneste.GodkjennFraKundeAsync(token, body.Navn ?? "", body.Firma, body.Signatur ?? "", body.Kryss ?? [], baseUrl);
+    return Results.Json(new { ok = feil is null, melding = feil });
+}).AllowAnonymous().RequireRateLimiting("login");
+
 app.MapGet("/fdvvedlegg/{id:int}/fil", async (int id, ApplicationDbContext db) =>
 {
     var vedlegg = await db.FdvVedlegg.FindAsync(id);
@@ -2171,3 +2191,5 @@ sealed class InlineFileResult(byte[] data, string contentType, string filename) 
         return httpContext.Response.Body.WriteAsync(data).AsTask();
     }
 }
+
+record LasplanGodkjenningBody(string? Navn, string? Firma, string? Signatur, List<string>? Kryss);

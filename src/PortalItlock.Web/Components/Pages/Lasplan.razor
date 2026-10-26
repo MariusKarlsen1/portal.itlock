@@ -10,6 +10,10 @@
 @inject LagretPdfService LagretPdfService
 @inject TilbudSyncService TilbudSync
 @inject VisningPreferanseService VisningPref
+@inject LasplanGodkjenningService Godkjenning
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@using Microsoft.AspNetCore.Components.Authorization
 
 <PageTitle>Låsplan - @(_prosjekt?.Navn)</PageTitle>
 
@@ -23,9 +27,12 @@ else if (_prosjekt is null)
 }
 else
 {
-    @* Låsplan LP1 (lasplan-forslag.html): som før, samlet i ett kort - infofelter
-       som rad, tydelig låst/redigering, nøkler, matrise med faste overskrifter og
-       kryss, legg til sylinder manuelt og lagrede PDF-er. Samme funksjoner som før. *@
+    @* Låsplan (lasplan-proto.html): status øverst (I arbeid → Sendt til kunde →
+       Godkjent og signert), knapper i toppen, matrisen med loddrette nøkkelnavn og
+       kryss, «Se på plantegning» per sylinder og historikk nederst. Kunden godkjenner
+       via en lenke (LasplanGodkjenningService, /lasplan/g/{token}). *@
+    var status = _prosjekt.LasplanStatus;
+    var kanEndre = !_prosjekt.LasplanLast && status == LasplanStatus.IArbeid;
     <div class="ls-kort @(_full ? "ls-full" : "")">
         <div class="ls-topp">
             <div>
@@ -33,15 +40,74 @@ else
                 <h1>Låsplan – @_prosjekt.Navn</h1>
             </div>
             <div class="ls-handl">
-                <button type="button" class="ls-kn" @onclick="SynkroniserSylindere">Synkroniser sylindere</button>
-                <button type="button" class="ls-kn ls-kn-p" @onclick="GenererPdf"><Icon Name="file-text" />Last ned PDF</button>
+                <div class="ls-status-w">
+                    <button type="button" class="ls-status @StatusKlasse(status)" aria-haspopup="menu" aria-expanded="@(_visStatusMeny ? "true" : "false")" @onclick="@(() => _visStatusMeny = !_visStatusMeny)">
+                        @status.Visningsnavn() <Icon Name="chevron-down" />
+                    </button>
+                    @if (_visStatusMeny)
+                    {
+                        <div class="ls-status-meny" role="menu">
+                            <button type="button" role="menuitem" @onclick="ApneSend"><b>@(status == LasplanStatus.SendtTilKunde ? "Send på nytt" : "Send til kunde")</b><small>Kunden får en lenke på e-post</small></button>
+                            @if (status != LasplanStatus.Godkjent)
+                            {
+                                <button type="button" role="menuitem" @onclick="GodkjennInternt"><b>Godkjenn selv</b><small>Marker som godkjent uten kunde</small></button>
+                            }
+                            @if (status != LasplanStatus.IArbeid)
+                            {
+                                <button type="button" role="menuitem" @onclick="TilbakeTilArbeid"><b>Sett tilbake til «I arbeid»</b><small>Lenken til kunden slutter å virke</small></button>
+                            }
+                        </div>
+                    }
+                </div>
                 <button type="button" class="ls-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
             </div>
         </div>
-        <p class="ls-hint">
-            Sylindere hentes fra varer merket «Låsplan» på prosjektets tilbud <strong>som også er plassert på en dør</strong>
-            (under Dører-fanen). Kryss av hvilke nøkler som åpner hvilke sylindere.
-        </p>
+
+        <div class="ls-steg">
+            <span class="@(status == LasplanStatus.IArbeid ? "na" : "ferdig")">I arbeid</span><i></i>
+            <span class="@(status == LasplanStatus.SendtTilKunde ? "na" : status == LasplanStatus.Godkjent ? "ferdig" : "")">Sendt til kunde</span><i></i>
+            <span class="@(status == LasplanStatus.Godkjent ? "na" : "")">Godkjent og signert</span>
+        </div>
+
+        @if (status == LasplanStatus.SendtTilKunde)
+        {
+            <div class="ls-banner sendt">
+                <div>
+                    <b>Sendt til @_prosjekt.LasplanSendtTil · @(_prosjekt.LasplanSendtDato?.ToString("dd.MM.yyyy HH:mm"))</b>
+                    <small>Venter på at kunden ser over og godkjenner. Matrisen er låst mens den er hos kunden. Lenken gjelder til @(_prosjekt.LasplanTokenUtloper?.ToString("dd.MM.yyyy")).</small>
+                </div>
+                <span class="ls-sp"></span>
+                <button type="button" class="ls-kn ls-kn-s" @onclick="KopierLenke">Kopier lenke</button>
+                <button type="button" class="ls-kn ls-kn-s" @onclick="Paminn">Send påminnelse</button>
+            </div>
+        }
+        else if (status == LasplanStatus.Godkjent)
+        {
+            var endr = LasplanGodkjenningService.KundeEndringer(_prosjekt);
+            <div class="ls-banner godkjent">
+                <div>
+                    <b>Godkjent og signert av @_prosjekt.LasplanGodkjentAv@(_prosjekt.LasplanGodkjentFirma is null ? "" : $", {_prosjekt.LasplanGodkjentFirma}")</b>
+                    <small>@(_prosjekt.LasplanGodkjentDato?.ToString("dd.MM.yyyy HH:mm"))@(endr.Count > 0 ? $" · kunden endret {endr.Count} kryss (merket gult i matrisen)" : _prosjekt.LasplanSignatur is null ? "" : " · uten endringer")</small>
+                </div>
+                <span class="ls-sp"></span>
+                @if (_prosjekt.LasplanSignatur is { } sig)
+                {
+                    <img class="ls-signatur" src="@sig" alt="Signatur" />
+                }
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(_statusMelding))
+        {
+            <span class="ls-melding">@_statusMelding</span>
+        }
+
+        <div class="ls-verktoy">
+            <button type="button" class="ls-kn ls-kn-p" @onclick="ApneLeggTilSylinder" disabled="@(status != LasplanStatus.IArbeid)"><Icon Name="plus" />Legg til sylinder</button>
+            <button type="button" class="ls-kn" @onclick="SynkroniserSylindere" disabled="@(status != LasplanStatus.IArbeid)">Synkroniser fra dører</button>
+            <button type="button" class="ls-kn" @onclick="ToggleLast" disabled="@(status == LasplanStatus.SendtTilKunde)"><Icon Name="lock" />@(kanEndre ? "Lås matrise" : "Aktiver redigering")</button>
+            <span class="ls-sp"></span>
+            <button type="button" class="ls-kn" @onclick="GenererPdf"><Icon Name="file-text" />Last ned PDF</button>
+        </div>
         @if (!string.IsNullOrEmpty(_syncMessage))
         {
             <span class="ls-melding">@_syncMessage</span>
@@ -65,10 +131,8 @@ else
                 <div><span class="ls-lbl">Utarbeidet av / dato</span><b>@(string.IsNullOrWhiteSpace(_prosjekt.LasplanUtarbeidetAv) ? "–" : _prosjekt.LasplanUtarbeidetAv)</b></div>
             </div>
         }
-
         <div class="ls-rad">
-            <span class="ls-lasmerke @(_prosjekt.LasplanLast ? "last" : "apen")">@(_prosjekt.LasplanLast ? "🔒 Matrisen er låst" : "✏️ Redigering på")</span>
-            <button type="button" class="ls-kn ls-kn-s" @onclick="ToggleLast">@(_prosjekt.LasplanLast ? "Aktiver redigering" : "Lås matrise")</button>
+            <span class="ls-lasmerke @(kanEndre ? "apen" : "last")">@(kanEndre ? "✏️ Redigering på – trykk i rutene for å sette kryss" : status == LasplanStatus.SendtTilKunde ? "🔒 Låst mens den er hos kunden" : "🔒 Matrisen er låst")</span>
             <span class="ls-hoyre">
                 @if (!string.IsNullOrEmpty(_savedMessage))
                 {
@@ -105,7 +169,10 @@ else
                 {
                     <span @key="n.Id" class="ls-nokkel">
                         @n.Merking: @n.Navn (@n.Antall stk)
-                        <button type="button" title="Fjern nøkkel" @onclick="@(() => FjernNokkel(n))">&times;</button>
+                        @if (status == LasplanStatus.IArbeid)
+                        {
+                            <button type="button" title="Fjern nøkkel" @onclick="@(() => FjernNokkel(n))">&times;</button>
+                        }
                     </span>
                 }
                 @if (_nokler.Any(n => n.Merking is null || !n.Merking.StartsWith('K')))
@@ -113,48 +180,66 @@ else
                     <button type="button" class="ls-kn ls-kn-s" @onclick="FiksNokkelmerking">Fiks merking (K1, K2, ...)</button>
                 }
             </div>
-            <div class="ls-rad">
-                <input class="ls-inp ls-flex2" @bind="_nyNokkelNavn" @bind:event="oninput" placeholder="Nøkkelnavn, f.eks. Hovednøkkel" />
-                <input class="ls-inp ls-flex1" @bind="_nyNokkelMateriale" @bind:event="oninput" placeholder="Materiale (valgfritt)" />
-                <input class="ls-inp ls-antall" type="number" min="0" @bind="_nyNokkelAntall" placeholder="Antall" />
-                <button type="button" class="ls-kn ls-kn-p ls-kn-s" @onclick="LeggTilNokkel" disabled="@string.IsNullOrWhiteSpace(_nyNokkelNavn)">Legg til nøkkel</button>
-            </div>
+            @if (status == LasplanStatus.IArbeid)
+            {
+                <div class="ls-rad">
+                    <input class="ls-inp ls-flex2" @bind="_nyNokkelNavn" @bind:event="oninput" placeholder="Nøkkelnavn, f.eks. Hovednøkkel" />
+                    <input class="ls-inp ls-flex1" @bind="_nyNokkelMateriale" @bind:event="oninput" placeholder="Materiale (valgfritt)" />
+                    <input class="ls-inp ls-antall" type="number" min="0" @bind="_nyNokkelAntall" placeholder="Antall" />
+                    <button type="button" class="ls-kn ls-kn-p ls-kn-s" @onclick="LeggTilNokkel" disabled="@string.IsNullOrWhiteSpace(_nyNokkelNavn)">Legg til nøkkel</button>
+                </div>
+            }
         </div>
 
         @if (_rader.Count == 0)
         {
-            <p class="list-empty">Ingen sylindere plassert på dører ennå. Kryss av "Låsplan" på riktige varer inne på tilbudet, og legg dem til på en dør under Dører-fanen.</p>
+            <p class="list-empty">Ingen sylindere ennå. Kryss av «Låsplan» på riktige varer inne på tilbudet og legg dem til på en dør under Dører-fanen – eller bruk «Legg til sylinder» over.</p>
         }
         else
         {
+            var endringer = status == LasplanStatus.Godkjent ? LasplanGodkjenningService.KundeEndringer(_prosjekt) : new List<LasplanGodkjenningService.Endring>();
+            <div class="ls-forklaring">
+                <span><i class="ls-x pa">X</i>Åpner</span>
+                @if (endringer.Count > 0)
+                {
+                    <span><i class="ls-x ny">X</i>Lagt til av kunde</span>
+                    <span><i class="ls-x fjernet"></i>Fjernet av kunde</span>
+                }
+            </div>
             <div class="ls-mxwrap">
-                <table class="ls-mx @(_prosjekt.LasplanLast ? "ls-mx-last" : "")">
+                <table class="ls-mx @(kanEndre ? "" : "ls-mx-last")">
                     <thead>
                         <tr>
-                            <th class="ls-fast">Syl.mrk</th>
+                            <th class="ls-fast">Syl.</th>
                             <th>Dør til</th>
                             <th>Dørnr.</th>
-                            <th>Sylindertype</th>
-                            <th>Antall</th>
+                            <th>Sylinder</th>
+                            <th>Ant.</th>
                             @foreach (var n in _nokler)
                             {
-                                <th @key="n.Id" class="ls-nk"><b>@n.Merking</b><small>@n.Navn</small></th>
+                                <th @key="n.Id" class="ls-nk"><span class="ls-nk-inn"><span class="ls-nk-navn">@n.Navn</span><b>@n.Merking</b><em>@n.Antall stk</em></span></th>
                             }
+                            <th>Montert</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var rad in _rader)
                         {
+                            var radNokkel = rad.ReserveId is not null ? $"r{rad.ReserveId}" : $"d{rad.DorId}-{rad.ComponentId}";
                             <tr @key="rad.RadKey">
-                                <td class="ls-fast"><b>@rad.Visningsnummer</b></td>
-                                <td>@(rad.Dor?.DorTil ?? (string.IsNullOrWhiteSpace(rad.ReserveDorTil) ? "–" : rad.ReserveDorTil))</td>
+                                <td class="ls-fast"><b class="ls-nr">@rad.Visningsnummer</b></td>
+                                <td><b>@(rad.Dor?.DorTil ?? (string.IsNullOrWhiteSpace(rad.ReserveDorTil) ? "–" : rad.ReserveDorTil))</b></td>
                                 <td class="@(rad.Dor is null ? "ls-mut" : "")">@(rad.Dor?.Dornummer ?? (string.IsNullOrWhiteSpace(rad.ReserveDornr) ? "Reserve" : rad.ReserveDornr))</td>
                                 <td>
                                     <span class="ls-syl">
                                         @rad.Component.Navn
-                                        <button type="button" class="ls-fjern" title="Fjern sylinder" @onclick="@(() => FjernRad(rad))">&times;</button>
+                                        @if (status == LasplanStatus.IArbeid)
+                                        {
+                                            <button type="button" class="ls-fjern" title="Fjern sylinder" @onclick="@(() => FjernRad(rad))">&times;</button>
+                                        }
                                     </span>
-                                    @if (rad.ReserveId is not null)
+                                    @if (rad.ReserveId is not null && status == LasplanStatus.IArbeid)
                                     {
                                         <span class="ls-koble">
                                             <select @bind="rad.ValgtKoblingDorId">
@@ -172,10 +257,26 @@ else
                                 @foreach (var n in _nokler)
                                 {
                                     var krysset = ApnerDenne(rad, n);
-                                    <td @key="n.Id" class="ls-x @(krysset ? "krysset" : "")" @onclick="@(() => ToggleKryss(rad, n))">
-                                        @(krysset ? "X" : "")
+                                    var endring = endringer.FirstOrDefault(x => x.NokkelId == n.Id && x.Rad == radNokkel);
+                                    var klasse = endring is not null ? (endring.Pa ? "ny" : "fjernet") : krysset ? "pa" : "";
+                                    <td @key="n.Id" class="ls-xc">
+                                        <button type="button" disabled="@(!kanEndre)" aria-pressed="@(krysset ? "true" : "false")" aria-label="@($"{n.Navn} åpner {rad.Dor?.DorTil ?? rad.Component.Navn}")" @onclick="@(() => ToggleKryss(rad, n))">
+                                            <i class="ls-x @klasse">@(krysset ? "X" : "")</i>
+                                        </button>
                                     </td>
                                 }
+                                <td>
+                                    @if (rad.Dor is not null)
+                                    {
+                                        <span class="ls-mt @(rad.Montert ? "ja" : "nei")">@(rad.Montert ? "Montert" : "Ikke montert")</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (rad.Dor?.PlantegningId is not null)
+                                    {
+                                        <button type="button" class="ls-pin" @onclick="@(() => _planDor = rad.Dor)"><Icon Name="map-pin" />Se på plantegning</button>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -183,59 +284,139 @@ else
             </div>
         }
 
-        <div class="ls-boks">
-            <h3>Legg til sylinder manuelt</h3>
-            <span class="ls-mut ls-liten">
-                Bruk dette dersom en sylinder ikke ligger på tilbudet, eller du vil legge den til direkte uten å gå via Dører-fanen.
-                Velg "Legg til ny" for en sylinder som skal leveres, men som ikke er montert på noen dør ennå.
-            </span>
-            <div class="ls-rad">
-                <select class="ls-inp ls-velg" @bind="_valgtDorId">
-                    <option value="">Velg dør...</option>
-                    <option value="-1">Legg til ny</option>
-                    @foreach (var d in _dorer)
-                    {
-                        <option value="@d.Id">@d.Dornummer@(string.IsNullOrWhiteSpace(d.DorTil) ? "" : $" – {d.DorTil}")</option>
-                    }
-                </select>
-                <input class="ls-inp ls-antall" type="number" min="1" @bind="_manuellAntall" placeholder="Antall" />
-                @if (_valgtDorId == -1)
-                {
-                    <input class="ls-inp ls-flex1" @bind="_manuellDornr" @bind:event="oninput" placeholder="Dørnr. (valgfritt)" />
-                    <input class="ls-inp ls-flex1" @bind="_manuellDorTil" @bind:event="oninput" placeholder="Dør til (valgfritt)" />
-                }
-            </div>
-            <div class="ls-sok">
-                <input class="ls-inp" @bind="_komponentSok" @bind:event="oninput" @bind:after="SokSylinderKomponent" placeholder="Søk sylinder – navn, leverandør eller produktkode" />
-                @if (_sokeResultater.Count > 0)
-                {
-                    <ul class="ls-treff">
-                        @foreach (var r in _sokeResultater)
-                        {
-                            <li>
-                                <button type="button" @onclick="@(() => LeggTilManuellSylinder(r))">
-                                    <b>@r.Navn</b>
-                                    <span class="ls-mut">@r.Leverandor</span>
-                                </button>
-                            </li>
-                        }
-                    </ul>
-                }
-                else if (_komponentSok.Trim().Length >= 2)
-                {
-                    <span class="ls-mut ls-liten">Ingen treff.</span>
-                }
-            </div>
-            @if (!string.IsNullOrEmpty(_manuellMessage))
-            {
-                <span class="ls-melding">@_manuellMessage</span>
-            }
-        </div>
-
         <div class="ls-seksjon">
             <h4>Lagrede PDF-er</h4>
             <LagredePdfListe Pdfer="_lagredePdfer" />
         </div>
+
+        @{ var logg = LasplanGodkjenningService.Logg(_prosjekt); }
+        @if (logg.Count > 0)
+        {
+            <div class="ls-seksjon">
+                <h4>Historikk</h4>
+                <div class="ls-logg">
+                    @foreach (var l in Enumerable.Reverse(logg))
+                    {
+                        <div><time>@l.Tid.ToString("dd.MM.yyyy HH:mm")</time><span>@l.Tekst</span></div>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (_visLeggTil)
+        {
+            <div class="ls-overlay" @onclick="@(() => _visLeggTil = false)">
+                <div class="ls-modal" role="dialog" aria-modal="true" aria-label="Legg til sylinder" @onclick:stopPropagation="true">
+                    <div class="ls-mhode"><h3>Legg til sylinder</h3><button type="button" class="ls-lukk" aria-label="Lukk" @onclick="@(() => _visLeggTil = false)"><Icon Name="x" /></button></div>
+                    <div class="ls-mkropp">
+                        <span class="ls-mut ls-liten">For en sylinder som ikke ligger på tilbudet, eller som skal leveres uten å være montert på en dør ennå («Ny – ikke på noen dør»).</span>
+                        <div class="ls-rad">
+                            <select class="ls-inp ls-velg" @bind="_valgtDorId">
+                                <option value="">Velg dør...</option>
+                                <option value="-1">Ny – ikke på noen dør</option>
+                                @foreach (var d in _dorer)
+                                {
+                                    <option value="@d.Id">@d.Dornummer@(string.IsNullOrWhiteSpace(d.DorTil) ? "" : $" – {d.DorTil}")</option>
+                                }
+                            </select>
+                            <input class="ls-inp ls-antall" type="number" min="1" @bind="_manuellAntall" placeholder="Antall" />
+                        </div>
+                        @if (_valgtDorId == -1)
+                        {
+                            <div class="ls-rad">
+                                <input class="ls-inp ls-flex1" @bind="_manuellDornr" @bind:event="oninput" placeholder="Dørnr. (valgfritt)" />
+                                <input class="ls-inp ls-flex1" @bind="_manuellDorTil" @bind:event="oninput" placeholder="Dør til (valgfritt)" />
+                            </div>
+                        }
+                        <div class="ls-sok">
+                            <input class="ls-inp" @bind="_komponentSok" @bind:event="oninput" @bind:after="SokSylinderKomponent" placeholder="Søk sylinder – navn, leverandør eller produktkode" />
+                            @if (_sokeResultater.Count > 0)
+                            {
+                                <ul class="ls-treff">
+                                    @foreach (var r in _sokeResultater)
+                                    {
+                                        <li>
+                                            <button type="button" @onclick="@(() => LeggTilManuellSylinder(r))">
+                                                <b>@r.Navn</b>
+                                                <span class="ls-mut">@r.Leverandor</span>
+                                            </button>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                            else if (_komponentSok.Trim().Length >= 2)
+                            {
+                                <span class="ls-mut ls-liten">Ingen treff.</span>
+                            }
+                        </div>
+                        @if (!string.IsNullOrEmpty(_manuellMessage))
+                        {
+                            <span class="ls-melding">@_manuellMessage</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (_visSend)
+        {
+            <div class="ls-overlay" @onclick="@(() => _visSend = false)">
+                <div class="ls-modal" role="dialog" aria-modal="true" aria-label="Send låsplan til kunde" @onclick:stopPropagation="true">
+                    <div class="ls-mhode"><h3>Send låsplan til kunde</h3><button type="button" class="ls-lukk" aria-label="Lukk" @onclick="@(() => _visSend = false)"><Icon Name="x" /></button></div>
+                    <div class="ls-mkropp">
+                        <label class="ls-felt">E-post til kunden<input type="email" @bind="_sendEpost" @bind:event="oninput" autocomplete="off" /></label>
+                        <label class="ls-felt">Melding (valgfritt)<textarea rows="4" @bind="_sendMelding" @bind:event="oninput"></textarea></label>
+                        <div class="ls-forhand">
+                            <b>Kunden får en e-post med en lenke til låsplanen.</b>
+                            <span class="ls-mut">Lenken gjelder i @LasplanGodkjenningService.GyldigDager dager og krever ikke innlogging. Kunden kan endre kryss og godkjenne med navn og signatur – ikke legge til eller slette sylindere og nøkler.</span>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_sendFeil))
+                        {
+                            <p class="form-error">@_sendFeil</p>
+                        }
+                    </div>
+                    <div class="ls-mfot">
+                        <button type="button" class="ls-kn" @onclick="@(() => _visSend = false)">Avbryt</button>
+                        <button type="button" class="ls-kn ls-kn-p" @onclick="SendTilKunde" disabled="@_sender"><Icon Name="send" />@(_sender ? "Sender …" : "Send")</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (_planDor is not null)
+        {
+            var plan = _planDor;
+            var dorerPaPlan = _dorer.Where(d => d.PlantegningId == plan.PlantegningId && d.PosX is not null && d.PosY is not null).ToList();
+            <div class="ls-overlay" @onclick="@(() => _planDor = null)">
+                <div class="ls-modal ls-modal-stor" role="dialog" aria-modal="true" aria-label="Plantegning" @onclick:stopPropagation="true">
+                    <div class="ls-mhode"><h3>Plantegning – dør @plan.Dornummer@(string.IsNullOrWhiteSpace(plan.DorTil) ? "" : $" · {plan.DorTil}")</h3><button type="button" class="ls-lukk" aria-label="Lukk" @onclick="@(() => _planDor = null)"><Icon Name="x" /></button></div>
+                    <div class="ls-mkropp">
+                        @if (plan.PosX is null || plan.PosY is null)
+                        {
+                            <span class="ls-mut ls-liten">Døren er ikke plassert på plantegningen ennå.</span>
+                        }
+                        else
+                        {
+                            <span class="ls-mut ls-liten">Den valgte døren blinker. Trykk på en annen dør for å se den.</span>
+                        }
+                        <div class="ls-plan">
+                            <img src="@($"/plantegningbilde/{plan.PlantegningId}")" alt="Plantegning" />
+                            @foreach (var d in dorerPaPlan)
+                            {
+                                var dor = d;
+                                <button type="button" class="ls-plan-pkt @(dor.Id == plan.Id ? "valgt" : "")" style="left:@(dor.PosX!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))%;top:@(dor.PosY!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))%" title="@dor.Dornummer @dor.DorTil" @onclick="@(() => _planDor = dor)">
+                                    <span>@dor.Dornummer</span>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                    <div class="ls-mfot">
+                        <a class="ls-kn" href="@($"/plantegning/{plan.PlantegningId}")">Åpne plantegningen</a>
+                        <a class="ls-kn ls-kn-p" href="@($"/dor/{plan.Id}")">Åpne dørkortet</a>
+                    </div>
+                </div>
+            </div>
+        }
 
         <PdfPreviewModal Url="@_pdfUrl" Tittel="Låsplan" SaveMessage="@_pdfSavedMessage"
                           OnSave="LagreLasplanPdf" OnClose="@(() => _pdfUrl = null)" />
@@ -283,6 +464,7 @@ else
         public string? ReserveDorTil { get; set; }
         public string? ReserveDornr { get; set; }
         public int? ValgtKoblingDorId { get; set; }
+        public bool Montert { get; set; }
 
         public string RadKey => ReserveId is not null ? $"R{ReserveId}-{ComponentId}-{Visningsnummer}" : $"{DorId}-{ComponentId}-{Visningsnummer}";
     }
@@ -349,7 +531,8 @@ else
                     DorId = dk.DorId,
                     ComponentId = dk.ComponentId,
                     Dor = dk.Dor!,
-                    Component = dk.Component!
+                    Component = dk.Component!,
+                    Montert = dk.Montert
                 });
             }
         }
@@ -489,6 +672,8 @@ else
         _manuellDornr = "";
         _manuellDorTil = "";
         _manuellMessage = $"{r.Navn} lagt til.";
+        _visLeggTil = false;
+        _syncMessage = _manuellMessage;
     }
 
     private async Task FjernReserve(SylinderRad rad)
@@ -589,7 +774,7 @@ else
 
     private async Task ToggleKryss(SylinderRad rad, Nokkel nokkel)
     {
-        if (_prosjekt!.LasplanLast)
+        if (_prosjekt!.LasplanLast || _prosjekt.LasplanStatus != LasplanStatus.IArbeid)
         {
             return;
         }
@@ -639,7 +824,19 @@ else
 
     private async Task ToggleLast()
     {
-        _prosjekt!.LasplanLast = !_prosjekt.LasplanLast;
+        if (_prosjekt!.LasplanStatus == LasplanStatus.SendtTilKunde)
+        {
+            return;
+        }
+        if (_prosjekt.LasplanStatus == LasplanStatus.Godkjent)
+        {
+            var (navn, _) = await InnloggetAsync();
+            await Godkjenning.TilbakeTilArbeidAsync(Id, navn);
+            _prosjekt.LasplanLast = false;
+            await Db.SaveChangesAsync();
+            return;
+        }
+        _prosjekt.LasplanLast = !_prosjekt.LasplanLast;
         await Db.SaveChangesAsync();
     }
 
@@ -718,5 +915,119 @@ else
 
         _lagredePdfer.Add(pdf);
         _pdfSavedMessage = "PDF-en er lagret nedenfor.";
+    }
+
+    // Status og godkjenning (LasplanGodkjenningService)
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _visStatusMeny;
+    private bool _visSend;
+    private bool _sender;
+    private string _sendEpost = "";
+    private string _sendMelding = "";
+    private string? _sendFeil;
+    private string? _statusMelding;
+    private bool _visLeggTil;
+    private Dor? _planDor;
+
+    private static string StatusKlasse(LasplanStatus s) => s switch
+    {
+        LasplanStatus.SendtTilKunde => "sendt",
+        LasplanStatus.Godkjent => "godkjent",
+        _ => "arbeid"
+    };
+
+    private async Task<(string Navn, string? Epost)> InnloggetAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id)
+            && await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id) is { } b)
+        {
+            return (b.Navn, b.Epost);
+        }
+        return ("Ukjent", null);
+    }
+
+    private void ApneLeggTilSylinder()
+    {
+        _manuellMessage = null;
+        _komponentSok = "";
+        _sokeResultater = [];
+        _visLeggTil = true;
+    }
+
+    private void ApneSend()
+    {
+        _visStatusMeny = false;
+        _sendFeil = null;
+        _sendEpost = _prosjekt?.LasplanSendtTil ?? _prosjekt?.Kunde?.Epost ?? "";
+        _sendMelding = "";
+        _visSend = true;
+    }
+
+    private async Task SendTilKunde()
+    {
+        if (!LasplanGodkjenningService.ErGyldigEpost(_sendEpost))
+        {
+            _sendFeil = "Skriv en gyldig e-postadresse.";
+            return;
+        }
+        _sender = true;
+        try
+        {
+            var (navn, epost) = await InnloggetAsync();
+            var (lenke, sendt) = await Godkjenning.SendTilKundeAsync(Id, _sendEpost, _sendMelding, navn, epost, Nav.BaseUri);
+            _sisteLenke = lenke;
+            _visSend = false;
+            _statusMelding = sendt
+                ? $"Låsplanen er sendt til {_sendEpost.Trim()}."
+                : "Låsplanen er klar, men e-posten kunne ikke sendes. Trykk «Kopier lenke» og send den til kunden selv.";
+        }
+        finally
+        {
+            _sender = false;
+        }
+    }
+
+    private string? _sisteLenke;
+
+    private async Task KopierLenke()
+    {
+        var lenke = _prosjekt?.LasplanToken is { } token ? $"{Nav.BaseUri.TrimEnd('/')}/lasplan/g/{token}" : _sisteLenke;
+        if (lenke is null)
+        {
+            return;
+        }
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", lenke);
+            _statusMelding = "Lenken er kopiert.";
+        }
+        catch (JSException)
+        {
+            _statusMelding = lenke;
+        }
+    }
+
+    private async Task Paminn()
+    {
+        var (navn, epost) = await InnloggetAsync();
+        await Godkjenning.PaminnAsync(Id, navn, epost, Nav.BaseUri);
+        _statusMelding = $"Påminnelse sendt til {_prosjekt?.LasplanSendtTil}.";
+    }
+
+    private async Task GodkjennInternt()
+    {
+        _visStatusMeny = false;
+        var (navn, _) = await InnloggetAsync();
+        await Godkjenning.GodkjennInterntAsync(Id, navn);
+        _statusMelding = null;
+    }
+
+    private async Task TilbakeTilArbeid()
+    {
+        _visStatusMeny = false;
+        var (navn, _) = await InnloggetAsync();
+        await Godkjenning.TilbakeTilArbeidAsync(Id, navn);
+        _statusMelding = null;
     }
 }

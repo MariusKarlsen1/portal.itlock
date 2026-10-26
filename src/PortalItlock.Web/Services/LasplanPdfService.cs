@@ -131,14 +131,48 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenant
                         Matrise(col.Item(), del);
                     }
 
-                    col.Item().PaddingTop(30).ShowEntire().Row(row =>
+                    // Godkjent av kunden (eller internt): navn, dato og signatur. Ellers
+                    // tomme signaturlinjer som før, til papirsignering.
+                    if (prosjekt.LasplanStatus == LasplanStatus.Godkjent && prosjekt.LasplanGodkjentDato is { } godkjentDato)
                     {
-                        row.Spacing(28);
-                        foreach (var tekst in new[] { "Dato", "Godkjent systemeier", "Utarbeidet av" })
+                        byte[]? signatur = null;
+                        if (prosjekt.LasplanSignatur is { } sig && sig.StartsWith("data:image/png;base64,", StringComparison.Ordinal))
                         {
-                            row.RelativeItem().BorderTop(0.6f).BorderColor(PdfStil.Ink).PaddingTop(3).Text(tekst).FontSize(7).FontColor(dempet);
+                            try
+                            {
+                                signatur = Convert.FromBase64String(sig["data:image/png;base64,".Length..]);
+                            }
+                            catch (FormatException)
+                            {
+                                signatur = null;
+                            }
                         }
-                    });
+                        col.Item().PaddingTop(24).ShowEntire().Border(0.6f).BorderColor(rammeFarge).Padding(8).Row(row =>
+                        {
+                            row.Spacing(16);
+                            row.RelativeItem().Column(c =>
+                            {
+                                c.Item().Text("GODKJENT OG SIGNERT").FontSize(6).Bold().FontColor(org.Aksent).LetterSpacing(0.08f);
+                                c.Item().PaddingTop(2).Text(prosjekt.LasplanGodkjentAv + (prosjekt.LasplanGodkjentFirma is null ? "" : $", {prosjekt.LasplanGodkjentFirma}")).FontSize(9).SemiBold();
+                                c.Item().Text(godkjentDato.ToString("dd.MM.yyyy HH:mm")).FontSize(7.5f).FontColor(dempet);
+                            });
+                            if (signatur is not null)
+                            {
+                                row.ConstantItem(150).Height(46).AlignRight().Image(signatur).FitArea();
+                            }
+                        });
+                    }
+                    else
+                    {
+                        col.Item().PaddingTop(30).ShowEntire().Row(row =>
+                        {
+                            row.Spacing(28);
+                            foreach (var tekst in new[] { "Dato", "Godkjent systemeier", "Utarbeidet av" })
+                            {
+                                row.RelativeItem().BorderTop(0.6f).BorderColor(PdfStil.Ink).PaddingTop(3).Text(tekst).FontSize(7).FontColor(dempet);
+                            }
+                        });
+                    }
                 });
 
                 void Matrise(IContainer container, List<Nokkel> nokler)

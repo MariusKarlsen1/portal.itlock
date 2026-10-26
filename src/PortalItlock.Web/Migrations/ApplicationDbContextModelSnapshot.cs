@@ -5295,13 +5295,46 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("KundeId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("LasplanGodkjentAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LasplanGodkjentDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LasplanGodkjentFirma")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LasplanKundeEndringer")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("LasplanLast")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("LasplanLogg")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LasplanProsjektnummer")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("LasplanSendtDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LasplanSendtTil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LasplanSignatur")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("LasplanStatus")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("LasplanSystemnr")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LasplanToken")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LasplanTokenUtloper")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("LasplanUtarbeidetAv")
@@ -5379,6 +5412,9 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("AnsvarligMontorId");
 
                     b.HasIndex("KundeId");
+
+                    b.HasIndex("LasplanToken")
+                        .IsUnique();
 
                     b.HasIndex("ProsjektlederId");
 
