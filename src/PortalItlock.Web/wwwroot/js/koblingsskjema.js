@@ -344,11 +344,14 @@ function avstandTilLinjestykke(p, a, b) {
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-function finnStrekNaer(canvasEl, clientX, clientY) {
+function finnStrekNaer(canvasEl, clientX, clientY, kunLedere = false) {
     const rect = canvasRect(canvasEl);
     let best = null;
     let bestDist = STREK_HIT_PX;
     canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]').forEach(pl => {
+        if (kunLedere && !pl.dataset.strekid.startsWith('-')) {
+            return;
+        }
         const pts = lesPunkter(pl).map(p => ({
             x: rect.left + (p.x / 100) * rect.width,
             y: rect.top + (p.y / 100) * rect.height
@@ -427,10 +430,14 @@ function tegnPolyline(ui, rect, pts, farge, tykkelse, stiplet) {
 
 let currentStrekTegning = null;
 
-export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet) {
+export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet, opts) {
     stopStrekTegning();
 
-    let pts = [];
+    // opts (valgfritt): { startPts, ferdig(pts), avbrutt() } - brukes når en
+    // leder i en kabel forlenges fra der den slutter i dag.
+    let pts = opts && opts.startPts ? opts.startPts.map(p => ({ x: p.x, y: p.y })) : [];
+    const minPts = pts.length;
+    let fullfort = false;
     let mus = null;
     let fri = false;
     let malPort = null;
@@ -489,6 +496,14 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet)
         const r = rens(pts);
         pts = [];
         tegnUi();
+        if (opts) {
+            fullfort = true;
+            if (r.length >= 2 && opts.ferdig) {
+                opts.ferdig(r);
+            }
+            stopStrekTegning();
+            return;
+        }
         if (r.length >= 2) {
             dotNetRef.invokeMethodAsync('OnStrekFerdig', punkterTilJson(r));
         }
@@ -565,7 +580,7 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet)
             if (pts.length >= 2) {
                 ferdig();
             }
-        } else if (e.key === 'Backspace' && pts.length) {
+        } else if (e.key === 'Backspace' && pts.length > minPts) {
             e.preventDefault();
             pts.pop();
             tegnUi();
@@ -588,6 +603,10 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet)
         tomUi(canvasEl);
         if (currentStrekTegning === api) {
             currentStrekTegning = null;
+        }
+        if (opts && !fullfort && opts.avbrutt) {
+            fullfort = true;
+            opts.avbrutt();
         }
     }
 
@@ -768,7 +787,17 @@ export function initStrekRedigering(canvasEl, dotNetRef) {
             return;
         }
 
-        const strekId = finnStrekNaer(canvasEl, e.clientX, e.clientY);
+        // Lederne ligger oppå enden av kabelen - de går foran når klikket er nær en leder.
+        const lederId = finnStrekNaer(canvasEl, e.clientX, e.clientY, true);
+        const strekId = lederId ?? finnStrekNaer(canvasEl, e.clientX, e.clientY);
+        if (strekId !== null && strekId < 0) {
+            // En leder i en kabel: den følger musen videre fra enden. Klikk lager
+            // sving, klikk på et tilkoblingspunkt kobler, Esc stopper.
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            startLederForlengelse(canvasEl, dotNetRef, strekId);
+            return;
+        }
         if (strekId !== null) {
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -1406,5 +1435,25 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         });
 
         dotNetRef.invokeMethodAsync('OnRubberBandValgt', JSON.stringify(matched), e.shiftKey);
+    });
+
+}
+
+function startLederForlengelse(canvasEl, dotNetRef, lederId) {
+    const pl = strekPolyline(canvasEl, lederId);
+    if (!pl) {
+        return;
+    }
+    const pts = lesPunkter(pl);
+    if (pts.length < 2) {
+        return;
+    }
+    canvasEl.dataset.valgtstrek = '0';
+    tomUi(canvasEl);
+    dotNetRef.invokeMethodAsync('OnLederTegningStart', lederId);
+    startStrekTegning(canvasEl, dotNetRef, pl.getAttribute('stroke') || '#1d1d1b', 2, false, {
+        startPts: pts,
+        ferdig: r => dotNetRef.invokeMethodAsync('OnLederForlenget', lederId, punkterTilJson(r)),
+        avbrutt: () => dotNetRef.invokeMethodAsync('OnLederTegningSlutt')
     });
 }
