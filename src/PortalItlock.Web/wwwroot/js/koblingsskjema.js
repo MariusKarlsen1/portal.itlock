@@ -86,6 +86,39 @@ export function initZoomPan(wrapEl, canvasEl) {
         };
     }
 
+    // Hold inne høyre museknapp og dra for å flytte rundt på skissen, som på
+    // plantegningen. Virker også mens man redigerer og tegner kabler.
+    let hoyrePan = null;
+    wrapEl.addEventListener('contextmenu', (e) => e.preventDefault());
+    wrapEl.addEventListener('pointerdown', (e) => {
+        if (e.button !== 2 || e.pointerType === 'touch') {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        hoyrePan = { x: e.clientX, y: e.clientY, l: wrapEl.scrollLeft, t: wrapEl.scrollTop };
+        safeCapture(wrapEl, e.pointerId);
+        wrapEl.classList.add('ks-panorerer');
+    }, true);
+    wrapEl.addEventListener('pointermove', (e) => {
+        if (!hoyrePan) {
+            return;
+        }
+        e.stopPropagation();
+        wrapEl.scrollLeft = hoyrePan.l - (e.clientX - hoyrePan.x);
+        wrapEl.scrollTop = hoyrePan.t - (e.clientY - hoyrePan.y);
+    }, true);
+    const slippHoyre = (e) => {
+        if (!hoyrePan) {
+            return;
+        }
+        hoyrePan = null;
+        safeRelease(wrapEl, e.pointerId);
+        wrapEl.classList.remove('ks-panorerer');
+    };
+    wrapEl.addEventListener('pointerup', slippHoyre, true);
+    wrapEl.addEventListener('pointercancel', slippHoyre, true);
+
     wrapEl.addEventListener('click', (e) => {
         if (suppressClick) {
             suppressClick = false;
@@ -293,11 +326,26 @@ function porterForBoks(b, erPunkt) {
     ];
 }
 
+// Egne tilkoblingspunkter (data-porter = [[x,y],...] i andel av symbolets
+// størrelse). Finnes de, brukes bare de - ellers de vanlige punktene.
+function porterForSymbol(el, b) {
+    let egne = [];
+    try {
+        egne = JSON.parse(el.dataset.porter || '[]');
+    } catch {
+        egne = [];
+    }
+    if (Array.isArray(egne) && egne.length) {
+        return egne.map((p, i) => ({ side: 'e' + i, x: b.x + p[0] * b.w, y: b.y + p[1] * b.h }));
+    }
+    return porterForBoks(b, el.dataset.elementtype === 'Punkt');
+}
+
 function porterForMarker(m) {
     if (m.dataset.elementtype === 'Tekstboks') {
         return [];
     }
-    return porterForBoks(markerBoks(m), m.dataset.elementtype === 'Punkt');
+    return porterForSymbol(m, markerBoks(m));
 }
 
 function allePorter(canvasEl) {
@@ -594,10 +642,10 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet,
     }
 
     function cleanup() {
-        canvasEl.removeEventListener('pointerdown', onPointerDown);
-        canvasEl.removeEventListener('pointermove', onPointerMove);
+        canvasEl.removeEventListener('pointerdown', onPointerDown, true);
+        canvasEl.removeEventListener('pointermove', onPointerMove, true);
         canvasEl.removeEventListener('pointerleave', onLeave);
-        canvasEl.removeEventListener('dblclick', onDblClick);
+        canvasEl.removeEventListener('dblclick', onDblClick, true);
         document.removeEventListener('keydown', onKeyDown);
 
         tomUi(canvasEl);
@@ -610,10 +658,12 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet,
         }
     }
 
-    canvasEl.addEventListener('pointerdown', onPointerDown);
-    canvasEl.addEventListener('pointermove', onPointerMove);
+    // Capture-fase: et klikk oppå et bilde eller en komponent blir en sving i
+    // streken i stedet for å velge/dra komponenten mens man tegner.
+    canvasEl.addEventListener('pointerdown', onPointerDown, true);
+    canvasEl.addEventListener('pointermove', onPointerMove, true);
     canvasEl.addEventListener('pointerleave', onLeave);
-    canvasEl.addEventListener('dblclick', onDblClick);
+    canvasEl.addEventListener('dblclick', onDblClick, true);
     document.addEventListener('keydown', onKeyDown);
 
 
@@ -925,7 +975,7 @@ function finnTilkoblinger(canvasEl, grupper) {
         const ender = [];
         for (const idx of [0, orig.length - 1]) {
             for (const g of grupper) {
-                const port = porterForBoks(g.startBoks, g.el.dataset.elementtype === 'Punkt')
+                const port = porterForSymbol(g.el, g.startBoks)
                     .find(p => Math.abs(p.x - orig[idx].x) < PORT_TREFF_PCT && Math.abs(p.y - orig[idx].y) < PORT_TREFF_PCT);
                 if (port) {
                     ender.push({ idx, g, side: port.side });
@@ -942,7 +992,7 @@ function finnTilkoblinger(canvasEl, grupper) {
 
 function nyPortPos(g, side) {
     const b = markerBoks(g.el);
-    return porterForBoks(b, g.el.dataset.elementtype === 'Punkt').find(p => p.side === side) ?? porterForBoks(b, true)[0];
+    return porterForSymbol(g.el, b).find(p => p.side === side) ?? porterForBoks(b, true)[0];
 }
 
 function oppdaterTilkobledeStreker(tilkoblinger) {
@@ -1456,4 +1506,59 @@ function startLederForlengelse(canvasEl, dotNetRef, lederId) {
         ferdig: r => dotNetRef.invokeMethodAsync('OnLederForlenget', lederId, punkterTilJson(r)),
         avbrutt: () => dotNetRef.invokeMethodAsync('OnLederTegningSlutt')
     });
+}
+
+// ===================================================================
+// Egne koblingspunkter: klikk på den valgte komponenten for å legge inn et
+// blått punkt der kablene skal kobles. Klikk utenfor eller Esc avslutter.
+// ===================================================================
+let stoppPort = null;
+
+export function startPortPlassering(canvasEl, dotNetRef, symbolId) {
+    stoppPortPlassering();
+
+    function avslutt() {
+        stoppPortPlassering();
+        dotNetRef.invokeMethodAsync('OnPortPlasseringSlutt');
+    }
+
+    function ned(e) {
+        if (e.button !== 0) {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const m = canvasEl.querySelector(`.kobling-symbol-marker[data-symbolid="${symbolId}"]`);
+        const r = m ? m.getBoundingClientRect() : null;
+        if (!r || e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) {
+            avslutt();
+            return;
+        }
+        dotNetRef.invokeMethodAsync('OnPortLagtTil', symbolId, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+    }
+
+    function tast(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            avslutt();
+        }
+    }
+
+    canvasEl.addEventListener('pointerdown', ned, true);
+    document.addEventListener('keydown', tast, true);
+    canvasEl.classList.add('ks-plasser-port');
+    stoppPort = () => {
+        canvasEl.removeEventListener('pointerdown', ned, true);
+        document.removeEventListener('keydown', tast, true);
+        canvasEl.classList.remove('ks-plasser-port');
+    };
+}
+
+export function stoppPortPlassering() {
+    if (stoppPort) {
+        const f = stoppPort;
+        stoppPort = null;
+        f();
+    }
 }

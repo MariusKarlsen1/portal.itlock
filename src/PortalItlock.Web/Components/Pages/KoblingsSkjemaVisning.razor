@@ -413,7 +413,8 @@ else if (_skjema is not null)
                         <KoblingsSymbolElement @key="symbol.Id" Symbol="symbol"
                                                 Selected="@(_valgteSymbolIds.Contains(symbol.Id))"
                                                 VisNavn="@(_skjema?.VisKomponentnavn ?? true)"
-                                                VisResizeHandle="@(_redigerModus && !_tegnStrekModus && !symbol.ErLaast)" />
+                                                VisResizeHandle="@(_redigerModus && !_tegnStrekModus && !symbol.ErLaast)"
+                                                VisEgnePorter="_redigerModus" />
                     }
 
                     @* Knekkpunkter, tilkoblingspunkter og hjelpelinjer - innholdet tegnes av koblingsskjema.js. *@
@@ -706,6 +707,27 @@ else if (_skjema is not null)
                             </label>
                         }
 
+                        @if (_selectedSymbol.ElementType is not (KoblingsElementType.Tekstboks or KoblingsElementType.Punkt))
+                        {
+                            var egne = KoblingsPorter.Les(_selectedSymbol.PorterJson);
+                            <div class="ks-porter">
+                                <b>Koblingspunkter</b>
+                                <span>@(egne.Count == 0 ? "Vanlige: midt på hver kant." : $"{egne.Count} egne punkter.")</span>
+                                @for (var i = 0; i < egne.Count; i++)
+                                {
+                                    var idx = i;
+                                    <span class="ks-port-rad"><i></i>Punkt @(idx + 1)<button type="button" title="Fjern punkt @(idx + 1)" @onclick="@(() => FjernPort(idx))">✕</button></span>
+                                }
+                                <button type="button" class="@(_plasserPort ? "ks-port-pa" : "cancel-button")" @onclick="VekslePortPlassering">
+                                    @(_plasserPort ? "Ferdig" : "Legg til punkter")
+                                </button>
+                                @if (_plasserPort)
+                                {
+                                    <small>Klikk på komponenten der kabelen skal kobles inn. Esc eller Ferdig avslutter.</small>
+                                }
+                            </div>
+                        }
+
                         <label>
                             Bredde (%)
                             <input type="number" min="2" max="100" @bind="_selectedSymbol.Bredde" @bind:after="LagreSymbol" />
@@ -876,7 +898,7 @@ else if (_skjema is not null)
     {
         if (firstRender)
         {
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=18");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=20");
             _dotNetRef = DotNetObjectReference.Create(this);
         }
 
@@ -1001,7 +1023,8 @@ else if (_skjema is not null)
             Bredde = s.Bredde,
             Hoyde = s.Hoyde,
             ZIndex = s.ZIndex,
-            ErLaast = s.ErLaast
+            ErLaast = s.ErLaast,
+            PorterJson = s.PorterJson
         }).ToList();
 
     private static List<KoblingsStrek> KloneStreker(List<KoblingsStrek> kilde) =>
@@ -1140,7 +1163,8 @@ else if (_skjema is not null)
                 Bredde = s.Bredde,
                 Hoyde = s.Hoyde,
                 ZIndex = s.ZIndex,
-                ErLaast = s.ErLaast
+                ErLaast = s.ErLaast,
+                PorterJson = s.PorterJson
             });
         }
 
@@ -2000,7 +2024,8 @@ else if (_skjema is not null)
                 PosY = s.PosY + 4,
                 Bredde = s.Bredde,
                 Hoyde = s.Hoyde,
-                ZIndex = nesteZIndex
+                ZIndex = nesteZIndex,
+                PorterJson = s.PorterJson
             };
             Db.KoblingsSymboler.Add(kopi);
             nye.Add(kopi);
@@ -2327,5 +2352,71 @@ else if (_skjema is not null)
     {
         _tegnerLederId = null;
         StateHasChanged();
+    }
+}
+
+@code {
+    // ---------- Egne koblingspunkter (blå punkter kablene kobles i) ----------
+    private bool _plasserPort;
+
+    private async Task VekslePortPlassering()
+    {
+        if (_module is null || _selectedSymbol is null)
+        {
+            return;
+        }
+        if (_plasserPort)
+        {
+            _plasserPort = false;
+            await _module.InvokeVoidAsync("stoppPortPlassering");
+            return;
+        }
+        _plasserPort = true;
+        _dotNetRef ??= DotNetObjectReference.Create(this);
+        await _module.InvokeVoidAsync("startPortPlassering", _canvasRef, _dotNetRef, _selectedSymbol.Id);
+    }
+
+    [JSInvokable]
+    public async Task OnPortLagtTil(int symbolId, double x, double y)
+    {
+        var s = _symboler.FirstOrDefault(s => s.Id == symbolId);
+        if (s is null)
+        {
+            return;
+        }
+        var porter = KoblingsPorter.Les(s.PorterJson);
+        if (porter.Count >= KoblingsPorter.Maks)
+        {
+            return;
+        }
+        PushUndo();
+        porter.Add((x, y));
+        s.PorterJson = KoblingsPorter.Skriv(porter);
+        await Db.SaveChangesAsync();
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnPortPlasseringSlutt()
+    {
+        _plasserPort = false;
+        StateHasChanged();
+    }
+
+    private async Task FjernPort(int idx)
+    {
+        if (_selectedSymbol is null)
+        {
+            return;
+        }
+        var porter = KoblingsPorter.Les(_selectedSymbol.PorterJson);
+        if (idx < 0 || idx >= porter.Count)
+        {
+            return;
+        }
+        PushUndo();
+        porter.RemoveAt(idx);
+        _selectedSymbol.PorterJson = KoblingsPorter.Skriv(porter);
+        await Db.SaveChangesAsync();
     }
 }

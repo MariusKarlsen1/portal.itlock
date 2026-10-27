@@ -37,4 +37,9 @@ public class KoblingsSymbol
 
     // Låst mot flytting/endring av størrelse med mus, men fortsatt redigerbar via sidepanelet.
     public bool ErLaast { get; set; }
+
+    // Egne tilkoblingspunkter (de blå punktene kabler kobles i), som
+    // [[x,y],...] i andel (0-1) av symbolets bredde/høyde. Null = de fire
+    // vanlige punktene midt på hver kant.
+    public string? PorterJson { get; set; }
 }

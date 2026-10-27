@@ -3503,6 +3503,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Navn")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PorterJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<double>("PosX")
                         .HasColumnType("REAL");
 

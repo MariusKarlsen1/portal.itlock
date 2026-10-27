@@ -197,22 +197,22 @@ public static class KoblingsKabel
         double dx = (bx - ax) / seg, dy = (by - ay) / seg;
         double nx = -dy, ny = dx;
 
-        var maksAndel = punkter.Count == 2 ? 0.3 : 0.45;
-        var lengde = Math.Min(4.0, seg * maksAndel);
+        // Den sorte kabelen går helt ut til enden der man klikket, og lederne
+        // begynner der og vifter ut videre i samme retning (bort fra kabelen).
+        const double lengde = 4.0;
         var n = ledere.Count;
         var avstand = Math.Min(0.75, 7.0 / n);
-        var cx = ax + dx * lengde;
-        var cy = ay + dy * lengde;
+        double ux = -dx, uy = -dy;
 
         for (var i = 0; i < n; i++)
         {
             // Speil rekkefølgen i sluttenden så samme leder ligger på samme side av kabelen.
             var o = ((fraStart ? i : n - 1 - i) - (n - 1) / 2.0) * avstand;
-            var x1 = ax + nx * o;
-            var y1 = ay + ny * o;
-            var x2 = x1 + dx * lengde * 0.4;
-            var y2 = y1 + dy * lengde * 0.4;
-            var fra = new KoblingsStrekPunkt { X = cx, Y = cy / aspekt };
+            var x2 = ax + ux * lengde * 0.5 + nx * o;
+            var y2 = ay + uy * lengde * 0.5 + ny * o;
+            var x1 = ax + ux * lengde + nx * o;
+            var y1 = ay + uy * lengde + ny * o;
+            var fra = new KoblingsStrekPunkt { X = p0.X, Y = p0.Y };
             var egen = fraStart ? ledere[i].Start : ledere[i].Slutt;
             List<KoblingsStrekPunkt> vei = egen is { Count: > 0 }
                 ? [fra, .. egen]
@@ -220,9 +220,9 @@ public static class KoblingsKabel
             linjer.Add(new LederLinje(ledere[i], vei, i, fraStart));
         }
 
-        kroppStart = new KoblingsStrekPunkt { X = cx, Y = cy / aspekt };
-        var r = lengde * 0.97;
-        ende = new Ende(p0, r, r / aspekt);
+        // Kabelen skal ikke skjules noe sted lenger: masken får radius 0.
+        kroppStart = p0;
+        ende = new Ende(p0, 0, 0);
         return true;
     }
 
