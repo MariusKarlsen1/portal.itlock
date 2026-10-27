@@ -540,14 +540,14 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet,
         }
     }
 
-    function ferdig() {
+    function ferdig(tilPort) {
         const r = rens(pts);
         pts = [];
         tegnUi();
         if (opts) {
             fullfort = true;
             if (r.length >= 2 && opts.ferdig) {
-                opts.ferdig(r);
+                opts.ferdig(r, !!tilPort);
             }
             stopStrekTegning();
             return;
@@ -583,7 +583,7 @@ export function startStrekTegning(canvasEl, dotNetRef, farge, tykkelse, stiplet,
         const kobletTilPort = !!malPort && pts.length > 0;
         pts = rens([...pts, ...forhand()]);
         if (kobletTilPort && pts.length >= 2) {
-            ferdig();
+            ferdig(true);
             return;
         }
         tegnUi();
@@ -707,6 +707,7 @@ function tegnStrekHandtak(canvasEl) {
     }
     const rect = canvasRect(canvasEl);
     const pts = lesPunkter(pl);
+    const kabel = pl.dataset.kabel === '1';
 
     // Hver strekbit kan gripes hvor som helst langs biten (bred, usynlig
     // treffsone), og flyttes da parallelt. Prikken midt på viser at det går.
@@ -718,8 +719,8 @@ function tegnStrekHandtak(canvasEl) {
             stroke: 'transparent', 'stroke-width': 16, 'stroke-linecap': 'round', 'data-h': 'm', 'data-i': i
         }, ui);
         treff.style.pointerEvents = 'stroke';
-        treff.style.cursor = lik(pts[i].y, pts[i + 1].y) ? 'ns-resize' : lik(pts[i].x, pts[i + 1].x) ? 'ew-resize' : 'move';
-        svgEl('title', {}, treff).textContent = 'Dra for å flytte denne biten';
+        treff.style.cursor = kabel ? 'move' : lik(pts[i].y, pts[i + 1].y) ? 'ns-resize' : lik(pts[i].x, pts[i + 1].x) ? 'ew-resize' : 'move';
+        svgEl('title', {}, treff).textContent = kabel ? 'Dra for å flytte hele kabelen' : 'Dra for å flytte denne biten';
         if (Math.hypot(b.x - a.x, b.y - a.y) >= 26) {
             svgEl('circle', { cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, r: 4, fill: UI_FARGE, opacity: 0.6 }, ui);
         }
@@ -746,6 +747,21 @@ export function oppdaterEditorUi(canvasEl, valgtStrekId, snap) {
     if (!currentStrekTegning) {
         tegnStrekHandtak(canvasEl);
     }
+}
+
+// Lederne i en kabel (id = -(kabelId*100 + ...)), så de kan følge med når hele
+// kabelen dras. Ledere som er koblet (data-fast) blir stående i enden.
+function kabelLedere(canvasEl, pl, id) {
+    if (pl.dataset.kabel !== '1') {
+        return null;
+    }
+    const res = [];
+    canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid^="-"]').forEach(l => {
+        if (Math.floor(-parseInt(l.dataset.strekid, 10) / 100) === id) {
+            res.push({ pl: l, orig: lesPunkter(l), fast: l.dataset.fast === '1' });
+        }
+    });
+    return res;
 }
 
 export function initStrekRedigering(canvasEl, dotNetRef) {
@@ -827,7 +843,8 @@ export function initStrekRedigering(canvasEl, dotNetRef) {
             const p = fraEvent(canvasEl, e);
             drag = {
                 type: h.dataset.h, i: parseInt(h.dataset.i, 10), pl, id: valgtId,
-                orig: lesPunkter(pl), start: p, flyttet: false, fri: e.shiftKey, resultat: null
+                orig: lesPunkter(pl), start: p, flyttet: false, fri: e.shiftKey, resultat: null,
+                kabel: kabelLedere(canvasEl, pl, valgtId)
             };
             safeCapture(canvasEl, e.pointerId);
             return;
@@ -872,7 +889,8 @@ export function initStrekRedigering(canvasEl, dotNetRef) {
             }
             drag = {
                 type: 'm', i: bestI, pl, id: strekId, orig,
-                start: fraEvent(canvasEl, e), flyttet: false, fri: e.shiftKey, resultat: null
+                start: fraEvent(canvasEl, e), flyttet: false, fri: e.shiftKey, resultat: null,
+                kabel: kabelLedere(canvasEl, pl, strekId)
             };
             safeCapture(canvasEl, e.pointerId);
             return;
@@ -898,11 +916,22 @@ export function initStrekRedigering(canvasEl, dotNetRef) {
         let q = { x: snapPct(canvasEl, raw.x), y: snapPct(canvasEl, raw.y) };
         const siste = drag.orig.length - 1;
         let arr;
-        if (drag.type === 'v') {
+        if (drag.type === 'm' && drag.kabel) {
+            // Den sorte kabelen flyttes som en helhet; lederne følger med.
+            const dx = raw.x - drag.start.x;
+            const dy = raw.y - drag.start.y;
+            arr = drag.orig.map(p => ({ x: p.x + dx, y: p.y + dy }));
+            for (const l of drag.kabel) {
+                const n = l.orig.length - 1;
+                l.pl.setAttribute('points', punkterTilStr(l.orig.map((p, i) => (l.fast && i === n ? p : { x: p.x + dx, y: p.y + dy }))));
+            }
+        } else if (drag.type === 'v') {
+            drag.tilPort = false;
             if (drag.i === 0 || drag.i === siste) {
                 const port = finnPortNaer(canvasEl, e.clientX, e.clientY);
                 if (port) {
                     q = { x: port.x, y: port.y };
+                    drag.tilPort = drag.i === siste;
                 }
             }
             arr = flyttKnekk(drag.orig, drag.i, q);
@@ -922,7 +951,12 @@ export function initStrekRedigering(canvasEl, dotNetRef) {
         const d = drag;
         drag = null;
         if (d.flyttet && d.resultat && d.resultat.length >= 2) {
-            dotNetRef.invokeMethodAsync('OnStrekFlyttet', d.id, punkterTilJson(d.resultat));
+            if (d.id < 0 && d.tilPort) {
+                // En leder dratt til et koblingspunkt: den legger seg ryddig av seg selv.
+                dotNetRef.invokeMethodAsync('OnLederForlenget', d.id, punkterTilJson(d.resultat), true);
+            } else {
+                dotNetRef.invokeMethodAsync('OnStrekFlyttet', d.id, punkterTilJson(d.resultat));
+            }
         }
     }
 
@@ -1101,7 +1135,7 @@ const GRID_STEP = 2;
 
 function snapToGrid(containerEl, value) {
     if (containerEl.dataset.snap === '0') {
-        return Math.round(value * 10) / 10;
+        return Math.round(value * 100) / 100;
     }
     return Math.round(value / GRID_STEP) * GRID_STEP;
 }
@@ -1183,9 +1217,12 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                 const pdx = (dx / rect.width) * 100;
                 const pdy = (dy / rect.height) * 100;
 
+                // Alt = helt fritt (ingen rutenett eller innretting mot andre).
+                const fritt = e.altKey;
+                const plasser = v => (fritt ? Math.round(v * 100) / 100 : snapToGrid(containerEl, v));
                 groupMarkers.forEach(g => {
-                    const nx = snapToGrid(containerEl, Math.max(0, g.startLeft + pdx));
-                    const ny = snapToGrid(containerEl, Math.max(0, g.startTop + pdy));
+                    const nx = plasser(Math.max(0, g.startLeft + pdx));
+                    const ny = plasser(Math.max(0, g.startTop + pdy));
                     g.el.style.left = nx + '%';
                     g.el.style.top = ny + '%';
                     const w = parseFloat(g.el.style.width) || 0;
@@ -1194,8 +1231,10 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                     g.el.dataset.y = ny + h / 2;
                 });
 
-                if (groupMarkers.length === 1) {
+                if (groupMarkers.length === 1 && !fritt) {
                     justerMotAndre(containerEl, groupMarkers[0].el);
+                } else {
+                    fjernGuider(containerEl);
                 }
                 oppdaterTilkobledeStreker(tilkoblinger);
             });
@@ -1333,8 +1372,11 @@ export function disableEditorSnarveier(containerEl) {
     stopStrekTegning();
 }
 
-const NUDGE_STEP = 1;
+// Piltast flytter 0,1 % (omtrent en millimeter på utskrift), Shift + piltast 2 %.
+const NUDGE_STEP = 0.1;
+const NUDGE_STEP_LANGT = 2;
 let nudgeSaveTimer = null;
+let nudge = null;
 
 export function enableKeyboardShortcuts(containerEl, dotNetRef) {
     if (containerEl.dataset.keysBound === '1') {
@@ -1377,26 +1419,46 @@ export function enableKeyboardShortcuts(containerEl, dotNetRef) {
             return;
         }
 
-        const selected = containerEl.querySelectorAll('.kobling-symbol-marker-selected');
-        if (selected.length !== 1 || selected[0].dataset.laast === 'true') {
+        const selected = Array.from(containerEl.querySelectorAll('.kobling-symbol-marker-selected'))
+            .filter(el => el.dataset.laast !== 'true');
+        if (!selected.length) {
             return;
         }
 
         e.preventDefault();
-        const markerEl = selected[0];
-        const left = Math.min(100, Math.max(0, (parseFloat(markerEl.style.left) || 0) + delta[0] * NUDGE_STEP));
-        const top = Math.min(100, Math.max(0, (parseFloat(markerEl.style.top) || 0) + delta[1] * NUDGE_STEP));
-        markerEl.style.left = left + '%';
-        markerEl.style.top = top + '%';
-        const w = parseFloat(markerEl.style.width) || 0;
-        const h = parseFloat(markerEl.style.height) || 0;
-        markerEl.dataset.x = left + w / 2;
-        markerEl.dataset.y = top + h / 2;
+        const steg = e.shiftKey ? NUDGE_STEP_LANGT : NUDGE_STEP;
+        // En puff-runde varer til det lagres: streker som sitter i
+        // komponentene følger med fra der de var da runden startet.
+        const ids = selected.map(el => el.dataset.symbolid).join(',');
+        if (!nudge || nudge.containerEl !== containerEl || nudge.ids !== ids) {
+            const grupper = selected.map(el => ({ el, startBoks: markerBoks(el) }));
+            nudge = { containerEl, ids, grupper, tilkoblinger: finnTilkoblinger(containerEl, grupper) };
+        }
+        for (const markerEl of selected) {
+            const w = parseFloat(markerEl.style.width) || 0;
+            const h = parseFloat(markerEl.style.height) || 0;
+            const left = Math.round(Math.min(100 - Math.min(w, 100), Math.max(0, (parseFloat(markerEl.style.left) || 0) + delta[0] * steg)) * 100) / 100;
+            const top = Math.round(Math.min(100 - Math.min(h, 100), Math.max(0, (parseFloat(markerEl.style.top) || 0) + delta[1] * steg)) * 100) / 100;
+            markerEl.style.left = left + '%';
+            markerEl.style.top = top + '%';
+            markerEl.dataset.x = left + w / 2;
+            markerEl.dataset.y = top + h / 2;
+        }
+        oppdaterTilkobledeStreker(nudge.tilkoblinger);
 
         clearTimeout(nudgeSaveTimer);
         nudgeSaveTimer = setTimeout(() => {
-            const symbolId = parseInt(markerEl.dataset.symbolid, 10);
-            dotNetRef.invokeMethodAsync('OnSymbolMoved', symbolId, parseFloat(markerEl.style.left), parseFloat(markerEl.style.top));
+            const n = nudge;
+            nudge = null;
+            if (!n) {
+                return;
+            }
+            const payload = n.grupper.map(g => ({
+                Id: parseInt(g.el.dataset.symbolid, 10),
+                X: parseFloat(g.el.style.left),
+                Y: parseFloat(g.el.style.top)
+            }));
+            dotNetRef.invokeMethodAsync('OnSymbolerFlyttet', JSON.stringify(payload), tilkoblingerTilJson(n.tilkoblinger));
         }, 400);
     };
 
@@ -1503,7 +1565,7 @@ function startLederForlengelse(canvasEl, dotNetRef, lederId) {
     dotNetRef.invokeMethodAsync('OnLederTegningStart', lederId);
     startStrekTegning(canvasEl, dotNetRef, pl.getAttribute('stroke') || '#1d1d1b', 2, false, {
         startPts: pts,
-        ferdig: r => dotNetRef.invokeMethodAsync('OnLederForlenget', lederId, punkterTilJson(r)),
+        ferdig: (r, tilPort) => dotNetRef.invokeMethodAsync('OnLederForlenget', lederId, punkterTilJson(r), tilPort),
         avbrutt: () => dotNetRef.invokeMethodAsync('OnLederTegningSlutt')
     });
 }

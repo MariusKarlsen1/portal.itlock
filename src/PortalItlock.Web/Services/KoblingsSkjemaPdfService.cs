@@ -276,6 +276,19 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                 $"<polyline points='{pts}' fill='none' stroke='{KoblingsKabel.Hex(l.Leder.Farge)}' stroke-width='0.32' stroke-linejoin='round' stroke-linecap='round' {dash} />");
         }
 
+        // Navnet på hver leder ved enden, som på skjermen.
+        var fs = Math.Clamp(vifte.Mellom * 0.82, 0.45, 1.1);
+        foreach (var l in vifte.Ledere)
+        {
+            if (KoblingsKabel.LagEtikett(l, ViewBoxHoyde / ViewBoxBredde) is not { } et)
+            {
+                continue;
+            }
+            var dx = et.Etter ? fs * 0.45 : -fs * 0.6;
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<text transform='translate({Inv(et.Punkt.X)},{Inv(YtilVb(et.Punkt.Y))}) rotate({Inv(et.Vinkel)})' x='{Inv(dx)}' y='{Inv(fs * 0.35)}' font-size='{Inv(fs)}' font-family='Arial, sans-serif' font-weight='bold' text-anchor='{(et.Etter ? "start" : "end")}' fill='#2a2622'>{System.Net.WebUtility.HtmlEncode(KoblingsKabel.LederNavn(l.Leder))}</text>");
+        }
+
         if (!string.IsNullOrWhiteSpace(strek.Navn))
         {
             var etikett = $"{strek.Navn} · {(string.IsNullOrWhiteSpace(strek.KabelType) ? KoblingsKabel.MalNavn(KoblingsKabel.Les(strek.LedereJson)) : strek.KabelType)}";

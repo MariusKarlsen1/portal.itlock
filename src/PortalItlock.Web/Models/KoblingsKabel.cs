@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace PortalItlock.Web.Models;
@@ -20,6 +21,11 @@ public sealed class KoblingsLeder
     // fra der lederen forlater kabelen og ut til der den kobles). Null = standard vifte.
     public List<KoblingsStrekPunkt>? Start { get; set; }
     public List<KoblingsStrekPunkt>? Slutt { get; set; }
+
+    // Koblet til et koblingspunkt: veien legges automatisk (ryddig, symmetrisk og
+    // uten kryssinger) fra kabelen til siste punkt i Start/Slutt.
+    public bool StartAuto { get; set; }
+    public bool SluttAuto { get; set; }
 }
 
 // Flerlederkabel på koblingsskjema: en tykk sort kabel som deler seg i
@@ -101,7 +107,47 @@ public static class KoblingsKabel
     public static string Type(int antall) => $"{antall}-leder";
 
     // Punkter går fra kabelen og ut. Indeks/ErStart sier hvilken leder og ende det er.
-    public sealed record LederLinje(KoblingsLeder Leder, List<KoblingsStrekPunkt> Punkter, int Indeks, bool ErStart);
+    // Fri = lederen står løst i vifta (ikke koblet noe sted).
+    public sealed record LederLinje(KoblingsLeder Leder, List<KoblingsStrekPunkt> Punkter, int Indeks, bool ErStart, bool Fri = false);
+
+    // Navnet som skrives ved lederen på tegningen: funksjonen, ellers fargen.
+    public static string LederNavn(KoblingsLeder l) => string.IsNullOrWhiteSpace(l.Funksjon) ? l.Farge : l.Funksjon;
+
+    // Hvor ledernavnet står: ved enden av lederen, langs den siste biten.
+    // Vinkel er i grader på skjermen (alltid lesbar, aldri opp-ned). Etter =
+    // teksten står etter punktet i vinkelens retning, ellers foran.
+    public sealed record Etikett(KoblingsStrekPunkt Punkt, double Vinkel, bool Etter);
+
+    public static Etikett? LagEtikett(LederLinje l, double aspekt)
+    {
+        var p = l.Punkter;
+        if (p.Count < 2)
+        {
+            return null;
+        }
+        var b = p[^1];
+        KoblingsStrekPunkt? a = null;
+        for (var k = p.Count - 2; k >= 0; k--)
+        {
+            if (Avstand(p[k], b, aspekt) > 0.01)
+            {
+                a = p[k];
+                break;
+            }
+        }
+        if (a is null)
+        {
+            return null;
+        }
+        var v = Math.Atan2((b.Y - a.Y) * aspekt, b.X - a.X) * 180 / Math.PI;
+        var etter = l.Fri;
+        if (v > 89.5 || v < -90.5)
+        {
+            v = v > 0 ? v - 180 : v + 180;
+            etter = !etter;
+        }
+        return new Etikett(b, Math.Round(v, 1), etter);
+    }
 
     // Id for en lederende på lerretet (negativ, så den ikke kolliderer med strek-id-er).
     public static int LederId(int strekId, bool erStart, int indeks) => -(strekId * 100 + (erStart ? 0 : 50) + indeks + 1);
@@ -126,21 +172,38 @@ public static class KoblingsKabel
         List<KoblingsStrekPunkt> Kropp,
         Ende Start,
         Ende Slutt,
-        KoblingsStrekPunkt Merke);
+        KoblingsStrekPunkt Merke,
+        double Mellom);
+
+    // Avstand mellom lederne (KoblingsStrek.LederAvstand) er en faktor lagret som
+    // tekst ("0.6"). Null = normal. "Tett"/"Bred" er eldre lagrede verdier.
+    public static readonly (double Faktor, string Navn)[] Avstander = [(0.45, "Tett"), (1.0, "Normal"), (1.6, "Bred")];
+    public const double MinFaktor = 0.2;
+    public const double MaksFaktor = 3.0;
+
+    public static double AvstandFaktor(string? avstand) => avstand switch
+    {
+        null or "" => 1.0,
+        "Tett" => 0.45,
+        "Bred" => 1.6,
+        _ => double.TryParse(avstand, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) && double.IsFinite(f)
+            ? Math.Clamp(f, MinFaktor, MaksFaktor)
+            : 1.0
+    };
+
+    public static string? AvstandVerdi(double faktor)
+    {
+        faktor = Math.Round(Math.Clamp(faktor, MinFaktor, MaksFaktor), 2);
+        return Math.Abs(faktor - 1.0) < 0.001 ? null : faktor.ToString(CultureInfo.InvariantCulture);
+    }
+
+    // Avstanden mellom to naboledere i prosent av lerretets bredde.
+    public static double LederAvstand(int antall, string? avstand) =>
+        Math.Min(0.75, 7.0 / Math.Max(1, antall)) * AvstandFaktor(avstand);
 
     // Punktene er i prosent av lerretet. aspekt = høyde/bredde på lerretet,
     // slik at lederne står vinkelrett på kabelen også når lerretet ikke er
     // kvadratisk. Alle punkter som returneres er også i prosent.
-    // Valgene for avstand mellom lederne (KoblingsStrek.LederAvstand). Null = normal.
-    public static readonly (string? Verdi, string Navn)[] Avstander = [("Tett", "Tett"), (null, "Normal"), ("Bred", "Bred")];
-
-    public static double AvstandFaktor(string? avstand) => avstand switch
-    {
-        "Tett" => 0.45,
-        "Bred" => 1.6,
-        _ => 1.0
-    };
-
     public static Vifte? LagVifte(List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, string? avstand = null)
     {
         if (punkter.Count < 2 || ledere.Count == 0)
@@ -149,9 +212,9 @@ public static class KoblingsKabel
         }
 
         var linjer = new List<LederLinje>();
-        var faktor = AvstandFaktor(avstand);
-        var forste = LagEnde(punkter, ledere, aspekt, faktor, fraStart: true, linjer, out var startKropp, out var startEnde);
-        var siste = LagEnde(punkter, ledere, aspekt, faktor, fraStart: false, linjer, out var sluttKropp, out var sluttEnde);
+        var mellom = LederAvstand(ledere.Count, avstand);
+        var forste = LagEnde(punkter, ledere, aspekt, mellom, fraStart: true, linjer, out var startKropp, out var startEnde);
+        var siste = LagEnde(punkter, ledere, aspekt, mellom, fraStart: false, linjer, out var sluttKropp, out var sluttEnde);
         if (!forste || !siste)
         {
             return null;
@@ -174,11 +237,11 @@ public static class KoblingsKabel
             }
         }
 
-        return new Vifte(linjer, kropp, startEnde, sluttEnde, merke);
+        return new Vifte(linjer, kropp, startEnde, sluttEnde, merke, mellom);
     }
 
     private static bool LagEnde(
-        List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, double faktor, bool fraStart,
+        List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, double mellom, bool fraStart,
         List<LederLinje> linjer, out KoblingsStrekPunkt kroppStart, out Ende ende)
     {
         var p0 = fraStart ? punkter[0] : punkter[^1];
@@ -202,39 +265,132 @@ public static class KoblingsKabel
         }
 
         // Regn i "synlige" enheter (y skalert med aspekt) så vinklene blir riktige.
+        // u peker ut fra kabelen (retningen lederne går), n står vinkelrett på den.
         double ax = p0.X, ay = p0.Y * aspekt;
         double bx = nabo.X, by = nabo.Y * aspekt;
         var seg = Math.Sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
-        double dx = (bx - ax) / seg, dy = (by - ay) / seg;
-        double nx = -dy, ny = dx;
+        double ux = -(bx - ax) / seg, uy = -(by - ay) / seg;
+        double nx = uy, ny = -ux;
+
+        KoblingsStrekPunkt Til(double cu, double cn) =>
+            new() { X = ax + ux * cu + nx * cn, Y = (ay + uy * cu + ny * cn) / aspekt };
+
+        (double U, double N) Fra(KoblingsStrekPunkt p)
+        {
+            double px = p.X - ax, py = p.Y * aspekt - ay;
+            return (px * ux + py * uy, px * nx + py * ny);
+        }
 
         // Den sorte kabelen går helt ut til enden der man klikket, og lederne
         // begynner der og vifter ut videre i samme retning (bort fra kabelen).
+        const double vifte = 2.0;
         const double lengde = 4.0;
+        const double rett = 0.05;
         var n = ledere.Count;
-        var avstand = Math.Min(0.75, 7.0 / n) * faktor;
-        double ux = -dx, uy = -dy;
 
+        // Hver leder får en plass i vifta. Ledere som er koblet til et punkt
+        // sorteres etter hvor punktet ligger, så ingen ledere krysser hverandre.
+        var plasser = new List<(int I, double Nokkel, (double U, double N)? Mal, KoblingsStrekPunkt? MalPunkt, List<KoblingsStrekPunkt>? Egen)>();
         for (var i = 0; i < n; i++)
         {
             // Speil rekkefølgen i sluttenden så samme leder ligger på samme side av kabelen.
-            var o = ((fraStart ? i : n - 1 - i) - (n - 1) / 2.0) * avstand;
-            var x2 = ax + ux * lengde * 0.5 + nx * o;
-            var y2 = ay + uy * lengde * 0.5 + ny * o;
-            var x1 = ax + ux * lengde + nx * o;
-            var y1 = ay + uy * lengde + ny * o;
-            var fra = new KoblingsStrekPunkt { X = p0.X, Y = p0.Y };
+            var o = ((fraStart ? i : n - 1 - i) - (n - 1) / 2.0) * mellom;
             var egen = fraStart ? ledere[i].Start : ledere[i].Slutt;
-            List<KoblingsStrekPunkt> vei = egen is { Count: > 0 }
-                ? [fra, .. egen]
-                : [fra, new KoblingsStrekPunkt { X = x2, Y = y2 / aspekt }, new KoblingsStrekPunkt { X = x1, Y = y1 / aspekt }];
-            linjer.Add(new LederLinje(ledere[i], vei, i, fraStart));
+            var auto = (fraStart ? ledere[i].StartAuto : ledere[i].SluttAuto) && egen is { Count: > 0 };
+            var mal = auto ? Fra(egen![^1]) : ((double U, double N)?)null;
+            plasser.Add((i, mal?.N ?? o, mal, auto ? egen![^1] : null, auto ? null : egen));
+        }
+        plasser = plasser.OrderBy(p => p.Nokkel).ToList();
+
+        double Plass(int j) => (j - (n - 1) / 2.0) * mellom;
+        bool Bak((double U, double N) m) => m.U < vifte + 1;
+
+        // Ledere som må gå bakover (punktet ligger bak kabelenden) legger seg
+        // inni hverandre som en U: da må de bytte plass innbyrdes.
+        foreach (var oppover in new[] { true, false })
+        {
+            var bytt = Enumerable.Range(0, n)
+                .Where(j => plasser[j].Mal is { } m && Bak(m) && (oppover ? m.N < Plass(j) - rett : m.N > Plass(j) + rett))
+                .ToList();
+            var snudd = bytt.Select(j => plasser[j]).Reverse().ToList();
+            for (var k = 0; k < bytt.Count; k++)
+            {
+                plasser[bytt[k]] = snudd[k];
+            }
+        }
+
+        // Ledere som må svinge til siden svinger i trapp: den ytterste først,
+        // så de ikke krysser hverandre på vei inn til punktene sine.
+        var trapp = new int[n];
+        var opp = 0;
+        for (var j = 0; j < n; j++)
+        {
+            if (plasser[j].Mal is { } m && m.N < Plass(j) - rett)
+            {
+                trapp[j] = opp++;
+            }
+        }
+        var ned = 0;
+        for (var j = n - 1; j >= 0; j--)
+        {
+            if (plasser[j].Mal is { } m && m.N > Plass(j) + rett)
+            {
+                trapp[j] = ned++;
+            }
+        }
+        var steg = Math.Max(mellom, 0.6);
+
+        for (var j = 0; j < n; j++)
+        {
+            var (i, _, mal, malPunkt, egen) = plasser[j];
+            var o = Plass(j);
+            var fra = new KoblingsStrekPunkt { X = p0.X, Y = p0.Y };
+            List<KoblingsStrekPunkt> vei;
+            var fri = false;
+            if (mal is { } t)
+            {
+                vei = [fra, Til(vifte, o)];
+                if (Math.Abs(t.N - o) >= rett)
+                {
+                    var c = vifte + steg * (trapp[j] + 1);
+                    if (!Bak(t) && c > t.U - 0.4)
+                    {
+                        c = Math.Max(vifte, t.U - 0.4);
+                    }
+                    vei.Add(Til(c, o));
+                    vei.Add(Til(c, t.N));
+                }
+                vei.Add(new KoblingsStrekPunkt { X = malPunkt!.X, Y = malPunkt.Y });
+            }
+            else if (egen is { Count: > 0 })
+            {
+                vei = [fra, .. egen];
+            }
+            else
+            {
+                vei = [fra, Til(vifte, o), Til(lengde, o)];
+                fri = true;
+            }
+            linjer.Add(new LederLinje(ledere[i], UtenDobbelt(vei, aspekt), i, fraStart, fri));
         }
 
         // Kabelen skal ikke skjules noe sted lenger: masken får radius 0.
         kroppStart = p0;
         ende = new Ende(p0, 0, 0);
         return true;
+    }
+
+    private static List<KoblingsStrekPunkt> UtenDobbelt(List<KoblingsStrekPunkt> vei, double aspekt)
+    {
+        var res = new List<KoblingsStrekPunkt>(vei.Count);
+        foreach (var p in vei)
+        {
+            if (res.Count == 0 || Avstand(res[^1], p, aspekt) > 0.01)
+            {
+                res.Add(p);
+            }
+        }
+        return res;
     }
 
     private static double Avstand(KoblingsStrekPunkt a, KoblingsStrekPunkt b, double aspekt)
