@@ -3443,6 +3443,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("KoblingsSkjemaId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("LederAvstand")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("LedereJson")
                         .HasColumnType("TEXT");
 

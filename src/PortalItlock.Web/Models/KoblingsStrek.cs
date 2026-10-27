@@ -23,6 +23,9 @@ public class KoblingsStrek
     // Kabelbetegnelse, f.eks. "6 PAR 0,6 PT HF (maks 100 m)".
     public string? KabelType { get; set; }
 
+    // Avstand mellom lederne der kabelen deler seg: "Tett", "Bred" eller null (normal).
+    public string? LederAvstand { get; set; }
+
     public bool ErKabel => LedereJson is not null;
 }
 

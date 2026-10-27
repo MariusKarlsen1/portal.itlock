@@ -253,7 +253,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
     // Kabel med ledere: tykk sort kabel som deler seg i fargede ledere i hver ende.
     private static void TegnKabel(StringBuilder sb, KoblingsStrek strek, List<KoblingsStrekPunkt> punkter)
     {
-        var vifte = KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(strek.LedereJson), ViewBoxHoyde / ViewBoxBredde);
+        var vifte = KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(strek.LedereJson), ViewBoxHoyde / ViewBoxBredde, strek.LederAvstand);
         if (vifte is null)
         {
             return;

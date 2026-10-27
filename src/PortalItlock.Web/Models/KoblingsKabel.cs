@@ -131,7 +131,17 @@ public static class KoblingsKabel
     // Punktene er i prosent av lerretet. aspekt = høyde/bredde på lerretet,
     // slik at lederne står vinkelrett på kabelen også når lerretet ikke er
     // kvadratisk. Alle punkter som returneres er også i prosent.
-    public static Vifte? LagVifte(List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt)
+    // Valgene for avstand mellom lederne (KoblingsStrek.LederAvstand). Null = normal.
+    public static readonly (string? Verdi, string Navn)[] Avstander = [("Tett", "Tett"), (null, "Normal"), ("Bred", "Bred")];
+
+    public static double AvstandFaktor(string? avstand) => avstand switch
+    {
+        "Tett" => 0.45,
+        "Bred" => 1.6,
+        _ => 1.0
+    };
+
+    public static Vifte? LagVifte(List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, string? avstand = null)
     {
         if (punkter.Count < 2 || ledere.Count == 0)
         {
@@ -139,8 +149,9 @@ public static class KoblingsKabel
         }
 
         var linjer = new List<LederLinje>();
-        var forste = LagEnde(punkter, ledere, aspekt, fraStart: true, linjer, out var startKropp, out var startEnde);
-        var siste = LagEnde(punkter, ledere, aspekt, fraStart: false, linjer, out var sluttKropp, out var sluttEnde);
+        var faktor = AvstandFaktor(avstand);
+        var forste = LagEnde(punkter, ledere, aspekt, faktor, fraStart: true, linjer, out var startKropp, out var startEnde);
+        var siste = LagEnde(punkter, ledere, aspekt, faktor, fraStart: false, linjer, out var sluttKropp, out var sluttEnde);
         if (!forste || !siste)
         {
             return null;
@@ -167,7 +178,7 @@ public static class KoblingsKabel
     }
 
     private static bool LagEnde(
-        List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, bool fraStart,
+        List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, double faktor, bool fraStart,
         List<LederLinje> linjer, out KoblingsStrekPunkt kroppStart, out Ende ende)
     {
         var p0 = fraStart ? punkter[0] : punkter[^1];
@@ -201,7 +212,7 @@ public static class KoblingsKabel
         // begynner der og vifter ut videre i samme retning (bort fra kabelen).
         const double lengde = 4.0;
         var n = ledere.Count;
-        var avstand = Math.Min(0.75, 7.0 / n);
+        var avstand = Math.Min(0.75, 7.0 / n) * faktor;
         double ux = -dx, uy = -dy;
 
         for (var i = 0; i < n; i++)
