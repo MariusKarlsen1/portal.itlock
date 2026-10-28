@@ -349,7 +349,13 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("FullfortDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Kommentar")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Resultat")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Tekst")

@@ -1,0 +1,209 @@
+@page "/app/ordre/{Id:int}/vedlegg"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Vedlegg</PageTitle>
+
+@* Bilder og filer på arbeidsordren i montørappen. «Ta bilde» åpner kameraet
+   direkte, «Last opp» velger bilder eller filer fra telefonen. Lagres som
+   på arbeidsordren i portalen (ArbeidsordreMedia) og kommer med i
+   sluttrapporten. *@
+<div class="ma">
+    <AppHode Ikon="camera" Sand="true" Tittel="Vedlegg" Under="@(_a is null ? "" : $"{_a.Id} {_a.Tittel}")" Tilbake="@($"/app/ordre/{Id}")" />
+
+    @if (_kanLaste)
+    {
+        <div class="mvl-knapper">
+            <label class="ma-knapp">
+                <Icon Name="camera" />Ta bilde
+                <InputFile OnChange="LastOpp" accept="image/*" capture="environment" class="mvl-fil" />
+            </label>
+            <label class="ma-knapp sek">
+                <Icon Name="file-text" />Last opp
+                <InputFile OnChange="LastOpp" multiple class="mvl-fil" />
+            </label>
+        </div>
+    }
+    @if (_laster)
+    {
+        <p class="ma-melding" role="status" style="margin:0 1rem .6rem">Laster opp …</p>
+    }
+    @if (_feil is not null)
+    {
+        <p class="ma-feil" role="alert" style="margin:0 1rem .6rem">@_feil</p>
+    }
+
+    <div class="ma-filter">
+        <span class="ma-trakt"><Icon Name="filter" /></span>
+        <label><span>Vis</span>
+            <select @bind="_filter">
+                <option value="alle">Alle (@_media.Count)</option>
+                <option value="bilder">Bilder (@_media.Count(m => ErBilde(m)))</option>
+                <option value="filer">Filer (@_media.Count(m => !ErBilde(m)))</option>
+            </select>
+        </label>
+    </div>
+
+    <div class="ma-liste">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (Synlige.Count == 0)
+        {
+            <p class="ma-tom">Ingen vedlegg ennå. Ta et bilde eller last opp en fil.</p>
+        }
+        else
+        {
+            var bilder = Synlige.Where(ErBilde).ToList();
+            @if (bilder.Count > 0)
+            {
+                <div class="mvl-rutenett">
+                    @foreach (var m in bilder)
+                    {
+                        <a href="@($"/arbeidsordremedia/{m.Id}")" target="_blank" rel="noopener"><img src="@($"/arbeidsordremedia/{m.Id}")" alt="@m.Filnavn" loading="lazy" /></a>
+                    }
+                </div>
+            }
+            @foreach (var m in Synlige)
+            {
+                var media = m;
+                <div class="ma-rad" style="cursor:default">
+                    <Icon Name="@(ErBilde(m) ? "camera" : "file-text")" />
+                    <a class="ma-rad-tekst" href="@($"/arbeidsordremedia/{m.Id}")" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">
+                        <b>@m.Filnavn</b>
+                        <small>@(m.LastetOppAvKunde ? "Fra kunden" : ErBilde(m) ? "Bilde" : "Fil") · @m.OpprettetDato.ToString("dd.MM HH:mm")</small>
+                    </a>
+                    @if (_kanLaste && !m.LastetOppAvKunde)
+                    {
+                        <button type="button" class="ma-pilknapp" aria-label="@($"Slett {m.Filnavn}")" @onclick="@(() => _slett = media)"><Icon Name="trash" /></button>
+                    }
+                </div>
+            }
+        }
+    </div>
+    <p class="ma-teller-tekst" style="text-align:left;font-style:normal;padding:.6rem 1rem">Bildene kommer med i sluttrapporten til kunden.</p>
+
+    @if (_slett is { } s)
+    {
+        <div class="ma-ark-bak" @onclick="@(() => _slett = null)">
+            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Slett vedlegg">
+                <div class="ma-ark-handtak"></div>
+                <h2>Slette @s.Filnavn?</h2>
+                <div class="ma-under" style="grid-template-columns:1fr 1fr">
+                    <button type="button" class="ma-knapp sek" @onclick="@(() => _slett = null)">Avbryt</button>
+                    <button type="button" class="ma-knapp rod" @onclick="Slett">Slett</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private const long MaksStorrelse = 20_000_000;
+
+    private bool _lastet;
+    private bool _laster;
+    private bool _kanLaste;
+    private string? _feil;
+    private string _filter = "alle";
+    private Arbeidsordre? _a;
+    private List<ArbeidsordreMedia> _media = [];
+    private ArbeidsordreMedia? _slett;
+
+    private List<ArbeidsordreMedia> Synlige => _media
+        .Where(m => _filter == "alle" || (_filter == "bilder") == ErBilde(m))
+        .ToList();
+
+    private static bool ErBilde(ArbeidsordreMedia m) => m.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var rolle = Enum.TryParse<BrukerRolle>((await AuthStateTask).User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, out var r) ? r : (BrukerRolle?)null;
+            _kanLaste = ModulRettigheter.KanFerdigmelde(rolle);
+        }
+
+        _a = await Db.Arbeidsordre.AsNoTracking().FirstOrDefaultAsync(a => a.Id == Id);
+
+        // Uten selve dataene; bildene vises via /arbeidsordremedia/{id}.
+        _media = await Db.ArbeidsordreMedia.AsNoTracking().Where(m => m.ArbeidsordreId == Id).OrderByDescending(m => m.OpprettetDato)
+            .Select(m => new ArbeidsordreMedia { Id = m.Id, ArbeidsordreId = m.ArbeidsordreId, Data = Array.Empty<byte>(), ContentType = m.ContentType, Filnavn = m.Filnavn, OpprettetDato = m.OpprettetDato, LastetOppAvKunde = m.LastetOppAvKunde })
+            .ToListAsync();
+        _lastet = true;
+    }
+
+    private async Task LastOpp(InputFileChangeEventArgs e)
+    {
+        if (!_kanLaste || _a is null)
+        {
+            return;
+        }
+
+        _feil = null;
+        _laster = true;
+        try
+        {
+            foreach (var fil in e.GetMultipleFiles(10))
+            {
+                if (fil.Size > MaksStorrelse)
+                {
+                    _feil = $"«{fil.Name}» er for stor (maks 20 MB).";
+                    continue;
+                }
+
+                using var buffer = new MemoryStream();
+                await using (var strom = fil.OpenReadStream(maxAllowedSize: MaksStorrelse))
+                {
+                    await strom.CopyToAsync(buffer);
+                }
+
+                var media = new ArbeidsordreMedia
+                {
+                    ArbeidsordreId = Id,
+                    Data = buffer.ToArray(),
+                    ContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType,
+                    Filnavn = fil.Name
+                };
+                Db.ArbeidsordreMedia.Add(media);
+                await Db.SaveChangesAsync();
+                Db.Entry(media).State = EntityState.Detached;
+                _media.Insert(0, new ArbeidsordreMedia { Id = media.Id, ArbeidsordreId = Id, Data = Array.Empty<byte>(), ContentType = media.ContentType, Filnavn = media.Filnavn, OpprettetDato = media.OpprettetDato });
+            }
+        }
+        catch (IOException)
+        {
+            _feil = "Opplastingen ble avbrutt. Sjekk dekningen og prøv igjen.";
+        }
+        finally
+        {
+            _laster = false;
+        }
+    }
+
+    private async Task Slett()
+    {
+        if (_slett is not { } m || !_kanLaste || m.LastetOppAvKunde)
+        {
+            return;
+        }
+
+        var entitet = await Db.ArbeidsordreMedia.FirstOrDefaultAsync(x => x.Id == m.Id && x.ArbeidsordreId == Id);
+        if (entitet is not null)
+        {
+            Db.ArbeidsordreMedia.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        _media.Remove(m);
+        _slett = null;
+    }
+}

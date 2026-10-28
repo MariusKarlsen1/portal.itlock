@@ -13,4 +13,16 @@ public class ArbeidsordreSjekkpunkt
 
     public int? FullfortAvBrukerId { get; set; }
     public Bruker? FullfortAvBruker { get; set; }
+
+    // Svaret fra montørappen (OK, avvik eller ikke aktuelt) og en kommentar.
+    // Fullfort følger svaret: OK og ikke aktuelt er fullført, avvik er det ikke.
+    public SjekkpunktResultat? Resultat { get; set; }
+    public string? Kommentar { get; set; }
+}
+
+public enum SjekkpunktResultat
+{
+    Ok,
+    Avvik,
+    IkkeAktuelt
 }

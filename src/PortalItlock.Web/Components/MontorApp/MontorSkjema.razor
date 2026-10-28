@@ -1,0 +1,126 @@
+@page "/app/ordre/{Id:int}/skjema"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Skjema</PageTitle>
+
+@* Sjekklista på arbeidsordren i montørappen. Hvert punkt besvares med OK,
+   Avvik eller Ikke aktuelt; avvik får en kommentar. Svaret lagres med en
+   gang, og «fullført» følger svaret slik at sjekklista i portalen og
+   sluttrapporten viser det samme. *@
+<div class="ma">
+    <AppHode Ikon="clipboard" Sand="true" Tittel="Skjema" Under="@(_a is null ? "" : $"{_a.Id} {_a.Tittel}")" Tilbake="@($"/app/ordre/{Id}")" />
+
+    @if (!_lastet)
+    {
+        <div class="ma-liste"><p class="ma-tom">Laster …</p></div>
+    }
+    else if (_punkter.Count == 0)
+    {
+        <div class="ma-liste"><p class="ma-tom">Ordren har ingen sjekkliste. Prosjektleder legger den på i portalen.</p></div>
+    }
+    else
+    {
+        var besvart = _punkter.Count(p => p.Resultat is not null);
+        <div class="ma-sum" style="display:block">
+            <div style="display:flex;justify-content:space-between"><span>Sjekkliste</span><span>@besvart av @_punkter.Count</span></div>
+            <span class="ma-fremdrift" style="display:block"><i style="width:@(besvart * 100 / _punkter.Count)%"></i></span>
+        </div>
+        <div class="ma-liste">
+            @foreach (var p in _punkter)
+            {
+                var punkt = p;
+                <div class="msj-punkt">
+                    <b>@(_punkter.IndexOf(p) + 1). @p.Tekst</b>
+                    <div class="msj-valg" role="group" aria-label="@p.Tekst">
+                        <button type="button" class="@(p.Resultat == SjekkpunktResultat.Ok ? "ok" : "")" aria-pressed="@(p.Resultat == SjekkpunktResultat.Ok)" disabled="@(!_kanEndre)" @onclick="@(() => Svar(punkt, SjekkpunktResultat.Ok))">OK</button>
+                        <button type="button" class="@(p.Resultat == SjekkpunktResultat.Avvik ? "avvik" : "")" aria-pressed="@(p.Resultat == SjekkpunktResultat.Avvik)" disabled="@(!_kanEndre)" @onclick="@(() => Svar(punkt, SjekkpunktResultat.Avvik))">Avvik</button>
+                        <button type="button" class="@(p.Resultat == SjekkpunktResultat.IkkeAktuelt ? "na" : "")" aria-pressed="@(p.Resultat == SjekkpunktResultat.IkkeAktuelt)" disabled="@(!_kanEndre)" @onclick="@(() => Svar(punkt, SjekkpunktResultat.IkkeAktuelt))">Ikke aktuelt</button>
+                    </div>
+                    @if (p.Resultat == SjekkpunktResultat.Avvik)
+                    {
+                        <textarea rows="2" maxlength="500" placeholder="Hva er feil, og hva må gjøres?" value="@p.Kommentar" disabled="@(!_kanEndre)" @onchange="@(e => LagreKommentar(punkt, e.Value?.ToString()))"></textarea>
+                    }
+                    @if (p.Resultat is not null && p.FullfortAvBruker is { } b && p.FullfortDato is { } d)
+                    {
+                        <small>@MontorApp.Initialer(b.Navn) @d.ToString("dd.MM HH:mm")</small>
+                    }
+                </div>
+            }
+        </div>
+        <div class="ma-under">
+            <a class="ma-knapp sek" href="@($"/arbeidsordre/{Id}/sjekkliste/pdf")" target="_blank" rel="noopener"><Icon Name="file-text" />Sjekkliste som PDF</a>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _lastet;
+    private bool _kanEndre;
+    private int _brukerId;
+    private Bruker? _bruker;
+    private Arbeidsordre? _a;
+    private List<ArbeidsordreSjekkpunkt> _punkter = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var u = (await AuthStateTask).User;
+            if (int.TryParse(u.FindFirst("BrukerId")?.Value, out var id)) _brukerId = id;
+            var rolle = Enum.TryParse<BrukerRolle>(u.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, out var r) ? r : (BrukerRolle?)null;
+            _kanEndre = ModulRettigheter.KanFerdigmelde(rolle);
+        }
+
+        _bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == _brukerId);
+        _a = await Db.Arbeidsordre.AsNoTracking().FirstOrDefaultAsync(a => a.Id == Id);
+        _punkter = await Db.ArbeidsordreSjekkpunkter.Include(p => p.FullfortAvBruker)
+            .Where(p => p.ArbeidsordreId == Id).OrderBy(p => p.Rekkefolge).ThenBy(p => p.Id).ToListAsync();
+
+        // Punkter hukt av i portalen før svarene fantes, regnes som OK.
+        foreach (var p in _punkter.Where(p => p.Fullfort && p.Resultat is null))
+        {
+            p.Resultat = SjekkpunktResultat.Ok;
+        }
+
+        _lastet = true;
+    }
+
+    private async Task Svar(ArbeidsordreSjekkpunkt p, SjekkpunktResultat svar)
+    {
+        if (!_kanEndre)
+        {
+            return;
+        }
+
+        p.Resultat = p.Resultat == svar ? null : svar;
+        p.Fullfort = p.Resultat is SjekkpunktResultat.Ok or SjekkpunktResultat.IkkeAktuelt;
+        p.FullfortDato = p.Resultat is null ? null : DateTime.Now;
+        p.FullfortAvBrukerId = p.Resultat is null ? null : _brukerId;
+        p.FullfortAvBruker = p.Resultat is null ? null : _bruker;
+        if (p.Resultat != SjekkpunktResultat.Avvik)
+        {
+            p.Kommentar = null;
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreKommentar(ArbeidsordreSjekkpunkt p, string? tekst)
+    {
+        if (!_kanEndre)
+        {
+            return;
+        }
+
+        p.Kommentar = string.IsNullOrWhiteSpace(tekst) ? null : tekst.Trim();
+        await Db.SaveChangesAsync();
+    }
+}

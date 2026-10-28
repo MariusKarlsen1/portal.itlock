@@ -1,0 +1,125 @@
+@page "/app/ordre/{Id:int}/notater"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+<PageTitle>Notater</PageTitle>
+
+@* Utført arbeid og anbefalinger i montørappen. Det er de samme feltene som
+   sluttrapporten på arbeidsordren, og prosjektleder lager PDF-en av dem.
+   Lagres når feltet forlates, og med «Lagre». *@
+<div class="ma">
+    <AppHode Ikon="edit" Sand="true" Tittel="Notater" Under="@(_a is null ? "" : $"{_a.Id} {_a.Tittel}")" Tilbake="@($"/app/ordre/{Id}")">
+        <span class="ma-skille"></span>
+        <a class="ma-ikonknapp" href="@($"/arbeidsordre/{Id}/rapport/pdf")" target="_blank" rel="noopener" aria-label="Forhåndsvis rapport"><Icon Name="file-text" /></a>
+    </AppHode>
+
+    @if (_a is null)
+    {
+        <div class="ma-liste"><p class="ma-tom">@(_lastet ? "Fant ikke arbeidsordren." : "Laster …")</p></div>
+    }
+    else
+    {
+        <div class="ma-liste" style="padding:0 0 .4rem">
+            <div class="mod-merknad mod-bla" style="margin:.9rem 1rem .4rem"><Icon Name="file-text" /><span>Notatene brukes i sluttrapporten (PDF) som prosjektleder sender kunden. Skriv kort og tydelig.</span></div>
+
+            <div class="ma-felt" style="border:0">
+                <b>Utført arbeid</b>
+                <div class="mnt-hurtig">
+                    @foreach (var h in Hurtig)
+                    {
+                        var tekst = h;
+                        <button type="button" class="ma-hurtig" style="margin:0" disabled="@(!_kanEndre)" @onclick="@(() => LeggTil(tekst))">+ @h</button>
+                    }
+                </div>
+                <textarea rows="7" maxlength="4000" @bind="_utfort" @bind:event="oninput" @onblur="Lagre" disabled="@(!_kanEndre)" placeholder="Hva ble gjort på jobben?"></textarea>
+            </div>
+            <div class="ma-felt" style="border:0">
+                <b>Anbefalinger til kunden</b>
+                <textarea rows="4" maxlength="2000" @bind="_anbefaling" @bind:event="oninput" @onblur="Lagre" disabled="@(!_kanEndre)" placeholder="For eksempel: bytte dørlukker på inngangsdøra innen ett år"></textarea>
+            </div>
+        </div>
+        @if (_melding is not null)
+        {
+            <p class="ma-melding" role="status" style="margin:.6rem 1rem 0">@_melding</p>
+        }
+        <div class="ma-under" style="grid-template-columns:1fr 1fr">
+            <a class="ma-knapp sek" href="@($"/arbeidsordre/{Id}/rapport/pdf")" target="_blank" rel="noopener"><Icon Name="file-text" />Forhåndsvis</a>
+            <button type="button" class="ma-knapp" disabled="@(!_kanEndre)" @onclick="Lagre"><Icon Name="check" />Lagre</button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly string[] Hurtig = ["Montert og testet", "Programmert mot låsplan", "Kunden er opplært", "Gammel sylinder levert retur"];
+
+    private bool _lastet;
+    private bool _kanEndre;
+    private string? _melding;
+    private string _utfort = "";
+    private string _anbefaling = "";
+    private Arbeidsordre? _a;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var rolle = Enum.TryParse<BrukerRolle>((await AuthStateTask).User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, out var r) ? r : (BrukerRolle?)null;
+            _kanEndre = ModulRettigheter.KanFerdigmelde(rolle);
+        }
+
+        _a = await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.Id == Id);
+        if (_a is not null)
+        {
+            // Feltene er rik tekst i portalen; her redigeres de som ren tekst.
+            _utfort = RikTekst.TilTekst(_a.UtfortArbeid);
+            _anbefaling = RikTekst.TilTekst(_a.Anbefalinger);
+        }
+
+        _lastet = true;
+    }
+
+    private void LeggTil(string tekst)
+    {
+        _utfort = string.IsNullOrWhiteSpace(_utfort) ? "• " + tekst : _utfort.TrimEnd() + "\n• " + tekst;
+        _melding = null;
+    }
+
+    private async Task Lagre()
+    {
+        if (!_kanEndre || _a is null)
+        {
+            return;
+        }
+
+        var utfort = string.IsNullOrWhiteSpace(_utfort) ? null : _utfort.Trim();
+        var anbefaling = string.IsNullOrWhiteSpace(_anbefaling) ? null : _anbefaling.Trim();
+
+        // Uendret tekst skrives ikke tilbake, så formatering fra portalen beholdes.
+        var endret = false;
+        if (utfort != (string.IsNullOrWhiteSpace(RikTekst.TilTekst(_a.UtfortArbeid)) ? null : RikTekst.TilTekst(_a.UtfortArbeid).Trim()))
+        {
+            _a.UtfortArbeid = utfort;
+            endret = true;
+        }
+
+        if (anbefaling != (string.IsNullOrWhiteSpace(RikTekst.TilTekst(_a.Anbefalinger)) ? null : RikTekst.TilTekst(_a.Anbefalinger).Trim()))
+        {
+            _a.Anbefalinger = anbefaling;
+            endret = true;
+        }
+
+        if (endret)
+        {
+            await Db.SaveChangesAsync();
+            _melding = "Lagret.";
+        }
+    }
+}
