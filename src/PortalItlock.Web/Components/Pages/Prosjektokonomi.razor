@@ -48,7 +48,7 @@
                     <Icon Name="bar-chart" /><span class="ek-meny-tekst">Pågående<small>@_pagaende.Count prosjekter</small></span>
                     @if (_folgMed.Count > 0)
                     {
-                        <small class="ek-meny-tall @(_folgMed.Any(f => f.Status == ProsjektOkonomiService.OkonomiStatus.OverBudsjett) ? "" : "ek-meny-tall-gul")" title="Med gult eller rødt varsel">@_folgMed.Count</small>
+                        <small class="ek-meny-tall @(_folgMed.Any(f => f.FortjenesteIgjen < 0) ? "" : "ek-meny-tall-gul")" title="Med gult eller rødt varsel">@_folgMed.Count</small>
                     }
                 </a>
                 <a class="ek-meny-rad @(HovedFane == "etterkalkyle" ? "aktiv" : "")" href="/prosjektokonomi/etterkalkyle" @onclick="@(() => { if (Visning == "etterkalkyle") _apenProsjekt = null; })">
@@ -140,6 +140,8 @@
     private Dictionary<int, ProsjektOppfolgingService.Oppfolging> _oppfolging = [];
     private bool _bareVarsel;
     private string _filter = "alle";
+    private string _sok = "";
+    private string _sorter = "kritisk";
     private int? _brukerId;
     private DateTime _lastet;
     private List<ProsjektOkonomiService.Okonomi> _folgMed = [];
@@ -180,7 +182,7 @@
         }
 
         _bareVarsel = Fane == "folg";
-        _filter = _bareVarsel ? "folg" : "alle";
+        _filter = _bareVarsel ? "taper" : "alle";
         _full = await VisningPref.HentAsync("etterkalkyle-bredde", "normal") == "full";
         await LastAsync();
 
@@ -305,9 +307,7 @@
 
         _pagaende = prosjekter
             .Select(p => (p, _okonomi.GetValueOrDefault(p.Id) is { Tilbud.Count: > 0 } o ? o : null))
-            .OrderBy(x => Rekkefolge(x.Item2))
-            .ThenByDescending(x => x.Item2 is { BudsjettKost: > 0 } o ? o.PrognoseKost / o.BudsjettKost : 0)
-            .ThenBy(x => x.p.Navn)
+            .OrderBy(x => x.p.Navn)
             .ToList();
         _folgMed = _pagaende.Where(x => ErVarsel(x.O)).Select(x => x.O!).ToList();
         _lastet = DateTime.Now;
@@ -316,16 +316,8 @@
         await LastTimekostAsync();
     }
 
-    private static bool ErVarsel(ProsjektOkonomiService.Okonomi? o) =>
-        o?.Status is ProsjektOkonomiService.OkonomiStatus.FolgMed or ProsjektOkonomiService.OkonomiStatus.OverBudsjett;
-
-    private static int Rekkefolge(ProsjektOkonomiService.Okonomi? o) => o is not { Inntekt: > 0 } ? 3 : o.Status switch
-    {
-        ProsjektOkonomiService.OkonomiStatus.OverBudsjett => 0,
-        ProsjektOkonomiService.OkonomiStatus.FolgMed => 1,
-        ProsjektOkonomiService.OkonomiStatus.IRute => 2,
-        _ => 3
-    };
+    // Varsel i menyen: prosjekter som taper fortjeneste (faktisk brukt mot tilbudt).
+    private static bool ErVarsel(ProsjektOkonomiService.Okonomi? o) => o?.TaperFortjeneste == true;
 
     private static string Pst(decimal v) => Math.Clamp(v * 100, 0, 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
     private static string Pst100(decimal v) => Math.Round(v * 100).ToString("0", Kultur) + " %";
@@ -531,18 +523,45 @@
         }
     </div>;
 
-    // Filtrene over lista. «folg» er den gamle adressen /prosjektokonomi/folg.
+    // Filtrene over lista. «folg» er den gamle adressen /prosjektokonomi/folg
+    // (varselbjella), og viser de som taper fortjeneste.
     private bool IFilter(Prosjekt p, ProsjektOkonomiService.Okonomi? o)
     {
         var f = _oppfolging.GetValueOrDefault(p.Id);
         return _filter switch
         {
             "trenger" => f?.NesteStegNiva is ProsjektOppfolgingService.Niva.Gul or ProsjektOppfolgingService.Niva.Rod,
+            "fakturer" => f is not null && (f.KlarAkonto is not null || f.UtfortIkkeFakturert > 0),
+            "taper" or "folg" or "over" => f?.FortjenesteNiva is ProsjektOppfolgingService.Niva.Gul or ProsjektOppfolgingService.Niva.Rod,
             "akonto" => f?.KlarAkonto is not null,
-            "over" => o?.Status == ProsjektOkonomiService.OkonomiStatus.OverBudsjett,
             "mine" => p.ProsjektlederId == _brukerId && _brukerId is not null,
-            "folg" => ErVarsel(o),
             _ => true
+        };
+    }
+
+    private bool ISok(Prosjekt p) =>
+        string.IsNullOrWhiteSpace(_sok)
+        || $"{p.Navn} {p.Kunde?.Navn} {p.Prosjektleder?.Navn}".Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase);
+
+    // Sorteringen. «Mest kritisk» setter dem som taper mest av fortjenesten øverst.
+    private IEnumerable<(Prosjekt Prosjekt, ProsjektOkonomiService.Okonomi? O)> Sorter(IEnumerable<(Prosjekt Prosjekt, ProsjektOkonomiService.Okonomi? O)> liste)
+    {
+        ProsjektOppfolgingService.Oppfolging? F((Prosjekt Prosjekt, ProsjektOkonomiService.Okonomi? O) x) => x.O is null ? null : _oppfolging.GetValueOrDefault(x.Prosjekt.Id);
+        static int Rang(ProsjektOppfolgingService.Oppfolging? f) => f?.FortjenesteNiva switch
+        {
+            ProsjektOppfolgingService.Niva.Rod => 0,
+            ProsjektOppfolgingService.Niva.Gul => 1,
+            ProsjektOppfolgingService.Niva.Gronn => 2,
+            _ => 3
+        };
+        static decimal Andel(ProsjektOppfolgingService.Oppfolging? f) => f is { TilbudtFortjeneste: > 0 } ? f.FortjenesteIgjen / f.TilbudtFortjeneste : 1;
+
+        return _sorter switch
+        {
+            "fakturer" => liste.OrderByDescending(x => F(x)?.UtfortIkkeFakturert ?? -1).ThenBy(x => x.Prosjekt.Navn),
+            "fortjeneste" => liste.OrderByDescending(x => F(x)?.FortjenesteIgjen ?? decimal.MinValue).ThenBy(x => x.Prosjekt.Navn),
+            "navn" => liste.OrderBy(x => x.Prosjekt.Navn),
+            _ => liste.OrderBy(x => Rang(F(x))).ThenBy(x => Andel(F(x))).ThenByDescending(x => F(x)?.UtfortIkkeFakturert ?? 0).ThenBy(x => x.Prosjekt.Navn)
         };
     }
 
@@ -554,11 +573,29 @@
         _ => ""
     };
 
-    private RenderFragment FilterKnapp(string id, string tekst, int antall) => @<button type="button" class="ek-arsak @(_filter == id ? "aktiv" : "")" @onclick="@(() => _filter = id)">@tekst (@antall)</button>;
+    private static string NivaOrd(ProsjektOppfolgingService.Niva n) => n switch
+    {
+        ProsjektOppfolgingService.Niva.Gronn => "I rute",
+        ProsjektOppfolgingService.Niva.Gul => "Følg med",
+        ProsjektOppfolgingService.Niva.Rod => "Taper fortjeneste",
+        _ => "–"
+    };
+
+    private static string MalerKlasse(ProsjektOppfolgingService.Niva n) => n switch
+    {
+        ProsjektOppfolgingService.Niva.Gul => "ek-maler-gul",
+        ProsjektOppfolgingService.Niva.Rod => "ek-maler-rod",
+        _ => ""
+    };
+
+    private static string MalerBredde(decimal igjen, decimal tilbudt) =>
+        Math.Clamp(tilbudt > 0 ? igjen / tilbudt * 100 : 0, 0, 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+
+    private RenderFragment FilterKnapp(string id, string tekst, int antall) => @<button type="button" class="ek-arsak @(_filter == id ? "aktiv" : "")" aria-pressed="@(_filter == id ? "true" : "false")" @onclick="@(() => _filter = id)">@tekst <small>@antall</small></button>;
 
     private RenderFragment Pagaende() => @<div class="ek-fane">
         <div class="ek-fane-topp">
-            <span><h2>Pågående prosjekter</h2><p>Prosjekter som er registrert eller under arbeid. Øverst er totalen, og hver rad sier hva som er neste steg. Trykk på et prosjekt for oversikt, fremdriftsplan, budsjett og fakturering. Når prosjektet overleveres, flyttes det til Etterkalkyle.</p></span>
+            <span><h2>Pågående prosjekter</h2><p>Tjener vi penger på prosjektene, og hva må gjøres nå? Tallene er bare faktisk brukt mot det som er tilbudt. Trykk på et prosjekt for detaljer, fremdriftsplan og fakturering.</p></span>
             <span class="ek-knapper">
                 <span class="ek-oppdatert"><i class="ek-live"></i>Live · oppdatert @_lastet.ToString("HH:mm:ss")</span>
                 <button type="button" class="ek-knapp" @onclick="OppdaterAsync">Oppdater tallene</button>
@@ -567,58 +604,86 @@
         @{
             var alle = _oppfolging.Values.ToList();
             var medTall = alle.Where(f => f.O is { Inntekt: > 0 }).ToList();
-            var inntekt = medTall.Sum(f => f.O!.Inntekt);
-            var prognoseDg = inntekt > 0 ? (inntekt - medTall.Sum(f => f.O!.PrognoseKost)) / inntekt : (decimal?)null;
-            var tilbudtDg = inntekt > 0 ? (inntekt - medTall.Sum(f => f.O!.BudsjettKost)) / inntekt : (decimal?)null;
+            var igjen = medTall.Sum(f => f.FortjenesteIgjen);
+            var tilbudt = medTall.Sum(f => f.TilbudtFortjeneste);
             var klart = alle.Where(f => f.UtfortIkkeFakturert > 0).ToList();
-            var oppgaver = alle.Sum(f => f.AapneOppgaver.Count);
-            var sene = alle.Sum(f => f.AapneOppgaver.Count(x => x.Forsinket));
-            var liste = _pagaende.Where(x => IFilter(x.Prosjekt, x.O)).ToList();
+            var taper = medTall.Where(f => f.FortjenesteNiva == ProsjektOppfolgingService.Niva.Rod).ToList();
+            var liste = Sorter(_pagaende.Where(x => IFilter(x.Prosjekt, x.O) && ISok(x.Prosjekt))).ToList();
+            var totalNiva = tilbudt > 0 && tilbudt - igjen > tilbudt * 0.25m || igjen < 0 ? ProsjektOppfolgingService.Niva.Rod : tilbudt > 0 && tilbudt - igjen > tilbudt * 0.05m ? ProsjektOppfolgingService.Niva.Gul : ProsjektOppfolgingService.Niva.Gronn;
         }
-        <div class="ek-kpi ek-kpi-5">
-            <div><span>Ordrereserve</span><b>@Kr(alle.Sum(f => f.Gjenstar))</b><small>Gjenstår å fakturere</small></div>
-            <div class="@(klart.Count > 0 ? "ek-kpi-gul" : "")"><span>Utført, ikke fakturert</span><b>@Kr(klart.Sum(f => f.UtfortIkkeFakturert))</b><small>@klart.Count @(klart.Count == 1 ? "prosjekt" : "prosjekter")</small></div>
-            <div><span>Fakturert denne måneden</span><b>@Kr(alle.Sum(f => f.FakturertDenneMaaned))</b><small>Akontoer og arbeidsordre</small></div>
-            <div><span>Dekningsgrad</span><b class="@(prognoseDg < tilbudtDg - 0.02m ? "ek-rod" : "ek-gronn")">@DG(prognoseDg)</b><small>Prognose · tilbudt @DG(tilbudtDg)</small></div>
-            <div class="@(sene > 0 ? "ek-kpi-rod" : "")"><span>Oppgaver denne uken</span><b>@oppgaver</b><small>@(sene > 0 ? $"{sene} forsinket" : "Fra fremdriftsplanene")</small></div>
+        <div class="ek-kpi ek-kpi-ny">
+            <div class="ek-kpi-hoved">
+                <span><Icon Name="trend-up" />Fortjeneste igjen</span>
+                <b class="@(igjen < 0 ? "ek-rod" : "")">@Kr(igjen)</b>
+                <span class="ek-maler"><i class="@MalerKlasse(totalNiva)" style="width:@MalerBredde(igjen, tilbudt)"></i></span>
+                <small>av @Kr(tilbudt) i tilbudene</small>
+            </div>
+            <button type="button" class="@(klart.Count > 0 ? "ek-kpi-gul" : "")" @onclick="@(() => { _filter = "fakturer"; _sorter = "fakturer"; })">
+                <span><Icon Name="file-text" />Utført, ikke fakturert</span>
+                <b>@Kr(klart.Sum(f => f.UtfortIkkeFakturert))</b>
+                <small>@klart.Count @(klart.Count == 1 ? "prosjekt" : "prosjekter") · vis</small>
+            </button>
+            <div>
+                <span><Icon Name="bar-chart" />Ordrereserve</span>
+                <b>@Kr(alle.Sum(f => f.Gjenstar))</b>
+                <small>Gjenstår å fakturere · denne måneden fakturert @Kr(alle.Sum(f => f.FakturertDenneMaaned))</small>
+            </div>
+            <button type="button" class="@(taper.Count > 0 ? "ek-kpi-rod" : "")" @onclick="@(() => { _filter = "taper"; _sorter = "kritisk"; })">
+                <span><Icon Name="alert-triangle" />Taper fortjeneste</span>
+                <b>@taper.Count</b>
+                <small>@(taper.Count == 1 ? "prosjekt" : "prosjekter") · vis</small>
+            </button>
         </div>
-        <div class="ek-filter">
-            @FilterKnapp("alle", "Alle", _pagaende.Count)
-            @FilterKnapp("trenger", "Trenger oppfølging", _pagaende.Count(x => _oppfolging.GetValueOrDefault(x.Prosjekt.Id)?.NesteStegNiva is ProsjektOppfolgingService.Niva.Gul or ProsjektOppfolgingService.Niva.Rod))
-            @FilterKnapp("akonto", "Klar for akonto", alle.Count(f => f.KlarAkonto is not null))
-            @FilterKnapp("over", "Over budsjett", _pagaende.Count(x => x.O?.Status == ProsjektOkonomiService.OkonomiStatus.OverBudsjett))
-            @if (_brukerId is not null)
-            {
-                @FilterKnapp("mine", "Mine prosjekter", _pagaende.Count(x => x.Prosjekt.ProsjektlederId == _brukerId))
-            }
+        <div class="ek-verktoy">
+            <label class="ek-sok"><Icon Name="search" /><input type="search" placeholder="Søk prosjekt, kunde eller prosjektleder" aria-label="Søk" @bind="_sok" @bind:event="oninput" /></label>
+            <div class="ek-filter">
+                @FilterKnapp("alle", "Alle", _pagaende.Count)
+                @FilterKnapp("trenger", "Trenger handling", _pagaende.Count(x => _oppfolging.GetValueOrDefault(x.Prosjekt.Id)?.NesteStegNiva is ProsjektOppfolgingService.Niva.Gul or ProsjektOppfolgingService.Niva.Rod))
+                @FilterKnapp("fakturer", "Kan faktureres", klart.Count)
+                @FilterKnapp("taper", "Taper fortjeneste", medTall.Count(f => f.FortjenesteNiva is ProsjektOppfolgingService.Niva.Gul or ProsjektOppfolgingService.Niva.Rod))
+                @if (_brukerId is not null)
+                {
+                    @FilterKnapp("mine", "Mine prosjekter", _pagaende.Count(x => x.Prosjekt.ProsjektlederId == _brukerId))
+                }
+            </div>
+            <select class="ek-sorter" aria-label="Sorter" @bind="_sorter">
+                <option value="kritisk">Mest kritisk først</option>
+                <option value="fakturer">Mest å fakturere</option>
+                <option value="fortjeneste">Størst fortjeneste igjen</option>
+                <option value="navn">Navn</option>
+            </select>
         </div>
         @if (liste.Count == 0)
         {
-            <div class="ek-tomboks"><Icon Name="check-circle" /><span>@(_filter == "alle" ? "Ingen prosjekter er registrert eller under arbeid." : "Ingen prosjekter i dette filteret.")</span></div>
+            <div class="ek-tomboks"><Icon Name="check-circle" /><span>@(_pagaende.Count == 0 ? "Ingen prosjekter er registrert eller under arbeid." : "Ingen prosjekter passer søket eller filteret.")</span>
+                @if (_pagaende.Count > 0)
+                {
+                    <button type="button" class="ek-knapp" @onclick="@(() => { _filter = "alle"; _sok = ""; })">Vis alle</button>
+                }
+            </div>
         }
         else
         {
             <div class="ek-tabellramme">
-                <table class="ek-tabell ek-kortliste">
-                    <thead><tr><th>Prosjekt</th><th>Utført / tid brukt</th><th class="n">Prosjektsum</th><th>Fakturert</th><th class="n">Dekningsgrad</th><th>Neste steg</th></tr></thead>
+                <table class="ek-tabell ek-kortliste ek-pagaende">
+                    <thead><tr><th>Prosjekt</th><th>Status</th><th>Fortjeneste igjen</th><th>Utført / fakturert</th><th>Neste steg</th></tr></thead>
                     <tbody>
                         @foreach (var (p, o) in liste)
                         {
                             var id = p.Id;
                             var f = _oppfolging.GetValueOrDefault(p.Id);
-                            <tr class="ek-klikkrad" @onclick="@(() => ApneAsync(id))">
+                            <tr class="ek-klikkrad" tabindex="0" @onclick="@(() => ApneAsync(id))" @onkeydown="@(e => e.Key == "Enter" ? ApneAsync(id) : Task.CompletedTask)">
                                 <td><b>@p.Navn</b><small>@(p.Kunde?.Navn ?? "Ingen kunde")@(p.Prosjektleder is { } pl ? $" · PL {pl.Navn}" : "") · @(p.Status?.Visningsnavn() ?? "Aktiv")</small></td>
                                 @if (o is { Inntekt: > 0 } && f is not null)
                                 {
-                                    <td class="ek-fremdrift" data-label="Utført"><span class="ek-minibar"><i style="width:@Pst(o.Fremdrift)"></i></span><small>@Pst100(o.Fremdrift) utført@(f.Tidsandel is { } tid ? $" · {Pst100(tid)} av tiden" : "")</small></td>
-                                    <td class="n" data-label="Prosjektsum">@Kr(f.Prosjektsum)</td>
-                                    <td class="ek-fremdrift" data-label="Fakturert"><span class="ek-minibar ek-minibar-aks"><i style="width:@Pst(f.Prosjektsum > 0 ? f.Fakturert / f.Prosjektsum : 0)"></i></span><small>@Pst100(f.Prosjektsum > 0 ? f.Fakturert / f.Prosjektsum : 0) · @Kr(f.Fakturert)</small></td>
-                                    <td class="n" data-label="Dekningsgrad"><b class="@(o.Status == ProsjektOkonomiService.OkonomiStatus.OverBudsjett || o.PrognoseDekningsgrad < o.BudsjettDekningsgrad - 0.02m ? "ek-rod" : "")">@DG(o.PrognoseDekningsgrad)</b><small>tilbudt @DG(o.BudsjettDekningsgrad)</small></td>
+                                    <td data-label="Status"><span class="ek-chip @NivaKlasse(f.FortjenesteNiva)">@NivaOrd(f.FortjenesteNiva)</span><small>@(f.FortjenesteArsak ?? "Innenfor tilbudet så langt")</small></td>
+                                    <td class="ek-fremdrift" data-label="Fortjeneste igjen"><b class="@(f.FortjenesteIgjen < 0 ? "ek-rod" : "")">@Kr(f.FortjenesteIgjen)</b><span class="ek-maler ek-maler-liten"><i class="@MalerKlasse(f.FortjenesteNiva)" style="width:@MalerBredde(f.FortjenesteIgjen, f.TilbudtFortjeneste)"></i></span><small>av @Kr(f.TilbudtFortjeneste)</small></td>
+                                    <td class="ek-fremdrift" data-label="Utført / fakturert"><small class="ek-svart">@Pst100(f.Fremdrift) utført · @Pst100(f.Prosjektsum > 0 ? f.Fakturert / f.Prosjektsum : 0) fakturert</small><span class="ek-minibar ek-minibar-aks ek-minibar-mal"><i style="width:@Pst(f.Prosjektsum > 0 ? f.Fakturert / f.Prosjektsum : 0)"></i><em style="left:@Pst(f.Fremdrift)"></em></span>@if (f.ForsinkedeAktiviteter > 0) {<small class="ek-rod">@f.ForsinkedeAktiviteter forsinket i planen</small>}</td>
                                     <td data-label="Neste steg"><span class="ek-chip @NivaKlasse(f.NesteStegNiva)">@f.NesteSteg</span></td>
                                 }
                                 else
                                 {
-                                    <td colspan="4"><small>@(o is null ? "Budsjettet låses når et tilbud på prosjektet settes til Godkjent." : "Det godkjente tilbudet har ingen beløp. Legg inn linjer i tilbudet, så følges økonomien opp.")</small></td>
+                                    <td colspan="3"><small>@(o is null ? "Budsjettet låses når et tilbud på prosjektet settes til Godkjent." : "Det godkjente tilbudet har ingen beløp. Legg inn linjer i tilbudet, så følges økonomien opp.")</small></td>
                                     <td><span class="ek-chip">@(o is null ? "Mangler godkjent tilbud" : "Tilbud uten beløp")</span></td>
                                 }
                             </tr>

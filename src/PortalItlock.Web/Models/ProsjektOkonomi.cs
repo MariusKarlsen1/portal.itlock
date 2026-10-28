@@ -47,6 +47,13 @@ public class TilbudBudsjett
     // Delen av AndreKost som er prosentlinjer (småmateriell, rigg og drift).
     // Den registreres ikke underveis og anslås alltid etter fremdriften.
     public decimal AndreProsentKost { get; set; }
+
+    // Det kunden betaler, fordelt på varer, arbeid (montering) og kjøring/
+    // tillegg fra kodelinjene. Summen er alltid lik Salgssum. Tomme på
+    // budsjetter låst før fordelingen fantes; de fylles ut ved neste utregning.
+    public decimal? SalgVarer { get; set; }
+    public decimal? SalgArbeid { get; set; }
+    public decimal? SalgAndre { get; set; }
     public DateTime Laast { get; set; } = DateTime.Now;
 }
 

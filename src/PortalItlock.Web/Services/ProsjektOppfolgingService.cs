@@ -53,6 +53,41 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         public AkontoRad? KlarAkonto => Akontoer.FirstOrDefault(a => a.Klar);
         public int EndringerVenter => Endringsmeldinger.Count(e => e.Tilbud.Status == EndringsmeldingStatus.SendtTilKunde && e.DagerVentet >= 7);
         public int Utfordringer => AapneOppgaver.Count(o => o.Oppgave.Status == PlanOppgaveStatus.Utfordring);
+
+        // Fortjeneste igjen: prosjektsummen minus kosten per post, der en
+        // post teller med det som er størst av rammen og det som er brukt.
+        // Uten brukt over rammen er det fortjenesten slik den ble tilbudt
+        // (pluss indeks, minus justeringer). Ingen prognose.
+        public decimal TilbudtFortjeneste => O?.TilbudtFortjeneste ?? 0;
+        public decimal FortjenesteIgjen => O is not { } o ? 0 : o.FortjenesteIgjen + Indeks;
+        public decimal BruktOver => (O?.OverTimer ?? 0) + (O?.OverVarer ?? 0) + (O?.OverAndre ?? 0);
+
+        // Grønn: innenfor. Gul: mer enn 5 % av fortjenesten er spist opp.
+        // Rød: mer enn 25 % er spist opp, eller prosjektet går med tap.
+        public Niva FortjenesteNiva
+        {
+            get
+            {
+                if (O is not { Inntekt: > 0 }) return Niva.Noytral;
+                var tapt = TilbudtFortjeneste - FortjenesteIgjen;
+                if (FortjenesteIgjen < 0 || (TilbudtFortjeneste > 0 && tapt > TilbudtFortjeneste * 0.25m)) return Niva.Rod;
+                if (TilbudtFortjeneste <= 0 || tapt > TilbudtFortjeneste * 0.05m) return Niva.Gul;
+                return Niva.Gronn;
+            }
+        }
+
+        // Den posten som har spist mest av fortjenesten, i klartekst.
+        public string? FortjenesteArsak
+        {
+            get
+            {
+                if (O is not { } o || BruktOver <= 0) return null;
+                var (navn, over) = new[] { ("Timene", o.OverTimer), ("Varene", o.OverVarer), ("Kjøring og tillegg", o.OverAndre) }.MaxBy(x => x.Item2);
+                var tillegg = navn == "Timene" && o.BudsjettTimer > 0
+                    ? $" ({o.FaktiskTimer.ToString("0.#", ProsjektplanTekst.Kultur)} t brukt av {o.BudsjettTimer.ToString("0.#", ProsjektplanTekst.Kultur)} t)" : "";
+                return $"{navn} er {over.ToString("#,##0", ProsjektplanTekst.Kultur)} kr over tilbudet{tillegg}";
+            }
+        }
     }
 
     public async Task<Oppfolging> HentAsync(int prosjektId) => (await HentFlereAsync([prosjektId]))[prosjektId];
@@ -197,21 +232,13 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         {
             liste.Add(new("Tjener vi penger?", Niva.Noytral, "Ikke ennå", "Budsjettet låses når et tilbud på prosjektet settes til Godkjent."));
         }
-        else if (o.Status == ProsjektOkonomiService.OkonomiStatus.OverBudsjett)
-        {
-            liste.Add(new("Tjener vi penger?", Niva.Rod, $"Nei, {DG(o.PrognoseDekningsgrad)} DG", o.StatusTekst));
-        }
-        else if ((o.PrognoseDekningsgrad ?? 0) < (o.BudsjettDekningsgrad ?? 0) - 0.1m)
-        {
-            liste.Add(new("Tjener vi penger?", Niva.Rod, $"For lite, {DG(o.PrognoseDekningsgrad)} DG", $"Tilbudt {DG(o.BudsjettDekningsgrad)}. {o.StatusTekst}"));
-        }
-        else if ((o.PrognoseDekningsgrad ?? 0) < (o.BudsjettDekningsgrad ?? 0) - 0.02m || o.Status == ProsjektOkonomiService.OkonomiStatus.FolgMed)
-        {
-            liste.Add(new("Tjener vi penger?", Niva.Gul, $"Ja, {DG(o.PrognoseDekningsgrad)} DG", $"Tilbudt {DG(o.BudsjettDekningsgrad)}. {o.StatusTekst}"));
-        }
         else
         {
-            liste.Add(new("Tjener vi penger?", Niva.Gronn, $"Ja, {DG(o.PrognoseDekningsgrad)} DG", $"Tilbudt {DG(o.BudsjettDekningsgrad)}. Prognosen er {Kr(o.PrognoseKost)} mot budsjett {Kr(o.JustertKost)}."));
+            // Bare faktisk brukt mot tilbudt: fortjenesten som er igjen.
+            var niva = f.FortjenesteNiva;
+            var overskrift = f.FortjenesteIgjen < 0 ? $"Nei, {Kr(f.FortjenesteIgjen)}" : $"{Kr(f.FortjenesteIgjen)} igjen";
+            var tekst = $"Av {Kr(f.TilbudtFortjeneste)} i tilbudet ({DG(o.BudsjettDekningsgrad)}). " + (f.FortjenesteArsak is { } a ? a + "." : "Ingenting er brukt mer enn tilbudt.");
+            liste.Add(new("Tjener vi penger?", niva, overskrift, tekst));
         }
 
         // 2. Er vi i rute?
@@ -284,9 +311,9 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
             return ("Mangler godkjent tilbud", Niva.Noytral);
         }
 
-        if (f.O.Status == ProsjektOkonomiService.OkonomiStatus.OverBudsjett)
+        if (f.FortjenesteNiva == Niva.Rod)
         {
-            return ("Over budsjett · se prognosen", Niva.Rod);
+            return (f.FortjenesteIgjen < 0 ? "Taper penger · lag endringsmelding?" : "Taper fortjeneste · se hvorfor", Niva.Rod);
         }
 
         if (f.ForsinkedeAktiviteter > 0)
@@ -294,7 +321,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
             return ($"{f.ForsinkedeAktiviteter} forsinket i planen", Niva.Rod);
         }
 
-        if (f.O.Status == ProsjektOkonomiService.OkonomiStatus.FolgMed)
+        if (f.FortjenesteNiva == Niva.Gul)
         {
             return ("Følg med på kostnadene", Niva.Gul);
         }

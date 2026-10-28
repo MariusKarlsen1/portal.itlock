@@ -7037,6 +7037,15 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime>("Laast")
                         .HasColumnType("TEXT");
 
+                    b.Property<decimal?>("SalgAndre")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("SalgArbeid")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("SalgVarer")
+                        .HasColumnType("TEXT");
+
                     b.Property<decimal>("Salgssum")
                         .HasColumnType("TEXT");
 

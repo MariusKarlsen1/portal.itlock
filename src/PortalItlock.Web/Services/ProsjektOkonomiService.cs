@@ -23,7 +23,11 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
 
     public enum OkonomiStatus { IkkeVunnet, IRute, FolgMed, OverBudsjett }
 
-    public sealed record TilbudInfo(int Id, string Tittel, bool ErEndring, decimal Salgssum, decimal Varekost, decimal Timer, DateTime Laast, decimal AndreKost = 0);
+    public sealed record TilbudInfo(int Id, string Tittel, bool ErEndring, decimal Salgssum, decimal Varekost, decimal Timer, DateTime Laast, decimal AndreKost = 0,
+        decimal SalgVarer = 0, decimal SalgArbeid = 0, decimal SalgAndre = 0, decimal Timekost = 0)
+    {
+        public decimal Kost => Varekost + Timekost + AndreKost;
+    }
 
     public sealed record AoLinje(int Id, string Tittel, ArbeidsordreStatus Status, decimal Timer, decimal TimerVenter, decimal Timekost, decimal Varer, decimal? IkkeFakturert);
 
@@ -52,8 +56,43 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         bool VarerManuell = false,
         decimal BudsjettAndre = 0,
         decimal BudsjettAndreProsent = 0,
-        decimal? FaktiskAndreRegistrert = null)
+        decimal? FaktiskAndreRegistrert = null,
+        decimal JusteringVarer = 0,
+        decimal JusteringTimer = 0,
+        decimal JusteringUforutsett = 0)
     {
+        // Det kunden betaler for hver post, summert fra de godkjente tilbudene.
+        public decimal SalgVarer => Tilbud.Sum(t => t.SalgVarer);
+        public decimal SalgArbeid => Tilbud.Sum(t => t.SalgArbeid);
+        public decimal SalgAndre => Tilbud.Sum(t => t.SalgAndre);
+
+        // Fortjenesten slik den ble tilbudt.
+        public decimal TilbudtFortjeneste => Inntekt - BudsjettKost;
+
+        // Rammen per post: kosten i tilbudet pluss justeringene underveis.
+        public decimal RammeVarer => BudsjettVarer + JusteringVarer;
+        public decimal RammeTimer => BudsjettTimekost + JusteringTimer;
+        public decimal RammeAndre => BudsjettAndre;
+
+        // Det som allerede er brukt mer enn rammen. Ingen prognose: bare
+        // faktisk brukt mot det som er tilbudt.
+        public decimal OverVarer => Math.Max(0, FaktiskVarer - RammeVarer);
+        public decimal OverTimer => Math.Max(0, FaktiskTimekost - RammeTimer);
+        public decimal OverAndre => Math.Max(0, FaktiskAndre - RammeAndre);
+
+        // Fortjenesten som er igjen: inntekten minus kosten per post, der en
+        // post teller med det som er størst av rammen og det som er brukt.
+        public decimal FortjenesteIgjen => Inntekt - Math.Max(RammeTimer, FaktiskTimekost) - Math.Max(RammeVarer, FaktiskVarer)
+            - Math.Max(RammeAndre, FaktiskAndre) - JusteringUforutsett;
+
+        // Mer enn 5 % av fortjenesten i tilbudet er spist opp, eller prosjektet går med tap.
+        public bool TaperFortjeneste => Inntekt > 0 && (FortjenesteIgjen < 0 || TilbudtFortjeneste - FortjenesteIgjen > Math.Max(0, TilbudtFortjeneste) * 0.05m);
+
+        // Varer og kjøring er anslått (ikke registrert) når ingenting er tatt
+        // ut fra lageret, lagt inn for hånd eller ført på arbeidsordrene.
+        public bool VarerAnslatt => !VarerFraLager && !VarerManuell && BudsjettVarer > 0;
+        public bool AndreAnslatt => !AndreRegistrert && BudsjettAndre > 0;
+
         // Kjøring, småmateriell og tillegg fra kodelinjene. Det montørene
         // fører på arbeidsordrene er faktisk kost;
         // prosentlinjene (og alt før noe er ført) anslås etter fremdriften.
@@ -162,8 +201,16 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
                 b.AndreKost = Math.Round(summer.Except(arbeid).Sum(x => x.Sum.Kost), 2);
                 b.AndreProsentKost = Math.Round(summer.Except(arbeid).Where(x => x.Linje.Enhet.ErProsent()).Sum(x => x.Sum.Kost), 2);
             }
+            Fordel(b, t);
             db.TilbudBudsjetter.Add(b);
             budsjetter[t.Id] = b;
+            nye = true;
+        }
+
+        // Budsjetter låst før salget ble fordelt på postene, fylles ut nå.
+        foreach (var t in tilbud.Where(t => budsjetter[t.Id].SalgVarer is null))
+        {
+            Fordel(budsjetter[t.Id], t);
             nye = true;
         }
 
@@ -228,7 +275,8 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         foreach (var pid in ider)
         {
             var pTilbud = tilbud.Where(t => t.ProsjektId == pid).OrderBy(t => t.Id)
-                .Select(t => { var b = budsjetter[t.Id]; return new TilbudInfo(t.Id, t.Tittel, t.Type == TilbudType.Endringsmelding, b.Salgssum, b.Varekost, b.Timer, b.Laast, b.AndreKost); })
+                .Select(t => { var b = budsjetter[t.Id]; return new TilbudInfo(t.Id, t.Tittel, t.Type == TilbudType.Endringsmelding, b.Salgssum, b.Varekost, b.Timer, b.Laast, b.AndreKost,
+                    b.SalgVarer ?? 0, b.SalgArbeid ?? 0, b.SalgAndre ?? 0, Math.Round(b.Timer * b.Timesats, 2)); })
                 .ToList();
             var pBudsjett = tilbud.Where(t => t.ProsjektId == pid).Select(t => budsjetter[t.Id]).ToList();
             var budTimer = pBudsjett.Sum(b => b.Timer);
@@ -254,6 +302,9 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
             var effSats = fTimer > 0 && fTimekost > 0 ? fTimekost / fTimer : timesats;
             var budTimekost = pBudsjett.Sum(b => b.Timer * (b.Timesats > 0 ? b.Timesats : effSats));
             if (timesats <= 0) timesats = effSats;
+
+            // Tilbud uten egen timesats: timekosten regnes som i budsjettet over.
+            pTilbud = pTilbud.Select(x => x.Timekost == 0 && x.Timer > 0 ? x with { Timekost = Math.Round(x.Timer * effSats, 2) } : x).ToList();
 
             // Kjøring og tillegg montørene har ført på arbeidsordrene. Uten noe
             // ført brukes anslaget fra tilbudet.
@@ -334,16 +385,42 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
                 progVarer = fremdrift >= 0.999m ? fVarer : Math.Max(fVarer, budVarer + direkteVarer);
             }
 
+            var pJust = justeringer.Where(j => j.ProsjektId == pid).ToList();
             var o2 = new Okonomi(pid, OkonomiStatus.IkkeVunnet, "", inntekt, Math.Round(budTimer, 2), Math.Round(budTimekost, 2), Math.Round(budVarer, 2),
                 Math.Round(fTimer, 2), aoLinjer.Sum(a => a.TimerVenter), Math.Round(fTimekost, 2), Math.Round(fVarer, 2), fraLager,
                 fremdrift, fremdriftTekst, Math.Round(progTimer, 2), Math.Round(progVarer, 2), Math.Round(timesats, 2), pTilbud, aoLinjer,
-                justeringer.Where(j => j.ProsjektId == pid).Sum(j => j.Belop), restOverstyrt, varerManuell, Math.Round(pBudsjett.Sum(b => b.AndreKost), 2),
-                Math.Round(pBudsjett.Sum(b => b.AndreProsentKost), 2), andreRegistrert);
+                pJust.Sum(j => j.Belop), restOverstyrt, varerManuell, Math.Round(pBudsjett.Sum(b => b.AndreKost), 2),
+                Math.Round(pBudsjett.Sum(b => b.AndreProsentKost), 2), andreRegistrert,
+                pJust.Where(j => j.Post == BudsjettPost.Varer).Sum(j => j.Belop),
+                pJust.Where(j => j.Post == BudsjettPost.Timer).Sum(j => j.Belop),
+                pJust.Where(j => j.Post == BudsjettPost.Uforutsett).Sum(j => j.Belop));
 
             resultat[pid] = o2 with { Status = Vurder(o2, inn, out var tekst), StatusTekst = tekst };
         }
 
         return resultat;
+    }
+
+    // Fordeler det kunden betaler på varer, arbeid og kjøring/tillegg.
+    // Arbeid er resten, så summen alltid er lik den låste salgssummen også
+    // om tilbudet er endret etter at budsjettet ble låst.
+    private static void Fordel(TilbudBudsjett b, Tilbud t)
+    {
+        var varelinjer = t.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).ToList();
+        var varer = varelinjer.Sum(l => l.Utpris * l.Antall);
+        var andre = 0m;
+        if (t.BrukerKodelinjer && t.KodeLinjer.Count > 0)
+        {
+            andre = t.KodeLinjer
+                .Where(l => !(l.Type == PrisKodeType.Arbeid && l.Enhet == PrisKodeEnhet.Time))
+                .Sum(l => KodeLinjeBeregner.Sum(l, t.KodeLinjer, varer).Salg);
+        }
+
+        varer = Math.Clamp(Math.Round(varer, 2), 0, Math.Max(0, b.Salgssum));
+        andre = Math.Clamp(Math.Round(andre, 2), 0, Math.Max(0, b.Salgssum - varer));
+        b.SalgVarer = varer;
+        b.SalgAndre = andre;
+        b.SalgArbeid = b.Salgssum - varer - andre;
     }
 
     private static OkonomiStatus Vurder(Okonomi o, OkonomiInnstillinger inn, out string tekst)
@@ -385,7 +462,8 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
         return OkonomiStatus.IRute;
     }
 
-    // Antall aktive prosjekter med gult eller rødt - til varselbjella.
+    // Antall aktive prosjekter som taper fortjeneste - til varselbjella.
+    // Bare faktisk brukt mot tilbudt, som på Prosjektøkonomi.
     public async Task<int> AntallMedVarselAsync()
     {
         var ider = await AktiveVunneIderAsync();
@@ -394,7 +472,7 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
             return 0;
         }
 
-        return (await BeregnFlereAsync(ider)).Values.Count(o => o.Status is OkonomiStatus.FolgMed or OkonomiStatus.OverBudsjett);
+        return (await BeregnFlereAsync(ider)).Values.Count(o => o.TaperFortjeneste);
     }
 
     public async Task<int> AntallTilGjennomgangAsync() =>
