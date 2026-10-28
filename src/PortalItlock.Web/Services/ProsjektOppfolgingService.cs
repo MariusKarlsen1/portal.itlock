@@ -501,6 +501,8 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
 
     public sealed record AvvikBidrag(string Tekst, decimal Belop, bool Total = false);
 
+    public sealed record DataMangel(string Kode, string Tittel, string Tekst);
+
     public sealed record Etterkalkyle(
         int ProsjektId,
         ProsjektOkonomiService.Okonomi O,
@@ -545,6 +547,44 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         public int? DagerOverFrist => Frist is { } f && Overlevert is { } o ? (int)(o.Date - f.Date).TotalDays : null;
 
         public Dom Dom => FaktiskResultat < 0 || DgPoeng <= -3 ? Dom.Darligere : DgPoeng >= 2 ? Dom.Bedre : Dom.Som;
+
+        // Det kunden betalte for hver post, fra de godkjente tilbudene.
+        public decimal SalgVarer => O.SalgVarer;
+        public decimal SalgArbeid => O.SalgArbeid;
+        public decimal SalgAndre => O.SalgAndre;
+
+        // Det som mangler for at tallene skal stemme. «timer» og «varer» gjør
+        // at resultatet ikke kan vurderes; de andre er bare til opplysning.
+        public List<DataMangel> Mangler
+        {
+            get
+            {
+                var liste = new List<DataMangel>();
+                if (O.BudsjettTimer > 0 && O.FaktiskTimer <= 0)
+                {
+                    liste.Add(new("timer", "Ingen timer er ført på prosjektet", "Arbeid blir 0 kr, så resultatet ser bedre ut enn det var."));
+                }
+
+                if (VarerAnslatt && KalkVarer > 0)
+                {
+                    liste.Add(new("varer", "Varene er anslått fra tilbudet", "Ingen uttak fra lageret er registrert, så varene ser ut til å treffe kalkylen. Legg inn faktisk varekost."));
+                }
+
+                if (O.FaktiskTimerVenter > 0)
+                {
+                    liste.Add(new("venter", $"{O.FaktiskTimerVenter.ToString("0.#", ProsjektplanTekst.Kultur)} t venter på godkjenning", "Timer som ikke er godkjent, kan bli endret."));
+                }
+
+                if (Fakturert < FaktiskInntekt - 1)
+                {
+                    liste.Add(new("faktura", $"{Kr(FaktiskInntekt - Fakturert)} er ikke fakturert", "Resultatet regnes av prosjektsummen, men pengene er ikke fakturert ennå."));
+                }
+
+                return liste;
+            }
+        }
+
+        public bool ManglerData => Mangler.Any(m => m.Kode is "timer" or "varer");
 
         public string DomTekst => Dom switch
         {

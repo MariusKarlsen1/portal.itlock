@@ -155,7 +155,7 @@ public class ProsjektOkonomiService(ApplicationDbContext db, TilleggsmodulServic
 
     // Overleverte prosjekter som ikke er kontrollert ennå.
     public async Task<List<Prosjekt>> TilGjennomgangAsync() =>
-        await db.Prosjekter.AsNoTracking().Include(p => p.Kunde)
+        await db.Prosjekter.AsNoTracking().Include(p => p.Kunde).Include(p => p.Prosjektleder)
             .Where(p => p.Status == ProsjektStatus.Overlevert)
             .Where(p => !db.ProsjektEtterkalkyler.Any(k => k.ProsjektId == p.Id && !k.ErUtkast))
             .OrderBy(p => p.OverlevertDato ?? p.OpprettetDato)

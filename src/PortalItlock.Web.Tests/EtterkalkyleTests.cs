@@ -53,6 +53,18 @@ public class EtterkalkyleTests
     }
 
     [Fact]
+    public void ManglerData_NarTimerEllerVarerIkkeErRegistrert()
+    {
+        // Timer og varer registrert: kan vurderes. At ikke alt er fakturert, er bare til opplysning.
+        var ok = Lag(faktiskVarer: 396000, faktiskTimer: 330);
+        Assert.False(ok.ManglerData);
+        Assert.Contains(ok.Mangler, m => m.Kode == "faktura");
+
+        Assert.True(Lag(faktiskVarer: 396000, faktiskTimer: 0).ManglerData);
+        Assert.True(Lag(faktiskVarer: 396000, faktiskTimer: 330, fraLager: false).ManglerData);
+    }
+
+    [Fact]
     public void VarerAnslatt_NarVarerIkkeErRegistrert()
     {
         Assert.True(Lag(faktiskVarer: 396000, faktiskTimer: 330, fraLager: false).VarerAnslatt);
