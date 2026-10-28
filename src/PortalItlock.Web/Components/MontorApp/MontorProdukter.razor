@@ -1,0 +1,328 @@
+@page "/app/ordre/{Id:int}/produkter"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@implements IAsyncDisposable
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+@inject LagerService LagerSvc
+@inject PlukkService PlukkSvc
+@inject ReservasjonService ResSvc
+@inject TilleggsmodulService Tilleggsmoduler
+
+<PageTitle>Produkter</PageTitle>
+
+@* Varene på arbeidsordren i montørappen: hak av det som er plukket, eller
+   skann strekkoden med kameraet. Lagringen følger samme regler som
+   varelisten på arbeidsordren i portalen (ArbeidsordreSkjema): plukket vare
+   trekkes fra lageret, og reservasjonene oppdateres. Varer brukt fra bilen
+   er allerede trukket og kan ikke endres her. *@
+<div class="ma">
+    <AppHode Ikon="box" Tittel="Produkter" Under="@(_ordre is null ? "" : $"{_ordre.Id} {_ordre.Tittel}")" Tilbake="@($"/app/ordre/{Id}")">
+        @if (_kanPlukke && _rader.Any(r => !r.FraBil))
+        {
+            <span class="ma-skille"></span>
+            <button type="button" class="ma-ikonknapp" @onclick="ApneSkanner" aria-label="Skann strekkode"><Icon Name="camera" /></button>
+        }
+    </AppHode>
+
+    @if (_lastet && _rader.Count > 0)
+    {
+        var plukket = _rader.Count(r => r.Plukket);
+        <div class="ma-sum">
+            <span style="white-space:nowrap"><Icon Name="box" />@plukket av @_rader.Count plukket</span>
+            @if (_kanPlukke && _rader.Any(r => !r.FraBil && !r.Plukket))
+            {
+                <button type="button" class="ma-knapp" style="min-height:2.4rem;padding:0 0.9rem;font-size:0.9rem" @onclick="ApneSkanner"><Icon Name="camera" />Skann</button>
+            }
+        </div>
+    }
+
+    <div class="ma-liste">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (_ordre is null)
+        {
+            <p class="ma-tom">Fant ikke ordren.</p>
+        }
+        else if (_rader.Count == 0)
+        {
+            <p class="ma-tom">Ingen varer på ordren. Varer brukt fra bilen føres i «Bilen min».</p>
+        }
+        @foreach (var r in _rader)
+        {
+            var rad = r;
+            <div class="ma-rad" style="cursor:default">
+                <button type="button" class="ma-hake @(r.Plukket ? "paa" : "")" disabled="@(!_kanPlukke || r.FraBil || _lagrer)" aria-pressed="@r.Plukket" aria-label="@($"{r.Navn} plukket")" @onclick="@(() => Veksle(rad))">@if (r.Plukket) {<Icon Name="check" />}</button>
+                <span class="ma-rad-tekst">
+                    <b>@r.Navn</b>
+                    <small>@UnderTekst(r)</small>
+                </span>
+                <span class="ma-merke @(r.Plukket ? "gronn" : "gra")">@r.Antall stk</span>
+            </div>
+        }
+    </div>
+    @if (!_kanPlukke && _lastet && _rader.Count > 0)
+    {
+        <p class="ma-teller-tekst" style="text-align:left;font-style:normal;padding:0.6rem 1rem">Du har ikke tilgang til å plukke varer.</p>
+    }
+
+    @if (_visSkanner)
+    {
+        <div class="ma-ark-bak" @onclick="LukkSkanner">
+            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Skann strekkode">
+                <div class="ma-ark-handtak"></div>
+                <h2>Skann strekkode</h2>
+                <div class="mpk-video"><video @ref="_video" playsinline muted></video><span class="mpk-laser"></span></div>
+                @if (_treff is not null)
+                {
+                    <p class="ma-melding" role="status">@_treff</p>
+                }
+                @if (_skannFeil is not null)
+                {
+                    <p class="ma-feil" role="alert">@_skannFeil</p>
+                }
+                <div class="ma-under"><button type="button" class="ma-knapp sek" @onclick="LukkSkanner">Ferdig</button></div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    // Én rad i plukklisten: en linje fra tilbudet eller en vare lagt på ordren.
+    private sealed class Rad
+    {
+        public TilbudLinje? Linje { get; init; }
+        public ArbeidsordreVare? Vare { get; init; }
+        public string Navn => Linje?.Navn ?? Vare!.Navn;
+        public int Antall => Linje?.Antall ?? Vare!.Antall;
+        public Component? Component => Linje?.Component ?? Vare!.Component;
+        public bool FraBil => Vare?.FraLagerId is not null;
+        public bool Plukket => Linje?.Plukket ?? Vare!.Plukket;
+        public DateTime? PlukketDato => Linje?.PlukketDato ?? Vare!.PlukketDato;
+    }
+
+    private bool _lastet;
+    private bool _lagrer;
+    private bool _kanPlukke;
+    private bool _harLager;
+    private bool _reserverAuto = true;
+    private int _brukerId;
+    private string? _brukerNavn;
+    private Arbeidsordre? _ordre;
+    private List<Rad> _rader = [];
+    private Dictionary<int, int> _res = [];
+    private Dictionary<int, int> _ledig = [];
+
+    private bool _visSkanner;
+    private bool _skannerSkalStarte;
+    private string? _treff;
+    private string? _skannFeil;
+    private ElementReference _video;
+    private DotNetObjectReference<MontorProdukter>? _ref;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var bruker = (await AuthStateTask).User;
+            if (int.TryParse(bruker.FindFirst("BrukerId")?.Value, out var id)) _brukerId = id;
+            var rolle = Enum.TryParse<BrukerRolle>(bruker.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, out var r) ? r : (BrukerRolle?)null;
+            _kanPlukke = ModulRettigheter.KanPlukke(rolle);
+        }
+
+        _brukerNavn = await Db.Brukere.Where(b => b.Id == _brukerId).Select(b => b.Navn).FirstOrDefaultAsync();
+        _ordre = await Db.Arbeidsordre.Include(a => a.Varer).ThenInclude(v => v.Component).FirstOrDefaultAsync(a => a.Id == Id);
+        if (_ordre is not null)
+        {
+            var linjer = _ordre.TilbudId is { } tid
+                ? await Db.TilbudLinjer.Include(l => l.Component)
+                    .Where(l => l.TilbudId == tid && !l.ErGruppering && l.LevertAv == LevertAv.F)
+                    .OrderBy(l => l.Rekkefolge).ToListAsync()
+                : [];
+            _rader = linjer.Select(l => new Rad { Linje = l })
+                .Concat(_ordre.Varer.OrderBy(v => v.Id).Select(v => new Rad { Vare = v }))
+                .ToList();
+            if (_ordre.Status is ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert)
+            {
+                _kanPlukke = false;
+            }
+
+            await SikreLagerAsync();
+        }
+
+        _lastet = true;
+    }
+
+    private string UnderTekst(Rad r)
+    {
+        var deler = new List<string>();
+        if (r.Component?.Produktkode is { Length: > 0 } kode) deler.Add(kode);
+        if (r.FraBil) deler.Add("Brukt fra bilen");
+        else if (r.Plukket && r.PlukketDato is { } d) deler.Add($"Plukket {d:dd.MM HH:mm}");
+        else if (r.Component?.Gtin is { Length: > 0 }) deler.Add("Kan skannes");
+        return string.Join(" · ", deler);
+    }
+
+    // Som SikreVarerAsync i ArbeidsordreSkjema: forbruket først, så reservasjonene.
+    private async Task SikreLagerAsync()
+    {
+        _harLager = await Tilleggsmoduler.HarAsync(TilleggsModuler.Lager);
+        if (!_harLager)
+        {
+            return;
+        }
+
+        await PlukkSvc.SynkForbrukAsync(Id);
+        _reserverAuto = await ResSvc.ReserverAutomatiskAsync();
+        await ResSvc.SikreArbeidsordreAsync(Id, _brukerNavn);
+        _res = (await Db.LagerReservasjoner.AsNoTracking().Where(r => r.ArbeidsordreId == Id)
+                .Select(r => new { r.ComponentId, r.Antall }).ToListAsync())
+            .GroupBy(r => r.ComponentId).ToDictionary(g => g.Key, g => g.Sum(r => r.Antall));
+        _ledig = await ResSvc.LedigAsync();
+    }
+
+    private async Task Veksle(Rad r)
+    {
+        if (!_kanPlukke || r.FraBil || _lagrer)
+        {
+            return;
+        }
+
+        await SettPlukket(r, !r.Plukket);
+    }
+
+    private async Task SettPlukket(Rad r, bool plukket)
+    {
+        _lagrer = true;
+        try
+        {
+            if (r.Linje is { } l)
+            {
+                l.Plukket = plukket;
+                l.PlukketDato = plukket ? DateTime.Now : null;
+                l.PlukketAvBrukerId = plukket ? _brukerId : null;
+            }
+            else if (r.Vare is { } v)
+            {
+                v.Plukket = plukket;
+                v.PlukketDato = plukket ? DateTime.Now : null;
+                v.PlukketAvBrukerId = plukket ? _brukerId : null;
+            }
+
+            await Db.SaveChangesAsync();
+            if (plukket)
+            {
+                await TrekkUtUtenReservasjonAsync(r.Component, r.Antall);
+                await SikreLagerAsync();
+            }
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    // Uten automatisk reservasjon trekkes en plukket vare som ikke er
+    // reservert, rett fra hovedlageret (samme regel som i portalen).
+    private async Task TrekkUtUtenReservasjonAsync(Component? c, int antall)
+    {
+        if (!_harLager || _reserverAuto || c is not { ILagerstyring: true } || _res.ContainsKey(c.Id))
+        {
+            return;
+        }
+
+        var ant = Math.Min(antall, _ledig.GetValueOrDefault(c.Id));
+        if (ant <= 0)
+        {
+            return;
+        }
+
+        var hoved = await LagerSvc.HovedlagerAsync();
+        await LagerSvc.RegistrerAsync(c.Id, hoved.Id, -ant, LagerBevegelseType.Forbruk, $"Plukket på {_ordre!.Tittel}",
+            _brukerId, _brukerNavn, prosjektId: _ordre.ProsjektId, arbeidsordreId: Id);
+        _ledig[c.Id] = _ledig.GetValueOrDefault(c.Id) - ant;
+    }
+
+    private void ApneSkanner()
+    {
+        _visSkanner = true;
+        _skannerSkalStarte = true;
+        _treff = null;
+        _skannFeil = null;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_visSkanner && _skannerSkalStarte)
+        {
+            _skannerSkalStarte = false;
+            _ref ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("eanSkanner.start", _video, _ref);
+        }
+    }
+
+    private async Task LukkSkanner()
+    {
+        _visSkanner = false;
+        try
+        {
+            await JS.InvokeVoidAsync("eanSkanner.stop");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnStrekkodeSkannet(string ean)
+    {
+        var rad = _rader.FirstOrDefault(r => !r.Plukket && !r.FraBil && r.Component?.Gtin == ean);
+        if (rad is null)
+        {
+            _treff = null;
+            _skannFeil = _rader.Any(r => r.Component?.Gtin == ean)
+                ? "Denne varen er allerede plukket."
+                : $"Fant ingen vare med strekkode {ean} på ordren.";
+        }
+        else
+        {
+            await SettPlukket(rad, true);
+            _skannFeil = null;
+            _treff = $"✓ {rad.Navn} ({rad.Antall} stk) er plukket.";
+        }
+
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnSkannerFeil(string melding)
+    {
+        _skannFeil = melding;
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_visSkanner)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("eanSkanner.stop");
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+
+        _ref?.Dispose();
+    }
+}

@@ -275,7 +275,10 @@ window.kart = (function () {
         liste.forEach(p => {
             const ikon = p.pin ? lagPinIkon(p.farge, p.glyph) : lagIkon(p.farge);
             const marker = L.marker([p.lat, p.lng], { icon: ikon });
-            marker.bindPopup(lagPopup(p), { minWidth: 220 });
+            // utenPopup: siden viser sitt eget ark ved trykk (montørappen).
+            if (!valg.utenPopup) {
+                marker.bindPopup(lagPopup(p), { minWidth: 220 });
+            }
 
             if (p.kallelut && visKallelut) {
                 marker.bindTooltip(lagKallelut(p), {

@@ -103,6 +103,10 @@ public static class ModulRettigheter
     public static bool KanSetteMontertStatus(BrukerRolle? rolle) =>
         rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor;
 
+    // Plukke varer på en arbeidsordre (hake av og skanne i montørappen).
+    public static bool KanPlukke(BrukerRolle? rolle) =>
+        rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor;
+
     // Melde inn avvik fra felt.
     public static bool KanMeldeAvvik(BrukerRolle? rolle) =>
         rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor;

@@ -1,0 +1,218 @@
+@page "/app/kart"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@implements IAsyncDisposable
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+@inject PortalItlock.Web.Services.GeocodingService Geokoding
+
+<PageTitle>Kart</PageTitle>
+
+@* De åpne arbeidsordrene på kart i montørappen, med nål i statusfarge.
+   Trykk på en nål for et ark med ordren, åpne den eller få veibeskrivelse.
+   Ordre uten posisjon slås opp fra adressen én gang og lagres. *@
+<div class="ma mkt">
+    <AppHode Ikon="map" Tittel="Kart" Under="@(_alle ? "Alle åpne arbeidsordre" : "Mine arbeidsordre")" Tilbake="@(_alle ? "/app/ordre?alle=1" : "/app/ordre")">
+        <span class="ma-skille"></span>
+        <a class="ma-ikonknapp" href="@(_alle ? "/app/ordre?alle=1" : "/app/ordre")" aria-label="Vis som liste"><Icon Name="list" /></a>
+    </AppHode>
+
+    <div class="ma-sok">
+        <button type="button" class="ma-modus @(!_alle ? "aktiv" : "")" @onclick="@(() => Bytt(false))" aria-pressed="@(!_alle)" title="Mine ordre"><Icon Name="users" /></button>
+        <button type="button" class="ma-modus @(_alle ? "aktiv" : "")" @onclick="@(() => Bytt(true))" aria-pressed="@_alle" title="Alle ordre"><Icon Name="list" /></button>
+        <span class="mkt-tall">@(_laster ? "Laster …" : $"{Synlige.Count} på kartet{(_utenPosisjon > 0 ? $" · {_utenPosisjon} uten adresse" : "")}")</span>
+    </div>
+
+    <div class="mkt-kart">
+        <div id="app-kart" class="mkt-flate"></div>
+        <div class="mkt-knapper">
+            <button type="button" aria-label="Zoom inn" @onclick="@(() => JS.InvokeVoidAsync("kart.zoom", 1))"><Icon Name="plus" /></button>
+            <button type="button" aria-label="Zoom ut" @onclick="@(() => JS.InvokeVoidAsync("kart.zoom", -1))"><Icon Name="minus" /></button>
+            <button type="button" aria-label="Min posisjon" @onclick="@(() => JS.InvokeVoidAsync("kart.finnMeg"))"><Icon Name="crosshair" /></button>
+        </div>
+        <div class="mkt-legende">
+            <span><i class="ma-prikk ma-prikk-ny"></i>Ny</span>
+            <span><i class="ma-prikk ma-prikk-klar"></i>Klar</span>
+            <span><i class="ma-prikk ma-prikk-pagaende"></i>Pågår</span>
+        </div>
+    </div>
+
+    @if (_valgt is { } v)
+    {
+        <div class="ma-ark-bak" @onclick="@(() => _valgt = null)">
+            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="@($"Ordre {v.Id}")">
+                <div class="ma-ark-handtak"></div>
+                <h2>@v.Id @v.Tittel</h2>
+                <div class="ma-liste" style="border:1px solid var(--itlock-border);border-radius:14px">
+                    <div class="ma-rad" style="cursor:default">
+                        <span class="ma-rad-tekst"><small>Status</small><b><i class="ma-prikk ma-prikk-@MontorApp.StatusKlasse(v.Status)"></i> @v.Status.Visningsnavn()@(v.PlanlagtDato is { } d ? $" · {MontorApp.DagKort(d)}{(d.TimeOfDay > TimeSpan.Zero ? " kl. " + d.ToString("HH:mm") : "")}" : "")</b></span>
+                    </div>
+                    <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><small>Kunde</small><b>@(v.Kunde ?? "–")</b></span></div>
+                    @if (v.Adresse is not null)
+                    {
+                        <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><small>Adresse</small><b>@v.Adresse</b></span></div>
+                    }
+                    @if (v.Montor is not null)
+                    {
+                        <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><small>Montør</small><b>@v.Montor</b></span></div>
+                    }
+                </div>
+                <div class="ma-under" style="grid-template-columns:1fr 1fr">
+                    <a class="ma-knapp" href="@($"/app/ordre/{v.Id}")">Åpne ordren</a>
+                    <a class="ma-knapp sek" href="@($"https://www.google.com/maps/dir/?api=1&destination={v.Lat.ToString(CultureInfo.InvariantCulture)},{v.Lng.ToString(CultureInfo.InvariantCulture)}")" target="_blank" rel="noopener"><Icon Name="send" />Veibeskrivelse</a>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "alle")] public int? AlleQuery { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Punkt(int Id, string Tittel, ArbeidsordreStatus Status, DateTime? PlanlagtDato, string? Kunde, string? Adresse, string? Montor, int? MontorId, double Lat, double Lng);
+
+    private bool _laster = true;
+    private bool _alle;
+    private bool _kartKlart;
+    private string _signatur = "";
+    private int _brukerId;
+    private int _utenPosisjon;
+    private List<Punkt> _punkter = [];
+    private List<int> _utenIder = [];
+    private Punkt? _valgt;
+    private DotNetObjectReference<MontorKart>? _ref;
+
+    private List<Punkt> Synlige => _alle ? _punkter : _punkter.Where(p => p.MontorId == _brukerId).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            _brukerId = id;
+        }
+
+        _alle = AlleQuery == 1;
+        var ordre = await Db.Arbeidsordre.Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde).Include(a => a.Kunde).Include(a => a.AnsvarligMontor)
+            .Where(a => a.Status == ArbeidsordreStatus.Ny || a.Status == ArbeidsordreStatus.Klar || a.Status == ArbeidsordreStatus.Pagaende)
+            .ToListAsync();
+
+        var lagret = false;
+        foreach (var a in ordre)
+        {
+            var egen = !string.IsNullOrWhiteSpace(a.Adresse);
+            var adresse = egen ? a.Adresse : a.Prosjekt?.Adresse;
+            var postnr = egen ? a.Postnr : a.Prosjekt?.Postnr;
+            var sted = egen ? a.Sted : a.Prosjekt?.Sted;
+            var lat = a.Latitude ?? a.Prosjekt?.Latitude;
+            var lng = a.Longitude ?? a.Prosjekt?.Longitude;
+
+            // Samme oppslag som kartet i portalen: én gang, så lagres posisjonen.
+            if ((lat is null || lng is null) && !string.IsNullOrWhiteSpace(adresse))
+            {
+                var treff = await Geokoding.GeocodeAsync(adresse!, postnr, sted);
+                if (treff is not null)
+                {
+                    lat = a.Latitude = treff.Value.Latitude;
+                    lng = a.Longitude = treff.Value.Longitude;
+                    lagret = true;
+                }
+            }
+
+            if (lat is null || lng is null)
+            {
+                _utenIder.Add(a.AnsvarligMontorId ?? 0);
+                continue;
+            }
+
+            var full = string.Join(" ", new[] { adresse, postnr, sted }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            _punkter.Add(new Punkt(a.Id, a.Tittel, a.Status, a.PlanlagtDato, a.Kunde?.Navn ?? a.Prosjekt?.Kunde?.Navn,
+                full.Length > 0 ? full : null, a.AnsvarligMontor?.Navn, a.AnsvarligMontorId, lat.Value, lng.Value));
+        }
+
+        if (lagret)
+        {
+            await Db.SaveChangesAsync();
+        }
+
+        OppdaterUtenPosisjon();
+        _laster = false;
+    }
+
+    private void OppdaterUtenPosisjon() => _utenPosisjon = _alle ? _utenIder.Count : _utenIder.Count(i => i == _brukerId);
+
+    private void Bytt(bool alle)
+    {
+        _alle = alle;
+        _valgt = null;
+        OppdaterUtenPosisjon();
+    }
+
+    private static string Farge(ArbeidsordreStatus s) => s switch
+    {
+        ArbeidsordreStatus.Ny => "#f0a030",
+        ArbeidsordreStatus.Pagaende => "#4a9be0",
+        _ => "#8a939b"
+    };
+
+    private List<object> KartPunkter() => Synlige.Select(p => (object)new
+    {
+        id = p.Id,
+        lat = p.Lat,
+        lng = p.Lng,
+        tittel = $"{p.Id} {p.Tittel}",
+        undertekst = p.Adresse ?? "",
+        farge = Farge(p.Status),
+        pin = true
+    }).ToList();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_laster)
+        {
+            return;
+        }
+
+        var punkter = KartPunkter();
+        var signatur = string.Join(",", Synlige.Select(p => p.Id));
+        if (!_kartKlart)
+        {
+            _ref ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("kart.init", "app-kart", punkter, _ref, new { utenPopup = true, klyngeRadius = 40 });
+            _kartKlart = true;
+            _signatur = signatur;
+        }
+        else if (signatur != _signatur)
+        {
+            await JS.InvokeVoidAsync("kart.setPunkter", punkter);
+            _signatur = signatur;
+        }
+    }
+
+    [JSInvokable]
+    public Task OnKartPunktValgt(int id)
+    {
+        _valgt = _punkter.FirstOrDefault(p => p.Id == id);
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _ref?.Dispose();
+        if (_kartKlart)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("kart.fjern", "app-kart");
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+    }
+}
