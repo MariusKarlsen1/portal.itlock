@@ -1,113 +1,465 @@
 @page "/app/prosjekt/{Id:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 
-<PageTitle>Prosjekt</PageTitle>
+<PageTitle>@(_p?.Navn ?? "Prosjekt")</PageTitle>
 
-@* Ett prosjekt i montørappen: fremdrift, adresse og kontakt, og snarveier til
-   dører (avhaking), arbeidsordre, plukkliste og prosjektkortet. *@
-<div class="ma">
-    <AppHode Ikon="folder" Tittel="@(_p?.Navn ?? "Prosjekt")" Under="@_p?.Kunde?.Navn" Tilbake="/app/prosjekter" />
-
+@* Ett prosjekt i montørappen. Åpner på plantegningen med dørene som prikker
+   i statusfarge; trykk på en dør for å huke av beslagene. Fanen Dører viser
+   samme dører som liste, og Info har adresse, kontakter og snarveier.
+   Avhakingen følger samme regler som dørskjemaet i portalen: døra blir
+   «pågår» når noe er montert og «ferdig» når alle beslag er montert. *@
+<div class="mp">
     @if (!_lastet)
     {
-        <div class="ma-liste"><p class="ma-tom">Laster …</p></div>
+        <p class="mp-tom">Laster …</p>
     }
     else if (_p is null)
     {
-        <div class="ma-liste"><p class="ma-tom">Fant ikke prosjektet.</p></div>
+        <p class="mp-tom">Fant ikke prosjektet. <a href="/app/prosjekter">Tilbake til prosjektene</a></p>
     }
     else
     {
-        var pst = _dorer == 0 ? 0 : _ferdige * 100 / _dorer;
-        <div class="ma-sum"><span><Icon Name="door" />Ferdig montert</span><span>@_ferdige av @_dorer (@pst %)</span></div>
-        <div style="background:var(--itlock-surface);padding:0 .9rem .8rem;border:1px solid var(--itlock-border);border-top:0">
-            <span class="ma-fremdrift" style="display:block;margin-top:0"><i style="width:@(pst)%"></i></span>
-        </div>
-
-        <div class="ma-liste">
-            @if (MontorApp.Adresse(_p) is { } adr)
-            {
-                <a class="ma-rad" href="@MontorApp.KartLenke(adr)" target="_blank" rel="noopener">
-                    <Icon Name="map-pin" /><span class="ma-rad-tekst"><small>Adresse</small><b>@adr</b></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
-                </a>
-            }
-            @if (_p.OverleveringsfristDato is { } f)
-            {
-                <div class="ma-rad" style="cursor:default">
-                    <Icon Name="calendar" /><span class="ma-rad-tekst"><small>Overleveringsfrist</small><b class="@(f < DateTime.Today ? "ma-status-rod" : "")">@MontorApp.Dato(f)</b></span>
+        var ferdige = _dorer.Count(d => Status(d) == "ferdig");
+        var beslagTotalt = _dorer.Sum(d => d.Komponenter.Sum(k => k.Antall));
+        var beslagMontert = _dorer.Sum(d => d.Komponenter.Where(k => k.Montert).Sum(k => k.Antall));
+        <header class="mp-topp">
+            <div class="mp-hode">
+                <a class="mp-ikb" href="/app/prosjekter" aria-label="Tilbake"><Icon Name="chevron-left" /></a>
+                <div class="mp-tittel">
+                    <h1>@_p.Navn</h1>
+                    <small>@string.Join(" · ", new[] { _p.Kunde?.Navn, MontorApp.Adresse(_p) }.Where(s => !string.IsNullOrWhiteSpace(s)))</small>
                 </div>
-            }
-
-            <div class="ma-gruppe">Jobben</div>
-            <a class="ma-rad" href="@($"/app/dorer/{Id}?tilbake=/app/prosjekt/{Id}")">
-                <Icon Name="door" /><span class="ma-rad-tekst"><b>Dører</b><small>Huk av ferdig monterte dører</small></span><span class="ma-boks">@_dorer</span><span class="ma-pil"><Icon Name="chevron-right" /></span>
-            </a>
-            @foreach (var a in _ordre)
-            {
-                <a class="ma-rad" href="@($"/app/ordre/{a.Id}")">
-                    <Icon Name="tool" /><span class="ma-rad-tekst"><b>@a.Id @a.Tittel</b><small><i class="ma-prikk ma-prikk-@MontorApp.StatusKlasse(a.Status)"></i> @a.Status.Visningsnavn()@(a.PlanlagtDato is { } d ? " · " + MontorApp.DagKort(d) : "")</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
-                </a>
-            }
-            @if (_ordre.Count == 0)
-            {
-                <div class="ma-rad" style="cursor:default"><Icon Name="tool" /><span class="ma-rad-tekst"><b>Arbeidsordre</b><small>Ingen åpne ordre på prosjektet</small></span></div>
-            }
-            <a class="ma-rad" href="@($"/prosjekt/{Id}/plukkliste")">
-                <Icon Name="box" /><span class="ma-rad-tekst"><b>Plukkliste</b><small>Varer til prosjektet</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
-            </a>
-            <a class="ma-rad" href="@($"/prosjekter/{Id}")">
-                <Icon Name="file-text" /><span class="ma-rad-tekst"><b>Prosjektkortet</b><small>Tegninger, dokumenter, CE og avvik</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
-            </a>
-
-            <div class="ma-gruppe">Kontakt</div>
-            @if (_p.Prosjektleder is { } pl)
-            {
-                <div class="ma-rad" style="cursor:default">
-                    <span class="ma-boks" style="border-radius:50%">@MontorApp.Initialer(pl.Navn)</span>
-                    <span class="ma-rad-tekst"><b>@pl.Navn</b><small>Prosjektleder@(string.IsNullOrWhiteSpace(pl.Stilling) || pl.Stilling == "Prosjektleder" ? "" : " · " + pl.Stilling)</small></span>
+            </div>
+            <div class="mp-tall">
+                <div>
+                    <small>Dører ferdig</small>
+                    <b>@ferdige <span>av @_dorer.Count</span></b>
+                    <span class="mp-bar"><i style="width:@Prosent(ferdige, _dorer.Count)%"></i></span>
                 </div>
-            }
-            @if (!string.IsNullOrWhiteSpace(_p.Kontaktperson) || !string.IsNullOrWhiteSpace(_p.Telefon))
+                <div>
+                    <small>Beslag montert</small>
+                    <b>@beslagMontert <span>av @beslagTotalt</span></b>
+                    <span class="mp-bar"><i style="width:@Prosent(beslagMontert, beslagTotalt)%"></i></span>
+                </div>
+            </div>
+        </header>
+
+        <nav class="mp-faner" role="tablist">
+            <button type="button" role="tab" class="@(_fane == "plan" ? "paa" : "")" aria-selected="@(_fane == "plan")" @onclick="@(() => _fane = "plan")">Plantegning</button>
+            <button type="button" role="tab" class="@(_fane == "dorer" ? "paa" : "")" aria-selected="@(_fane == "dorer")" @onclick="@(() => _fane = "dorer")">Dører</button>
+            <button type="button" role="tab" class="@(_fane == "info" ? "paa" : "")" aria-selected="@(_fane == "info")" @onclick="@(() => _fane = "info")">Info</button>
+        </nav>
+
+        @if (_fane == "plan")
+        {
+            @if (_planer.Count == 0)
             {
-                <div class="ma-rad" style="cursor:default">
-                    <span class="ma-boks" style="border-radius:50%">@MontorApp.Initialer(_p.Kontaktperson ?? "K")</span>
-                    <span class="ma-rad-tekst"><b>@(_p.Kontaktperson ?? "Kontakt")</b><small>Kontaktperson hos kunden@(string.IsNullOrWhiteSpace(_p.Telefon) ? "" : " · " + _p.Telefon)</small></span>
-                    @if (!string.IsNullOrWhiteSpace(_p.Telefon))
+                <p class="mp-tom">Prosjektet har ingen plantegninger ennå. Se dørene under fanen Dører.</p>
+            }
+            else
+            {
+                var plan = _planer.FirstOrDefault(p => p.Id == _planId) ?? _planer[0];
+                var pins = _dorer.Where(d => d.PlantegningId == plan.Id && d.PosX.HasValue && d.PosY.HasValue && (!_gjenstar || Status(d) != "ferdig")).ToList();
+                <div class="mp-verktoy">
+                    @foreach (var p in _planer)
                     {
-                        <a class="ma-pilknapp" href="@($"tel:{_p.Telefon}")" aria-label="Ring"><Icon Name="phone" /></a>
+                        var pid = p.Id;
+                        <button type="button" class="mp-chip @(pid == plan.Id ? "paa" : "")" @onclick="@(() => _planId = pid)">@p.Navn</button>
+                    }
+                    <button type="button" class="mp-chip mp-chip-hoyre @(_gjenstar ? "paa" : "")" aria-pressed="@_gjenstar" @onclick="@(() => _gjenstar = !_gjenstar)">Gjenstår</button>
+                </div>
+                <div class="mp-plan">
+                    <div class="mp-plan-rull">
+                        <div class="mp-plan-flate" style="width:@(_zoom.ToString(CultureInfo.InvariantCulture))%">
+                            <img src="@($"/plantegningbilde/{plan.Id}")" alt="@plan.Navn" />
+                            @foreach (var d in pins)
+                            {
+                                var dor = d;
+                                var s = Status(d);
+                                <button type="button" class="mp-pin mp-@s" style="left:@d.PosX!.Value.ToString(CultureInfo.InvariantCulture)%;top:@d.PosY!.Value.ToString(CultureInfo.InvariantCulture)%" @onclick="@(() => Apne(dor))" aria-label="@($"Dør {d.Dornummer}, {Navn(s)}")">
+                                    <i>@if (s == "ferdig") {<Icon Name="check" />} else if (s == "avvik") {<span>!</span>}</i>
+                                    <em>@d.Dornummer</em>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                    <div class="mp-legende">
+                        @foreach (var s in new[] { "ikke", "pagar", "ferdig", "avvik" })
+                        {
+                            <span><i class="mp-@s"></i>@Navn(s)</span>
+                        }
+                    </div>
+                    <div class="mp-zoom">
+                        <button type="button" @onclick="@(() => _zoom = Math.Min(300, _zoom + 50))" aria-label="Zoom inn">+</button>
+                        <button type="button" @onclick="@(() => _zoom = Math.Max(100, _zoom - 50))" aria-label="Zoom ut">−</button>
+                    </div>
+                    @if (pins.Count == 0)
+                    {
+                        <div class="mp-plan-tom">@(_gjenstar ? "Alle dørene på denne tegningen er ferdige." : "Ingen dører er plassert på denne tegningen.")</div>
                     }
                 </div>
             }
-            @if (_p.Prosjektleder is null && string.IsNullOrWhiteSpace(_p.Kontaktperson) && string.IsNullOrWhiteSpace(_p.Telefon))
+        }
+        else if (_fane == "dorer")
+        {
+            <div class="mp-sok"><input type="search" placeholder="Søk dør eller rom" aria-label="Søk dør eller rom" @bind="_sok" @bind:event="oninput" /></div>
+            @if (_dorer.Count == 0)
             {
-                <p class="ma-tom">Ingen kontaktpersoner registrert.</p>
+                <p class="mp-tom">Prosjektet har ingen dører registrert.</p>
             }
-        </div>
+            @foreach (var g in SokteDorer.GroupBy(GruppeFor))
+            {
+                <div class="mp-gruppe"><span>@g.Key</span><span>@g.Count(d => Status(d) == "ferdig") av @g.Count() ferdig</span></div>
+                @foreach (var d in g)
+                {
+                    var dor = d;
+                    var s = Status(d);
+                    var tot = d.Komponenter.Sum(k => k.Antall);
+                    var mont = d.Komponenter.Where(k => k.Montert).Sum(k => k.Antall);
+                    <button type="button" class="mp-dor" @onclick="@(() => Apne(dor))">
+                        <i class="mp-prikk mp-@s"></i>
+                        <span class="mp-dor-tekst">
+                            <b>@d.Dornummer@(Rom(d) is { } rom ? " · " + rom : "")</b>
+                            <small>@(tot == 0 ? "Ingen beslag registrert" : $"{mont} av {tot} beslag")@(string.IsNullOrWhiteSpace(d.Brann) ? "" : " · " + d.Brann)</small>
+                            @if (tot > 0)
+                            {
+                                <span class="mp-minibar"><i class="mp-@s" style="width:@Prosent(mont, tot)%"></i></span>
+                            }
+                        </span>
+                        <span class="mp-merke mp-merke-@s">@Navn(s)</span>
+                    </button>
+                }
+            }
+        }
+        else
+        {
+            <div class="mp-kort">
+                @if (MontorApp.Adresse(_p) is { } adr)
+                {
+                    <a class="mp-rad" href="@MontorApp.KartLenke(adr)" target="_blank" rel="noopener">
+                        <span class="mp-ik"><Icon Name="map-pin" /></span><span class="mp-rad-tekst"><b>@adr</b><small>Naviger hit</small></span><span class="mp-pil"><Icon Name="chevron-right" /></span>
+                    </a>
+                }
+                @if (!string.IsNullOrWhiteSpace(_p.Kontaktperson) || !string.IsNullOrWhiteSpace(_p.Telefon))
+                {
+                    <a class="mp-rad" href="@(string.IsNullOrWhiteSpace(_p.Telefon) ? null : $"tel:{_p.Telefon}")">
+                        <span class="mp-ik"><Icon Name="phone" /></span><span class="mp-rad-tekst"><b>@(_p.Kontaktperson ?? "Kontakt hos kunden")</b><small>Kontaktperson hos kunden@(string.IsNullOrWhiteSpace(_p.Telefon) ? "" : " · " + _p.Telefon)</small></span>
+                    </a>
+                }
+                @if (_p.Prosjektleder is { } pl)
+                {
+                    <div class="mp-rad">
+                        <span class="mp-ik"><Icon Name="users" /></span><span class="mp-rad-tekst"><b>@pl.Navn</b><small>Prosjektleder</small></span>
+                    </div>
+                }
+                @if (_p.OverleveringsfristDato is { } frist)
+                {
+                    <div class="mp-rad">
+                        <span class="mp-ik"><Icon Name="calendar" /></span><span class="mp-rad-tekst"><b>@MontorApp.Dato(frist)</b><small>Overleveringsfrist</small></span>
+                    </div>
+                }
+            </div>
+            <div class="mp-kort">
+                @foreach (var a in _ordre)
+                {
+                    <a class="mp-rad" href="@($"/app/ordre/{a.Id}")">
+                        <span class="mp-ik"><Icon Name="tool" /></span><span class="mp-rad-tekst"><b>@a.Id @a.Tittel</b><small>@a.Status.Visningsnavn()@(a.PlanlagtDato is { } pd ? " · " + MontorApp.DagKort(pd) : "")</small></span><span class="mp-pil"><Icon Name="chevron-right" /></span>
+                    </a>
+                }
+                <a class="mp-rad" href="@($"/prosjekt/{Id}/plukkliste")">
+                    <span class="mp-ik"><Icon Name="box" /></span><span class="mp-rad-tekst"><b>Plukkliste</b><small>Varer til prosjektet</small></span><span class="mp-pil"><Icon Name="chevron-right" /></span>
+                </a>
+                <a class="mp-rad" href="@($"/prosjekter/{Id}")">
+                    <span class="mp-ik"><Icon Name="file-text" /></span><span class="mp-rad-tekst"><b>Prosjektkortet</b><small>Tegninger, dokumenter, CE og avvik</small></span><span class="mp-pil"><Icon Name="chevron-right" /></span>
+                </a>
+                <div class="mp-rad">
+                    <span class="mp-ik"><Icon Name="alert-triangle" /></span><span class="mp-rad-tekst"><b>Avvik</b><small>@(_apneAvvik.Count == 0 ? "Ingen åpne avvik" : _apneAvvik.Count == 1 ? "1 dør med åpent avvik" : $"{_apneAvvik.Count} dører med åpne avvik")</small></span>
+                </div>
+            </div>
+        }
+
+        @if (_valgt is { } v)
+        {
+            var s = Status(v);
+            var alle = v.Komponenter.Count > 0 && v.Komponenter.All(k => k.Montert);
+            <div class="mp-bak" @onclick="@(() => _valgt = null)">
+                <div class="mp-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="@($"Dør {v.Dornummer}")">
+                    <div class="mp-ark-topp">
+                        <div class="mp-handtak"></div>
+                        <h2><i class="mp-prikk mp-@s"></i>@v.Dornummer@(Rom(v) is { } rom ? " · " + rom : "")</h2>
+                        <div class="mp-under">@ArkUnder(v)</div>
+                        <div class="mp-egenskaper">
+                            @if (!string.IsNullOrWhiteSpace(v.Brann)) {<span class="mp-eg mp-eg-brann">@v.Brann</span>}
+                            @if (Mal(v) is { } mal) {<span class="mp-eg">@mal</span>}
+                            @if (!string.IsNullOrWhiteSpace(v.Dortype)) {<span class="mp-eg">@v.Dortype</span>}
+                            @if (!string.IsNullOrWhiteSpace(v.Slagretning)) {<span class="mp-eg">Slagretning @v.Slagretning</span>}
+                            @if (v.ToFloyet) {<span class="mp-eg">Tofløyet</span>}
+                        </div>
+                    </div>
+                    <div class="mp-ark-innhold">
+                        @if (ErBranndor(v))
+                        {
+                            <div class="mp-krav"><Icon Name="alert-triangle" /><span><b>@v.Brann:</b> dørlukker og godkjent sluttstykke kreves. Døra skal ikke stå oppe uten holdemagnet.</span></div>
+                        }
+                        @if (v.Komponenter.Count == 0)
+                        {
+                            <p class="mp-tom">Ingen beslag er registrert på døra. Marker hele døra som ferdig når den er montert.</p>
+                        }
+                        @foreach (var k in v.Komponenter.OrderBy(k => k.Component?.Type?.Sortering ?? int.MaxValue).ThenBy(k => k.Component?.Navn))
+                        {
+                            var dk = k;
+                            <button type="button" class="mp-beslag" @onclick="@(() => VeksleBeslag(v, dk))" aria-pressed="@dk.Montert" disabled="@_lagrer">
+                                <span class="mp-hake @(dk.Montert ? "paa" : "")">@if (dk.Montert) {<Icon Name="check" />}</span>
+                                <span class="mp-beslag-tekst">
+                                    <b>@(dk.Component?.Type?.Navn ?? dk.Component?.Navn ?? "Beslag")@(dk.Antall > 1 ? $" · {dk.Antall} stk" : "")</b>
+                                    <small>@BeslagUnder(dk)</small>
+                                </span>
+                            </button>
+                        }
+                    </div>
+                    @if (_feil is not null)
+                    {
+                        <p class="mp-feil" role="alert">@_feil</p>
+                    }
+                    <div class="mp-ark-bunn">
+                        <button type="button" class="mp-knapp @(s == "ferdig" ? "ferdig" : "")" @onclick="@(() => AltMontert(v))" disabled="@_lagrer">
+                            <Icon Name="check" />@(s == "ferdig" || alle ? "Ferdig montert" : v.Komponenter.Count == 0 ? "Marker som ferdig" : "Alt montert")
+                        </button>
+                        <a class="mp-sek" href="@($"/dor/{v.Id}")" aria-label="Åpne døra med bilder og dokumenter"><Icon Name="camera" /></a>
+                        <button type="button" class="mp-sek mp-sek-rod" @onclick="@(() => _meldAvvik = true)" aria-label="Meld avvik"><Icon Name="alert-triangle" /></button>
+                    </div>
+                </div>
+            </div>
+            @if (_meldAvvik)
+            {
+                <MeldAvvikDialog ProsjektId="Id" DorId="v.Id" OnLukk="@(() => _meldAvvik = false)" OnMeldt="AvvikMeldt" />
+            }
+        }
     }
 </div>
 
 @code {
     [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Plan(int Id, string Navn);
 
     private bool _lastet;
+    private bool _lagrer;
+    private bool _gjenstar;
+    private bool _meldAvvik;
+    private string? _feil;
+    private string _fane = "plan";
+    private string _sok = "";
+    private int _zoom = 100;
+    private int _planId;
+    private int _brukerId;
     private Prosjekt? _p;
-    private int _dorer;
-    private int _ferdige;
+    private List<Plan> _planer = [];
+    private List<Dor> _dorer = [];
     private List<Arbeidsordre> _ordre = [];
+    private HashSet<int> _apneAvvik = [];
+    private Dor? _valgt;
 
     protected override async Task OnParametersSetAsync()
     {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            _brukerId = id;
+        }
+
         _p = await Db.Prosjekter.AsNoTracking().Include(p => p.Kunde).Include(p => p.Prosjektleder).FirstOrDefaultAsync(p => p.Id == Id);
-        _dorer = await Db.Dorer.CountAsync(d => d.ProsjektId == Id);
-        _ferdige = await Db.Dorer.CountAsync(d => d.ProsjektId == Id && d.Status == MontasjeStatus.FerdigMontert);
-        _ordre = await Db.Arbeidsordre.AsNoTracking()
-            .Where(a => a.ProsjektId == Id && (a.Status == ArbeidsordreStatus.Ny || a.Status == ArbeidsordreStatus.Klar || a.Status == ArbeidsordreStatus.Pagaende))
-            .OrderBy(a => a.PlanlagtDato ?? DateTime.MaxValue).ToListAsync();
+        if (_p is not null)
+        {
+            _planer = await Db.Plantegninger.AsNoTracking().Where(p => p.ProsjektId == Id)
+                .OrderBy(p => p.Navn).Select(p => new Plan(p.Id, p.Navn)).ToListAsync();
+            _dorer = await Db.Dorer.Where(d => d.ProsjektId == Id)
+                .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
+                .Include(d => d.Komponenter).ThenInclude(k => k.MontertAvBruker)
+                .AsSplitQuery().ToListAsync();
+            _dorer = _dorer.OrderBy(d => d.Dornummer.Length).ThenBy(d => d.Dornummer, StringComparer.CurrentCultureIgnoreCase).ToList();
+            await LastAvvik();
+            _ordre = await Db.Arbeidsordre.AsNoTracking()
+                .Where(a => a.ProsjektId == Id && (a.Status == ArbeidsordreStatus.Ny || a.Status == ArbeidsordreStatus.Klar || a.Status == ArbeidsordreStatus.Pagaende))
+                .OrderBy(a => a.PlanlagtDato ?? DateTime.MaxValue).ToListAsync();
+
+            // Første tegning med plasserte dører, ellers rett til dørlisten.
+            _planId = _planer.FirstOrDefault(p => _dorer.Any(d => d.PlantegningId == p.Id && d.PosX.HasValue))?.Id ?? _planer.FirstOrDefault()?.Id ?? 0;
+            if (_planer.Count == 0 || !_dorer.Any(d => d.PosX.HasValue))
+            {
+                _fane = "dorer";
+            }
+        }
+
         _lastet = true;
+    }
+
+    private async Task LastAvvik()
+    {
+        var ider = _dorer.Select(d => d.Id).ToList();
+        _apneAvvik = (await Db.Avvik.AsNoTracking().Where(a => ider.Contains(a.DorId) && a.Status == AvvikStatus.Apent)
+            .Select(a => a.DorId).ToListAsync()).ToHashSet();
+    }
+
+    private IEnumerable<Dor> SokteDorer => string.IsNullOrWhiteSpace(_sok)
+        ? _dorer
+        : _dorer.Where(d => $"{d.Dornummer} {d.Romnr} {d.DorTil} {d.Etasje}".Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase));
+
+    private string GruppeFor(Dor d) => d.Etasje is { Length: > 0 } e
+        ? Etasje(e)
+        : _planer.FirstOrDefault(p => p.Id == d.PlantegningId)?.Navn ?? "Uten etasje";
+
+    private static string Etasje(string e) => char.IsDigit(e[0]) ? e + ". etasje" : e;
+
+    // Avvik vinner over montasjestatus, så det ikke blir oversett.
+    private string Status(Dor d) => _apneAvvik.Contains(d.Id) ? "avvik" : d.Status switch
+    {
+        MontasjeStatus.FerdigMontert => "ferdig",
+        MontasjeStatus.Montert => "pagar",
+        _ => "ikke"
+    };
+
+    private static string Navn(string s) => s switch
+    {
+        "ferdig" => "Ferdig",
+        "pagar" => "Pågår",
+        "avvik" => "Avvik",
+        _ => "Ikke startet"
+    };
+
+    private static string? Rom(Dor d) => !string.IsNullOrWhiteSpace(d.DorTil) ? d.DorTil : string.IsNullOrWhiteSpace(d.Romnr) ? null : d.Romnr;
+
+    private static string? Mal(Dor d) => !string.IsNullOrWhiteSpace(d.BxH) ? d.BxH : d.Bredde is { } b && d.Hoyde is { } h ? $"{b}×{h}" : null;
+
+    private static bool ErBranndor(Dor d) => d.Brann?.Contains("EI", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static string Prosent(int del, int av) => (av == 0 ? 0 : Math.Round(del * 100.0 / av)).ToString(CultureInfo.InvariantCulture);
+
+    private static string ArkUnder(Dor d)
+    {
+        var deler = new List<string>();
+        if (!string.IsNullOrWhiteSpace(d.Etasje)) deler.Add(Etasje(d.Etasje));
+        if (d.Komponenter.Count > 0) deler.Add($"{d.Komponenter.Where(k => k.Montert).Sum(k => k.Antall)} av {d.Komponenter.Sum(k => k.Antall)} beslag montert");
+        return string.Join(" · ", deler);
+    }
+
+    private static string BeslagUnder(DorKomponent k)
+    {
+        var deler = new List<string>();
+        if (k.Component is { } c)
+        {
+            deler.Add(c.Type is null ? c.Produktkode ?? "" : string.Join(" ", new[] { c.Navn, c.Produktkode }.Where(s => !string.IsNullOrWhiteSpace(s))));
+        }
+
+        if (k.Plassering is { } p) deler.Add(p.Visningsnavn());
+        if (k.Montert && k.MontertDato is { } md) deler.Add($"{(k.MontertAvBruker is { } b ? MontorApp.Initialer(b.Navn) + " " : "")}{md:dd.MM HH:mm}");
+        return string.Join(" · ", deler.Where(s => s.Length > 0));
+    }
+
+    private void Apne(Dor d)
+    {
+        _feil = null;
+        _meldAvvik = false;
+        _valgt = d;
+    }
+
+    private async Task VeksleBeslag(Dor d, DorKomponent k)
+    {
+        k.Montert = !k.Montert;
+        k.MontertDato = k.Montert ? DateTime.Now : null;
+        k.MontertAvBrukerId = k.Montert ? _brukerId : null;
+        k.MontertAvBruker = k.Montert ? await Db.Brukere.FirstOrDefaultAsync(b => b.Id == _brukerId) : null;
+        OppdaterStatus(d);
+        await Lagre();
+    }
+
+    private async Task AltMontert(Dor d)
+    {
+        if (Status(d) == "ferdig")
+        {
+            _valgt = null;
+            return;
+        }
+
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == _brukerId);
+        foreach (var k in d.Komponenter.Where(k => !k.Montert))
+        {
+            k.Montert = true;
+            k.MontertDato = DateTime.Now;
+            k.MontertAvBrukerId = _brukerId;
+            k.MontertAvBruker = bruker;
+        }
+
+        if (d.Komponenter.Count == 0)
+        {
+            d.Status = MontasjeStatus.FerdigMontert;
+            d.MontertDato = DateTime.Now;
+            d.MontertAvBrukerId = _brukerId;
+            d.OppdatertDato = DateTime.Now;
+            d.OppdatertAvBrukerId = _brukerId;
+        }
+        else
+        {
+            OppdaterStatus(d);
+        }
+
+        if (await Lagre())
+        {
+            _valgt = null;
+        }
+    }
+
+    // Samme regel som dørskjemaet (DorRedigering): status følger beslagene.
+    private void OppdaterStatus(Dor d)
+    {
+        var totalt = d.Komponenter.Sum(k => k.Antall);
+        if (totalt == 0)
+        {
+            return;
+        }
+
+        var montert = d.Komponenter.Where(k => k.Montert).Sum(k => k.Antall);
+        var status = montert == 0 ? MontasjeStatus.IkkeStartet : montert < totalt ? MontasjeStatus.Montert : MontasjeStatus.FerdigMontert;
+        if (status != MontasjeStatus.FerdigMontert || d.Status != MontasjeStatus.FerdigMontert)
+        {
+            d.MontertDato = status == MontasjeStatus.FerdigMontert ? DateTime.Now : null;
+            d.MontertAvBrukerId = status == MontasjeStatus.FerdigMontert ? _brukerId : null;
+        }
+
+        d.Status = status;
+        d.OppdatertDato = DateTime.Now;
+        d.OppdatertAvBrukerId = _brukerId;
+    }
+
+    private async Task<bool> Lagre()
+    {
+        _lagrer = true;
+        _feil = null;
+        try
+        {
+            await Db.SaveChangesAsync();
+            return true;
+        }
+        catch (DbUpdateException)
+        {
+            _feil = "Kunne ikke lagre. Sjekk dekningen og prøv igjen.";
+            return false;
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    private async Task AvvikMeldt(Avvik _)
+    {
+        _meldAvvik = false;
+        await LastAvvik();
     }
 }
