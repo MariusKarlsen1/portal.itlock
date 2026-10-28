@@ -617,10 +617,12 @@ app.Use(async (context, next) =>
 
     // Unntak: "Gå til fullversjon" (TopBar.razor) navigerer bevisst til "/"
     // for å vise modul-oversikten - ?fullversjon=1 markerer at dette IKKE
-    // skal fanges opp av mobil-omdirigeringen under.
+    // skal fanges opp av mobil-omdirigeringen under. Det samme gjelder når
+    // fullversjon er valgt (informasjonskapselen settes av settFullversjon).
     if (erGet
         && context.Request.Path == "/"
         && !context.Request.Query.ContainsKey("fullversjon")
+        && context.Request.Cookies["itlock-fullversjon"] != "1"
         && MobilDeteksjon.GjettFraUserAgent(context.Request.Headers.UserAgent.ToString()))
     {
         // Driftslisens og kunde har egne portaler - /app er bare for

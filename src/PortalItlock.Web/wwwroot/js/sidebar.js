@@ -6,6 +6,14 @@ window.erMobilvisning = function () {
     return window.matchMedia('(max-width: 640.98px)').matches;
 };
 
+// Lagrer «fullversjon» både i localStorage (leses i <head> for PC-bredde) og
+// i en informasjonskapsel, så serveren ikke sender en til /app når man går
+// til forsiden i fullversjon.
+window.settFullversjon = function (paa) {
+    try { localStorage.setItem('itlock-fullversjon', paa ? '1' : '0'); } catch (e) { }
+    document.cookie = 'itlock-fullversjon=' + (paa ? '1' : '0') + '; path=/; max-age=31536000; samesite=lax';
+};
+
 // MainLayout er statisk og kan derfor bare avgjøre "content-fullversjon"
 // riktig for selve siden som først ble lastet (der ?fullversjon står i
 // URL-en) - vanlig SPA-navigasjon videre derfra (f.eks. å trykke seg inn på
