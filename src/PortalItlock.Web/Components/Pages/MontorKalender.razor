@@ -1,0 +1,259 @@
+@page "/app/kalender"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Kalender</PageTitle>
+
+@* Kalenderen i montørappen. «Meg» viser dine jobber og planer for dagen,
+   «Teamet» viser hvor alle er: en ukeoversikt per person og et kort per
+   person for valgt dag. Fravær vises bare som «Fravær» for andre enn deg,
+   så typen (for eksempel sykdom) ikke deles med kollegene. *@
+<div class="mk">
+    <div class="mk-topp">
+        <a class="mk-tilbake" href="/app" aria-label="Til forsiden"><Icon Name="chevron-left" /></a>
+        <div class="mk-tittel"><b>Kalender</b><small>Uke @Ukenr(_mandag)@(_team ? " · hele teamet" : "")</small></div>
+        <button type="button" class="mk-pil" @onclick="@(() => FlyttUke(-1))" aria-label="Forrige uke"><Icon Name="chevron-left" /></button>
+        <button type="button" class="mk-pil" @onclick="@(() => FlyttUke(1))" aria-label="Neste uke"><Icon Name="chevron-right" /></button>
+    </div>
+
+    <div class="mk-velger" role="tablist">
+        <button type="button" role="tab" aria-selected="@(!_team)" class="@(!_team ? "aktiv" : "")" @onclick="@(() => _team = false)">Meg</button>
+        <button type="button" role="tab" aria-selected="@_team" class="@(_team ? "aktiv" : "")" @onclick="@(() => _team = true)"><Icon Name="users" />Teamet</button>
+    </div>
+
+    <div class="mk-uke">
+        @for (var i = 0; i < 7; i++)
+        {
+            var dag = _mandag.AddDays(i);
+            var har = _team ? _poster.Any(p => p.Dato == dag) : _poster.Any(p => p.Dato == dag && p.BrukerId == _brukerId);
+            <button type="button" class="mk-dag @(dag == _valgt ? "valgt" : "") @(dag == DateTime.Today ? "idag" : "") @(har ? "har" : "")" @onclick="@(() => _valgt = dag)">
+                <small>@dag.ToString("ddd", Kultur).TrimEnd('.')</small><b>@dag.Day</b><i></i>
+            </button>
+        }
+    </div>
+
+    @if (!_lastet)
+    {
+        <p class="mk-tom">Laster …</p>
+    }
+    else if (_team)
+    {
+        <section class="mk-boks">
+            <div class="mk-rutenett" style="grid-template-columns:6.2rem repeat(5, minmax(2.4rem, 1fr))">
+                <span></span>
+                @for (var i = 0; i < 5; i++)
+                {
+                    var dag = _mandag.AddDays(i);
+                    <button type="button" class="mk-rhode @(dag == _valgt ? "valgt" : "")" @onclick="@(() => _valgt = dag)"><small>@dag.ToString("ddd", Kultur).TrimEnd('.')</small><b>@dag.Day</b></button>
+                }
+                @foreach (var b in _personer)
+                {
+                    <span class="mk-person-navn"><span class="mk-av" style="background:@Farge(b.Id)">@Initialer(b.Navn)</span>@Fornavn(b.Navn)</span>
+                    @for (var i = 0; i < 5; i++)
+                    {
+                        var dag = _mandag.AddDays(i);
+                        var forste = _poster.FirstOrDefault(p => p.BrukerId == b.Id && p.Dato == dag);
+                        <button type="button" class="mk-celle mk-celle-@(forste?.Type ?? "ledig")" title="@(forste?.Tittel ?? "Ledig")" @onclick="@(() => _valgt = dag)">@(forste?.Kort ?? "")</button>
+                    }
+                }
+            </div>
+            <div class="mk-tegn"><span><i class="mk-celle-jobb"></i>Jobb</span><span><i class="mk-celle-plan"></i>Plan</span><span><i class="mk-celle-fravar"></i>Fravær</span><span><i class="mk-celle-ledig"></i>Ledig</span></div>
+        </section>
+
+        <h2 class="mk-seksjon">@(_valgt == DateTime.Today ? "I dag" : DagTekst(_valgt)) · hvor er alle?</h2>
+        @foreach (var b in _personer)
+        {
+            var dagens = _poster.Where(p => p.BrukerId == b.Id && p.Dato == _valgt).OrderBy(p => p.Tid).ToList();
+            <article class="mk-kort mk-kort-person">
+                <span class="mk-av mk-av-stor" style="background:@Farge(b.Id)">@Initialer(b.Navn)</span>
+                <div class="mk-kort-tekst">
+                    <b>@b.Navn@(b.Id == _brukerId ? " (deg)" : "")</b>
+                    @if (dagens.Count == 0)
+                    {
+                        <span class="mk-dempet">Ingen oppdrag</span>
+                    }
+                    @foreach (var p in dagens)
+                    {
+                        <span class="mk-linje">
+                            @if (p.Href is not null)
+                            {
+                                <a href="@p.Href">@(p.Tid.Length > 0 ? p.Tid + " · " : "")@p.Tittel</a>
+                            }
+                            else
+                            {
+                                @(p.Tid.Length > 0 ? p.Tid + " · " : "")@p.Tittel
+                            }
+                        </span>
+                        @if (!string.IsNullOrEmpty(p.Adresse))
+                        {
+                            <span class="mk-dempet mk-adresse"><Icon Name="map-pin" />@p.Adresse</span>
+                        }
+                    }
+                </div>
+            </article>
+        }
+    }
+    else
+    {
+        var mine = _poster.Where(p => p.BrukerId == _brukerId && p.Dato == _valgt).OrderBy(p => p.Tid).ToList();
+        <h2 class="mk-seksjon">@(_valgt == DateTime.Today ? "I dag" : DagTekst(_valgt))</h2>
+        @if (mine.Count == 0)
+        {
+            <p class="mk-tom">Ingen jobber eller planer denne dagen.</p>
+        }
+        @foreach (var p in mine)
+        {
+            var sammen = p.ProsjektId is { } pid
+                ? _poster.Where(x => x.BrukerId != _brukerId && x.Dato == _valgt && x.ProsjektId == pid).Select(x => Fornavn(_personer.FirstOrDefault(b => b.Id == x.BrukerId)?.Navn ?? "")).Distinct().ToList()
+                : [];
+            var innhold = Avtale(p, sammen);
+            @if (p.Href is not null)
+            {
+                <a class="mk-kort mk-avtale" href="@p.Href">@innhold</a>
+            }
+            else
+            {
+                <div class="mk-kort mk-avtale">@innhold</div>
+            }
+        }
+        <button type="button" class="mk-knapp" @onclick="@(() => _team = true)"><Icon Name="users" />Se hvor resten av teamet er</button>
+    }
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly string[] Farger = ["#7b4a26", "#2f5f8a", "#2f7a3a", "#6a4c9c", "#a3620c", "#b4372b", "#1f7a7a", "#8a3f6f"];
+
+    // Én ting i kalenderen: en jobb (arbeidsordre), en plan fra ressurskalenderen eller fravær.
+    private sealed record Post(int BrukerId, DateTime Dato, string Tid, string Tittel, string? Adresse, string Type, string? Href, int? ProsjektId, string Kort, string Varighet);
+
+    private bool _lastet;
+    private bool _team;
+    private int _brukerId;
+    private DateTime _mandag = Mandag(DateTime.Today);
+    private DateTime _valgt = DateTime.Today;
+    private List<Post> _poster = [];
+    private List<Bruker> _personer = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            _brukerId = id;
+        }
+
+        await LastAsync();
+    }
+
+    private static DateTime Mandag(DateTime d) => d.Date.AddDays(-(((int)d.DayOfWeek + 6) % 7));
+
+    private static int Ukenr(DateTime d) => ISOWeek.GetWeekOfYear(d);
+
+    private async Task FlyttUke(int uker)
+    {
+        _mandag = _mandag.AddDays(7 * uker);
+        _valgt = _mandag.AddDays(Math.Min(4, Math.Max(0, ((int)_valgt.DayOfWeek + 6) % 7)));
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        var fra = _mandag;
+        var til = _mandag.AddDays(7);
+
+        var ordre = await Db.Arbeidsordre.AsNoTracking().Include(a => a.Prosjekt)
+            .Where(a => a.AnsvarligMontorId != null && a.PlanlagtDato != null && a.PlanlagtDato >= fra && a.PlanlagtDato < til && a.Status != ArbeidsordreStatus.Fakturert)
+            .ToListAsync();
+        var planer = await Db.Ressursplaner.AsNoTracking().Where(r => r.Dato >= fra && r.Dato < til).ToListAsync();
+        var fravar = await Db.FravarSoknader.AsNoTracking()
+            .Where(f => f.Status == FravarStatus.Godkjent && f.FraDato < til && f.TilDato >= fra)
+            .ToListAsync();
+
+        var poster = new List<Post>();
+        foreach (var a in ordre)
+        {
+            var d = a.PlanlagtDato!.Value;
+            var varighet = a.PlanlagtSlutt is { } s && s > d ? Timer((decimal)(s - d).TotalHours) : a.EstimerteTimer is { } e ? Timer(e) : "";
+            poster.Add(new(a.AnsvarligMontorId!.Value, d.Date, d.TimeOfDay > TimeSpan.Zero ? d.ToString("HH:mm") : "", a.Tittel,
+                Adresse(a), "jobb", $"/arbeidsordre/{a.Id}", a.ProsjektId, Kortnavn(a.Prosjekt?.Navn ?? a.Tittel), varighet));
+        }
+
+        foreach (var r in planer)
+        {
+            poster.Add(new(r.MontorId, r.Dato.Date, r.Fra > TimeSpan.Zero ? r.Fra.ToString(@"hh\:mm") : "", r.Tittel, null, "plan", null, null, Kortnavn(r.Tittel), Timer((decimal)(r.Til - r.Fra).TotalHours)));
+        }
+
+        foreach (var f in fravar)
+        {
+            for (var d = f.FraDato.Date < fra ? fra : f.FraDato.Date; d <= f.TilDato.Date && d < til; d = d.AddDays(1))
+            {
+                // Typen fravær vises bare for deg selv.
+                poster.Add(new(f.BrukerId, d, "", f.BrukerId == _brukerId ? f.Type.Visningsnavn() : "Fravær", null, "fravar", null, null, "–", ""));
+            }
+        }
+
+        _poster = poster;
+
+        var ider = poster.Select(p => p.BrukerId).Append(_brukerId).ToHashSet();
+        _personer = (await Db.Brukere.AsNoTracking()
+                .Where(b => b.Aktiv && b.SlettetDato == null && (b.Rolle == BrukerRolle.Montor || ider.Contains(b.Id)))
+                .Where(b => b.Rolle != BrukerRolle.Kunde && b.Rolle != BrukerRolle.Driftslisens)
+                .ToListAsync())
+            .OrderByDescending(b => b.Id == _brukerId).ThenBy(b => b.Navn).ToList();
+        _lastet = true;
+    }
+
+    private static string Timer(decimal t) => t > 0 ? t.ToString("0.#", Kultur) + " t" : "";
+
+    private static string? Adresse(Arbeidsordre a)
+    {
+        var deler = new[] { a.Adresse ?? a.Prosjekt?.Adresse, a.Sted ?? a.Prosjekt?.Sted }.Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+        return deler.Count > 0 ? string.Join(", ", deler) : null;
+    }
+
+    // Kort kode til ukeoversikten: forbokstavene i de to første ordene.
+    private static string Kortnavn(string navn)
+    {
+        var ord = navn.Split([' ', '–', '-', ','], StringSplitOptions.RemoveEmptyEntries).Where(o => char.IsLetterOrDigit(o[0])).ToList();
+        if (ord.Count == 0) return "•";
+        if (ord.Count == 1) return ord[0][..Math.Min(2, ord[0].Length)].ToUpperInvariant();
+        return string.Concat(ord.Take(2).Select(o => char.ToUpperInvariant(o[0])));
+    }
+
+    private static string Initialer(string navn) =>
+        string.Concat(navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(s => char.ToUpperInvariant(s[0])));
+
+    private static string Fornavn(string navn) => navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? navn;
+
+    private static string Farge(int id) => Farger[Math.Abs(id) % Farger.Length];
+
+    private static string DagTekst(DateTime d)
+    {
+        var t = d.ToString("dddd d. MMMM", Kultur);
+        return char.ToUpper(t[0]) + t[1..];
+    }
+
+    private static RenderFragment Avtale(Post p, List<string> sammen) => @<text>
+        <span class="mk-kl">@(p.Tid.Length > 0 ? p.Tid : "–")<small>@p.Varighet</small></span>
+        <span class="mk-strek mk-strek-@p.Type"></span>
+        <span class="mk-kort-tekst">
+            <b>@p.Tittel</b>
+            @if (!string.IsNullOrEmpty(p.Adresse))
+            {
+                <span class="mk-dempet mk-adresse"><Icon Name="map-pin" />@p.Adresse</span>
+            }
+            @if (sammen.Count > 0)
+            {
+                <span class="mk-dempet mk-adresse"><Icon Name="users" />Sammen med @string.Join(" og ", sammen)</span>
+            }
+        </span>
+    </text>;
+}

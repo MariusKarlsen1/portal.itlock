@@ -1,0 +1,173 @@
+@page "/app"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject TilleggsmodulService Tilleggsmoduler
+
+<PageTitle>Hjem</PageTitle>
+
+@* Montørforsiden på mobil: hilsen, aktiv arbeidsordre, og seks snarveier
+   (Ordre, Prosjekter, Kalender, Bilen min, Timeliste, Søknader) med en
+   linje status på hver. Synkroniser, fullversjon og logg ut ligger i
+   brukermenyen (avataren øverst). *@
+<div class="mh">
+    @if (!_lastet)
+    {
+        <p class="mh-tom">Laster …</p>
+    }
+    else
+    {
+        <section class="mh-topp">
+            <h1>@Hilsen(), @Fornavn</h1>
+            <p>@DatoTekst() · @(_dagens.Count == 0 ? "ingen jobber i dag" : _dagens.Count == 1 ? "1 jobb i dag" : $"{_dagens.Count} jobber i dag")</p>
+            @if (_aktiv is { } a)
+            {
+                <div class="mh-aktiv">
+                    <a class="mh-aktiv-tekst" href="@($"/arbeidsordre/{a.Id}")">
+                        <small>@(a.Status == ArbeidsordreStatus.Pagaende ? "Pågår nå" : a.PlanlagtDato?.Date == DateTime.Today ? $"I dag{(a.PlanlagtDato.Value.TimeOfDay > TimeSpan.Zero ? " kl. " + a.PlanlagtDato.Value.ToString("HH:mm") : "")}" : "Neste jobb")</small>
+                        <b>@a.Tittel</b>
+                        <span>@AdresseFor(a)</span>
+                    </a>
+                    <a class="mh-start" href="/min-dag" title="Start timer på dagens jobb" aria-label="Start timer på dagens jobb"><Icon Name="play" /></a>
+                </div>
+            }
+            else
+            {
+                <div class="mh-aktiv mh-aktiv-tom"><span>Ingen planlagte jobber. Se kalenderen eller arbeidsordrene.</span></div>
+            }
+        </section>
+
+        <nav class="mh-liste" aria-label="Snarveier">
+            @Kort("/arbeidsordre", "tool", "rod", "Ordre", $"Åpne: {_apne} · Pågående: {_pagaende}", null)
+            @Kort("/prosjekter", "folder", "bla", "Prosjekter", $"{_prosjekter} pågående" + (_dorerIgjen > 0 ? $" · {_dorerIgjen} dører igjen" : ""), null)
+            @Kort("/app/kalender", "calendar", "gronn", "Kalender", KalenderTekst(), null)
+            @if (_harLager)
+            {
+                @Kort("/min-bil", "box", "lilla", "Bilen min", "Lager i bilen og plukklister", null)
+            }
+            @if (_harTimer)
+            {
+                @Kort("/timeregistrering", "clock", "gul", "Timeliste", $"Denne uka: {_ukeTimer.ToString("0.#", Kultur)} av {Ukesmal.ToString("0.#", Kultur)} t", Ring())
+                @Kort("/fravar", "sun", "brun", "Søknader", _soknaderVenter > 0 ? $"Ferie og fravær · {_soknaderVenter} venter" : "Ferie, avspasering og fravær", _soknaderVenter > 0 ? Teller(_soknaderVenter) : null)
+            }
+        </nav>
+
+        <div class="mh-bunn">
+            @if (_harTimer)
+            {
+                <a class="mh-knapp" href="/timeregistrering"><Icon Name="plus" />Legg til timer</a>
+            }
+            <a class="mh-knapp mh-knapp-s" href="/min-dag"><Icon Name="calendar" />Mine oppgaver i dag</a>
+        </div>
+    }
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+
+    // Normal arbeidsuke, brukt til ringen på Timeliste.
+    private const decimal Ukesmal = 37.5m;
+
+    private bool _lastet;
+    private string Fornavn = "";
+    private List<Arbeidsordre> _dagens = [];
+    private Arbeidsordre? _aktiv;
+    private int _apne, _pagaende, _prosjekter, _dorerIgjen, _soknaderVenter;
+    private decimal _ukeTimer;
+    private bool _harLager, _harTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var brukerId = 0;
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            brukerId = id;
+        }
+
+        var bruker = await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == brukerId);
+        Fornavn = bruker?.Navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+
+        var moduler = await Tilleggsmoduler.AktiveAsync();
+        _harLager = moduler.Contains(TilleggsModuler.Lager);
+        _harTimer = moduler.Contains(TilleggsModuler.Timer);
+
+        var idag = DateTime.Today;
+        var mine = await Db.Arbeidsordre.AsNoTracking().Include(a => a.Prosjekt)
+            .Where(a => a.AnsvarligMontorId == brukerId && (a.Status == ArbeidsordreStatus.Ny || a.Status == ArbeidsordreStatus.Klar || a.Status == ArbeidsordreStatus.Pagaende))
+            .ToListAsync();
+        _apne = mine.Count(a => a.Status != ArbeidsordreStatus.Pagaende);
+        _pagaende = mine.Count(a => a.Status == ArbeidsordreStatus.Pagaende);
+        _dagens = mine.Where(a => a.PlanlagtDato?.Date == idag).OrderBy(a => a.PlanlagtDato).ToList();
+
+        // Aktiv ordre: det som pågår, ellers dagens første, ellers den neste planlagte.
+        _aktiv = mine.FirstOrDefault(a => a.Status == ArbeidsordreStatus.Pagaende && a.PlanlagtDato?.Date == idag)
+            ?? _dagens.FirstOrDefault()
+            ?? mine.Where(a => a.PlanlagtDato >= idag).OrderBy(a => a.PlanlagtDato).FirstOrDefault()
+            ?? mine.FirstOrDefault(a => a.Status == ArbeidsordreStatus.Pagaende);
+
+        var pagaendeStatus = new[] { ProsjektStatus.Registrert, ProsjektStatus.UnderArbeid };
+        _prosjekter = await Db.Prosjekter.CountAsync(p => p.Status != null && pagaendeStatus.Contains(p.Status.Value));
+        _dorerIgjen = await Db.Dorer.CountAsync(d => d.Prosjekt!.Status == ProsjektStatus.UnderArbeid && d.Status != MontasjeStatus.FerdigMontert);
+
+        if (_harTimer)
+        {
+            var mandag = idag.AddDays(-(((int)idag.DayOfWeek + 6) % 7));
+            var uke = await Db.Timeregistreringer.AsNoTracking()
+                .Where(t => t.MontorId == brukerId && t.Dato >= mandag && t.Dato < mandag.AddDays(7) && t.Status != TimeregistreringStatus.Avslatt)
+                .Select(t => new { t.Start, t.Slutt, t.PauseMinutter }).ToListAsync();
+            _ukeTimer = uke.Sum(t => Math.Max(0, (decimal)(t.Slutt - t.Start).TotalHours - t.PauseMinutter / 60m));
+            _soknaderVenter = await Db.FravarSoknader.CountAsync(s => s.BrukerId == brukerId && s.Status == FravarStatus.Venter);
+        }
+
+        _lastet = true;
+    }
+
+    private static string Hilsen()
+    {
+        var time = DateTime.Now.Hour;
+        return time >= 17 ? "God kveld" : time >= 10 ? "Hei" : "God morgen";
+    }
+
+    private static string DatoTekst()
+    {
+        var t = DateTime.Today.ToString("dddd d. MMMM", Kultur);
+        return char.ToUpper(t[0]) + t[1..];
+    }
+
+    private string KalenderTekst()
+    {
+        if (_dagens.Count == 0) return "Se uka di og hvor teamet er";
+        var tider = _dagens.Select(Klokke).Where(k => k.Length > 0).ToList();
+        return tider.Count > 0 ? "I dag: " + string.Join(", ", tider) : $"I dag: {_dagens.Count} jobber";
+    }
+
+    private static string Klokke(Arbeidsordre a) => a.PlanlagtDato is { } d && d.TimeOfDay > TimeSpan.Zero ? d.ToString("HH:mm") : "";
+
+    private static string AdresseFor(Arbeidsordre a)
+    {
+        var deler = new[] { a.Adresse ?? a.Prosjekt?.Adresse, a.Sted ?? a.Prosjekt?.Sted }.Where(s => !string.IsNullOrWhiteSpace(s));
+        var adresse = string.Join(", ", deler);
+        return adresse.Length > 0 ? adresse : a.Prosjekt?.Navn ?? "";
+    }
+
+    private decimal UkeProsent => Math.Round(_ukeTimer / Ukesmal * 100);
+
+    private RenderFragment Ring() => @<span class="mh-ring" style="@($"--p:{Math.Min(100m, UkeProsent).ToString(CultureInfo.InvariantCulture)}")"><i>@UkeProsent.ToString("0", Kultur)%</i></span>;
+
+    private static RenderFragment Teller(int antall) => @<span class="mh-teller">@antall</span>;
+
+    private static RenderFragment Kort(string href, string ikon, string farge, string tittel, string under, RenderFragment? ekstra) => @<a class="mh-kort" href="@href">
+        <span class="mh-ik mh-ik-@farge"><Icon Name="@ikon" /></span>
+        <span class="mh-tekst"><b>@tittel</b><small>@under</small></span>
+        @ekstra
+        <span class="mh-pil"><Icon Name="chevron-right" /></span>
+    </a>;
+}

@@ -600,7 +600,7 @@ app.Use(async (context, next) =>
 
 app.UseAuthorization();
 
-// Mobil skal alltid starte på Oppgaver ("/min-dag"), ikke skrivebordets
+// Mobil skal alltid starte på montørforsiden ("/app"), ikke skrivebordets
 // prosjektoversikt på "/". Dette var tidligere en klientside-omdirigering
 // (window.location.replace i App.razor), men det ga et kaldstart-tilfelle
 // med TO fulle sidelastinger etter hverandre (først "/", så "/min-dag") som
@@ -623,11 +623,11 @@ app.Use(async (context, next) =>
         && !context.Request.Query.ContainsKey("fullversjon")
         && MobilDeteksjon.GjettFraUserAgent(context.Request.Headers.UserAgent.ToString()))
     {
-        // Driftslisens og kunde har egne portaler - /min-dag er bare for
+        // Driftslisens og kunde har egne portaler - /app er bare for
         // ansatte, og sendte dem rett tilbake til innloggingen på mobil.
         var mal = context.User.IsInRole(nameof(BrukerRolle.Driftslisens)) ? "/drift"
             : context.User.IsInRole(nameof(BrukerRolle.Kunde)) ? "/kunde"
-            : "/min-dag";
+            : "/app";
         context.Response.Redirect(mal);
         return;
     }
