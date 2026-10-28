@@ -6,12 +6,13 @@ window.erMobilvisning = function () {
     return window.matchMedia('(max-width: 640.98px)').matches;
 };
 
-// Lagrer «fullversjon» både i localStorage (leses i <head> for PC-bredde) og
-// i en informasjonskapsel, så serveren ikke sender en til /app når man går
-// til forsiden i fullversjon.
+// Lagrer «fullversjon» for økten: i sessionStorage (leses i <head> for
+// PC-bredde) og i en øktkapsel, så serveren ikke sender en til /app når man
+// går til forsiden i fullversjon. Begge forsvinner når appen lukkes, og
+// nullstilles ved innlogging (se App.razor).
 window.settFullversjon = function (paa) {
-    try { localStorage.setItem('itlock-fullversjon', paa ? '1' : '0'); } catch (e) { }
-    document.cookie = 'itlock-fullversjon=' + (paa ? '1' : '0') + '; path=/; max-age=31536000; samesite=lax';
+    try { sessionStorage.setItem('itlock-fullversjon', paa ? '1' : '0'); localStorage.removeItem('itlock-fullversjon'); } catch (e) { }
+    document.cookie = 'itlock-fullversjon=' + (paa ? '1' : '0') + '; path=/; samesite=lax';
 };
 
 // MainLayout er statisk og kan derfor bare avgjøre "content-fullversjon"
