@@ -1,0 +1,224 @@
+@page "/app/soknader"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Søknader</PageTitle>
+
+@* Fraværssøknadene dine med status, feriedager igjen i år, og «Ny søknad»
+   som et ark nedenfra. Søknaden behandles av lederen i fullversjonen. *@
+<div class="ma">
+    <AppHode Ikon="send" Tittel="Søknader" Under="@_navn">
+        <span class="ma-skille"></span>
+        <button type="button" class="ma-ikonknapp" @onclick="Ny" aria-label="Ny søknad"><Icon Name="plus" /></button>
+    </AppHode>
+
+    <div class="ma-sum">
+        <span><Icon Name="sun" />Feriedager igjen @DateTime.Today.Year</span>
+        <span>@_ferieIgjen av @_kvote</span>
+    </div>
+
+    @if (_melding is not null)
+    {
+        <p class="ma-melding" role="status" style="margin:.6rem .2rem">@_melding</p>
+    }
+
+    <div class="ma-liste">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (_soknader.Count == 0)
+        {
+            <p class="ma-tom">Ingen søknader ennå. Trykk + for å søke om ferie eller fravær.</p>
+        }
+        @foreach (var s in _soknader)
+        {
+            <div class="ma-kort" style="cursor:default">
+                <span class="ma-kort-tekst">
+                    <h3>@s.Type.Visningsnavn()</h3>
+                    <span class="ma-linje"><Icon Name="calendar" /><span>@Periode(s)</span></span>
+                    @if (!string.IsNullOrWhiteSpace(s.Kommentar))
+                    {
+                        <span class="ma-linje"><Icon Name="edit" /><span>@s.Kommentar</span></span>
+                    }
+                </span>
+                <span class="ma-merke @(s.Status switch { FravarStatus.Godkjent => "gronn", FravarStatus.Avslatt => "rod", _ => "gul" })">@s.Status.Visningsnavn()</span>
+            </div>
+        }
+    </div>
+    <div class="ma-under">
+        <button type="button" class="ma-knapp" @onclick="Ny"><Icon Name="plus" />Ny søknad</button>
+    </div>
+
+    @if (_ny)
+    {
+        <div class="ma-ark-bak" @onclick="@(() => _ny = false)">
+            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Ny søknad">
+                <div class="ma-ark-handtak"></div>
+                <h2>Ny søknad</h2>
+                <div class="ma-felt">
+                    <b>Type</b>
+                    <select @bind="_type">
+                        @foreach (var t in Enum.GetValues<FravarType>())
+                        {
+                            <option value="@t">@t.Visningsnavn()</option>
+                        }
+                    </select>
+                </div>
+                <div class="ma-felt-rad" style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
+                    <div class="ma-felt"><b>Fra</b><input type="date" @bind="_fra" /></div>
+                    <div class="ma-felt"><b>Til</b><input type="date" @bind="_til" /></div>
+                </div>
+                <label class="ma-felt" style="flex-direction:row;display:flex;align-items:center;gap:.5rem">
+                    <input type="checkbox" @bind="_heleDagen" /> <span>Hele dager</span>
+                </label>
+                @if (!_heleDagen)
+                {
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
+                        <div class="ma-felt"><b>Fra kl.</b><input type="time" @bind="_start" /></div>
+                        <div class="ma-felt"><b>Til kl.</b><input type="time" @bind="_slutt" /></div>
+                    </div>
+                }
+                <div class="ma-felt">
+                    <b>Kommentar</b>
+                    <textarea rows="3" maxlength="500" @bind="_kommentar" @bind:event="oninput"></textarea>
+                </div>
+                @if (_type == FravarType.Ferie && _heleDagen)
+                {
+                    <p class="ma-teller-tekst" style="text-align:left;font-style:normal">@Hverdager(_fra, _til) @(Hverdager(_fra, _til) == 1 ? "feriedag" : "feriedager") · @_ferieIgjen igjen</p>
+                }
+                @if (_feil is not null)
+                {
+                    <p class="ma-feil" role="alert">@_feil</p>
+                }
+                <div class="ma-under">
+                    <button type="button" class="ma-knapp" @onclick="Send" disabled="@_lagrer"><Icon Name="send" />@(_lagrer ? "Sender …" : "Send søknad")</button>
+                    <button type="button" class="ma-knapp sek" @onclick="@(() => _ny = false)">Avbryt</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "sendt")] public int? Sendt { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _lastet;
+    private bool _ny;
+    private bool _lagrer;
+    private string? _feil;
+    private string? _melding;
+    private int _brukerId;
+    private string _navn = "";
+    private int _kvote = 25;
+    private int _ferieIgjen;
+    private List<FravarSoknad> _soknader = [];
+
+    private FravarType _type = FravarType.Ferie;
+    private DateTime _fra = DateTime.Today;
+    private DateTime _til = DateTime.Today;
+    private bool _heleDagen = true;
+    private TimeOnly _start = new(8, 0);
+    private TimeOnly _slutt = new(12, 0);
+    private string? _kommentar;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            _brukerId = id;
+        }
+
+        var bruker = await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == _brukerId);
+        _navn = bruker?.Navn ?? "";
+        _kvote = bruker?.FerieKvote ?? 25;
+        if (Sendt == 1) _melding = "Søknaden er sendt. Du ser status her når lederen har behandlet den.";
+        await Last();
+    }
+
+    private async Task Last()
+    {
+        _soknader = await Db.FravarSoknader.AsNoTracking().Where(f => f.BrukerId == _brukerId)
+            .OrderByDescending(f => f.FraDato).Take(100).ToListAsync();
+
+        // Godkjent og ventende ferie i år trekkes fra kvoten.
+        var ar = DateTime.Today.Year;
+        var brukt = _soknader.Where(f => f.Type == FravarType.Ferie && f.Status != FravarStatus.Avslatt && f.HeleDagen)
+            .Sum(f => Hverdager(f.FraDato.Year < ar ? new DateTime(ar, 1, 1) : f.FraDato, f.TilDato.Year > ar ? new DateTime(ar, 12, 31) : f.TilDato));
+        _ferieIgjen = Math.Max(0, _kvote - brukt);
+        _lastet = true;
+    }
+
+    private void Ny()
+    {
+        _type = FravarType.Ferie;
+        _fra = _til = DateTime.Today;
+        _heleDagen = true;
+        _kommentar = null;
+        _feil = null;
+        _melding = null;
+        _ny = true;
+    }
+
+    private async Task Send()
+    {
+        _feil = null;
+        if (_til < _fra)
+        {
+            _feil = "Til-datoen kan ikke være før fra-datoen.";
+            return;
+        }
+
+        if (!_heleDagen && (_fra != _til || _slutt <= _start))
+        {
+            _feil = _fra != _til ? "Deler av en dag kan bare søkes for én dato om gangen." : "Til kl. må være etter fra kl.";
+            return;
+        }
+
+        _lagrer = true;
+        try
+        {
+            Db.FravarSoknader.Add(new FravarSoknad
+            {
+                BrukerId = _brukerId,
+                Type = _type,
+                FraDato = _fra.Date,
+                TilDato = _til.Date,
+                HeleDagen = _heleDagen,
+                StartTid = _heleDagen ? null : _start,
+                SluttTid = _heleDagen ? null : _slutt,
+                Kommentar = string.IsNullOrWhiteSpace(_kommentar) ? null : _kommentar.Trim()
+            });
+            await Db.SaveChangesAsync();
+            _ny = false;
+            _melding = "Søknaden er sendt. Du ser status her når lederen har behandlet den.";
+            await Last();
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    private static int Hverdager(DateTime fra, DateTime til)
+    {
+        var n = 0;
+        for (var d = fra.Date; d <= til.Date; d = d.AddDays(1))
+        {
+            if (d.DayOfWeek is not DayOfWeek.Saturday and not DayOfWeek.Sunday) n++;
+        }
+
+        return n;
+    }
+
+    private static string Periode(FravarSoknad f)
+    {
+        var p = f.FraDato.Date == f.TilDato.Date ? MontorApp.DagKort(f.FraDato) : $"{MontorApp.Dato(f.FraDato)} – {MontorApp.Dato(f.TilDato)}";
+        return !f.HeleDagen && f.StartTid is { } s && f.SluttTid is { } e ? $"{p} kl. {s:HH\\:mm}–{e:HH\\:mm}" : p;
+    }
+}

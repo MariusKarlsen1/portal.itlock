@@ -1,0 +1,115 @@
+@page "/app/prosjekter"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Prosjekter</PageTitle>
+
+@* Pågående prosjekter med fremdrift på dørene og overleveringsfrist.
+   «Mine» er prosjekter der montøren er ansvarlig eller har en åpen ordre. *@
+<div class="ma">
+    <AppHode Ikon="folder" Tittel="Prosjekter" Under="@(_alle ? "Alle pågående prosjekter" : "Mine prosjekter")" />
+
+    <div class="ma-sok">
+        <button type="button" class="ma-modus @(!_alle ? "aktiv" : "")" @onclick="@(() => _alle = false)" aria-pressed="@(!_alle)" title="Mine prosjekter"><Icon Name="users" /></button>
+        <button type="button" class="ma-modus @(_alle ? "aktiv" : "")" @onclick="@(() => _alle = true)" aria-pressed="@_alle" title="Alle prosjekter"><Icon Name="list" /></button>
+        <input type="search" placeholder="Søk" aria-label="Søk" @bind="_sok" @bind:event="oninput" />
+    </div>
+
+    <div class="ma-liste">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (Liste.Count == 0)
+        {
+            <p class="ma-tom">@(_alle ? "Ingen pågående prosjekter passer søket." : "Du er ikke satt på noen pågående prosjekter. Trykk på listeikonet for å se alle.")</p>
+        }
+        @foreach (var p in Liste)
+        {
+            var pst = p.Dorer == 0 ? 0 : p.Ferdige * 100 / p.Dorer;
+            <a class="ma-kort" href="@($"/app/prosjekt/{p.Id}")">
+                <span class="ma-kort-tekst">
+                    <h3>@p.Navn<em>Prosjekt</em></h3>
+                    <span class="ma-linje"><Icon Name="users" /><span>@(p.Kunde ?? "Uten kunde")</span></span>
+                    @if (p.Adresse is not null)
+                    {
+                        <span class="ma-linje"><Icon Name="map-pin" /><span>@p.Adresse</span></span>
+                    }
+                    @if (p.Frist is { } f)
+                    {
+                        <span class="ma-linje @(f < DateTime.Today ? "ma-status-rod" : "")"><Icon Name="calendar" /><span>Overlevering @MontorApp.Dato(f)</span></span>
+                    }
+                    @if (p.Dorer > 0)
+                    {
+                        <span class="ma-linje dempet"><Icon Name="door" /><span>@p.Ferdige av @p.Dorer dører ferdig montert</span></span>
+                        <span class="ma-fremdrift" style="display:block"><i style="width:@(pst)%"></i></span>
+                    }
+                </span>
+                <span class="ma-pilknapp"><Icon Name="chevron-right" /></span>
+            </a>
+        }
+    </div>
+    <div class="ma-bunnlinje">@Liste.Count prosjekter</div>
+</div>
+
+@code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Rad(int Id, string Navn, string? Kunde, string? Adresse, DateTime? Frist, int Dorer, int Ferdige, bool Min);
+
+    private bool _lastet;
+    private bool _alle;
+    private string _sok = "";
+    private List<Rad> _prosjekter = [];
+
+    private List<Rad> Liste
+    {
+        get
+        {
+            IEnumerable<Rad> l = _alle ? _prosjekter : _prosjekter.Where(p => p.Min);
+            if (_sok.Trim() is { Length: > 0 } s)
+            {
+                l = l.Where(p => $"{p.Navn} {p.Kunde} {p.Adresse}".Contains(s, StringComparison.CurrentCultureIgnoreCase));
+            }
+
+            return l.ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var brukerId = 0;
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            brukerId = id;
+        }
+
+        var medOrdre = await Db.Arbeidsordre.AsNoTracking()
+            .Where(a => a.ProsjektId != null && a.AnsvarligMontorId == brukerId
+                && (a.Status == ArbeidsordreStatus.Ny || a.Status == ArbeidsordreStatus.Klar || a.Status == ArbeidsordreStatus.Pagaende))
+            .Select(a => a.ProsjektId!.Value).Distinct().ToListAsync();
+
+        var liste = await Db.Prosjekter.AsNoTracking()
+            .Where(p => p.Status == ProsjektStatus.UnderArbeid || p.Status == ProsjektStatus.Aktiv || p.Status == ProsjektStatus.Registrert || medOrdre.Contains(p.Id))
+            .Select(p => new
+            {
+                p.Id, p.Navn, Kunde = p.Kunde != null ? p.Kunde.Navn : null, p.Adresse, p.Postnr, p.Sted,
+                p.OverleveringsfristDato, p.AnsvarligMontorId, p.Status,
+                Dorer = p.Dorer.Count, Ferdige = p.Dorer.Count(d => d.Status == MontasjeStatus.FerdigMontert)
+            })
+            .ToListAsync();
+
+        _prosjekter = liste
+            .Select(p => new Rad(p.Id, p.Navn, p.Kunde,
+                string.Join(", ", new[] { p.Adresse, $"{p.Postnr} {p.Sted}".Trim() }.Where(x => !string.IsNullOrWhiteSpace(x))) is { Length: > 0 } a ? a : null,
+                p.OverleveringsfristDato, p.Dorer, p.Ferdige, p.AnsvarligMontorId == brukerId || medOrdre.Contains(p.Id)))
+            .OrderByDescending(p => p.Min).ThenBy(p => p.Frist ?? DateTime.MaxValue).ThenBy(p => p.Navn)
+            .ToList();
+        _alle = !_prosjekter.Any(p => p.Min);
+        _lastet = true;
+    }
+}

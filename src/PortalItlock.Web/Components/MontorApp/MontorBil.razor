@@ -1,0 +1,109 @@
+@page "/app/bil"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject LagerService LagerSvc
+@inject TilleggsmodulService Tilleggsmoduler
+@inject NavigationManager Nav
+
+<PageTitle>Bilen min</PageTitle>
+
+@* Hva som ligger i bilen, med varer under standard antall øverst. Bruk,
+   retur og påfyll føres i «Min bil» i fullversjonen. *@
+<div class="ma">
+    <AppHode Ikon="box" Tittel="Bilen min" Under="@(_bil?.Navn ?? "")">
+        <span class="ma-skille"></span>
+        <a class="ma-ikonknapp" href="/min-bil" aria-label="Bruk, retur og påfyll"><Icon Name="edit" /></a>
+    </AppHode>
+
+    <div class="ma-sok">
+        <input type="search" placeholder="Søk etter vare" aria-label="Søk etter vare" @bind="_sok" @bind:event="oninput" />
+    </div>
+
+    @if (_varer.Count(v => v.Under) is > 0 and var under)
+    {
+        <div class="ma-sum" style="color:var(--ma-gul)"><span><Icon Name="alert-triangle" />@under varer under standard</span><a href="/min-bil" style="color:inherit">Fyll på</a></div>
+    }
+
+    <div class="ma-liste">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (_bil is null)
+        {
+            <p class="ma-tom">Du har ingen bil registrert som lager. Be lederen sette deg som ansvarlig på bilen under Lager.</p>
+        }
+        else if (Liste.Count == 0)
+        {
+            <p class="ma-tom">@(string.IsNullOrWhiteSpace(_sok) ? "Bilen er tom." : "Ingen varer passer søket.")</p>
+        }
+        @foreach (var v in Liste)
+        {
+            <div class="ma-rad" style="cursor:default">
+                <span class="ma-rad-tekst">
+                    <b>@v.Navn</b>
+                    <small>@(v.Kode ?? "")@(v.Minimum is { } m ? $"{(v.Kode is null ? "" : " · ")}standard {m}" : "")</small>
+                </span>
+                <span class="ma-merke @(v.Under ? "gul" : "gra")">@v.Antall stk</span>
+            </div>
+        }
+    </div>
+    <div class="ma-bunnlinje">@Liste.Count varer · @Liste.Sum(v => v.Antall) stk</div>
+    <div class="ma-under">
+        <a class="ma-knapp sek" href="/min-bil"><Icon Name="edit" />Før bruk, retur og påfyll</a>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Vare(string Navn, string? Kode, int Antall, int? Minimum)
+    {
+        public bool Under => Minimum is { } m && Antall < m;
+    }
+
+    private bool _lastet;
+    private string _sok = "";
+    private Lager? _bil;
+    private List<Vare> _varer = [];
+
+    private List<Vare> Liste => _varer
+        .Where(v => string.IsNullOrWhiteSpace(_sok) || $"{v.Navn} {v.Kode}".Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase))
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await Tilleggsmoduler.HarAsync(TilleggsModuler.Lager))
+        {
+            Nav.NavigateTo("/app", replace: true);
+            return;
+        }
+
+        var brukerId = 0;
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            brukerId = id;
+        }
+
+        _bil = await Db.Lagre.AsNoTracking().Where(l => l.Aktiv && l.Type == LagerType.Bil && l.AnsvarligBrukerId == brukerId).OrderBy(l => l.Navn).FirstOrDefaultAsync();
+        if (_bil is not null)
+        {
+            var beholdning = (await LagerSvc.BeholdningAsync(lagerId: _bil.Id)).Where(b => b.Antall != 0).ToList();
+            var standard = await Db.VareLagerplasser.AsNoTracking().Where(p => p.LagerId == _bil.Id && p.Minimum != null)
+                .ToDictionaryAsync(p => p.ComponentId, p => p.Minimum);
+            var ider = beholdning.Select(b => b.ComponentId).Concat(standard.Keys).Distinct().ToList();
+            var komponenter = await Db.Components.AsNoTracking().Where(c => ider.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+            _varer = ider.Where(komponenter.ContainsKey)
+                .Select(i => new Vare(komponenter[i].Navn, komponenter[i].Produktkode,
+                    beholdning.Where(b => b.ComponentId == i).Sum(b => b.Antall), standard.GetValueOrDefault(i)))
+                .OrderByDescending(v => v.Under).ThenBy(v => v.Navn, StringComparer.CurrentCultureIgnoreCase).ToList();
+        }
+
+        _lastet = true;
+    }
+}

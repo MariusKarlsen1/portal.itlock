@@ -1,0 +1,180 @@
+@page "/app/ordre"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Ordre</PageTitle>
+
+@* Ordrelisten i montørappen: mine eller alle åpne arbeidsordre, søk,
+   gruppering og sortering. Den aktive ordren ligger øverst. *@
+<div class="ma">
+    <AppHode Ikon="tool" Tittel="Ordre" Under="@(_alle ? "Alle åpne arbeidsordre" : "Mine arbeidsordre")">
+        <span class="ma-skille"></span>
+        <a class="ma-ikonknapp" href="/arbeidsordre" aria-label="Kart og alle arbeidsordre"><Icon Name="map" /></a>
+    </AppHode>
+
+    <div class="ma-sok">
+        <button type="button" class="ma-modus @(!_alle ? "aktiv" : "")" @onclick="@(() => _alle = false)" aria-pressed="@(!_alle)" title="Mine ordre"><Icon Name="users" /></button>
+        <button type="button" class="ma-modus @(_alle ? "aktiv" : "")" @onclick="@(() => _alle = true)" aria-pressed="@_alle" title="Alle ordre"><Icon Name="list" /></button>
+        <input type="search" placeholder="Søk" aria-label="Søk" @bind="_sok" @bind:event="oninput" />
+    </div>
+
+    <div class="ma-filter">
+        <span class="ma-trakt"><Icon Name="filter" /></span>
+        <label><span>Grupper etter</span>
+            <select @bind="_grupper">
+                <option value="ingen">Ingen gruppering</option>
+                <option value="status">Status</option>
+                <option value="kunde">Kunde</option>
+                <option value="prosjekt">Prosjekt</option>
+            </select>
+        </label>
+        <label><span>Sorter etter</span>
+            <select @bind="_sorter">
+                <option value="dato">Dato</option>
+                <option value="adresse">Adresse</option>
+                <option value="nr">Ordrenr</option>
+            </select>
+        </label>
+    </div>
+
+    <div class="ma-liste">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (Liste.Count == 0)
+        {
+            <p class="ma-tom">@(_alle ? "Ingen åpne arbeidsordre passer søket." : "Ingen arbeidsordre er tildelt deg. Trykk på listeikonet for å se alle.")</p>
+        }
+        else if (_grupper == "ingen")
+        {
+            @foreach (var a in Liste)
+            {
+                @Kort(a)
+            }
+        }
+        else
+        {
+            @foreach (var g in Liste.GroupBy(Gruppe))
+            {
+                <div class="ma-gruppe">@g.Key · @g.Count()</div>
+                @foreach (var a in g)
+                {
+                    @Kort(a)
+                }
+            }
+        }
+    </div>
+    <div class="ma-bunnlinje">@Liste.Count ordre</div>
+
+    @if (_info is { } i)
+    {
+        <div class="ma-ark-bak" @onclick="@(() => _info = null)">
+            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true">
+                <div class="ma-ark-handtak"></div>
+                <h2>@i.Id @i.Tittel</h2>
+                <div class="ma-liste" style="border:1px solid var(--itlock-border);border-radius:14px">
+                    <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><small>Status</small><b>@i.Status.Visningsnavn()@(i.PlanlagtDato is { } d ? $" · {MontorApp.DagKort(d)}{(d.TimeOfDay > TimeSpan.Zero ? " kl. " + d.ToString("HH:mm") : "")}" : "")</b></span></div>
+                    <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><small>Kunde</small><b>@(i.Kunde?.Navn ?? i.Prosjekt?.Kunde?.Navn ?? "–")</b></span></div>
+                    @if (MontorApp.Adresse(i) is { } adr)
+                    {
+                        <a class="ma-rad" href="@MontorApp.KartLenke(adr)" target="_blank" rel="noopener"><span class="ma-rad-tekst"><small>Adresse</small><b>@adr</b></span><Icon Name="map-pin" /></a>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(i.Beskrivelse))
+                    {
+                        <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><small>Beskrivelse</small><span>@i.Beskrivelse</span></span></div>
+                    }
+                </div>
+                <div class="ma-under">
+                    <a class="ma-knapp" href="@($"/app/ordre/{i.Id}")">Åpne ordren</a>
+                    <button type="button" class="ma-knapp sek" @onclick="@(() => _info = null)">Lukk</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _lastet;
+    private bool _alle;
+    private string _sok = "";
+    private string _grupper = "ingen";
+    private string _sorter = "dato";
+    private int _brukerId;
+    private int? _aktivId;
+    private List<Arbeidsordre> _ordre = [];
+    private Arbeidsordre? _info;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            _brukerId = id;
+        }
+
+        _ordre = await Db.Arbeidsordre.AsNoTracking().Include(a => a.Kunde).Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Where(a => a.Status == ArbeidsordreStatus.Ny || a.Status == ArbeidsordreStatus.Klar || a.Status == ArbeidsordreStatus.Pagaende)
+            .ToListAsync();
+
+        var mine = _ordre.Where(a => a.AnsvarligMontorId == _brukerId).ToList();
+        var idag = DateTime.Today;
+        _aktivId = (mine.FirstOrDefault(a => a.Status == ArbeidsordreStatus.Pagaende && a.PlanlagtDato?.Date == idag)
+            ?? mine.Where(a => a.PlanlagtDato?.Date == idag).OrderBy(a => a.PlanlagtDato).FirstOrDefault()
+            ?? mine.FirstOrDefault(a => a.Status == ArbeidsordreStatus.Pagaende))?.Id;
+        _lastet = true;
+    }
+
+    private List<Arbeidsordre> Liste
+    {
+        get
+        {
+            IEnumerable<Arbeidsordre> l = _alle ? _ordre : _ordre.Where(a => a.AnsvarligMontorId == _brukerId);
+            if (!string.IsNullOrWhiteSpace(_sok))
+            {
+                var s = _sok.Trim();
+                l = l.Where(a => $"{a.Id} {a.Tittel} {a.Kunde?.Navn} {a.Prosjekt?.Navn} {MontorApp.Adresse(a)}".Contains(s, StringComparison.CurrentCultureIgnoreCase));
+            }
+
+            l = _sorter switch
+            {
+                "adresse" => l.OrderBy(a => MontorApp.Adresse(a) ?? "~"),
+                "nr" => l.OrderByDescending(a => a.Id),
+                _ => l.OrderBy(a => a.PlanlagtDato ?? DateTime.MaxValue).ThenByDescending(a => a.Id)
+            };
+            var liste = l.ToList();
+            if (_aktivId is { } aktiv && liste.FirstOrDefault(a => a.Id == aktiv) is { } forst)
+            {
+                liste.Remove(forst);
+                liste.Insert(0, forst);
+            }
+
+            return liste;
+        }
+    }
+
+    private string Gruppe(Arbeidsordre a) => _grupper switch
+    {
+        "status" => a.Status.Visningsnavn(),
+        "kunde" => a.Kunde?.Navn ?? a.Prosjekt?.Kunde?.Navn ?? "Uten kunde",
+        _ => a.Prosjekt?.Navn ?? "Uten prosjekt"
+    };
+
+    private RenderFragment Kort(Arbeidsordre a) => @<a class="ma-kort @(a.Id == _aktivId ? "aktiv" : "")" href="@($"/app/ordre/{a.Id}")">
+        <span class="ma-kort-tekst">
+            <h3>@a.Id @a.Tittel<em>Ordre</em></h3>
+            <span class="ma-linje dempet"><i class="ma-prikk ma-prikk-@MontorApp.StatusKlasse(a.Status)"></i><span>@a.Status.Visningsnavn()@(a.Id == _aktivId ? " · aktiv" : "")@(a.PlanlagtDato is { } d ? " · " + MontorApp.DagKort(d) + (d.TimeOfDay > TimeSpan.Zero ? " " + d.ToString("HH:mm") : "") : "")</span></span>
+            <span class="ma-linje"><Icon Name="users" /><span>@(a.Kunde?.Navn ?? a.Prosjekt?.Kunde?.Navn ?? "Uten kunde")</span></span>
+            @if (MontorApp.Adresse(a) is { } adr)
+            {
+                <span class="ma-linje"><Icon Name="map-pin" /><span>@adr</span></span>
+            }
+        </span>
+        <button type="button" class="ma-info" @onclick="@(() => _info = a)" @onclick:preventDefault="true" @onclick:stopPropagation="true" aria-label="Info">i</button>
+    </a>;
+}

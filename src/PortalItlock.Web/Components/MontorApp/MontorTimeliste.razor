@@ -1,0 +1,205 @@
+@page "/app/timeliste"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Timeliste</PageTitle>
+
+@* Timelisten for en periode: sum per dag, detaljer per dag og sum per
+   timetype. Fravær som ikke er avslått telles med. *@
+<div class="ma">
+    <AppHode Ikon="list" Tittel="Timeliste" Under="@_navn" />
+
+    <div class="ma-filter" style="flex-wrap:wrap">
+        <span class="ma-trakt"><Icon Name="calendar" /></span>
+        <label><span>Periode</span>
+            <select value="@_periode" @onchange="@(e => VelgPeriode(e.Value?.ToString()))">
+                <option value="uke">Denne uka</option>
+                <option value="forrige">Forrige uke</option>
+                <option value="maned">Denne måneden</option>
+                <option value="egen">Egendefinert</option>
+            </select>
+        </label>
+        @if (_periode == "egen")
+        {
+            <label><span>Fra</span><input type="date" value="@_fra.ToString("yyyy-MM-dd")" @onchange="@(e => SettDato(e.Value?.ToString(), true))" /></label>
+            <label><span>Til</span><input type="date" value="@_til.ToString("yyyy-MM-dd")" @onchange="@(e => SettDato(e.Value?.ToString(), false))" /></label>
+        }
+    </div>
+
+    <div class="ma-faner" role="tablist">
+        <button type="button" role="tab" class="@(_fane == 0 ? "aktiv" : "")" aria-selected="@(_fane == 0)" @onclick="@(() => _fane = 0)">Timer</button>
+        <button type="button" role="tab" class="@(_fane == 1 ? "aktiv" : "")" aria-selected="@(_fane == 1)" @onclick="@(() => _fane = 1)">Detaljer</button>
+        <button type="button" role="tab" class="@(_fane == 2 ? "aktiv" : "")" aria-selected="@(_fane == 2)" @onclick="@(() => _fane = 2)">Sum</button>
+    </div>
+
+    <div class="ma-liste" style="padding:0">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (_fane == 0)
+        {
+            @foreach (var d in Dager)
+            {
+                var sum = _rader.Where(r => r.Dato == d).Sum(r => r.Timer);
+                <div class="ma-sum" style="font-weight:@(sum > 0 ? 700 : 400)">
+                    <span>@MontorApp.DagKort(d)</span><span>@MontorApp.Timer(sum)</span>
+                </div>
+            }
+        }
+        else if (_fane == 1)
+        {
+            @foreach (var d in Dager.Where(d => _rader.Any(r => r.Dato == d)))
+            {
+                var dag = d;
+                var apen = _apne.Contains(d);
+                <button type="button" class="ma-dag @(apen ? "apen" : "")" aria-expanded="@apen" @onclick="@(() => Veksle(dag))">
+                    <span class="ma-snu"><Icon Name="chevron-right" /></span>
+                    <b>@MontorApp.Dato(d)</b>
+                    <span class="ma-dag-navn">@MontorApp.Kultur.DateTimeFormat.GetDayName(d.DayOfWeek)</span>
+                    <b>@MontorApp.Timer(_rader.Where(r => r.Dato == d).Sum(r => r.Timer))</b>
+                </button>
+                @if (apen)
+                {
+                    @foreach (var r in _rader.Where(r => r.Dato == d))
+                    {
+                        <div class="ma-rad innrykk" style="cursor:default;padding-left:2.4rem">
+                            <span class="ma-rad-tekst">
+                                <b>@r.Type</b>
+                                <small>@(r.Ordre ?? r.Status)@(string.IsNullOrWhiteSpace(r.Kommentar) ? "" : " · " + r.Kommentar)</small>
+                            </span>
+                            <b>@MontorApp.Timer(r.Timer)</b>
+                        </div>
+                    }
+                }
+            }
+            @if (_rader.Count == 0)
+            {
+                <p class="ma-tom">Ingen timer i perioden.</p>
+            }
+        }
+        else
+        {
+            @foreach (var g in _rader.GroupBy(r => r.Type).OrderByDescending(g => g.Sum(r => r.Timer)))
+            {
+                <div class="ma-sum" style="font-weight:400"><span>@g.Key</span><b>@MontorApp.Timer(g.Sum(r => r.Timer))</b></div>
+            }
+            @if (_rader.Count == 0)
+            {
+                <p class="ma-tom">Ingen timer i perioden.</p>
+            }
+        }
+    </div>
+    <div class="ma-bunnlinje" style="display:flex;justify-content:space-between">
+        <span>Sum timer · @MontorApp.Dato(_fra) – @MontorApp.Dato(_til)</span><b>@MontorApp.Timer(_rader.Sum(r => r.Timer))</b>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Rad(DateTime Dato, string Type, string? Ordre, string? Kommentar, decimal Timer, string Status);
+
+    private bool _lastet;
+    private int _brukerId;
+    private string _navn = "";
+    private string _periode = "uke";
+    private int _fane;
+    private DateTime _fra = MontorApp.Mandag(DateTime.Today);
+    private DateTime _til = MontorApp.Mandag(DateTime.Today).AddDays(6);
+    private List<MontorApp.Timetype> _typer = [];
+    private List<Rad> _rader = [];
+    private readonly HashSet<DateTime> _apne = [];
+
+    private IEnumerable<DateTime> Dager
+    {
+        get
+        {
+            for (var d = _fra; d <= _til; d = d.AddDays(1))
+            {
+                yield return d;
+            }
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            _brukerId = id;
+        }
+
+        _navn = await Db.Brukere.Where(b => b.Id == _brukerId).Select(b => b.Navn).FirstOrDefaultAsync() ?? "";
+        _typer = MontorApp.Timetyper(await Db.PrisKoder.AsNoTracking().ToListAsync());
+        await Last();
+    }
+
+    private async Task VelgPeriode(string? p)
+    {
+        _periode = p ?? "uke";
+        var i = DateTime.Today;
+        (_fra, _til) = _periode switch
+        {
+            "forrige" => (MontorApp.Mandag(i).AddDays(-7), MontorApp.Mandag(i).AddDays(-1)),
+            "maned" => (new DateTime(i.Year, i.Month, 1), new DateTime(i.Year, i.Month, 1).AddMonths(1).AddDays(-1)),
+            "egen" => (_fra, _til),
+            _ => (MontorApp.Mandag(i), MontorApp.Mandag(i).AddDays(6))
+        };
+        await Last();
+    }
+
+    private async Task SettDato(string? verdi, bool fra)
+    {
+        if (!DateTime.TryParse(verdi, out var d))
+        {
+            return;
+        }
+
+        if (fra) _fra = d.Date; else _til = d.Date;
+        if (_til < _fra) (_fra, _til) = (_til, _fra);
+        if ((_til - _fra).TotalDays > 366) _til = _fra.AddDays(366);
+        await Last();
+    }
+
+    private void Veksle(DateTime d)
+    {
+        if (!_apne.Remove(d)) _apne.Add(d);
+    }
+
+    private async Task Last()
+    {
+        var timer = await Db.Timeregistreringer.AsNoTracking().Include(t => t.Arbeidsordre)
+            .Where(t => t.MontorId == _brukerId && t.Dato >= _fra && t.Dato <= _til)
+            .ToListAsync();
+        timer = timer.OrderBy(t => t.Dato).ThenBy(t => t.Start).ToList();
+        var rader = timer.Select(t => new Rad(t.Dato.Date, MontorApp.TypeFor(t, _typer).Visning,
+            t.Arbeidsordre is { } a ? $"{a.Id} {a.Tittel}" : null, t.Kommentar, t.TotalTimer, t.Status.ToString())).ToList();
+
+        // Fravær fordeles på hverdagene i perioden (hel dag = 7,5 t).
+        var fravar = await Db.FravarSoknader.AsNoTracking()
+            .Where(f => f.BrukerId == _brukerId && f.Status != FravarStatus.Avslatt && f.FraDato <= _til && f.TilDato >= _fra)
+            .ToListAsync();
+        foreach (var f in fravar)
+        {
+            var navn = _typer.FirstOrDefault(t => t.Fravar == f.Type)?.Visning ?? f.Type.Visningsnavn();
+            for (var d = f.FraDato.Date < _fra ? _fra : f.FraDato.Date; d <= f.TilDato.Date && d <= _til; d = d.AddDays(1))
+            {
+                if (d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+                {
+                    continue;
+                }
+
+                var t = !f.HeleDagen && f.StartTid is { } s && f.SluttTid is { } e ? Math.Max(0, (decimal)(e - s).TotalHours) : MontorApp.Arbeidsdag;
+                rader.Add(new Rad(d, navn, null, f.Kommentar, t, f.Status.Visningsnavn()));
+            }
+        }
+
+        _rader = rader.OrderBy(r => r.Dato).ToList();
+        _apne.Clear();
+        _lastet = true;
+    }
+}

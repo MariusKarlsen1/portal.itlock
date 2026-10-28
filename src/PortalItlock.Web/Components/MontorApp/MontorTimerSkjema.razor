@@ -1,0 +1,287 @@
+@page "/app/timer/skjema"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>Timer</PageTitle>
+
+@* Skjemaet for én føring: ansatt, dato, timetype, ordre (for jobb og internt
+   arbeid), antall og kommentar. Jobb og internt arbeid lagres som en
+   timeregistrering på ordren (til godkjenning); fravær som en
+   fraværssøknad. Med ?id= endres en føring som venter. *@
+<div class="ma">
+    <AppHode Ikon="clock" Tittel="@(_id is null ? "Timer" : "Endre timer")" Under="@_navn" Tilbake="@_tilbake">
+        <span class="ma-skille"></span>
+        <button type="button" class="ma-ikonknapp" @onclick="Lagre" disabled="@_lagrer" aria-label="Lagre"><Icon Name="check" /></button>
+    </AppHode>
+
+    @if (!_lastet)
+    {
+        <div class="ma-liste"><p class="ma-tom">Laster …</p></div>
+    }
+    else if (_laast is not null)
+    {
+        <div class="ma-liste"><p class="ma-tom">@_laast</p></div>
+    }
+    else
+    {
+        var type = Valgt;
+        <div class="ma-liste" style="border-radius:0 0 18px 18px">
+            <div class="ma-felt"><b>Ansatt</b><select disabled><option>@_navn</option></select></div>
+            <div class="ma-felt">
+                <b>Dato</b>
+                <span class="ma-stepper">
+                    <button type="button" @onclick="@(() => _dato = _dato.AddDays(-1))" aria-label="Dagen før">−</button>
+                    <span>@MontorApp.Dato(_dato)</span>
+                    <button type="button" @onclick="@(() => _dato = _dato.AddDays(1))" aria-label="Dagen etter">+</button>
+                </span>
+            </div>
+            <div class="ma-felt">
+                <b>Timetype</b>
+                <select @bind="_typeId">
+                    @foreach (var g in _typer.Where(t => _id is null || t.Gruppe != MontorApp.TimetypeGruppe.Fravar).GroupBy(t => t.Gruppe))
+                    {
+                        <optgroup label="@MontorApp.GruppeNavn(g.Key)">
+                            @foreach (var t in g)
+                            {
+                                <option value="@t.Id">@t.Visning</option>
+                            }
+                        </optgroup>
+                    }
+                </select>
+            </div>
+            @if (type.Gruppe != MontorApp.TimetypeGruppe.Fravar)
+            {
+                <div class="ma-felt">
+                    <b>Ordre</b>
+                    <select @bind="_ordreId">
+                        <option value="0">Velg ordre …</option>
+                        @foreach (var a in _ordre)
+                        {
+                            <option value="@a.Id">@a.Id @a.Tittel</option>
+                        }
+                    </select>
+                    @if (type.Gruppe == MontorApp.TimetypeGruppe.Intern)
+                    {
+                        <div class="ma-teller-tekst" style="text-align:left;font-style:normal">Internt arbeid føres på en intern timeordre.</div>
+                    }
+                </div>
+            }
+            <div class="ma-felt">
+                <b>Antall@(type.Gruppe == MontorApp.TimetypeGruppe.Fravar ? " timer (7,5 = hel dag)" : "")</b>
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:.4rem 0">
+                    <span class="ma-stepper">
+                        <button type="button" @onclick="@(() => _antall = Math.Max(0.5m, _antall - 0.5m))" aria-label="Mindre">−</button>
+                        <span>@MontorApp.Timer(_antall)</span>
+                        <button type="button" @onclick="@(() => _antall = Math.Min(24m, _antall + 0.5m))" aria-label="Mer">+</button>
+                    </span>
+                    <button type="button" class="ma-hurtig" @onclick="@(() => _antall = 1m)">1</button>
+                    <button type="button" class="ma-hurtig" @onclick="@(() => _antall = 4m)">4</button>
+                    <button type="button" class="ma-hurtig" @onclick="@(() => _antall = 7.5m)">7.5</button>
+                </div>
+            </div>
+            <div class="ma-felt">
+                <b>Kommentar</b>
+                <textarea rows="4" maxlength="500" @bind="_kommentar" @bind:event="oninput"></textarea>
+                <div class="ma-teller-tekst">@(500 - (_kommentar?.Length ?? 0))</div>
+            </div>
+        </div>
+        @if (_feil is not null)
+        {
+            <p class="ma-feil" role="alert">@_feil</p>
+        }
+        <div class="ma-under">
+            <button type="button" class="ma-knapp" @onclick="Lagre" disabled="@_lagrer"><Icon Name="check" />@(_lagrer ? "Lagrer …" : $"Lagre {MontorApp.Timer(_antall)} t")</button>
+            @if (_id is not null)
+            {
+                <button type="button" class="ma-knapp sek" style="color:var(--ma-rod)" @onclick="Slett" disabled="@_lagrer">Slett føringen</button>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "id")] public int? IdQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "type")] public string? TypeQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "dato")] public string? DatoQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "ordre")] public int? OrdreQuery { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _lastet;
+    private bool _lagrer;
+    private string? _feil;
+    private string? _laast;
+    private int _brukerId;
+    private string _navn = "";
+    private int? _id;
+    private DateTime _dato = DateTime.Today;
+    private string _typeId = "";
+    private int _ordreId;
+    private decimal _antall = 0.5m;
+    private string? _kommentar;
+    private List<MontorApp.Timetype> _typer = [];
+    private List<Arbeidsordre> _ordre = [];
+
+    private MontorApp.Timetype Valgt => _typer.FirstOrDefault(t => t.Id == _typeId) ?? _typer[0];
+    private string _tilbake => OrdreQuery is { } o ? $"/app/timer?ordre={o}" : "/app/timer";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            _brukerId = id;
+        }
+
+        _navn = await Db.Brukere.Where(b => b.Id == _brukerId).Select(b => b.Navn).FirstOrDefaultAsync() ?? "";
+        _typer = MontorApp.Timetyper(await Db.PrisKoder.AsNoTracking().ToListAsync());
+
+        // Åpne ordre: mine først, så resten.
+        _ordre = (await Db.Arbeidsordre.AsNoTracking()
+                .Where(a => a.Status == ArbeidsordreStatus.Ny || a.Status == ArbeidsordreStatus.Klar || a.Status == ArbeidsordreStatus.Pagaende)
+                .ToListAsync())
+            .OrderByDescending(a => a.AnsvarligMontorId == _brukerId).ThenBy(a => a.PlanlagtDato ?? DateTime.MaxValue).ThenBy(a => a.Tittel).ToList();
+
+        if (IdQuery is { } eid)
+        {
+            var t = await Db.Timeregistreringer.AsNoTracking().Include(x => x.Arbeidsordre).FirstOrDefaultAsync(x => x.Id == eid && x.MontorId == _brukerId);
+            if (t is null)
+            {
+                _laast = "Fant ikke føringen.";
+            }
+            else if (t.Status != TimeregistreringStatus.Venter)
+            {
+                _laast = "Føringen er behandlet og kan ikke endres.";
+            }
+            else
+            {
+                _id = t.Id;
+                _dato = t.Dato.Date;
+                _typeId = MontorApp.TypeFor(t, _typer).Id;
+                _ordreId = t.ArbeidsordreId;
+                _antall = Math.Max(0.5m, Math.Round(t.TotalTimer * 2) / 2);
+                _kommentar = t.Kommentar;
+                if (t.Arbeidsordre is { } a && _ordre.All(o => o.Id != a.Id))
+                {
+                    _ordre.Insert(0, a);
+                }
+            }
+        }
+        else
+        {
+            if (DateTime.TryParse(DatoQuery, out var d)) _dato = d.Date;
+            _typeId = _typer.Any(t => t.Id == TypeQuery) ? TypeQuery! : _typer[0].Id;
+            _ordreId = OrdreQuery ?? _ordre.FirstOrDefault(a => a.AnsvarligMontorId == _brukerId && a.PlanlagtDato?.Date == _dato)?.Id ?? 0;
+            if (Valgt.Gruppe == MontorApp.TimetypeGruppe.Fravar) _antall = MontorApp.Arbeidsdag;
+        }
+
+        if (_typeId == "" && _typer.Count > 0) _typeId = _typer[0].Id;
+        _lastet = true;
+    }
+
+    private async Task Lagre()
+    {
+        _feil = null;
+        var type = Valgt;
+        if (_antall <= 0 || _antall > 24)
+        {
+            _feil = "Antall timer må være mellom 0,5 og 24.";
+            return;
+        }
+
+        if (type.Gruppe != MontorApp.TimetypeGruppe.Fravar && _ordre.All(a => a.Id != _ordreId))
+        {
+            _feil = "Velg ordren timene skal føres på.";
+            return;
+        }
+
+        _lagrer = true;
+        try
+        {
+            var kommentar = string.IsNullOrWhiteSpace(_kommentar) ? null : _kommentar.Trim();
+            if (type.Gruppe == MontorApp.TimetypeGruppe.Fravar)
+            {
+                var hel = _antall >= MontorApp.Arbeidsdag;
+                var start = new TimeOnly(7, 0);
+                Db.FravarSoknader.Add(new FravarSoknad
+                {
+                    BrukerId = _brukerId,
+                    Type = type.Fravar!.Value,
+                    FraDato = _dato,
+                    TilDato = _dato,
+                    Kommentar = kommentar,
+                    HeleDagen = hel,
+                    StartTid = hel ? null : start,
+                    SluttTid = hel ? null : start.AddMinutes((double)(_antall * 60))
+                });
+                await Db.SaveChangesAsync();
+                Nav.NavigateTo("/app/soknader?sendt=1");
+                return;
+            }
+
+            var reg = _id is { } eid ? await Db.Timeregistreringer.FirstOrDefaultAsync(t => t.Id == eid && t.MontorId == _brukerId && t.Status == TimeregistreringStatus.Venter) : null;
+            if (_id is not null && reg is null)
+            {
+                _feil = "Føringen er behandlet i mellomtiden og kan ikke endres.";
+                return;
+            }
+
+            // Ny føring legges etter det som allerede er ført samme dag (fra 07:00).
+            var varighet = TimeSpan.FromMinutes((double)(_antall * 60));
+            TimeSpan startTid;
+            if (reg is not null && reg.Dato.Date == _dato)
+            {
+                startTid = reg.Start;
+            }
+            else
+            {
+                var sist = await Db.Timeregistreringer.Where(t => t.MontorId == _brukerId && t.Dato == _dato && (reg == null || t.Id != reg.Id))
+                    .Select(t => t.Slutt).ToListAsync();
+                startTid = sist.Count > 0 ? sist.Max() : new TimeSpan(7, 0, 0);
+            }
+
+            if (startTid + varighet > new TimeSpan(23, 59, 0))
+            {
+                startTid = new TimeSpan(23, 59, 0) - varighet;
+            }
+
+            reg ??= Db.Timeregistreringer.Add(new Timeregistrering { MontorId = _brukerId }).Entity;
+            reg.ArbeidsordreId = _ordreId;
+            reg.Dato = _dato;
+            reg.Start = startTid;
+            reg.Slutt = startTid + varighet;
+            reg.PauseMinutter = 0;
+            reg.Type = type.Type;
+            reg.Aktivitet = type.Aktivitet;
+            reg.PrisKodeId = type.PrisKodeId;
+            reg.Fakturerbar = type.Fakturerbar;
+            reg.Kommentar = kommentar;
+            await Db.SaveChangesAsync();
+            Nav.NavigateTo(_tilbake);
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    private async Task Slett()
+    {
+        if (_id is not { } eid)
+        {
+            return;
+        }
+
+        var reg = await Db.Timeregistreringer.FirstOrDefaultAsync(t => t.Id == eid && t.MontorId == _brukerId && t.Status == TimeregistreringStatus.Venter);
+        if (reg is not null)
+        {
+            Db.Timeregistreringer.Remove(reg);
+            await Db.SaveChangesAsync();
+        }
+
+        Nav.NavigateTo(_tilbake);
+    }
+}

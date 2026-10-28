@@ -1,0 +1,141 @@
+@page "/app/timer"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Timer</PageTitle>
+
+@* Timene dine i montørappen, nyeste først, med filter på timetype.
+   Fra en ordre (?ordre=) vises bare timene på den. Trykk på en føring som
+   venter for å endre den; godkjente timer er låst. *@
+<div class="ma">
+    <AppHode Ikon="clock" Tittel="Timer" Under="@(_ordreTittel is null ? _navn : $"{_navn} · ordre {Ordre}")" Tilbake="@(Ordre is { } o ? $"/app/ordre/{o}" : "/app")">
+        <span class="ma-skille"></span>
+        <a class="ma-ikonknapp" href="@($"/app/timer/ny{(Ordre is { } oo ? $"?ordre={oo}" : "")}")" aria-label="Legg til timer"><Icon Name="plus" /></a>
+    </AppHode>
+
+    <div class="ma-filter">
+        <span class="ma-trakt"><Icon Name="filter" /></span>
+        <label><span>Ansatt</span><select disabled><option>@_navn</option></select></label>
+        <label><span>Timetype</span>
+            <select @bind="_typeFilter">
+                <option value="">Alle</option>
+                @foreach (var t in _typer.Where(t => _rader.Any(r => r.Type.Id == t.Id)))
+                {
+                    <option value="@t.Id">@t.Visning</option>
+                }
+            </select>
+        </label>
+    </div>
+
+    <div class="ma-liste">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (Synlige.Count == 0)
+        {
+            <p class="ma-tom">Ingen timer ført@(Ordre is null ? "" : " på denne ordren"). Trykk + for å legge til.</p>
+        }
+        @foreach (var r in Synlige)
+        {
+            <a class="ma-kort" href="@r.Href">
+                <span class="ma-kort-tekst">
+                    <h3><span class="@StatusKlasse(r.Status)" style="margin-right:.35rem"><Icon Name="@StatusIkon(r.Status)" /></span>@r.Type.Visning</h3>
+                    <span class="ma-linje"><Icon Name="calendar" /><span>@r.DatoTekst</span></span>
+                    @if (r.Ordre is not null)
+                    {
+                        <span class="ma-linje"><Icon Name="tool" /><span>@r.Ordre</span></span>
+                    }
+                    <span class="ma-linje"><Icon Name="edit" /><span>@(string.IsNullOrWhiteSpace(r.Kommentar) ? "–" : r.Kommentar)</span></span>
+                </span>
+                <span class="ma-boks">@MontorApp.Timer(r.Timer)</span>
+                @if (r.Href is not null) { <span class="ma-pilknapp"><Icon Name="chevron-right" /></span> }
+            </a>
+        }
+    </div>
+    <div class="ma-bunnlinje">@Synlige.Count føringer · @MontorApp.Timer(Synlige.Sum(r => r.Timer)) t</div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "ordre")] public int? Ordre { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Rad(DateTime Dato, string DatoTekst, MontorApp.Timetype Type, string? Ordre, string? Kommentar, decimal Timer, string Status, string? Href);
+
+    private bool _lastet;
+    private string _navn = "";
+    private string? _ordreTittel;
+    private string _typeFilter = "";
+    private List<MontorApp.Timetype> _typer = [];
+    private List<Rad> _rader = [];
+
+    private List<Rad> Synlige => _rader.Where(r => _typeFilter == "" || r.Type.Id == _typeFilter).ToList();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var brukerId = 0;
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            brukerId = id;
+        }
+
+        _navn = await Db.Brukere.Where(b => b.Id == brukerId).Select(b => b.Navn).FirstOrDefaultAsync() ?? "";
+        _typer = MontorApp.Timetyper(await Db.PrisKoder.AsNoTracking().ToListAsync());
+        _ordreTittel = Ordre is { } o ? await Db.Arbeidsordre.Where(a => a.Id == o).Select(a => a.Tittel).FirstOrDefaultAsync() : null;
+
+        var timer = await Db.Timeregistreringer.AsNoTracking().Include(t => t.Arbeidsordre)
+            .Where(t => t.MontorId == brukerId && (Ordre == null || t.ArbeidsordreId == Ordre))
+            .OrderByDescending(t => t.Dato).ThenByDescending(t => t.Id).Take(300).ToListAsync();
+        timer = timer.OrderByDescending(t => t.Dato).ThenByDescending(t => t.Start).ToList();
+        var rader = timer.Select(t => new Rad(t.Dato, MontorApp.Dato(t.Dato), MontorApp.TypeFor(t, _typer),
+            t.Arbeidsordre is { } a ? $"{a.Id} {a.Tittel}" : null, t.Kommentar, t.TotalTimer,
+            t.Status.ToString(), t.Status == TimeregistreringStatus.Venter ? $"/app/timer/skjema?id={t.Id}" : null)).ToList();
+
+        if (Ordre is null)
+        {
+            var fravar = await Db.FravarSoknader.AsNoTracking().Where(f => f.BrukerId == brukerId)
+                .OrderByDescending(f => f.FraDato).Take(100).ToListAsync();
+            rader.AddRange(fravar.Select(f => new Rad(f.FraDato,
+                f.FraDato.Date == f.TilDato.Date ? MontorApp.Dato(f.FraDato) : $"{MontorApp.Dato(f.FraDato)} – {MontorApp.Dato(f.TilDato)}",
+                _typer.First(t => t.Fravar == f.Type), null, f.Kommentar, FravarTimer(f), f.Status.ToString(), "/app/soknader")));
+        }
+
+        _rader = rader.OrderByDescending(r => r.Dato).ToList();
+        _lastet = true;
+    }
+
+    // Fravær i timer: hele dager à 7,5 t (hverdager), ellers klokkeslettene.
+    private static decimal FravarTimer(FravarSoknad f)
+    {
+        if (!f.HeleDagen && f.StartTid is { } s && f.SluttTid is { } e)
+        {
+            return Math.Max(0, (decimal)(e - s).TotalHours);
+        }
+
+        var dager = 0;
+        for (var d = f.FraDato.Date; d <= f.TilDato.Date; d = d.AddDays(1))
+        {
+            if (d.DayOfWeek is not DayOfWeek.Saturday and not DayOfWeek.Sunday) dager++;
+        }
+
+        return dager * MontorApp.Arbeidsdag;
+    }
+
+    private static string StatusIkon(string s) => s switch
+    {
+        nameof(TimeregistreringStatus.Godkjent) => "check-circle",
+        nameof(TimeregistreringStatus.Avslatt) => "x-circle",
+        _ => "clock"
+    };
+
+    private static string StatusKlasse(string s) => s switch
+    {
+        nameof(TimeregistreringStatus.Godkjent) => "ma-status-gronn",
+        nameof(TimeregistreringStatus.Avslatt) => "ma-status-rod",
+        _ => "ma-status-gul"
+    };
+}

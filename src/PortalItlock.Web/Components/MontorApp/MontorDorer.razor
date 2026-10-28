@@ -1,0 +1,79 @@
+@page "/app/dorer/{ProsjektId:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>Dører</PageTitle>
+
+@* Dørene på prosjektet med en rute for «ferdig montert». Avhakingen
+   lagres med en gang, med dato og montør, som i dørlisten i portalen. *@
+<div class="ma">
+    <AppHode Ikon="door" Tittel="Dører" Under="@_prosjektNavn" Tilbake="@_tilbake" />
+    <div class="ma-sum"><span>Ferdig montert</span><span>@_dorer.Count(d => d.Status == MontasjeStatus.FerdigMontert) av @_dorer.Count</span></div>
+    <div class="ma-liste">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (_dorer.Count == 0)
+        {
+            <p class="ma-tom">Prosjektet har ingen dører registrert.</p>
+        }
+        @foreach (var d in _dorer)
+        {
+            var dor = d;
+            var ferdig = d.Status == MontasjeStatus.FerdigMontert;
+            <div class="ma-rad" style="cursor:default">
+                <button type="button" class="ma-hake @(ferdig ? "paa" : "")" @onclick="@(() => Veksle(dor))" aria-pressed="@ferdig" aria-label="@($"{dor.Dornummer} ferdig montert")">@if (ferdig) {<Icon Name="check" />}</button>
+                <span class="ma-rad-tekst">
+                    <b>@d.Dornummer@(string.IsNullOrWhiteSpace(d.DorTil) ? "" : " · " + d.DorTil)</b>
+                    <small>@(ferdig ? $"Ferdig montert {d.MontertDato?.ToString("dd.MM.yyyy")}{(d.MontertAvBruker is { } m ? " av " + m.Navn : "")}" : d.Status.Visningsnavn())@(string.IsNullOrWhiteSpace(d.Etasje) ? "" : " · " + (char.IsDigit(d.Etasje[0]) ? d.Etasje + ". etg." : d.Etasje))</small>
+                </span>
+                <a class="ma-pilknapp" href="@($"/dor/{d.Id}")" aria-label="Åpne døra"><Icon Name="chevron-right" /></a>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public int ProsjektId { get; set; }
+    [SupplyParameterFromQuery(Name = "tilbake")] public string? Tilbake { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _lastet;
+    private int _brukerId;
+    private string _prosjektNavn = "";
+    private string _tilbake = "/app/prosjekter";
+    private List<Dor> _dorer = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            _brukerId = id;
+        }
+
+        // Bare lenker internt i appen godtas som tilbake-adresse.
+        _tilbake = Tilbake is { } t && t.StartsWith("/app", StringComparison.Ordinal) ? t : $"/app/prosjekt/{ProsjektId}";
+        _prosjektNavn = await Db.Prosjekter.Where(p => p.Id == ProsjektId).Select(p => p.Navn).FirstOrDefaultAsync() ?? "";
+        _dorer = await Db.Dorer.Include(d => d.MontertAvBruker).Where(d => d.ProsjektId == ProsjektId).ToListAsync();
+        _dorer = _dorer.OrderBy(d => d.Dornummer.Length).ThenBy(d => d.Dornummer, StringComparer.CurrentCultureIgnoreCase).ToList();
+        _lastet = true;
+    }
+
+    private async Task Veksle(Dor d)
+    {
+        var ferdig = d.Status != MontasjeStatus.FerdigMontert;
+        d.Status = ferdig ? MontasjeStatus.FerdigMontert : MontasjeStatus.IkkeStartet;
+        d.MontertDato = ferdig ? DateTime.Now : null;
+        d.MontertAvBrukerId = ferdig ? _brukerId : null;
+        d.MontertAvBruker = ferdig ? await Db.Brukere.FirstOrDefaultAsync(b => b.Id == _brukerId) : null;
+        d.OppdatertDato = DateTime.Now;
+        d.OppdatertAvBrukerId = _brukerId;
+        await Db.SaveChangesAsync();
+    }
+}

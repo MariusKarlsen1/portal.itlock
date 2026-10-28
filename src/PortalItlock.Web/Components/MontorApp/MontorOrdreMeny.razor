@@ -1,0 +1,149 @@
+@page "/app/ordre/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Ordre @Id</PageTitle>
+
+@* Én arbeidsordre i montørappen: en meny med det montøren trenger.
+   Detaljer, produkter, skjema, vedlegg og notater åpner arbeidsordren
+   i portalen; timer og dører har egne sider i appen. *@
+<div class="ma">
+    @if (_a is null)
+    {
+        <AppHode Ikon="tool" Tittel="Ordre" Tilbake="/app/ordre" />
+        <div class="ma-liste"><p class="ma-tom">@(_lastet ? "Fant ikke arbeidsordren." : "Laster …")</p></div>
+    }
+    else
+    {
+        var a = _a;
+        var full = $"/arbeidsordre/{a.Id}";
+        <AppHode Ikon="tool" Tittel="@($"{a.Id} {a.Tittel}")" Under="@(a.Kunde?.Navn ?? a.Prosjekt?.Kunde?.Navn)" Tilbake="/app/ordre">
+            <span class="ma-skille"></span>
+            <a class="ma-ikonknapp" href="@full" aria-label="Ferdigmeld i arbeidsordren"><Icon Name="check" /></a>
+        </AppHode>
+        <div class="ma-liste">
+            @Rad(full, "file-text", "Ordredetaljer", $"{a.Status.Visningsnavn()}{(MontorApp.Adresse(a) is { } adr ? " | " + adr : "")}", null)
+            @Rad($"/app/timer?ordre={a.Id}", "clock", "Timer", $"Dine timer: {MontorApp.Timer(_mineTimer)}", _antallTimer)
+            @if (_dorer > 0)
+            {
+                @Rad($"/app/dorer/{a.ProsjektId}?tilbake=/app/ordre/{a.Id}", "door", "Dører", $"{_dorerFerdig} av {_dorer} ferdig montert", null, $"{_dorerFerdig}/{_dorer}")
+            }
+            @Rad(full, "box", "Produkter", _varer > 0 ? $"{_varer} varer på ordren" : "Varer brukt på ordren", _varer > 0 ? _varer : null)
+            @Rad(full, "clipboard", "Skjema", _sjekk > 0 ? $"{_sjekkFerdig} av {_sjekk} sjekkpunkter" : "Sjekkliste og sluttrapport", null)
+            @Rad(full, "camera", "Vedlegg", _media > 0 ? $"{_media} bilder og filer" : "Bilder og dokumenter", _media > 0 ? _media : null)
+            @Rad(full, "edit", "Notater", string.IsNullOrWhiteSpace(a.UtfortArbeid) ? "Utført arbeid og anbefalinger" : Kort(RikTekst.TilTekst(a.UtfortArbeid)), null)
+            @Rad("/app/kalender", "calendar", "Avtaler", a.PlanlagtDato is { } d ? MontorApp.DagKort(d) + (d.TimeOfDay > TimeSpan.Zero ? " kl. " + d.ToString("HH:mm") : "") : "Ingen avtale", null)
+            <div class="ma-rad" style="cursor:default">
+                <Icon Name="users" />
+                <span class="ma-rad-tekst"><b>Deltakere</b><small>@string.Join(" · ", _deltakere)</small></span>
+                <span class="ma-boks gronn">@_deltakere.Count</span>
+            </div>
+            <button type="button" class="ma-rad" @onclick="@(() => _total = true)">
+                <Icon Name="dokument-linjer" />
+                <span class="ma-rad-tekst"><b>Totaloversikt</b><small>Timer, dører og varer samlet</small></span>
+                <span class="ma-pil"><Icon Name="chevron-right" /></span>
+            </button>
+        </div>
+
+        @if (_total)
+        {
+            <div class="ma-ark-bak" @onclick="@(() => _total = false)">
+                <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true">
+                    <div class="ma-ark-handtak"></div>
+                    <h2>Totaloversikt</h2>
+                    <div class="ma-liste" style="border:1px solid var(--itlock-border);border-radius:14px">
+                        <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><b>Timer på ordren</b><small>@_antallTimerAlle føringer, alle montører</small></span><span class="ma-boks">@MontorApp.Timer(_alleTimer)</span></div>
+                        @if (a.EstimerteTimer is { } est)
+                        {
+                            <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><b>Estimert</b></span><span class="ma-boks">@MontorApp.Timer(est)</span></div>
+                        }
+                        @if (_dorer > 0)
+                        {
+                            <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><b>Dører ferdig montert</b></span><span class="ma-boks gronn">@_dorerFerdig/@_dorer</span></div>
+                        }
+                        <div class="ma-rad" style="cursor:default"><span class="ma-rad-tekst"><b>Varer på ordren</b></span><span class="ma-boks">@_varer</span></div>
+                    </div>
+                    <div class="ma-under"><button type="button" class="ma-knapp sek" @onclick="@(() => _total = false)">Lukk</button></div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _lastet;
+    private bool _total;
+    private Arbeidsordre? _a;
+    private decimal _mineTimer, _alleTimer;
+    private int _antallTimer, _antallTimerAlle, _dorer, _dorerFerdig, _varer, _sjekk, _sjekkFerdig, _media;
+    private List<string> _deltakere = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var brukerId = 0;
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            brukerId = id;
+        }
+
+        _a = await Db.Arbeidsordre.AsNoTracking()
+            .Include(a => a.Kunde).Include(a => a.AnsvarligMontor)
+            .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Include(a => a.Prosjekt).ThenInclude(p => p!.Prosjektleder)
+            .FirstOrDefaultAsync(a => a.Id == Id);
+        if (_a is { } a)
+        {
+            var timer = await Db.Timeregistreringer.AsNoTracking()
+                .Where(t => t.ArbeidsordreId == a.Id && t.Status != TimeregistreringStatus.Avslatt)
+                .Select(t => new { t.MontorId, t.Start, t.Slutt, t.PauseMinutter }).ToListAsync();
+            decimal T(TimeSpan s, TimeSpan e, int p) => Math.Max(0, (decimal)(e - s).TotalHours - p / 60m);
+            _alleTimer = timer.Sum(t => T(t.Start, t.Slutt, t.PauseMinutter));
+            _antallTimerAlle = timer.Count;
+            _mineTimer = timer.Where(t => t.MontorId == brukerId).Sum(t => T(t.Start, t.Slutt, t.PauseMinutter));
+            _antallTimer = timer.Count(t => t.MontorId == brukerId);
+
+            if (a.ProsjektId is { } pid)
+            {
+                _dorer = await Db.Dorer.CountAsync(d => d.ProsjektId == pid);
+                _dorerFerdig = await Db.Dorer.CountAsync(d => d.ProsjektId == pid && d.Status == MontasjeStatus.FerdigMontert);
+            }
+
+            _varer = await Db.ArbeidsordreVarer.CountAsync(v => v.ArbeidsordreId == a.Id);
+            _sjekk = await Db.Set<ArbeidsordreSjekkpunkt>().CountAsync(s => s.ArbeidsordreId == a.Id);
+            _sjekkFerdig = await Db.Set<ArbeidsordreSjekkpunkt>().CountAsync(s => s.ArbeidsordreId == a.Id && s.Fullfort);
+            _media = await Db.Set<ArbeidsordreMedia>().CountAsync(m => m.ArbeidsordreId == a.Id);
+
+            _deltakere = new[]
+            {
+                a.Prosjekt?.Prosjektleder is { } pl ? $"{pl.Navn} (prosjektleder)" : null,
+                a.AnsvarligMontor is { } m ? $"{m.Navn} (montør)" : null
+            }.Where(x => x is not null).Select(x => x!).ToList();
+        }
+
+        _lastet = true;
+    }
+
+    private static RenderFragment Rad(string href, string ikon, string tittel, string under, int? teller, string? tellerTekst = null) => @<a class="ma-rad" href="@href">
+        <Icon Name="@ikon" />
+        <span class="ma-rad-tekst"><b>@tittel</b><small>@under</small></span>
+        @if (tellerTekst is not null || teller is not null)
+        {
+            <span class="ma-boks gronn">@(tellerTekst ?? teller.ToString())</span>
+        }
+        <span class="ma-pil"><Icon Name="chevron-right" /></span>
+    </a>;
+
+    // Første linjene av notatet, som én linje.
+    private static string Kort(string tekst)
+    {
+        var s = string.Join(" · ", tekst.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        return s.Length > 90 ? s[..90].TrimEnd() + " …" : s;
+    }
+}
