@@ -74,6 +74,23 @@ public static class MontorApp
 
     public static string Dato(DateTime d) => d.ToString("dd.MM.yyyy", Kultur);
 
+    // Kort status og prikkfarge for et prosjekt i prosjektlista og på kartet.
+    public static string ProsjektStatusKort(ProsjektStatus? s) => s switch
+    {
+        ProsjektStatus.UnderArbeid => "Under arbeid",
+        ProsjektStatus.Aktiv => "Prosjektering",
+        ProsjektStatus.Registrert => "Registrert",
+        { } x => x.Visningsnavn(),
+        _ => "Uten status"
+    };
+
+    public static string ProsjektStatusKlasse(ProsjektStatus? s) => s switch
+    {
+        ProsjektStatus.UnderArbeid => "pagaende",
+        ProsjektStatus.Aktiv => "ny",
+        _ => "klar"
+    };
+
     public static string DagKort(DateTime d) => d.ToString("ddd", Kultur).TrimEnd('.') + ". " + d.ToString("dd.MM.yyyy", Kultur);
 
     public static string DagLang(DateTime d)

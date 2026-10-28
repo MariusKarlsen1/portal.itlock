@@ -6,6 +6,7 @@
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>@(_p?.Navn ?? "Prosjekt")</PageTitle>
 
@@ -51,8 +52,10 @@
         </header>
 
         <nav class="mp-faner" role="tablist">
-            <button type="button" role="tab" class="@(_fane == "plan" ? "paa" : "")" aria-selected="@(_fane == "plan")" @onclick="@(() => _fane = "plan")">Plantegning</button>
+            <button type="button" role="tab" class="@(_fane == "plan" ? "paa" : "")" aria-selected="@(_fane == "plan")" @onclick="@(() => _fane = "plan")">Plan</button>
             <button type="button" role="tab" class="@(_fane == "dorer" ? "paa" : "")" aria-selected="@(_fane == "dorer")" @onclick="@(() => _fane = "dorer")">Dører</button>
+            <button type="button" role="tab" class="@(_fane == "ordre" ? "paa" : "")" aria-selected="@(_fane == "ordre")" @onclick="@(() => _fane = "ordre")">Ordre@(_ordre.Count > 0 ? $" ({_ordre.Count})" : "")</button>
+            <button type="button" role="tab" class="@(_fane == "avvik" ? "paa" : "")" aria-selected="@(_fane == "avvik")" @onclick="@(() => _fane = "avvik")">Avvik@(_avvik.Count > 0 ? $" ({_avvik.Count})" : "")</button>
             <button type="button" role="tab" class="@(_fane == "info" ? "paa" : "")" aria-selected="@(_fane == "info")" @onclick="@(() => _fane = "info")">Info</button>
         </nav>
 
@@ -76,7 +79,7 @@
                 </div>
                 <div class="mp-plan">
                     <div class="mp-plan-rull">
-                        <div class="mp-plan-flate" style="width:@(_zoom.ToString(CultureInfo.InvariantCulture))%">
+                        <div class="mp-plan-flate" @key="plan.Id" style="width:100%">
                             <img src="@($"/plantegningbilde/{plan.Id}")" alt="@plan.Navn" />
                             @foreach (var d in pins)
                             {
@@ -96,8 +99,8 @@
                         }
                     </div>
                     <div class="mp-zoom">
-                        <button type="button" @onclick="@(() => _zoom = Math.Min(300, _zoom + 50))" aria-label="Zoom inn">+</button>
-                        <button type="button" @onclick="@(() => _zoom = Math.Max(100, _zoom - 50))" aria-label="Zoom ut">−</button>
+                        <button type="button" onclick="planZoom.steg(this, 50)" aria-label="Zoom inn">+</button>
+                        <button type="button" onclick="planZoom.steg(this, -50)" aria-label="Zoom ut">−</button>
                     </div>
                     @if (pins.Count == 0)
                     {
@@ -137,6 +140,56 @@
                 }
             }
         }
+        else if (_fane == "ordre")
+        {
+            @* Samme kort som ordrelista i appen. *@
+            <div class="ma-liste" style="border:0;border-radius:0">
+                @if (_ordre.Count == 0)
+                {
+                    <p class="ma-tom">Ingen åpne arbeidsordre på prosjektet.</p>
+                }
+                @foreach (var a in _ordre)
+                {
+                    <a class="ma-kort" href="@($"/app/ordre/{a.Id}")">
+                        <span class="ma-kort-tekst">
+                            <h3>@a.Id @a.Tittel<em>Ordre</em></h3>
+                            <span class="ma-linje dempet"><i class="ma-prikk ma-prikk-@MontorApp.StatusKlasse(a.Status)"></i><span>@a.Status.Visningsnavn()@(a.PlanlagtDato is { } d ? " · " + MontorApp.DagKort(d) + (d.TimeOfDay > TimeSpan.Zero ? " " + d.ToString("HH:mm") : "") : "")</span></span>
+                            <span class="ma-linje"><Icon Name="users" /><span>@(a.AnsvarligMontor?.Navn ?? "Ikke tildelt")</span></span>
+                            @if (MontorApp.Adresse(a) is { } oadr)
+                            {
+                                <span class="ma-linje"><Icon Name="map-pin" /><span>@oadr</span></span>
+                            }
+                        </span>
+                        <span class="ma-pilknapp"><Icon Name="chevron-right" /></span>
+                    </a>
+                }
+            </div>
+        }
+        else if (_fane == "avvik")
+        {
+            @* Åpne avvik på dørene. Nytt avvik meldes fra døra (trykk på en dør). *@
+            @if (_avvik.Count == 0)
+            {
+                <p class="mp-tom">Ingen åpne avvik. Meld avvik fra døra det gjelder.</p>
+            }
+            else
+            {
+                <div class="mp-kort">
+                    @foreach (var av in _avvik)
+                    {
+                        var dor = _dorer.FirstOrDefault(d => d.Id == av.DorId);
+                        <button type="button" class="mp-rad" style="width:100%;border-left:0;border-right:0;border-top:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer" @onclick="@(() => { if (dor is not null) Apne(dor); })">
+                            <span class="mp-ik" style="color:#b4372b"><Icon Name="alert-triangle" /></span>
+                            <span class="mp-rad-tekst">
+                                <b>@av.Overskrift</b>
+                                <small>@av.NummerTekst@(dor is null ? "" : " · dør " + dor.Dornummer)@(av.Prioritet == AvvikPrioritet.Hoy ? " · høy prioritet" : "") · @av.OpprettetDato.ToString("dd.MM HH:mm")</small>
+                            </span>
+                            <span class="mp-pil"><Icon Name="chevron-right" /></span>
+                        </button>
+                    }
+                </div>
+            }
+        }
         else
         {
             <div class="mp-kort">
@@ -166,21 +219,12 @@
                 }
             </div>
             <div class="mp-kort">
-                @foreach (var a in _ordre)
-                {
-                    <a class="mp-rad" href="@($"/app/ordre/{a.Id}")">
-                        <span class="mp-ik"><Icon Name="tool" /></span><span class="mp-rad-tekst"><b>@a.Id @a.Tittel</b><small>@a.Status.Visningsnavn()@(a.PlanlagtDato is { } pd ? " · " + MontorApp.DagKort(pd) : "")</small></span><span class="mp-pil"><Icon Name="chevron-right" /></span>
-                    </a>
-                }
                 <a class="mp-rad" href="@($"/prosjekt/{Id}/plukkliste")">
                     <span class="mp-ik"><Icon Name="box" /></span><span class="mp-rad-tekst"><b>Plukkliste</b><small>Varer til prosjektet</small></span><span class="mp-pil"><Icon Name="chevron-right" /></span>
                 </a>
                 <a class="mp-rad" href="@($"/prosjekter/{Id}")">
                     <span class="mp-ik"><Icon Name="file-text" /></span><span class="mp-rad-tekst"><b>Prosjektkortet</b><small>Tegninger, dokumenter, CE og avvik</small></span><span class="mp-pil"><Icon Name="chevron-right" /></span>
                 </a>
-                <div class="mp-rad">
-                    <span class="mp-ik"><Icon Name="alert-triangle" /></span><span class="mp-rad-tekst"><b>Avvik</b><small>@(_apneAvvik.Count == 0 ? "Ingen åpne avvik" : _apneAvvik.Count == 1 ? "1 dør med åpent avvik" : $"{_apneAvvik.Count} dører med åpne avvik")</small></span>
-                </div>
             </div>
         }
 
@@ -257,7 +301,6 @@
     private string? _feil;
     private string _fane = "plan";
     private string _sok = "";
-    private int _zoom = 100;
     private int _planId;
     private int _brukerId;
     private Prosjekt? _p;
@@ -265,7 +308,17 @@
     private List<Dor> _dorer = [];
     private List<Arbeidsordre> _ordre = [];
     private HashSet<int> _apneAvvik = [];
+    private List<Avvik> _avvik = [];
     private Dor? _valgt;
+
+    // Knipezoom på plantegningen kobles på når tegningen vises.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_fane == "plan" && _planer.Count > 0)
+        {
+            await JS.InvokeVoidAsync("planZoom.koble");
+        }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -285,7 +338,7 @@
                 .AsSplitQuery().ToListAsync();
             _dorer = _dorer.OrderBy(d => d.Dornummer.Length).ThenBy(d => d.Dornummer, StringComparer.CurrentCultureIgnoreCase).ToList();
             await LastAvvik();
-            _ordre = await Db.Arbeidsordre.AsNoTracking()
+            _ordre = await Db.Arbeidsordre.AsNoTracking().Include(a => a.AnsvarligMontor).Include(a => a.Prosjekt)
                 .Where(a => a.ProsjektId == Id && (a.Status == ArbeidsordreStatus.Ny || a.Status == ArbeidsordreStatus.Klar || a.Status == ArbeidsordreStatus.Pagaende))
                 .OrderBy(a => a.PlanlagtDato ?? DateTime.MaxValue).ToListAsync();
 
@@ -303,8 +356,9 @@
     private async Task LastAvvik()
     {
         var ider = _dorer.Select(d => d.Id).ToList();
-        _apneAvvik = (await Db.Avvik.AsNoTracking().Where(a => ider.Contains(a.DorId) && a.Status == AvvikStatus.Apent)
-            .Select(a => a.DorId).ToListAsync()).ToHashSet();
+        _avvik = await Db.Avvik.AsNoTracking().Where(a => ider.Contains(a.DorId) && a.Status == AvvikStatus.Apent)
+            .OrderByDescending(a => a.OpprettetDato).ToListAsync();
+        _apneAvvik = _avvik.Select(a => a.DorId).ToHashSet();
     }
 
     private IEnumerable<Dor> SokteDorer => string.IsNullOrWhiteSpace(_sok)
@@ -364,6 +418,8 @@
 
     private void Apne(Dor d)
     {
+        // Er siden knepet inn, settes den tilbake så arket vises i vanlig størrelse.
+        _ = JS.InvokeVoidAsync("planZoom.nullstillSide").AsTask();
         _feil = null;
         _meldAvvik = false;
         _valgt = d;
