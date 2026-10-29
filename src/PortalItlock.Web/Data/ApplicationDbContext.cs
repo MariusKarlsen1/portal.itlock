@@ -117,6 +117,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<LagerBevegelse> LagerBevegelser => Set<LagerBevegelse>();
     public DbSet<VareLagerplass> VareLagerplasser => Set<VareLagerplass>();
     public DbSet<Varetelling> Varetellinger => Set<Varetelling>();
+    public DbSet<PafyllBestilling> PafyllBestillinger => Set<PafyllBestilling>();
+    public DbSet<PafyllLinje> PafyllLinjer => Set<PafyllLinje>();
     public DbSet<VaretellingLinje> VaretellingLinjer => Set<VaretellingLinje>();
     public DbSet<Innkjopsordre> Innkjopsordrer => Set<Innkjopsordre>();
     public DbSet<InnkjopsordreLinje> InnkjopsordreLinjer => Set<InnkjopsordreLinje>();

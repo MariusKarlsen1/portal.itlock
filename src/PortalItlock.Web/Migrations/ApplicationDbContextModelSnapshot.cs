@@ -4933,6 +4933,70 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("PackageRequirements");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.PafyllBestilling", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BilLagerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("BrukerNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("HentetDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("KlarDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Opprettet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlukketAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BilLagerId");
+
+                    b.ToTable("PafyllBestillinger");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PafyllLinje", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Antall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("PafyllBestillingId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Plukket")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ComponentId");
+
+                    b.HasIndex("PafyllBestillingId");
+
+                    b.ToTable("PafyllLinjer");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.PlanForbindelse", b =>
                 {
                     b.Property<int>("Id")
@@ -8891,6 +8955,36 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("RequirementValue");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.PafyllBestilling", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Lager", "BilLager")
+                        .WithMany()
+                        .HasForeignKey("BilLagerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("BilLager");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PafyllLinje", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Component", "Component")
+                        .WithMany()
+                        .HasForeignKey("ComponentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.PafyllBestilling", "PafyllBestilling")
+                        .WithMany("Linjer")
+                        .HasForeignKey("PafyllBestillingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Component");
+
+                    b.Navigation("PafyllBestilling");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.PlanForbindelse", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.PlanUtstyr", "FraUtstyr")
@@ -9801,6 +9895,11 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Komponenter");
 
                     b.Navigation("Krav");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PafyllBestilling", b =>
+                {
+                    b.Navigation("Linjer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Plantegning", b =>

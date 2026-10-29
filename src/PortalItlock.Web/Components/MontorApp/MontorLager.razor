@@ -1,0 +1,1183 @@
+@page "/app/lager"
+@page "/app/bil"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@implements IAsyncDisposable
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject LagerService LagerSvc
+@inject PlukkService PlukkSvc
+@inject ReservasjonService ResSvc
+@inject InnkjopService InnkjopSvc
+@inject TilleggsmodulService Tilleggsmoduler
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Lager</PageTitle>
+
+@* Lageret i montørappen: bilen og hovedlageret på samme side, med en bryter
+   øverst. Samme oppsett begge steder: fire hurtigknapper og faner.
+   Bilen: beholdning mot standard, brukt på ordre, retur, påfyll fra
+   hovedlageret (sendt → plukkes → klar → hentet), telling og historikk.
+   Hovedlageret: varemottak mot innkjøpsordre, plukk av påfyll til bilene,
+   beholdning med reservert og ledig, og telling. *@
+<div class="ma ml">
+    @if (_detalj is null)
+    {
+        <AppHode Ikon="box" Sand="true" Tittel="Lager" Under="@(_hoved ? "Hovedlager" : _bil?.Navn ?? "Bilen min")">
+            <span class="ma-skille"></span>
+            <button type="button" class="ma-ikonknapp" @onclick="ApneSkanner" aria-label="Skann vare"><Icon Name="camera" /></button>
+        </AppHode>
+        <div class="ml-seg-ramme">
+            <div class="ml-seg" role="tablist">
+                <button type="button" role="tab" aria-selected="@(!_hoved)" class="@(!_hoved ? "paa" : "")" @onclick="@(() => { _hoved = false; _melding = null; _sok = ""; })"><span>Bilen min</span>@if (BilVarsel > 0) {<em>@BilVarsel</em>}</button>
+                <button type="button" role="tab" aria-selected="@_hoved" class="@(_hoved ? "paa" : "")" @onclick="@(() => { _hoved = true; _melding = null; _sok = ""; })"><span>Hovedlager</span>@if (HovedVarsel > 0) {<em>@HovedVarsel</em>}</button>
+            </div>
+        </div>
+    }
+
+    @if (!_lastet)
+    {
+        <p class="ma-tom">Laster …</p>
+    }
+    else if (!_harModul)
+    {
+        <p class="ma-tom">Lagermodulen er ikke slått på for organisasjonen.</p>
+    }
+    else if (_detalj is { } d)
+    {
+        @Detalj(d)
+    }
+    else if (!_hoved)
+    {
+        @Bil()
+    }
+    else
+    {
+        @Hoved()
+    }
+
+    @if (_melding is not null)
+    {
+        <p class="ma-melding ml-melding" role="status" @onclick="@(() => _melding = null)">@_melding</p>
+    }
+
+    @Ark()
+
+    @if (_visSkanner)
+    {
+        <div class="ma-ark-bak" @onclick="LukkSkanner">
+            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Skann strekkode">
+                <div class="ma-ark-handtak"></div>
+                <h2>Skann strekkode</h2>
+                <div class="mpk-video"><video @ref="_video" playsinline muted></video><span class="mpk-laser"></span></div>
+                @if (_treff is not null)
+                {
+                    <p class="ma-melding" role="status">@_treff</p>
+                }
+                @if (_skannFeil is not null)
+                {
+                    <p class="ma-feil" role="alert">@_skannFeil</p>
+                }
+                <div class="ma-under"><button type="button" class="ma-knapp sek" @onclick="LukkSkanner">Ferdig</button></div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly PafyllStatus[] ApnePafyll = [PafyllStatus.Sendt, PafyllStatus.Plukkes, PafyllStatus.Klar];
+
+    private sealed record BilVare(int Id, string Navn, string? Kode, string? Gtin, string Type, int Antall, int? Standard, int TilJobber, decimal Kost)
+    {
+        public bool Under => Standard is { } s && Antall - TilJobber < s;
+    }
+
+    private sealed record HovedVare(int Id, string Navn, string? Kode, string? Gtin, string? Hylle, int Antall, int Reservert, int? Minimum)
+    {
+        public int Ledig => Antall - Reservert;
+        public bool Under => Minimum is { } m && Antall < m;
+    }
+
+    private sealed record AnnetLager(string Navn, int Antall);
+
+    private bool _lastet;
+    private bool _harModul;
+    private bool _hoved;
+    private bool _lagrer;
+    private int _brukerId;
+    private string? _brukerNavn;
+    private string? _melding;
+    private string _bfane = "beholdning";
+    private string _hfane = "mottak";
+    private string _sok = "";
+    private string? _kategori;
+    private bool _bareUnder;
+
+    // Én av: "mottak:{id}", "plukk:{id}", "telling".
+    private string? _detalj;
+
+    private Lager? _bil;
+    private int _hovedId;
+    private List<BilVare> _bilVarer = [];
+    private Dictionary<int, int> _ledig = [];
+    private Dictionary<int, string?> _hovedHylle = [];
+    private List<PlukkService.Pafyll> _forslag = [];
+    private Dictionary<int, int> _pafyllAntall = [];
+    private PafyllBestilling? _aktivtPafyll;
+    private List<LagerBevegelse> _historikk = [];
+    private List<Arbeidsordre> _mineOrdre = [];
+
+    private List<HovedVare> _hovedVarer = [];
+    private List<Innkjopsordre> _mottak = [];
+    private List<PafyllBestilling> _plukkKo = [];
+    private int _jobbPlukk;
+
+    private Innkjopsordre? _mottakOrdre;
+    private Dictionary<int, int> _mottakAntall = [];
+    private PafyllBestilling? _plukkBestilling;
+    private Varetelling? _telling;
+
+    // Ark nederst: "bilvare", "hovedvare" eller "retur".
+    private string? _ark;
+    private int _arkVare;
+    private int _arkAntall = 1;
+    private int? _arkOrdre;
+    private List<AnnetLager> _arkLagre = [];
+    private List<(string Io, int Antall)> _arkInn = [];
+
+    private bool _visSkanner;
+    private bool _skannerSkalStarte;
+    private string? _treff;
+    private string? _skannFeil;
+    private ElementReference _video;
+    private DotNetObjectReference<MontorLager>? _ref;
+
+    private int BilVarsel => _bilVarer.Count(v => v.Under) + (_aktivtPafyll?.Status == PafyllStatus.Klar ? 1 : 0);
+    private int HovedVarsel => _mottak.Count(m => m.OnsketLevering is null || m.OnsketLevering.Value.Date <= DateTime.Today) + _plukkKo.Count(p => p.Status != PafyllStatus.Klar);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _harModul = await Tilleggsmoduler.HarAsync(TilleggsModuler.Lager);
+        if (!_harModul)
+        {
+            _lastet = true;
+            return;
+        }
+
+        var erLeder = false;
+        if (AuthStateTask is not null)
+        {
+            var u = (await AuthStateTask).User;
+            erLeder = u.IsInRole("Admin") || u.IsInRole("Prosjektleder");
+            if (int.TryParse(u.FindFirst("BrukerId")?.Value, out var id))
+            {
+                _brukerId = id;
+                _brukerNavn = (await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id))?.Navn ?? u.Identity?.Name;
+            }
+        }
+
+        await PlukkSvc.SynkForbrukAsync();
+        _hovedId = (await LagerSvc.HovedlagerAsync()).Id;
+        var biler = await Db.Lagre.AsNoTracking().Where(l => l.Aktiv && l.Type == LagerType.Bil).OrderBy(l => l.Navn).ToListAsync();
+        _bil = biler.FirstOrDefault(b => b.AnsvarligBrukerId == _brukerId);
+
+        // Uten egen bil (typisk lederen) starter siden på hovedlageret.
+        _hoved = _bil is null && (erLeder || biler.Count == 0);
+        await LastAsync();
+        _lastet = true;
+    }
+
+    private async Task LastAsync()
+    {
+        _ledig = await ResSvc.LedigAsync();
+        _hovedHylle = await Db.VareLagerplasser.AsNoTracking().Where(p => p.LagerId == _hovedId)
+            .ToDictionaryAsync(p => p.ComponentId, p => p.Hylle);
+        await LastBilAsync();
+        await LastHovedAsync();
+    }
+
+    private async Task LastBilAsync()
+    {
+        if (_bil is null)
+        {
+            return;
+        }
+
+        var bilId = _bil.Id;
+        var beholdning = (await LagerSvc.BeholdningAsync(lagerId: bilId)).Where(b => b.Antall != 0).ToDictionary(b => b.ComponentId, b => b.Antall);
+        var standard = await Db.VareLagerplasser.AsNoTracking().Where(p => p.LagerId == bilId && p.Minimum != null)
+            .ToDictionaryAsync(p => p.ComponentId, p => p.Minimum);
+        var tilJobber = (await Db.LagerReservasjoner.AsNoTracking().Where(r => r.PlukketLagerId == bilId && r.Plukket > 0)
+                .Select(r => new { r.ComponentId, r.Plukket }).ToListAsync())
+            .GroupBy(r => r.ComponentId).ToDictionary(g => g.Key, g => g.Sum(r => r.Plukket));
+        var ider = beholdning.Keys.Concat(standard.Keys).Distinct().ToList();
+        var komponenter = await Db.Components.AsNoTracking().Include(c => c.Type).Where(c => ider.Contains(c.Id)).ToListAsync();
+        _bilVarer = komponenter
+            .Select(c => new BilVare(c.Id, c.Navn, c.Produktkode, c.Gtin, c.Type?.Navn ?? "Annet", beholdning.GetValueOrDefault(c.Id),
+                standard.GetValueOrDefault(c.Id), tilJobber.GetValueOrDefault(c.Id), LagerService.KostFor(c)))
+            .OrderByDescending(v => v.Under).ThenBy(v => v.Navn, StringComparer.CurrentCultureIgnoreCase).ToList();
+
+        _forslag = await PlukkSvc.PafyllAsync(bilId, _ledig);
+        _aktivtPafyll = await Db.PafyllBestillinger.AsNoTracking().Include(p => p.Linjer).ThenInclude(l => l.Component)
+            .Where(p => p.BilLagerId == bilId && ApnePafyll.Contains(p.Status))
+            .OrderByDescending(p => p.Opprettet).FirstOrDefaultAsync();
+        if (_aktivtPafyll is null && _pafyllAntall.Count == 0)
+        {
+            _pafyllAntall = _forslag.ToDictionary(p => p.Vare.Id, p => Math.Max(0, Math.Min(p.Antall, p.LedigHovedlager)));
+        }
+
+        _historikk = await Db.LagerBevegelser.AsNoTracking().Include(b => b.Component)
+            .Where(b => b.LagerId == bilId).OrderByDescending(b => b.Tidspunkt).Take(40).ToListAsync();
+        var eier = _bil.AnsvarligBrukerId;
+        _mineOrdre = await Db.Arbeidsordre.AsNoTracking()
+            .Where(a => (a.Status == ArbeidsordreStatus.Ny || a.Status == ArbeidsordreStatus.Klar || a.Status == ArbeidsordreStatus.Pagaende) && a.AnsvarligMontorId == eier)
+            .OrderBy(a => a.PlanlagtDato ?? DateTime.MaxValue).Take(6).ToListAsync();
+    }
+
+    private async Task LastHovedAsync()
+    {
+        var beholdning = (await LagerSvc.BeholdningAsync(lagerId: _hovedId)).Where(b => b.Antall != 0).ToDictionary(b => b.ComponentId, b => b.Antall);
+        var reservert = (await Db.LagerReservasjoner.AsNoTracking().Where(r => r.LagerId == _hovedId)
+                .Select(r => new { r.ComponentId, Rest = r.Antall - r.Plukket }).ToListAsync())
+            .GroupBy(r => r.ComponentId).ToDictionary(g => g.Key, g => g.Sum(r => r.Rest));
+        var minimum = await Db.VareLagerplasser.AsNoTracking().Where(p => p.LagerId == _hovedId && p.Minimum != null)
+            .ToDictionaryAsync(p => p.ComponentId, p => p.Minimum);
+        var ider = beholdning.Keys.ToList();
+        var komponenter = await Db.Components.AsNoTracking().Where(c => ider.Contains(c.Id)).ToListAsync();
+        _hovedVarer = komponenter
+            .Select(c => new HovedVare(c.Id, c.Navn, c.Produktkode, c.Gtin, _hovedHylle.GetValueOrDefault(c.Id), beholdning.GetValueOrDefault(c.Id),
+                Math.Max(0, reservert.GetValueOrDefault(c.Id)), minimum.GetValueOrDefault(c.Id) ?? c.Minimumsbeholdning))
+            .OrderBy(v => v.Hylle ?? "~").ThenBy(v => v.Navn, StringComparer.CurrentCultureIgnoreCase).ToList();
+
+        _mottak = await Db.Innkjopsordrer.AsNoTracking().Include(o => o.Linjer)
+            .Where(o => InnkjopService.KanMottas.Contains(o.Status) && o.LagerId == _hovedId)
+            .OrderBy(o => o.OnsketLevering ?? DateTime.MaxValue).ThenBy(o => o.Nummer).ToListAsync();
+        _plukkKo = await Db.PafyllBestillinger.AsNoTracking().Include(p => p.Linjer).Include(p => p.BilLager)
+            .Where(p => ApnePafyll.Contains(p.Status)).OrderBy(p => p.Opprettet).ToListAsync();
+        _jobbPlukk = await Db.LagerReservasjoner.AsNoTracking().CountAsync(r => r.LagerId == _hovedId && r.Antall - r.Plukket > 0);
+    }
+
+    // ---------- Bilen ----------
+
+    private RenderFragment Bil() => __builder =>
+    {
+        if (_bil is null)
+        {
+            <p class="ma-tom">Du har ingen bil registrert som lager. Be den som har ansvar for lageret om å sette deg som montør på bilen under Lager → Lagre og biler.</p>
+            return;
+        }
+
+        var antPafyll = _aktivtPafyll is not null ? 1 : _bilVarer.Count(v => v.Under);
+        <div class="ml-handling">
+            <button type="button" class="hoved" @onclick="ApneSkanner"><span><Icon Name="camera" /></span>Skann</button>
+            <button type="button" @onclick="@(() => _bfane = "pafyll")"><span><Icon Name="box" /></span>Fyll på</button>
+            <button type="button" @onclick="@(() => _ark = "retur")"><span><Icon Name="refresh" /></span>Retur</button>
+            <button type="button" @onclick="@(() => StartTelling(_bil.Id))"><span><Icon Name="clipboard" /></span>Tell bilen</button>
+        </div>
+        <div class="ml-faner">
+            <button type="button" class="@(_bfane == "beholdning" ? "paa" : "")" @onclick="@(() => _bfane = "beholdning")">Beholdning</button>
+            <button type="button" class="@(_bfane == "pafyll" ? "paa" : "")" @onclick="@(() => _bfane = "pafyll")"><span>Påfyll</span>@if (antPafyll > 0) {<em>@antPafyll</em>}</button>
+            <button type="button" class="@(_bfane == "historikk" ? "paa" : "")" @onclick="@(() => _bfane = "historikk")">Historikk</button>
+        </div>
+
+        if (_bfane == "beholdning")
+        {
+            var typer = _bilVarer.Select(v => v.Type).Distinct().OrderBy(t => t).ToList();
+            var liste = _bilVarer.Where(v => (_kategori is null || v.Type == _kategori) && Treff(v.Navn, v.Kode, v.Gtin)).ToList();
+            <div class="ml-sok"><input type="search" placeholder="Søk i bilen" aria-label="Søk i bilen" @bind="_sok" @bind:event="oninput" /></div>
+            @if (typer.Count > 1)
+            {
+                <div class="ml-chips">
+                    <button type="button" class="@(_kategori is null ? "paa" : "")" @onclick="@(() => _kategori = null)">Alle</button>
+                    @foreach (var t in typer)
+                    {
+                        var tt = t;
+                        <button type="button" class="@(_kategori == t ? "paa" : "")" @onclick="@(() => _kategori = tt)">@t</button>
+                    }
+                </div>
+            }
+            <div class="ml-liste">
+                @if (liste.Count == 0)
+                {
+                    <p class="ma-tom">@(_bilVarer.Count == 0 ? "Bilen er tom." : "Ingen varer passer søket.")</p>
+                }
+                @foreach (var v in liste)
+                {
+                    var vid = v.Id;
+                    <button type="button" class="ml-vare" @onclick="@(() => ApneBilvare(vid))">
+                        <span class="ml-vare-tekst">
+                            <b>@v.Navn</b>
+                            <small>@(v.Kode ?? "–")@(v.TilJobber > 0 ? $" · {v.TilJobber} til jobber" : "")</small>
+                            @if (v.Standard is { } s && s > 0)
+                            {
+                                <span class="ml-niva"><i class="@(v.Under ? "lav" : "")" style="width:@Pst(v.Antall, s * 1.5)%"></i></span>
+                            }
+                        </span>
+                        <span class="ml-ant @(v.Under ? "lav" : "")"><b>@v.Antall</b>@if (v.Standard is { } st) {<small>av @st</small>}</span>
+                    </button>
+                }
+            </div>
+        }
+        else if (_bfane == "pafyll")
+        {
+            @Pafyll()
+        }
+        else
+        {
+            <div class="ml-liste">
+                @if (_historikk.Count == 0)
+                {
+                    <p class="ma-tom">Ingen bevegelser ennå.</p>
+                }
+                @foreach (var h in _historikk)
+                {
+                    <div class="ml-vare ml-statisk">
+                        <span class="ml-tegn @(h.Antall > 0 ? "inn" : h.Type == LagerBevegelseType.FlyttUt ? "retur" : "ut")">@(h.Antall > 0 ? "+" : "−")@Math.Abs(h.Antall)</span>
+                        <span class="ml-vare-tekst"><b>@(h.Component?.Navn ?? "Vare")</b><small>@(h.Notat ?? h.Type.ToString())</small></span>
+                        <small class="ml-tid">@Tid(h.Tidspunkt)</small>
+                    </div>
+                }
+            </div>
+        }
+    };
+
+    private RenderFragment Pafyll() => __builder =>
+    {
+        if (_aktivtPafyll is { } p)
+        {
+            var steg = new[] { "Sendt", "Plukkes", "Klar", "Hentet" };
+            var i = (int)p.Status;
+            <div class="ml-status">
+                <div class="ml-status-topp"><b>Påfyll til bilen</b><span class="ma-merke @(p.Status == PafyllStatus.Klar ? "gronn" : "gul")">@(p.Status == PafyllStatus.Klar ? "Klar til henting" : p.Status == PafyllStatus.Plukkes ? "Plukkes" : "Sendt")</span></div>
+                <small>@p.Linjer.Count varer · sendt @Tid(p.Opprettet)@(p.Status == PafyllStatus.Klar ? $" · klar {Tid(p.KlarDato ?? DateTime.Now)}" : "")</small>
+                <div class="ml-steg">
+                    @for (var j = 0; j < steg.Length; j++)
+                    {
+                        <span class="@(j < i ? "ferdig" : j == i ? "na" : "")"><i>@if (j < i) {<Icon Name="check" />}</i>@steg[j]</span>
+                    }
+                </div>
+                <small>@(p.Status == PafyllStatus.Klar ? "Varene ligger klare på hovedlageret. Bekreft når du har hentet dem, så legges de inn i bilen." : "Hovedlageret plukker varene. Kom tilbake hit når de er klare.")</small>
+            </div>
+            <div class="ml-liste">
+                @foreach (var l in p.Linjer)
+                {
+                    <div class="ml-vare ml-statisk">
+                        <span class="ml-vare-tekst"><b>@(l.Component?.Navn ?? "Vare")</b><small>@(l.Component?.Produktkode ?? "–")</small></span>
+                        <span class="ml-ant"><b>@(p.Status == PafyllStatus.Klar ? l.Plukket : l.Antall)</b><small>@(p.Status == PafyllStatus.Klar && l.Plukket < l.Antall ? $"av {l.Antall}" : "stk")</small></span>
+                    </div>
+                }
+            </div>
+            <div class="ml-bunn">
+                @if (p.Status == PafyllStatus.Klar)
+                {
+                    <button type="button" class="ma-knapp ml-gronn" disabled="@_lagrer" @onclick="BekreftHentet"><Icon Name="check" />Jeg har hentet varene</button>
+                }
+                else if (p.Status == PafyllStatus.Sendt)
+                {
+                    <button type="button" class="ma-knapp sek" disabled="@_lagrer" @onclick="AvbrytPafyll">Angre påfyllet</button>
+                }
+            </div>
+            return;
+        }
+
+        var forslagIder = _forslag.Select(f => f.Vare.Id).ToHashSet();
+        var andre = _bilVarer.Where(v => !forslagIder.Contains(v.Id)).ToList();
+        var sum = _pafyllAntall.Values.Count(n => n > 0);
+        <div class="ml-info"><Icon Name="sparkle" /><span>Forslaget fyller bilen opp til standard med det som er ledig på hovedlageret. Juster antall før du sender.</span></div>
+        @if (_forslag.Count > 0)
+        {
+            <h3 class="ml-tittel">Under standard</h3>
+            <div class="ml-liste">
+                @foreach (var f in _forslag)
+                {
+                    @PafyllRad(f.Vare.Id, f.Vare.Navn, $"I bilen {f.IBil} · standard {f.Minimum} · ledig på lager {Math.Max(0, f.LedigHovedlager)}")
+                }
+            </div>
+        }
+        else
+        {
+            <p class="ma-tom">Alt i bilen er over standard.</p>
+        }
+        @if (andre.Count > 0)
+        {
+            <h3 class="ml-tittel">Andre varer i bilen</h3>
+            <div class="ml-liste">
+                @foreach (var v in andre)
+                {
+                    @PafyllRad(v.Id, v.Navn, $"I bilen {v.Antall}{(v.Standard is { } s ? $" · standard {s}" : "")} · ledig på lager {Math.Max(0, _ledig.GetValueOrDefault(v.Id))}")
+                }
+            </div>
+        }
+        <div class="ml-bunn">
+            <button type="button" class="ma-knapp" disabled="@(sum == 0 || _lagrer)" @onclick="SendPafyll"><Icon Name="send" />Send påfyll til hovedlageret@(sum > 0 ? $" ({sum} varer)" : "")</button>
+        </div>
+    };
+
+    private RenderFragment PafyllRad(int id, string navn, string under) => @<div class="ml-vare ml-statisk">
+        <span class="ml-vare-tekst"><b>@navn</b><small>@under</small></span>
+        @Teller(_pafyllAntall.GetValueOrDefault(id), () => _pafyllAntall[id] = Math.Max(0, _pafyllAntall.GetValueOrDefault(id) - 1), () => _pafyllAntall[id] = _pafyllAntall.GetValueOrDefault(id) + 1)
+    </div>;
+
+    private async Task SendPafyll()
+    {
+        if (_bil is null || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        var bestilling = new PafyllBestilling { BilLagerId = _bil.Id, BrukerId = _brukerId, BrukerNavn = _brukerNavn, Status = PafyllStatus.Sendt };
+        foreach (var (id, antall) in _pafyllAntall.Where(a => a.Value > 0))
+        {
+            bestilling.Linjer.Add(new PafyllLinje { ComponentId = id, Antall = antall });
+        }
+
+        Db.PafyllBestillinger.Add(bestilling);
+        await Db.SaveChangesAsync();
+        _pafyllAntall = [];
+        await LastAsync();
+        _melding = "Påfyllet er sendt til hovedlageret.";
+        _lagrer = false;
+    }
+
+    private async Task AvbrytPafyll()
+    {
+        if (_aktivtPafyll is null)
+        {
+            return;
+        }
+
+        var p = await Db.PafyllBestillinger.FirstAsync(x => x.Id == _aktivtPafyll.Id);
+        if (p.Status == PafyllStatus.Sendt)
+        {
+            p.Status = PafyllStatus.Avbrutt;
+            await Db.SaveChangesAsync();
+            _melding = "Påfyllet er angret.";
+        }
+
+        await LastAsync();
+    }
+
+    // Varene flyttes fra hovedlageret til bilen først når montøren har hentet dem.
+    private async Task BekreftHentet()
+    {
+        if (_aktivtPafyll is null || _bil is null || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        var p = await Db.PafyllBestillinger.Include(x => x.Linjer).FirstAsync(x => x.Id == _aktivtPafyll.Id);
+        if (p.Status == PafyllStatus.Klar)
+        {
+            var totalt = 0;
+            foreach (var l in p.Linjer.Where(l => l.Plukket > 0))
+            {
+                await LagerSvc.FlyttAsync(l.ComponentId, _hovedId, _bil.Id, l.Plukket, "Påfyll av bil", _brukerId, _brukerNavn);
+                totalt += l.Plukket;
+            }
+
+            p.Status = PafyllStatus.Hentet;
+            p.HentetDato = DateTime.Now;
+            await Db.SaveChangesAsync();
+            _melding = $"{totalt} stk er lagt inn i bilen.";
+            _bfane = "beholdning";
+        }
+
+        await LastAsync();
+        _lagrer = false;
+    }
+
+    private async Task ApneBilvare(int id)
+    {
+        _ark = "bilvare";
+        _arkVare = id;
+        _arkAntall = 1;
+        _arkOrdre = _mineOrdre.FirstOrDefault(a => a.Status == ArbeidsordreStatus.Pagaende)?.Id ?? _mineOrdre.FirstOrDefault()?.Id;
+        await Task.CompletedTask;
+    }
+
+    private async Task Brukt()
+    {
+        if (_bil is null || _bilVarer.FirstOrDefault(v => v.Id == _arkVare) is not { } v || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        await PlukkSvc.BruktAsync(v.Id, _bil.Id, _arkAntall, null, _arkOrdre, null, _brukerId, _brukerNavn);
+        var ordre = _mineOrdre.FirstOrDefault(a => a.Id == _arkOrdre);
+        _melding = $"{_arkAntall} × {v.Navn} ført som brukt" + (ordre is null ? "." : $" på {ordre.Id} {ordre.Tittel}. Varen er lagt på arbeidsordren.");
+        _ark = null;
+        await LastAsync();
+        _lagrer = false;
+    }
+
+    private async Task Retur()
+    {
+        if (_bil is null || _bilVarer.FirstOrDefault(v => v.Id == _arkVare) is not { } v || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        await PlukkSvc.ReturAsync(v.Id, _bil.Id, _hovedId, _arkAntall, null, _brukerId, _brukerNavn);
+        _melding = $"{_arkAntall} × {v.Navn} er sendt i retur til hovedlageret.";
+        _ark = null;
+        await LastAsync();
+        _lagrer = false;
+    }
+
+    private void LeggIPafyll(int id)
+    {
+        var v = _bilVarer.FirstOrDefault(x => x.Id == id);
+        _pafyllAntall[id] = _pafyllAntall.GetValueOrDefault(id) + Math.Max(1, (v?.Standard ?? 0) - (v?.Antall ?? 0));
+        _ark = null;
+        _bfane = "pafyll";
+        _melding = "Lagt i påfyllet. Send det når du er klar.";
+    }
+
+    // ---------- Hovedlageret ----------
+
+    private RenderFragment Hoved() => __builder =>
+    {
+        var forsteMottak = _mottak.FirstOrDefault();
+        var forstePlukk = _plukkKo.FirstOrDefault(p => p.Status != PafyllStatus.Klar);
+        <div class="ml-handling">
+            <button type="button" class="hoved" @onclick="@(() => { if (forsteMottak is not null) ApneMottak(forsteMottak.Id); else _melding = "Ingen varer venter på mottak."; })"><span><Icon Name="download" /></span>Ta imot</button>
+            <button type="button" @onclick="@(() => { if (forstePlukk is not null) ApnePlukk(forstePlukk.Id); else _hfane = "plukk"; })"><span><Icon Name="clipboard" /></span>Plukk</button>
+            <button type="button" @onclick="ApneSkanner"><span><Icon Name="search" /></span>Finn vare</button>
+            <button type="button" @onclick="@(() => StartTelling(_hovedId))"><span><Icon Name="list" /></span>Telling</button>
+        </div>
+        <div class="ml-faner">
+            <button type="button" class="@(_hfane == "mottak" ? "paa" : "")" @onclick="@(() => _hfane = "mottak")"><span>Varemottak</span>@if (_mottak.Count > 0) {<em>@_mottak.Count</em>}</button>
+            <button type="button" class="@(_hfane == "plukk" ? "paa" : "")" @onclick="@(() => _hfane = "plukk")"><span>Plukk</span>@if (_plukkKo.Count > 0) {<em>@_plukkKo.Count</em>}</button>
+            <button type="button" class="@(_hfane == "beholdning" ? "paa" : "")" @onclick="@(() => _hfane = "beholdning")">Beholdning</button>
+        </div>
+
+        if (_hfane == "mottak")
+        {
+            @if (_mottak.Count == 0)
+            {
+                <p class="ma-tom">Ingen innkjøpsordre venter på mottak.</p>
+            }
+            @foreach (var o in _mottak)
+            {
+                var oid = o.Id;
+                var mott = o.Linjer.Sum(l => l.Mottatt);
+                var tot = o.Linjer.Sum(l => l.Antall);
+                <button type="button" class="ml-kort" @onclick="@(() => ApneMottak(oid))">
+                    <span class="ml-kort-topp">
+                        <span class="ml-vare-tekst"><b>@o.LeverandorNavn</b><small>@o.Visningsnummer · @o.Linjer.Count linjer@(o.OnsketLevering is { } d ? " · forventet " + MontorApp.DagKort(d).ToLower(Kultur) : "")</small></span>
+                        <span class="ma-merke @(o.Status == InnkjopStatus.DelvisMottatt ? "gul" : "gra")">@(o.Status == InnkjopStatus.DelvisMottatt ? "Delvis mottatt" : o.Status == InnkjopStatus.Bekreftet ? "Bekreftet" : "Bestilt")</span>
+                    </span>
+                    <span class="ma-fremdrift" style="display:block"><i style="width:@Pst(mott, tot)%"></i></span>
+                    <small class="ml-kort-under">@mott av @tot stk mottatt</small>
+                </button>
+            }
+        }
+        else if (_hfane == "plukk")
+        {
+            @if (_plukkKo.Count == 0)
+            {
+                <p class="ma-tom">Ingen påfyll venter på plukk.</p>
+            }
+            @foreach (var p in _plukkKo)
+            {
+                var pid = p.Id;
+                var pl = p.Linjer.Sum(l => l.Plukket);
+                var tot = p.Linjer.Sum(l => l.Antall);
+                <button type="button" class="ml-kort" @onclick="@(() => ApnePlukk(pid))">
+                    <span class="ml-kort-topp">
+                        <span class="ml-vare-tekst"><b>Påfyll · @(p.BilLager?.Navn ?? "Bil")</b><small>@(p.BrukerNavn ?? "Montør") · sendt @Tid(p.Opprettet) · @p.Linjer.Count varer</small></span>
+                        <span class="ma-merke @(p.Status == PafyllStatus.Klar ? "gronn" : p.Status == PafyllStatus.Plukkes ? "gul" : "gra")">@(p.Status == PafyllStatus.Klar ? "Klar" : p.Status == PafyllStatus.Plukkes ? "Påbegynt" : "Ny")</span>
+                    </span>
+                    <span class="ma-fremdrift" style="display:block"><i style="width:@Pst(pl, tot)%"></i></span>
+                    <small class="ml-kort-under">@(p.Status == PafyllStatus.Klar ? "Venter på at montøren henter" : $"{pl} av {tot} stk plukket")</small>
+                </button>
+            }
+            @if (_jobbPlukk > 0)
+            {
+                <a class="ml-kort ml-lenke" href="/lager/plukk">
+                    <span class="ml-kort-topp"><span class="ml-vare-tekst"><b>Plukk til jobber</b><small>@_jobbPlukk reserverte varer venter · åpnes i lagermodulen</small></span><Icon Name="chevron-right" /></span>
+                </a>
+            }
+        }
+        else
+        {
+            var under = _hovedVarer.Count(v => v.Under);
+            var liste = _hovedVarer.Where(v => (!_bareUnder || v.Under) && Treff(v.Navn, v.Kode, v.Gtin, v.Hylle)).ToList();
+            <div class="ml-sok"><input type="search" placeholder="Søk vare, kode eller plass" aria-label="Søk på hovedlageret" @bind="_sok" @bind:event="oninput" /></div>
+            <div class="ml-chips">
+                <button type="button" class="@(!_bareUnder ? "paa" : "")" @onclick="@(() => _bareUnder = false)">Alle (@_hovedVarer.Count)</button>
+                <button type="button" class="@(_bareUnder ? "paa" : "")" @onclick="@(() => _bareUnder = true)">Under minimum (@under)</button>
+            </div>
+            <div class="ml-liste">
+                @if (liste.Count == 0)
+                {
+                    <p class="ma-tom">Ingen varer passer.</p>
+                }
+                @foreach (var v in liste)
+                {
+                    var vid = v.Id;
+                    <button type="button" class="ml-vare" @onclick="@(() => ApneHovedvare(vid))">
+                        <span class="ml-vare-tekst">
+                            <b>@v.Navn</b>
+                            <small>@if (v.Hylle is not null) {<span class="ml-plass">@v.Hylle</span>} @(v.Kode ?? "")@(v.Reservert > 0 ? $" · {v.Reservert} reservert" : "")</small>
+                            @if (v.Minimum is { } m && m > 0)
+                            {
+                                <span class="ml-niva"><i class="@(v.Under ? "lav" : "")" style="width:@Pst(v.Antall, m * 2)%"></i></span>
+                            }
+                        </span>
+                        <span class="ml-ant @(v.Under || v.Ledig <= 0 ? "lav" : "")"><b>@Math.Max(0, v.Ledig)</b><small>ledig</small></span>
+                    </button>
+                }
+            </div>
+            @if (_bareUnder && under > 0)
+            {
+                <div class="ml-bunn"><a class="ma-knapp" href="/lager/innkjop"><Icon Name="receipt" />Lag innkjøp i lagermodulen</a></div>
+            }
+        }
+    };
+
+    private async Task ApneHovedvare(int id)
+    {
+        _ark = "hovedvare";
+        _arkVare = id;
+        var lagre = await Db.Lagre.AsNoTracking().Where(l => l.Aktiv && l.Id != _hovedId).ToDictionaryAsync(l => l.Id, l => l.Navn);
+        _arkLagre = (await LagerSvc.BeholdningAsync(componentId: id))
+            .Where(b => b.Antall > 0 && lagre.ContainsKey(b.LagerId))
+            .Select(b => new AnnetLager(lagre[b.LagerId] + (_bil?.Id == b.LagerId ? " (din)" : ""), b.Antall)).ToList();
+        _arkInn = (await Db.InnkjopsordreLinjer.AsNoTracking().Include(l => l.Innkjopsordre)
+                .Where(l => l.ComponentId == id && l.Antall > l.Mottatt && InnkjopService.KanMottas.Contains(l.Innkjopsordre!.Status)).ToListAsync())
+            .Select(l => ($"{l.Innkjopsordre!.Visningsnummer} · {l.Innkjopsordre.LeverandorNavn}", l.Antall - l.Mottatt)).ToList();
+    }
+
+    // ---------- Varemottak ----------
+
+    private void ApneMottak(int id)
+    {
+        _melding = null;
+        _mottakOrdre = null;
+        _detalj = $"mottak:{id}";
+        _ = LastMottakAsync(id);
+    }
+
+    private async Task LastMottakAsync(int id)
+    {
+        _mottakOrdre = await Db.Innkjopsordrer.Include(o => o.Linjer).ThenInclude(l => l.Component).FirstOrDefaultAsync(o => o.Id == id);
+        _mottakAntall = _mottakOrdre?.Linjer.ToDictionary(l => l.Id, _ => 0) ?? [];
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private RenderFragment MottakVisning(Innkjopsordre o) => __builder =>
+    {
+        var denne = _mottakAntall.Values.Sum();
+        <AppHode Ikon="download" Sand="true" Tittel="Varemottak" Under="@($"{o.Visningsnummer} · {o.LeverandorNavn}")" Tilbake="@null">
+            <span class="ma-skille"></span>
+            <button type="button" class="ma-ikonknapp" @onclick="ApneSkanner" aria-label="Skann vare"><Icon Name="camera" /></button>
+        </AppHode>
+        <button type="button" class="ml-tilbake" @onclick="LukkDetalj"><Icon Name="chevron-left" />Tilbake til lageret</button>
+        <div class="ml-info"><Icon Name="box" /><span>Skann varene eller hak av det som er kommet. Det som ikke kommer, blir stående som restordre.</span></div>
+        <div class="ml-liste">
+            @foreach (var l in o.Linjer.OrderBy(l => _hovedHylle.GetValueOrDefault(l.ComponentId) ?? "~"))
+            {
+                var lid = l.Id;
+                var n = _mottakAntall.GetValueOrDefault(l.Id);
+                var alt = l.Rest > 0 && n >= l.Rest;
+                <div class="ml-linje @(alt || l.Rest == 0 ? "ferdig" : "")">
+                    <div class="ml-linje-topp">
+                        <button type="button" class="ma-hake @(alt || l.Rest == 0 ? "paa" : "")" disabled="@(l.Rest == 0)" @onclick="@(() => _mottakAntall[lid] = alt ? 0 : l.Rest)" aria-label="Alt mottatt">@if (alt || l.Rest == 0) {<Icon Name="check" />}</button>
+                        <span class="ml-vare-tekst"><b>@l.Navn</b><small>@(l.Varenummer ?? l.Component?.Produktkode ?? "") · bestilt @l.Antall@(l.Mottatt > 0 ? $" · {l.Mottatt} mottatt før" : "")</small></span>
+                        @if (l.Rest > 0)
+                        {
+                            @Teller(n, () => _mottakAntall[lid] = Math.Max(0, n - 1), () => _mottakAntall[lid] = n + 1)
+                        }
+                    </div>
+                    <div class="ml-linje-under">
+                        @if (_hovedHylle.GetValueOrDefault(l.ComponentId) is { } hylle)
+                        {
+                            <span class="ml-plass"><Icon Name="map-pin" />Legg på @hylle</span>
+                        }
+                        @if (n > l.Rest && l.Rest > 0)
+                        {
+                            <span class="ma-merke rod">@(n - l.Rest) for mye</span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+        <div class="ml-bunn">
+            <button type="button" class="ma-knapp" disabled="@(denne == 0 || _lagrer)" @onclick="FullforMottak"><Icon Name="check" />Fullfør mottak (@denne stk)</button>
+        </div>
+    };
+
+    private async Task FullforMottak()
+    {
+        if (_mottakOrdre is null || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        var res = await InnkjopSvc.MottaAsync(_mottakOrdre, _mottakAntall.Where(a => a.Value > 0).ToDictionary(a => a.Key, a => a.Value), null, _brukerId, _brukerNavn);
+        var rest = _mottakOrdre.Linjer.Sum(l => l.Rest);
+        _melding = $"{res.Totalt} stk er lagt på lager" + (res.TilReservasjoner.Count > 0 ? $", {res.TilReservasjoner.Sum(r => r.Antall)} går rett til jobber" : "")
+            + (rest > 0 ? $". {rest} stk står igjen som restordre." : ". Ordren er ferdig mottatt.");
+        LukkDetalj();
+        await LastAsync();
+        _lagrer = false;
+    }
+
+    // ---------- Plukk av påfyll ----------
+
+    private void ApnePlukk(int id)
+    {
+        _melding = null;
+        _plukkBestilling = null;
+        _detalj = $"plukk:{id}";
+        _ = LastPlukkAsync(id);
+    }
+
+    private async Task LastPlukkAsync(int id)
+    {
+        _plukkBestilling = await Db.PafyllBestillinger.Include(p => p.Linjer).ThenInclude(l => l.Component).Include(p => p.BilLager)
+            .FirstOrDefaultAsync(p => p.Id == id);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private RenderFragment PlukkVisning(PafyllBestilling p) => __builder =>
+    {
+        var pl = p.Linjer.Sum(l => l.Plukket);
+        var tot = p.Linjer.Sum(l => l.Antall);
+        <AppHode Ikon="clipboard" Sand="true" Tittel="Plukk påfyll" Under="@($"{p.BilLager?.Navn} · sendt {Tid(p.Opprettet)}")" Tilbake="@null">
+            <span class="ma-skille"></span>
+            <button type="button" class="ma-ikonknapp" @onclick="ApneSkanner" aria-label="Skann vare"><Icon Name="camera" /></button>
+        </AppHode>
+        <button type="button" class="ml-tilbake" @onclick="LukkDetalj"><Icon Name="chevron-left" />Tilbake til lageret</button>
+        <div class="ml-info"><Icon Name="map-pin" /><span>Sortert etter plass, så du går én runde. Trykk på en vare når den er plukket, eller skann den.</span></div>
+        <div class="ml-liste">
+            @foreach (var l in p.Linjer.OrderBy(l => _hovedHylle.GetValueOrDefault(l.ComponentId) ?? "~"))
+            {
+                var linje = l;
+                var ok = l.Plukket >= l.Antall;
+                <button type="button" class="ml-vare @(ok ? "ferdig" : "")" disabled="@(p.Status == PafyllStatus.Klar)" @onclick="@(() => SettPlukket(linje, ok ? 0 : linje.Antall))">
+                    @if (_hovedHylle.GetValueOrDefault(l.ComponentId) is { } plass) {<span class="ml-plass stor">@plass</span>}
+                    <span class="ml-vare-tekst"><b>@(l.Component?.Navn ?? "Vare")</b><small>@(l.Component?.Produktkode ?? "") · ledig @Math.Max(0, _ledig.GetValueOrDefault(l.ComponentId))</small></span>
+                    <span class="ml-ant"><b>@l.Plukket/@l.Antall</b><small>stk</small></span>
+                    <span class="ma-hake @(ok ? "paa" : "")">@if (ok) {<Icon Name="check" />}</span>
+                </button>
+            }
+        </div>
+        <div class="ml-bunn">
+            @if (p.Status == PafyllStatus.Klar)
+            {
+                <p class="ma-tom">Klar til henting – venter på @(p.BrukerNavn ?? "montøren").</p>
+            }
+            else
+            {
+                @if (pl == 0 && p.Linjer.All(l => _ledig.GetValueOrDefault(l.ComponentId) <= 0))
+                {
+                    <button type="button" class="ma-knapp sek" disabled="@_lagrer" @onclick="AvsluttPlukk">Avslutt – ingenting er ledig</button>
+                }
+                else
+                {
+                    <button type="button" class="ma-knapp @(pl >= tot ? "ml-gronn" : "")" disabled="@(pl == 0 || _lagrer)" @onclick="KlarTilHenting"><Icon Name="check" />Klar til henting (@pl av @tot)</button>
+                }
+            }
+        </div>
+    };
+
+    // Det som er reservert til jobber, kan ikke plukkes til en bil.
+    private async Task SettPlukket(PafyllLinje l, int antall)
+    {
+        var ledig = Math.Max(0, _ledig.GetValueOrDefault(l.ComponentId));
+        if (antall > ledig)
+        {
+            _melding = ledig == 0 ? $"{l.Component?.Navn} har ingen ledige på lageret – resten er reservert til jobber." : $"Bare {ledig} ledig av {l.Component?.Navn}. Resten er reservert til jobber.";
+            antall = ledig;
+        }
+
+        l.Plukket = Math.Max(0, antall);
+        if (_plukkBestilling is { Status: PafyllStatus.Sendt } p)
+        {
+            p.Status = PafyllStatus.Plukkes;
+            p.PlukketAv = _brukerNavn;
+        }
+
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task KlarTilHenting()
+    {
+        if (_plukkBestilling is not { } p || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        p.Status = PafyllStatus.Klar;
+        p.KlarDato = DateTime.Now;
+        p.PlukketAv = _brukerNavn;
+        await Db.SaveChangesAsync();
+        _melding = $"Påfyllet er klart. {p.BrukerNavn ?? "Montøren"} ser det i appen og bekrefter når varene er hentet.";
+        LukkDetalj();
+        await LastAsync();
+        _lagrer = false;
+    }
+
+    private async Task AvsluttPlukk()
+    {
+        if (_plukkBestilling is not { } p || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        p.Status = PafyllStatus.Avbrutt;
+        p.PlukketAv = _brukerNavn;
+        await Db.SaveChangesAsync();
+        _melding = "Påfyllet er avsluttet fordi ingenting var ledig. Montøren kan sende et nytt senere.";
+        LukkDetalj();
+        await LastAsync();
+        _lagrer = false;
+    }
+
+    // ---------- Telling ----------
+
+    private async Task StartTelling(int lagerId)
+    {
+        var telling = await Db.Varetellinger.Include(t => t.Linjer).ThenInclude(l => l.Component)
+            .FirstOrDefaultAsync(t => t.LagerId == lagerId && t.Status == VaretellingStatus.Pagar);
+        if (telling is null)
+        {
+            var beholdning = (await LagerSvc.BeholdningAsync(lagerId: lagerId)).Where(b => b.Antall != 0).ToList();
+            var standard = await Db.VareLagerplasser.AsNoTracking().Where(p => p.LagerId == lagerId && p.Minimum != null).Select(p => p.ComponentId).ToListAsync();
+            telling = new Varetelling { LagerId = lagerId, Status = VaretellingStatus.Pagar, StartetAv = _brukerNavn };
+            foreach (var id in beholdning.Select(b => b.ComponentId).Union(standard))
+            {
+                telling.Linjer.Add(new VaretellingLinje { ComponentId = id, Registrert = beholdning.FirstOrDefault(b => b.ComponentId == id)?.Antall ?? 0 });
+            }
+
+            Db.Varetellinger.Add(telling);
+            await Db.SaveChangesAsync();
+            await Db.Entry(telling).Collection(t => t.Linjer).Query().Include(l => l.Component).LoadAsync();
+        }
+
+        _telling = telling;
+        _melding = null;
+        _detalj = "telling";
+    }
+
+    private RenderFragment TellingVisning(Varetelling t) => __builder =>
+    {
+        var bil = t.LagerId != _hovedId;
+        var talt = t.Linjer.Count(l => l.Talt is not null);
+        var avvik = t.Linjer.Count(l => l.Talt is { } x && x != l.Registrert);
+        var sortert = t.Linjer.OrderBy(l => bil ? "" : _hovedHylle.GetValueOrDefault(l.ComponentId) ?? "~").ThenBy(l => l.Component?.Navn).ToList();
+        <AppHode Ikon="list" Sand="true" Tittel="@(bil ? "Tell bilen" : "Telling")" Under="@(bil ? _bil?.Navn : "Hovedlager")" Tilbake="@null">
+            <span class="ma-skille"></span>
+            <button type="button" class="ma-ikonknapp" @onclick="ApneSkanner" aria-label="Skann vare"><Icon Name="camera" /></button>
+        </AppHode>
+        <button type="button" class="ml-tilbake" @onclick="LukkDetalj"><Icon Name="chevron-left" />Tilbake (tellingen lagres)</button>
+        <div class="ml-status">
+            <div class="ml-status-topp"><b>@talt av @t.Linjer.Count talt</b><span class="ma-merke @(avvik > 0 ? "gul" : "gronn")">@avvik avvik</span></div>
+            <span class="ma-fremdrift" style="display:block"><i style="width:@Pst(talt, t.Linjer.Count)%"></i></span>
+            <small>Hak av når antallet stemmer, eller juster med − og +. Skanner du, telles én om gangen.</small>
+        </div>
+        <div class="ml-liste">
+            @foreach (var l in sortert)
+            {
+                var linje = l;
+                var vis = l.Talt ?? l.Registrert;
+                var diff = l.Talt is { } x ? x - l.Registrert : 0;
+                <div class="ml-linje @(l.Talt is not null && diff == 0 ? "ferdig" : "")">
+                    <div class="ml-linje-topp">
+                        <button type="button" class="ma-hake @(l.Talt is not null ? "paa" : "")" @onclick="@(() => SettTalt(linje, linje.Talt is null ? linje.Registrert : null))" aria-label="Stemmer">@if (l.Talt is not null) {<Icon Name="check" />}</button>
+                        <span class="ml-vare-tekst"><b>@(l.Component?.Navn ?? "Vare")</b><small>@(!bil && _hovedHylle.GetValueOrDefault(l.ComponentId) is { } h ? h + " · " : "")systemet sier @l.Registrert</small></span>
+                        @Teller(vis, () => _ = SettTalt(linje, Math.Max(0, vis - 1)), () => _ = SettTalt(linje, vis + 1))
+                    </div>
+                    @if (diff != 0)
+                    {
+                        <div class="ml-linje-under"><span class="ma-merke @(diff < 0 ? "rod" : "gul")">@(diff > 0 ? "+" : "")@diff mot systemet</span></div>
+                    }
+                </div>
+            }
+        </div>
+        <div class="ml-bunn">
+            <button type="button" class="ma-knapp" disabled="@(talt == 0 || _lagrer)" @onclick="FullforTelling"><Icon Name="check" />Fullfør telling (@talt av @t.Linjer.Count)</button>
+        </div>
+    };
+
+    private async Task SettTalt(VaretellingLinje l, int? talt)
+    {
+        l.Talt = talt;
+        await Db.SaveChangesAsync();
+        StateHasChanged();
+    }
+
+    private async Task FullforTelling()
+    {
+        if (_telling is null || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        var avvik = _telling.Linjer.Count(l => l.Talt is { } x && x != l.Registrert);
+        await LagerSvc.GodkjennTellingAsync(_telling.Id, _brukerId, _brukerNavn);
+        _melding = avvik == 0 ? "Tellingen er lagret. Ingen avvik." : $"Tellingen er lagret, og {avvik} avvik er rettet i beholdningen.";
+        LukkDetalj();
+        await LastAsync();
+        _lagrer = false;
+    }
+
+    // ---------- Felles ----------
+
+    private RenderFragment Detalj(string d) => __builder =>
+    {
+        if (d.StartsWith("mottak:") && _mottakOrdre is { } o)
+        {
+            @MottakVisning(o)
+        }
+        else if (d.StartsWith("plukk:") && _plukkBestilling is { } p)
+        {
+            @PlukkVisning(p)
+        }
+        else if (d == "telling" && _telling is { } t)
+        {
+            @TellingVisning(t)
+        }
+        else
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+    };
+
+    private void LukkDetalj()
+    {
+        _detalj = null;
+        _mottakOrdre = null;
+        _plukkBestilling = null;
+        _telling = null;
+    }
+
+    private RenderFragment Ark() => __builder =>
+    {
+        if (_ark is null)
+        {
+            return;
+        }
+
+        <div class="ma-ark-bak" @onclick="@(() => _ark = null)">
+            <div class="ma-ark ml-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true">
+                <div class="ma-ark-handtak"></div>
+                @if (_ark == "retur")
+                {
+                    <h2>Retur til hovedlageret</h2>
+                    <p class="ml-ark-under">Velg varen som skal tilbake, eller skann den.</p>
+                    <div class="ml-liste ml-ark-liste">
+                        @foreach (var v in _bilVarer.Where(v => v.Antall > 0))
+                        {
+                            var vid = v.Id;
+                            <button type="button" class="ml-vare" @onclick="@(() => ApneBilvare(vid))"><span class="ml-vare-tekst"><b>@v.Navn</b><small>@v.Antall i bilen</small></span><Icon Name="chevron-right" /></button>
+                        }
+                    </div>
+                    <div class="ma-under"><button type="button" class="ma-knapp sek" @onclick="@(() => { _ark = null; ApneSkanner(); })"><Icon Name="camera" />Skann vare</button></div>
+                }
+                else if (_ark == "bilvare" && _bilVarer.FirstOrDefault(x => x.Id == _arkVare) is { } v)
+                {
+                    var ledig = Math.Max(0, _ledig.GetValueOrDefault(v.Id));
+                    <h2>@v.Navn</h2>
+                    <p class="ml-ark-under">@(v.Kode ?? "")@(v.TilJobber > 0 ? $" · {v.TilJobber} plukket til jobber" : "")</p>
+                    <div class="ml-tre">
+                        <div><small>I bilen</small><b class="@(v.Under ? "lav" : "")">@v.Antall</b></div>
+                        <div><small>Standard</small><b>@(v.Standard?.ToString() ?? "–")</b></div>
+                        <div><small>Ledig på lager</small><b>@ledig</b></div>
+                    </div>
+                    @if (ledig > 0 && _aktivtPafyll is null)
+                    {
+                        <button type="button" class="ml-kobling" @onclick="@(() => LeggIPafyll(v.Id))"><Icon Name="box" /><b>@ledig ledig på hovedlageret@(_hovedHylle.GetValueOrDefault(v.Id) is { } h ? $" ({h})" : "")</b><span>Legg i påfyll</span></button>
+                    }
+                    @if (v.Antall > 0)
+                    {
+                        <div class="ml-ark-rad"><b>Antall</b>@Teller(_arkAntall, () => _arkAntall = Math.Max(1, _arkAntall - 1), () => _arkAntall = Math.Min(v.Antall, _arkAntall + 1))</div>
+                        @if (_mineOrdre.Count > 0)
+                        {
+                            <b class="ml-ark-tittel">Brukt på ordre</b>
+                            <div class="ml-chips ml-chips-bryt">
+                                @foreach (var a in _mineOrdre)
+                                {
+                                    var aid = a.Id;
+                                    <button type="button" class="@(_arkOrdre == aid ? "paa" : "")" @onclick="@(() => _arkOrdre = aid)">@a.Id @a.Tittel</button>
+                                }
+                                <button type="button" class="@(_arkOrdre is null ? "paa" : "")" @onclick="@(() => _arkOrdre = null)">Ingen bestemt</button>
+                            </div>
+                        }
+                        <div class="ma-under" style="grid-template-columns:1fr 1fr">
+                            <button type="button" class="ma-knapp sek" disabled="@_lagrer" @onclick="Retur"><Icon Name="refresh" />Retur</button>
+                            <button type="button" class="ma-knapp" disabled="@_lagrer" @onclick="Brukt"><Icon Name="check" />Brukt@(_arkOrdre is { } o ? $" på {o}" : "")</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="ma-under"><button type="button" class="ma-knapp sek" @onclick="@(() => _ark = null)">Lukk</button></div>
+                    }
+                }
+                else if (_ark == "hovedvare" && _hovedVarer.FirstOrDefault(x => x.Id == _arkVare) is { } hv)
+                {
+                    <h2>@hv.Navn</h2>
+                    <p class="ml-ark-under">@if (hv.Hylle is not null) {<span class="ml-plass"><Icon Name="map-pin" />@hv.Hylle</span>} @(hv.Kode ?? "")</p>
+                    <div class="ml-tre">
+                        <div><small>På lager</small><b>@hv.Antall</b></div>
+                        <div><small>Reservert</small><b>@hv.Reservert</b></div>
+                        <div><small>Minimum</small><b class="@(hv.Under ? "lav" : "")">@(hv.Minimum?.ToString() ?? "–")</b></div>
+                    </div>
+                    <b class="ml-ark-tittel">Finnes også i</b>
+                    @if (_arkLagre.Count == 0)
+                    {
+                        <p class="ml-ark-under">Ikke i noen biler eller andre lagre.</p>
+                    }
+                    @foreach (var l in _arkLagre)
+                    {
+                        <div class="ml-ark-linje"><span>@l.Navn</span><b>@l.Antall stk</b></div>
+                    }
+                    @if (_arkInn.Count > 0)
+                    {
+                        <b class="ml-ark-tittel">På vei inn</b>
+                        @foreach (var (io, n) in _arkInn)
+                        {
+                            <div class="ml-ark-linje"><span>@io</span><b>@n stk</b></div>
+                        }
+                    }
+                    <div class="ma-under"><button type="button" class="ma-knapp sek" @onclick="@(() => _ark = null)">Lukk</button></div>
+                }
+            </div>
+        </div>
+    };
+
+    private RenderFragment Teller(int verdi, Action minus, Action pluss) => @<span class="ml-teller" @onclick:stopPropagation="true">
+        <button type="button" @onclick="minus" aria-label="Én mindre">−</button><span>@verdi</span><button type="button" @onclick="pluss" aria-label="Én til">+</button>
+    </span>;
+
+    private bool Treff(params string?[] felt) =>
+        string.IsNullOrWhiteSpace(_sok) || felt.Any(f => f?.Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase) == true);
+
+    private static string Pst(double del, double av) => (av <= 0 ? 0 : Math.Clamp(del * 100 / av, 0, 100)).ToString("0", CultureInfo.InvariantCulture);
+
+    private static string Tid(DateTime t) => t.Date == DateTime.Today ? "i dag " + t.ToString("HH:mm")
+        : t.Date == DateTime.Today.AddDays(-1) ? "i går " + t.ToString("HH:mm") : t.ToString("dd.MM HH:mm");
+
+    // ---------- Skanning ----------
+
+    private void ApneSkanner()
+    {
+        _visSkanner = true;
+        _skannerSkalStarte = true;
+        _treff = null;
+        _skannFeil = null;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_visSkanner && _skannerSkalStarte)
+        {
+            _skannerSkalStarte = false;
+            _ref ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("eanSkanner.start", _video, _ref);
+        }
+    }
+
+    private async Task LukkSkanner()
+    {
+        _visSkanner = false;
+        try
+        {
+            await JS.InvokeVoidAsync("eanSkanner.stop");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    // Hva skanningen gjør avhenger av hvor man er: mottak og plukk teller opp,
+    // telling teller én, ellers åpnes varen i bilen eller på hovedlageret.
+    [JSInvokable]
+    public async Task OnStrekkodeSkannet(string kode)
+    {
+        var c = await Db.Components.AsNoTracking().FirstOrDefaultAsync(x => x.Gtin == kode || x.Produktkode == kode);
+        _skannFeil = null;
+        _treff = null;
+        if (c is null)
+        {
+            _skannFeil = $"Fant ingen vare med strekkode {kode}.";
+        }
+        else if (_detalj?.StartsWith("mottak:") == true && _mottakOrdre?.Linjer.FirstOrDefault(l => l.ComponentId == c.Id) is { } ml)
+        {
+            _mottakAntall[ml.Id] = _mottakAntall.GetValueOrDefault(ml.Id) + 1;
+            _treff = $"✓ {c.Navn}: {_mottakAntall[ml.Id]} av {ml.Rest} mottatt" + (_hovedHylle.GetValueOrDefault(c.Id) is { } h ? $" · legg på {h}" : "");
+        }
+        else if (_detalj?.StartsWith("plukk:") == true && _plukkBestilling?.Linjer.FirstOrDefault(l => l.ComponentId == c.Id) is { } pl)
+        {
+            await SettPlukket(pl, pl.Plukket + 1);
+            _treff = $"✓ {c.Navn}: {pl.Plukket} av {pl.Antall} plukket";
+        }
+        else if (_detalj == "telling" && _telling?.Linjer.FirstOrDefault(l => l.ComponentId == c.Id) is { } tl)
+        {
+            await SettTalt(tl, (tl.Talt ?? 0) + 1);
+            _treff = $"✓ {c.Navn}: {tl.Talt} talt";
+        }
+        else if (_detalj is not null)
+        {
+            _skannFeil = $"{c.Navn} er ikke på denne listen.";
+        }
+        else if (!_hoved && _bilVarer.Any(v => v.Id == c.Id))
+        {
+            await LukkSkanner();
+            await ApneBilvare(c.Id);
+        }
+        else if (_hovedVarer.Any(v => v.Id == c.Id))
+        {
+            await LukkSkanner();
+            _hoved = true;
+            await ApneHovedvare(c.Id);
+        }
+        else
+        {
+            _skannFeil = $"{c.Navn} ligger ikke {(_hoved ? "på hovedlageret" : "i bilen")}.";
+        }
+
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void OnSkannerFeil(string melding)
+    {
+        _skannFeil = melding;
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_visSkanner)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("eanSkanner.stop");
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+
+        _ref?.Dispose();
+    }
+}
