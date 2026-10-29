@@ -13,6 +13,7 @@ window.eanSkanner = (function () {
     let skannerLoop = null;
     let reserve = null;
     let reserveHolder = null;
+    let aktivRef = null;
 
     function stotter() {
         return true;
@@ -50,8 +51,28 @@ window.eanSkanner = (function () {
         };
     }
 
+    // Forklarer hvorfor kameraet ikke startet, så montøren vet hva som må gjøres.
+    function kameraFeil(err) {
+        const navn = err && err.name ? err.name : '';
+        const tekst = String(err && err.message ? err.message : err || '');
+        if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            return 'Kameraet er blokkert: siden må åpnes over en sikker tilkobling (https).';
+        }
+        if (navn === 'NotAllowedError' || navn === 'SecurityError' || /notallowed|permission|denied|not allowed/i.test(tekst)) {
+            return 'Kameraet er blokkert for denne siden. Slå på kameratilgang i telefonens innstillinger, eller ta bilde av strekkoden.';
+        }
+        if (navn === 'NotFoundError' || navn === 'OverconstrainedError' || /notfound|no camera|requested device not found/i.test(tekst)) {
+            return 'Fant ikke noe kamera på enheten. Ta bilde av strekkoden eller skriv inn varenummeret.';
+        }
+        if (navn === 'NotReadableError' || navn === 'AbortError' || /notreadable|could not start|in use/i.test(tekst)) {
+            return 'Kameraet brukes av en annen app. Lukk den og prøv igjen.';
+        }
+        return 'Fikk ikke startet kameraet (' + (navn || tekst) + '). Ta bilde av strekkoden eller skriv inn varenummeret.';
+    }
+
     async function start(videoEl, dotNetRef) {
         stop();
+        aktivRef = dotNetRef;
         const meld = lagMelder(dotNetRef);
 
         if (harInnebygd()) {
@@ -61,7 +82,8 @@ window.eanSkanner = (function () {
                 videoEl.srcObject = stream;
                 await videoEl.play();
             } catch (err) {
-                await dotNetRef.invokeMethodAsync('OnSkannerFeil', 'Fikk ikke tilgang til kamera: ' + err.message);
+                stop();
+                await dotNetRef.invokeMethodAsync('OnSkannerFeil', kameraFeil(err));
                 return;
             }
 
@@ -110,7 +132,7 @@ window.eanSkanner = (function () {
                 kode => { meld(kode); },
                 () => { });
         } catch (err) {
-            await dotNetRef.invokeMethodAsync('OnSkannerFeil', 'Fikk ikke tilgang til kamera: ' + (err && err.message ? err.message : err));
+            await dotNetRef.invokeMethodAsync('OnSkannerFeil', kameraFeil(err));
         }
     }
 
@@ -141,5 +163,53 @@ window.eanSkanner = (function () {
         }
     }
 
-    return { start, stop, stotter };
+    // Leser strekkoden fra et bilde tatt med telefonens vanlige kamera. Det
+    // trenger ingen kameratillatelse i nettleseren, så det virker også når
+    // kameraet er blokkert for siden.
+    async function lesBilde(input) {
+        const fil = input && input.files && input.files[0];
+        const ref = aktivRef;
+        if (input) input.value = '';
+        if (!fil || !ref) {
+            return;
+        }
+
+        let kode = null;
+        try {
+            if (harInnebygd()) {
+                const bilde = await createImageBitmap(fil);
+                const funn = await new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'] }).detect(bilde);
+                kode = funn.length > 0 ? funn[0].rawValue : null;
+            }
+            if (!kode) {
+                await lastBibliotek();
+                let holder = document.getElementById('ean-bilde-holder');
+                if (!holder) {
+                    holder = document.createElement('div');
+                    holder.id = 'ean-bilde-holder';
+                    holder.style.display = 'none';
+                    document.body.appendChild(holder);
+                }
+                const F = window.Html5QrcodeSupportedFormats;
+                const leser = new window.Html5Qrcode(holder.id, { formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128], verbose: false });
+                try {
+                    kode = await leser.scanFile(fil, false);
+                } catch {
+                    kode = null;
+                } finally {
+                    try { leser.clear(); } catch { }
+                }
+            }
+        } catch {
+            kode = null;
+        }
+
+        if (kode) {
+            await ref.invokeMethodAsync('OnStrekkodeSkannet', kode);
+        } else {
+            await ref.invokeMethodAsync('OnSkannerFeil', 'Fant ingen strekkode i bildet. Ta bildet nærmere, rett forfra og med godt lys.');
+        }
+    }
+
+    return { start, stop, stotter, lesBilde };
 })();

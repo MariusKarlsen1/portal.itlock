@@ -15,79 +15,281 @@
 
 <PageTitle>Produkter</PageTitle>
 
-@* Varene på arbeidsordren i montørappen: hak av det som er plukket, eller
-   skann strekkoden med kameraet. Lagringen følger samme regler som
-   varelisten på arbeidsordren i portalen (ArbeidsordreSkjema): plukket vare
-   trekkes fra lageret, og reservasjonene oppdateres. Varer brukt fra bilen
-   er allerede trukket og kan ikke endres her. *@
+@* Varene på arbeidsordren i montørappen, med bilde av hver vare til venstre.
+   - Varene på ordren hakes av når de er tatt ut, eller skannes. Lagringen
+     følger samme regler som varelisten i portalen (ArbeidsordreSkjema):
+     det som tas ut trekkes fra lageret, og reservasjonene oppdateres.
+   - «Legg til vare» tar ut andre varer fra bilen eller hovedlageret. De
+     trekkes fra lageret med en gang og føres på ordren (PlukkService.BruktAsync).
+   - Trykk på en vare for å legge den tilbake på lager hvis den ikke ble brukt.
+   - Er kameraet blokkert, kan man ta bilde av strekkoden med telefonens
+     vanlige kamera eller skrive inn varenummeret. *@
 <div class="ma">
     <AppHode Ikon="box" Sand="true" Tittel="Produkter" Under="@(_ordre is null ? "" : $"{_ordre.Id} {_ordre.Tittel}")" Tilbake="@($"/app/ordre/{Id}")">
-        @if (_kanPlukke && _rader.Any(r => !r.FraBil))
+        @if (_kanPlukke)
         {
             <span class="ma-skille"></span>
-            <button type="button" class="ma-ikonknapp" @onclick="ApneSkanner" aria-label="Skann strekkode"><Icon Name="camera" /></button>
+            <button type="button" class="ma-ikonknapp" @onclick="ApneLeggTil" aria-label="Legg til vare"><Icon Name="plus" /></button>
         }
     </AppHode>
 
-    @if (_lastet && _rader.Count > 0)
+    @if (_lastet && _ordre is not null)
     {
-        var plukket = _rader.Count(r => r.Plukket);
-        <div class="ma-sum">
-            <span style="white-space:nowrap"><Icon Name="box" />@plukket av @_rader.Count plukket</span>
-            @if (_kanPlukke && _rader.Any(r => !r.FraBil && !r.Plukket))
-            {
-                <button type="button" class="ma-knapp" style="min-height:2.4rem;padding:0 0.9rem;font-size:0.9rem" @onclick="ApneSkanner"><Icon Name="camera" />Skann</button>
-            }
+        var plan = _rader.Where(r => !r.Ekstra).ToList();
+        var ekstra = _rader.Where(r => r.Ekstra).ToList();
+        @if (plan.Count > 0)
+        {
+            var tattUt = plan.Count(r => r.Plukket);
+            <div class="mpr-topp">
+                <span>@tattUt av @plan.Count tatt ut@(_bil is null ? "" : " · " + _bil.Navn)</span>
+                <span class="mpr-bar"><i style="width:@(tattUt * 100 / plan.Count)%"></i></span>
+            </div>
+        }
+        @if (_kanPlukke)
+        {
+            <div class="mpr-handling">
+                <button type="button" class="ma-knapp" @onclick="ApneSkanner"><Icon Name="camera" />Skann</button>
+                <button type="button" class="ma-knapp sek" @onclick="ApneLeggTil"><Icon Name="plus" />Legg til vare</button>
+            </div>
+        }
+        @if (_melding is not null)
+        {
+            <p class="ma-melding" role="status" style="margin:0.6rem 0.75rem 0">@_melding</p>
+        }
+
+        @if (_rader.Count == 0)
+        {
+            <p class="ma-tom">Ingen varer på ordren. Trykk «Legg til vare» eller skann.</p>
+        }
+        @if (plan.Count > 0)
+        {
+            <div class="mpr-gruppe"><span>På ordren</span><span>@plan.Count(r => r.Plukket) av @plan.Count tatt ut</span></div>
+            <div class="ma-liste">
+                @foreach (var r in plan)
+                {
+                    var rad = r;
+                    <div class="mpr-rad">
+                        <button type="button" class="mpr-apne" @onclick="@(() => ApneVare(rad))">
+                            @Bilde(rad.Component, rad.Plukket, false)
+                            <span class="mpr-tekst"><b>@rad.Navn</b><small>@UnderTekst(rad)</small></span>
+                        </button>
+                        <span class="ma-merke @(rad.Plukket ? "gronn" : "gra")">@rad.Antall stk</span>
+                        <button type="button" class="ma-hake @(rad.Plukket ? "paa" : "")" disabled="@(!_kanPlukke || _lagrer)" aria-pressed="@rad.Plukket" aria-label="@($"{rad.Navn} tatt ut")" @onclick="@(() => Veksle(rad))">@if (rad.Plukket) {<Icon Name="check" />}</button>
+                    </div>
+                }
+            </div>
+        }
+        @if (ekstra.Count > 0)
+        {
+            <div class="mpr-gruppe"><span>Lagt til</span><span>@ekstra.Sum(r => r.Antall) stk</span></div>
+            <div class="ma-liste">
+                @foreach (var r in ekstra)
+                {
+                    var rad = r;
+                    <div class="mpr-rad">
+                        <button type="button" class="mpr-apne" @onclick="@(() => ApneVare(rad))">
+                            @Bilde(rad.Component, false, false)
+                            <span class="mpr-tekst"><b>@rad.Navn</b><small>@UnderTekst(rad)</small></span>
+                        </button>
+                        @if (_kanPlukke)
+                        {
+                            <span class="mpr-stepper">
+                                <button type="button" disabled="@_lagrer" aria-label="Én mindre" @onclick="@(() => EndreEkstra(rad, rad.Antall - 1))">−</button>
+                                <span>@rad.Antall</span>
+                                <button type="button" disabled="@_lagrer" aria-label="Én til" @onclick="@(() => EndreEkstra(rad, rad.Antall + 1))">+</button>
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="ma-merke gra">@rad.Antall stk</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        @if (_tilbake.Count > 0)
+        {
+            <div class="mpr-gruppe"><span>Lagt tilbake på lager</span></div>
+            <div class="ma-liste">
+                @foreach (var t in _tilbake)
+                {
+                    <div class="mpr-logg"><span class="mpr-logg-ik"><Icon Name="refresh" /></span><span class="mpr-tekst"><b>@t.Antall × @t.Navn</b><small>Tilbake til @t.Lager · @t.Tid.ToString("dd.MM HH:mm")</small></span></div>
+                }
+            </div>
+        }
+        @if (_rader.Count > 0)
+        {
+            <p class="mpr-hint">@(_kanPlukke ? "Det du tar ut trekkes fra lageret og føres på ordren. Ble noe ikke brukt? Trykk på varen og velg «Legg tilbake»." : "Du har ikke tilgang til å ta ut varer.")</p>
+        }
+    }
+    else
+    {
+        <p class="ma-tom">@(_lastet ? "Fant ikke ordren." : "Laster …")</p>
+    }
+
+    @* Én vare: tall, ta ut, og legg tilbake på lager. *@
+    @if (_valgt is { } v)
+    {
+        <div class="ma-ark-bak" @onclick="@(() => _valgt = null)">
+            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="@v.Navn">
+                <div class="ma-ark-handtak"></div>
+                <div class="mpr-ark-hode">
+                    @Bilde(v.Component, false, true)
+                    <div><h2>@v.Navn</h2><small>@string.Join(" · ", new[] { v.Component?.Produktkode, v.Ekstra ? Kilde(v) : null }.Where(s => !string.IsNullOrWhiteSpace(s)))</small></div>
+                </div>
+                <div class="mpr-tre">
+                    <div><small>@(v.Ekstra ? "Lagt til" : "På ordren")</small><b>@v.Antall</b></div>
+                    <div><small>Status</small><b>@(v.Plukket ? "Tatt ut" : "Ikke tatt ut")</b></div>
+                    <div><small>I bilen</small><b>@(_bil is null || v.Component is null ? "–" : _iBil.GetValueOrDefault(v.Component.Id).ToString())</b></div>
+                </div>
+
+                @if (_kanPlukke && !v.Plukket)
+                {
+                    <div class="ma-under"><button type="button" class="ma-knapp" disabled="@_lagrer" @onclick="@(() => TaUt(v))"><Icon Name="check" />Ta ut @v.Antall stk</button></div>
+                }
+                else if (_kanPlukke)
+                {
+                    <div class="mpr-boks">
+                        <h3>Legg tilbake på lager</h3>
+                        <small>@(v.Ekstra ? "Ble det ikke brukt? Det trekkes fra ordren og legges tilbake på lageret." : "Ble varen ikke brukt? Den tas av som uttatt, og det som er trukket fra lageret legges tilbake.")</small>
+                        @if (v.Ekstra)
+                        {
+                            <div class="mpr-linje"><b>Antall</b>
+                                <span class="mpr-stepper">
+                                    <button type="button" aria-label="Færre" @onclick="@(() => _tbAntall = Math.Max(1, _tbAntall - 1))">−</button>
+                                    <span>@_tbAntall</span>
+                                    <button type="button" aria-label="Flere" @onclick="@(() => _tbAntall = Math.Min(v.Antall, _tbAntall + 1))">+</button>
+                                </span>
+                            </div>
+                        }
+                        @if (_harLager && _bil is not null)
+                        {
+                            <div class="mpr-linje"><b>Til</b>
+                                <span class="mpr-valg">
+                                    <button type="button" class="@(_tbTilBil ? "paa" : "")" @onclick="@(() => _tbTilBil = true)">@_bil.Navn</button>
+                                    <button type="button" class="@(!_tbTilBil ? "paa" : "")" @onclick="@(() => _tbTilBil = false)">Hovedlageret</button>
+                                </span>
+                            </div>
+                        }
+                        <button type="button" class="ma-knapp sek" style="margin-top:0.8rem" disabled="@_lagrer" @onclick="LeggTilbake">
+                            <Icon Name="refresh" />@(v.Ekstra ? $"Legg {_tbAntall} stk tilbake" : $"Legg {v.Antall} stk tilbake")
+                        </button>
+                    </div>
+                }
+                @if (_feil is not null)
+                {
+                    <p class="ma-feil" role="alert">@_feil</p>
+                }
+            </div>
         </div>
     }
 
-    <div class="ma-liste">
-        @if (!_lastet)
-        {
-            <p class="ma-tom">Laster …</p>
-        }
-        else if (_ordre is null)
-        {
-            <p class="ma-tom">Fant ikke ordren.</p>
-        }
-        else if (_rader.Count == 0)
-        {
-            <p class="ma-tom">Ingen varer på ordren. Varer brukt fra bilen føres i «Bilen min».</p>
-        }
-        @foreach (var r in _rader)
-        {
-            var rad = r;
-            <div class="ma-rad" style="cursor:default">
-                <button type="button" class="ma-hake @(r.Plukket ? "paa" : "")" disabled="@(!_kanPlukke || r.FraBil || _lagrer)" aria-pressed="@r.Plukket" aria-label="@($"{r.Navn} plukket")" @onclick="@(() => Veksle(rad))">@if (r.Plukket) {<Icon Name="check" />}</button>
-                <span class="ma-rad-tekst">
-                    <b>@r.Navn</b>
-                    <small>@UnderTekst(r)</small>
-                </span>
-                <span class="ma-merke @(r.Plukket ? "gronn" : "gra")">@r.Antall stk</span>
-            </div>
-        }
-    </div>
-    @if (!_kanPlukke && _lastet && _rader.Count > 0)
+    @* Legg til vare fra bilen eller hovedlageret. *@
+    @if (_leggTil)
     {
-        <p class="ma-teller-tekst" style="text-align:left;font-style:normal;padding:0.6rem 1rem">Du har ikke tilgang til å plukke varer.</p>
+        <div class="ma-ark-bak" @onclick="@(() => _leggTil = false)">
+            <div class="ma-ark mpr-ark-hoy" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Legg til vare">
+                <div class="ma-ark-handtak"></div>
+                <h2 style="margin-bottom:0.2rem">Legg til vare</h2>
+                <small class="mpr-dempet">@(_harLager ? $"Trekkes fra lageret og føres på ordre {Id}." : $"Føres på ordre {Id}.")</small>
+                @if (_harLager)
+                {
+                    <div class="mpr-valg" style="margin-top:0.7rem">
+                        @if (_bil is not null)
+                        {
+                            <button type="button" class="@(_ltFraBil ? "paa" : "")" @onclick="@(() => VelgKilde(true))">@_bil.Navn</button>
+                        }
+                        <button type="button" class="@(!_ltFraBil ? "paa" : "")" @onclick="@(() => VelgKilde(false))">Hovedlageret</button>
+                    </div>
+                }
+                <div class="mpr-sok">
+                    <input type="search" placeholder="Søk navn, varenummer eller EAN" aria-label="Søk vare" @bind="_ltSok" @bind:event="oninput" @bind:after="SokVarer" />
+                    <button type="button" class="ma-ikonknapp" aria-label="Skann" @onclick="@(() => { _leggTil = false; ApneSkanner(); })"><Icon Name="camera" /></button>
+                </div>
+                <div class="mpr-liste">
+                    @if (_ltListe.Count == 0)
+                    {
+                        <p class="ma-tom" style="padding:1rem 0">@(string.IsNullOrWhiteSpace(_ltSok) ? (_harLager && _ltFraBil ? "Bilen er tom." : _harLager ? "Ingenting ledig på hovedlageret." : "Søk etter varen.") : "Ingen varer passer.")</p>
+                    }
+                    @foreach (var x in _ltListe)
+                    {
+                        var valg = x;
+                        <button type="button" class="mpr-velg @(_ltValgt?.Id == valg.Vare.Id ? "valgt" : "")" @onclick="@(() => VelgVare(valg))">
+                            @Bilde(valg.Vare, false, false)
+                            <span class="mpr-tekst"><b>@valg.Vare.Navn</b><small>@string.Join(" · ", new[] { valg.Vare.Produktkode, valg.Antall is { } a ? $"{a} {(_ltFraBil ? "i bilen" : "ledig")}" : null }.Where(s => !string.IsNullOrWhiteSpace(s)))</small></span>
+                            @if (_ltValgt?.Id == valg.Vare.Id) {<Icon Name="check" />}
+                        </button>
+                    }
+                </div>
+                @if (_ltValgt is not null)
+                {
+                    <div class="mpr-legg-bunn">
+                        <span class="mpr-stepper">
+                            <button type="button" aria-label="Færre" @onclick="@(() => _ltAntall = Math.Max(1, _ltAntall - 1))">−</button>
+                            <span>@_ltAntall</span>
+                            <button type="button" aria-label="Flere" @onclick="@(() => _ltAntall = _ltMaks is { } m ? Math.Min(m, _ltAntall + 1) : _ltAntall + 1)">+</button>
+                        </span>
+                        <button type="button" class="ma-knapp" disabled="@(_lagrer || _ltMaks is <= 0)" @onclick="LeggTil"><Icon Name="plus" />@(_ltMaks is <= 0 ? "Ikke på lager" : $"Legg til {_ltAntall} stk")</button>
+                    </div>
+                }
+                @if (_feil is not null)
+                {
+                    <p class="ma-feil" role="alert">@_feil</p>
+                }
+            </div>
+        </div>
     }
 
     @if (_visSkanner)
     {
+        var blokkert = _skannFeil?.Contains("blokkert", StringComparison.OrdinalIgnoreCase) == true;
         <div class="ma-ark-bak" @onclick="LukkSkanner">
             <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Skann strekkode">
                 <div class="ma-ark-handtak"></div>
                 <h2>Skann strekkode</h2>
-                <div class="mpk-video"><video @ref="_video" playsinline muted></video><span class="mpk-laser"></span></div>
+                <div class="mpk-video" style="@(blokkert ? "display:none" : null)"><video @ref="_video" playsinline muted></video><span class="mpk-laser"></span></div>
                 @if (_treff is not null)
                 {
                     <p class="ma-melding" role="status">@_treff</p>
+                }
+                @if (_skannForslag is { } forslag)
+                {
+                    <div class="mpr-forslag">
+                        @Bilde(forslag, false, false)
+                        <span class="mpr-tekst"><b>@forslag.Navn</b><small>Ikke på ordren</small></span>
+                        <button type="button" class="ma-knapp" style="width:auto;min-height:2.5rem;padding:0 1rem" @onclick="@(() => LeggTilFraSkann(forslag))">Legg til</button>
+                    </div>
                 }
                 @if (_skannFeil is not null)
                 {
                     <p class="ma-feil" role="alert">@_skannFeil</p>
                 }
-                <div class="ma-under"><button type="button" class="ma-knapp sek" @onclick="LukkSkanner">Ferdig</button></div>
+                @if (blokkert)
+                {
+                    <div class="mpr-hjelp">
+                        <b>iPhone</b>
+                        <span>Innstillinger → Safari → Kamera → Tillat. Bruker du appen fra hjemskjermen: åpne den i Safari én gang og tillat kamera.</span>
+                        <b>Android (Chrome)</b>
+                        <span>Trykk på ikonet til venstre for adressen → Tillatelser → Kamera → Tillat.</span>
+                    </div>
+                }
+                <div class="mpr-alternativ">
+                    <label class="ma-knapp sek mpr-fil">
+                        <Icon Name="camera" />Ta bilde av strekkoden
+                        <input type="file" accept="image/*" capture="environment" onchange="eanSkanner.lesBilde(this)" />
+                    </label>
+                    <div class="mpr-sok" style="margin:0">
+                        <input type="text" placeholder="Skriv varenummer eller EAN" aria-label="Varenummer eller EAN" @bind="_manuellKode" @onkeydown="@(async e => { if (e.Key == "Enter") await FinnManuell(); })" />
+                        <button type="button" class="ma-knapp sek" style="width:auto;min-height:2.6rem;padding:0 1rem" @onclick="FinnManuell">Finn</button>
+                    </div>
+                </div>
+                <div class="ma-under">
+                    @if (blokkert)
+                    {
+                        <button type="button" class="ma-knapp" @onclick="ProvIgjen"><Icon Name="refresh" />Prøv kameraet igjen</button>
+                    }
+                    <button type="button" class="ma-knapp sek" @onclick="LukkSkanner">Ferdig</button>
+                </div>
             </div>
         </div>
     }
@@ -97,7 +299,8 @@
     [Parameter] public int Id { get; set; }
     [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
 
-    // Én rad i plukklisten: en linje fra tilbudet eller en vare lagt på ordren.
+    // Én rad: en linje fra tilbudet eller en vare på ordren. Ekstra = tatt
+    // rett fra et lager av montøren (bil eller hovedlager), og allerede trukket.
     private sealed class Rad
     {
         public TilbudLinje? Linje { get; init; }
@@ -105,10 +308,13 @@
         public string Navn => Linje?.Navn ?? Vare!.Navn;
         public int Antall => Linje?.Antall ?? Vare!.Antall;
         public Component? Component => Linje?.Component ?? Vare!.Component;
-        public bool FraBil => Vare?.FraLagerId is not null;
+        public bool Ekstra => Vare?.FraLagerId is not null;
         public bool Plukket => Linje?.Plukket ?? Vare!.Plukket;
         public DateTime? PlukketDato => Linje?.PlukketDato ?? Vare!.PlukketDato;
     }
+
+    private sealed record Valg(Component Vare, int? Antall);
+    private sealed record Tilbake(string Navn, int Antall, string Lager, DateTime Tid);
 
     private bool _lastet;
     private bool _lagrer;
@@ -116,16 +322,38 @@
     private bool _harLager;
     private bool _reserverAuto = true;
     private int _brukerId;
+    private int _hovedId;
     private string? _brukerNavn;
+    private string? _melding;
+    private string? _feil;
     private Arbeidsordre? _ordre;
+    private Lager? _bil;
     private List<Rad> _rader = [];
+    private List<Tilbake> _tilbake = [];
     private Dictionary<int, int> _res = [];
     private Dictionary<int, int> _ledig = [];
+    private Dictionary<int, int> _iBil = [];
+    private Dictionary<int, string> _lagerNavn = [];
+    private HashSet<int> _medBilde = [];
+
+    private Rad? _valgt;
+    private int _tbAntall = 1;
+    private bool _tbTilBil = true;
+
+    private bool _leggTil;
+    private bool _ltFraBil = true;
+    private string _ltSok = "";
+    private List<Valg> _ltListe = [];
+    private Component? _ltValgt;
+    private int _ltAntall = 1;
+    private int? _ltMaks;
 
     private bool _visSkanner;
     private bool _skannerSkalStarte;
     private string? _treff;
     private string? _skannFeil;
+    private string? _manuellKode;
+    private Component? _skannForslag;
     private ElementReference _video;
     private DotNetObjectReference<MontorProdukter>? _ref;
 
@@ -140,34 +368,93 @@
         }
 
         _brukerNavn = await Db.Brukere.Where(b => b.Id == _brukerId).Select(b => b.Navn).FirstOrDefaultAsync();
-        _ordre = await Db.Arbeidsordre.Include(a => a.Varer).ThenInclude(v => v.Component).FirstOrDefaultAsync(a => a.Id == Id);
-        if (_ordre is not null)
+        _harLager = await Tilleggsmoduler.HarAsync(TilleggsModuler.Lager);
+        if (_harLager)
         {
-            var linjer = _ordre.TilbudId is { } tid
-                ? await Db.TilbudLinjer.Include(l => l.Component)
-                    .Where(l => l.TilbudId == tid && !l.ErGruppering && l.LevertAv == LevertAv.F)
-                    .OrderBy(l => l.Rekkefolge).ToListAsync()
-                : [];
-            _rader = linjer.Select(l => new Rad { Linje = l })
-                .Concat(_ordre.Varer.OrderBy(v => v.Id).Select(v => new Rad { Vare = v }))
-                .ToList();
-            if (_ordre.Status is ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert)
-            {
-                _kanPlukke = false;
-            }
-
-            await SikreLagerAsync();
+            _hovedId = (await LagerSvc.HovedlagerAsync()).Id;
+            _bil = await Db.Lagre.AsNoTracking().Where(l => l.Aktiv && l.Type == LagerType.Bil && l.AnsvarligBrukerId == _brukerId).OrderBy(l => l.Id).FirstOrDefaultAsync();
+            _lagerNavn = await Db.Lagre.AsNoTracking().ToDictionaryAsync(l => l.Id, l => l.Navn);
         }
 
+        _tbTilBil = _bil is not null;
+        _ltFraBil = _bil is not null;
+        await LastAsync();
         _lastet = true;
     }
+
+    private async Task LastAsync()
+    {
+        Db.ChangeTracker.Clear();
+        _ordre = await Db.Arbeidsordre.Include(a => a.Varer).ThenInclude(v => v.Component).FirstOrDefaultAsync(a => a.Id == Id);
+        if (_ordre is null)
+        {
+            _rader = [];
+            return;
+        }
+
+        var linjer = _ordre.TilbudId is { } tid
+            ? await Db.TilbudLinjer.Include(l => l.Component)
+                .Where(l => l.TilbudId == tid && !l.ErGruppering && l.LevertAv == LevertAv.F)
+                .OrderBy(l => l.Rekkefolge).ToListAsync()
+            : [];
+        _rader = linjer.Select(l => new Rad { Linje = l })
+            .Concat(_ordre.Varer.OrderBy(v => v.Id).Select(v => new Rad { Vare = v }))
+            .ToList();
+        if (_ordre.Status is ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert)
+        {
+            _kanPlukke = false;
+        }
+
+        await SikreLagerAsync();
+        if (_harLager)
+        {
+            _tilbake = (await Db.LagerBevegelser.AsNoTracking().Include(b => b.Component)
+                    .Where(b => b.ArbeidsordreId == Id && b.Type == LagerBevegelseType.Forbruk && b.Antall > 0)
+                    .OrderByDescending(b => b.Tidspunkt).Take(20).ToListAsync())
+                .Select(b => new Tilbake(b.Component?.Navn ?? "Vare", b.Antall, _lagerNavn.GetValueOrDefault(b.LagerId) ?? "lageret", b.Tidspunkt)).ToList();
+            _iBil = _bil is null ? [] : (await LagerSvc.BeholdningAsync(lagerId: _bil.Id)).ToDictionary(b => b.ComponentId, b => b.Antall);
+        }
+
+        await LastBilderAsync(_rader.Select(r => r.Component?.Id).OfType<int>());
+    }
+
+    private async Task LastBilderAsync(IEnumerable<int> ider)
+    {
+        var nye = ider.Where(i => !_medBilde.Contains(i)).Distinct().ToList();
+        if (nye.Count > 0)
+        {
+            _medBilde.UnionWith(await Db.KomponenterMedFilAsync("BildeData", nye));
+        }
+    }
+
+    // Varens bilde fra varekartoteket, eller et ikon når den ikke har bilde.
+    private RenderFragment Bilde(Component? c, bool ferdig, bool stor) => __builder =>
+    {
+        <span class="mpr-bilde @(stor ? "stor" : "")">
+            @if (c is not null && _medBilde.Contains(c.Id))
+            {
+                <img src="@($"/komponent/{c.Id}/bilde?w={(stor ? 200 : 120)}")" alt="" loading="lazy" />
+            }
+            else
+            {
+                <Icon Name="box" />
+            }
+            @if (ferdig)
+            {
+                <span class="mpr-ok"><Icon Name="check" /></span>
+            }
+        </span>
+    };
+
+    private string Kilde(Rad r) => r.Vare?.FraLagerId is { } l ? "fra " + (l == _bil?.Id ? "bilen" : _lagerNavn.GetValueOrDefault(l) ?? "lageret") : "";
 
     private string UnderTekst(Rad r)
     {
         var deler = new List<string>();
         if (r.Component?.Produktkode is { Length: > 0 } kode) deler.Add(kode);
-        if (r.FraBil) deler.Add("Brukt fra bilen");
-        else if (r.Plukket && r.PlukketDato is { } d) deler.Add($"Plukket {d:dd.MM HH:mm}");
+        if (r.Ekstra) deler.Add(Kilde(r));
+        else if (r.Plukket && r.PlukketDato is { } d) deler.Add($"Tatt ut {d:dd.MM HH:mm}");
+        else if (_bil is not null && r.Component is { } c && _iBil.GetValueOrDefault(c.Id) > 0) deler.Add($"{_iBil[c.Id]} i bilen");
         else if (r.Component?.Gtin is { Length: > 0 }) deler.Add("Kan skannes");
         return string.Join(" · ", deler);
     }
@@ -175,7 +462,6 @@
     // Som SikreVarerAsync i ArbeidsordreSkjema: forbruket først, så reservasjonene.
     private async Task SikreLagerAsync()
     {
-        _harLager = await Tilleggsmoduler.HarAsync(TilleggsModuler.Lager);
         if (!_harLager)
         {
             return;
@@ -190,14 +476,36 @@
         _ledig = await ResSvc.LedigAsync();
     }
 
+    private void ApneVare(Rad r)
+    {
+        _feil = null;
+        _melding = null;
+        _tbAntall = r.Antall;
+        _tbTilBil = _bil is not null;
+        _valgt = r;
+    }
+
     private async Task Veksle(Rad r)
     {
-        if (!_kanPlukke || r.FraBil || _lagrer)
+        if (!_kanPlukke || _lagrer)
         {
             return;
         }
 
-        await SettPlukket(r, !r.Plukket);
+        if (r.Plukket)
+        {
+            // Å ta bort haken er det samme som å legge varen tilbake.
+            ApneVare(r);
+            return;
+        }
+
+        await SettPlukket(r, true);
+    }
+
+    private async Task TaUt(Rad r)
+    {
+        await SettPlukket(r, true);
+        _valgt = null;
     }
 
     private async Task SettPlukket(Rad r, bool plukket)
@@ -222,8 +530,9 @@
             if (plukket)
             {
                 await TrekkUtUtenReservasjonAsync(r.Component, r.Antall);
-                await SikreLagerAsync();
             }
+
+            await LastAsync();
         }
         finally
         {
@@ -246,11 +555,274 @@
             return;
         }
 
-        var hoved = await LagerSvc.HovedlagerAsync();
-        await LagerSvc.RegistrerAsync(c.Id, hoved.Id, -ant, LagerBevegelseType.Forbruk, $"Plukket på {_ordre!.Tittel}",
+        await LagerSvc.RegistrerAsync(c.Id, _hovedId, -ant, LagerBevegelseType.Forbruk, $"Plukket på {_ordre!.Tittel}",
             _brukerId, _brukerNavn, prosjektId: _ordre.ProsjektId, arbeidsordreId: Id);
         _ledig[c.Id] = _ledig.GetValueOrDefault(c.Id) - ant;
     }
+
+    // ---------- Legg tilbake ----------
+
+    private async Task LeggTilbake()
+    {
+        if (_valgt is not { } r || _ordre is null || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        _feil = null;
+        try
+        {
+            var tilBil = _bil is not null && _tbTilBil;
+            var tilLager = tilBil ? _bil!.Id : _hovedId;
+            var tilNavn = tilBil ? "bilen" : "hovedlageret";
+            int antall;
+            if (r.Vare is { FraLagerId: { } kilde } v)
+            {
+                // Tatt fra et lager av montøren: tilbake til samme lager, og
+                // flyttes videre hvis det skal til et annet.
+                antall = Math.Clamp(_tbAntall, 1, v.Antall);
+                await PlukkSvc.EndreBruktAsync(v.Id, v.Antall, v.Antall - antall, _brukerId, _brukerNavn);
+                if (v.ComponentId is { } cid && tilLager != kilde)
+                {
+                    await PlukkSvc.ReturAsync(cid, kilde, tilLager, antall, $"Ikke brukt på {_ordre.Tittel}", _brukerId, _brukerNavn);
+                }
+
+                var lagret = await Db.ArbeidsordreVarer.FirstAsync(x => x.Id == v.Id);
+                if (lagret.Antall - antall <= 0)
+                {
+                    Db.ArbeidsordreVarer.Remove(lagret);
+                }
+                else
+                {
+                    lagret.Antall -= antall;
+                }
+
+                await Db.SaveChangesAsync();
+            }
+            else
+            {
+                // Vare på ordren: haken tas bort, og det som er trukket fra
+                // lageret for den, legges tilbake. Varen reserveres så på nytt.
+                antall = r.Antall;
+                if (r.Linje is { } l)
+                {
+                    l.Plukket = false;
+                    l.PlukketDato = null;
+                    l.PlukketAvBrukerId = null;
+                }
+                else if (r.Vare is { } pv)
+                {
+                    pv.Plukket = false;
+                    pv.PlukketDato = null;
+                    pv.PlukketAvBrukerId = null;
+                }
+
+                await Db.SaveChangesAsync();
+                if (_harLager && r.Component is { } c)
+                {
+                    var forbrukt = -(await Db.LagerBevegelser.Where(b => b.ArbeidsordreId == Id && b.ComponentId == c.Id && b.Type == LagerBevegelseType.Forbruk)
+                        .SumAsync(b => (int?)b.Antall) ?? 0);
+                    var fraLager = await Db.ArbeidsordreVarer.Where(x => x.ArbeidsordreId == Id && x.ComponentId == c.Id && x.FraLagerId != null)
+                        .SumAsync(x => (int?)x.Antall) ?? 0;
+                    antall = Math.Min(r.Antall, forbrukt - fraLager);
+                    if (antall > 0)
+                    {
+                        await LagerSvc.RegistrerAsync(c.Id, tilLager, antall, LagerBevegelseType.Forbruk, $"Lagt tilbake i {tilNavn} fra {_ordre.Tittel}",
+                            _brukerId, _brukerNavn, prosjektId: _ordre.ProsjektId, arbeidsordreId: Id);
+                    }
+                }
+            }
+
+            _melding = _harLager && antall > 0 ? $"{antall} stk {r.Navn} er lagt tilbake i {tilNavn}." : $"{r.Navn} er ikke lenger tatt ut.";
+            _valgt = null;
+            await LastAsync();
+        }
+        catch (DbUpdateException)
+        {
+            _feil = "Kunne ikke lagre. Sjekk dekningen og prøv igjen.";
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    // − / + på en vare som er lagt til: endrer det som er trukket fra lageret.
+    // Går den til 0, åpnes «Legg tilbake» så man velger hvor den skal.
+    private async Task EndreEkstra(Rad r, int nytt)
+    {
+        if (r.Vare is not { FraLagerId: { } kilde } v || _lagrer)
+        {
+            return;
+        }
+
+        if (nytt <= 0)
+        {
+            ApneVare(r);
+            return;
+        }
+
+        if (nytt > v.Antall && kilde == _bil?.Id && v.ComponentId is { } cid && _iBil.GetValueOrDefault(cid) < nytt - v.Antall)
+        {
+            _melding = "Det er ikke flere igjen i bilen.";
+            return;
+        }
+
+        _lagrer = true;
+        try
+        {
+            await PlukkSvc.EndreBruktAsync(v.Id, v.Antall, nytt, _brukerId, _brukerNavn);
+            var lagret = await Db.ArbeidsordreVarer.FirstAsync(x => x.Id == v.Id);
+            lagret.Antall = nytt;
+            await Db.SaveChangesAsync();
+            _melding = null;
+            await LastAsync();
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    // ---------- Legg til ----------
+
+    private async Task ApneLeggTil()
+    {
+        _feil = null;
+        _melding = null;
+        _ltSok = "";
+        _ltValgt = null;
+        _ltAntall = 1;
+        _leggTil = true;
+        await SokVarer();
+    }
+
+    private async Task VelgKilde(bool fraBil)
+    {
+        _ltFraBil = fraBil;
+        _ltValgt = null;
+        await SokVarer();
+    }
+
+    private async Task SokVarer()
+    {
+        var sok = _ltSok.Trim();
+        IQueryable<Component> q = Db.Components.AsNoTracking().Where(c => c.Aktiv);
+        if (sok.Length > 0)
+        {
+            q = q.Where(c => c.Navn.Contains(sok) || (c.Produktkode != null && c.Produktkode.Contains(sok)) || c.Gtin == sok);
+        }
+
+        if (_harLager && _ltFraBil && _bil is not null)
+        {
+            var iBil = _iBil.Where(b => b.Value > 0).Select(b => b.Key).ToList();
+            var varer = await q.Where(c => iBil.Contains(c.Id)).OrderBy(c => c.Navn).Take(60).ToListAsync();
+            _ltListe = varer.Select(c => new Valg(c, _iBil[c.Id])).ToList();
+        }
+        else if (_harLager)
+        {
+            var ledige = _ledig.Where(l => l.Value > 0).Select(l => l.Key).ToList();
+            var varer = sok.Length == 0
+                ? await q.Where(c => ledige.Contains(c.Id)).OrderBy(c => c.Navn).Take(60).ToListAsync()
+                : await q.OrderBy(c => c.Navn).Take(60).ToListAsync();
+            _ltListe = varer.Select(c => new Valg(c, Math.Max(0, _ledig.GetValueOrDefault(c.Id)))).ToList();
+        }
+        else
+        {
+            _ltListe = sok.Length == 0 ? [] : (await q.OrderBy(c => c.Navn).Take(60).ToListAsync()).Select(c => new Valg(c, null)).ToList();
+        }
+
+        await LastBilderAsync(_ltListe.Select(v => v.Vare.Id));
+    }
+
+    private void VelgVare(Valg v)
+    {
+        _ltValgt = v.Vare;
+        _ltMaks = v.Antall;
+        _ltAntall = 1;
+        _feil = null;
+    }
+
+    private async Task LeggTilFraSkann(Component c)
+    {
+        await LukkSkanner();
+        _feil = null;
+        _melding = null;
+        _ltSok = "";
+        _ltFraBil = _bil is not null && _iBil.GetValueOrDefault(c.Id) > 0;
+        await SokVarer();
+        _ltValgt = c;
+        _ltMaks = _harLager ? Math.Max(0, _ltFraBil ? _iBil.GetValueOrDefault(c.Id) : _ledig.GetValueOrDefault(c.Id)) : null;
+        _ltAntall = 1;
+        await LastBilderAsync([c.Id]);
+        _leggTil = true;
+    }
+
+    private async Task LeggTil()
+    {
+        if (_ltValgt is not { } c || _ordre is null || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        _feil = null;
+        try
+        {
+            var antall = Math.Max(1, _ltAntall);
+            var fraBil = _ltFraBil && _bil is not null;
+            if (_harLager)
+            {
+                var lagerId = fraBil ? _bil!.Id : _hovedId;
+                var finnes = _rader.Select(r => r.Vare).FirstOrDefault(v => v is not null && v.FraLagerId == lagerId && v.ComponentId == c.Id);
+                if (finnes is not null)
+                {
+                    await PlukkSvc.EndreBruktAsync(finnes.Id, finnes.Antall, finnes.Antall + antall, _brukerId, _brukerNavn);
+                    var lagret = await Db.ArbeidsordreVarer.FirstAsync(x => x.Id == finnes.Id);
+                    lagret.Antall += antall;
+                    await Db.SaveChangesAsync();
+                }
+                else
+                {
+                    await PlukkSvc.BruktAsync(c.Id, lagerId, antall, null, Id, null, _brukerId, _brukerNavn);
+                }
+            }
+            else
+            {
+                var vare = await Db.Components.FirstAsync(x => x.Id == c.Id);
+                Db.ArbeidsordreVarer.Add(new ArbeidsordreVare
+                {
+                    ArbeidsordreId = Id,
+                    ComponentId = c.Id,
+                    Navn = vare.Navn,
+                    Antall = antall,
+                    Kostpris = LagerService.KostFor(vare),
+                    Utpris = vare.PrisVeiledende ?? vare.PrisNetto ?? 0m,
+                    LagtTilAvBrukerId = _brukerId,
+                    LagtTilDato = DateTime.Now,
+                    Plukket = true,
+                    PlukketDato = DateTime.Now,
+                    PlukketAvBrukerId = _brukerId
+                });
+                await Db.SaveChangesAsync();
+            }
+
+            _melding = $"{antall} stk {c.Navn} er lagt på ordren{(_harLager ? (fraBil ? " og trukket fra bilen" : " og trukket fra hovedlageret") : "")}.";
+            _leggTil = false;
+            await LastAsync();
+        }
+        catch (DbUpdateException)
+        {
+            _feil = "Kunne ikke lagre. Sjekk dekningen og prøv igjen.";
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    // ---------- Skanning ----------
 
     private void ApneSkanner()
     {
@@ -258,6 +830,14 @@
         _skannerSkalStarte = true;
         _treff = null;
         _skannFeil = null;
+        _skannForslag = null;
+        _manuellKode = null;
+    }
+
+    private void ProvIgjen()
+    {
+        _skannFeil = null;
+        _skannerSkalStarte = true;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -266,7 +846,15 @@
         {
             _skannerSkalStarte = false;
             _ref ??= DotNetObjectReference.Create(this);
-            await JS.InvokeVoidAsync("eanSkanner.start", _video, _ref);
+            try
+            {
+                await JS.InvokeVoidAsync("eanSkanner.start", _video, _ref);
+            }
+            catch (JSException)
+            {
+                _skannFeil = "Fikk ikke startet kameraet. Ta bilde av strekkoden eller skriv inn varenummeret.";
+                StateHasChanged();
+            }
         }
     }
 
@@ -277,27 +865,50 @@
         {
             await JS.InvokeVoidAsync("eanSkanner.stop");
         }
-        catch (JSDisconnectedException)
+        catch (Exception ex) when (ex is JSDisconnectedException or JSException)
         {
         }
     }
 
-    [JSInvokable]
-    public async Task OnStrekkodeSkannet(string ean)
+    private async Task FinnManuell()
     {
-        var rad = _rader.FirstOrDefault(r => !r.Plukket && !r.FraBil && r.Component?.Gtin == ean);
-        if (rad is null)
+        if (!string.IsNullOrWhiteSpace(_manuellKode))
         {
-            _treff = null;
-            _skannFeil = _rader.Any(r => r.Component?.Gtin == ean)
-                ? "Denne varen er allerede plukket."
-                : $"Fant ingen vare med strekkode {ean} på ordren.";
+            await OnStrekkodeSkannet(_manuellKode.Trim());
         }
-        else
+    }
+
+    [JSInvokable]
+    public async Task OnStrekkodeSkannet(string kode)
+    {
+        _skannForslag = null;
+        bool Passer(Component? c) => c is not null && (c.Gtin == kode || string.Equals(c.Produktkode, kode, StringComparison.OrdinalIgnoreCase));
+        var rad = _kanPlukke ? _rader.FirstOrDefault(r => !r.Ekstra && !r.Plukket && Passer(r.Component)) : null;
+        if (rad is not null)
         {
             await SettPlukket(rad, true);
             _skannFeil = null;
-            _treff = $"✓ {rad.Navn} ({rad.Antall} stk) er plukket.";
+            _treff = $"✓ {rad.Navn} ({rad.Antall} stk) er tatt ut.";
+        }
+        else if (_rader.Any(r => !r.Ekstra && Passer(r.Component)))
+        {
+            _treff = null;
+            _skannFeil = "Denne varen er allerede tatt ut.";
+        }
+        else
+        {
+            var vare = await Db.Components.AsNoTracking().FirstOrDefaultAsync(c => c.Aktiv && (c.Gtin == kode || c.Produktkode == kode));
+            _treff = null;
+            if (vare is not null && _kanPlukke)
+            {
+                await LastBilderAsync([vare.Id]);
+                _skannForslag = vare;
+                _skannFeil = null;
+            }
+            else
+            {
+                _skannFeil = $"Fant ingen vare med koden {kode}.";
+            }
         }
 
         StateHasChanged();
@@ -306,6 +917,7 @@
     [JSInvokable]
     public void OnSkannerFeil(string melding)
     {
+        _treff = null;
         _skannFeil = melding;
         StateHasChanged();
     }
@@ -318,7 +930,7 @@
             {
                 await JS.InvokeVoidAsync("eanSkanner.stop");
             }
-            catch (JSDisconnectedException)
+            catch (Exception ex) when (ex is JSDisconnectedException or JSException)
             {
             }
         }
