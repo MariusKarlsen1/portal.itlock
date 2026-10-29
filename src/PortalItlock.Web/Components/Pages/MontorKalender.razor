@@ -56,61 +56,85 @@
     else if (_team && _person is null)
     {
         <div class="mk-sum">
-            <h2>Hvor er alle?<small>@DagTekst(_valgt)</small></h2>
+            <h2>@(_teamUke ? "Uka for teamet" : "Hvor er alle?")<small>@(_teamUke ? $"Uke {ISOWeek.GetWeekOfYear(_mandag)}" : DagTekst(_valgt))</small></h2>
             <div class="mk-vis">
-                <button type="button" class="@(!_teamUke ? "paa" : "")" @onclick="@(() => _teamUke = false)">Dag</button>
+                <button type="button" class="@(!_teamUke ? "paa" : "")" @onclick="@(() => _teamUke = false)">Nå</button>
                 <button type="button" class="@(_teamUke ? "paa" : "")" @onclick="@(() => _teamUke = true)">Uke</button>
             </div>
         </div>
 
         @if (_teamUke)
         {
-            <div class="mk-teamuke">
+            @* Personer nedover, dager bortover. Ruta viser jobben og timene; ledige dager er grønne og stiplede. *@
+            var ledigTimer = _personer.Sum(b => Enumerable.Range(0, 5).Sum(i => Borte(b.Id, _mandag.AddDays(i)) ? 0 : Math.Max(0, Arbeidsdag - Timer(b.Id, _mandag.AddDays(i)))));
+            <div class="mk-ku-sum">
+                <span class="mk-ku-ik"><Icon Name="clock" /></span>
+                <span><b>@TimerT(ledigTimer) ledig denne uka</b><small>Grønne ruter er dager uten jobb. Trykk for å se dagen.</small></span>
+            </div>
+            <div class="mk-ku">
                 <span></span>
                 @for (var i = 0; i < 5; i++)
                 {
                     var dag = _mandag.AddDays(i);
-                    <button type="button" class="mk-th @(dag == _valgt ? "valgt" : "")" @onclick="@(() => _valgt = dag)">@dag.ToString("ddd", Kultur).TrimEnd('.') @dag.Day</button>
+                    var ledige = _personer.Count(b => Poster(dag, b.Id).Count == 0);
+                    <button type="button" class="mk-ku-h @(dag == NorskTid.Idag ? "idag" : "") @(dag == _valgt ? "mk-ku-kol" : "")" @onclick="@(() => _valgt = dag)">
+                        <b>@dag.ToString("ddd", Kultur).TrimEnd('.') @dag.Day</b><small class="@(ledige == 0 ? "full" : "")">@(ledige == 0 ? "Fullt" : $"{ledige} ledig")</small>
+                    </button>
                 }
                 @foreach (var b in _personer)
                 {
                     var bid = b.Id;
-                    <span class="mk-tn"><span class="mk-av mk-av-liten" style="background:@Farge(b.Id)">@Initialer(b.Navn)</span>@Fornavn(b.Navn)</span>
+                    var sum = Enumerable.Range(0, 5).Sum(i => Timer(b.Id, _mandag.AddDays(i)));
+                    <span class="mk-ku-n">
+                        <span class="mk-ku-r"><span class="mk-av mk-av-liten" style="background:@Farge(b.Id)">@Initialer(b.Navn)</span><b>@(b.Id == _brukerId ? "Deg" : Fornavn(b.Navn))</b></span>
+                        <small class="@(sum > 5 * Arbeidsdag ? "over" : "")">@TimerT(sum)</small>
+                    </span>
                     @for (var i = 0; i < 5; i++)
                     {
                         var dag = _mandag.AddDays(i);
-                        var forste = Poster(dag, b.Id).FirstOrDefault();
-                        <button type="button" class="mk-tc mk-b-@(forste?.Type ?? "ledig")" title="@(forste?.Tittel ?? "Ledig")" @onclick="@(() => { _person = bid; _valgt = dag; _uke = false; })">@(forste is null ? "Ledig" : UtenNummer(forste.Tittel))</button>
+                        var liste = Poster(dag, b.Id);
+                        var fravar = liste.FirstOrDefault(p => p.Type == "fravar");
+                        var forste = liste.FirstOrDefault(p => p.Type != "fravar");
+                        var t = Timer(b.Id, dag);
+                        <span class="mk-ku-c @(dag == _valgt ? "mk-ku-kol" : "")">
+                            @if (fravar is not null)
+                            {
+                                <button type="button" class="mk-ku-b mk-ku-borte" title="@fravar.Tittel" @onclick="@(() => VisPerson(bid, dag))"><span>@(fravar.Tittel == "Ferie" ? "Ferie" : "Borte")</span></button>
+                            }
+                            else if (forste is null)
+                            {
+                                <button type="button" class="mk-ku-b mk-ku-ledig" @onclick="@(() => VisPerson(bid, dag))"><span>Ledig</span></button>
+                            }
+                            else
+                            {
+                                <button type="button" class="mk-ku-b mk-b-@forste.Type" title="@forste.Tittel" @onclick="@(() => VisPerson(bid, dag))">
+                                    <span>@KortNavn(forste.Tittel)@(liste.Count > 1 ? $" +{liste.Count - 1}" : "")</span>
+                                    <small>@(t > 0 ? TimerT(t) : "")</small>
+                                    <i class="mk-f-@forste.Type" style="width:@(Math.Min(100, t * 100 / Arbeidsdag).ToString("0", CultureInfo.InvariantCulture))%"></i>
+                                </button>
+                            }
+                        </span>
                     }
                 }
             </div>
-            <div class="mk-tegn"><span class="mk-b-jobb">Jobb</span><span class="mk-b-plan">Plan</span><span class="mk-b-fravar">Fravær</span><span class="mk-b-ledig">Ledig</span></div>
+            <div class="mk-tegn"><span><i class="mk-f-jobb"></i>Jobb</span><span><i class="mk-f-plan"></i>Plan</span><span><i class="mk-f-fravar"></i>Ferie/borte</span><span><i class="mk-tegn-ledig"></i>Ledig</span></div>
         }
         else
         {
-            var status = _personer.ToDictionary(b => b.Id, b => Status(b.Id));
-            <div class="mk-chips">
-                @foreach (var g in status.Values.GroupBy(s => s.Navn).OrderBy(g => Rekkefolge(g.Key)))
-                {
-                    <span class="mk-chip"><i style="background:@g.First().Farge"></i>@g.Count() @g.Key.ToLower(Kultur)</span>
-                }
-            </div>
+            @* Én rad per person: hva de gjør nå og hva som kommer etterpå. *@
             <div class="mk-team">
-                @foreach (var b in _personer)
+                @foreach (var (b, s) in _personer.Select(b => (b, Status(b.Id))).OrderBy(x => x.Item2.Rekke).ThenByDescending(x => x.b.Id == _brukerId))
                 {
                     var bid = b.Id;
-                    var s = status[b.Id];
-                    <button type="button" class="mk-person" @onclick="@(() => { _person = bid; _uke = false; })">
-                        <span class="mk-av" style="background:@Farge(b.Id)">@Initialer(b.Navn)<i style="background:@s.Farge"></i></span>
+                    <button type="button" class="mk-person" @onclick="@(() => VisPerson(bid, _valgt))">
+                        <span class="mk-av mk-av-ring" style="background:@Farge(b.Id);--ring:@s.Farge">@Initialer(b.Navn)</span>
                         <span class="mk-person-tekst">
-                            <b>@b.Navn@if (b.Id == _brukerId) {<em> (deg)</em>}</b>
-                            <small>@s.Tekst</small>
-                            <span class="mk-dagbar">
-                                @foreach (var p in Poster(_valgt, b.Id).Where(p => p.Fra is not null))
-                                {
-                                    <i class="mk-f-@p.Type" style="left:@Pst(p.Fra!.Value.TotalMinutes - DagStart)%;width:@Pst(Varighet(p))%"></i>
-                                }
-                            </span>
+                            <span class="mk-person-navn"><b>@(b.Id == _brukerId ? "Deg" : b.Navn)</b><span class="mk-st" style="color:@s.Farge;background:color-mix(in srgb, @s.Farge 13%, transparent)">@s.Navn</span></span>
+                            <span class="mk-hva">@if (s.Post is { } a && s.Navn != "Fravær") {<text>@(s.Navn == "På jobb" ? "Nå" : a.Fra is { } f ? f.ToString(@"hh\:mm") : "I dag"): <b>@a.Tittel</b>@if (Sted(a) is { } st) {<small> · @st</small>}</text>} else {@s.Tekst}</span>
+                            @if (s.Etterpa is { Length: > 0 } e)
+                            {
+                                <small>@e</small>
+                            }
                         </span>
                         <span class="mk-pilk"><Icon Name="chevron-right" /></span>
                     </button>
@@ -232,7 +256,7 @@
     private sealed record Post(int BrukerId, DateTime Dato, TimeSpan? Fra, double Minutter, string Tittel, string? Adresse,
         string Type, string? Href, ArbeidsordreStatus? Status, string? Kontakt);
 
-    private sealed record PersonStatus(string Navn, string Farge, string Tekst);
+    private sealed record PersonStatus(string Navn, string Farge, string Tekst, int Rekke, Post? Post, string? Etterpa);
 
     private bool _lastet;
     private bool _team;
@@ -349,18 +373,59 @@
     private PersonStatus Status(int brukerId)
     {
         var l = Poster(_valgt, brukerId);
-        if (l.FirstOrDefault(p => p.Type == "fravar") is { } f) return new("Fravær", "#b7791f", f.Tittel);
-        if (l.Count == 0) return new("Ledig", "#9aa3ab", "Ingen planlagte jobber");
-        var na = NorskTid.Na.TimeOfDay.TotalMinutes;
+        if (l.FirstOrDefault(p => p.Type == "fravar") is { } f) return new("Fravær", "#b7791f", f.BrukerId == _brukerId ? $"{f.Tittel} hele dagen" : "Borte hele dagen", 3, f, null);
+        if (l.Count == 0) return new("Ledig", "#4f9a5a", "Ingen jobber – kan ta oppdrag", 2, null, null);
         var idag = _valgt == NorskTid.Idag;
-        var naa = idag ? l.FirstOrDefault(p => p.Fra is { } fr && fr.TotalMinutes <= na && fr.TotalMinutes + Varighet(p) > na) : null;
-        var p = naa ?? l.FirstOrDefault(x => !idag || x.Fra is null || x.Fra.Value.TotalMinutes + Varighet(x) > na) ?? l[^1];
-        var sted = p.Adresse?.Split(',').Last().Trim();
-        var tekst = $"{(naa is not null ? "Nå" : p.Fra is { } t ? t.ToString(@"hh\:mm") : "Hele dagen")}: {p.Tittel}{(string.IsNullOrEmpty(sted) ? "" : " · " + sted)}";
-        return naa is not null ? new("På jobb", "#3aa655", tekst) : new("Planlagt", "#3b78b5", tekst);
+        var na = NorskTid.Na.TimeOfDay.TotalMinutes;
+        var slutt = (Post p) => p.Fra is { } fr ? fr.TotalMinutes + Varighet(p) : 24 * 60;
+        if (!idag)
+        {
+            return new("Planlagt", "#3b78b5", "", 1, l[0], l.Count > 1 ? $"Så {Klokke(l[1])}{l[1].Tittel}" : null);
+        }
+
+        var naa = l.FirstOrDefault(p => p.Fra is { } fr && fr.TotalMinutes <= na && slutt(p) > na);
+        if (naa is not null)
+        {
+            var neste = l.FirstOrDefault(p => p != naa && p.Fra is { } fr && fr.TotalMinutes >= slutt(naa));
+            return new("På jobb", "#2f8a45", "", 0, naa, $"Til {Kl(slutt(naa))}{(neste is null ? "" : $" · så {Klokke(neste)}{neste.Tittel}")}");
+        }
+
+        var senere = l.FirstOrDefault(p => p.Fra is null || p.Fra.Value.TotalMinutes > na);
+        if (senere is not null)
+        {
+            var neste = l.SkipWhile(p => p != senere).Skip(1).FirstOrDefault();
+            return new("Senere i dag", "#3b78b5", "", 1, senere, neste is null ? null : $"Så {Klokke(neste)}{neste.Tittel}");
+        }
+
+        return new("Ledig", "#4f9a5a", "Ferdig med dagens jobber", 2, null, null);
     }
 
-    private static int Rekkefolge(string status) => status switch { "På jobb" => 0, "Planlagt" => 1, "Ledig" => 2, _ => 3 };
+    private static string Klokke(Post p) => p.Fra is { } f ? f.ToString(@"hh\:mm") + " " : "";
+
+    private static string? Sted(Post p) => p.Adresse?.Split(',').Last().Trim() is { Length: > 0 } s ? s : null;
+
+    private void VisPerson(int brukerId, DateTime dag)
+    {
+        _person = brukerId;
+        _valgt = dag;
+        _uke = false;
+    }
+
+    // Timer planlagt på en dag (jobber og planer), og om personen er borte.
+    private double Timer(int brukerId, DateTime dag) => Poster(dag, brukerId).Where(p => p.Type != "fravar" && p.Fra is not null).Sum(Varighet) / 60.0;
+
+    private bool Borte(int brukerId, DateTime dag) => Poster(dag, brukerId).Any(p => p.Type == "fravar");
+
+    private const double Arbeidsdag = 7.5;
+
+    // Korte navn i ukeruta: «Kontorhotellet – ARX» blir «Kontorh…», «Kvartal 11» får stå.
+    private static string KortNavn(string tittel)
+    {
+        var n = UtenNummer(tittel).Split(" – ")[0];
+        if (n.Length <= 9) return n;
+        var f = n.Split(' ')[0];
+        return f.Length <= 8 ? f : f[..7] + "…";
+    }
 
     private string Navn(int id) => _personer.FirstOrDefault(b => b.Id == id)?.Navn ?? "Kalender";
 
@@ -379,6 +444,8 @@
     private static string Kl(double minutter) => TimeSpan.FromMinutes(minutter).ToString(@"hh\:mm");
 
     private static string TimerTekst(double minutter) => (Math.Round(minutter / 30) / 2).ToString("0.#", Kultur) + " t";
+
+    private static string TimerT(double timer) => (Math.Round(timer * 2) / 2).ToString("0.#", Kultur) + " t";
 
     private static string Initialer(string navn) =>
         string.Concat(navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(s => char.ToUpperInvariant(s[0])));
