@@ -1,0 +1,260 @@
+@page "/app/systemer"
+@page "/app/systemer/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+
+<PageTitle>Systemregister</PageTitle>
+
+@* Systemregisteret i montørappen: finn låssystemet, se hvem som har fått
+   nøkler, og utlever nye med signatur fra mottakeren med fingeren.
+   Kvitteringen er den samme som i portalen (NokkelKvittering). *@
+<div class="ma mv">
+    @if (Id is null)
+    {
+        <AppHode Ikon="shield" Sand="true" Tittel="Systemregister" Under="Låssystemer og nøkler" Tilbake="/app/verktoy" />
+        <div class="mv-sok-ramme"><input type="search" class="mv-sok" placeholder="Søk system, kunde eller adresse" aria-label="Søk" @bind="_sok" @bind:event="oninput" /></div>
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (Filtrert.Count == 0)
+        {
+            <p class="ma-tom">Ingen systemer passer søket.</p>
+        }
+        else
+        {
+            <div class="mv-kort" style="margin-top:0.9rem">
+                @foreach (var s in Filtrert.Take(100))
+                {
+                    <a class="mv-rad" href="@($"/app/systemer/{s.Id}")">
+                        <span class="mv-ik"><Icon Name="shield" /></span>
+                        <span class="mv-tekst"><b>@(s.Kundenavn ?? s.Systemnummer)</b><small>@s.Systemnummer@(string.IsNullOrWhiteSpace(s.Fabrikat) ? "" : " · " + s.Fabrikat)@(string.IsNullOrWhiteSpace(s.Adresse) ? "" : " · " + s.Adresse)</small></span>
+                        @if (s.Status == NokkelsystemStatus.Inaktiv)
+                        {
+                            <span class="ma-merke gra">Inaktiv</span>
+                        }
+                        <span class="mv-pil"><Icon Name="chevron-right" /></span>
+                    </a>
+                }
+            </div>
+        }
+    }
+    else if (_s is not null)
+    {
+        <AppHode Ikon="shield" Sand="true" Tittel="@(_s.Kundenavn ?? _s.Systemnummer)" Under="@($"{_s.Systemnummer}{(string.IsNullOrWhiteSpace(_s.Fabrikat) ? "" : " · " + _s.Fabrikat)}")" Tilbake="/app/systemer" />
+
+        <div class="mv-kort" style="margin-top:0.9rem">
+            @if (Adresse(_s) is { Length: > 0 } adr)
+            {
+                <a class="mv-rad" href="@MontorApp.KartLenke(adr)" target="_blank" rel="noopener"><span class="mv-ik"><Icon Name="map-pin" /></span><span class="mv-tekst"><b>@adr</b><small>Naviger hit</small></span><span class="mv-pil"><Icon Name="chevron-right" /></span></a>
+            }
+            @if (!string.IsNullOrWhiteSpace(_s.Kontaktperson) || !string.IsNullOrWhiteSpace(_s.Telefon))
+            {
+                <a class="mv-rad" href="@(string.IsNullOrWhiteSpace(_s.Telefon) ? null : $"tel:{_s.Telefon}")"><span class="mv-ik"><Icon Name="phone" /></span><span class="mv-tekst"><b>@(_s.Kontaktperson ?? "Kontakt")</b><small>@(_s.Telefon ?? "Ingen telefon")</small></span></a>
+            }
+            <div class="mv-rad statisk"><span class="mv-ik"><Icon Name="lock" /></span><span class="mv-tekst"><b>@(_s.Type ?? _s.Fabrikat ?? "Låssystem")</b><small>Status: @_s.Status.Visningsnavn()</small></span></div>
+        </div>
+
+        <h2 class="mv-seksjon"><span>Utleverte nøkler (@_s.Kvitteringer.Count)</span></h2>
+        @if (_s.Kvitteringer.Count == 0)
+        {
+            <p class="ma-tom" style="text-align:left;padding:0 1rem">Ingen nøkler er utlevert ennå.</p>
+        }
+        else
+        {
+            <div class="mv-kort">
+                @foreach (var k in _s.Kvitteringer.OrderByDescending(k => k.Dato))
+                {
+                    <div class="mv-rad statisk">
+                        <span class="mv-ik"><Icon Name="lock" /></span>
+                        <span class="mv-tekst">
+                            <b>@k.MottakerNavn</b>
+                            <small>@(k.Antall) × @(k.NokkelBetegnelse ?? "nøkkel")@(string.IsNullOrWhiteSpace(k.Nokkelnummer) ? "" : " · nr " + k.Nokkelnummer) · @k.Dato.ToLocalTime().ToString("dd.MM.yyyy")</small>
+                        </span>
+                        @if (k.Signatur is { Length: > 0 })
+                        {
+                            <img class="msy-signatur" src="@($"data:image/png;base64,{Convert.ToBase64String(k.Signatur)}")" alt="Signatur" />
+                        }
+                        else
+                        {
+                            <span class="ma-merke gul">Ikke signert</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        @if (_kanUtlevere && _s.Status == NokkelsystemStatus.Aktiv)
+        {
+            <div class="mv-bunn"><button type="button" class="ma-knapp" @onclick="ApneUtlevering"><Icon Name="lock" />Utlever nøkkel</button></div>
+        }
+
+        @if (_utlever)
+        {
+            <div class="ma-ark-bak" @onclick="LukkUtlevering">
+                <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Utlever nøkkel">
+                    <div class="ma-ark-handtak"></div>
+                    <h2>Utlever nøkkel</h2>
+                    <div class="mv-to" style="margin:0">
+                        <label class="mv-felt" style="margin:0 0 0.75rem"><span>Nøkkel</span><input @bind="_ny.NokkelBetegnelse" placeholder="F.eks. Fellesdører" /></label>
+                        <label class="mv-felt" style="margin:0 0 0.75rem"><span>Nøkkelnr</span><input @bind="_ny.Nokkelnummer" placeholder="F.eks. F1-097" /></label>
+                    </div>
+                    <div class="mv-to" style="margin:0;grid-template-columns:2fr 1fr">
+                        <label class="mv-felt" style="margin:0 0 0.75rem"><span>Mottaker *</span><input @bind="_ny.MottakerNavn" placeholder="Navn" /></label>
+                        <label class="mv-felt" style="margin:0 0 0.75rem"><span>Antall</span><input type="number" min="1" @bind="_ny.Antall" /></label>
+                    </div>
+                    @if (_s.Rekvirenter.Count > 0)
+                    {
+                        <span class="msy-lbl">Rekvirert av</span>
+                        <div class="mv-chips" style="padding:0.3rem 0 0.75rem">
+                            @foreach (var r in _s.Rekvirenter)
+                            {
+                                var navn = r.Navn;
+                                <button type="button" class="@(_ny.RekvirertAv == navn ? "paa" : "")" @onclick="@(() => _ny.RekvirertAv = _ny.RekvirertAv == navn ? null : navn)">@r.Navn</button>
+                            }
+                        </div>
+                    }
+                    <span class="msy-lbl" style="display:flex;justify-content:space-between">Signatur fra mottakeren <button type="button" class="msy-tom" @onclick="TomSignatur">Tøm</button></span>
+                    <div class="mv-signatur" style="margin:0.3rem 0 0"><canvas id="sig-mobil" width="700" height="300"></canvas><div class="linje"></div><div class="hint">Signer med fingeren</div></div>
+                    <small class="msy-hint">Mottakeren bekrefter at nøkkelen er mottatt og at tap skal meldes.</small>
+                    @if (_feil is not null)
+                    {
+                        <p class="ma-feil" role="alert">@_feil</p>
+                    }
+                    <div class="ma-under" style="grid-template-columns:1fr 1fr">
+                        <button type="button" class="ma-knapp sek" @onclick="LukkUtlevering">Avbryt</button>
+                        <button type="button" class="ma-knapp" disabled="@_lagrer" @onclick="BekreftUtlevering"><Icon Name="check" />Bekreft</button>
+                    </div>
+                </div>
+            </div>
+        }
+        @if (_melding is not null)
+        {
+            <p class="ma-melding" role="status" style="margin:0.75rem">@_melding</p>
+        }
+    }
+    else
+    {
+        <AppHode Ikon="shield" Sand="true" Tittel="Systemregister" Tilbake="/app/systemer" />
+        <p class="ma-tom">@(_lastet ? "Fant ikke systemet." : "Laster …")</p>
+    }
+</div>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _lastet;
+    private bool _lagrer;
+    private bool _kanUtlevere;
+    private bool _utlever;
+    private bool _signaturKlar;
+    private int? _brukerId;
+    private string _sok = "";
+    private string? _feil;
+    private string? _melding;
+    private List<Nokkelsystem> _liste = [];
+    private Nokkelsystem? _s;
+    private NokkelKvittering _ny = new() { MottakerNavn = "" };
+
+    private List<Nokkelsystem> Filtrert => _liste
+        .Where(s => string.IsNullOrWhiteSpace(_sok) || $"{s.Systemnummer} {s.Kundenavn} {Adresse(s)} {s.Fabrikat}".Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase))
+        .ToList();
+
+    private static string Adresse(Nokkelsystem s) =>
+        string.Join(", ", new[] { s.Adresse, $"{s.Postnr} {s.Sted}".Trim() }.Where(x => !string.IsNullOrWhiteSpace(x)));
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var u = (await AuthStateTask).User;
+            _brukerId = int.TryParse(u.FindFirst("BrukerId")?.Value, out var id) ? id : null;
+            var rolle = Enum.TryParse<BrukerRolle>(u.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, out var r) ? r : (BrukerRolle?)null;
+            _kanUtlevere = ModulRettigheter.KanUtlevereNokler(rolle);
+        }
+
+        if (Id is { } sid)
+        {
+            _s = await Db.Nokkelsystemer.Include(s => s.Kvitteringer).Include(s => s.Rekvirenter).FirstOrDefaultAsync(s => s.Id == sid);
+        }
+        else
+        {
+            // Bildet og vedleggene trengs ikke i lista.
+            _liste = await Db.Nokkelsystemer.AsNoTracking()
+                .OrderBy(s => s.Status).ThenBy(s => s.Kundenavn).ThenBy(s => s.Systemnummer)
+                .Select(s => new Nokkelsystem { Id = s.Id, Systemnummer = s.Systemnummer, Kundenavn = s.Kundenavn, Adresse = s.Adresse, Postnr = s.Postnr, Sted = s.Sted, Fabrikat = s.Fabrikat, Status = s.Status })
+                .ToListAsync();
+        }
+
+        _lastet = true;
+    }
+
+    private void ApneUtlevering()
+    {
+        _ny = new NokkelKvittering { MottakerNavn = "", Antall = 1, Dato = DateTime.UtcNow };
+        _feil = null;
+        _melding = null;
+        _utlever = true;
+        _signaturKlar = false;
+    }
+
+    private void LukkUtlevering() => _utlever = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_utlever && !_signaturKlar)
+        {
+            _signaturKlar = true;
+            await JS.InvokeVoidAsync("signatur.init", "sig-mobil");
+        }
+    }
+
+    private async Task TomSignatur() => await JS.InvokeVoidAsync("signatur.clear", "sig-mobil");
+
+    private async Task BekreftUtlevering()
+    {
+        if (_s is null || _lagrer || !_kanUtlevere)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_ny.MottakerNavn))
+        {
+            _feil = "Skriv navnet på den som får nøkkelen.";
+            return;
+        }
+
+        if (await JS.InvokeAsync<bool>("signatur.isEmpty", "sig-mobil"))
+        {
+            _feil = "Mottakeren må signere med fingeren.";
+            return;
+        }
+
+        _lagrer = true;
+        var base64 = await JS.InvokeAsync<string>("signatur.getPngBase64", "sig-mobil");
+        _ny.NokkelsystemId = _s.Id;
+        _ny.MottakerNavn = _ny.MottakerNavn.Trim();
+        _ny.Antall = Math.Max(1, _ny.Antall);
+        _ny.Signatur = Convert.FromBase64String(base64);
+        _ny.SignertDato = DateTime.Now;
+        Db.NokkelKvitteringer.Add(_ny);
+        Db.NokkelsystemHendelser.Add(new NokkelsystemHendelse
+        {
+            NokkelsystemId = _s.Id,
+            Beskrivelse = $"Ny nøkkel registrert: {(string.IsNullOrWhiteSpace(_ny.NokkelBetegnelse) ? "Nøkkel" : _ny.NokkelBetegnelse)} til {_ny.MottakerNavn} (signert i montørappen)",
+            Tidspunkt = DateTime.Now,
+            UtfortAvBrukerId = _brukerId
+        });
+        await Db.SaveChangesAsync();
+        _melding = $"{_ny.Antall} × {_ny.NokkelBetegnelse ?? "nøkkel"} er utlevert til {_ny.MottakerNavn}. Kvitteringen er lagret med signatur.";
+        _utlever = false;
+        _lagrer = false;
+    }
+}

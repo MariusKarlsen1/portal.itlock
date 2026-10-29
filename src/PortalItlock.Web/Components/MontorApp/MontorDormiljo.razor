@@ -1,0 +1,93 @@
+@page "/app/dormiljo"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@inject ApplicationDbContext Db
+
+<PageTitle>Dørmiljø</PageTitle>
+
+@* Dørmiljø-skissene i montørappen. Trykk på en skisse for å se den;
+   PDF-er åpnes i nettleserens egen visning. Skissene legges inn i portalen. *@
+<div class="ma mv">
+    <AppHode Ikon="door" Sand="true" Tittel="@(_valgt?.Navn ?? "Dørmiljø")" Under="@(_valgt is null ? "Skisser av vanlige dørløsninger" : "Dørmiljø")" Tilbake="@(_valgt is null ? "/app/verktoy" : null)">
+        @if (_valgt is not null)
+        {
+            <span class="ma-skille"></span>
+            <a class="ma-ikonknapp" href="@_valgt.Adresse" target="_blank" rel="noopener" aria-label="Åpne i full størrelse"><Icon Name="maximize" /></a>
+        }
+    </AppHode>
+
+    @if (_valgt is { } v)
+    {
+        <button type="button" class="mdm-tilbake" @onclick="@(() => _valgt = null)"><Icon Name="chevron-left" />Alle skisser</button>
+        <div class="mdm-visning">
+            @if (v.ErBilde)
+            {
+                <img src="@v.Adresse" alt="@v.Navn" />
+            }
+            else
+            {
+                <iframe src="@v.Adresse" title="@v.Navn"></iframe>
+            }
+        </div>
+        <div style="margin:0.75rem"><a class="ma-knapp sek" style="width:100%;box-sizing:border-box" href="@v.Adresse" target="_blank" rel="noopener"><Icon Name="maximize" />Åpne i full størrelse</a></div>
+    }
+    else
+    {
+        <div class="mv-sok-ramme"><input type="search" class="mv-sok" placeholder="Søk dørmiljø" aria-label="Søk" @bind="_sok" @bind:event="oninput" /></div>
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (Filtrert.Count == 0)
+        {
+            <p class="ma-tom">@(_dokumenter.Count == 0 ? "Ingen dørmiljø er lagt inn ennå." : "Ingen treff.")</p>
+        }
+        else
+        {
+            <div class="mv-kort" style="margin-top:0.9rem">
+                @foreach (var d in Filtrert)
+                {
+                    var dok = d;
+                    <button type="button" class="mv-rad" @onclick="@(() => _valgt = dok)">
+                        <span class="mv-ik"><Icon Name="@(d.ErBilde ? "image" : "file-text")" /></span>
+                        <span class="mv-tekst"><b>@d.Navn</b><small>@(d.ErBilde ? "Bilde" : "PDF")</small></span>
+                        <span class="mv-pil"><Icon Name="chevron-right" /></span>
+                    </button>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private sealed record Dokument(int Id, string Navn, string Adresse, bool ErBilde);
+
+    private bool _lastet;
+    private string _sok = "";
+    private List<Dokument> _dokumenter = [];
+    private Dokument? _valgt;
+
+    private List<Dokument> Filtrert => _dokumenter
+        .Where(d => string.IsNullOrWhiteSpace(_sok) || d.Navn.Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase))
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Samme regel som Dørmiljø i portalen: opplastede ligger i databasen,
+        // de opprinnelige ligger som filer under wwwroot/dormiljo.
+        var rader = await Db.DoorEnvironmentDocuments.AsNoTracking().OrderBy(d => d.Rekkefolge)
+            .Select(d => new
+            {
+                d.Id, d.Navn, d.FileName, d.ContentType,
+                Opplastet = SqlFn.TypeOf(d.Data) != "null" && d.Data!.Length > 0
+            })
+            .ToListAsync();
+        _dokumenter = rader.Select(d => new Dokument(d.Id, d.Navn,
+                d.Opplastet ? $"/dormiljofil/{d.Id}" : $"/dormiljo/{d.FileName}",
+                (d.ContentType ?? "").StartsWith("image/") || d.FileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || d.FileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        _lastet = true;
+    }
+}

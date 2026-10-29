@@ -111,6 +111,12 @@ public static class ModulRettigheter
     public static bool KanMeldeAvvik(BrukerRolle? rolle) =>
         rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor;
 
+    // Utlevere nøkler fra systemregisteret med signatur fra mottakeren.
+    // Montøren står hos kunden og leverer nøklene, så dette er et unntak fra
+    // lesetilgangen på systemregisteret.
+    public static bool KanUtlevereNokler(BrukerRolle? rolle) =>
+        rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor;
+
     // Laste opp bilder på et prosjekt.
     public static bool KanLeggeTilBilder(BrukerRolle? rolle) =>
         rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor;
