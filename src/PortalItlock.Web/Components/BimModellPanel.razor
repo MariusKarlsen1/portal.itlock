@@ -1,0 +1,314 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject BimModellService BimSvc
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+@* Prosjektets BIM-modell (IFC): last opp, se i 3D og hent dørene fra
+   modellen. Brukes som fane på prosjektsiden i portalen og som egen side i
+   montørappen. Bare Admin og Prosjektleder kan laste opp og importere
+   (ModulRettigheter.KanEndreBimModell). PDF-plantegning trengs ikke i
+   tillegg - planen og dørlisten kommer fra modellen. *@
+<div class="bimp">
+    @if (_prosjekt is null)
+    {
+        <p class="bimp-dempet">Laster …</p>
+    }
+    else if (_prosjekt.ModellFilnavn is null || !BimSvc.Finnes(ProsjektId))
+    {
+        <div class="bimp-tom">
+            <span class="bimp-ik"><Icon Name="box" /></span>
+            <h3>Ingen 3D-modell på prosjektet</h3>
+            <p>Last opp IFC-fila fra arkitekten eller rådgiveren (BIM-modellen). Da får du bygget i 3D med dørene i statusfarge, og dørlisten kan hentes rett fra modellen. Du trenger ikke PDF-plantegning i tillegg.</p>
+            @if (KanEndre)
+            {
+                <label class="bimp-knapp">
+                    <Icon Name="plus" />@(_lasterOpp ? "Laster opp …" : "Last opp IFC-fil")
+                    <InputFile OnChange="LastOpp" accept=".ifc" disabled="@_lasterOpp" />
+                </label>
+            }
+            else
+            {
+                <p class="bimp-dempet">Be prosjektleder laste opp IFC-fila.</p>
+            }
+            @if (_lasterOpp)
+            {
+                <p class="bimp-dempet">Store modeller kan ta et par minutter. Ikke lukk siden.</p>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="bimp-fil">
+            <span class="bimp-ik liten"><Icon Name="box" /></span>
+            <span class="bimp-filtekst"><b>@_prosjekt.ModellFilnavn</b><small>@Storrelse(_prosjekt.ModellStorrelse) · lastet opp @_prosjekt.ModellOpplastet?.ToString("dd.MM.yyyy")@(string.IsNullOrWhiteSpace(_prosjekt.ModellOpplastetAv) ? "" : " av " + _prosjekt.ModellOpplastetAv)</small></span>
+            @if (KanEndre)
+            {
+                <button type="button" class="bimp-knapp sek" @onclick="HentDorer" disabled="@(_henter || _lasterOpp)"><Icon Name="download" />@(_henter ? "Leser modellen …" : "Hent dører fra modellen")</button>
+                <label class="bimp-knapp sek">
+                    <Icon Name="refresh" />@(_lasterOpp ? "Laster opp …" : "Bytt modell")
+                    <InputFile OnChange="LastOpp" accept=".ifc" disabled="@_lasterOpp" />
+                </label>
+                <button type="button" class="bimp-knapp sek rod" title="Fjern modellen" aria-label="Fjern modellen" @onclick="@(() => _bekreftSlett = true)"><Icon Name="trash" /></button>
+            }
+        </div>
+
+        @if (_bekreftSlett)
+        {
+            <div class="bimp-boks">
+                <b>Fjerne modellen?</b>
+                <span>Dørene i portalen beholdes, men koblingen til modellen fjernes.</span>
+                <div class="bimp-rad"><button type="button" class="bimp-knapp rod" @onclick="Slett">Fjern modellen</button><button type="button" class="bimp-knapp sek" @onclick="@(() => _bekreftSlett = false)">Avbryt</button></div>
+            </div>
+        }
+
+        @if (_forslag is not null)
+        {
+            var nye = _forslag.Count(f => f.Type == BimModellService.Forslagstype.Ny);
+            var endret = _forslag.Count(f => f.Type == BimModellService.Forslagstype.Endret);
+            var koblet = _forslag.Count(f => f.Dor is not null);
+            <div class="bimp-import">
+                <div class="bimp-tall">
+                    <div><b>@_forslag.Count</b><small>dører i modellen</small></div>
+                    <div><b>@koblet</b><small>finnes i portalen</small></div>
+                    <div><b>@nye</b><small>nye</small></div>
+                    <div><b>@endret</b><small>endret</small></div>
+                </div>
+                @if (_kilder.Count > 1)
+                {
+                    <label class="bimp-kilde">
+                        <span>Dørnummer hentes fra</span>
+                        <select value="@_kilde" @onchange="@(e => VelgKilde(e.Value?.ToString()))">
+                            @foreach (var k in _kilder)
+                            {
+                                <option value="@k.Kode">@k.Visning@(k.Treff > 0 ? $" – {k.Treff} stemmer med portalen" : $" – {k.Utfylt} utfylt")</option>
+                            }
+                        </select>
+                    </label>
+                }
+                <div class="bimp-liste">
+                    @foreach (var f in _forslag)
+                    {
+                        var forslag = f;
+                        var kanVelges = f.Type == BimModellService.Forslagstype.Endret || (f.Type == BimModellService.Forslagstype.Ny && f.Nummer is not null);
+                        <label class="bimp-linje @(kanVelges ? "" : "laast")">
+                            <input type="checkbox" checked="@(kanVelges ? f.Valgt : f.Dor is not null)" disabled="@(!kanVelges)" @onchange="@(e => forslag.Valgt = e.Value is true)" />
+                            <span class="bimp-linjetekst">
+                                <b>@(f.Nummer ?? "Uten nummer")@(f.Dor is { DorTil: { Length: > 0 } til } ? " · " + til : "")</b>
+                                <small>@string.Join(" · ", new[] { f.Etasje is null ? null : $"Etasje {f.Etasje}", f.Fra.Bredde is { } b && f.Fra.Hoyde is { } h ? $"{b}×{h}" : null, f.Brann }.Where(s => s is not null))</small>
+                                @if (f.Endringer.Count > 0)
+                                {
+                                    <small class="bimp-endring">@string.Join(" · ", f.Endringer)</small>
+                                }
+                            </span>
+                            <span class="bimp-merke @(f.Type switch { BimModellService.Forslagstype.Ny => "ny", BimModellService.Forslagstype.Endret => "endret", _ => "ok" })">
+                                @(f.Type switch { BimModellService.Forslagstype.Ny => "Ny", BimModellService.Forslagstype.Endret => "Endret", _ => "Koblet" })
+                            </span>
+                        </label>
+                    }
+                </div>
+                <p class="bimp-dempet">Dører som finnes i portalen kobles til modellen automatisk, og tomme felt fylles ut. Hak av «Endret» for å overskrive med verdiene fra modellen.</p>
+                <div class="bimp-rad">
+                    <button type="button" class="bimp-knapp" @onclick="Importer" disabled="@_lagrer">
+                        <Icon Name="check" />@(_lagrer ? "Lagrer …" : $"Importer {_forslag.Count(f => f.Valgt && f.Type == BimModellService.Forslagstype.Ny)} nye og koble {koblet}")
+                    </button>
+                    <button type="button" class="bimp-knapp sek" @onclick="@(() => _forslag = null)">Avbryt</button>
+                </div>
+            </div>
+        }
+
+        <BimVisning @key="_versjon" ProsjektId="ProsjektId" Versjon="@_versjon" Dorer="_bimDorer" OnDorValgt="DorValgt" Hoyde="@Hoyde" />
+    }
+
+    @if (_melding is not null)
+    {
+        <p class="bimp-melding" role="status">@_melding</p>
+    }
+    @if (_feil is not null)
+    {
+        <p class="bimp-feil" role="alert">@_feil</p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+    [Parameter] public bool KanEndre { get; set; }
+    [Parameter] public string? BrukerNavn { get; set; }
+    [Parameter] public int? BrukerId { get; set; }
+    [Parameter] public string Hoyde { get; set; } = "65vh";
+    // Trykk på en dør i 3D. Uten denne åpnes dørsiden i portalen.
+    [Parameter] public EventCallback<int> OnDorValgt { get; set; }
+    // Kalles når dører er importert eller koblet, så siden kan laste dem på nytt.
+    [Parameter] public EventCallback OnDorerEndret { get; set; }
+
+    private Prosjekt? _prosjekt;
+    private List<BimVisning.BimDor> _bimDorer = [];
+    private string _versjon = "";
+    private bool _lasterOpp;
+    private bool _henter;
+    private bool _lagrer;
+    private bool _bekreftSlett;
+    private string? _melding;
+    private string? _feil;
+    private BimModellService.IfcDorliste? _fraModell;
+    private List<BimModellService.NummerKilde> _kilder = [];
+    private string _kilde = "tag";
+    private List<BimModellService.Forslag>? _forslag;
+
+    protected override async Task OnParametersSetAsync() => await LastAsync();
+
+    private async Task LastAsync()
+    {
+        _prosjekt = await Db.Prosjekter.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProsjektId);
+        _versjon = _prosjekt?.ModellOpplastet?.Ticks.ToString() ?? "";
+        var dorer = await Db.Dorer.AsNoTracking().Where(d => d.ProsjektId == ProsjektId && d.IfcGuid != null)
+            .Select(d => new { d.Id, d.IfcGuid, d.Dornummer, d.Status }).ToListAsync();
+        var ider = dorer.Select(d => d.Id).ToList();
+        var avvik = (await Db.Avvik.AsNoTracking().Where(a => ider.Contains(a.DorId) && a.Status == AvvikStatus.Apent).Select(a => a.DorId).ToListAsync()).ToHashSet();
+        _bimDorer = dorer.Select(d => new BimVisning.BimDor(d.Id, d.IfcGuid!, d.Dornummer,
+            avvik.Contains(d.Id) ? "avvik" : d.Status switch { MontasjeStatus.FerdigMontert => "ferdig", MontasjeStatus.Montert => "pagar", _ => "ikke" })).ToList();
+    }
+
+    private static string Storrelse(long? b) => b is null ? "" : b >= 1_000_000 ? $"{b / 1_000_000.0:0.#} MB" : $"{Math.Max(1, b.Value / 1000)} kB";
+
+    private async Task LastOpp(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        _melding = null;
+        if (!e.File.Name.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase))
+        {
+            _feil = "Velg en IFC-fil (.ifc). Er modellen i et annet format, be arkitekten eksportere den som IFC.";
+            return;
+        }
+
+        if (e.File.Size > BimModellService.MaksStorrelse)
+        {
+            _feil = $"Fila er for stor ({e.File.Size / 1_000_000} MB). Maks er {BimModellService.MaksStorrelse / 1_000_000} MB.";
+            return;
+        }
+
+        _lasterOpp = true;
+        StateHasChanged();
+        try
+        {
+            await using var strom = e.File.OpenReadStream(BimModellService.MaksStorrelse);
+            await BimSvc.LagreAsync(ProsjektId, strom, e.File.Name, BrukerNavn);
+            _forslag = null;
+            await LastAsync();
+            _melding = "Modellen er lastet opp. Hent dørene fra modellen for å koble dem til portalen.";
+        }
+        catch (InvalidDataException ex)
+        {
+            _feil = ex.Message;
+        }
+        catch (IOException)
+        {
+            _feil = "Opplastingen ble avbrutt. Prøv igjen.";
+        }
+        finally
+        {
+            _lasterOpp = false;
+        }
+    }
+
+    private async Task HentDorer()
+    {
+        _feil = null;
+        _melding = null;
+        _henter = true;
+        StateHasChanged();
+        try
+        {
+            _fraModell = await JS.InvokeAsync<BimModellService.IfcDorliste>("bimModell.lesDorer", TimeSpan.FromMinutes(5), $"/prosjekt/{ProsjektId}/modell.ifc?v={_versjon}");
+            var numre = await Db.Dorer.AsNoTracking().Where(d => d.ProsjektId == ProsjektId).Select(d => d.Dornummer).ToListAsync();
+            _kilder = BimModellService.Nummerkilder(_fraModell.Dorer, numre);
+            _kilde = _kilder.FirstOrDefault()?.Kode ?? "tag";
+            await LagForslag();
+            if (_fraModell.Dorer.Count == 0)
+            {
+                _forslag = null;
+                _melding = "Fant ingen dører (IfcDoor) i modellen.";
+            }
+        }
+        catch (JSException ex)
+        {
+            _feil = "Kunne ikke lese modellen: " + ex.Message.Split('\n')[0];
+        }
+        catch (TaskCanceledException)
+        {
+            _feil = "Modellen tok for lang tid å lese.";
+        }
+        finally
+        {
+            _henter = false;
+        }
+    }
+
+    private async Task VelgKilde(string? kilde)
+    {
+        _kilde = kilde ?? "tag";
+        await LagForslag();
+    }
+
+    private async Task LagForslag()
+    {
+        if (_fraModell is null)
+        {
+            return;
+        }
+
+        var dorer = await Db.Dorer.AsNoTracking().Where(d => d.ProsjektId == ProsjektId).ToListAsync();
+        _forslag = BimModellService.Sammenlign(_fraModell.Dorer, dorer, _kilde);
+    }
+
+    private async Task Importer()
+    {
+        if (_forslag is null)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        _feil = null;
+        try
+        {
+            var (nye, koblet, oppdatert) = await BimSvc.ImporterAsync(ProsjektId, _forslag, BrukerId);
+            _melding = $"{nye} nye dører importert, {koblet} koblet til modellen{(oppdatert > 0 ? $", {oppdatert} oppdatert" : "")}.";
+            _forslag = null;
+            await LastAsync();
+            await OnDorerEndret.InvokeAsync();
+        }
+        catch (DbUpdateException)
+        {
+            _feil = "Kunne ikke lagre dørene. Prøv igjen.";
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    private async Task Slett()
+    {
+        await BimSvc.SlettAsync(ProsjektId);
+        _bekreftSlett = false;
+        _forslag = null;
+        await LastAsync();
+        _melding = "Modellen er fjernet.";
+        await OnDorerEndret.InvokeAsync();
+    }
+
+    private async Task DorValgt(int id)
+    {
+        if (OnDorValgt.HasDelegate)
+        {
+            await OnDorValgt.InvokeAsync(id);
+        }
+        else
+        {
+            Nav.NavigateTo($"/dor/{id}");
+        }
+    }
+}

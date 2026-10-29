@@ -19,6 +19,10 @@ public class Dor
     public double? PosY { get; set; }
 
     public string? Etasje { get; set; }
+
+    // GlobalId til døra i prosjektets BIM-modell (IFC), så den kan vises og
+    // åpnes i 3D. Settes ved import fra modellen.
+    public string? IfcGuid { get; set; }
     public string? Sone { get; set; }
     public string? Dortype { get; set; }
     public string? AluProfil { get; set; }

@@ -18,6 +18,13 @@ public class Prosjekt
     public string? Risikoklasse { get; set; }
     public string? Tek { get; set; }
     public int CeGyldighetMåneder { get; set; } = 12;
+
+    // BIM-modellen (IFC) til prosjektet. Selve fila ligger på disk ved siden
+    // av databasen (se BimModellService), ikke i databasen.
+    public string? ModellFilnavn { get; set; }
+    public long? ModellStorrelse { get; set; }
+    public DateTime? ModellOpplastet { get; set; }
+    public string? ModellOpplastetAv { get; set; }
     public ProsjektStatus? Status { get; set; }
     public ProsjektType Type { get; set; } = ProsjektType.Annet;
     public DateTime? OverlevertDato { get; set; }

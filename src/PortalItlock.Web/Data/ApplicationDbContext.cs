@@ -480,6 +480,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
+        modelBuilder.Entity<Dor>().HasIndex(d => new { d.ProsjektId, d.IfcGuid });
+
         modelBuilder.Entity<Dor>()
             .HasMany(d => d.Funksjoner)
             .WithMany(f => f.Dorer)

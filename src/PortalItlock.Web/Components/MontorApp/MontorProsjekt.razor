@@ -63,10 +63,37 @@
             <button type="button" role="tab" class="@(_fane == "info" ? "paa" : "")" aria-selected="@(_fane == "info")" @onclick="@(() => _fane = "info")">Info</button>
         </nav>
 
-        @if (_fane == "plan")
+        @if (_fane == "plan" && (_harModell || _kanEndreModell) && _vis3d)
+        {
+            <div class="mp-verktoy">@Bryter()</div>
+            @if (_harModell)
+            {
+                <div class="mp-3d">
+                    <BimVisning ProsjektId="Id" Versjon="@_p.ModellOpplastet?.Ticks.ToString()" Dorer="BimDorer" OnDorValgt="Apne3d" Hoyde="calc(100dvh - 330px)" />
+                    @if (_kanEndreModell)
+                    {
+                        <a class="mp-3d-lenke" href="@($"/app/prosjekt/{Id}/modell")"><Icon Name="box" />Modell og import av dører</a>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="mp-3d-tom">
+                    <span class="mp-ik"><Icon Name="box" /></span>
+                    <b>Ingen 3D-modell på prosjektet</b>
+                    <span>Last opp IFC-fila fra arkitekten. Da får du bygget i 3D og dørlisten hentet fra modellen – du trenger ikke PDF i tillegg.</span>
+                    <a class="ma-knapp" href="@($"/app/prosjekt/{Id}/modell")"><Icon Name="plus" />Last opp IFC-fil</a>
+                </div>
+            }
+        }
+        else if (_fane == "plan")
         {
             @if (_planer.Count == 0)
             {
+                @if (_harModell || _kanEndreModell)
+                {
+                    <div class="mp-verktoy">@Bryter()</div>
+                }
                 <p class="mp-tom">Prosjektet har ingen plantegninger ennå. Se dørene under fanen Dører.</p>
             }
             else
@@ -74,6 +101,10 @@
                 var plan = _planer.FirstOrDefault(p => p.Id == _planId) ?? _planer[0];
                 var pins = _dorer.Where(d => d.PlantegningId == plan.Id && d.PosX.HasValue && d.PosY.HasValue && (!_gjenstar || Status(d) != "ferdig")).ToList();
                 <div class="mp-verktoy">
+                    @if (_harModell || _kanEndreModell)
+                    {
+                        @Bryter()
+                    }
                     @foreach (var p in _planer)
                     {
                         var pid = p.Id;
@@ -360,6 +391,7 @@
 @code {
     [Parameter] public int Id { get; set; }
     [SupplyParameterFromQuery] public string? Fane { get; set; }
+    [SupplyParameterFromQuery(Name = "dor")] public int? DorId { get; set; }
     [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
 
     private sealed record Plan(int Id, string Navn);
@@ -392,7 +424,7 @@
     // Knipezoom på plantegningen kobles på når tegningen vises.
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (_fane == "plan" && _planer.Count > 0)
+        if (_fane == "plan" && _planer.Count > 0 && !_vis3d)
         {
             await JS.InvokeVoidAsync("planZoom.koble");
         }
@@ -400,9 +432,16 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        if (AuthStateTask is not null)
         {
-            _brukerId = id;
+            var bruker = (await AuthStateTask).User;
+            if (int.TryParse(bruker.FindFirst("BrukerId")?.Value, out var id))
+            {
+                _brukerId = id;
+            }
+
+            _kanEndreModell = ModulRettigheter.KanEndreBimModell(
+                Enum.TryParse<BrukerRolle>(bruker.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, out var rolle) ? rolle : null);
         }
 
         _p = await Db.Prosjekter.AsNoTracking().Include(p => p.Kunde).Include(p => p.Prosjektleder).FirstOrDefaultAsync(p => p.Id == Id);
@@ -422,9 +461,17 @@
 
             // Første tegning med plasserte dører, ellers rett til dørlisten.
             _planId = _planer.FirstOrDefault(p => _dorer.Any(d => d.PlantegningId == p.Id && d.PosX.HasValue))?.Id ?? _planer.FirstOrDefault()?.Id ?? 0;
+            _harModell = _p.ModellFilnavn is not null;
             if (_planer.Count == 0 || !_dorer.Any(d => d.PosX.HasValue))
             {
-                _fane = "dorer";
+                // Uten plassert tegning: 3D-modellen hvis den finnes, ellers dørlisten.
+                _vis3d = _harModell;
+                _fane = _harModell ? "plan" : "dorer";
+            }
+
+            if (DorId is { } valgtDor && _dorer.FirstOrDefault(d => d.Id == valgtDor) is { } dorFraModell)
+            {
+                _valgt = dorFraModell;
             }
 
             await LastCe();
@@ -443,6 +490,32 @@
         _avvik = await Db.Avvik.AsNoTracking().Where(a => ider.Contains(a.DorId) && a.Status == AvvikStatus.Apent)
             .OrderByDescending(a => a.OpprettetDato).ToListAsync();
         _apneAvvik = _avvik.Select(a => a.DorId).ToHashSet();
+    }
+
+    // ---------- 3D-modell (BIM) ----------
+
+    private bool _harModell;
+    private bool _kanEndreModell;
+    private bool _vis3d;
+
+    private RenderFragment Bryter() => __builder =>
+    {
+        <span class="mp-seg">
+            <button type="button" class="@(!_vis3d ? "paa" : "")" @onclick="@(() => _vis3d = false)">Tegning</button>
+            <button type="button" class="@(_vis3d ? "paa" : "")" @onclick="@(() => _vis3d = true)">3D</button>
+        </span>
+    };
+
+    // Dørene som er koblet til modellen, med samme status som prikkene på tegningen.
+    private List<BimVisning.BimDor> BimDorer => _dorer.Where(d => !string.IsNullOrWhiteSpace(d.IfcGuid))
+        .Select(d => new BimVisning.BimDor(d.Id, d.IfcGuid!, d.Dornummer, Status(d))).ToList();
+
+    private void Apne3d(int dorId)
+    {
+        if (_dorer.FirstOrDefault(d => d.Id == dorId) is { } d)
+        {
+            Apne(d);
+        }
     }
 
     // Siste CE-godkjenning per dør med automatikk.

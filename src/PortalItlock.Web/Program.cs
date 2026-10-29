@@ -139,6 +139,7 @@ builder.Services.AddScoped<SjekklistePdfService>();
 builder.Services.AddScoped<LagretPdfService>();
 builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
+builder.Services.AddScoped<BimModellService>();
 // Bakgrunnsjobbene kjører for hver organisasjon (se OrganisasjonKjorer), og
 // påminnelsene går til mottakerne som er satt opp i adminportalen.
 builder.Services.AddSingleton<OrganisasjonKjorer>();
@@ -1194,6 +1195,19 @@ app.MapGet("/app/pdfside/nedlastning/{id:int}/{side:int}", async (int id, int si
     var fil = await db.NedlastningsFiler.FindAsync(id);
     ctx.Response.Headers.CacheControl = "private, max-age=3600";
     return fil is null || !fil.ContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase) ? Results.NotFound() : PdfSideSomBilde(fil.Data, side);
+}).RequireAuthorization();
+
+// Prosjektets BIM-modell (IFC) til 3D-visningen. Fila leses i nettleseren.
+app.MapGet("/prosjekt/{id:int}/modell.ifc", (int id, BimModellService bim, HttpContext ctx) =>
+{
+    var sti = bim.Sti(id);
+    if (!File.Exists(sti))
+    {
+        return Results.NotFound();
+    }
+
+    ctx.Response.Headers.CacheControl = "private, no-cache";
+    return Results.File(sti, "application/octet-stream", $"prosjekt-{id}.ifc", lastModified: File.GetLastWriteTimeUtc(sti), enableRangeProcessing: true);
 }).RequireAuthorization();
 
 app.MapGet("/app/pdfside/komponent/{type}/{kilde}/{id:int}/{side:int}", async (string type, string kilde, int id, int side, ApplicationDbContext db, HttpContext ctx) =>

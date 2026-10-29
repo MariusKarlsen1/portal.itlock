@@ -1,0 +1,181 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@* 3D-visning av prosjektets BIM-modell. Dørene som er koblet til modellen
+   (Dor.IfcGuid) får statusfarge og dørnummer, og kan trykkes på. Brukes på
+   prosjektsiden i portalen og på plan-fanen i montørappen. Selve
+   tegningen gjøres av wwwroot/js/bimModell.js. *@
+<div class="bim">
+    <div class="bim-verktoy">
+        @if (_etasjer.Count > 1)
+        {
+            <button type="button" class="@(_etasje == 0 ? "paa" : "")" @onclick="@(() => VelgEtasje(0))">Alle</button>
+            @for (var i = 0; i < _etasjer.Count; i++)
+            {
+                var nr = i + 1;
+                <button type="button" class="@(_etasje == nr ? "paa" : "")" @onclick="@(() => VelgEtasje(nr))">@_etasjer[i]</button>
+            }
+        }
+        <button type="button" class="bim-hoyre @(_skjulFerdig ? "paa" : "")" aria-pressed="@_skjulFerdig" @onclick="@(() => Bytt(ref _skjulFerdig))">Gjenstår</button>
+    </div>
+    <div class="bim-ramme" style="height:@Hoyde">
+        <div class="bim-lerret" @ref="_holder"></div>
+        @if (_status is not null)
+        {
+            <div class="bim-status">@_status</div>
+        }
+        <div class="bim-knapper">
+            <button type="button" class="@(_gjennom ? "paa" : "")" aria-pressed="@_gjennom" title="Gjennomsiktige vegger" aria-label="Gjennomsiktige vegger" @onclick="@(() => Bytt(ref _gjennom))"><Icon Name="eye" /></button>
+            <button type="button" title="Tilbakestill visningen" aria-label="Tilbakestill visningen" @onclick="Nullstill"><Icon Name="refresh" /></button>
+        </div>
+        <div class="bim-legende">
+            @foreach (var (navn, farge) in Statuser)
+            {
+                <span><i style="background:@farge"></i>@navn</span>
+            }
+        </div>
+    </div>
+    @if (_antallIModell is { } antall && _status is null)
+    {
+        var koblet = Dorer.Count;
+        <p class="bim-hint">@(antall == 0 ? "Fant ingen dører i modellen." : koblet == 0
+            ? $"{antall} dører i modellen, men ingen er koblet til dørene i portalen ennå. Hent dørene fra modellen for å koble dem."
+            : $"{Math.Min(koblet, antall)} av {antall} dører er koblet til portalen. Dra for å snu, knip eller rull for å zoome, trykk på en dør for å åpne den.")</p>
+    }
+</div>
+
+@code {
+    // Én dør i portalen som skal vises i modellen. Status: ikke, pagar, ferdig, avvik.
+    public sealed record BimDor(int Id, string Guid, string Nr, string Status);
+
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+    [Parameter] public IReadOnlyList<BimDor> Dorer { get; set; } = [];
+    [Parameter] public EventCallback<int> OnDorValgt { get; set; }
+    [Parameter] public string Hoyde { get; set; } = "60vh";
+    // Endres når modellfila byttes, så visningen lastes på nytt.
+    [Parameter] public string? Versjon { get; set; }
+
+    private static readonly (string Navn, string Farge)[] Statuser =
+        [("Ikke startet", "#b8ada1"), ("Pågår", "#d79b2c"), ("Ferdig", "#2f7a3a"), ("Avvik", "#c0392b")];
+
+    private ElementReference _holder;
+    private DotNetObjectReference<BimVisning>? _ref;
+    private List<string> _etasjer = [];
+    private int _etasje;
+    private bool _gjennom;
+    private bool _skjulFerdig;
+    private string? _status = "Laster modellen …";
+    private int? _antallIModell;
+    private string? _lastetUrl;
+    private bool _laster;
+
+    private string Url => $"/prosjekt/{ProsjektId}/modell.ifc?v={Uri.EscapeDataString(Versjon ?? "")}";
+
+    private static string Farge(string status) => status switch
+    {
+        "ferdig" => "#2f7a3a",
+        "pagar" => "#d79b2c",
+        "avvik" => "#c0392b",
+        _ => "#b8ada1"
+    };
+
+    private object JsDorer => Dorer.Select(d => new { id = d.Id, guid = d.Guid, nr = d.Nr, farge = Farge(d.Status), ferdig = d.Status == "ferdig" }).ToList();
+
+    private object Valg => new { etasje = _etasje, gjennom = _gjennom, skjulFerdig = _skjulFerdig };
+
+    private sealed record Resultat(List<string> Etasjer, int AntallDorer, int Koblet);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_laster)
+        {
+            return;
+        }
+
+        if (_lastetUrl != Url)
+        {
+            _laster = true;
+            _status = "Laster modellen …";
+            _ref ??= DotNetObjectReference.Create(this);
+            try
+            {
+                var r = await JS.InvokeAsync<Resultat>("bimModell.vis", TimeSpan.FromMinutes(5), _holder, Url, JsDorer, _ref, Valg);
+                _lastetUrl = Url;
+                _etasjer = r.Etasjer;
+                _status = null;
+                _antallIModell = r.AntallDorer;
+            }
+            catch (JSException ex)
+            {
+                _status = "Kunne ikke vise modellen: " + ex.Message.Split('\n')[0];
+            }
+            catch (TaskCanceledException)
+            {
+                _status = "Modellen tok for lang tid å laste.";
+            }
+            finally
+            {
+                _laster = false;
+            }
+
+            StateHasChanged();
+        }
+        else
+        {
+            await Oppdater();
+        }
+    }
+
+    private async Task Oppdater()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("bimModell.oppdater", JsDorer, Valg);
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException)
+        {
+        }
+    }
+
+    private async Task VelgEtasje(int etasje)
+    {
+        _etasje = etasje;
+        await Oppdater();
+        try
+        {
+            await JS.InvokeVoidAsync("bimModell.nullstill");
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException)
+        {
+        }
+    }
+
+    private static void Bytt(ref bool verdi) => verdi = !verdi;
+
+    private async Task Nullstill()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("bimModell.nullstill");
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException)
+        {
+        }
+    }
+
+    [JSInvokable]
+    public Task BimDorValgt(int dorId) => OnDorValgt.InvokeAsync(dorId);
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("bimModell.lukk");
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException)
+        {
+        }
+
+        _ref?.Dispose();
+    }
+}

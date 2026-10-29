@@ -2361,6 +2361,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("Hoyde")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("IfcGuid")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Lyd")
                         .HasColumnType("TEXT");
 
@@ -2419,7 +2422,7 @@ namespace PortalItlock.Web.Migrations
 
                     b.HasIndex("PlantegningId");
 
-                    b.HasIndex("ProsjektId");
+                    b.HasIndex("ProsjektId", "IfcGuid");
 
                     b.ToTable("Dorer");
                 });
@@ -5454,6 +5457,18 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<double?>("Longitude")
                         .HasColumnType("REAL");
+
+                    b.Property<string>("ModellFilnavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ModellOpplastet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModellOpplastetAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("ModellStorrelse")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("MontasjestartDato")
                         .HasColumnType("TEXT");

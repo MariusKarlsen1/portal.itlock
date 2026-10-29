@@ -128,6 +128,11 @@ public static class ModulRettigheter
     public static bool KanFerdigmelde(BrukerRolle? rolle) =>
         rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor;
 
+    // Laste opp, bytte og fjerne prosjektets BIM-modell (IFC), og importere
+    // dører fra den. Montøren ser modellen, men endrer den ikke.
+    public static bool KanEndreBimModell(BrukerRolle? rolle) =>
+        rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder;
+
     // Fanene på prosjektsiden en rolle ikke skal se i det hele tatt.
     public static IReadOnlySet<string> SkjulteProsjektFaner(BrukerRolle? rolle) =>
         rolle == BrukerRolle.Montor
