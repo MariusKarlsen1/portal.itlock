@@ -1,0 +1,126 @@
+@using System.Globalization
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Components.Pages
+@inject ApplicationDbContext Db
+
+@* Koblingsskjemaet tegnet som i portalen, men bare til å se på: ingen
+   redigering, ingen tilkoblingspunkter og ingen kabeljournal. Brukes i
+   montørappen. Strekene og kablene tegnes på samme måte som i
+   KoblingsSkjemaVisning, og symbolene med samme KoblingsSymbolElement. *@
+@if (_skjema is not null)
+{
+    <div class="kl-lerret @(_skjema.VisRutenett ? "kl-rutenett" : "")">
+        <svg class="kl-streker" viewBox="0 0 100 100" preserveAspectRatio="none">
+            @foreach (var s in _streker)
+            {
+                var vifte = KabelVifte(s);
+                <g @key="s.Id">
+                    @if (vifte is not null)
+                    {
+                        <mask id="kl-km-@s.Id" maskUnits="userSpaceOnUse" x="-10" y="-10" width="120" height="120">
+                            <rect x="-10" y="-10" width="120" height="120" fill="#fff" />
+                            @foreach (var e in new[] { vifte.Start, vifte.Slutt })
+                            {
+                                <ellipse cx="@Inv(e.Senter.X)" cy="@Inv(e.Senter.Y)" rx="@Inv(e.Rx)" ry="@Inv(e.Ry)" fill="#000" />
+                            }
+                        </mask>
+                        <polyline points="@Punkter(s.PunkterJson)" fill="none" stroke="@KoblingsKabel.KabelFarge" stroke-width="7"
+                                  stroke-linejoin="round" stroke-linecap="round" mask="url(#kl-km-@s.Id)" vector-effect="non-scaling-stroke" />
+                        @foreach (var l in vifte.Ledere)
+                        {
+                            var pts = Pts(l.Punkter);
+                            @if (l.Leder.Farge == "Hvit")
+                            {
+                                <polyline points="@pts" fill="none" stroke="#9a948c" stroke-width="3.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
+                            }
+                            <polyline points="@pts" fill="none" stroke="@KoblingsKabel.Hex(l.Leder.Farge)" stroke-width="2.2"
+                                      stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="@(l.Leder.Stiplet ? "4,3" : null)" vector-effect="non-scaling-stroke" />
+                        }
+                    }
+                    else
+                    {
+                        <polyline points="@Punkter(s.PunkterJson)" fill="none" stroke="@s.Farge" stroke-width="@s.Tykkelse"
+                                  stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="@(s.Stiplet ? "6,4" : null)" vector-effect="non-scaling-stroke" />
+                    }
+                </g>
+            }
+        </svg>
+
+        @foreach (var s in _streker.Where(s => s.ErKabel && !string.IsNullOrWhiteSpace(s.Navn)))
+        {
+            if (KabelVifte(s)?.Merke is { } merke)
+            {
+                <div class="kl-kabel-merke" style="left:@Inv(merke.X)%; top:@Inv(merke.Y)%">@KabelEtikett(s)</div>
+            }
+        }
+
+        @foreach (var s in _streker.Where(s => s.ErKabel))
+        {
+            var vifte = KabelVifte(s);
+            if (vifte is null)
+            {
+                continue;
+            }
+
+            var str = Inv(Math.Clamp(vifte.Mellom * 0.82, 0.35, 1.2));
+            foreach (var l in vifte.Ledere)
+            {
+                var et = KoblingsKabel.LagEtikett(l, LerretAspekt);
+                if (et is null)
+                {
+                    continue;
+                }
+
+                <span class="kl-leder-navn @(et.Etter ? "etter" : "foran")" style="left:@Inv(et.Punkt.X)%; top:@Inv(et.Punkt.Y)%; --v:@(Inv(et.Vinkel))deg; --fs:@(str)cqw; --f:@KoblingsKabel.Hex(l.Leder.Farge)">@KoblingsKabel.LederNavn(l.Leder)</span>
+            }
+        }
+
+        @foreach (var symbol in _symboler)
+        {
+            <KoblingsSymbolElement @key="symbol.Id" Symbol="symbol" VisNavn="@_skjema.VisKomponentnavn" />
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public int SkjemaId { get; set; }
+
+    // Samme forhold som lerretet i portalen (16:13).
+    private const double LerretAspekt = 13.0 / 16.0;
+
+    private KoblingsSkjema? _skjema;
+    private List<KoblingsSymbol> _symboler = [];
+    private List<KoblingsStrek> _streker = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _skjema = await Db.KoblingsSkjemaer.AsNoTracking().FirstOrDefaultAsync(s => s.Id == SkjemaId);
+        _symboler = await Db.KoblingsSymboler.AsNoTracking().Where(s => s.KoblingsSkjemaId == SkjemaId)
+            .OrderBy(s => s.ZIndex).ThenBy(s => s.Id).ToListAsync();
+        _streker = await Db.KoblingsStreker.AsNoTracking().Where(s => s.KoblingsSkjemaId == SkjemaId).ToListAsync();
+    }
+
+    private static string Inv(double v) => Math.Round(v, 3).ToString(CultureInfo.InvariantCulture);
+
+    private static string Pts(List<KoblingsStrekPunkt> punkter) => string.Join(" ", punkter.Select(p => $"{Inv(p.X)},{Inv(p.Y)}"));
+
+    private static string Punkter(string punkterJson) =>
+        Pts(JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(punkterJson) ?? []);
+
+    private static KoblingsKabel.Vifte? KabelVifte(KoblingsStrek s)
+    {
+        if (!s.ErKabel)
+        {
+            return null;
+        }
+
+        var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(s.PunkterJson) ?? [];
+        return KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(s.LedereJson), LerretAspekt, s.LederAvstand);
+    }
+
+    private static string KabelEtikett(KoblingsStrek s) =>
+        $"{s.Navn} · {(string.IsNullOrWhiteSpace(s.KabelType) ? KoblingsKabel.MalNavn(KoblingsKabel.Les(s.LedereJson)) : s.KabelType)}";
+}

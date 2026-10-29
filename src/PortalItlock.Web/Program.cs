@@ -1155,6 +1155,47 @@ app.MapGet("/dormiljofil/{id:int}", async (int id, ApplicationDbContext db) =>
         : new InlineFileResult(dok.Data, FilSikkerhet.TryggContentType(dok.ContentType), dok.FileName);
 }).RequireAuthorization();
 
+// Montørappen: PDF-er vises som bilder side for side, fordi mobilnettlesere
+// ikke viser PDF inne i en side (Android viser ingenting, iPhone bare første side).
+static IResult PdfSideSomBilde(byte[] pdf, int side)
+{
+    if (side < 0 || side >= PDFtoImage.Conversion.GetPageCount(pdf))
+    {
+        return Results.NotFound();
+    }
+
+    using var bitmap = PDFtoImage.Conversion.ToImage(pdf, page: side, options: new PDFtoImage.RenderOptions(Dpi: 140));
+    using var data = bitmap.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, 85);
+    return Results.File(data.ToArray(), "image/jpeg");
+}
+
+app.MapGet("/app/pdfside/dormiljo/{id:int}/{side:int}", async (int id, int side, ApplicationDbContext db, IWebHostEnvironment env, HttpContext ctx) =>
+{
+    var dok = await db.DoorEnvironmentDocuments.FindAsync(id);
+    if (dok is null)
+    {
+        return Results.NotFound();
+    }
+
+    var data = dok.Data is { Length: > 0 } d ? d : null;
+    if (data is null)
+    {
+        // De opprinnelige dørmiljøene ligger som filer under wwwroot/dormiljo.
+        var sti = Path.Combine(env.WebRootPath, "dormiljo", Path.GetFileName(dok.FileName));
+        data = File.Exists(sti) ? await File.ReadAllBytesAsync(sti) : null;
+    }
+
+    ctx.Response.Headers.CacheControl = "private, max-age=3600";
+    return data is null ? Results.NotFound() : PdfSideSomBilde(data, side);
+}).RequireAuthorization();
+
+app.MapGet("/app/pdfside/nedlastning/{id:int}/{side:int}", async (int id, int side, ApplicationDbContext db, HttpContext ctx) =>
+{
+    var fil = await db.NedlastningsFiler.FindAsync(id);
+    ctx.Response.Headers.CacheControl = "private, max-age=3600";
+    return fil is null || !fil.ContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase) ? Results.NotFound() : PdfSideSomBilde(fil.Data, side);
+}).RequireAuthorization();
+
 app.MapGet("/koblingsbibliotek/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var symbol = await db.KoblingsSymbolBibliotek.FindAsync(id);

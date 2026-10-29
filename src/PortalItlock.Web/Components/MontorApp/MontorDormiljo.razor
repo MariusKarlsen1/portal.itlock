@@ -4,34 +4,49 @@
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @inject ApplicationDbContext Db
+@inject IWebHostEnvironment Env
+@inject IJSRuntime JS
 
 <PageTitle>Dørmiljø</PageTitle>
 
-@* Dørmiljø-skissene i montørappen. Trykk på en skisse for å se den;
-   PDF-er åpnes i nettleserens egen visning. Skissene legges inn i portalen. *@
+@* Dørmiljø-skissene i montørappen. Mobilnettlesere viser ikke PDF inne i en
+   side, så PDF-ene vises som bilder side for side (knip for å zoome).
+   Skissene legges inn i portalen. *@
 <div class="ma mv">
-    <AppHode Ikon="door" Sand="true" Tittel="@(_valgt?.Navn ?? "Dørmiljø")" Under="@(_valgt is null ? "Skisser av vanlige dørløsninger" : "Dørmiljø")" Tilbake="@(_valgt is null ? "/app/verktoy" : null)">
-        @if (_valgt is not null)
-        {
-            <span class="ma-skille"></span>
-            <a class="ma-ikonknapp" href="@_valgt.Adresse" target="_blank" rel="noopener" aria-label="Åpne i full størrelse"><Icon Name="maximize" /></a>
-        }
-    </AppHode>
+    <AppHode Ikon="door" Sand="true" Tittel="@(_valgt?.Navn ?? "Dørmiljø")" Under="@(_valgt is null ? "Skisser av vanlige dørløsninger" : _sider > 1 ? $"{_sider} sider" : "Dørmiljø")" Tilbake="@(_valgt is null ? "/app/verktoy" : null)" />
 
     @if (_valgt is { } v)
     {
         <button type="button" class="mdm-tilbake" @onclick="@(() => _valgt = null)"><Icon Name="chevron-left" />Alle skisser</button>
-        <div class="mdm-visning">
-            @if (v.ErBilde)
-            {
-                <img src="@v.Adresse" alt="@v.Navn" />
-            }
-            else
-            {
-                <iframe src="@v.Adresse" title="@v.Navn"></iframe>
-            }
-        </div>
-        <div style="margin:0.75rem"><a class="ma-knapp sek" style="width:100%;box-sizing:border-box" href="@v.Adresse" target="_blank" rel="noopener"><Icon Name="maximize" />Åpne i full størrelse</a></div>
+        @if (_sider == 0 && !v.ErBilde)
+        {
+            <p class="ma-tom">Fant ikke skissen.</p>
+        }
+        else
+        {
+            <div class="zoom-ramme" style="margin-top:0">
+                <div class="zoom-rull">
+                    <div class="zoom-flate" style="width:100%" @key="v.Id">
+                        @if (v.ErBilde)
+                        {
+                            <img src="@v.Adresse" alt="@v.Navn" />
+                        }
+                        else
+                        {
+                            @for (var s = 0; s < _sider; s++)
+                            {
+                                <img src="@($"/app/pdfside/dormiljo/{v.Id}/{s}")" alt="@($"{v.Navn}, side {s + 1}")" loading="lazy" />
+                            }
+                        }
+                    </div>
+                </div>
+                <div class="zoom-knapper">
+                    <button type="button" onclick="planZoom.steg(this, 50)" aria-label="Zoom inn">+</button>
+                    <button type="button" onclick="planZoom.steg(this, -50)" aria-label="Zoom ut">−</button>
+                </div>
+            </div>
+            <p class="zoom-hint">Knip med to fingre eller bruk + og − for å zoome.</p>
+        }
     }
     else
     {
@@ -50,9 +65,9 @@
                 @foreach (var d in Filtrert)
                 {
                     var dok = d;
-                    <button type="button" class="mv-rad" @onclick="@(() => _valgt = dok)">
+                    <button type="button" class="mv-rad" @onclick="@(() => Apne(dok))">
                         <span class="mv-ik"><Icon Name="@(d.ErBilde ? "image" : "file-text")" /></span>
-                        <span class="mv-tekst"><b>@d.Navn</b><small>@(d.ErBilde ? "Bilde" : "PDF")</small></span>
+                        <span class="mv-tekst"><b>@d.Navn</b><small>@(d.ErBilde ? "Bilde" : "Skisse")</small></span>
                         <span class="mv-pil"><Icon Name="chevron-right" /></span>
                     </button>
                 }
@@ -62,10 +77,11 @@
 </div>
 
 @code {
-    private sealed record Dokument(int Id, string Navn, string Adresse, bool ErBilde);
+    private sealed record Dokument(int Id, string Navn, string FileName, string Adresse, bool ErBilde, bool Opplastet);
 
     private bool _lastet;
     private string _sok = "";
+    private int _sider;
     private List<Dokument> _dokumenter = [];
     private Dokument? _valgt;
 
@@ -84,10 +100,50 @@
                 Opplastet = SqlFn.TypeOf(d.Data) != "null" && d.Data!.Length > 0
             })
             .ToListAsync();
-        _dokumenter = rader.Select(d => new Dokument(d.Id, d.Navn,
+        _dokumenter = rader.Select(d => new Dokument(d.Id, d.Navn, d.FileName,
                 d.Opplastet ? $"/dormiljofil/{d.Id}" : $"/dormiljo/{d.FileName}",
-                (d.ContentType ?? "").StartsWith("image/") || d.FileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || d.FileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)))
+                (d.ContentType ?? "").StartsWith("image/") || d.FileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || d.FileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase),
+                d.Opplastet))
             .ToList();
         _lastet = true;
+    }
+
+    // Antall sider trengs for å vise hver PDF-side som et bilde.
+    private async Task Apne(Dokument d)
+    {
+        _valgt = d;
+        _sider = 0;
+        if (d.ErBilde)
+        {
+            return;
+        }
+
+        byte[]? data = null;
+        if (d.Opplastet)
+        {
+            data = await Db.DoorEnvironmentDocuments.Where(x => x.Id == d.Id).Select(x => x.Data).FirstOrDefaultAsync();
+        }
+        else
+        {
+            var sti = Path.Combine(Env.WebRootPath, "dormiljo", Path.GetFileName(d.FileName));
+            data = File.Exists(sti) ? await File.ReadAllBytesAsync(sti) : null;
+        }
+
+        try
+        {
+            _sider = data is { Length: > 0 } ? PDFtoImage.Conversion.GetPageCount(data) : 0;
+        }
+        catch (Exception)
+        {
+            _sider = 0;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_valgt is not null)
+        {
+            await JS.InvokeVoidAsync("planZoom.koble");
+        }
     }
 }

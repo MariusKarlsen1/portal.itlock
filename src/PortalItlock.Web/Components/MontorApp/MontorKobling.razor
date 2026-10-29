@@ -1,70 +1,119 @@
 @page "/app/kobling"
+@page "/app/kobling/{Id:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>Koblingsskjema</PageTitle>
 
-@* Koblingsskjemaene i montørappen, gruppert per kategori (system).
-   Trykk på et skjema for å åpne det. *@
+@* Koblingsskjemaene i montørappen, gruppert per system. Her kan man bare se
+   selve tegningen (knip for å zoome) – ikke endre, ikke lage nye og ikke se
+   kabeljournalen. Det gjøres i portalen. *@
 <div class="ma mv">
-    <AppHode Ikon="trend-up" Sand="true" Tittel="Koblingsskjema" Under="Skjema per system" Tilbake="/app/verktoy" />
-    <div class="mv-sok-ramme"><input type="search" class="mv-sok" placeholder="Søk skjema eller system" aria-label="Søk" @bind="_sok" @bind:event="oninput" /></div>
+    @if (Id is null)
+    {
+        <AppHode Ikon="trend-up" Sand="true" Tittel="Koblingsskjema" Under="Skjema per system" Tilbake="/app/verktoy" />
+        <div class="mv-sok-ramme"><input type="search" class="mv-sok" placeholder="Søk skjema eller system" aria-label="Søk" @bind="_sok" @bind:event="oninput" /></div>
 
-    @if (!_lastet)
-    {
-        <p class="ma-tom">Laster …</p>
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (!Kategorier.Any())
+        {
+            <p class="ma-tom">@(string.IsNullOrWhiteSpace(_sok) ? "Ingen koblingsskjema er lagt inn ennå." : "Ingen skjema passer søket.")</p>
+        }
+        else
+        {
+            @foreach (var k in Kategorier)
+            {
+                <h2 class="mv-gruppe">@k.Navn@(string.IsNullOrWhiteSpace(k.Produsent) ? "" : " · " + k.Produsent)</h2>
+                <div class="mv-kort">
+                    @foreach (var s in k.Skjemaer.Where(Passer).OrderBy(s => s.Navn))
+                    {
+                        <a class="mv-rad" href="@($"/app/kobling/{s.Id}")">
+                            <span class="mv-ik"><Icon Name="trend-up" /></span>
+                            <span class="mv-tekst"><b>@s.Navn</b><small>@(string.IsNullOrWhiteSpace(s.Beskrivelse) ? (s.Versjon is { Length: > 0 } v ? "Versjon " + v : "Koblingsskjema") : s.Beskrivelse)</small></span>
+                            <span class="mv-pil"><Icon Name="chevron-right" /></span>
+                        </a>
+                    }
+                </div>
+            }
+        }
     }
-    else if (!Kategorier.Any())
+    else if (_skjema is not null)
     {
-        <p class="ma-tom">@(string.IsNullOrWhiteSpace(_sok) ? "Ingen koblingsskjema er lagt inn ennå." : "Ingen skjema passer søket.")</p>
+        <AppHode Ikon="trend-up" Sand="true" Tittel="@_skjema.Navn" Under="@(_skjema.Kategori?.Navn ?? "Koblingsskjema")" Tilbake="/app/kobling" />
+        <div class="zoom-ramme">
+            <div class="zoom-rull">
+                <div class="zoom-flate" style="width:100%">
+                    <KoblingsLesevisning SkjemaId="_skjema.Id" />
+                </div>
+            </div>
+            <div class="zoom-knapper">
+                <button type="button" onclick="planZoom.steg(this, 50)" aria-label="Zoom inn">+</button>
+                <button type="button" onclick="planZoom.steg(this, -50)" aria-label="Zoom ut">−</button>
+            </div>
+        </div>
+        <p class="zoom-hint">Knip med to fingre eller bruk + og − for å zoome.</p>
+        @if (!string.IsNullOrWhiteSpace(_skjema.Beskrivelse))
+        {
+            <p class="mv-info" style="background:none;color:var(--itlock-ink);padding:0;margin:0.8rem 1rem 0">@_skjema.Beskrivelse</p>
+        }
     }
     else
     {
-        @foreach (var k in Kategorier)
-        {
-            <h2 class="mv-gruppe">@k.Navn@(string.IsNullOrWhiteSpace(k.Produsent) ? "" : " · " + k.Produsent)</h2>
-            <div class="mv-kort">
-                @foreach (var s in k.Skjemaer.Where(Passer).OrderBy(s => s.Navn))
-                {
-                    <a class="mv-rad" href="@($"/koblingsskjema/{s.Id}")">
-                        <span class="mv-ik"><Icon Name="trend-up" /></span>
-                        <span class="mv-tekst"><b>@s.Navn</b><small>@(string.IsNullOrWhiteSpace(s.Beskrivelse) ? (s.Versjon is { Length: > 0 } v ? "Versjon " + v : "Koblingsskjema") : s.Beskrivelse)</small></span>
-                        <span class="mv-pil"><Icon Name="chevron-right" /></span>
-                    </a>
-                }
-            </div>
-        }
+        <AppHode Ikon="trend-up" Sand="true" Tittel="Koblingsskjema" Tilbake="/app/kobling" />
+        <p class="ma-tom">@(_lastet ? "Fant ikke skjemaet." : "Laster …")</p>
     }
 </div>
 
 @code {
+    [Parameter] public int? Id { get; set; }
+
     private bool _lastet;
     private string _sok = "";
     private List<KoblingsKategori> _kategorier = [];
+    private KoblingsSkjema? _skjema;
 
     private IEnumerable<KoblingsKategori> Kategorier => _kategorier.Where(k => k.Skjemaer.Any(Passer));
 
     private bool Passer(KoblingsSkjema s) =>
         string.IsNullOrWhiteSpace(_sok) || $"{s.Navn} {s.Beskrivelse} {s.Kategori?.Navn} {s.Kategori?.Produsent}".Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase);
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnParametersSetAsync()
     {
-        // Bare de generelle skjemaene (ikke de som hører til en bestemt dør eller et prosjekt).
-        _kategorier = await Db.KoblingsKategorier.AsNoTracking()
-            .Include(k => k.Skjemaer.Where(s => s.ProsjektId == null && s.DorId == null))
-            .OrderBy(k => k.Rekkefolge).ThenBy(k => k.Navn).ToListAsync();
-        foreach (var k in _kategorier)
+        if (Id is { } id)
         {
-            foreach (var s in k.Skjemaer)
+            _skjema = await Db.KoblingsSkjemaer.AsNoTracking().Include(s => s.Kategori).FirstOrDefaultAsync(s => s.Id == id);
+        }
+        else if (_kategorier.Count == 0)
+        {
+            // Bare de generelle skjemaene (ikke de som hører til en bestemt dør eller et prosjekt).
+            _kategorier = await Db.KoblingsKategorier.AsNoTracking()
+                .Include(k => k.Skjemaer.Where(s => s.ProsjektId == null && s.DorId == null))
+                .OrderBy(k => k.Rekkefolge).ThenBy(k => k.Navn).ToListAsync();
+            foreach (var k in _kategorier)
             {
-                s.Kategori = k;
+                foreach (var s in k.Skjemaer)
+                {
+                    s.Kategori = k;
+                }
             }
         }
 
         _lastet = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_skjema is not null)
+        {
+            await JS.InvokeVoidAsync("planZoom.koble");
+        }
     }
 }

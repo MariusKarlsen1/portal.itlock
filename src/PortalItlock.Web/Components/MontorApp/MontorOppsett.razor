@@ -1,77 +1,191 @@
 @page "/app/oppsett"
+@page "/app/oppsett/{KategoriId:int}"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
 
 <PageTitle>Oppsett adgangskontroll</PageTitle>
 
-@* Guiden «Oppsett adgangskontroll» i montørappen. Hver linje i guiden blir
-   et steg man kan hake av mens man jobber (lagres ikke – bare til hjelp på
-   stedet). Overskrifter (linjer som slutter med kolon) blir mellomtitler.
-   Innholdet redigeres i portalen. *@
+@* Oppsett adgangskontroll i montørappen: de samme systemene og dokumentene
+   som er lagt inn i portalen. Velg system, så dokument, og les det her –
+   PDF-er vises side for side som bilder (knip for å zoome). *@
 <div class="ma mv">
-    <AppHode Ikon="list" Sand="true" Tittel="Oppsett adgangskontroll" Under="@(_linjer.Count(l => !l.Overskrift) is var n && n > 0 ? $"{_ferdig.Count} av {n} steg gjort" : "Steg-for-steg guide")" Tilbake="/app/verktoy" />
-
-    @if (!_lastet)
+    @if (KategoriId is null)
     {
-        <p class="ma-tom">Laster …</p>
+        <AppHode Ikon="list" Sand="true" Tittel="Oppsett adgangskontroll" Under="Velg system" Tilbake="/app/verktoy" />
+        <div class="mv-sok-ramme"><input type="search" class="mv-sok" placeholder="Søk system eller produsent" aria-label="Søk" @bind="_sok" @bind:event="oninput" /></div>
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (!Kategorier.Any())
+        {
+            <p class="ma-tom">@(_kategorier.Count == 0 ? "Ingen systemer er lagt inn ennå. De legges inn under Oppsett adgangskontroll i portalen." : "Ingen treff.")</p>
+        }
+        else
+        {
+            @foreach (var g in Kategorier.GroupBy(k => string.IsNullOrWhiteSpace(k.Rad.Gruppe) ? "Systemer" : k.Rad.Gruppe!))
+            {
+                <h2 class="mv-gruppe">@g.Key</h2>
+                <div class="mv-kort">
+                    @foreach (var k in g)
+                    {
+                        <a class="mv-rad" href="@($"/app/oppsett/{k.Rad.Id}")">
+                            <span class="mv-ik"><Icon Name="lock" /></span>
+                            <span class="mv-tekst"><b>@k.Rad.Navn</b><small>@(string.IsNullOrWhiteSpace(k.Rad.Produsent) ? k.Rad.Beskrivelse : k.Rad.Produsent)</small></span>
+                            <span class="mv-merke-tall">@k.Antall</span>
+                            <span class="mv-pil"><Icon Name="chevron-right" /></span>
+                        </a>
+                    }
+                </div>
+            }
+        }
     }
-    else if (_linjer.Count == 0)
+    else if (_kategori is not null)
     {
-        <p class="ma-tom">Guiden er ikke skrevet ennå. Den legges inn under Guider i portalen.</p>
+        @if (_valgt is { } vf)
+        {
+            <AppHode Ikon="file-text" Sand="true" Tittel="@vf.Navn" Under="@($"{_kategori.Navn}{(_sider > 1 ? $" · {_sider} sider" : "")}")" Tilbake="@null" />
+            <button type="button" class="mdm-tilbake" @onclick="@(() => _valgt = null)"><Icon Name="chevron-left" />Alle dokumenter</button>
+            @if (vf.ErPdf && _sider == 0)
+            {
+                <p class="ma-tom">Kunne ikke lese dokumentet.</p>
+            }
+            else if (vf.ErPdf || vf.ErBilde)
+            {
+                <div class="zoom-ramme" style="margin-top:0">
+                    <div class="zoom-rull">
+                        <div class="zoom-flate" style="width:100%" @key="vf.Id">
+                            @if (vf.ErBilde)
+                            {
+                                <img src="@($"/nedlastningsfil/{vf.Id}")" alt="@vf.Navn" />
+                            }
+                            else
+                            {
+                                @for (var s = 0; s < _sider; s++)
+                                {
+                                    <img src="@($"/app/pdfside/nedlastning/{vf.Id}/{s}")" alt="@($"{vf.Navn}, side {s + 1}")" loading="lazy" />
+                                }
+                            }
+                        </div>
+                    </div>
+                    <div class="zoom-knapper">
+                        <button type="button" onclick="planZoom.steg(this, 50)" aria-label="Zoom inn">+</button>
+                        <button type="button" onclick="planZoom.steg(this, -50)" aria-label="Zoom ut">−</button>
+                    </div>
+                </div>
+                <p class="zoom-hint">Knip med to fingre eller bruk + og − for å zoome.</p>
+            }
+            else
+            {
+                <div style="margin:0.9rem 0.75rem"><a class="ma-knapp" style="width:100%;box-sizing:border-box" href="@($"/nedlastningsfil/{vf.Id}")" target="_blank" rel="noopener"><Icon Name="file-text" />Åpne @vf.Filnavn</a></div>
+            }
+        }
+        else
+        {
+            <AppHode Ikon="lock" Sand="true" Tittel="@_kategori.Navn" Under="@(string.IsNullOrWhiteSpace(_kategori.Produsent) ? "Dokumenter" : _kategori.Produsent)" Tilbake="/app/oppsett" />
+            @if (!string.IsNullOrWhiteSpace(_kategori.Beskrivelse))
+            {
+                <p class="mop-meta" style="margin-top:0.9rem">@_kategori.Beskrivelse</p>
+            }
+            @if (_filer.Count == 0)
+            {
+                <p class="ma-tom">Ingen dokumenter er lagt inn for dette systemet ennå.</p>
+            }
+            else
+            {
+                <div class="mv-kort" style="margin-top:0.9rem">
+                    @foreach (var f in _filer)
+                    {
+                        var fil = f;
+                        <button type="button" class="mv-rad" @onclick="@(() => Apne(fil))">
+                            <span class="mv-ik"><Icon Name="@(f.ErBilde ? "image" : "file-text")" /></span>
+                            <span class="mv-tekst"><b>@f.Navn</b><small>@(f.ErPdf ? "PDF" : f.ErBilde ? "Bilde" : f.Filnavn)</small></span>
+                            <span class="mv-pil"><Icon Name="chevron-right" /></span>
+                        </button>
+                    }
+                </div>
+            }
+        }
     }
     else
     {
-        <div class="mv-kort" style="margin-top:0.9rem">
-            @for (var i = 0; i < _linjer.Count; i++)
-            {
-                var nr = i;
-                var l = _linjer[i];
-                if (l.Overskrift)
-                {
-                    <div class="mop-overskrift">@l.Tekst</div>
-                }
-                else
-                {
-                    var ok = _ferdig.Contains(nr);
-                    <button type="button" class="mv-rad mop-steg @(ok ? "ok" : "")" aria-pressed="@ok" @onclick="@(() => { if (!_ferdig.Remove(nr)) _ferdig.Add(nr); })">
-                        <span class="ma-hake @(ok ? "paa" : "")">@if (ok) {<Icon Name="check" />}</span>
-                        <span class="mop-tekst">@l.Tekst</span>
-                    </button>
-                }
-            }
-        </div>
-        @if (_ferdig.Count > 0)
-        {
-            <div style="margin:0.9rem 0.75rem"><button type="button" class="ma-knapp sek" style="width:100%" @onclick="@(() => _ferdig.Clear())">Start på nytt</button></div>
-        }
-        @if (_sistOppdatert is { } d)
-        {
-            <p class="mop-meta">Sist oppdatert @d.ToLocalTime().ToString("dd.MM.yyyy")</p>
-        }
+        <AppHode Ikon="list" Sand="true" Tittel="Oppsett adgangskontroll" Tilbake="/app/oppsett" />
+        <p class="ma-tom">@(_lastet ? "Fant ikke systemet." : "Laster …")</p>
     }
 </div>
 
 @code {
-    private sealed record Linje(string Tekst, bool Overskrift);
+    [Parameter] public int? KategoriId { get; set; }
+
+    private sealed record KategoriRad(NedlastningsKategori Rad, int Antall);
+    private sealed record Fil(int Id, string Navn, string Filnavn, string ContentType)
+    {
+        public bool ErPdf => ContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase) || Filnavn.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
+        public bool ErBilde => ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+    }
 
     private bool _lastet;
-    private DateTime? _sistOppdatert;
-    private List<Linje> _linjer = [];
-    private readonly HashSet<int> _ferdig = [];
+    private string _sok = "";
+    private int _sider;
+    private List<KategoriRad> _kategorier = [];
+    private NedlastningsKategori? _kategori;
+    private List<Fil> _filer = [];
+    private Fil? _valgt;
 
-    protected override async Task OnInitializedAsync()
+    private IEnumerable<KategoriRad> Kategorier => _kategorier
+        .Where(k => string.IsNullOrWhiteSpace(_sok) || $"{k.Rad.Navn} {k.Rad.Produsent} {k.Rad.Gruppe}".Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase));
+
+    protected override async Task OnParametersSetAsync()
     {
-        var side = await Db.GuideSider.AsNoTracking().FirstOrDefaultAsync(g => g.Nokkel == "oppsett-adgangskontroll");
-        _sistOppdatert = side?.SistOppdatert;
-        _linjer = (side?.Innhold ?? "")
-            .Split('\n')
-            .Select(l => l.Trim().TrimStart('-', '*', '•').Trim())
-            .Where(l => l.Length > 0)
-            .Select(l => new Linje(l.TrimEnd(':'), l.EndsWith(':')))
-            .ToList();
+        _valgt = null;
+        if (KategoriId is { } id)
+        {
+            _kategori = await Db.NedlastningsKategorier.AsNoTracking().FirstOrDefaultAsync(k => k.Id == id);
+            _filer = await Db.NedlastningsFiler.AsNoTracking().Where(f => f.KategoriId == id).OrderBy(f => f.Navn)
+                .Select(f => new Fil(f.Id, f.Navn, f.Filnavn, f.ContentType)).ToListAsync();
+        }
+        else
+        {
+            _kategorier = (await Db.NedlastningsKategorier.AsNoTracking()
+                    .OrderBy(k => k.Gruppe).ThenBy(k => k.Rekkefolge).ThenBy(k => k.Navn)
+                    .Select(k => new { k, Antall = k.Filer.Count }).ToListAsync())
+                .Select(x => new KategoriRad(x.k, x.Antall)).ToList();
+        }
+
         _lastet = true;
+    }
+
+    // Antall sider trengs for å vise hver PDF-side som et bilde.
+    private async Task Apne(Fil f)
+    {
+        _valgt = f;
+        _sider = 0;
+        if (!f.ErPdf)
+        {
+            return;
+        }
+
+        var data = await Db.NedlastningsFiler.Where(x => x.Id == f.Id).Select(x => x.Data).FirstOrDefaultAsync();
+        try
+        {
+            _sider = data is { Length: > 0 } ? PDFtoImage.Conversion.GetPageCount(data) : 0;
+        }
+        catch (Exception)
+        {
+            _sider = 0;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_valgt is not null)
+        {
+            await JS.InvokeVoidAsync("planZoom.koble");
+        }
     }
 }

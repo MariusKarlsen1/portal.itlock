@@ -1,10 +1,10 @@
-// Zoom i plantegningen i montørappen. Knipe med to fingre zoomer bare
+// Zoom i plantegningen og andre tegninger (.zoom-rull/.zoom-flate) i montørappen. Knipe med to fingre zoomer bare
 // tegningen, ikke hele siden, så dørarket åpner seg i vanlig størrelse.
 // Punktet mellom fingrene blir liggende der det er mens man zoomer.
 window.planZoom = (function () {
     var MIN = 100, MAKS = 400;
 
-    function flate(rull) { return rull.querySelector('.mp-plan-flate'); }
+    function flate(rull) { return rull.querySelector('.mp-plan-flate, .zoom-flate'); }
 
     function bredde(rull) {
         var f = flate(rull);
@@ -52,9 +52,9 @@ window.planZoom = (function () {
     }
 
     return {
-        koble: function () { document.querySelectorAll('.mp-plan-rull').forEach(koble); },
+        koble: function () { document.querySelectorAll('.mp-plan-rull, .zoom-rull').forEach(koble); },
         steg: function (knapp, d) {
-            var rull = knapp.closest('.mp-plan').querySelector('.mp-plan-rull');
+            var rull = knapp.closest('.mp-plan, .zoom-ramme').querySelector('.mp-plan-rull, .zoom-rull');
             sett(rull, bredde(rull) + d);
         },
         // Er siden likevel zoomet (knepet utenfor tegningen), settes den
