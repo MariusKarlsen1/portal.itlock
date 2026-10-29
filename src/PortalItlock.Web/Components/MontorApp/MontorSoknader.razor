@@ -1,155 +1,265 @@
 @page "/app/soknader"
+@page "/app/soknader/ny"
 @rendermode InteractiveServer
+@implements IDisposable
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
 @using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
+@inject NavigationManager Nav
 
 <PageTitle>Søknader</PageTitle>
 
-@* Søknader i montørappen. Oversikt: ferie (tilgjengelig, kommende og tatt
-   ut, med ring), timebank, egenmelding og sykt barn, regnet som på
-   fraværssiden i portalen (godkjente søknader i år). Mine søknader: listen
-   med status. «Ny søknad» er et ark nedenfra; lederen behandler søknaden. *@
-<div class="ma">
-    <AppHode Ikon="send" Sand="true" Tittel="Søknader" Under="@_navn">
-        <span class="ma-skille"></span>
-        <button type="button" class="ma-ikonknapp" @onclick="Ny" aria-label="Ny søknad"><Icon Name="plus" /></button>
-    </AppHode>
-
-    <div class="ma-faner" role="tablist" style="grid-template-columns:1fr 1fr">
-        <button type="button" role="tab" class="@(_fane == 0 ? "aktiv" : "")" aria-selected="@(_fane == 0)" @onclick="@(() => _fane = 0)">Oversikt</button>
-        <button type="button" role="tab" class="@(_fane == 1 ? "aktiv" : "")" aria-selected="@(_fane == 1)" @onclick="@(() => _fane = 1)">Mine søknader@(_venter > 0 ? $" ({_venter})" : "")</button>
-    </div>
-
-    @if (_melding is not null)
+@* Søknader i montørappen.
+   Oversikt: ferie (tilgjengelig, kommende og tatt ut, med ring), varsel om
+   søknader som venter, og hva som er brukt i år – regnet som på
+   fraværssiden i portalen.
+   Mine søknader: filter, kommende og tidligere; trykk for status og svar,
+   og trekk tilbake en søknad som ikke er behandlet.
+   «+» øverst åpner ny søknad: velg type, hele dager eller del av dag, se
+   hvor mange dager det blir, og send. Lederen behandler søknaden. *@
+<div class="ma mv">
+    @if (_nySide)
     {
-        <p class="ma-melding" role="status" style="margin:.6rem .9rem">@_melding</p>
-    }
+        <AppHode Ikon="send" Sand="true" Tittel="Ny søknad" Under="@(_type is { } vt ? vt.Visningsnavn() : "Velg type")" Tilbake="/app/soknader" />
 
-    @if (!_lastet)
-    {
-        <div class="ma-liste"><p class="ma-tom">Laster …</p></div>
-    }
-    else if (_fane == 0)
-    {
-        var tilgjengelig = Math.Max(0, _kvote - _ferieTatt - _ferieKommende);
-        <div class="ma-liste" style="flex:none">
-            <div class="ma-gruppe"><Icon Name="sun" /> Ferie @DateTime.Today.Year</div>
-            <div class="msk-ferie">
-                <ul>
-                    <li><i class="msk-gronn"></i><span>Tilgjengelige dager</span><b>@tilgjengelig</b></li>
-                    <li><i class="msk-gul"></i><span>Kommende ferie</span><b>@_ferieKommende</b></li>
-                    <li><i class="msk-gra"></i><span>Dager tatt ut</span><b>@_ferieTatt</b></li>
-                </ul>
-                <div class="msk-ring" style="background:@RingGradient(tilgjengelig)"><span><b>@tilgjengelig</b><small>av @_kvote</small></span></div>
+        <h2 class="mv-seksjon">Hva vil du søke om?</h2>
+        <div class="msk-typer">
+            @foreach (var t in Typer)
+            {
+                var type = t;
+                <button type="button" class="@(_type == t ? "paa" : "")" @onclick="@(() => VelgType(type))">
+                    <span class="mv-ik"><Icon Name="@Ikon(t)" /></span>
+                    <span><b>@t.Visningsnavn()</b><small>@TypeTekst(t)</small></span>
+                </button>
+            }
+        </div>
+
+        @if (_type is { } valgt)
+        {
+            var dager = _heleDagen ? Hverdager(_fra, _til) : 0;
+            var timer = !_heleDagen && _slutt > _start ? (_slutt - _start).TotalHours : 0;
+            <h2 class="mv-seksjon">Når?</h2>
+            <div style="margin:0 0.75rem 0.75rem">
+                <div class="mv-segment">
+                    <button type="button" class="@(_heleDagen ? "paa" : "")" @onclick="@(() => _heleDagen = true)">Hele dager</button>
+                    <button type="button" class="@(!_heleDagen ? "paa" : "")" @onclick="@(() => { _heleDagen = false; _til = _fra; })">Del av dag</button>
+                </div>
             </div>
-            <div class="ma-gruppe">Annen statistikk</div>
-            <div class="ma-rad" style="cursor:default"><Icon Name="clock" /><span class="ma-rad-tekst"><b>Timebank</b><small>Din timebank-saldo for perioden</small></span><b>0 t</b></div>
-            <div class="ma-rad" style="cursor:default"><Icon Name="cross-medical" /><span class="ma-rad-tekst"><b>Egenmelding</b><small>Eget fravær eller sykdom</small></span><b>@_egenmelding @Dager(_egenmelding)</b></div>
-            <div class="ma-rad" style="cursor:default"><Icon Name="users" /><span class="ma-rad-tekst"><b>Egenmelding – sykt barn</b><small>Sykdom hos barn eller barnepasser</small></span><b>@_syktBarn @Dager(_syktBarn)</b></div>
+            @if (_heleDagen)
+            {
+                <div class="mv-to">
+                    <label class="mv-felt"><span>Fra</span><input type="date" value="@_fra.ToString("yyyy-MM-dd")" @onchange="@(e => SettFra(e.Value?.ToString()))" /></label>
+                    <label class="mv-felt"><span>Til og med</span><input type="date" @bind="_til" /></label>
+                </div>
+            }
+            else
+            {
+                <label class="mv-felt"><span>Dato</span><input type="date" value="@_fra.ToString("yyyy-MM-dd")" @onchange="@(e => SettFra(e.Value?.ToString()))" /></label>
+                <div class="mv-to">
+                    <label class="mv-felt"><span>Fra kl.</span><input type="time" @bind="_start" /></label>
+                    <label class="mv-felt"><span>Til kl.</span><input type="time" @bind="_slutt" /></label>
+                </div>
+            }
+            <div class="msk-oppsum">
+                <span class="mv-ik"><Icon Name="@Ikon(valgt)" /></span>
+                <span>
+                    <b>@(_heleDagen ? $"{dager} {(dager == 1 ? "arbeidsdag" : "arbeidsdager")}" : $"{timer.ToString("0.#", MontorApp.Kultur)} timer")</b>
+                    <small>@Etterpa(valgt, dager)</small>
+                </span>
+            </div>
+            @if (valgt == FravarType.Egenmelding && dager > 3)
+            {
+                <p class="msk-advarsel">Egenmelding gjelder normalt for noen få dager om gangen. Ved lengre fravær trengs sykemelding fra lege.</p>
+            }
+            <label class="mv-felt" style="margin-top:0.75rem"><span>Kommentar <small style="font-weight:500;color:var(--itlock-ink-muted)">(valgfritt)</small></span><input @bind="_kommentar" maxlength="500" placeholder="@(valgt == FravarType.Ferie ? "F.eks. høstferie" : "Kort forklaring til lederen")" /></label>
+        }
+
+        @if (_feil is not null)
+        {
+            <p class="ma-feil" role="alert" style="margin:0 0.75rem">@_feil</p>
+        }
+        <div class="mv-bunn">
+            <button type="button" class="ma-knapp" disabled="@(_type is null || _lagrer)" @onclick="Send"><Icon Name="send" />@(_lagrer ? "Sender …" : "Send søknad")</button>
         </div>
     }
     else
     {
-        <div class="ma-liste">
-            @if (_soknader.Count == 0)
-            {
-                <p class="ma-tom">Ingen søknader ennå. Trykk + for å søke om ferie eller fravær.</p>
-            }
-            @foreach (var s in _soknader)
-            {
-                <div class="ma-kort" style="cursor:default">
-                    <span class="ma-kort-tekst">
-                        <h3>@s.Type.Visningsnavn()</h3>
-                        <span class="ma-linje"><Icon Name="calendar" /><span>@Periode(s)</span></span>
-                        @if (!string.IsNullOrWhiteSpace(s.Kommentar))
-                        {
-                            <span class="ma-linje"><Icon Name="edit" /><span>@s.Kommentar</span></span>
-                        }
-                    </span>
-                    <span class="ma-merke @(s.Status switch { FravarStatus.Godkjent => "gronn", FravarStatus.Avslatt => "rod", _ => "gul" })">@s.Status.Visningsnavn()</span>
-                </div>
-            }
-        </div>
-    }
-    <div class="ma-under">
-        <button type="button" class="ma-knapp" @onclick="Ny"><Icon Name="plus" />Ny søknad</button>
-    </div>
+        <AppHode Ikon="send" Sand="true" Tittel="Søknader" Under="Ferie og fravær">
+            <span class="ma-skille"></span>
+            <a class="ma-ikonknapp" href="/app/soknader/ny" aria-label="Ny søknad"><Icon Name="plus" /></a>
+        </AppHode>
 
-    @if (_ny)
-    {
-        <div class="ma-ark-bak" @onclick="@(() => _ny = false)">
-            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Ny søknad">
-                <div class="ma-ark-handtak"></div>
-                <h2>Ny søknad</h2>
-                <div class="ma-felt">
-                    <b>Type</b>
-                    <select @bind="_type">
-                        @foreach (var t in Enum.GetValues<FravarType>())
-                        {
-                            <option value="@t">@t.Visningsnavn()</option>
-                        }
-                    </select>
-                </div>
-                <div class="ma-felt-rad" style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
-                    <div class="ma-felt"><b>Fra</b><input type="date" @bind="_fra" /></div>
-                    <div class="ma-felt"><b>Til</b><input type="date" @bind="_til" /></div>
-                </div>
-                <label class="ma-felt" style="flex-direction:row;display:flex;align-items:center;gap:.5rem">
-                    <input type="checkbox" @bind="_heleDagen" /> <span>Hele dager</span>
-                </label>
-                @if (!_heleDagen)
-                {
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
-                        <div class="ma-felt"><b>Fra kl.</b><input type="time" @bind="_start" /></div>
-                        <div class="ma-felt"><b>Til kl.</b><input type="time" @bind="_slutt" /></div>
-                    </div>
-                }
-                <div class="ma-felt">
-                    <b>Kommentar</b>
-                    <textarea rows="3" maxlength="500" @bind="_kommentar" @bind:event="oninput"></textarea>
-                </div>
-                @if (_type == FravarType.Ferie && _heleDagen)
-                {
-                    <p class="ma-teller-tekst" style="text-align:left;font-style:normal">@Hverdager(_fra, _til) @(Hverdager(_fra, _til) == 1 ? "feriedag" : "feriedager") · @_ferieIgjen igjen</p>
-                }
-                @if (_feil is not null)
-                {
-                    <p class="ma-feil" role="alert">@_feil</p>
-                }
-                <div class="ma-under">
-                    <button type="button" class="ma-knapp" @onclick="Send" disabled="@_lagrer"><Icon Name="send" />@(_lagrer ? "Sender …" : "Send søknad")</button>
-                    <button type="button" class="ma-knapp sek" @onclick="@(() => _ny = false)">Avbryt</button>
+        <div class="ma-faner" role="tablist" style="grid-template-columns:1fr 1fr">
+            <button type="button" role="tab" class="@(_fane == 0 ? "aktiv" : "")" aria-selected="@(_fane == 0)" @onclick="@(() => _fane = 0)">Oversikt</button>
+            <button type="button" role="tab" class="@(_fane == 1 ? "aktiv" : "")" aria-selected="@(_fane == 1)" @onclick="@(() => _fane = 1)"><span>Mine søknader</span>@if (_venter > 0) {<span class="msk-teller">@_venter</span>}</button>
+        </div>
+
+        @if (_melding is not null)
+        {
+            <p class="ma-melding" role="status" style="margin:.75rem .75rem 0">@_melding</p>
+        }
+
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (_fane == 0)
+        {
+            var tilgjengelig = Math.Max(0, _kvote - _ferieTatt - _ferieKommende);
+            <h2 class="mv-gruppe">Ferie @DateTime.Today.Year</h2>
+            <div class="mv-kort">
+                <div class="msk-ferie">
+                    <ul>
+                        <li><i class="msk-gronn"></i><span>Tilgjengelige dager</span><b>@tilgjengelig</b></li>
+                        <li><i class="msk-gul"></i><span>Kommende ferie</span><b>@_ferieKommende</b></li>
+                        <li><i class="msk-gra"></i><span>Dager tatt ut</span><b>@_ferieTatt</b></li>
+                    </ul>
+                    <div class="msk-ring" style="background:@RingGradient(tilgjengelig)"><span><b>@tilgjengelig</b><small>av @_kvote</small></span></div>
                 </div>
             </div>
-        </div>
+            @if (_venter > 0)
+            {
+                <button type="button" class="msk-varsel" @onclick="@(() => { _fane = 1; _filter = "venter"; })">
+                    <Icon Name="clock" /><span>@_venter @(_venter == 1 ? "søknad venter" : "søknader venter") på svar</span><Icon Name="chevron-right" />
+                </button>
+            }
+            <h2 class="mv-gruppe">Brukt i år</h2>
+            <div class="mv-kort">
+                <div class="mv-rad statisk"><span class="mv-ik"><Icon Name="cross-medical" /></span><span class="mv-tekst"><b>Egenmelding</b><small>Eget fravær eller sykdom</small></span><b>@_egenmelding @Dager(_egenmelding)</b></div>
+                <div class="mv-rad statisk"><span class="mv-ik"><Icon Name="users" /></span><span class="mv-tekst"><b>Sykt barn</b><small>Sykdom hos barn eller barnepasser</small></span><b>@_syktBarn @Dager(_syktBarn)</b></div>
+                <div class="mv-rad statisk"><span class="mv-ik"><Icon Name="calendar" /></span><span class="mv-tekst"><b>Permisjon og annet</b><small>Godkjent i år</small></span><b>@_annet @Dager(_annet)</b></div>
+            </div>
+        }
+        else
+        {
+            <div class="mv-chips">
+                <button type="button" class="@(_filter == "alle" ? "paa" : "")" @onclick="@(() => _filter = "alle")">Alle</button>
+                <button type="button" class="@(_filter == "venter" ? "paa" : "")" @onclick="@(() => _filter = "venter")">Venter</button>
+                <button type="button" class="@(_filter == "godkjent" ? "paa" : "")" @onclick="@(() => _filter = "godkjent")">Godkjent</button>
+                <button type="button" class="@(_filter == "avslatt" ? "paa" : "")" @onclick="@(() => _filter = "avslatt")">Avslått</button>
+            </div>
+            var liste = _soknader.Where(Passer).ToList();
+            var kommende = liste.Where(s => s.TilDato.Date >= DateTime.Today).OrderBy(s => s.FraDato).ToList();
+            var tidligere = liste.Where(s => s.TilDato.Date < DateTime.Today).OrderByDescending(s => s.FraDato).ToList();
+            @if (liste.Count == 0)
+            {
+                <p class="ma-tom">@(_soknader.Count == 0 ? "Ingen søknader ennå. Trykk + øverst for å søke om ferie eller fravær." : "Ingen søknader her.")</p>
+            }
+            @if (kommende.Count > 0)
+            {
+                <h2 class="mv-gruppe">Kommende</h2>
+                <div class="mv-kort">
+                    @foreach (var s in kommende)
+                    {
+                        @Rad(s)
+                    }
+                </div>
+            }
+            @if (tidligere.Count > 0)
+            {
+                <h2 class="mv-gruppe">Tidligere</h2>
+                <div class="mv-kort">
+                    @foreach (var s in tidligere)
+                    {
+                        @Rad(s)
+                    }
+                </div>
+            }
+        }
+
+        @if (_valgt is { } v)
+        {
+            <div class="ma-ark-bak" @onclick="@(() => _valgt = null)">
+                <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Søknad">
+                    <div class="ma-ark-handtak"></div>
+                    <div class="msk-ark-topp">
+                        <span class="mv-ik"><Icon Name="@Ikon(v.Type)" /></span>
+                        <span class="msk-ark-tittel"><b>@v.Type.Visningsnavn()</b><small>@Periode(v)</small></span>
+                        @Merke(v.Status)
+                    </div>
+                    <div class="msk-steg">
+                        <div class="ferdig"><i><Icon Name="check" /></i><span><b>Sendt</b><small>@v.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</small></span></div>
+                        @if (v.Status == FravarStatus.Venter)
+                        {
+                            <div class="venter"><i></i><span><b>Venter på svar</b><small>@(v.TilOppfolgingHosBruker?.Navn is { } leder ? $"{leder} behandler søknaden" : "Lederen behandler søknaden")</small></span></div>
+                        }
+                        else
+                        {
+                            <div class="@(v.Status == FravarStatus.Godkjent ? "ferdig" : "avslatt")"><i><Icon Name="@(v.Status == FravarStatus.Godkjent ? "check" : "x")" /></i><span><b>@v.Status.Visningsnavn()</b><small>@(v.BehandletAvBruker?.Navn ?? "Lederen")@(v.BehandletDato is { } bd ? " · " + bd.ToString("dd.MM.yyyy HH:mm") : "")</small></span></div>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(v.Kommentar))
+                    {
+                        <b class="msk-lbl">Din kommentar</b>
+                        <p class="msk-tekst">@v.Kommentar</p>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(v.AvslagsBegrunnelse))
+                    {
+                        <div class="msk-svar"><b>Svar fra @(v.BehandletAvBruker?.Navn ?? "lederen")</b>@v.AvslagsBegrunnelse</div>
+                    }
+                    <div class="ma-under" style="grid-template-columns:1fr 1fr">
+                        @if (v.Status == FravarStatus.Venter)
+                        {
+                            <button type="button" class="ma-knapp sek msk-rod" disabled="@_lagrer" @onclick="@(() => TrekkTilbake(v))">Trekk tilbake</button>
+                        }
+                        else if (v.Status == FravarStatus.Avslatt)
+                        {
+                            <a class="ma-knapp sek" href="@($"/app/soknader/ny?type={v.Type}")">Søk på nytt</a>
+                        }
+                        else
+                        {
+                            <span></span>
+                        }
+                        <button type="button" class="ma-knapp" @onclick="@(() => _valgt = null)">Lukk</button>
+                    </div>
+                </div>
+            </div>
+        }
     }
 </div>
 
 @code {
+    // Lista og «ny» er samme side. Blazor setter ikke parametrene på nytt når
+    // bare adressen endres, så vi lytter på navigeringen selv.
+    protected override void OnInitialized() => Nav.LocationChanged += VedNavigering;
+
+    private void VedNavigering(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) =>
+        _ = InvokeAsync(async () =>
+        {
+            await OnParametersSetAsync();
+            StateHasChanged();
+        });
+
+    public void Dispose() => Nav.LocationChanged -= VedNavigering;
+
+    [SupplyParameterFromQuery(Name = "type")] public string? TypeQuery { get; set; }
     [SupplyParameterFromQuery(Name = "sendt")] public int? Sendt { get; set; }
     [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
 
+    private static readonly FravarType[] Typer = [FravarType.Ferie, FravarType.Egenmelding, FravarType.SyktBarn, FravarType.Sykemelding, FravarType.Permisjon, FravarType.Annet];
+
     private bool _lastet;
-    private bool _ny;
+    private bool _nySide;
     private bool _lagrer;
     private string? _feil;
     private string? _melding;
     private int _brukerId;
-    private string _navn = "";
     private int _kvote = 25;
     private int _ferieIgjen;
     private int _fane;
+    private string _filter = "alle";
     private int _venter;
     private int _ferieTatt;
     private int _ferieKommende;
     private int _egenmelding;
     private int _syktBarn;
+    private int _annet;
     private List<FravarSoknad> _soknader = [];
+    private FravarSoknad? _valgt;
 
-    private FravarType _type = FravarType.Ferie;
+    private FravarType? _type;
     private DateTime _fra = DateTime.Today;
     private DateTime _til = DateTime.Today;
     private bool _heleDagen = true;
@@ -157,28 +267,39 @@
     private TimeOnly _slutt = new(12, 0);
     private string? _kommentar;
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnParametersSetAsync()
     {
         if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
         {
             _brukerId = id;
         }
 
-        var bruker = await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == _brukerId);
-        _navn = bruker?.Navn ?? "";
-        _kvote = bruker?.FerieKvote ?? 25;
-        if (Sendt == 1)
+        _kvote = (await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == _brukerId))?.FerieKvote ?? 25;
+        _nySide = Nav.ToBaseRelativePath(Nav.Uri).Split('?')[0].TrimEnd('/').EndsWith("/ny");
+        if (_nySide)
         {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+            _type = Enum.TryParse<FravarType>(query.TryGetValue("type", out var q) ? q.ToString() : TypeQuery, out var t) ? t : null;
+            _fra = _til = DateTime.Today;
+            _heleDagen = true;
+            _kommentar = null;
+            _feil = null;
+        }
+
+        else if (Sendt == 1)
+        {
+            // Fravær ført fra «Legg til timer» blir en søknad.
             _melding = "Søknaden er sendt. Du ser status her når lederen har behandlet den.";
             _fane = 1;
         }
+
         await Last();
     }
 
     private async Task Last()
     {
-        _soknader = await Db.FravarSoknader.AsNoTracking().Where(f => f.BrukerId == _brukerId)
-            .OrderByDescending(f => f.FraDato).Take(100).ToListAsync();
+        _soknader = await Db.FravarSoknader.AsNoTracking().Include(f => f.BehandletAvBruker).Include(f => f.TilOppfolgingHosBruker)
+            .Where(f => f.BrukerId == _brukerId).OrderByDescending(f => f.FraDato).Take(100).ToListAsync();
 
         // Godkjent og ventende ferie i år trekkes fra kvoten.
         var ar = DateTime.Today.Year;
@@ -194,7 +315,7 @@
         var godkjente = await Db.FravarSoknader.AsNoTracking()
             .Where(f => f.BrukerId == _brukerId && f.Status == FravarStatus.Godkjent && f.FraDato.Date <= arSlutt && f.TilDato.Date >= arStart)
             .ToListAsync();
-        _ferieTatt = _ferieKommende = _egenmelding = _syktBarn = 0;
+        _ferieTatt = _ferieKommende = _egenmelding = _syktBarn = _annet = 0;
         foreach (var f in godkjente)
         {
             var fra = f.FraDato.Date < arStart ? arStart : f.FraDato.Date;
@@ -207,11 +328,72 @@
                     case FravarType.Ferie: _ferieTatt++; break;
                     case FravarType.Egenmelding: _egenmelding++; break;
                     case FravarType.SyktBarn: _syktBarn++; break;
+                    case FravarType.Permisjon or FravarType.Annet: _annet++; break;
                 }
             }
         }
 
         _lastet = true;
+    }
+
+    private bool Passer(FravarSoknad s) => _filter switch
+    {
+        "venter" => s.Status == FravarStatus.Venter,
+        "godkjent" => s.Status == FravarStatus.Godkjent,
+        "avslatt" => s.Status == FravarStatus.Avslatt,
+        _ => true
+    };
+
+    private RenderFragment Rad(FravarSoknad s) => @<button type="button" class="mv-rad" @onclick="@(() => _valgt = s)">
+        <span class="mv-ik"><Icon Name="@Ikon(s.Type)" /></span>
+        <span class="mv-tekst"><b>@s.Type.Visningsnavn()</b><small>@Periode(s)@(string.IsNullOrWhiteSpace(s.Kommentar) ? "" : " · " + s.Kommentar)</small></span>
+        @Merke(s.Status)
+    </button>;
+
+    private static RenderFragment Merke(FravarStatus s) =>
+        @<span class="ma-merke @(s switch { FravarStatus.Godkjent => "gronn", FravarStatus.Avslatt => "rod", _ => "gul" })">@s.Visningsnavn()</span>;
+
+    private static string Ikon(FravarType t) => t switch
+    {
+        FravarType.Ferie => "sun",
+        FravarType.Egenmelding => "cross-medical",
+        FravarType.Sykemelding => "heart",
+        FravarType.SyktBarn => "users",
+        FravarType.Permisjon => "calendar",
+        _ => "file-text"
+    };
+
+    private string TypeTekst(FravarType t) => t switch
+    {
+        FravarType.Ferie => $"{_ferieIgjen} feriedager igjen",
+        FravarType.Egenmelding => "Eget fravær eller sykdom",
+        FravarType.SyktBarn => "Barn eller barnepasser er syk",
+        FravarType.Sykemelding => "Sykemeldt av lege",
+        FravarType.Permisjon => "Velferd, lege, flytting o.l.",
+        _ => "Beskriv i kommentaren"
+    };
+
+    private string Etterpa(FravarType t, int dager) =>
+        t == FravarType.Ferie && _heleDagen ? $"{Math.Max(0, _ferieIgjen - dager)} feriedager igjen etterpå" : "Helger telles ikke med";
+
+    private void VelgType(FravarType t)
+    {
+        _type = t;
+        _feil = null;
+    }
+
+    private void SettFra(string? verdi)
+    {
+        if (!DateTime.TryParse(verdi, out var d))
+        {
+            return;
+        }
+
+        _fra = d.Date;
+        if (_til < _fra || !_heleDagen)
+        {
+            _til = _fra;
+        }
     }
 
     private static string Dager(int n) => n == 1 ? "dag" : "dager";
@@ -231,29 +413,24 @@
             "conic-gradient(#2b7a4b 0% {0:0.##}%, #d9a520 {0:0.##}% {1:0.##}%, #c7c2b6 {1:0.##}% 100%)", p1, p2);
     }
 
-    private void Ny()
-    {
-        _type = FravarType.Ferie;
-        _fra = _til = DateTime.Today;
-        _heleDagen = true;
-        _kommentar = null;
-        _feil = null;
-        _melding = null;
-        _ny = true;
-    }
-
     private async Task Send()
     {
         _feil = null;
-        if (_til < _fra)
+        if (_type is not { } type)
+        {
+            _feil = "Velg hva du søker om.";
+            return;
+        }
+
+        if (_heleDagen && _til < _fra)
         {
             _feil = "Til-datoen kan ikke være før fra-datoen.";
             return;
         }
 
-        if (!_heleDagen && (_fra != _til || _slutt <= _start))
+        if (!_heleDagen && _slutt <= _start)
         {
-            _feil = _fra != _til ? "Deler av en dag kan bare søkes for én dato om gangen." : "Til kl. må være etter fra kl.";
+            _feil = "Til kl. må være etter fra kl.";
             return;
         }
 
@@ -263,24 +440,45 @@
             Db.FravarSoknader.Add(new FravarSoknad
             {
                 BrukerId = _brukerId,
-                Type = _type,
+                Type = type,
                 FraDato = _fra.Date,
-                TilDato = _til.Date,
+                TilDato = _heleDagen ? _til.Date : _fra.Date,
                 HeleDagen = _heleDagen,
                 StartTid = _heleDagen ? null : _start,
                 SluttTid = _heleDagen ? null : _slutt,
                 Kommentar = string.IsNullOrWhiteSpace(_kommentar) ? null : _kommentar.Trim()
             });
             await Db.SaveChangesAsync();
-            _ny = false;
-            _fane = 1;
             _melding = "Søknaden er sendt. Du ser status her når lederen har behandlet den.";
-            await Last();
+            _fane = 1;
+            _filter = "alle";
+            Nav.NavigateTo("/app/soknader");
         }
         finally
         {
             _lagrer = false;
         }
+    }
+
+    // Bare søknader som ikke er behandlet, kan trekkes tilbake.
+    private async Task TrekkTilbake(FravarSoknad s)
+    {
+        _lagrer = true;
+        var entitet = await Db.FravarSoknader.FirstOrDefaultAsync(f => f.Id == s.Id && f.BrukerId == _brukerId && f.Status == FravarStatus.Venter);
+        if (entitet is not null)
+        {
+            Db.FravarSoknader.Remove(entitet);
+            await Db.SaveChangesAsync();
+            _melding = $"{s.Type.Visningsnavn()} {Periode(s)} er trukket tilbake.";
+        }
+        else
+        {
+            _melding = "Søknaden er allerede behandlet og kan ikke trekkes tilbake.";
+        }
+
+        _valgt = null;
+        await Last();
+        _lagrer = false;
     }
 
     private static int Hverdager(DateTime fra, DateTime til)
