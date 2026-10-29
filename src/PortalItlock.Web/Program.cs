@@ -1196,6 +1196,13 @@ app.MapGet("/app/pdfside/nedlastning/{id:int}/{side:int}", async (int id, int si
     return fil is null || !fil.ContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase) ? Results.NotFound() : PdfSideSomBilde(fil.Data, side);
 }).RequireAuthorization();
 
+app.MapGet("/app/pdfside/komponent/{type}/{kilde}/{id:int}/{side:int}", async (string type, string kilde, int id, int side, ApplicationDbContext db, HttpContext ctx) =>
+{
+    var fil = await KomponentDokumenter.HentAsync(db, type, kilde, id);
+    ctx.Response.Headers.CacheControl = "private, max-age=3600";
+    return fil is not { ErPdf: true } ? Results.NotFound() : PdfSideSomBilde(fil.Data, side);
+}).RequireAuthorization();
+
 app.MapGet("/koblingsbibliotek/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var symbol = await db.KoblingsSymbolBibliotek.FindAsync(id);
@@ -1687,6 +1694,49 @@ app.MapGet("/ce/{id:int}/pdf", async (int id, HttpContext context, CeGodkjenning
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
+
+// CE-merket: utskrift av det runde merket med QR, og QR-bildet. QR-en peker
+// på den åpne statussiden /ce/m/{kode} (se CeMerkeSide).
+static async Task<CeGodkjenning?> CeMedMerkeAsync(ApplicationDbContext db, int id)
+{
+    var ce = await db.CeGodkjenninger.FirstOrDefaultAsync(c => c.Id == id);
+    if (ce is { MerkeToken: null })
+    {
+        ce.MerkeToken = CeGodkjenningFabrikk.NyttMerkeToken();
+        await db.SaveChangesAsync();
+    }
+
+    return ce;
+}
+
+app.MapGet("/ce/{id:int}/merke", async (int id, ApplicationDbContext db) =>
+{
+    var ce = await CeMedMerkeAsync(db, id);
+    return ce is null ? Results.NotFound() : Results.Content(CeMerkeSide.Utskrift(ce, $"/ce/{id}/merke.png"), "text/html; charset=utf-8");
+}).RequireAuthorization();
+
+app.MapGet("/ce/{id:int}/merke.png", async (int id, HttpContext context, ApplicationDbContext db) =>
+{
+    var ce = await CeMedMerkeAsync(db, id);
+    return ce is null
+        ? Results.NotFound()
+        : Results.File(QrCodeService.GeneratePng(CeMerkeSide.Url($"{context.Request.Scheme}://{context.Request.Host}", ce.MerkeToken!)), "image/png");
+}).RequireAuthorization();
+
+// Statussiden man kommer til når CE-merket på døra skannes. Åpen uten
+// innlogging: koden i lenken er tilgangen, og organisasjonen finnes fra vertsnavnet.
+app.MapGet("/ce/m/{token}", async (string token, ApplicationDbContext db, ITenantContext tenantContext) =>
+{
+    var org = tenantContext.Current is { } t ? t.PortalVisningsnavn ?? t.Navn : "Full Kontroll";
+    var ce = string.IsNullOrWhiteSpace(token) ? null : await db.CeGodkjenninger.AsNoTracking().FirstOrDefaultAsync(c => c.MerkeToken == token);
+    if (ce is null)
+    {
+        return Results.Content(CeMerkeSide.Melding(org, "Fant ikke CE-merket", "Koden er ugyldig. Ta kontakt med firmaet som har ansvar for døra."), "text/html; charset=utf-8");
+    }
+
+    var historikk = await db.CeGodkjenninger.AsNoTracking().Where(c => c.DorId == ce.DorId).ToListAsync();
+    return Results.Content(CeMerkeSide.Status(org, ce, historikk), "text/html; charset=utf-8");
+}).AllowAnonymous().RequireRateLimiting("login");
 
 // "Last ned PDF-er" for valgte rader på /ce-godkjenninger: én PDF per
 // CE-godkjenning, samlet i en zip-fil (navngitt etter sertifikatnummeret).

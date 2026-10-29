@@ -7,6 +7,7 @@
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 
 <PageTitle>@(_p?.Navn ?? "Prosjekt")</PageTitle>
 
@@ -14,7 +15,9 @@
    i statusfarge; trykk på en dør for å huke av beslagene. Fanen Dører viser
    samme dører som liste, og Info har adresse, kontakter og snarveier.
    Avhakingen følger samme regler som dørskjemaet i portalen: døra blir
-   «pågår» når noe er montert og «ferdig» når alle beslag er montert. *@
+   «pågår» når noe er montert og «ferdig» når alle beslag er montert.
+   Dok samler monteringsanvisninger, datablad og FDV for varene på dørene,
+   og dører med automatikk får CE-godkjenning fra arket (MontorCe). *@
 <div class="mp">
     @if (!_lastet)
     {
@@ -56,6 +59,7 @@
             <button type="button" role="tab" class="@(_fane == "dorer" ? "paa" : "")" aria-selected="@(_fane == "dorer")" @onclick="@(() => _fane = "dorer")">Dører</button>
             <button type="button" role="tab" class="@(_fane == "ordre" ? "paa" : "")" aria-selected="@(_fane == "ordre")" @onclick="@(() => _fane = "ordre")">Ordre@(_ordre.Count > 0 ? $" ({_ordre.Count})" : "")</button>
             <button type="button" role="tab" class="@(_fane == "avvik" ? "paa" : "")" aria-selected="@(_fane == "avvik")" @onclick="@(() => _fane = "avvik")">Avvik@(_avvik.Count > 0 ? $" ({_avvik.Count})" : "")</button>
+            <button type="button" role="tab" class="@(_fane == "dok" ? "paa" : "")" aria-selected="@(_fane == "dok")" @onclick="ApneDok">Dok</button>
             <button type="button" role="tab" class="@(_fane == "info" ? "paa" : "")" aria-selected="@(_fane == "info")" @onclick="@(() => _fane = "info")">Info</button>
         </nav>
 
@@ -190,6 +194,50 @@
                 </div>
             }
         }
+        else if (_fane == "dok")
+        {
+            var antall = KomponentDokumenter.Typer.ToDictionary(t => t, t => _varer.Count(v => v.Dok.Any(d => d.Type == t)));
+            var varer = _varer.Where(v => v.Dok.Any(d => d.Type == _dokType)
+                && (string.IsNullOrWhiteSpace(_dokSok) || $"{v.Navn} {v.Kategori}".Contains(_dokSok.Trim(), StringComparison.CurrentCultureIgnoreCase))).ToList();
+            <div class="mp-dk-filter">
+                @foreach (var t in KomponentDokumenter.Typer)
+                {
+                    var type = t;
+                    <button type="button" class="mp-chip @(_dokType == type ? "paa" : "")" @onclick="@(() => _dokType = type)">@KomponentDokumenter.Navn(type) (@antall[type])</button>
+                }
+            </div>
+            <div class="mp-sok"><input type="search" placeholder="Søk vare" aria-label="Søk vare" @bind="_dokSok" @bind:event="oninput" /></div>
+            @if (_dokType == "montasjeblad")
+            {
+                <div class="mp-dk-info"><Icon Name="sparkle" /><span>Anvisningene hentes automatisk fra varene på dørene. Legges en ny vare på en dør, kommer anvisningen hit.</span></div>
+            }
+            @if (!_dokLastet)
+            {
+                <p class="mp-tom">Laster …</p>
+            }
+            else if (varer.Count == 0)
+            {
+                <p class="mp-tom">@(_varer.Count == 0 ? "Ingen av varene på dørene har dokumenter ennå." : "Ingen varer passer.")</p>
+            }
+            @foreach (var vare in varer)
+            {
+                <div class="mp-dk-vare">
+                    <div class="mp-dk-hode">
+                        <span class="mp-ik"><Icon Name="@(vare.Automatikk ? "sparkle" : "box")" /></span>
+                        <span class="mp-rad-tekst">
+                            <b>@vare.Navn</b>
+                            <small>@vare.Kategori · brukes på @vare.Dorer.Count @(vare.Dorer.Count == 1 ? "dør" : "dører"): @string.Join(", ", vare.Dorer.Take(4))@(vare.Dorer.Count > 4 ? " …" : "")</small>
+                        </span>
+                    </div>
+                    <div class="mp-dk-dok">
+                        @foreach (var d in vare.Dok.OrderBy(d => Array.IndexOf(KomponentDokumenter.Typer, d.Type)))
+                        {
+                            <a class="@(d.Type == _dokType ? "paa" : "")" href="@($"/app/dok/{d.Type}/{d.Kilde}/{d.Id}?p={Id}")"><Icon Name="file-text" />@d.Navn</a>
+                        }
+                    </div>
+                </div>
+            }
+        }
         else
         {
             <div class="mp-kort">
@@ -247,6 +295,27 @@
                         </div>
                     </div>
                     <div class="mp-ark-innhold">
+                        @if (HarAutomatikk(v))
+                        {
+                            var ce = _ceSiste.GetValueOrDefault(v.Id);
+                            var auto = v.Komponenter.First(k => k.Component?.Type?.CeKategori == CeTilbehorKategori.DorAutomatikk).Component!;
+                            @if (ce is null)
+                            {
+                                <div class="mp-ce"><Icon Name="sparkle" /><span><b>Døra har automatikk</b><small>@auto.Navn · CE er ikke gjort</small></span><button type="button" @onclick="@(() => StartCe(v))" disabled="@_lagrer">Start CE</button></div>
+                            }
+                            else if (ce.Status != CeGodkjenningStatus.Godkjent)
+                            {
+                                <div class="mp-ce gar"><Icon Name="clock" /><span><b>CE pågår</b><small>@auto.Navn · startet @ce.OpprettetDato.ToString("dd.MM")</small></span><a href="@($"/app/ce/{ce.Id}")">Fortsett</a></div>
+                            }
+                            else if (ce.GyldigTil < DateTime.Now)
+                            {
+                                <div class="mp-ce rod"><Icon Name="alert-triangle" /><span><b>Årlig kontroll er forfalt</b><small>@auto.Navn · gikk ut @ce.GyldigTil.ToString("dd.MM.yyyy")</small></span><a href="@($"/app/ce/{ce.Id}")">Se CE</a></div>
+                            }
+                            else
+                            {
+                                <div class="mp-ce ok"><Icon Name="check" /><span><b>CE-godkjent</b><small>@auto.Navn · gyldig til @ce.GyldigTil.ToString("dd.MM.yyyy")</small></span><a href="@($"/app/ce/{ce.Id}")">Se CE</a></div>
+                            }
+                        }
                         @if (ErBranndor(v))
                         {
                             <div class="mp-krav"><Icon Name="alert-triangle" /><span><b>@v.Brann:</b> dørlukker og godkjent sluttstykke kreves. Døra skal ikke stå oppe uten holdemagnet.</span></div>
@@ -290,9 +359,13 @@
 
 @code {
     [Parameter] public int Id { get; set; }
+    [SupplyParameterFromQuery] public string? Fane { get; set; }
     [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
 
     private sealed record Plan(int Id, string Navn);
+    private sealed record Dok(string Type, string Kilde, int Id, string Navn);
+    private sealed record VareDok(string Navn, string Kategori, bool Automatikk, List<string> Dorer, List<Dok> Dok);
+    private sealed record CeKort(int Id, int DorId, CeGodkjenningStatus Status, DateTime GyldigTil, DateTime OpprettetDato);
 
     private bool _lastet;
     private bool _lagrer;
@@ -310,6 +383,11 @@
     private HashSet<int> _apneAvvik = [];
     private List<Avvik> _avvik = [];
     private Dor? _valgt;
+    private Dictionary<int, CeKort> _ceSiste = [];
+    private bool _dokLastet;
+    private string _dokType = "montasjeblad";
+    private string _dokSok = "";
+    private List<VareDok> _varer = [];
 
     // Knipezoom på plantegningen kobles på når tegningen vises.
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -348,6 +426,12 @@
             {
                 _fane = "dorer";
             }
+
+            await LastCe();
+            if (Fane == "dok")
+            {
+                await ApneDok();
+            }
         }
 
         _lastet = true;
@@ -359,6 +443,102 @@
         _avvik = await Db.Avvik.AsNoTracking().Where(a => ider.Contains(a.DorId) && a.Status == AvvikStatus.Apent)
             .OrderByDescending(a => a.OpprettetDato).ToListAsync();
         _apneAvvik = _avvik.Select(a => a.DorId).ToHashSet();
+    }
+
+    // Siste CE-godkjenning per dør med automatikk.
+    private async Task LastCe()
+    {
+        var ider = _dorer.Where(HarAutomatikk).Select(d => d.Id).ToList();
+        _ceSiste = ider.Count == 0 ? [] : (await Db.CeGodkjenninger.AsNoTracking().Where(c => ider.Contains(c.DorId))
+                .Select(c => new CeKort(c.Id, c.DorId, c.Status, c.GyldigTil, c.OpprettetDato)).ToListAsync())
+            .GroupBy(c => c.DorId).ToDictionary(g => g.Key, g => g.MaxBy(c => c.Id)!);
+    }
+
+    private static bool HarAutomatikk(Dor d) => d.Komponenter.Any(k => k.Component?.Type?.CeKategori == CeTilbehorKategori.DorAutomatikk);
+
+    private async Task StartCe(Dor d)
+    {
+        _lagrer = true;
+        _feil = null;
+        try
+        {
+            if (await CeGodkjenningFabrikk.OpprettForDorAsync(Db, d.Id, _brukerId > 0 ? _brukerId : null) is { } ce)
+            {
+                Nav.NavigateTo($"/app/ce/{ce.Id}");
+            }
+        }
+        catch (DbUpdateException)
+        {
+            _feil = "Kunne ikke starte CE. Sjekk dekningen og prøv igjen.";
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    // Dokumentene til varene på dørene: hovedfila på varen og de ekstra
+    // dokumentene, for monteringsanvisning, datablad og FDV. Filene leses ikke.
+    private async Task ApneDok()
+    {
+        _fane = "dok";
+        if (_dokLastet)
+        {
+            return;
+        }
+
+        var komponenter = _dorer.SelectMany(d => d.Komponenter.Where(k => k.Component is not null).Select(k => (Dor: d, k.Component)))
+            .GroupBy(x => x.Component!.Id).ToList();
+        var ider = komponenter.Select(g => g.Key).ToList();
+        var dok = new Dictionary<int, List<Dok>>();
+        void Legg(int komponentId, Dok d)
+        {
+            if (!dok.TryGetValue(komponentId, out var liste))
+            {
+                dok[komponentId] = liste = [];
+            }
+
+            liste.Add(d);
+        }
+
+        foreach (var (type, kolonne) in new[] { ("montasjeblad", "MontasjebladData"), ("datablad", "DatabladData"), ("fdv", "FdvData") })
+        {
+            foreach (var kid in await Db.KomponenterMedFilAsync(kolonne, ider))
+            {
+                Legg(kid, new Dok(type, "vare", kid, KomponentDokumenter.Navn(type)));
+            }
+        }
+
+        foreach (var x in await Db.ComponentMontasjebladDokumenter.AsNoTracking().Where(x => ider.Contains(x.ComponentId)).Select(x => new { x.Id, x.ComponentId, x.Filnavn }).ToListAsync())
+        {
+            Legg(x.ComponentId, new Dok("montasjeblad", "ekstra", x.Id, Path.GetFileNameWithoutExtension(x.Filnavn)));
+        }
+
+        foreach (var x in await Db.ComponentDatabladDokumenter.AsNoTracking().Where(x => ider.Contains(x.ComponentId)).Select(x => new { x.Id, x.ComponentId, x.Filnavn }).ToListAsync())
+        {
+            Legg(x.ComponentId, new Dok("datablad", "ekstra", x.Id, Path.GetFileNameWithoutExtension(x.Filnavn)));
+        }
+
+        foreach (var x in await Db.ComponentFdvDokumenter.AsNoTracking().Where(x => ider.Contains(x.ComponentId)).Select(x => new { x.Id, x.ComponentId, x.Filnavn }).ToListAsync())
+        {
+            Legg(x.ComponentId, new Dok("fdv", "ekstra", x.Id, Path.GetFileNameWithoutExtension(x.Filnavn)));
+        }
+
+        _varer = komponenter.Where(g => dok.ContainsKey(g.Key)).Select(g =>
+            {
+                var c = g.First().Component!;
+                return new VareDok(c.Navn, c.Type?.Navn ?? "Vare", c.Type?.CeKategori == CeTilbehorKategori.DorAutomatikk,
+                    g.Select(x => x.Dor.Dornummer).Distinct().ToList(), dok[g.Key]);
+            })
+            .OrderBy(v => v.Kategori, StringComparer.CurrentCultureIgnoreCase).ThenBy(v => v.Navn, StringComparer.CurrentCultureIgnoreCase).ToList();
+
+        // Starter på en type som faktisk har dokumenter.
+        if (!_varer.Any(v => v.Dok.Any(d => d.Type == _dokType)))
+        {
+            _dokType = KomponentDokumenter.Typer.FirstOrDefault(t => _varer.Any(v => v.Dok.Any(d => d.Type == t))) ?? _dokType;
+        }
+
+        _dokLastet = true;
     }
 
     private IEnumerable<Dor> SokteDorer => string.IsNullOrWhiteSpace(_sok)

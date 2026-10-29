@@ -1,0 +1,103 @@
+@page "/app/dok/{Type}/{Kilde}/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+
+<PageTitle>@KomponentDokumenter.Navn(Type)</PageTitle>
+
+@* Monteringsanvisning, datablad eller FDV til en vare, åpnet fra Dok-fanen
+   på prosjektet. PDF vises side for side som bilder (mobilnettlesere viser
+   ikke PDF inne i en side), og kan knipes for å zoome. *@
+<div class="ma mv">
+    <AppHode Ikon="file-text" Sand="true" Tittel="@KomponentDokumenter.Navn(Type)" Under="@(_vare ?? _filnavn)" Tilbake="@(P is { } p ? $"/app/prosjekt/{p}?fane=dok" : "/app/prosjekter")" />
+    @if (!_lastet)
+    {
+        <p class="ma-tom">Laster …</p>
+    }
+    else if (_fil is null)
+    {
+        <p class="ma-tom">Fant ikke dokumentet.</p>
+    }
+    else if (_fil.ErBilde || _sider > 0)
+    {
+        <div class="zoom-ramme">
+            <div class="zoom-rull">
+                <div class="zoom-flate" style="width:100%">
+                    @if (_fil.ErBilde)
+                    {
+                        <img src="@Adresse" alt="@_filnavn" />
+                    }
+                    else
+                    {
+                        @for (var s = 0; s < _sider; s++)
+                        {
+                            <img src="@($"/app/pdfside/komponent/{Type}/{Kilde}/{Id}/{s}")" alt="@($"{_filnavn}, side {s + 1}")" loading="lazy" />
+                        }
+                    }
+                </div>
+            </div>
+            <div class="zoom-knapper">
+                <button type="button" onclick="planZoom.steg(this, 50)" aria-label="Zoom inn">+</button>
+                <button type="button" onclick="planZoom.steg(this, -50)" aria-label="Zoom ut">−</button>
+            </div>
+        </div>
+        <p class="zoom-hint">Knip med to fingre eller bruk + og − for å zoome.</p>
+        <div class="mv-bunn"><a class="ma-knapp sek" href="@Adresse" target="_blank" rel="noopener"><Icon Name="download" />Åpne fila</a></div>
+    }
+    else
+    {
+        <p class="ma-tom">Dokumentet kan ikke vises i appen. Åpne fila i stedet.</p>
+        <div class="mv-bunn"><a class="ma-knapp" href="@Adresse" target="_blank" rel="noopener"><Icon Name="download" />Last ned @_filnavn</a></div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Type { get; set; } = "";
+    [Parameter] public string Kilde { get; set; } = "";
+    [Parameter] public int Id { get; set; }
+    [SupplyParameterFromQuery] public int? P { get; set; }
+
+    private bool _lastet;
+    private int _sider;
+    private string? _filnavn;
+    private string? _vare;
+    private KomponentDokumenter.Fil? _fil;
+
+    private string Adresse => KomponentDokumenter.Adresse(Type, Kilde, Id);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _fil = KomponentDokumenter.Typer.Contains(Type) && Kilde is "vare" or "ekstra"
+            ? await KomponentDokumenter.HentAsync(Db, Type, Kilde, Id)
+            : null;
+        _filnavn = _fil?.Filnavn;
+        _vare = Kilde == "vare" ? await Db.Components.AsNoTracking().Where(c => c.Id == Id).Select(c => c.Navn).FirstOrDefaultAsync() : null;
+        try
+        {
+            _sider = _fil is { ErPdf: true } ? PDFtoImage.Conversion.GetPageCount(_fil.Data) : 0;
+        }
+        catch (Exception)
+        {
+            _sider = 0;
+        }
+
+        // Fila trengs ikke lenger i minnet; sidene hentes som bilder.
+        if (_fil is not null)
+        {
+            _fil = _fil with { Data = [] };
+        }
+
+        _lastet = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_fil is not null)
+        {
+            await JS.InvokeVoidAsync("planZoom.koble");
+        }
+    }
+}

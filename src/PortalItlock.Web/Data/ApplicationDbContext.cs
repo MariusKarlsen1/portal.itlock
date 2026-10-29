@@ -1122,6 +1122,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .HasForeignKey(c => c.DorId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        // Koden i QR-en på CE-merket må være unik (statussiden slår opp på den).
+        modelBuilder.Entity<CeGodkjenning>()
+            .HasIndex(c => c.MerkeToken)
+            .IsUnique();
+
         modelBuilder.Entity<CeGodkjenning>()
             .HasOne(c => c.OpprettetAvBruker)
             .WithMany()

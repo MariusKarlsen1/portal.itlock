@@ -1116,6 +1116,12 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("BreddeMm")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool?>("BruksanvisningOverlevert")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Bruksomrade")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Bygg")
                         .HasColumnType("TEXT");
 
@@ -1150,6 +1156,9 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Etasje")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FarepunkterJson")
                         .HasColumnType("TEXT");
 
                     b.Property<bool?>("ForsinkelseForLukking")
@@ -1203,11 +1212,17 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("KundeNavn")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool?>("KundeOpplaert")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool?>("KuttskadeRisiko")
                         .HasColumnType("INTEGER");
 
                     b.Property<double?>("Latitude")
                         .HasColumnType("REAL");
+
+                    b.Property<bool?>("LoggbokLagt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<double?>("Longitude")
                         .HasColumnType("REAL");
@@ -1225,6 +1240,9 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("MalKommentar")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MerkeToken")
                         .HasColumnType("TEXT");
 
                     b.Property<bool?>("NodapningTestet")
@@ -1285,6 +1303,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool?>("Serviceavtale")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool?>("ServiceavtaleTilbudt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool?>("SikkerhetssensorUtkoblingBrannalarm")
                         .HasColumnType("INTEGER");
 
@@ -1324,6 +1345,9 @@ namespace PortalItlock.Web.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("DorId");
+
+                    b.HasIndex("MerkeToken")
+                        .IsUnique();
 
                     b.HasIndex("OpprettetAvBrukerId");
 

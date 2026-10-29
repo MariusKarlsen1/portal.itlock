@@ -7,6 +7,10 @@ public class CeGodkjenning
     public Dor? Dor { get; set; }
 
     public required string Sertifiseringsnummer { get; set; }
+
+    // Koden i QR-en på CE-merket (/ce/m/{kode}). Ny for hver godkjenning, så
+    // fjorårets merke viser «utløpt» når det skannes. Se CeGodkjenningFabrikk.
+    public string? MerkeToken { get; set; }
     public CeGodkjenningStatus Status { get; set; } = CeGodkjenningStatus.UnderArbeid;
 
     public DateTime GyldigFra { get; set; } = DateTime.Now;
@@ -107,6 +111,15 @@ public class CeGodkjenning
     public string? VerifisertAvNavn { get; set; }
     public DateTime? VerifisertAvDato { get; set; }
     public byte[]? VerifisertAvSignatur { get; set; }
+
+    // Montørappens CE-gjennomgang: bruksområde, farepunkter med tiltak
+    // (JSON: område -> tiltak) og overleveringen til kunden.
+    public string? Bruksomrade { get; set; }
+    public string? FarepunkterJson { get; set; }
+    public bool? BruksanvisningOverlevert { get; set; }
+    public bool? KundeOpplaert { get; set; }
+    public bool? LoggbokLagt { get; set; }
+    public bool? ServiceavtaleTilbudt { get; set; }
 
     public List<CeGodkjenningMedia> Media { get; set; } = [];
 }

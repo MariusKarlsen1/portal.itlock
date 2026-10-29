@@ -1,0 +1,722 @@
+@page "/app/ce/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>CE @(_ce?.Dornummer)</PageTitle>
+
+@* CE-godkjenning av en automatisk dør i montørappen, i fire steg:
+   1 Døra (bruksområde, utstyr, serienummer, bilde av typeskiltet),
+   2 Farepunkter rett på en tegning av døra med tiltak per punkt,
+   3 Test (målte verdier mot grenseverdiene gir grønt/rødt, og ja/nei-sjekker),
+   4 Overlevering (sjekkliste og signatur fra montør og kunde).
+   «Fullfør» gjør godkjenningen gyldig og lager et eget CE-merke med QR
+   (CeMerkeSide). Alt lagres underveis, så man kan fortsette senere.
+   Feltene er de samme som i CE-skjemaet i portalen (/ce/{Id}). *@
+<div class="ma mv mce">
+    @if (_ce is null)
+    {
+        <AppHode Ikon="shield" Sand="true" Tittel="CE-godkjenning" Tilbake="/app/prosjekter" />
+        <p class="ma-tom">@(_lastet ? "Fant ikke CE-godkjenningen." : "Laster …")</p>
+    }
+    else if (_ce.Status == CeGodkjenningStatus.Godkjent)
+    {
+        var tilstand = CeMerkeSide.Finn(_ce, _historikk);
+        var aar = CeMerkeSide.Aar(_ce);
+        <AppHode Ikon="shield" Sand="true" Tittel="CE-status" Under="@DorTekst" Tilbake="@Tilbake" />
+
+        @if (_nyttMerke)
+        {
+            <div class="mce-kort mce-midt">
+                <h3>Nytt CE-merke er klart</h3>
+                <small>Skriv det ut og sett det på døra. Er det et gammelt merke der, tas det ned.</small>
+                <div class="mce-sticker" style="background:@CeMerkeSide.Farge(aar)"><span class="aar">@aar</span><img src="@($"/ce/{_ce.Id}/merke.png")" alt="QR-kode til CE-status" /><span class="ce">CE</span></div>
+                <a class="ma-knapp" href="@($"/ce/{_ce.Id}/merke")" target="_blank" rel="noopener"><Icon Name="download" />Skriv ut CE-merke</a>
+            </div>
+        }
+
+        <div class="mce-status @(tilstand == CeMerkeSide.Tilstand.Gyldig ? "ok" : "rod")">
+            <div class="ring"><Icon Name="@(tilstand == CeMerkeSide.Tilstand.Gyldig ? "check" : "alert-triangle")" /></div>
+            <h2>@(tilstand switch { CeMerkeSide.Tilstand.Gyldig => "CE-godkjent", CeMerkeSide.Tilstand.Forfalt => "Kontrollen er forfalt", _ => "Merket er utløpt" })</h2>
+            <p>@(tilstand switch { CeMerkeSide.Tilstand.Gyldig => $"Gyldig til {_ce.GyldigTil:dd.MM.yyyy}", CeMerkeSide.Tilstand.Forfalt => $"Gikk ut {_ce.GyldigTil:dd.MM.yyyy} – start årlig kontroll", _ => $"Merket fra {aar} er erstattet av et nyere" })</p>
+        </div>
+
+        <div class="mce-kort mce-merke">
+            <div class="mce-sticker liten" style="background:@CeMerkeSide.Farge(aar)"><span class="aar">@aar</span><img src="@($"/ce/{_ce.Id}/merke.png")" alt="QR-kode til CE-status" /><span class="ce">CE</span></div>
+            <div>
+                <b>@DorTekst</b>
+                @if (Automatikk is { Length: > 0 } auto)
+                {
+                    <span>@auto</span>
+                }
+                <small>@_ce.Sertifiseringsnummer · merke @aar</small>
+            </div>
+        </div>
+
+        <h2 class="mv-seksjon">Detaljer</h2>
+        <div class="mv-kort">
+            <div class="mv-rad statisk"><span class="mv-tekst"><small>Sist kontrollert</small><b>@((_ce.UtfortAvDato ?? _ce.GyldigFra).ToString("dd.MM.yyyy"))@(string.IsNullOrWhiteSpace(_ce.UtfortAvNavn) ? "" : " av " + _ce.UtfortAvNavn)</b></span></div>
+            <div class="mv-rad statisk"><span class="mv-tekst"><small>Neste kontroll</small><b>@_ce.GyldigTil.ToString("dd.MM.yyyy")</b></span></div>
+            @if (!string.IsNullOrWhiteSpace(_ce.Bruksomrade))
+            {
+                <div class="mv-rad statisk"><span class="mv-tekst"><small>Bruksområde</small><b>@_ce.Bruksomrade</b></span></div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_ce.Serienummer))
+            {
+                <div class="mv-rad statisk"><span class="mv-tekst"><small>Serienummer</small><b>@_ce.Serienummer</b></span></div>
+            }
+        </div>
+
+        <h2 class="mv-seksjon">Historikk</h2>
+        <div class="mv-kort">
+            @foreach (var h in _historikk.OrderByDescending(h => h.Id))
+            {
+                <a class="mv-rad mce-hist" href="@($"/app/ce/{h.Id}")">
+                    <span class="mce-prikk" style="background:@(h.Status == CeGodkjenningStatus.Godkjent ? CeMerkeSide.Farge(CeMerkeSide.Aar(h)) : "#d9cfc3")"></span>
+                    <span class="mv-tekst"><b>@HistorikkTekst(h)</b><small>@((h.UtfortAvDato ?? h.OpprettetDato).ToString("dd.MM.yyyy"))@(string.IsNullOrWhiteSpace(h.UtfortAvNavn) ? "" : " · " + h.UtfortAvNavn)</small></span>
+                    @if (h.Id == _ce.Id)
+                    {
+                        <span class="mv-merke-tall">Denne</span>
+                    }
+                </a>
+            }
+        </div>
+
+        <div class="mce-knapper">
+            <a class="ma-knapp sek" href="@($"/ce/{_ce.Id}/merke")" target="_blank" rel="noopener"><Icon Name="download" />Skriv ut CE-merke</a>
+            <a class="ma-knapp sek" href="@($"/ce/{_ce.Id}/pdf")" target="_blank" rel="noopener"><Icon Name="file-text" />CE-erklæring (PDF)</a>
+            <a class="ma-knapp sek" href="@($"/ce/m/{_ce.MerkeToken}")" target="_blank" rel="noopener"><Icon Name="search" />Se det kunden ser ved skanning</a>
+            @if (_historikk.FirstOrDefault(h => h.Id > _ce.Id && h.Status != CeGodkjenningStatus.Godkjent) is { } pagar)
+            {
+                <a class="ma-knapp" href="@($"/app/ce/{pagar.Id}")"><Icon Name="refresh" />Fortsett årlig kontroll</a>
+            }
+            else if (tilstand != CeMerkeSide.Tilstand.Utlopt)
+            {
+                <button type="button" class="ma-knapp" @onclick="StartArligKontroll" disabled="@_lagrer"><Icon Name="refresh" />Start årlig kontroll</button>
+            }
+        </div>
+        @if (_feil is not null)
+        {
+            <p class="ma-feil" role="alert" style="margin:0.6rem 1rem">@_feil</p>
+        }
+    }
+    else
+    {
+        var ferdig = new[] { Steg1Ferdig, Steg2Ferdig, Steg3Ferdig, Steg4Ferdig };
+        <div class="mce-topp">
+            <AppHode Ikon="shield" Sand="true" Tittel="@($"CE · {DorTekst}")" Under="@(Automatikk ?? "Automatisk dør")" Tilbake="@Tilbake" />
+            <div class="mce-steg">
+                @for (var i = 0; i < StegNavn.Length; i++)
+                {
+                    var n = i;
+                    <button type="button" class="@(n == _steg ? "na" : "") @(ferdig[n] ? "ok" : "")" @onclick="@(() => GaTil(n))" aria-current="@(n == _steg ? "step" : null)">
+                        <i>@if (ferdig[n]) {<Icon Name="check" />} else {<span>@(n + 1)</span>}</i>@StegNavn[n]
+                    </button>
+                }
+            </div>
+        </div>
+
+        @if (_steg == 0)
+        {
+            <div class="mce-kort">
+                <h3>Hva slags dør er dette?</h3>
+                <small>Bruken avgjør hvor strenge kravene er.</small>
+                <div class="mce-valg">
+                    @foreach (var b in Bruksomrader)
+                    {
+                        var verdi = b;
+                        <button type="button" class="@(_ce.Bruksomrade == verdi ? "paa" : "")" @onclick="@(() => SettBruk(verdi))">@verdi</button>
+                    }
+                </div>
+            </div>
+            <div class="mce-kort">
+                <h3>Utstyr</h3>
+                <small>Hentet fra døra og varen – sjekk at det stemmer.</small>
+                <div class="mce-fakta">
+                    <div><small>Automatikk</small><b>@(Automatikk ?? "–")</b></div>
+                    <div><small>Dør</small><b>@(_ce.Dorkonstruksjon ?? "–")</b></div>
+                    <div><small>Mål</small><b>@(_ce.BreddeMm is { } bredde && _ce.HoydeMm is { } hoyde ? $"{bredde} × {hoyde}" : "–")</b></div>
+                    <div><small>Brann</small><b>@(string.IsNullOrWhiteSpace(_ce.Brannklasse) ? "Ingen" : _ce.Brannklasse)</b></div>
+                </div>
+                <label class="mce-felt"><span>Serienummer</span><input @bind="_ce.Serienummer" @bind:after="Lagre" placeholder="Står på typeskiltet" /></label>
+                <label class="mce-felt"><span>Produksjonsår</span><input type="number" inputmode="numeric" @bind="_ce.ProduksjonsAar" @bind:after="Lagre" placeholder="F.eks. @DateTime.Today.Year" /></label>
+                @if (_typeskilt.Count > 0)
+                {
+                    <div class="mv-bilder">
+                        @foreach (var bildeId in _typeskilt)
+                        {
+                            <img src="@($"/cegodkjenningmedia/{bildeId}")" alt="Typeskilt" />
+                        }
+                    </div>
+                }
+                <label class="ma-knapp sek mce-foto">
+                    <Icon Name="camera" />@(_lasterBilde ? "Laster opp …" : _typeskilt.Count > 0 ? "Ta nytt bilde av typeskiltet" : "Ta bilde av typeskiltet")
+                    <InputFile OnChange="LastOppTypeskilt" accept="image/*" capture="environment" />
+                </label>
+            </div>
+        }
+        else if (_steg == 1)
+        {
+            var sone = Soner.First(s => s.Kode == _sone);
+            <div class="mce-kort">
+                <h3>Trykk på farepunktene</h3>
+                <small>Velg tiltak for hvert punkt. Grønt er håndtert.</small>
+                <svg class="mce-tegning" viewBox="0 0 300 260" role="img" aria-label="Døra med farepunkter">
+                    <rect x="20" y="20" width="230" height="200" fill="#f8f4ef" stroke="#2a2219" stroke-width="3" />
+                    <rect x="86" y="36" width="136" height="178" fill="#fff" stroke="#2a2219" stroke-width="2" />
+                    <rect x="96" y="24" width="116" height="10" rx="3" fill="#a36a3e" />
+                    <text x="154" y="16" font-size="9" text-anchor="middle" fill="#7d6250">automatikk</text>
+                    <path d="M86 214 A128 128 0 0 1 214 214" fill="none" stroke="#c9bdaf" stroke-dasharray="4 4" />
+                    @foreach (var s in Soner)
+                    {
+                        var kode = s.Kode;
+                        var haandtert = _farer.ContainsKey(kode);
+                        var farge = haandtert ? "#2f7a3a" : kode == _sone ? "#d79b2c" : "#b4372b";
+                        <rect class="mce-sone" x="@s.X" y="@s.Y" width="@s.B" height="@s.H" rx="5" fill="@farge" opacity="@(kode == _sone ? "0.55" : "0.32")"
+                              stroke="@farge" stroke-width="@(kode == _sone ? "2.5" : "1")" @onclick="@(() => _sone = kode)" />
+                    }
+                </svg>
+                <div class="mce-sone-hode"><b>@sone.Navn</b><span class="mce-badge @(_farer.ContainsKey(sone.Kode) ? "ok" : "rod")">@(_farer.ContainsKey(sone.Kode) ? "Håndtert" : "Ikke vurdert")</span></div>
+                <small class="mce-dempet">@sone.Fare</small>
+                <div class="mce-valg">
+                    @foreach (var t in Tiltak)
+                    {
+                        var tiltak = t;
+                        <button type="button" class="@(_farer.GetValueOrDefault(sone.Kode) == tiltak ? "paa" : "")" @onclick="@(() => VelgTiltak(sone.Kode, tiltak))">@tiltak</button>
+                    }
+                </div>
+            </div>
+            <h2 class="mv-seksjon"><span>@_farer.Count(f => Soner.Any(s => s.Kode == f.Key)) av @Soner.Length punkter håndtert</span></h2>
+            <div class="mv-kort">
+                @foreach (var s in Soner)
+                {
+                    var kode = s.Kode;
+                    <button type="button" class="mv-rad mce-hist" @onclick="@(() => _sone = kode)">
+                        <span class="mce-prikk" style="background:@(_farer.ContainsKey(kode) ? "#2f7a3a" : "#b4372b")"></span>
+                        <span class="mv-tekst"><b>@s.Navn</b><small>@(_farer.GetValueOrDefault(kode) ?? s.Fare)</small></span>
+                    </button>
+                }
+            </div>
+        }
+        else if (_steg == 2)
+        {
+            <div class="mce-kort">
+                <h3>Mål og test</h3>
+                <small>Skriv inn målt verdi – grønt eller rødt kommer av seg selv.</small>
+                @foreach (var m in Maalinger)
+                {
+                    var ok = MaalOk(m);
+                    <div class="mce-maal">
+                        <span><b>@m.Navn</b><small>Krav ≤ @m.Grense(_grense).ToString("0.##", CultureInfo.CurrentCulture) @m.Enhet</small></span>
+                        <input type="number" inputmode="decimal" step="any" placeholder="@m.Enhet" value="@m.Hent(_ce)?.ToString(CultureInfo.InvariantCulture)"
+                               @onchange="@(e => SettMaal(m, e.Value?.ToString()))" aria-label="@m.Navn" />
+                        <span class="mce-res @(ok switch { true => "ok", false => "rod", _ => "" })">@(ok switch { true => "✓", false => "!", _ => "–" })</span>
+                    </div>
+                }
+                @foreach (var j in Sjekker)
+                {
+                    var verdi = j.Hent(_ce);
+                    <div class="mce-maal mce-jn-rad">
+                        <span><b>@j.Navn</b></span>
+                        <span class="mce-jn">
+                            <button type="button" class="@(verdi == true ? "ja" : "")" @onclick="@(() => SettSjekk(j, true))">Ja</button>
+                            <button type="button" class="@(verdi == false ? "nei" : "")" @onclick="@(() => SettSjekk(j, false))">Nei</button>
+                        </span>
+                    </div>
+                }
+            </div>
+            @if (Maalinger.Any(m => MaalOk(m) == false) || Sjekker.Any(j => j.Hent(_ce) == false))
+            {
+                <div class="mce-varsel">
+                    <Icon Name="alert-triangle" />
+                    <span>Noe er ikke godkjent. Rett feilen og test på nytt – eller meld avvik.</span>
+                    <button type="button" @onclick="@(() => _meldAvvik = true)">Meld avvik</button>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="mce-kort">
+                <h3>Overlevering</h3>
+                <small>Hak av det som er gjort sammen med kunden.</small>
+                @foreach (var o in Overlevering)
+                {
+                    var punkt = o;
+                    var paa = punkt.Hent(_ce) == true;
+                    <button type="button" class="mce-hak-rad" @onclick="@(() => VeksleOverlevering(punkt))" aria-pressed="@paa">
+                        <span class="mce-hake @(paa ? "paa" : "")">@if (paa) {<Icon Name="check" />}</span>
+                        <b>@punkt.Navn</b>
+                    </button>
+                }
+            </div>
+            <div class="mce-kort">
+                <h3>Signaturer</h3>
+                <label class="mce-felt"><span>Montør</span><input @bind="_ce.UtfortAvNavn" @bind:after="Lagre" placeholder="Navn" /></label>
+                @if (_ce.UtfortAvSignatur is { Length: > 0 } ms)
+                {
+                    <div class="mce-signert"><img src="@($"data:image/png;base64,{Convert.ToBase64String(ms)}")" alt="Montørens signatur" /><button type="button" @onclick="@(() => SignerPaNytt(true))">Signer på nytt</button></div>
+                }
+                else
+                {
+                    <div class="mv-signatur mce-sign"><canvas id="ce-sig-m" width="700" height="300"></canvas><div class="linje"></div><div class="hint">Montøren signerer med fingeren</div></div>
+                }
+                <label class="mce-felt" style="margin-top:0.9rem"><span>Kunden</span><input @bind="_ce.VerifisertAvNavn" @bind:after="Lagre" placeholder="Navn på den som tar imot døra" /></label>
+                @if (_ce.VerifisertAvSignatur is { Length: > 0 } ks)
+                {
+                    <div class="mce-signert"><img src="@($"data:image/png;base64,{Convert.ToBase64String(ks)}")" alt="Kundens signatur" /><button type="button" @onclick="@(() => SignerPaNytt(false))">Signer på nytt</button></div>
+                }
+                else
+                {
+                    <div class="mv-signatur mce-sign"><canvas id="ce-sig-k" width="700" height="300"></canvas><div class="linje"></div><div class="hint">Kunden signerer med fingeren</div></div>
+                }
+            </div>
+        }
+
+        @if (_feil is not null)
+        {
+            <p class="ma-feil" role="alert" style="margin:0.6rem 1rem 0">@_feil</p>
+        }
+
+        <div class="mv-bunn">
+            @if (_steg < 3)
+            {
+                <button type="button" class="ma-knapp" @onclick="@(() => GaTil(_steg + 1))">Neste: @StegNavn[_steg + 1]</button>
+            }
+            else
+            {
+                var antall = ferdig.Take(3).Count(f => f) + (Steg4Ferdig ? 1 : 0);
+                <button type="button" class="ma-knapp mce-fullfor @(antall == 4 ? "klar" : "")" @onclick="Fullfor" disabled="@_lagrer">
+                    <Icon Name="check" />@(_lagrer ? "Lagrer …" : "Fullfør CE og lag merke")
+                </button>
+            }
+        </div>
+
+        @if (_meldAvvik && _prosjektId > 0)
+        {
+            <MeldAvvikDialog ProsjektId="_prosjektId" DorId="_ce.DorId" OnLukk="@(() => _meldAvvik = false)" OnMeldt="@(_ => _meldAvvik = false)" />
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Sone(string Kode, string Navn, string Fare, int X, int Y, int B, int H);
+    private sealed record Maaling(string Navn, string Enhet, Func<CeMaleGrenseverdier, double> Grense, Func<CeGodkjenning, double?> Hent, Action<CeGodkjenning, double?> Sett);
+    private sealed record Sjekk(string Navn, Func<CeGodkjenning, bool?> Hent, Action<CeGodkjenning, bool?> Sett);
+
+    private static readonly string[] StegNavn = ["Døra", "Farepunkter", "Test", "Overlevering"];
+    private static readonly string[] Bruksomrader = ["Publikum", "Ansatte", "Bolig", "Barn eller eldre"];
+    private static readonly string[] Tiltak = ["Sikkerhetssensor", "Fingerbeskyttelse", "Lavenergi (redusert kraft)", "Avstand ≥ 200 mm", "Ikke aktuelt"];
+
+    // Farepunktene på tegningen (koordinater i viewBox 300 × 260).
+    private static readonly Sone[] Soner =
+    [
+        new("hengsel", "Hengselside", "Klemfare for fingre", 72, 40, 14, 170),
+        new("lukke", "Lukkekant", "Klem eller støt mot karm", 222, 40, 14, 170),
+        new("svingsone", "Svingsonen", "Støt mot person", 90, 215, 130, 30),
+        new("bak", "Bakkant mot vegg", "Fanging mellom dør og vegg", 30, 60, 30, 140),
+        new("over", "Overkant", "Kutt eller klem ved armen", 86, 22, 136, 14)
+    ];
+
+    // Grenseverdiene er de samme som i portalen (CeMaleGrenseverdier, NS-EN 16005).
+    private static readonly Maaling[] Maalinger =
+    [
+        new("Åpningstid", "s", g => g.MaksApningstidSek, c => c.ApningstidSek, (c, v) => c.ApningstidSek = v),
+        new("Lukketid, høy hastighet", "s", g => g.MaksLukketidHoySek, c => c.LukketidHoySek, (c, v) => c.LukketidHoySek = v),
+        new("Lukketid, lav hastighet", "s", g => g.MaksLukketidLavSek, c => c.LukketidLavSek, (c, v) => c.LukketidLavSek = v),
+        new("Åpningskraft", "N", g => g.MaksApningskraftN, c => c.ApningskraftN, (c, v) => c.ApningskraftN = v)
+    ];
+
+    private static readonly Sjekk[] Sjekker =
+    [
+        new("Sensor stopper døra ved hindring", c => c.ReaksjonstidOk, (c, v) => c.ReaksjonstidOk = v),
+        new("Sensorene er riktig plassert", c => c.SensorplasseringKorrekt, (c, v) => c.SensorplasseringKorrekt = v),
+        new("Døra kan åpnes manuelt ved strømbrudd", c => c.NodapningTestet, (c, v) => c.NodapningTestet = v),
+        new("Brannsignal / nødåpner åpner døra", c => c.SikkerhetssensorUtkoblingBrannalarm, (c, v) => c.SikkerhetssensorUtkoblingBrannalarm = v),
+        new("Varselmerking er montert", c => c.TydeligSkilting, (c, v) => c.TydeligSkilting = v)
+    ];
+
+    private static readonly Sjekk[] Overlevering =
+    [
+        new("Bruksanvisning overlevert", c => c.BruksanvisningOverlevert, (c, v) => c.BruksanvisningOverlevert = v),
+        new("Kunden har fått opplæring", c => c.KundeOpplaert, (c, v) => c.KundeOpplaert = v),
+        new("Loggbok lagt ved døra eller i tavla", c => c.LoggbokLagt, (c, v) => c.LoggbokLagt = v),
+        new("Serviceavtale tilbudt", c => c.ServiceavtaleTilbudt, (c, v) => c.ServiceavtaleTilbudt = v)
+    ];
+
+    private bool _lastet;
+    private bool _lagrer;
+    private bool _lasterBilde;
+    private bool _meldAvvik;
+    private bool _nyttMerke;
+    private bool _signaturKlar;
+    private string? _feil;
+    private int _steg;
+    private string _sone = "hengsel";
+    private int _brukerId;
+    private string? _brukerNavn;
+    private int _prosjektId;
+    private CeGodkjenning? _ce;
+    private CeMaleGrenseverdier _grense = new();
+    private List<CeGodkjenning> _historikk = [];
+    private List<int> _typeskilt = [];
+    private Dictionary<string, string> _farer = [];
+
+    private string DorTekst => _ce is null ? "" : string.Join(" ", new[] { _ce.Dornummer, _ce.DorTil }.Where(s => !string.IsNullOrWhiteSpace(s))) is { Length: > 0 } t ? t : "Dør";
+
+    private string? Automatikk => _ce is null ? null : string.Join(" ", new[] { _ce.Produsent, _ce.ItemNavn }.Where(s => !string.IsNullOrWhiteSpace(s))) is { Length: > 0 } t ? t : null;
+
+    private string Tilbake => _prosjektId > 0 ? $"/app/prosjekt/{_prosjektId}" : "/app/prosjekter";
+
+    private bool Steg1Ferdig => !string.IsNullOrWhiteSpace(_ce?.Bruksomrade);
+    private bool Steg2Ferdig => Soner.All(s => _farer.ContainsKey(s.Kode));
+    private bool Steg3Ferdig => _ce is not null && Maalinger.All(m => MaalOk(m) == true) && Sjekker.All(j => j.Hent(_ce) == true);
+    private bool Steg4Ferdig => _ce is not null && Overlevering.All(o => o.Hent(_ce) == true)
+        && !string.IsNullOrWhiteSpace(_ce.UtfortAvNavn) && !string.IsNullOrWhiteSpace(_ce.VerifisertAvNavn);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var bruker = (await AuthStateTask).User;
+            _ = int.TryParse(bruker.FindFirst("BrukerId")?.Value, out _brukerId);
+            _brukerNavn = bruker.Identity?.Name;
+        }
+
+        if (_brukerId > 0)
+        {
+            _brukerNavn = await Db.Brukere.AsNoTracking().Where(b => b.Id == _brukerId).Select(b => b.Navn).FirstOrDefaultAsync() ?? _brukerNavn;
+        }
+
+        Db.ChangeTracker.Clear();
+        _ce = await Db.CeGodkjenninger.FirstOrDefaultAsync(c => c.Id == Id);
+        _steg = 0;
+        _sone = Soner[0].Kode;
+        _feil = null;
+        _signaturKlar = false;
+        if (_ce is not null)
+        {
+            _grense = await Db.CeMaleGrenseverdier.AsNoTracking().FirstOrDefaultAsync() ?? new();
+            var dor = await Db.Dorer.AsNoTracking().Where(d => d.Id == _ce.DorId).Select(d => new { d.ProsjektId, d.Dornummer, d.DorTil }).FirstOrDefaultAsync();
+            _prosjektId = dor?.ProsjektId ?? 0;
+
+            // Eldre godkjenninger kan mangle dørnummeret; hent det fra døra.
+            if (dor is not null && string.IsNullOrWhiteSpace(_ce.Dornummer))
+            {
+                _ce.Dornummer = dor.Dornummer;
+                _ce.DorTil ??= dor.DorTil;
+            }
+            _farer = LesFarer(_ce.FarepunkterJson);
+            await LastHistorikk();
+            await LastTypeskilt();
+
+            if (_ce.MerkeToken is null)
+            {
+                _ce.MerkeToken = CeGodkjenningFabrikk.NyttMerkeToken();
+                await Db.SaveChangesAsync();
+            }
+
+            if (_ce.Status != CeGodkjenningStatus.Godkjent && string.IsNullOrWhiteSpace(_ce.UtfortAvNavn) && !string.IsNullOrWhiteSpace(_brukerNavn))
+            {
+                _ce.UtfortAvNavn = _brukerNavn;
+            }
+
+            // Fortsett der man slapp: første steg som ikke er ferdig.
+            _steg = !Steg1Ferdig ? 0 : !Steg2Ferdig ? 1 : !Steg3Ferdig ? 2 : 3;
+            _sone = Soner.FirstOrDefault(s => !_farer.ContainsKey(s.Kode))?.Kode ?? Soner[0].Kode;
+        }
+
+        _lastet = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_ce is not null && _ce.Status != CeGodkjenningStatus.Godkjent && _steg == 3 && !_signaturKlar)
+        {
+            _signaturKlar = true;
+            try
+            {
+                await JS.InvokeVoidAsync("signatur.init", "ce-sig-m");
+                await JS.InvokeVoidAsync("signatur.init", "ce-sig-k");
+            }
+            catch (JSException)
+            {
+                _feil = "Signaturfeltene kunne ikke startes. Last siden på nytt og prøv igjen.";
+                StateHasChanged();
+            }
+        }
+    }
+
+    private async Task LastHistorikk()
+    {
+        _historikk = await Db.CeGodkjenninger.AsNoTracking().Where(c => c.DorId == _ce!.DorId).OrderByDescending(c => c.Id).ToListAsync();
+    }
+
+    private async Task LastTypeskilt()
+    {
+        _typeskilt = await Db.CeGodkjenningMedia.AsNoTracking()
+            .Where(m => m.CeGodkjenningId == Id && m.Plassering == CeGodkjenningMediaPlassering.Typeskilt)
+            .OrderBy(m => m.Id).Select(m => m.Id).ToListAsync();
+    }
+
+    private static Dictionary<string, string> LesFarer(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private string HistorikkTekst(CeGodkjenning h)
+    {
+        if (h.Status != CeGodkjenningStatus.Godkjent)
+        {
+            return "Pågår – ikke fullført";
+        }
+
+        var forste = _historikk.Where(x => x.Status == CeGodkjenningStatus.Godkjent).Min(x => x.Id);
+        return h.Id == forste ? "Første CE-godkjenning" : "Årlig kontroll – godkjent";
+    }
+
+    private bool? MaalOk(Maaling m) => m.Hent(_ce!) is { } v ? v > 0 && v <= m.Grense(_grense) : null;
+
+    private void GaTil(int steg)
+    {
+        _feil = null;
+        if (steg != _steg)
+        {
+            _signaturKlar = false;
+        }
+
+        _steg = Math.Clamp(steg, 0, 3);
+        _ = JS.InvokeVoidAsync("scrollTo", 0, 0).AsTask();
+    }
+
+    private async Task SettBruk(string verdi)
+    {
+        _ce!.Bruksomrade = verdi;
+        await Lagre();
+    }
+
+    private async Task VelgTiltak(string sone, string tiltak)
+    {
+        _farer[sone] = tiltak;
+        _ce!.FarepunkterJson = JsonSerializer.Serialize(_farer);
+        if (sone == "hengsel")
+        {
+            _ce.HengselsideBeskyttet = tiltak != "Ikke aktuelt";
+        }
+
+        // Hopp videre til neste punkt som ikke er vurdert.
+        _sone = Soner.FirstOrDefault(s => !_farer.ContainsKey(s.Kode))?.Kode ?? sone;
+        await Lagre();
+    }
+
+    private async Task SettMaal(Maaling m, string? tekst)
+    {
+        tekst = tekst?.Trim().Replace(',', '.');
+        m.Sett(_ce!, double.TryParse(tekst, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : null);
+        await Lagre();
+    }
+
+    private async Task SettSjekk(Sjekk j, bool verdi)
+    {
+        j.Sett(_ce!, j.Hent(_ce!) == verdi ? null : verdi);
+        await Lagre();
+    }
+
+    private async Task VeksleOverlevering(Sjekk o)
+    {
+        o.Sett(_ce!, o.Hent(_ce!) != true);
+        await Lagre();
+    }
+
+    private async Task SignerPaNytt(bool montor)
+    {
+        if (montor)
+        {
+            _ce!.UtfortAvSignatur = null;
+        }
+        else
+        {
+            _ce!.VerifisertAvSignatur = null;
+        }
+
+        _signaturKlar = false;
+        await Lagre();
+    }
+
+    private async Task LastOppTypeskilt(InputFileChangeEventArgs e)
+    {
+        _lasterBilde = true;
+        _feil = null;
+        try
+        {
+            using var buffer = new MemoryStream();
+            await using (var strom = e.File.OpenReadStream(maxAllowedSize: 20_000_000))
+            {
+                await strom.CopyToAsync(buffer);
+            }
+
+            if (BildeMiniatyr.Lag(buffer.ToArray(), 1600) is not { } bilde)
+            {
+                _feil = "Kunne ikke lese bildet. Prøv igjen.";
+                return;
+            }
+
+            Db.CeGodkjenningMedia.Add(new CeGodkjenningMedia
+            {
+                CeGodkjenningId = Id,
+                Data = bilde.Data,
+                ContentType = bilde.ContentType,
+                Filnavn = string.IsNullOrWhiteSpace(e.File.Name) ? "typeskilt.jpg" : e.File.Name,
+                Plassering = CeGodkjenningMediaPlassering.Typeskilt
+            });
+            await Db.SaveChangesAsync();
+            await LastTypeskilt();
+        }
+        catch (Exception ex) when (ex is IOException or DbUpdateException or InvalidOperationException)
+        {
+            _feil = "Bildet ble ikke lagret. Sjekk dekningen og prøv igjen.";
+        }
+        finally
+        {
+            _lasterBilde = false;
+        }
+    }
+
+    private async Task<byte[]?> LesSignatur(string id)
+    {
+        try
+        {
+            if (await JS.InvokeAsync<bool>("signatur.isEmpty", id))
+            {
+                return null;
+            }
+
+            return await JS.InvokeAsync<string?>("signatur.getPngBase64", id) is { Length: > 0 } b ? Convert.FromBase64String(b) : null;
+        }
+        catch (JSException)
+        {
+            return null;
+        }
+    }
+
+    private async Task Fullfor()
+    {
+        if (_ce is null || _lagrer)
+        {
+            return;
+        }
+
+        var mangler = new[] { (Steg1Ferdig, "Døra"), (Steg2Ferdig, "Farepunkter"), (Steg3Ferdig, "Test") }.Where(s => !s.Item1).Select(s => s.Item2).ToList();
+        if (mangler.Count > 0)
+        {
+            _feil = $"Gjør ferdig: {string.Join(", ", mangler)}.";
+            return;
+        }
+
+        if (!Steg4Ferdig)
+        {
+            _feil = "Hak av hele overleveringen og skriv navn på montør og kunde.";
+            return;
+        }
+
+        var montor = _ce.UtfortAvSignatur ?? await LesSignatur("ce-sig-m");
+        var kunde = _ce.VerifisertAvSignatur ?? await LesSignatur("ce-sig-k");
+        if (montor is null || kunde is null)
+        {
+            _feil = montor is null ? "Montøren må signere med fingeren." : "Kunden må signere med fingeren.";
+            return;
+        }
+
+        var naa = DateTime.Now;
+        _ce.UtfortAvSignatur = montor;
+        _ce.VerifisertAvSignatur = kunde;
+        _ce.UtfortAvDato = naa;
+        _ce.VerifisertAvDato = naa;
+        _ce.GyldigFra = naa;
+        _ce.GyldigTil = naa.AddMonths(_ce.GyldighetMåneder > 0 ? _ce.GyldighetMåneder : 12);
+        _ce.Status = CeGodkjenningStatus.Godkjent;
+        if (await Lagre())
+        {
+            _nyttMerke = true;
+            await LastHistorikk();
+            _ = JS.InvokeVoidAsync("scrollTo", 0, 0).AsTask();
+        }
+    }
+
+    private async Task StartArligKontroll()
+    {
+        if (_ce is null || _lagrer)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        _feil = null;
+        try
+        {
+            var ny = await CeGodkjenningFabrikk.OpprettForDorAsync(Db, _ce.DorId, _brukerId > 0 ? _brukerId : null);
+            if (ny is null)
+            {
+                _feil = "Fant ikke døra.";
+                return;
+            }
+
+            _nyttMerke = false;
+            Nav.NavigateTo($"/app/ce/{ny.Id}");
+        }
+        catch (DbUpdateException)
+        {
+            _feil = "Kunne ikke starte kontrollen. Sjekk dekningen og prøv igjen.";
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    private async Task<bool> Lagre()
+    {
+        if (_ce is null)
+        {
+            return false;
+        }
+
+        _lagrer = true;
+        try
+        {
+            _ce.OppdatertDato = DateTime.Now;
+            await Db.SaveChangesAsync();
+            return true;
+        }
+        catch (DbUpdateException)
+        {
+            _feil = "Kunne ikke lagre. Sjekk dekningen og prøv igjen.";
+            return false;
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+}

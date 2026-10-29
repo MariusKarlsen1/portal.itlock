@@ -4,7 +4,8 @@ public enum CeGodkjenningMediaPlassering
 {
     Hengselside,
     Karmside,
-    Video
+    Video,
+    Typeskilt
 }
 
 public static class CeGodkjenningMediaPlasseringExtensions
@@ -14,6 +15,7 @@ public static class CeGodkjenningMediaPlasseringExtensions
         CeGodkjenningMediaPlassering.Hengselside => "Hengselside",
         CeGodkjenningMediaPlassering.Karmside => "Karmside",
         CeGodkjenningMediaPlassering.Video => "Video",
+        CeGodkjenningMediaPlassering.Typeskilt => "Typeskilt",
         _ => plassering.ToString()
     };
 }
