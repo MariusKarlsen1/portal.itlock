@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using AngleSharp.Html.Parser;
 using Microsoft.EntityFrameworkCore;
 using PortalItlock.Web.Data;
 using PortalItlock.Web.Models;
@@ -88,11 +89,15 @@ public static class ServiceavtalePris
 }
 
 /// <summary>
-/// Tilbud på serviceavtale som PDF: forside, avtaletekst, priser og signaturer.
+/// Serviceavtale som PDF, malen «Sandbånd» (oktober 2026): et rolig bånd øverst i
+/// organisasjonens lyse farge med kunde og nøkkeltall, og avtaleteksten under med
+/// hver seksjon som en rad (overskrift til venstre, tekst til høyre). Ingen forside,
+/// priser eller signaturer - avtalen skal se ut som en avtale, ikke en rapport.
+/// Logo, navn, farge og kontaktinfo hentes fra organisasjonen som er logget inn.
 /// </summary>
 public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
-    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    public sealed record Seksjon(string? Tittel, string Html);
 
     public async Task<byte[]?> GenerateAsync(int prosjektId)
     {
@@ -105,90 +110,130 @@ public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfL
             return null;
         }
 
-        var dorer = await db.Dorer.AsNoTracking()
-            .Where(d => d.ProsjektId == prosjektId)
-            .Include(d => d.Komponenter).ThenInclude(dk => dk.Component)
-            .Include(d => d.Funksjoner)
-            .ToListAsync();
-        var minutter = await db.ServiceMinuttLinjer.AsNoTracking().Where(l => l.ProsjektId == prosjektId).ToListAsync();
-        var kategorier = await db.ServiceKategoriPriser.AsNoTracking().Where(k => k.ProsjektId == prosjektId).ToListAsync();
-
+        var antallDorer = await db.Dorer.CountAsync(d => d.ProsjektId == prosjektId);
         var org = RapportProfil.Fra(tenantContext.Current);
         var kunde = p.Kunde?.Navn ?? "kunden";
         var runder = ServiceavtalePris.RunderPerAr(p);
-        var arspris = ServiceavtalePris.Arspris(p, dorer, minutter, kategorier);
         var tekst = string.IsNullOrWhiteSpace(p.ServiceavtaleTekst) ? ServiceavtalePris.StandardTekst(org.Navn, kunde, runder) : p.ServiceavtaleTekst;
         var kontakt = p.Prosjektleder?.Navn ?? (org.ErStandard ? FirmaInfo.Kontaktperson : null);
-        var dato = DateTime.Today;
+        var seksjoner = Seksjoner(tekst);
 
-        var prislinjer = new List<(string, string)>
+        var nokkeltall = new (string Label, string? Verdi)[]
         {
-            ($"Serviceavtale – {(runder == 1 ? "1 runde" : $"{runder} runder")} per år", $"kr {arspris.ToString("#,##0", Kultur)} pr. år")
+            ("Dato", NorskTid.Idag.ToString("dd.MM.yyyy")),
+            ("Besøk", runder == 1 ? "1 per år" : $"{runder} per år"),
+            ("Dører", antallDorer > 0 ? antallDorer.ToString(CultureInfo.InvariantCulture) : null),
+            ("Kontaktperson", kontakt)
         };
-        prislinjer.AddRange(ServiceavtalePris.Prislinjer(p).Where(l => !string.IsNullOrWhiteSpace(l.Tjeneste)).Select(l => (l.Tjeneste, l.Pris)));
 
         var dokument = Document.Create(container =>
         {
-            container.Page(page => RapportMal.Forside(page, org, pdfLogo, "Tilbud", p.Navn, "Service- og vedlikeholdsavtale", "Tilbud", null,
-                ("Kunde", p.Kunde?.Navn), ("Kontaktperson", kontakt), ("Dato", dato.ToString("dd.MM.yyyy"))));
-
             container.Page(page =>
             {
-                RapportMal.Side(page);
-                page.Content().Column(col =>
+                page.Size(PageSizes.A4);
+                page.Margin(0);
+                page.DefaultTextStyle(x => x.FontSize(9.5f).FontColor(PdfStil.Ink).LineHeight(1.4f));
+
+                // Båndet vises bare på første side; på neste sider holdes vanlig toppmarg.
+                page.Header().Column(h =>
                 {
-                    col.Spacing(12);
-                    col.Item().Text("Service- og vedlikeholdsavtale").FontSize(20).Bold();
-                    col.Item().Text($"Gjelder dører og dørmiljø omfattet av avtalen · {kunde}").FontSize(9.5f).Italic().FontColor(RapportMal.Dempet);
-                    col.Item().Column(c => ForsideRenderer.Render(c, tekst));
-
-                    col.Item().PaddingTop(6).Column(c =>
-                    {
-                        RapportMal.Overskrift(c, "Priser", org);
-                        c.Item().PaddingTop(4).Table(table =>
+                    h.Item().ShowOnce().Background(org.AksentLys).BorderBottom(3).BorderColor(org.Aksent)
+                        .PaddingHorizontal(2, Unit.Centimetre).PaddingTop(1.8f, Unit.Centimetre).PaddingBottom(1.3f, Unit.Centimetre)
+                        .Column(b =>
                         {
-                            table.ColumnsDefinition(cd => { cd.RelativeColumn(2); cd.RelativeColumn(1); });
-                            table.Header(h =>
+                            b.Item().Element(e => org.TegnLogo(e, pdfLogo, 26));
+                            b.Item().PaddingTop(28).Element(e => Etikett(e, "Serviceavtale", org.Aksent));
+                            b.Item().PaddingTop(3).Text(kunde).FontSize(26).SemiBold().LineHeight(1.1f);
+                            if (!string.Equals(p.Navn, kunde, StringComparison.OrdinalIgnoreCase))
                             {
-                                h.Cell().BorderBottom(1.2f).BorderColor(RapportMal.Linje).PaddingVertical(4).Text("TJENESTE").FontSize(7).SemiBold().FontColor(RapportMal.Svak);
-                                h.Cell().BorderBottom(1.2f).BorderColor(RapportMal.Linje).PaddingVertical(4).AlignRight().Text("PRIS EKS. MVA").FontSize(7).SemiBold().FontColor(RapportMal.Svak);
-                            });
-                            var forste = true;
-                            foreach (var (tjeneste, pris) in prislinjer)
-                            {
-                                var v = table.Cell().BorderBottom(0.5f).BorderColor(RapportMal.Linje).PaddingVertical(5);
-                                var h = table.Cell().BorderBottom(0.5f).BorderColor(RapportMal.Linje).PaddingVertical(5).AlignRight();
-                                if (forste)
-                                {
-                                    v.Text(tjeneste).Bold();
-                                    h.Text(pris).Bold();
-                                    forste = false;
-                                }
-                                else
-                                {
-                                    v.Text(tjeneste);
-                                    h.Text(string.IsNullOrWhiteSpace(pris) ? "–" : pris);
-                                }
+                                b.Item().PaddingTop(4).Text(p.Navn).FontSize(11).FontColor(RapportMal.Dempet);
                             }
+                            b.Item().PaddingTop(24).Row(row =>
+                            {
+                                foreach (var (label, verdi) in nokkeltall.Where(n => !string.IsNullOrWhiteSpace(n.Verdi)))
+                                {
+                                    row.AutoItem().PaddingRight(30).Column(c =>
+                                    {
+                                        c.Item().Element(e => Etikett(e, label, RapportMal.Svak));
+                                        c.Item().PaddingTop(1).Text(verdi).FontSize(9.5f).SemiBold();
+                                    });
+                                }
+                            });
                         });
-                        c.Item().PaddingTop(6).Text("Deler og materiell faktureres etter medgått forbruk dersom ikke annet er avtalt.").FontSize(8.5f).FontColor(RapportMal.Dempet);
-                    });
-
-                    col.Item().PaddingTop(16).ShowEntire().Column(c =>
-                    {
-                        RapportMal.Overskrift(c, "Signaturer", org);
-                        foreach (var (part, datoTekst) in new[] { (kunde, ""), (org.Navn, dato.ToString("dd.MM.yyyy")) })
-                        {
-                            c.Item().PaddingTop(14).Text($"For {part}:").FontSize(9).FontColor(RapportMal.Dempet);
-                            c.Item().PaddingTop(22).LineHorizontal(0.75f).LineColor(RapportMal.Svak);
-                            c.Item().PaddingTop(4).Text($"Dato: {(string.IsNullOrEmpty(datoTekst) ? "____________________" : datoTekst)}").FontSize(9).FontColor(RapportMal.Dempet);
-                        }
-                    });
+                    h.Item().SkipOnce().Height(1.6f, Unit.Centimetre);
                 });
-                page.Footer().Element(e => RapportMal.Bunn(e, org));
+
+                page.Content().PaddingHorizontal(2, Unit.Centimetre).PaddingTop(1.1f, Unit.Centimetre).Column(col =>
+                {
+                    var forste = true;
+                    foreach (var s in seksjoner)
+                    {
+                        var rad = col.Item();
+                        if (!forste)
+                        {
+                            rad = rad.PaddingTop(10).BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(10);
+                        }
+                        forste = false;
+                        rad.Row(row =>
+                        {
+                            row.ConstantItem(100).PaddingTop(2).PaddingRight(12)
+                                .Element(e => Etikett(e, s.Tittel ?? "Avtale", org.Aksent));
+                            row.RelativeItem().Column(c => ForsideRenderer.Render(c, s.Html));
+                        });
+                    }
+                });
+
+                page.Footer().PaddingHorizontal(2, Unit.Centimetre).PaddingBottom(1.2f, Unit.Centimetre).Element(e => RapportMal.Bunn(e, org));
             });
         });
 
         return dokument.GeneratePdf();
+    }
+
+    private static void Etikett(IContainer e, string tekst, Color farge) =>
+        e.Text(tekst.ToUpperInvariant()).FontSize(7).Bold().FontColor(farge).LetterSpacing(0.08f);
+
+    /// Deler avtaleteksten i seksjoner ved hver overskrift (h1-h3), slik at
+    /// overskriften kan stå i venstre kolonne. Tekst før første overskrift
+    /// blir en seksjon uten tittel. Tomme seksjoner hoppes over.
+    public static List<Seksjon> Seksjoner(string? html)
+    {
+        var resultat = new List<Seksjon>();
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return resultat;
+        }
+
+        using var dokument = new HtmlParser().ParseDocument($"<!doctype html><body>{html}</body>");
+        string? tittel = null;
+        var innhold = new System.Text.StringBuilder();
+
+        void Avslutt()
+        {
+            if (innhold.Length > 0 && !string.IsNullOrWhiteSpace(innhold.ToString()))
+            {
+                resultat.Add(new Seksjon(tittel, innhold.ToString()));
+            }
+            else if (tittel is not null)
+            {
+                // Overskrift uten tekst under: vis den likevel, så ingenting forsvinner.
+                resultat.Add(new Seksjon(tittel, ""));
+            }
+            innhold.Clear();
+        }
+
+        foreach (var node in dokument.Body!.ChildNodes)
+        {
+            if (node is AngleSharp.Dom.IElement el && el.TagName.ToLowerInvariant() is "h1" or "h2" or "h3")
+            {
+                Avslutt();
+                tittel = string.IsNullOrWhiteSpace(el.TextContent) ? null : el.TextContent.Trim();
+                continue;
+            }
+
+            innhold.Append(node is AngleSharp.Dom.IElement e ? e.OuterHtml : WebUtility.HtmlEncode(node.TextContent));
+        }
+        Avslutt();
+        return resultat;
     }
 }

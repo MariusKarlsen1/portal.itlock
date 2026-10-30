@@ -1587,7 +1587,7 @@ app.MapGet("/komponent/{id:int}/bilde", async (int id, int? w, ApplicationDbCont
     return Results.File(komponent.BildeData, FilSikkerhet.TryggContentType(komponent.BildeContentType ?? "image/jpeg"), komponent.BildeFilnavn);
 }).RequireAuthorization();
 
-// Tilbud på serviceavtale (Prising-fanen): forside, avtaletekst, priser og signaturer.
+// Serviceavtale som PDF (Prising-fanen): malen «Sandbånd» med avtaleteksten, uten priser og signaturer.
 app.MapGet("/serviceavtale/{id:int}/tilbud/pdf", async (int id, HttpContext context, ApplicationDbContext db, ServiceavtaleTilbudPdfService service) =>
 {
     var pdf = await service.GenerateAsync(id);
