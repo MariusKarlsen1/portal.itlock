@@ -1989,7 +1989,13 @@ app.MapGet("/komponenter/etiketter/pdf", async (HttpContext context, EtikettPdfS
         PrisEksMva = Flagg("eks", false),
         Strekkode = Flagg("strek", true),
         AntallPerVare = int.TryParse(q["antall"], out var antall) ? antall : 1,
-        Start = int.TryParse(q["start"], out var start) ? start : 1
+        Start = int.TryParse(q["start"], out var start) ? start : 1,
+        // per=12:3,15:7 - eget antall per vare (fra lageret: like mange som på lager).
+        AntallPer = q.ContainsKey("per")
+            ? q["per"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries).Select(p => p.Split(':'))
+                .Where(p => p.Length == 2 && int.TryParse(p[0], out _) && int.TryParse(p[1], out _))
+                .GroupBy(p => int.Parse(p[0])).ToDictionary(g => g.Key, g => int.Parse(g.First()[1]))
+            : null
     };
 
     var pdf = await service.GenerateAsync(ider, valg);
@@ -2002,7 +2008,7 @@ app.MapGet("/komponenter/etiketter/pdf", async (HttpContext context, EtikettPdfS
     disposisjon.SetHttpFileName($"Etiketter-{DateTime.Now:yyyy-MM-dd}.pdf");
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(pdf, "application/pdf");
-}).RequireAuthorization(new AuthorizeAttribute { Roles = "Admin" });
+}).RequireAuthorization(new AuthorizeAttribute { Roles = "Admin,Prosjektleder" });
 
 app.MapGet("/plantegning/{id:int}/pdf", async (int id, HttpContext context, PlantegningDorPdfService service) =>
 {

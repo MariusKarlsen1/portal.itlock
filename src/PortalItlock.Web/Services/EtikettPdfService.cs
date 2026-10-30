@@ -43,6 +43,8 @@ public class EtikettPdfService(ApplicationDbContext db)
         public bool PrisEksMva { get; set; }
         public bool Strekkode { get; set; } = true;
         public int AntallPerVare { get; set; } = 1;
+        // Eget antall per vare (f.eks. like mange som på lager). Overstyrer AntallPerVare.
+        public Dictionary<int, int>? AntallPer { get; set; }
         public int Start { get; set; } = 1;
     }
 
@@ -63,7 +65,7 @@ public class EtikettPdfService(ApplicationDbContext db)
         var etiketter = ider
             .Select(id => komponenter.FirstOrDefault(c => c.Id == id))
             .Where(c => c is not null)
-            .SelectMany(c => Enumerable.Repeat(c!, antall))
+            .SelectMany(c => Enumerable.Repeat(c!, valg.AntallPer is { } per && per.TryGetValue(c!.Id, out var n) ? Math.Clamp(n, 0, 500) : antall))
             .ToList();
 
         var format = Formater.FirstOrDefault(f => f.Kode == valg.Format) ?? Formater[2];
