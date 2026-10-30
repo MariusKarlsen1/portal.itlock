@@ -62,10 +62,19 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo,
                 var undertittel = string.Join(" · ", new[] { prosjekt.Navn, valgteByggetrinn is not null ? $"Byggetrinn {string.Join(", ", valgteByggetrinn)}" : null }.Where(s => !string.IsNullOrWhiteSpace(s)));
                 page.Header().Column(col =>
                 {
-                    col.Item().ShowOnce().Element(e => RapportMal.Band(e, org, pdfLogo, "Beslagsliste", prosjekt.Navn,
-                        valgteByggetrinn is not null ? $"Byggetrinn {string.Join(", ", valgteByggetrinn)}" : null,
-                        [("Dører", dorer.Count.ToString())], NorskTid.Idag.ToString("dd.MM.yyyy"), margTopp: 1.8f * 28.3465f));
-                    col.Item().SkipOnce().Element(e => RapportMal.Lopetopp(e, org, "Beslagsliste", undertittel));
+                    col.Item().Row(row =>
+                    {
+                        row.RelativeItem().AlignBottom().Column(c =>
+                        {
+                            c.Item().Text("Beslagsliste").FontSize(18).Bold().FontColor(PdfStil.Ink);
+                            if (!string.IsNullOrWhiteSpace(undertittel))
+                            {
+                                c.Item().PaddingTop(2).Text(undertittel).FontSize(9).FontColor(Colors.Grey.Darken1);
+                            }
+                        });
+                        row.ConstantItem(150).AlignBottom().AlignRight().Element(e => org.TegnLogo(e, pdfLogo, 24));
+                    });
+                    col.Item().PaddingTop(6).BorderBottom(2).BorderColor(org.Aksent);
                 });
 
                 page.Content().PaddingTop(14).Column(col =>
@@ -86,7 +95,17 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo,
                     }
                 });
 
-                RapportMal.Bunn(page.Footer(), org);
+                page.Footer().PaddingTop(8).BorderTop(0.75f).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row =>
+                {
+                    row.RelativeItem().Text(org.Bunntekst).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
+                    row.AutoItem().AlignRight().Text(t =>
+                    {
+                        t.DefaultTextStyle(s => s.FontSize(7.5f).FontColor(Colors.Grey.Darken1));
+                        t.CurrentPageNumber();
+                        t.Span(" / ");
+                        t.TotalPages();
+                    });
+                });
             });
         });
 

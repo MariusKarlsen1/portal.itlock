@@ -72,13 +72,15 @@ public class ArbeidsordrePdfService(ApplicationDbContext db, PdfLogo pdfLogo, IT
                 RapportMal.Side(page);
 
                 page.Header().Column(col => RapportMal.Topp(col, org, pdfLogo, "Arbeidsrapport", ordre.Tittel,
-                    $"Nr. {ordre.Id}", utfortDato ?? DateTime.Today, erUtfort, ordre.Status.Visningsnavn(),
-                    ("Kunde", kunde?.Navn), ("Kontaktperson", kontakt), ("Adresse", adresse),
-                    ("Prosjekt", ordre.Prosjekt?.Navn), ("Montør", utfortAv)));
+                    $"Nr. {ordre.Id}", utfortDato ?? DateTime.Today, erUtfort, ordre.Status.Visningsnavn()));
 
-                page.Content().PaddingTop(16).Column(col =>
+                page.Content().PaddingTop(14).Column(col =>
                 {
                     col.Spacing(14);
+
+                    RapportMal.InfoBoks(col, org,
+                        ("Kunde", kunde?.Navn), ("Kontaktperson", kontakt), ("Adresse", adresse),
+                        ("Prosjekt", ordre.Prosjekt?.Navn), ("Utført", utfortDato?.ToString("dd.MM.yyyy")), ("Montør", utfortAv));
 
                     RapportMal.Seksjon(col, "Oppdraget", org, ordre.Beskrivelse);
                     RapportMal.Seksjon(col, "Utført arbeid", org, ordre.UtfortArbeid);

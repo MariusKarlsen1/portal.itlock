@@ -27,18 +27,18 @@ public static class DorPdfSeksjoner
         var komponenter = dor.Komponenter.Where(k => k.Component is not null).OrderBy(k => k.Component!.Type?.Navn).ThenBy(k => k.Component!.Navn).ToList();
 
         // Fargestripe: dørnummer og dør til til venstre, status til høyre.
-        col.Item().Background(lys).BorderBottom(1.5f).BorderColor(farge).CornerRadiusTopLeft(4).CornerRadiusTopRight(4).PaddingVertical(7).PaddingHorizontal(10).Row(row =>
+        col.Item().Background(farge).CornerRadiusTopLeft(4).CornerRadiusTopRight(4).PaddingVertical(7).PaddingHorizontal(10).Row(row =>
         {
             row.RelativeItem().AlignMiddle().Text(t =>
             {
-                t.Span(dor.Dornummer).FontSize(14).Bold().FontColor(farge);
+                t.Span(dor.Dornummer).FontSize(14).Bold().FontColor(Colors.White);
                 if (!string.IsNullOrWhiteSpace(dor.DorTil))
                 {
-                    t.Span("   " + dor.DorTil).FontSize(9).FontColor(RapportMal.Dempet);
+                    t.Span("   " + dor.DorTil).FontSize(9).FontColor(Color.FromHex("#E8FFFFFF"));
                 }
             });
-            row.AutoItem().AlignMiddle().Background(Colors.White).CornerRadius(8).PaddingVertical(2).PaddingHorizontal(8)
-                .Text(dor.Status.Visningsnavn()).FontSize(7.5f).Bold().FontColor(farge);
+            row.AutoItem().AlignMiddle().Background(Color.FromHex("#2EFFFFFF")).CornerRadius(8).PaddingVertical(2).PaddingHorizontal(8)
+                .Text(dor.Status.Visningsnavn()).FontSize(7.5f).Bold().FontColor(Colors.White);
         });
 
         col.Item().Border(0.75f).BorderColor(PdfStil.SandBorder).CornerRadiusBottomLeft(4).CornerRadiusBottomRight(4).Padding(11).Column(inner =>
@@ -157,20 +157,20 @@ public static class DorPdfSeksjoner
 
                 table.Header(header =>
                 {
-                    IContainer Hode() => header.Cell().BorderBottom(1.2f).BorderColor(PdfStil.SandBorder).PaddingVertical(5).PaddingHorizontal(6);
-                    Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(RapportMal.Svak);
-                    Hode().Text("Beskrivelse").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                    IContainer Hode() => header.Cell().Background(farge).PaddingVertical(5).PaddingHorizontal(6);
+                    Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().Text("Beskrivelse").FontSize(8).Bold().FontColor(Colors.White);
                     if (visOverflate)
                     {
-                        Hode().Text("Overflate").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                        Hode().Text("Overflate").FontSize(8).Bold().FontColor(Colors.White);
                     }
-                    Hode().Text("Enhet").FontSize(8).Bold().FontColor(RapportMal.Svak);
-                    Hode().AlignRight().Text("Antall").FontSize(8).Bold().FontColor(RapportMal.Svak);
-                    Hode().Text("Levering").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                    Hode().Text("Enhet").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().AlignRight().Text("Antall").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().Text("Levering").FontSize(8).Bold().FontColor(Colors.White);
                     if (visPris)
                     {
-                        Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(RapportMal.Svak);
-                        Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                        Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(Colors.White);
+                        Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(Colors.White);
                     }
                 });
 

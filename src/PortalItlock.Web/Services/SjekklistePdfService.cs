@@ -7,7 +7,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class SjekklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
+public class SjekklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 {
 
     public async Task<byte[]?> GenerateAsync(int arbeidsordreId)
@@ -36,7 +36,7 @@ public class SjekklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITen
                 page.Margin(1.8f, Unit.Centimetre);
                 page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col => PdfStil.Header(col, RapportProfil.Fra(tenantContext.Current), pdfLogo, 1.8f, "Sjekkliste", ordre.Tittel));
+                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Sjekkliste", ordre.Tittel));
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
@@ -71,7 +71,7 @@ public class SjekklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITen
                     }
                 });
 
-                RapportMal.Bunn(page.Footer(), RapportProfil.Fra(tenantContext.Current));
+                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
             });
         });
 
