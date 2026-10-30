@@ -12,122 +12,322 @@
 @inject LagerService LagerSvc
 @inject TilleggsmodulService Tilleggsmoduler
 @inject IJSRuntime JS
+@inject KassaParkering Parkering
+@inject ITenantContext TenantCtx
 
 <PageTitle>Kassa</PageTitle>
 <KreverModulVakt Modul="@TilleggsModuler.Kassa" />
 
-@* Salg i kassa: trykk på varene, velg kort eller kontant. Beløpet slås inn
-   manuelt på bankterminalen; kassa registrerer salget og gir kontantfaktura.
-   Varer koblet til komponentregisteret viser varens bilde, ellers symbolet. *@
-<div class="ks-salg">
-    <div>
-        <div class="ks-sokrad">
-            <label class="ks-sokfelt"><KassaIkon Navn="sok" /><input placeholder="Søk vare, varenummer eller strekkode" @bind="_sok" @bind:event="oninput" @onkeydown="SokEnter" aria-label="Søk vare" /></label>
-            <button type="button" class="ks-knapp sek" @onclick="ApneSkanner"><KassaIkon Navn="skann" />Skann</button>
-        </div>
-        <div class="ks-kat">
+@* Salgsskjermen: kategorier til venstre, varene i midten (med bilde, merke-
+   filter og rute-/listevisning) og handlekurven til høyre med én stor
+   betalingsknapp. Alle lagerførte varer ligger her automatisk (se
+   KassaService.SynkLagervarerAsync), og salg trekkes fra hovedlageret.
+   Beløpet slås inn manuelt på bankterminalen; kassa registrerer salget og
+   gir kontantfaktura. *@
+<div class="ks2">
+    <header class="ks2-topp">
+        <label class="ks2-sok">
+            <KassaIkon Navn="sok" />
+            <input placeholder="Søk etter produkt, varenummer eller strekkode …" @bind="_sok" @bind:event="oninput" @onkeydown="SokEnter" aria-label="Søk vare" />
+            <button type="button" class="ks2-skannknapp" title="Skann strekkode" aria-label="Skann strekkode" @onclick="ApneSkanner"><KassaIkon Navn="skann" /></button>
+        </label>
+        <button type="button" class="ks2-toppknapp" @onclick="@(() => _fane = "kunde")"><KassaIkon Navn="person" />@(_kundeNavn is null ? "Ny kunde" : _kundeNavn)</button>
+        <button type="button" class="ks2-toppknapp" @onclick="ParkerEllerVis">
+            <KassaIkon Navn="klokke" />@(_kurv.Count > 0 ? "Parkér salg" : "Parkerte salg")
+            @if (Parkerte.Count > 0)
+            {
+                <span class="ks2-teller">@Parkerte.Count</span>
+            }
+        </button>
+        <span class="ks2-avatar" title="@_brukerNavn">@Initialer</span>
+    </header>
+
+    <div class="ks2-flate">
+        <nav class="ks2-kategorier" aria-label="Kategorier">
             @foreach (var (k, ikon) in Kategorier)
             {
                 var kat = k;
-                <button type="button" class="ks-chip @(_kat == kat && string.IsNullOrWhiteSpace(_sok) ? "paa" : "")" @onclick="@(() => { _kat = kat; _sok = ""; })"><KassaIkon Navn="@ikon" />@kat</button>
+                <button type="button" class="@(_kat == kat && string.IsNullOrWhiteSpace(_sok) ? "paa" : "")" @onclick="@(() => { _kat = kat; _sok = ""; _merke = null; })"><KassaIkon Navn="@ikon" /><span>@kat</span></button>
             }
-        </div>
-        @if (!_lastet)
-        {
-            <p class="ks-tom">Laster …</p>
-        }
-        else if (_varer.Count == 0)
-        {
-            <div class="ks-info"><KassaIkon Navn="info" /><span>Ingen kassevarer ennå. @(_leder ? "Legg dem inn under Kassevarer, eller bruk «Fri vare» under." : "Be prosjektleder legge inn kassevarer. Du kan bruke «Fri vare» så lenge.")</span></div>
-        }
-        <div class="ks-varer">
-            @foreach (var v in SynligeVarer)
-            {
-                var vare = v;
-                var (bg, fg) = KassaIkon.Farge(v.Kategori);
-                var iKurv = _kurv.Where(l => l.VareId == v.Id).Sum(l => l.Antall);
-                <button type="button" class="ks-vare" @onclick="@(() => LeggTil(vare))">
-                    <span class="ks-bilde" style="background:@bg;color:@fg">
-                        @if (v.ComponentId is { } cid && _medBilde.Contains(cid))
-                        {
-                            <img src="@($"/komponent/{cid}/bilde?w=240")" alt="" loading="lazy" />
-                        }
-                        else
-                        {
-                            <KassaIkon Navn="@v.Ikon" />
-                        }
-                        @if (v.ComponentId is { } lc && _lager.TryGetValue(lc, out var paLager))
-                        {
-                            <span class="ks-lager @(paLager < 5 ? "lav" : "")">@paLager på lager</span>
-                        }
-                        @if (iKurv > 0)
-                        {
-                            <span class="ks-ant">@iKurv</span>
-                        }
-                    </span>
-                    <span class="ks-tekst"><b>@v.Navn</b><span class="ks-pris tall">@Kr(v.PrisInklMva)</span></span>
-                </button>
-            }
-            <button type="button" class="ks-vare fri" @onclick="ApneFri"><span class="ks-bilde"><KassaIkon Navn="blyant" /></span><span class="ks-tekst"><b>Fri vare eller beløp</b><span class="ks-pris" style="color:var(--dempet);font-weight:600">Skriv inn selv</span></span></button>
-        </div>
-    </div>
+        </nav>
 
-    <div class="ks-kort ks-kurv">
-        <div class="ks-kurv-topp">
-            <b>Handlekurv</b><span class="ks-merke ks-m-gra">@_kurv.Sum(l => l.Antall) varer</span>
-            @if (_kurv.Count > 0)
+        <section class="ks2-produkter">
+            <div class="ks2-produkter-topp">
+                <h2>@(string.IsNullOrWhiteSpace(_sok) ? _kat : $"Søk: «{_sok.Trim()}»")</h2>
+                <span class="ks2-vis">Vis:
+                    <button type="button" class="@(_liste ? "" : "paa")" title="Ruter" aria-label="Vis som ruter" @onclick="@(() => _liste = false)"><KassaIkon Navn="alle" /></button>
+                    <button type="button" class="@(_liste ? "paa" : "")" title="Liste" aria-label="Vis som liste" @onclick="@(() => _liste = true)"><KassaIkon Navn="rapport" /></button>
+                </span>
+            </div>
+            @if (Merker.Count > 1)
             {
-                <button type="button" class="ks-lenke-knapp" style="margin-left:auto" @onclick="TomKurv"><KassaIkon Navn="x" />Tøm</button>
-            }
-        </div>
-        <div class="ks-kurv-linjer">
-            @if (_kurv.Count == 0)
-            {
-                <div class="ks-kurv-tom"><KassaIkon Navn="kurv" /><span>Trykk på en vare for å starte et salg</span></div>
-            }
-            @foreach (var l in _kurv)
-            {
-                var linje = l;
-                <div class="ks-linje">
-                    <span><b>@l.Navn</b><small class="tall">@l.Antall × @Kr(l.Pris)</small></span>
-                    <span class="ks-stepper">
-                        <button type="button" aria-label="Færre" @onclick="@(() => Endre(linje, -1))"><KassaIkon Navn="minus" /></button>
-                        <span>@l.Antall</span>
-                        <button type="button" aria-label="Flere" @onclick="@(() => Endre(linje, 1))"><KassaIkon Navn="pluss" /></button>
-                    </span>
-                    <b class="tall" style="text-align:right">@KassaDokument.Kr(l.Pris * l.Antall)</b>
+                <div class="ks2-merker">
+                    <button type="button" class="@(_merke is null ? "paa" : "")" @onclick="@(() => _merke = null)">Alle</button>
+                    @foreach (var m in Merker)
+                    {
+                        var merke = m;
+                        <button type="button" class="@(_merke == merke ? "paa" : "")" @onclick="@(() => _merke = merke)">@merke</button>
+                    }
                 </div>
             }
-        </div>
-        <div class="ks-valg-rad">
-            <button type="button" class="@(_kundeNavn is not null ? "satt" : "")" @onclick="@(() => _modal = "kunde")"><KassaIkon Navn="person" />@(_kundeNavn ?? "Kunde")</button>
-            <button type="button" class="@(_rabatt > 0 ? "satt" : "")" disabled="@(_kurv.Count == 0)" @onclick="@(() => _modal = "rabatt")"><KassaIkon Navn="rabatt" />@(_rabatt > 0 ? $"{_rabatt:0.#} % rabatt" : "Rabatt")</button>
-        </div>
-        <div class="ks-sum">
-            <div><span>Sum varer</span><span class="tall">@KassaDokument.Kr(Brutto)</span></div>
-            @if (_rabatt > 0)
+
+            @if (!_lastet)
             {
-                <div><span>Rabatt @_rabatt.ToString("0.#") %</span><span class="tall ks-ok">−@KassaDokument.Kr(Brutto - Total)</span></div>
+                <p class="ks-tom">Laster …</p>
             }
-            <div><span>Herav mva</span><span class="tall">@KassaDokument.Kr(Mva)</span></div>
-            <div class="ks-total"><span>Å betale</span><span class="tall">@Kr(Total)</span></div>
-        </div>
-        <div class="ks-betal">
-            <button type="button" class="ks-knapp bla" disabled="@(Total <= 0)" @onclick="@(() => { _feil = null; _modal = "kort"; })"><KassaIkon Navn="kort" />Kort<small>Bankterminal</small></button>
-            <button type="button" class="ks-knapp gronn" disabled="@(Total <= 0)" @onclick="@(() => { _feil = null; _inn = ""; _modal = "kontant"; })"><KassaIkon Navn="kontant" />Kontant<small>Med veksel</small></button>
-        </div>
+            else if (_varer.Count == 0)
+            {
+                <div class="ks-info"><KassaIkon Navn="info" /><span>Ingen varer i kassa ennå. Lagerførte varer kommer inn av seg selv.@(_leder ? " Du kan også legge inn varer under Produkter." : "") Bruk «Fri vare» under så lenge.</span></div>
+            }
+
+            <div class="@(_liste ? "ks2-liste" : "ks2-rutenett")">
+                @foreach (var v in VisteVarer)
+                {
+                    var vare = v;
+                    var iKurv = _kurv.Where(l => l.VareId == v.Id).Sum(l => l.Antall);
+                    <div class="ks2-vare @(iKurv > 0 ? "i-kurv" : "")" @onclick="@(() => LeggTil(vare))">
+                        <span class="ks2-bilde">
+                            @VareBilde(v, 280)
+                            @if (iKurv > 0)
+                            {
+                                <span class="ks2-ant">@iKurv</span>
+                            }
+                            @if (v.ComponentId is { } lc && _lager.TryGetValue(lc, out var paLager))
+                            {
+                                <span class="ks2-lager @(paLager <= 0 ? "tom" : paLager < 5 ? "lav" : "")">@(paLager <= 0 ? "Tomt" : $"{paLager} på lager")</span>
+                            }
+                        </span>
+                        <span class="ks2-navn">@v.Navn</span>
+                        <span class="ks2-bunnrad">
+                            <b class="tall">@(v.PrisInklMva > 0 ? Pris(v.PrisInklMva) : "Sett pris")</b>
+                            <button type="button" class="ks2-info" title="Om varen" aria-label="Om varen" @onclick:stopPropagation="true" @onclick="@(() => { _infoVare = vare; _modal = "info"; })">i</button>
+                            <button type="button" class="ks2-pluss" title="Legg i handlekurven" aria-label="Legg i handlekurven" @onclick:stopPropagation="true" @onclick="@(() => LeggTil(vare))"><KassaIkon Navn="pluss" /></button>
+                        </span>
+                    </div>
+                }
+                <div class="ks2-vare ks2-fri" @onclick="ApneFri">
+                    <span class="ks2-bilde"><KassaIkon Navn="blyant" /></span>
+                    <span class="ks2-navn">Fri vare eller beløp</span>
+                    <span class="ks2-bunnrad"><span class="ks2-dempet">Skriv inn selv</span></span>
+                </div>
+            </div>
+        </section>
+
+        <aside class="ks2-kurv">
+            <div class="ks2-faner">
+                <button type="button" class="@(_fane == "kurv" ? "paa" : "")" @onclick="@(() => _fane = "kurv")">Handlekurv (@_kurv.Sum(l => l.Antall))</button>
+                <button type="button" class="@(_fane == "kunde" ? "paa" : "")" @onclick="@(() => _fane = "kunde")">Kunde@(_kundeNavn is not null ? " ✓" : "")</button>
+            </div>
+
+            @if (_fane == "kunde")
+            {
+                <div class="ks2-kunde">
+                    <p>Valgfritt. Navnet kommer på kontantfakturaen, og den kan sendes på e-post.</p>
+                    <label class="ks-felt"><span>Navn eller firma</span><input @bind="_kundeInn" placeholder="Navn" /></label>
+                    <label class="ks-felt"><span>E-post</span><input type="email" @bind="_epostInn" placeholder="For å sende kontantfakturaen" /></label>
+                    <div class="ks2-kunde-knapper">
+                        @if (_kundeNavn is not null)
+                        {
+                            <button type="button" class="ks2-sek" @onclick="FjernKunde">Fjern kunde</button>
+                        }
+                        <button type="button" class="ks2-mork" @onclick="LagreKunde"><KassaIkon Navn="sjekk" />Lagre kunde</button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="ks2-linjer">
+                    @if (_kurv.Count == 0)
+                    {
+                        <div class="ks2-tom"><KassaIkon Navn="kurv" /><span>Trykk på en vare for å starte et salg</span></div>
+                    }
+                    @foreach (var l in _kurv)
+                    {
+                        var linje = l;
+                        var kurvVare = l.VareId is { } vid ? _varer.FirstOrDefault(x => x.Id == vid) : null;
+                        <div class="ks2-linje">
+                            <span class="ks2-linjebilde">@VareBilde(kurvVare, 120)</span>
+                            <span class="ks2-linjetekst"><b>@l.Navn</b><small class="tall">@Pris(l.Pris)</small></span>
+                            <span class="ks2-stepper">
+                                <button type="button" aria-label="Færre" @onclick="@(() => Endre(linje, -1))">−</button>
+                                <span class="tall">@l.Antall</span>
+                                <button type="button" aria-label="Flere" @onclick="@(() => Endre(linje, 1))">+</button>
+                            </span>
+                            <span class="ks2-linjemeny">
+                                <button type="button" aria-label="Mer" @onclick="@(() => _menyLinje = _menyLinje == linje ? null : linje)">⋮</button>
+                                @if (_menyLinje == linje)
+                                {
+                                    <span class="ks2-popup">
+                                        <button type="button" @onclick="@(() => { _kurv.Remove(linje); _menyLinje = null; if (_kurv.Count == 0) { _rabatt = 0; } })"><KassaIkon Navn="x" />Fjern fra kurven</button>
+                                    </span>
+                                }
+                            </span>
+                        </div>
+                    }
+                </div>
+
+                <button type="button" class="ks2-rabattfelt @(_rabatt > 0 ? "satt" : "")" disabled="@(_kurv.Count == 0)" @onclick="@(() => _modal = "rabatt")">
+                    <KassaIkon Navn="rabatt" />@(_rabatt > 0 ? $"{_rabatt:0.#} % rabatt på hele kurven" : "Legg til rabatt")
+                </button>
+
+                <div class="ks2-sum">
+                    <div><span>Delsum</span><span class="tall">@Pris(Brutto)</span></div>
+                    <div><span>Rabatt</span><span class="tall">@(Brutto - Total > 0 ? "−" + Pris(Brutto - Total) : Pris(0))</span></div>
+                    <div><span>MVA (25 %)</span><span class="tall">@Pris(Mva)</span></div>
+                    <div class="ks2-totalt"><span>Totalt</span><span class="tall">@Pris(Total)</span></div>
+                </div>
+
+                <button type="button" class="ks2-betal" disabled="@(Total <= 0)" @onclick="@(() => { _feil = null; _modal = "betal"; })">
+                    <span>Betal</span><span class="tall">@Pris(Total)</span><span aria-hidden="true">→</span>
+                </button>
+                <div class="ks2-betalmater">
+                    <button type="button" disabled="@(Total <= 0)" @onclick="StartKontant"><KassaIkon Navn="kontant" />Kontant</button>
+                    <button type="button" disabled="@(Total <= 0)" @onclick="@(() => StartKort(false))"><KassaIkon Navn="kort" />Kort</button>
+                    <button type="button" disabled="@(Total <= 0)" @onclick="@(() => StartKort(true))"><span class="ks2-vipps">V</span>Vipps</button>
+                </div>
+                <div class="ks2-ekstra">
+                    <button type="button" disabled="@(_kurv.Count == 0)" @onclick="Parker"><KassaIkon Navn="klokke" />Parkér salg</button>
+                    <button type="button" disabled="@(_kurv.Count < 2 && _kurv.Sum(l => l.Antall) < 2)" @onclick="ApneDel"><KassaIkon Navn="kvittering" />Del betaling</button>
+                    <span class="ks2-linjemeny">
+                        <button type="button" aria-label="Flere valg" @onclick="@(() => _visMer = !_visMer)">⋯</button>
+                        @if (_visMer)
+                        {
+                            <span class="ks2-popup opp">
+                                <button type="button" @onclick="@(() => { _visMer = false; ApneFri(); })"><KassaIkon Navn="blyant" />Fri vare eller beløp</button>
+                                <button type="button" @onclick="@(() => { _visMer = false; _fane = "kunde"; })"><KassaIkon Navn="person" />Legg til kunde</button>
+                                <button type="button" disabled="@(_kurv.Count == 0)" @onclick="@(() => { _visMer = false; TomKurv(); })"><KassaIkon Navn="x" />Tøm handlekurven</button>
+                            </span>
+                        }
+                    </span>
+                </div>
+            }
+        </aside>
     </div>
 </div>
 
-@if (_modal == "kort")
+@if (_modal == "betal")
+{
+    <div class="ks-bak" @onclick="LukkModal">
+        <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Velg betaling">
+            @Topp("kurv", "var(--gronn-lys)", "var(--gronn)", "Hvordan betaler kunden?", $"Å betale {Pris(Total)}")
+            <div class="ks-modal-inn">
+                <div class="ks2-valg">
+                    <button type="button" @onclick="@(() => StartKort(false))"><span style="background:var(--bla-lys);color:var(--bla)"><KassaIkon Navn="kort" /></span><b>Kort</b><small>Bankterminal</small></button>
+                    <button type="button" @onclick="StartKontant"><span style="background:var(--gronn-lys);color:var(--gronn)"><KassaIkon Navn="kontant" /></span><b>Kontant</b><small>Med veksel</small></button>
+                    <button type="button" @onclick="@(() => StartKort(true))"><span style="background:#fde8e1;color:#ff5b24"><b class="ks2-vipps stor">V</b></span><b>Vipps</b><small>På terminalen</small></button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+else if (_modal == "info" && _infoVare is { } iv)
+{
+    <div class="ks-bak" @onclick="LukkModal">
+        <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Om varen">
+            <div class="ks2-infotopp">
+                <span class="ks2-infobilde">@VareBilde(iv, 320)</span>
+                <div><h2>@iv.Navn</h2><p class="tall">@Pris(iv.PrisInklMva) inkl. mva</p></div>
+                <button type="button" class="ks-x" aria-label="Lukk" @onclick="LukkModal"><KassaIkon Navn="x" /></button>
+            </div>
+            <div class="ks-modal-inn">
+                <div class="ks2-fakta">
+                    <div><small>Kategori</small><b>@iv.Kategori</b></div>
+                    <div><small>Varenummer</small><b>@(iv.Component?.Produktkode ?? "–")</b></div>
+                    <div><small>Merke</small><b>@(Merke(iv) ?? "–")</b></div>
+                    <div><small>Strekkode</small><b>@(iv.Strekkode ?? iv.Component?.Gtin ?? "–")</b></div>
+                    @if (iv.ComponentId is { } ic && _lager.TryGetValue(ic, out var beh))
+                    {
+                        <div><small>På hovedlageret</small><b class="@(beh <= 0 ? "ks-avvik" : "")">@beh stk</b></div>
+                    }
+                    <div><small>Mva</small><b>@iv.MvaSats.ToString("0.#") %</b></div>
+                </div>
+            </div>
+            <div class="ks-modal-bunn">
+                <button type="button" class="ks-knapp sek" @onclick="LukkModal">Lukk</button>
+                <button type="button" class="ks-knapp gronn" @onclick="@(() => { LeggTil(iv); if (_modal == "info") { _modal = null; } })"><KassaIkon Navn="pluss" />Legg i handlekurven</button>
+            </div>
+        </div>
+    </div>
+}
+else if (_modal == "pris" && _prisVare is { } pv)
+{
+    <div class="ks-bak" @onclick="LukkModal">
+        <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Pris">
+            @Topp("rabatt", "var(--aks-lys)", "var(--aks)", pv.Navn, "Varen har ingen pris i kassa – skriv inn prisen for dette salget")
+            <div class="ks-modal-inn">
+                <label class="ks-felt"><span>Pris inkl. mva</span><input @bind="_friPris" inputmode="decimal" placeholder="0,00" /></label>
+                @if (_feil is not null)
+                {
+                    <p class="ks-feil">@_feil</p>
+                }
+            </div>
+            <div class="ks-modal-bunn">
+                <button type="button" class="ks-knapp sek" @onclick="LukkModal">Avbryt</button>
+                <button type="button" class="ks-knapp" @onclick="LeggTilMedPris"><KassaIkon Navn="pluss" />Legg i handlekurven</button>
+            </div>
+        </div>
+    </div>
+}
+else if (_modal == "del")
+{
+    <div class="ks-bak" @onclick="LukkModal">
+        <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Del betaling">
+            @Topp("kvittering", "var(--aks-lys)", "var(--aks)", "Del betaling", "Velg hva som betales nå – resten blir liggende i handlekurven")
+            <div class="ks-modal-inn">
+                @foreach (var l in _kurv)
+                {
+                    var linje = l;
+                    var valgt = _delAntall.GetValueOrDefault(linje);
+                    <div class="ks2-delrad">
+                        <span><b>@l.Navn</b><small class="tall">@Pris(l.Pris) · @l.Antall i kurven</small></span>
+                        <span class="ks2-stepper">
+                            <button type="button" aria-label="Færre" @onclick="@(() => _delAntall[linje] = Math.Max(0, valgt - 1))">−</button>
+                            <span class="tall">@valgt</span>
+                            <button type="button" aria-label="Flere" @onclick="@(() => _delAntall[linje] = Math.Min(linje.Antall, valgt + 1))">+</button>
+                        </span>
+                    </div>
+                }
+                <div class="ks2-delsum"><span>Betales nå</span><b class="tall">@Pris(DelSum)</b></div>
+            </div>
+            <div class="ks-modal-bunn">
+                <button type="button" class="ks-knapp sek" @onclick="LukkModal">Avbryt</button>
+                <button type="button" class="ks-knapp gronn" disabled="@(DelSum <= 0)" @onclick="StartDel">Betal @Pris(DelSum)</button>
+            </div>
+        </div>
+    </div>
+}
+else if (_modal == "parkert")
+{
+    <div class="ks-bak" @onclick="LukkModal">
+        <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Parkerte salg">
+            @Topp("klokke", "var(--aks-lys)", "var(--aks)", "Parkerte salg", "Hent fram et salg som er lagt til side")
+            <div class="ks-modal-inn">
+                @if (Parkerte.Count == 0)
+                {
+                    <p class="ks-tom" style="padding:20px">Ingen parkerte salg.</p>
+                }
+                @foreach (var p in Parkerte)
+                {
+                    var parkert = p;
+                    <button type="button" class="ks2-parkert" @onclick="@(() => HentParkert(parkert.Id))">
+                        <span><b>@(parkert.Kunde ?? "Uten kunde")</b><small>@parkert.Tidspunkt.ToString("HH:mm") · @parkert.Linjer.Sum(l => l.Antall) varer</small></span>
+                        <b class="tall">@Pris(parkert.Sum)</b>
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+else if (_modal == "kort")
+
 {
     <div class="ks-bak" @onclick="LukkModal">
         <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Kortbetaling">
-            @Topp("kort", "var(--bla-lys)", "var(--bla)", "Kortbetaling", "Slå inn beløpet på bankterminalen")
+            @Topp("kort", "var(--bla-lys)", "var(--bla)", _vipps ? "Vipps" : "Kortbetaling", _vipps ? "Kunden betaler med Vipps på bankterminalen" : "Slå inn beløpet på bankterminalen")
             <div class="ks-modal-inn">
                 <div class="ks-terminal"><small>Beløp til terminalen</small><div class="ks-belop tall">@KassaDokument.Kr(Total)</div><small>NOK</small></div>
                 <div class="ks-punkt"><span class="n">1</span><span>Slå inn <b style="color:var(--tekst)">@KassaDokument.Kr(Total)</b> på terminalen og trykk OK.</span></div>
-                <div class="ks-punkt"><span class="n">2</span><span>La kunden betale med kort eller mobil.</span></div>
+                <div class="ks-punkt"><span class="n">2</span><span>@(_vipps ? "La kunden velge Vipps på terminalen og godkjenne i appen." : "La kunden betale med kort eller mobil.")</span></div>
                 <div class="ks-punkt"><span class="n">3</span><span>Når terminalen viser <i>Godkjent</i>, trykker du knappen under.</span></div>
                 @if (_feil is not null)
                 {
@@ -146,7 +346,7 @@ else if (_modal == "kontant")
     var mottatt = Mottatt;
     <div class="ks-bak" @onclick="LukkModal">
         <div class="ks-modal bred" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Kontant">
-            @Topp("kontant", "var(--gronn-lys)", "var(--gronn)", "Kontant", $"Å betale {Kr(Total)}")
+            @Topp("kontant", "var(--gronn-lys)", "var(--gronn)", "Kontant", $"Å betale {Pris(Total)}")
             <div class="ks-modal-inn">
                 <div class="ks-to">
                     <div>
@@ -293,7 +493,7 @@ else if (_modal == "skann")
     private int? _brukerId;
     private string? _brukerNavn;
     private string _sok = "";
-    private string _kat = "Mest solgt";
+    private string _kat = "Alle varer";
     private string? _modal;
     private string? _feil;
     private string _inn = "";
@@ -319,10 +519,213 @@ else if (_modal == "skann")
 
     private static string Kr(decimal v) => KassaDokument.Kr(v) + " kr";
 
+    // «kr 690,-» for hele kroner, ellers «kr 690,50».
+    private static string Pris(decimal v) => v == decimal.Round(v)
+        ? $"kr {v.ToString("#,##0", CultureInfo.GetCultureInfo("nb-NO"))},-"
+        : $"kr {v.ToString("#,##0.00", CultureInfo.GetCultureInfo("nb-NO"))}";
+
+    private bool _liste;
+    private string? _merke;
+    private string _fane = "kurv";
+    private KurvLinje? _menyLinje;
+    private bool _visMer;
+    private bool _vipps;
+    private KasseVare? _infoVare;
+    private KasseVare? _prisVare;
+    private string _visNavn = "";
+    private readonly Dictionary<KurvLinje, int> _delAntall = [];
+    private List<KurvLinje>? _rest;
+
+    private string Initialer => string.Concat(_visNavn.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(n => char.ToUpperInvariant(n[0])));
+
+    private int? TenantId => TenantCtx.Current?.Id;
+
+    private IReadOnlyList<KassaParkering.Parkert> Parkerte => Parkering.Hent(TenantId, _brukerId);
+
+    private static string? Merke(KasseVare v) =>
+        !string.IsNullOrWhiteSpace(v.Component?.Produsent) ? v.Component!.Produsent!.Trim()
+        : !string.IsNullOrWhiteSpace(v.Component?.Leverandor) ? v.Component!.Leverandor!.Trim() : null;
+
+    // Merkene i kategorien som vises, som filterknapper (som ASSA, Dorma, iLOQ).
+    private List<string> Merker => SynligeVarer.Select(Merke).OfType<string>()
+        .Distinct(StringComparer.CurrentCultureIgnoreCase).OrderBy(m => m, StringComparer.CurrentCultureIgnoreCase).Take(12).ToList();
+
+    private IEnumerable<KasseVare> VisteVarer => _merke is null
+        ? SynligeVarer
+        : SynligeVarer.Where(v => string.Equals(Merke(v), _merke, StringComparison.CurrentCultureIgnoreCase));
+
+    // Varens bilde fra varekartoteket, ellers et symbol i kategoriens farge.
+    private RenderFragment VareBilde(KasseVare? v, int bredde) => __builder =>
+    {
+        if (v?.ComponentId is { } cid && _medBilde.Contains(cid))
+        {
+            <img src="@($"/komponent/{cid}/bilde?w={bredde}")" alt="" loading="lazy" />
+        }
+        else
+        {
+            var (bg, fg) = KassaIkon.Farge(v?.Kategori ?? "Annet");
+            <span class="ks2-symbol" style="background:@bg;color:@fg"><KassaIkon Navn="@(v?.Ikon ?? "boks")" /></span>
+        }
+    };
+
+    private void StartKontant()
+    {
+        _feil = null;
+        _inn = "";
+        _modal = "kontant";
+    }
+
+    private void StartKort(bool vipps)
+    {
+        _vipps = vipps;
+        _feil = null;
+        _modal = "kort";
+    }
+
+    private void LeggTilMedPris()
+    {
+        if (_prisVare is not { } v)
+        {
+            return;
+        }
+
+        if (!decimal.TryParse(_friPris.Replace(" ", "").Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var pris) || pris <= 0)
+        {
+            _feil = "Skriv inn en pris.";
+            return;
+        }
+
+        pris = KassaService.Rund(pris);
+        var l = _kurv.FirstOrDefault(x => x.VareId == v.Id && x.Pris == pris);
+        if (l is null)
+        {
+            _kurv.Add(new KurvLinje { VareId = v.Id, Navn = v.Navn, Pris = pris, MvaSats = v.MvaSats, Kategori = v.Kategori, Antall = 1 });
+        }
+        else
+        {
+            l.Antall++;
+        }
+
+        _prisVare = null;
+        _modal = null;
+    }
+
+    // ---------- Parkerte salg ----------
+
+    private void ParkerEllerVis()
+    {
+        if (_kurv.Count > 0)
+        {
+            Parker();
+        }
+        else
+        {
+            _modal = "parkert";
+        }
+    }
+
+    private void Parker()
+    {
+        if (_kurv.Count == 0)
+        {
+            return;
+        }
+
+        Parkering.Parker(TenantId, _brukerId, new KassaParkering.Parkert(Guid.NewGuid(), NorskTid.Na, _kundeNavn, _rabatt,
+            _kurv.Select(l => new KassaParkering.Linje(l.VareId, l.Navn, l.Pris, l.MvaSats, l.Kategori, l.Antall)).ToList()));
+        TomKurv();
+        _kundeNavn = _kundeEpost = null;
+        _kundeInn = _epostInn = "";
+    }
+
+    private void HentParkert(Guid id)
+    {
+        if (_kurv.Count > 0)
+        {
+            Parker();
+        }
+
+        if (Parkering.TaUt(TenantId, _brukerId, id) is { } p)
+        {
+            _kurv.AddRange(p.Linjer.Select(l => new KurvLinje { VareId = l.VareId, Navn = l.Navn, Pris = l.Pris, MvaSats = l.MvaSats, Kategori = l.Kategori, Antall = l.Antall }));
+            _rabatt = p.Rabatt;
+            _kundeNavn = p.Kunde;
+            _kundeInn = p.Kunde ?? "";
+        }
+
+        _modal = null;
+    }
+
+    // ---------- Del betaling ----------
+
+    private decimal DelSum => KassaService.Rund(_delAntall.Sum(d => KassaService.Rund(d.Key.Pris * d.Value * (1 - _rabatt / 100m))));
+
+    private void ApneDel()
+    {
+        _delAntall.Clear();
+        _modal = "del";
+    }
+
+    // Det som skal betales nå blir handlekurven; resten legges til side og
+    // kommer tilbake i kurven etter betalingen (eller hvis den avbrytes).
+    private void StartDel()
+    {
+        var na = new List<KurvLinje>();
+        var rest = new List<KurvLinje>();
+        foreach (var l in _kurv)
+        {
+            var antall = _delAntall.GetValueOrDefault(l);
+            if (antall > 0)
+            {
+                na.Add(new KurvLinje { VareId = l.VareId, Navn = l.Navn, Pris = l.Pris, MvaSats = l.MvaSats, Kategori = l.Kategori, Antall = antall });
+            }
+
+            if (l.Antall - antall > 0)
+            {
+                rest.Add(new KurvLinje { VareId = l.VareId, Navn = l.Navn, Pris = l.Pris, MvaSats = l.MvaSats, Kategori = l.Kategori, Antall = l.Antall - antall });
+            }
+        }
+
+        if (na.Count == 0)
+        {
+            return;
+        }
+
+        _kurv.Clear();
+        _kurv.AddRange(na);
+        _rest = rest.Count > 0 ? rest : null;
+        _feil = null;
+        _modal = "betal";
+    }
+
+    private void LeggTilbakeRest()
+    {
+        if (_rest is null)
+        {
+            return;
+        }
+
+        foreach (var r in _rest)
+        {
+            var l = _kurv.FirstOrDefault(x => x.VareId == r.VareId && x.Navn == r.Navn && x.Pris == r.Pris);
+            if (l is null)
+            {
+                _kurv.Add(r);
+            }
+            else
+            {
+                l.Antall += r.Antall;
+            }
+        }
+
+        _rest = null;
+    }
+
     private IEnumerable<(string, string)> Kategorier =>
-        new[] { ("Mest solgt", "stjerne"), ("Alle", "alle") }
+        new[] { ("Alle varer", "alle"), ("Mest solgt", "trend") }
             .Concat(_varer.Select(v => v.Kategori).Distinct().OrderBy(k => k, StringComparer.CurrentCultureIgnoreCase)
-                .Select(k => (k, _varer.First(v => v.Kategori == k).Ikon)));
+                .Select(k => (k, KassaService.IkonFor(k) is var i && i != "boks" ? i : _varer.First(v => v.Kategori == k).Ikon)))
+            .Concat(_varer.Any(v => v.Favoritt) ? [("Favoritter", "stjerne")] : []);
 
     private IEnumerable<KasseVare> SynligeVarer
     {
@@ -337,7 +740,8 @@ else if (_modal == "skann")
 
             return _kat switch
             {
-                "Alle" => _varer,
+                "Alle varer" => _varer,
+                "Favoritter" => _varer.Where(v => v.Favoritt),
                 "Mest solgt" => _mestSolgt.Count > 0
                     ? _mestSolgt.Select(id => _varer.FirstOrDefault(v => v.Id == id)).OfType<KasseVare>().Concat(_varer.Where(v => v.Favoritt && !_mestSolgt.Contains(v.Id))).Take(16)
                     : _varer.Where(v => v.Favoritt).DefaultIfEmpty().OfType<KasseVare>().Concat(_varer.Where(v => !v.Favoritt)).Take(16),
@@ -361,6 +765,7 @@ else if (_modal == "skann")
             var bruker = (await AuthStateTask).User;
             _brukerId = int.TryParse(bruker.FindFirst("BrukerId")?.Value, out var id) ? id : null;
             _brukerNavn = bruker.Identity?.Name;
+            _visNavn = bruker.FindFirst("Navn")?.Value ?? _brukerNavn ?? "";
             _leder = bruker.IsInRole(nameof(BrukerRolle.Admin)) || bruker.IsInRole(nameof(BrukerRolle.Prosjektleder));
         }
 
@@ -370,6 +775,7 @@ else if (_modal == "skann")
 
     private async Task LastVarer()
     {
+        await Kassa.SynkLagervarerAsync();
         _varer = await Db.KasseVarer.AsNoTracking().Include(v => v.Component).Where(v => v.Aktiv)
             .OrderBy(v => v.Kategori).ThenBy(v => v.Rekkefolge).ThenBy(v => v.Navn).ToListAsync();
         var komponenter = _varer.Select(v => v.ComponentId).OfType<int>().Distinct().ToList();
@@ -392,15 +798,21 @@ else if (_modal == "skann")
                 .Where(l => l.KasseVareId != null && l.Antall > 0 && l.KasseSalg!.Tidspunkt >= fra)
                 .Select(l => new { l.KasseVareId, l.Antall }).ToListAsync())
             .GroupBy(l => l.KasseVareId!.Value).OrderByDescending(g => g.Sum(l => l.Antall)).Take(12).Select(g => g.Key).ToList();
-        if (_mestSolgt.Count == 0 && !_varer.Any(v => v.Favoritt))
-        {
-            _kat = "Alle";
-        }
+
     }
 
     private void LeggTil(KasseVare v)
     {
-        var l = _kurv.FirstOrDefault(x => x.VareId == v.Id);
+        if (v.PrisInklMva <= 0)
+        {
+            _prisVare = v;
+            _friPris = "";
+            _feil = null;
+            _modal = "pris";
+            return;
+        }
+
+        var l = _kurv.FirstOrDefault(x => x.VareId == v.Id && x.Pris == v.PrisInklMva);
         if (l is null)
         {
             _kurv.Add(new KurvLinje { VareId = v.Id, Navn = v.Navn, Pris = v.PrisInklMva, MvaSats = v.MvaSats, Kategori = v.Kategori, Antall = 1 });
@@ -487,6 +899,14 @@ else if (_modal == "skann")
         _kundeNavn = string.IsNullOrWhiteSpace(_kundeInn) ? null : _kundeInn.Trim();
         _kundeEpost = string.IsNullOrWhiteSpace(_epostInn) ? null : _epostInn.Trim();
         _modal = null;
+        _fane = "kurv";
+    }
+
+    private void FjernKunde()
+    {
+        _kundeNavn = _kundeEpost = null;
+        _kundeInn = _epostInn = "";
+        _fane = "kurv";
     }
 
     private void LukkModal()
@@ -494,6 +914,7 @@ else if (_modal == "skann")
         if (!_lagrer)
         {
             _modal = null;
+            LeggTilbakeRest();
         }
     }
 
@@ -510,8 +931,16 @@ else if (_modal == "skann")
         {
             var linjer = _kurv.Select(l => new KassaService.Linje(l.VareId, l.Navn, l.Pris, l.MvaSats, l.Antall, l.Kategori)).ToList();
             var salg = await Kassa.SelgAsync(linjer, type, _rabatt, type == KasseSalgType.Kontant ? Mottatt : null, _kundeNavn, _kundeEpost, _brukerId, _brukerNavn);
+            var rabatt = _rabatt;
             _kurv.Clear();
             _rabatt = 0;
+            if (_rest is not null)
+            {
+                // Del betaling: resten blir liggende i kurven til neste betaling.
+                _kurv.AddRange(_rest);
+                _rest = null;
+                _rabatt = rabatt;
+            }
             _kundeNavn = _kundeEpost = null;
             _kundeInn = _epostInn = "";
             _modal = null;

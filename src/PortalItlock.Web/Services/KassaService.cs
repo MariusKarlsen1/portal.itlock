@@ -31,6 +31,62 @@ public partial class KassaService(ApplicationDbContext db, LagerService lager, T
 
     public static decimal MvaAv(decimal belopInkl, decimal sats) => sats <= 0 ? 0 : Rund(belopInkl - belopInkl / (1 + sats / 100m));
 
+    // ---------- Varer ----------
+
+    // Kassevare laget fra en vare i varekartoteket: veiledende pris (eks. mva)
+    // pluss 25 % mva, varetypen som kategori og varens strekkode.
+    public static KasseVare FraKomponent(Component c) => new()
+    {
+        Navn = c.Navn,
+        Kategori = string.IsNullOrWhiteSpace(c.Type?.Navn) ? "Annet" : c.Type!.Navn,
+        ComponentId = c.Id,
+        PrisInklMva = Rund((c.PrisVeiledende ?? c.PrisNetto ?? 0) * 1.25m),
+        Strekkode = string.IsNullOrWhiteSpace(c.Gtin) ? null : c.Gtin,
+        Ikon = IkonFor(c.Type?.Navn)
+    };
+
+    // Symbol for en kategori når varen ikke har bilde (se KassaIkon).
+    public static string IkonFor(string? kategori)
+    {
+        var k = (kategori ?? "").ToLowerInvariant();
+        return k switch
+        {
+            _ when k.Contains("sylinder") => "sylinder",
+            _ when k.Contains("nøkl") || k.Contains("nøkkel") || k.Contains("nokkel") => "nokkel",
+            _ when k.Contains("hengelås") => "hengelas",
+            _ when k.Contains("lås") || k.Contains("sluttstykke") => "las",
+            _ when k.Contains("dør") || k.Contains("pumpe") || k.Contains("lukker") || k.Contains("vrider") || k.Contains("beslag") => "dor",
+            _ when k.Contains("adgang") || k.Contains("leser") || k.Contains("kort") || k.Contains("sentral") || k.Contains("automatikk") => "brikke",
+            _ when k.Contains("batteri") => "batteri",
+            _ when k.Contains("verktøy") || k.Contains("skrue") => "verktoy",
+            _ when k.Contains("skap") => "skap",
+            _ => "boks"
+        };
+    }
+
+    // Alle lagerførte varer ligger i kassa av seg selv: varer som er lagerført,
+    // men ikke har en kassevare ennå, får en. Varer som er tatt ut av kassa
+    // (Aktiv = false) legges ikke inn på nytt. Salg trekkes fra lageret.
+    public async Task<int> SynkLagervarerAsync()
+    {
+        if (!await tilleggsmoduler.HarAsync(TilleggsModuler.Lager))
+        {
+            return 0;
+        }
+
+        var har = await db.KasseVarer.Where(v => v.ComponentId != null).Select(v => v.ComponentId!.Value).ToListAsync();
+        var nye = await db.Components.Include(c => c.Type)
+            .Where(c => c.ILagerstyring && c.Aktiv && !har.Contains(c.Id)).ToListAsync();
+        if (nye.Count == 0)
+        {
+            return 0;
+        }
+
+        db.KasseVarer.AddRange(nye.Select(FraKomponent));
+        await db.SaveChangesAsync();
+        return nye.Count;
+    }
+
     public async Task<KasseOppsett> OppsettAsync()
     {
         var o = await db.KasseOppsett.FirstOrDefaultAsync();

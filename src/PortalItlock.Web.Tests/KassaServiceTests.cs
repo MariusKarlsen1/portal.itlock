@@ -71,4 +71,27 @@ public class KassaServiceTests
         Assert.Equal(new DateTime(2026, 10, 29), poster[0].Dato);
         Assert.Equal(1234.50m, poster[1].Belop);
     }
+
+    [Fact]
+    public void FraKomponent_LagerKassevareMedPrisInklMvaOgStrekkode()
+    {
+        var c = new Component { Id = 7, Navn = "ASSA 5520 sylinder", PrisVeiledende = 552m, Gtin = "7020000001234", Type = new ComponentType { Navn = "Sylinder" } };
+
+        var v = KassaService.FraKomponent(c);
+
+        Assert.Equal(690m, v.PrisInklMva);
+        Assert.Equal(7, v.ComponentId);
+        Assert.Equal("Sylinder", v.Kategori);
+        Assert.Equal("7020000001234", v.Strekkode);
+        Assert.Equal("sylinder", v.Ikon);
+    }
+
+    [Theory]
+    [InlineData("Låskasse", "las")]
+    [InlineData("Dørpumper", "dor")]
+    [InlineData("Nøkler", "nokkel")]
+    [InlineData("Adgangskontroll", "brikke")]
+    [InlineData(null, "boks")]
+    public void IkonFor_VelgerSymbolEtterKategori(string? kategori, string ikon) =>
+        Assert.Equal(ikon, KassaService.IkonFor(kategori));
 }

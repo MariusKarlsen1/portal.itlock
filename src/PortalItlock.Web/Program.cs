@@ -141,6 +141,7 @@ builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
 builder.Services.AddScoped<BimModellService>();
 builder.Services.AddScoped<KassaService>();
+builder.Services.AddSingleton<KassaParkering>();
 // Bakgrunnsjobbene kjører for hver organisasjon (se OrganisasjonKjorer), og
 // påminnelsene går til mottakerne som er satt opp i adminportalen.
 builder.Services.AddSingleton<OrganisasjonKjorer>();
