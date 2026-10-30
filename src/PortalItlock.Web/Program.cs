@@ -140,6 +140,7 @@ builder.Services.AddScoped<LagretPdfService>();
 builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
 builder.Services.AddScoped<BimModellService>();
+builder.Services.AddScoped<KassaService>();
 // Bakgrunnsjobbene kjører for hver organisasjon (se OrganisasjonKjorer), og
 // påminnelsene går til mottakerne som er satt opp i adminportalen.
 builder.Services.AddSingleton<OrganisasjonKjorer>();
@@ -1196,6 +1197,58 @@ app.MapGet("/app/pdfside/nedlastning/{id:int}/{side:int}", async (int id, int si
     ctx.Response.Headers.CacheControl = "private, max-age=3600";
     return fil is null || !fil.ContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase) ? Results.NotFound() : PdfSideSomBilde(fil.Data, side);
 }).RequireAuthorization();
+
+// Kassa: kontantfaktura/kreditnota og dagsrapport til utskrift, og
+// månedens salg som CSV til regnskapet.
+app.MapGet("/kassa/salg/{id:int}/kvittering", async (int id, ApplicationDbContext db, KassaService kassa, ITenantContext tenant) =>
+{
+    var s = await db.KasseSalg.AsNoTracking().Include(x => x.Linjer).FirstOrDefaultAsync(x => x.Id == id);
+    if (s is null)
+    {
+        return Results.NotFound();
+    }
+
+    var gjelder = s.KrediterSalgId is { } kid ? await db.KasseSalg.AsNoTracking().FirstOrDefaultAsync(x => x.Id == kid) : null;
+    var firma = KassaDokument.FraTenant(tenant.Current, await kassa.OppsettAsync());
+    var tittel = (s.Type == KasseSalgType.Kreditnota ? "Kreditnota " : "Kontantfaktura ") + s.Nummer;
+    return Results.Content(KassaDokument.UtskriftSide(tittel, KassaDokument.Lapp(s, firma, gjelder)), "text/html; charset=utf-8");
+}).RequireAuthorization();
+
+app.MapGet("/kassa/dagsoppgjor/{id:int}/rapport", async (int id, ApplicationDbContext db, KassaService kassa, ITenantContext tenant) =>
+{
+    var o = await db.KasseDagsoppgjor.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+    if (o is null)
+    {
+        return Results.NotFound();
+    }
+
+    var linjer = await db.KasseSalgLinjer.AsNoTracking().Where(l => l.KasseSalg!.DagsoppgjorId == id).ToListAsync();
+    var firma = KassaDokument.FraTenant(tenant.Current, await kassa.OppsettAsync());
+    return Results.Content(KassaDokument.UtskriftSide($"Dagsrapport {o.Lukket:dd.MM.yyyy}", KassaDokument.Dagsrapport(o, firma, KassaService.MvaFordeling(linjer))), "text/html; charset=utf-8");
+}).RequireAuthorization();
+
+app.MapGet("/kassa/salg.csv", async (int ar, int mnd, ApplicationDbContext db) =>
+{
+    var fra = new DateTime(ar, Math.Clamp(mnd, 1, 12), 1);
+    var til = fra.AddMonths(1);
+    var linjer = await db.KasseSalgLinjer.AsNoTracking().Include(l => l.KasseSalg)
+        .Where(l => l.KasseSalg!.Tidspunkt >= fra && l.KasseSalg.Tidspunkt < til)
+        .OrderBy(l => l.KasseSalg!.Nummer).ThenBy(l => l.Id).ToListAsync();
+    var nb = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+    static string F(string? t) => "\"" + (t ?? "").Replace("\"", "\"\"") + "\"";
+    var sb = new System.Text.StringBuilder("Nummer;Dato;Type;Betaling;Vare;Kategori;Antall;Beløp inkl. mva;Mva-sats;Mva;Kunde;Krediterer\r\n");
+    foreach (var l in linjer)
+    {
+        var s = l.KasseSalg!;
+        var type = s.Type == KasseSalgType.Kreditnota ? "Kreditnota" : "Kontantfaktura";
+        var betaling = (s.Type == KasseSalgType.Kreditnota ? s.BetaltTilbakeMed : s.Type) == KasseSalgType.Kort ? "Kort" : "Kontant";
+        sb.Append(string.Join(";", s.Nummer, s.Tidspunkt.ToString("dd.MM.yyyy HH:mm", nb), type, betaling, F(l.Navn), F(l.Kategori), l.Antall,
+            l.Belop.ToString("0.00", nb), l.MvaSats.ToString("0.##", nb), l.Mva.ToString("0.00", nb), F(s.KundeNavn), s.KrediterSalgId is null ? "" : "ja")).Append("\r\n");
+    }
+
+    var bytes = new System.Text.UTF8Encoding(true).GetBytes(sb.ToString());
+    return Results.File(bytes, "text/csv; charset=utf-8", $"kassa-{ar}-{mnd:00}.csv");
+}).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
 
 // Prosjektets BIM-modell (IFC) til 3D-visningen. Fila leses i nettleseren.
 app.MapGet("/prosjekt/{id:int}/modell.ifc", (int id, BimModellService bim, HttpContext ctx) =>

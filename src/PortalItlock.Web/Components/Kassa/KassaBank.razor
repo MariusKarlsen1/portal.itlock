@@ -1,0 +1,164 @@
+@page "/kassa/bank"
+@layout PortalItlock.Web.Components.Layout.KassaLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject KassaService Kassa
+
+<PageTitle>Bankavstemming</PageTitle>
+<KreverModulVakt Modul="@TilleggsModuler.Kassa" />
+
+@* Bankavstemming per lukket dag: kortsalget mot det innløseren har utbetalt,
+   og kontantene som skulle til bank mot det som er satt inn. Utbetalingene
+   kan kobles automatisk fra en kontoutskrift (CSV) eller skrives inn. *@
+<div class="ks-verktoy">
+    <select class="ks-velger" value="@_valgt" @onchange="VelgManed" aria-label="Måned">
+        @foreach (var m in _maneder)
+        {
+            <option value="@m.ToString("yyyy-MM")">@Nb.TextInfo.ToTitleCase(m.ToString("MMMM yyyy", Nb))</option>
+        }
+    </select>
+    <div class="ks-hoyre">
+        <label class="ks-knapp mork" style="position:relative;overflow:hidden">
+            <KassaIkon Navn="opp" />@(_leser ? "Leser …" : "Last opp kontoutskrift")
+            <InputFile OnChange="LastOpp" accept=".csv,.txt,text/csv" style="position:absolute;inset:0;opacity:0;cursor:pointer" />
+        </label>
+    </div>
+</div>
+<div class="ks-info"><KassaIkon Navn="bank" /><span>Kortsalg utbetales vanligvis 1–2 virkedager etter salget, samlet per dag fra innløseren. Last opp kontoutskriften (CSV) fra nettbanken, så kobles utbetalingene til riktig dag – eller skriv inn beløpet selv.</span></div>
+@if (_melding is not null)
+{
+    <div class="ks-info @(_avvik > 0 ? "gul" : "gronn")"><KassaIkon Navn="@(_avvik > 0 ? "varsel" : "sjekk")" /><span>@_melding</span></div>
+}
+
+<div class="ks-to" style="align-items:start">
+    <div class="ks-kort">
+        <div class="ks-seksjon-t"><KassaIkon Navn="kort" />Kort</div>
+        <table>
+            <tr><th>Dag</th><th class="h">I kassa</th><th class="h">Utbetalt</th><th class="h">Status</th></tr>
+            @if (_oppgjor.Count == 0)
+            {
+                <tr><td colspan="4" class="ks-tom">Ingen lukkede dager i måneden.</td></tr>
+            }
+            @foreach (var o in _oppgjor)
+            {
+                var opp = o;
+                var dif = o.UtbetaltBank is { } u ? u - o.KortIKassa : (decimal?)null;
+                <tr>
+                    <td>@o.Lukket.ToString("dd.MM.yyyy")</td>
+                    <td class="h tall">@KassaDokument.Kr(o.KortIKassa)</td>
+                    <td class="h"><input class="ks-inn-liten tall" value="@(o.UtbetaltBank is { } ub ? KassaDokument.Kr(ub) : "")" placeholder="Beløp" @onchange="@(e => Sett(opp, e.Value?.ToString(), true))" aria-label="Utbetalt" /></td>
+                    <td class="h">@if (dif is null) {<span style="color:var(--svak)">–</span>} else if (Math.Abs(dif.Value) < 0.5m) {<span class="ks-ok">Stemmer</span>} else {<span class="ks-avvik tall">@KassaDokument.Kr(dif.Value)</span>}</td>
+                </tr>
+            }
+        </table>
+    </div>
+    <div class="ks-kort">
+        <div class="ks-seksjon-t"><KassaIkon Navn="kontant" />Kontant til bank</div>
+        <table>
+            <tr><th>Dag</th><th class="h">Til bank</th><th class="h">Satt inn</th><th class="h">Status</th></tr>
+            @foreach (var o in _oppgjor)
+            {
+                var opp = o;
+                var dif = o.SattInnBank is { } s ? s - o.TilBank : (decimal?)null;
+                <tr>
+                    <td>@o.Lukket.ToString("dd.MM.yyyy")</td>
+                    <td class="h tall">@KassaDokument.Kr(o.TilBank)</td>
+                    <td class="h"><input class="ks-inn-liten tall" value="@(o.SattInnBank is { } sb ? KassaDokument.Kr(sb) : "")" placeholder="Beløp" @onchange="@(e => Sett(opp, e.Value?.ToString(), false))" aria-label="Satt inn" /></td>
+                    <td class="h">@if (dif is null) {<span style="color:var(--svak)">–</span>} else if (Math.Abs(dif.Value) < 0.5m) {<span class="ks-ok">Stemmer</span>} else {<span class="ks-avvik tall">@KassaDokument.Kr(dif.Value)</span>}</td>
+                </tr>
+            }
+        </table>
+    </div>
+</div>
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+
+    private List<DateTime> _maneder = [];
+    private string _valgt = "";
+    private DateTime _fra;
+    private List<KasseDagsoppgjor> _oppgjor = [];
+    private bool _leser;
+    private string? _melding;
+    private int _avvik;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var forste = await Db.KasseDagsoppgjor.AsNoTracking().OrderBy(o => o.Lukket).Select(o => (DateTime?)o.Lukket).FirstOrDefaultAsync() ?? NorskTid.Idag;
+        var na = new DateTime(NorskTid.Idag.Year, NorskTid.Idag.Month, 1);
+        for (var m = na; m >= new DateTime(forste.Year, forste.Month, 1) && _maneder.Count < 36; m = m.AddMonths(-1))
+        {
+            _maneder.Add(m);
+        }
+
+        _fra = na;
+        _valgt = na.ToString("yyyy-MM");
+        await Last();
+    }
+
+    private async Task VelgManed(ChangeEventArgs e)
+    {
+        if (DateTime.TryParseExact(e.Value?.ToString(), "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
+        {
+            _fra = d;
+            _valgt = d.ToString("yyyy-MM");
+            _melding = null;
+            await Last();
+        }
+    }
+
+    private async Task Last()
+    {
+        var til = _fra.AddMonths(1);
+        _oppgjor = await Db.KasseDagsoppgjor.Where(o => o.Lukket >= _fra && o.Lukket < til).OrderBy(o => o.Lukket).ToListAsync();
+        _avvik = _oppgjor.Count(o => o.UtbetaltBank is { } u && Math.Abs(u - o.KortIKassa) >= 0.5m);
+    }
+
+    private async Task Sett(KasseDagsoppgjor o, string? tekst, bool kort)
+    {
+        var t = (tekst ?? "").Replace(" ", "").Replace(" ", "");
+        decimal? verdi = string.IsNullOrWhiteSpace(t) ? null
+            : decimal.TryParse(t.Contains(',') ? t.Replace(".", "").Replace(',', '.') : t, NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : null;
+        if (kort)
+        {
+            o.UtbetaltBank = verdi;
+        }
+        else
+        {
+            o.SattInnBank = verdi;
+        }
+
+        await Db.SaveChangesAsync();
+        _avvik = _oppgjor.Count(x => x.UtbetaltBank is { } u && Math.Abs(u - x.KortIKassa) >= 0.5m);
+    }
+
+    private async Task LastOpp(InputFileChangeEventArgs e)
+    {
+        _leser = true;
+        _melding = null;
+        try
+        {
+            using var les = new StreamReader(e.File.OpenReadStream(5_000_000));
+            var poster = KassaService.LesKontoutskrift(await les.ReadToEndAsync());
+            var koblet = await Kassa.KobleBankAsync(poster);
+            Db.ChangeTracker.Clear();
+            await Last();
+            _melding = poster.Count == 0
+                ? "Fant ingen innbetalinger i fila. Sjekk at det er en kontoutskrift i CSV-format."
+                : $"{poster.Count} innbetalinger lest, {koblet} koblet til dager med kortsalg." + (_avvik > 0 ? $" {_avvik} dag(er) har avvik – sjekk terminalrapporten for de dagene." : "");
+        }
+        catch (IOException)
+        {
+            _melding = "Kunne ikke lese fila.";
+        }
+        finally
+        {
+            _leser = false;
+        }
+    }
+}

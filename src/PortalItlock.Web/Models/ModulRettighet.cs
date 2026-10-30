@@ -66,7 +66,11 @@ public static class ModulRettigheter
 
         // Egne timer og fravær fører de selv.
         ["timeregistrering"] = Rettighet.Full,
-        ["fravar"] = Rettighet.Full
+        ["fravar"] = Rettighet.Full,
+
+        // Kassa: montører i butikken kan selge og ta dagsoppgjør. Måneds-
+        // oppgjør, bankavstemming og kassevarer er for prosjektleder/admin.
+        ["kassa"] = Rettighet.Opprett
     };
 
     public static Rettighet For(BrukerRolle? rolle, string modul) => rolle switch

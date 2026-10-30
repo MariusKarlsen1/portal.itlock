@@ -3290,6 +3290,260 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("Inntektskontoer");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseDagsoppgjor", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AntallKreditnota")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AntallSalg")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("DifferanseKontant")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("DifferanseKort")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Forklaring")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("FraNummer")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("KasseNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("KontantIKassa")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("KortIKassa")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Lukket")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LukketAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Mva")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Omsetning")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Opptalt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("SattInnBank")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TellingJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("TerminalTotal")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("TilNummer")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal?>("UtbetaltBank")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("VekselStart")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("KasseDagsoppgjor");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseOppsett", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Bunntekst")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KasseNavn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("MvaRegistrert")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Vekselbeholdning")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("KasseOppsett");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseSalg", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Arsak")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("BetaltTilbakeMed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("BrukerNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("DagsoppgjorId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("KasseNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("KrediterSalgId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("KundeEpost")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KundeNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("Mottatt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Mva")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Nummer")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("RabattProsent")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Tidspunkt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Total")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DagsoppgjorId");
+
+                    b.HasIndex("KrediterSalgId");
+
+                    b.HasIndex("Nummer")
+                        .IsUnique();
+
+                    b.ToTable("KasseSalg");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseSalgLinje", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Antall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Belop")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Enhetspris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("KasseSalgId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("KasseVareId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Kategori")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Mva")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("MvaSats")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("RabattProsent")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KasseSalgId");
+
+                    b.ToTable("KasseSalgLinjer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseVare", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Aktiv")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Favoritt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Ikon")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kategori")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("MvaSats")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("PrisInklMva")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Strekkode")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ComponentId");
+
+                    b.ToTable("KasseVarer");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsKategori", b =>
                 {
                     b.Property<int>("Id")
@@ -8473,6 +8727,44 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Innkjopsordre");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseSalg", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.KasseDagsoppgjor", "Dagsoppgjor")
+                        .WithMany("Salg")
+                        .HasForeignKey("DagsoppgjorId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("PortalItlock.Web.Models.KasseSalg", "KrediterSalg")
+                        .WithMany()
+                        .HasForeignKey("KrediterSalgId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Dagsoppgjor");
+
+                    b.Navigation("KrediterSalg");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseSalgLinje", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.KasseSalg", "KasseSalg")
+                        .WithMany("Linjer")
+                        .HasForeignKey("KasseSalgId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("KasseSalg");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseVare", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Component", "Component")
+                        .WithMany()
+                        .HasForeignKey("ComponentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Component");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.KoblingsSkjema", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Dor", "Dor")
@@ -9858,6 +10150,16 @@ namespace PortalItlock.Web.Migrations
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Innkjopsordre", b =>
+                {
+                    b.Navigation("Linjer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseDagsoppgjor", b =>
+                {
+                    b.Navigation("Salg");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.KasseSalg", b =>
                 {
                     b.Navigation("Linjer");
                 });

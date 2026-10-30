@@ -298,6 +298,17 @@ public static class PortalModulRegister
                 ]),
             ]),
 
+        // Tilleggsmodul - salg i butikk. Åpnes i fullskjerm (KassaLayout).
+        new Rolle(
+            "kassa",
+            "Kassa",
+            "Salg, kontantfaktura og oppgjør",
+            [
+                new LenkeGruppe("Moduler", [
+                    new Lenke("Kassa", "Salg med kort eller kontant, kontantfaktura, dagsoppgjør og bankavstemming", "kassa", "receipt", null, ModulTilgang.Alle, KunIMeny: true, KreverModul: TilleggsModuler.Kassa),
+                ]),
+            ]),
+
         new Rolle(
             "administrasjon",
             "Administrasjon",

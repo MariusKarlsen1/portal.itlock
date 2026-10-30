@@ -1,0 +1,313 @@
+@page "/kassa/varer"
+@layout PortalItlock.Web.Components.Layout.KassaLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject KassaService Kassa
+
+<PageTitle>Kassevarer</PageTitle>
+<KreverModulVakt Modul="@TilleggsModuler.Kassa" />
+
+@* Knappene i kassa, og oppsett av kassa. En kassevare kan hentes fra
+   komponentregisteret: da vises varens bilde i kassa, og salg trekkes fra
+   lageret. Varer uten bilde får symbolet som er valgt. *@
+<div class="ks-verktoy">
+    <label class="ks-sokfelt" style="max-width:340px"><KassaIkon Navn="sok" /><input placeholder="Søk vare" @bind="_sok" @bind:event="oninput" /></label>
+    <div class="ks-hoyre">
+        <button type="button" class="ks-knapp sek" @onclick="@(() => { _hentSok = ""; _treff = []; _modal = "hent"; })"><KassaIkon Navn="last" />Hent fra komponentregister</button>
+        <button type="button" class="ks-knapp sek" @onclick="@(() => _modal = "oppsett")"><KassaIkon Navn="innst" />Oppsett</button>
+        <button type="button" class="ks-knapp mork" @onclick="Ny"><KassaIkon Navn="pluss" />Ny vare</button>
+    </div>
+</div>
+
+<div class="ks-kort">
+    <table>
+        <tr><th></th><th>Navn</th><th>Kategori</th><th class="h">Pris inkl. mva</th><th class="h">Mva</th><th>Strekkode</th><th>Koblet vare</th><th>Status</th></tr>
+        @if (Filtrert.Count == 0)
+        {
+            <tr><td colspan="8" class="ks-tom">@(_varer.Count == 0 ? "Ingen kassevarer ennå. Trykk «Ny vare» eller hent fra komponentregisteret." : "Ingen treff.")</td></tr>
+        }
+        @foreach (var v in Filtrert)
+        {
+            var vare = v;
+            var (bg, fg) = KassaIkon.Farge(v.Kategori);
+            <tr class="klikk" @onclick="@(() => Rediger(vare))">
+                <td style="width:52px"><span class="ks-vareikon" style="background:@bg;color:@fg">@if (v.ComponentId is { } cid && _medBilde.Contains(cid)) {<img src="@($"/komponent/{cid}/bilde?w=80")" alt="" />} else {<KassaIkon Navn="@v.Ikon" />}</span></td>
+                <td><b>@v.Navn</b>@if (v.Favoritt) {<span style="color:var(--aks);margin-left:6px;vertical-align:-3px;display:inline-flex"><KassaIkon Navn="stjerne" /></span>}</td>
+                <td style="color:var(--dempet)">@v.Kategori</td>
+                <td class="h tall">@KassaDokument.Kr(v.PrisInklMva)</td>
+                <td class="h">@v.MvaSats.ToString("0.#") %</td>
+                <td class="tall" style="color:var(--dempet)">@(v.Strekkode ?? v.Component?.Gtin ?? "–")</td>
+                <td style="color:var(--dempet)">@(v.Component is { } c ? c.Produktkode ?? c.Navn : "–")</td>
+                <td><span class="ks-merke @(v.Aktiv ? "ks-m-kontant" : "ks-m-gra")">@(v.Aktiv ? "I kassa" : "Skjult")</span></td>
+            </tr>
+        }
+    </table>
+</div>
+
+@if (_modal == "rediger" && _red is { } r)
+{
+    <div class="ks-bak" @onclick="AvbrytRed">
+        <div class="ks-modal bred" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Kassevare">
+            <div class="ks-modal-topp">
+                <span class="ks-mik" style="background:var(--aks-lys);color:var(--aks)"><KassaIkon Navn="@r.Ikon" /></span>
+                <div><h2>@(r.Id == 0 ? "Ny kassevare" : r.Navn)</h2><p>@(r.ComponentId is null ? "Egen kassevare" : "Koblet til komponentregisteret – bildet og lageret hentes derfra")</p></div>
+                <button type="button" class="ks-x" aria-label="Lukk" @onclick="AvbrytRed"><KassaIkon Navn="x" /></button>
+            </div>
+            <div class="ks-modal-inn">
+                <div class="ks-to">
+                    <label class="ks-felt"><span>Navn</span><input @bind="r.Navn" /></label>
+                    <label class="ks-felt"><span>Kategori</span><input @bind="r.Kategori" list="ks-kategorier" /></label>
+                </div>
+                <datalist id="ks-kategorier">@foreach (var k in _varer.Select(v => v.Kategori).Distinct()) {<option value="@k"></option>}</datalist>
+                <div class="ks-to">
+                    <label class="ks-felt"><span>Pris inkl. mva</span><input @bind="_prisTekst" inputmode="decimal" /></label>
+                    <label class="ks-felt"><span>Mva-sats</span><select @bind="r.MvaSats"><option value="25">25 %</option><option value="15">15 %</option><option value="12">12 %</option><option value="0">0 % (fritatt)</option></select></label>
+                </div>
+                <div class="ks-to">
+                    <label class="ks-felt"><span>Strekkode (EAN)</span><input @bind="r.Strekkode" inputmode="numeric" placeholder="@(r.Component?.Gtin ?? "Valgfritt")" /></label>
+                    <label class="ks-felt"><span>Rekkefølge i kategorien</span><input type="number" @bind="r.Rekkefolge" /></label>
+                </div>
+                <div class="ks-felt">
+                    <span>Symbol @(r.ComponentId is { } rc && _medBilde.Contains(rc) ? "(vises bare hvis varen mangler bilde)" : "")</span>
+                    <div class="ks-ikonvalg">
+                        @foreach (var (navn, tittel) in KassaIkon.Varesymboler)
+                        {
+                            var ikon = navn;
+                            <button type="button" class="@(r.Ikon == ikon ? "paa" : "")" title="@tittel" aria-label="@tittel" @onclick="@(() => r.Ikon = ikon)"><KassaIkon Navn="@ikon" /></button>
+                        }
+                    </div>
+                </div>
+                <label class="ks-sjekk"><input type="checkbox" @bind="r.Favoritt" /><span>Favoritt – vises under «Mest solgt»</span></label>
+                <label class="ks-sjekk"><input type="checkbox" @bind="r.Aktiv" /><span>Vises i kassa</span></label>
+                @if (_feil is not null)
+                {
+                    <p class="ks-feil">@_feil</p>
+                }
+            </div>
+            <div class="ks-modal-bunn">
+                <button type="button" class="ks-knapp sek" @onclick="AvbrytRed">Avbryt</button>
+                <button type="button" class="ks-knapp" @onclick="Lagre"><KassaIkon Navn="sjekk" />Lagre</button>
+            </div>
+        </div>
+    </div>
+}
+else if (_modal == "hent")
+{
+    <div class="ks-bak" @onclick="@(() => _modal = null)">
+        <div class="ks-modal bred" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Hent fra komponentregister">
+            <div class="ks-modal-topp">
+                <span class="ks-mik" style="background:var(--aks-lys);color:var(--aks)"><KassaIkon Navn="last" /></span>
+                <div><h2>Hent fra komponentregister</h2><p>Varen får bildet og lageret fra komponentregisteret. Prisen foreslås fra veiledende pris + mva.</p></div>
+                <button type="button" class="ks-x" aria-label="Lukk" @onclick="@(() => _modal = null)"><KassaIkon Navn="x" /></button>
+            </div>
+            <div class="ks-modal-inn">
+                <label class="ks-sokfelt" style="margin-bottom:10px"><KassaIkon Navn="sok" /><input placeholder="Søk navn, varenummer eller EAN" @bind="_hentSok" @bind:event="oninput" @bind:after="SokKomponenter" /></label>
+                @foreach (var c in _treff)
+                {
+                    var komp = c;
+                    var finnes = _varer.Any(v => v.ComponentId == c.Id);
+                    <div class="ks-sjekk" style="cursor:default">
+                        <span class="ks-vareikon" style="background:var(--flate2)">@if (_treffBilde.Contains(c.Id)) {<img src="@($"/komponent/{c.Id}/bilde?w=80")" alt="" />} else {<KassaIkon Navn="boks" />}</span>
+                        <span style="flex:1;min-width:0"><b style="display:block">@c.Navn</b><small style="color:var(--dempet)">@string.Join(" · ", new[] { c.Produktkode, c.Type?.Navn }.Where(s => !string.IsNullOrWhiteSpace(s)))</small></span>
+                        @if (finnes)
+                        {
+                            <span class="ks-merke ks-m-gra">Ligger i kassa</span>
+                        }
+                        else
+                        {
+                            <button type="button" class="ks-knapp sek" style="height:36px" @onclick="@(() => HentInn(komp))"><KassaIkon Navn="pluss" />Legg til</button>
+                        }
+                    </div>
+                }
+                @if (_treff.Count == 0 && !string.IsNullOrWhiteSpace(_hentSok))
+                {
+                    <p class="ks-tom" style="padding:16px">Ingen treff.</p>
+                }
+            </div>
+        </div>
+    </div>
+}
+else if (_modal == "oppsett" && _oppsett is { } o)
+{
+    <div class="ks-bak" @onclick="AvbrytOppsett">
+        <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Oppsett">
+            <div class="ks-modal-topp">
+                <span class="ks-mik" style="background:var(--aks-lys);color:var(--aks)"><KassaIkon Navn="innst" /></span>
+                <div><h2>Oppsett av kassa</h2><p>Firmanavn, adresse og org.nr. hentes fra organisasjonen</p></div>
+                <button type="button" class="ks-x" aria-label="Lukk" @onclick="AvbrytOppsett"><KassaIkon Navn="x" /></button>
+            </div>
+            <div class="ks-modal-inn">
+                <label class="ks-felt"><span>Navn på kassen</span><input @bind="o.KasseNavn" /></label>
+                <label class="ks-felt"><span>Vekselbeholdning (blir igjen i kassen)</span><input @bind="_vekselTekst" inputmode="decimal" /></label>
+                <label class="ks-felt"><span>Tekst nederst på kontantfakturaen</span><input @bind="o.Bunntekst" /></label>
+                <label class="ks-sjekk"><input type="checkbox" @bind="o.MvaRegistrert" /><span>Mva-registrert («MVA» etter org.nr. og mva på kontantfakturaen)</span></label>
+            </div>
+            <div class="ks-modal-bunn">
+                <button type="button" class="ks-knapp sek" @onclick="AvbrytOppsett">Avbryt</button>
+                <button type="button" class="ks-knapp" @onclick="LagreOppsett"><KassaIkon Navn="sjekk" />Lagre</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<KasseVare> _varer = [];
+    private HashSet<int> _medBilde = [];
+    private string _sok = "";
+    private string? _modal;
+    private KasseVare? _red;
+    private string _prisTekst = "";
+    private string? _feil;
+    private string _hentSok = "";
+    private List<Component> _treff = [];
+    private HashSet<int> _treffBilde = [];
+    private KasseOppsett? _oppsett;
+    private string _vekselTekst = "";
+
+    private List<KasseVare> Filtrert => _varer.Where(v => string.IsNullOrWhiteSpace(_sok)
+        || v.Navn.Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase) || v.Kategori.Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase)).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _oppsett = await Kassa.OppsettAsync();
+        _vekselTekst = KassaDokument.Kr(_oppsett.Vekselbeholdning);
+        await Last();
+    }
+
+    private async Task Last()
+    {
+        _varer = await Db.KasseVarer.Include(v => v.Component).OrderBy(v => v.Kategori).ThenBy(v => v.Rekkefolge).ThenBy(v => v.Navn).ToListAsync();
+        var ider = _varer.Select(v => v.ComponentId).OfType<int>().Distinct().ToList();
+        _medBilde = ider.Count == 0 ? [] : await Db.KomponenterMedFilAsync("BildeData", ider);
+    }
+
+    private static decimal? Tall(string? s)
+    {
+        var t = (s ?? "").Replace(" ", "").Replace(" ", "");
+        return decimal.TryParse(t.Contains(',') ? t.Replace(".", "").Replace(',', '.') : t, NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : null;
+    }
+
+    private void Ny()
+    {
+        _red = new KasseVare { Navn = "", Kategori = _varer.FirstOrDefault()?.Kategori ?? "Annet" };
+        _prisTekst = "";
+        _feil = null;
+        _modal = "rediger";
+    }
+
+    private void Rediger(KasseVare v)
+    {
+        _red = v;
+        _prisTekst = KassaDokument.Kr(v.PrisInklMva);
+        _feil = null;
+        _modal = "rediger";
+    }
+
+    private async Task AvbrytRed()
+    {
+        if (_red is { Id: > 0 })
+        {
+            await Db.Entry(_red).ReloadAsync();
+        }
+
+        _modal = null;
+    }
+
+    private async Task Lagre()
+    {
+        if (_red is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_red.Navn))
+        {
+            _feil = "Skriv inn et navn.";
+            return;
+        }
+
+        if (Tall(_prisTekst) is not { } pris || pris < 0)
+        {
+            _feil = "Skriv inn en gyldig pris.";
+            return;
+        }
+
+        _red.Navn = _red.Navn.Trim();
+        _red.Kategori = string.IsNullOrWhiteSpace(_red.Kategori) ? "Annet" : _red.Kategori.Trim();
+        _red.Strekkode = string.IsNullOrWhiteSpace(_red.Strekkode) ? null : _red.Strekkode.Trim();
+        _red.PrisInklMva = KassaService.Rund(pris);
+        if (_red.Id == 0)
+        {
+            Db.KasseVarer.Add(_red);
+        }
+
+        await Db.SaveChangesAsync();
+        _modal = null;
+        await Last();
+    }
+
+    private async Task SokKomponenter()
+    {
+        var s = _hentSok.Trim();
+        if (s.Length < 2)
+        {
+            _treff = [];
+            return;
+        }
+
+        _treff = await Db.Components.AsNoTracking().Include(c => c.Type)
+            .Where(c => c.Aktiv && (c.Navn.Contains(s) || (c.Produktkode != null && c.Produktkode.Contains(s)) || c.Gtin == s))
+            .OrderBy(c => c.Navn).Take(30).ToListAsync();
+        _treffBilde = _treff.Count == 0 ? [] : await Db.KomponenterMedFilAsync("BildeData", _treff.Select(c => c.Id).ToList());
+    }
+
+    private async Task HentInn(Component c)
+    {
+        var eksMva = c.PrisVeiledende ?? c.PrisNetto ?? 0;
+        var vare = new KasseVare
+        {
+            Navn = c.Navn,
+            Kategori = c.Type?.Navn ?? "Annet",
+            ComponentId = c.Id,
+            PrisInklMva = KassaService.Rund(eksMva * 1.25m),
+            Strekkode = c.Gtin,
+            Ikon = "boks"
+        };
+        Db.KasseVarer.Add(vare);
+        await Db.SaveChangesAsync();
+        await Last();
+        Rediger(_varer.First(v => v.Id == vare.Id));
+    }
+
+    private async Task AvbrytOppsett()
+    {
+        if (_oppsett is not null)
+        {
+            await Db.Entry(_oppsett).ReloadAsync();
+            _vekselTekst = KassaDokument.Kr(_oppsett.Vekselbeholdning);
+        }
+
+        _modal = null;
+    }
+
+    private async Task LagreOppsett()
+    {
+        if (_oppsett is null)
+        {
+            return;
+        }
+
+        if (Tall(_vekselTekst) is { } v && v >= 0)
+        {
+            _oppsett.Vekselbeholdning = v;
+        }
+
+        await Db.SaveChangesAsync();
+        _modal = null;
+    }
+}

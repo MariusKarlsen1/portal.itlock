@@ -1,0 +1,186 @@
+@page "/kassa/journal"
+@layout PortalItlock.Web.Components.Layout.KassaLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject KassaService Kassa
+
+<PageTitle>Salg i dag</PageTitle>
+<KreverModulVakt Modul="@TilleggsModuler.Kassa" />
+
+@* Alle salg og kreditnotaer for en dag. Salg slettes eller endres aldri;
+   feil rettes med kreditnota, så nummerserien er uten hull. *@
+<div class="ks-verktoy">
+    <input type="date" class="ks-velger" value="@_dato.ToString("yyyy-MM-dd")" @onchange="VelgDato" aria-label="Dato" />
+    <label class="ks-sokfelt" style="max-width:340px"><KassaIkon Navn="sok" /><input placeholder="Søk nummer, vare eller kunde" @bind="_sok" @bind:event="oninput" /></label>
+    <div class="ks-hoyre"><span class="ks-merke ks-m-gra">@_salg.Count(s => s.Type != KasseSalgType.Kreditnota) salg · @_salg.Count(s => s.Type == KasseSalgType.Kreditnota) kreditnota</span></div>
+</div>
+<div class="ks-info"><KassaIkon Navn="info" /><span>Salg kan ikke slettes eller endres. Feil rettes med kreditnota, slik at nummerserien er uten hull.</span></div>
+@if (_melding is not null)
+{
+    <div class="ks-info gronn"><KassaIkon Navn="sjekk" /><span>@_melding</span></div>
+}
+<div class="ks-kort">
+    <table>
+        <tr><th>Nr.</th><th>Tid</th><th>Varer</th><th>Kunde</th><th>Betaling</th><th class="h">Beløp</th><th class="h"></th></tr>
+        @if (Filtrert.Count == 0)
+        {
+            <tr><td colspan="7" class="ks-tom">@(_salg.Count == 0 ? "Ingen salg denne dagen." : "Ingen treff.")</td></tr>
+        }
+        @foreach (var s in Filtrert)
+        {
+            var salg = s;
+            var kreditert = _kreditert.Contains(s.Id);
+            <tr class="klikk" @onclick="@(() => _kvittering = salg.Id)">
+                <td><b>@s.Nummer</b></td>
+                <td class="tall">@s.Tidspunkt.ToString("HH:mm")</td>
+                <td style="color:var(--dempet)">@string.Join(", ", s.Linjer.Select(l => $"{Math.Abs(l.Antall)} × {l.Navn}"))</td>
+                <td>@(s.KundeNavn ?? "–")</td>
+                <td>
+                    @if (s.Type == KasseSalgType.Kreditnota)
+                    {
+                        <span class="ks-merke ks-m-kred"><KassaIkon Navn="angre" />Kreditnota for @(s.KrediterSalgId is { } g && _nummer.TryGetValue(g, out var gn) ? gn : null)</span>
+                    }
+                    else
+                    {
+                        <span class="ks-merke @(s.Type == KasseSalgType.Kort ? "ks-m-kort" : "ks-m-kontant")"><KassaIkon Navn="@(s.Type == KasseSalgType.Kort ? "kort" : "kontant")" />@(s.Type == KasseSalgType.Kort ? "Kort" : "Kontant")</span>
+                    }
+                </td>
+                <td class="h tall"><b>@KassaDokument.Kr(s.Total)</b></td>
+                <td class="h">
+                    @if (s.Type != KasseSalgType.Kreditnota && !kreditert)
+                    {
+                        <button type="button" class="ks-lenke-knapp" @onclick="@(() => ApneKrediter(salg))" @onclick:stopPropagation="true"><KassaIkon Navn="angre" />Krediter</button>
+                    }
+                    else if (kreditert)
+                    {
+                        <span class="ks-merke ks-m-gra">Kreditert</span>
+                    }
+                </td>
+            </tr>
+        }
+    </table>
+</div>
+
+@if (_krediter is { } k)
+{
+    <div class="ks-bak" @onclick="@(() => _krediter = null)">
+        <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Krediter">
+            <div class="ks-modal-topp">
+                <span class="ks-mik" style="background:var(--rod-lys);color:var(--rod)"><KassaIkon Navn="angre" /></span>
+                <div><h2>Krediter salg @k.Nummer</h2><p>Salg slettes aldri – det lages en kreditnota</p></div>
+                <button type="button" class="ks-x" aria-label="Lukk" @onclick="@(() => _krediter = null)"><KassaIkon Navn="x" /></button>
+            </div>
+            <div class="ks-modal-inn">
+                @foreach (var l in k.Linjer)
+                {
+                    var id = l.Id;
+                    <label class="ks-sjekk"><input type="checkbox" checked="@_valgte.Contains(id)" @onchange="@(e => { if (e.Value is true) _valgte.Add(id); else _valgte.Remove(id); })" /><span style="flex:1">@l.Antall × @l.Navn</span><b class="tall">@KassaDokument.Kr(l.Belop)</b></label>
+                }
+                <label class="ks-felt" style="margin-top:12px"><span>Årsak</span><input @bind="_arsak" placeholder="F.eks. retur, feil vare" /></label>
+                <div class="ks-info gul" style="margin:0"><KassaIkon Navn="varsel" /><span>@(k.Type == KasseSalgType.Kort ? "Kortsalg: gjør refusjon av samme beløp på bankterminalen." : "Kontantsalg: gi kunden pengene tilbake fra kassen.")</span></div>
+                @if (_feil is not null)
+                {
+                    <p class="ks-feil">@_feil</p>
+                }
+            </div>
+            <div class="ks-modal-bunn">
+                <button type="button" class="ks-knapp sek" @onclick="@(() => _krediter = null)">Avbryt</button>
+                <button type="button" class="ks-knapp rod" disabled="@(_valgte.Count == 0 || _lagrer)" @onclick="Krediter"><KassaIkon Navn="angre" />@(_lagrer ? "Lagrer …" : "Lag kreditnota")</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_kvittering is { } kv)
+{
+    <KassaKvittering SalgId="kv" OnLukk="@(() => _kvittering = null)" />
+}
+
+@code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private DateTime _dato = NorskTid.Idag;
+    private string _sok = "";
+    private List<KasseSalg> _salg = [];
+    private HashSet<int> _kreditert = [];
+    private Dictionary<int, int> _nummer = [];
+    private KasseSalg? _krediter;
+    private HashSet<int> _valgte = [];
+    private string? _arsak;
+    private string? _feil;
+    private string? _melding;
+    private bool _lagrer;
+    private int? _kvittering;
+
+    private List<KasseSalg> Filtrert => _salg
+        .Where(s => string.IsNullOrWhiteSpace(_sok) || s.Nummer.ToString().Contains(_sok.Trim())
+            || (s.KundeNavn?.Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase) ?? false)
+            || s.Linjer.Any(l => l.Navn.Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase)))
+        .OrderByDescending(s => s.Nummer).ToList();
+
+    protected override Task OnInitializedAsync() => Last();
+
+    private async Task Last()
+    {
+        var til = _dato.AddDays(1);
+        _salg = await Db.KasseSalg.AsNoTracking().Include(s => s.Linjer).Where(s => s.Tidspunkt >= _dato && s.Tidspunkt < til).ToListAsync();
+        var ider = _salg.Select(s => s.Id).ToList();
+        // Salg som er kreditert (også av en kreditnota en annen dag).
+        _kreditert = (await Db.KasseSalg.AsNoTracking().Where(s => s.KrediterSalgId != null && ider.Contains(s.KrediterSalgId.Value))
+            .Select(s => s.KrediterSalgId!.Value).ToListAsync()).ToHashSet();
+        // Nummeret på salget hver kreditnota gjelder.
+        var gjelder = _salg.Where(s => s.KrediterSalgId != null).Select(s => s.KrediterSalgId!.Value).ToList();
+        _nummer = await Db.KasseSalg.AsNoTracking().Where(s => gjelder.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Nummer);
+    }
+
+    private async Task VelgDato(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var d))
+        {
+            _dato = d.Date;
+            _melding = null;
+            await Last();
+        }
+    }
+
+    private void ApneKrediter(KasseSalg s)
+    {
+        _krediter = s;
+        _valgte = s.Linjer.Select(l => l.Id).ToHashSet();
+        _arsak = null;
+        _feil = null;
+    }
+
+    private async Task Krediter()
+    {
+        if (_krediter is null)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        _feil = null;
+        try
+        {
+            var bruker = AuthStateTask is null ? null : (await AuthStateTask).User;
+            var brukerId = int.TryParse(bruker?.FindFirst("BrukerId")?.Value, out var id) ? id : (int?)null;
+            var kred = await Kassa.KrediterAsync(_krediter.Id, _valgte, _arsak, brukerId, bruker?.Identity?.Name);
+            _krediter = null;
+            _dato = NorskTid.Idag;
+            await Last();
+            _kvittering = kred.Id;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _feil = ex.Message;
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+}

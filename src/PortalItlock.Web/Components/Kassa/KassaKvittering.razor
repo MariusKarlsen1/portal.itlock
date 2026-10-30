@@ -1,0 +1,114 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject KassaService Kassa
+@inject EmailService Epost
+@inject ITenantContext TenantCtx
+
+@* Kontantfaktura eller kreditnota som kassalapp, med utskrift og e-post. *@
+@if (_salg is { } s)
+{
+    var kred = s.Type == KasseSalgType.Kreditnota;
+    <div class="ks-bak" @onclick="Lukk">
+        <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Kvittering">
+            <div class="ks-modal-topp">
+                <span class="ks-mik" style="background:var(@(kred ? "--rod-lys" : "--gronn-lys"));color:var(@(kred ? "--rod" : "--gronn"))"><KassaIkon Navn="@(kred ? "angre" : "sjekk")" /></span>
+                <div>
+                    <h2>@(kred ? $"Kreditnota {s.Nummer}" : NyttSalg ? "Salget er fullført" : $"Kontantfaktura {s.Nummer}")</h2>
+                    <p>@(kred ? "Pengene er betalt tilbake og registrert" : $"Kontantfaktura {s.Nummer} · {(s.Type == KasseSalgType.Kort ? "kort" : "kontant")} · {KassaDokument.Kr(s.Total)} kr")</p>
+                </div>
+                <button type="button" class="ks-x" aria-label="Lukk" @onclick="Lukk"><KassaIkon Navn="x" /></button>
+            </div>
+            <div class="ks-lapp-ramme">@((MarkupString)KassaDokument.Lapp(s, _firma!, _gjelder))</div>
+            @if (_visEpost)
+            {
+                <div class="ks-modal-inn" style="padding-top:12px">
+                    <label class="ks-felt"><span>Send til e-post</span><input type="email" @bind="_epost" placeholder="kunde@eksempel.no" /></label>
+                </div>
+            }
+            @if (_melding is not null)
+            {
+                <div class="ks-info gronn" style="margin:10px 22px 0"><KassaIkon Navn="sjekk" /><span>@_melding</span></div>
+            }
+            @if (_feil is not null)
+            {
+                <p class="ks-feil" style="margin:8px 22px 0">@_feil</p>
+            }
+            <div class="ks-modal-bunn tre">
+                <a class="ks-knapp sek" href="@($"/kassa/salg/{s.Id}/kvittering?skriv=1")" target="_blank" rel="noopener"><KassaIkon Navn="skriv" />Skriv ut</a>
+                <button type="button" class="ks-knapp sek" disabled="@_sender" @onclick="SendEpost"><KassaIkon Navn="epost" />@(_sender ? "Sender …" : _visEpost ? "Send" : "E-post")</button>
+                <button type="button" class="ks-knapp mork" @onclick="Lukk">@(NyttSalg ? "Nytt salg" : "Lukk")</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public int SalgId { get; set; }
+    [Parameter] public bool NyttSalg { get; set; }
+    [Parameter] public EventCallback OnLukk { get; set; }
+
+    private KasseSalg? _salg;
+    private KasseSalg? _gjelder;
+    private KassaDokument.Firma? _firma;
+    private bool _visEpost;
+    private bool _sender;
+    private string? _epost;
+    private string? _melding;
+    private string? _feil;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _salg = await Db.KasseSalg.AsNoTracking().Include(s => s.Linjer).FirstOrDefaultAsync(s => s.Id == SalgId);
+        _gjelder = _salg?.KrediterSalgId is { } kid ? await Db.KasseSalg.AsNoTracking().FirstOrDefaultAsync(s => s.Id == kid) : null;
+        _firma = KassaDokument.FraTenant(TenantCtx.Current, await Kassa.OppsettAsync());
+        _epost = _salg?.KundeEpost;
+        _visEpost = false;
+        _melding = _feil = null;
+    }
+
+    private Task Lukk() => OnLukk.InvokeAsync();
+
+    private async Task SendEpost()
+    {
+        if (_salg is null)
+        {
+            return;
+        }
+
+        if (!_visEpost && string.IsNullOrWhiteSpace(_epost))
+        {
+            _visEpost = true;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_epost) || !_epost.Contains('@'))
+        {
+            _visEpost = true;
+            _feil = "Skriv inn en gyldig e-postadresse.";
+            return;
+        }
+
+        _sender = true;
+        _feil = null;
+        try
+        {
+            var emne = (_salg.Type == KasseSalgType.Kreditnota ? "Kreditnota " : "Kontantfaktura ") + _salg.Nummer + " fra " + _firma!.Navn;
+            var ok = await Epost.SendAsync(_epost.Trim(), emne, KassaDokument.Epost(_salg, _firma, _gjelder));
+            if (ok)
+            {
+                _melding = $"Sendt til {_epost.Trim()}.";
+                _visEpost = false;
+            }
+            else
+            {
+                _feil = "E-posten ble ikke sendt. Prøv igjen senere.";
+            }
+        }
+        finally
+        {
+            _sender = false;
+        }
+    }
+}

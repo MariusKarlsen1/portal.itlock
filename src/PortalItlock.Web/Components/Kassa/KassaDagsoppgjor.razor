@@ -1,0 +1,274 @@
+@page "/kassa/dagsoppgjor"
+@layout PortalItlock.Web.Components.Layout.KassaLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+@inject KassaService Kassa
+@inject ITenantContext TenantCtx
+
+<PageTitle>Dagsoppgjør</PageTitle>
+<KreverModulVakt Modul="@TilleggsModuler.Kassa" />
+
+@* Dagsoppgjør: terminalens total mot kortsalg i kassa, og opptelling av
+   kontantene mot veksel + kontantsalg. Avvik må forklares. Når dagen lukkes,
+   tas alle salg som ikke er med i et oppgjør, og oppgjøret låses. *@
+@if (_t is { } t)
+{
+    var forventet = _veksel + t.NettoKontant;
+    var talt = _telling.Sum(x => (decimal)x.Key * x.Value);
+    var terminal = Tall(_terminal);
+    var difT = (terminal ?? 0) - t.NettoKort;
+    var difK = talt - forventet;
+    var kortOk = terminal is not null && Math.Abs(difT) < 0.5m;
+    var kontOk = _tellingStartet && Math.Abs(difK) < 0.5m;
+
+    @if (_lukket is { } l)
+    {
+        <div class="ks-info gronn"><KassaIkon Navn="las" /><span><b>Dagen er lukket</b> kl. @l.Lukket.ToString("HH:mm") av @l.LukketAv. Oppgjøret er lagret og kan ikke endres. <a href="@($"/kassa/dagsoppgjor/{l.Id}/rapport?skriv=1")" target="_blank" rel="noopener" style="color:inherit;font-weight:700">Skriv ut dagsrapporten</a></span></div>
+    }
+
+    <div class="ks-nokkeltall">
+        @Nokkel("trend", "var(--aks-lys)", "var(--aks)", "Omsetning", t.Omsetning, $"{t.AntallSalg} salg{(t.AntallKreditnota > 0 ? $" · {t.AntallKreditnota} kreditnota" : "")}")
+        @Nokkel("kort", "var(--bla-lys)", "var(--bla)", "Kort", t.NettoKort, t.KortTilbake != 0 ? $"etter refusjon {KassaDokument.Kr(-t.KortTilbake)}" : "ingen refusjoner")
+        @Nokkel("kontant", "var(--gronn-lys)", "var(--gronn)", "Kontant", t.NettoKontant, t.KontantTilbake != 0 ? $"etter {KassaDokument.Kr(-t.KontantTilbake)} tilbake" : "ingen tilbakebetalt")
+        @Nokkel("mva", "var(--gul-lys)", "var(--gul)", "Utgående mva", t.Mva, string.Join(" · ", _mva.Select(m => $"{m.Sats:0.#} %")))
+    </div>
+
+    @if (t.AntallSalg + t.AntallKreditnota == 0 && _lukket is null)
+    {
+        <div class="ks-info"><KassaIkon Navn="info" /><span>Ingen salg siden forrige dagsoppgjør. Du kan likevel telle kassen og lukke dagen.</span></div>
+    }
+
+    <div class="ks-oppgjor">
+        <div>
+            <div class="ks-kort ks-stegkort">
+                <div class="hode"><span class="nr @(kortOk ? "ok" : "")">@if (kortOk) {<KassaIkon Navn="sjekk" />} else {<span>1</span>}</span><div><h3>Kort mot bankterminalen</h3><small>Ta dagsoppgjør på terminalen og skriv inn totalen fra terminalkvitteringen</small></div></div>
+                <div class="kropp">
+                    <input class="ks-stor-inn tall" inputmode="decimal" placeholder="0,00" @bind="_terminal" disabled="@(_lukket is not null)" aria-label="Total fra terminalen" />
+                    <div class="ks-linjer2" style="margin-top:12px">
+                        <div><span>Kort registrert i kassa</span><b class="tall">@Kr(t.NettoKort)</b></div>
+                        @if (terminal is not null)
+                        {
+                            <div class="sterk"><span>Differanse</span><span class="tall @(kortOk ? "ks-ok" : "ks-avvik")">@(kortOk ? "Stemmer" : Kr(difT))</span></div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="ks-kort ks-stegkort">
+                <div class="hode"><span class="nr @(kontOk ? "ok" : "")">@if (kontOk) {<KassaIkon Navn="sjekk" />} else {<span>2</span>}</span><div><h3>Tell kontantene</h3><small>Antall av hver valør i kassen</small></div></div>
+                <div class="kropp">
+                    <div class="ks-valorer">
+                        @foreach (var v in Valorer)
+                        {
+                            var valor = v;
+                            <label><span class="val">@v kr</span><input inputmode="numeric" disabled="@(_lukket is not null)" value="@(_telling.TryGetValue(v, out var n) && n > 0 ? n.ToString() : "")" @onchange="@(e => SettTelling(valor, e.Value?.ToString()))" aria-label="@($"Antall {v} kr")" /></label>
+                        }
+                    </div>
+                    <div class="ks-linjer2">
+                        <div><span>Veksel ved start</span><span><input class="ks-inn-liten tall" style="width:110px;height:30px" @bind="_vekselTekst" @bind:after="SettVeksel" disabled="@(_lukket is not null)" aria-label="Veksel ved start" /></span></div>
+                        <div><span>+ kontantsalg</span><span class="tall">@Kr(t.NettoKontant)</span></div>
+                        <div class="sterk"><span>Skal være i kassen</span><span class="tall">@Kr(forventet)</span></div>
+                        <div><span>Opptalt</span><b class="tall">@Kr(talt)</b></div>
+                        @if (_tellingStartet)
+                        {
+                            <div class="sterk"><span>Differanse</span><span class="tall @(kontOk ? "ks-ok" : "ks-avvik")">@(kontOk ? "Stemmer" : Kr(difK))</span></div>
+                            <div style="color:var(--dempet)"><span>Til bank (@KassaDokument.Kr(_veksel) blir igjen som veksel)</span><span class="tall">@Kr(Math.Max(0, talt - _veksel))</span></div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="ks-kort ks-stegkort">
+                <div class="hode"><span class="nr">3</span><div><h3>Varegrupper og mva</h3><small>Fordeling av salgene i oppgjøret</small></div></div>
+                <div style="padding:6px 0 4px">
+                    <table>
+                        <tr><th>Varegruppe</th><th class="h">Antall</th><th class="h">Grunnlag</th><th class="h">Mva</th><th class="h">Totalt</th></tr>
+                        @if (_grupper.Count == 0)
+                        {
+                            <tr><td colspan="5" class="ks-tom" style="padding:16px">Ingen salg.</td></tr>
+                        }
+                        @foreach (var g in _grupper)
+                        {
+                            <tr><td>@g.Navn</td><td class="h">@g.Antall</td><td class="h tall">@KassaDokument.Kr(g.Belop - g.Mva)</td><td class="h tall">@KassaDokument.Kr(g.Mva)</td><td class="h tall"><b>@KassaDokument.Kr(g.Belop)</b></td></tr>
+                        }
+                    </table>
+                </div>
+            </div>
+
+            @if (_tidligere.Count > 0)
+            {
+                <div class="ks-kort" style="margin-top:4px">
+                    <div class="ks-seksjon-t"><KassaIkon Navn="kalender" />Tidligere dagsoppgjør</div>
+                    <table>
+                        <tr><th>Lukket</th><th class="h">Omsetning</th><th class="h">Kassediff.</th><th>Av</th><th></th></tr>
+                        @foreach (var o in _tidligere)
+                        {
+                            <tr><td>@o.Lukket.ToString("dd.MM.yyyy HH:mm")</td><td class="h tall">@KassaDokument.Kr(o.Omsetning)</td><td class="h tall @(Math.Abs(o.DifferanseKontant) >= 0.5m ? "ks-avvik" : "")">@KassaDokument.Kr(o.DifferanseKontant)</td><td>@o.LukketAv</td><td class="h"><a class="ks-lenke-knapp" href="@($"/kassa/dagsoppgjor/{o.Id}/rapport")" target="_blank" rel="noopener"><KassaIkon Navn="kvittering" />Rapport</a></td></tr>
+                        }
+                    </table>
+                </div>
+            }
+        </div>
+
+        <div class="ks-kort ks-zrapport">
+            <div class="ks-seksjon-t"><KassaIkon Navn="kvittering" />Dagsrapport (Z)</div>
+            <div class="lapp">
+                <div class="midt"><b class="firma">@_firma?.Navn</b><br>@NorskTid.Idag.ToString("dd.MM.yyyy")</div><hr>
+                <div class="rad"><span>Antall salg</span><span>@t.AntallSalg</span></div>
+                <div class="rad"><span>Kreditnotaer</span><span>@t.AntallKreditnota</span></div>
+                <div class="rad"><span>Bilag</span><span>@(t.FraNummer is null ? "–" : $"{t.FraNummer}–{t.TilNummer}")</span></div><hr>
+                <div class="rad"><span>Kort</span><span>@KassaDokument.Kr(t.NettoKort)</span></div>
+                <div class="rad"><span>Kontant</span><span>@KassaDokument.Kr(t.NettoKontant)</span></div>
+                <div class="rad tot"><span>OMSETNING</span><span>@KassaDokument.Kr(t.Omsetning)</span></div>
+                @foreach (var m in _mva)
+                {
+                    <div class="rad"><span>Mva @m.Sats.ToString("0.#") %</span><span>@KassaDokument.Kr(m.Mva)</span></div>
+                }
+                <hr>
+                <div class="rad"><span>Terminal</span><span>@(terminal is null ? "–" : KassaDokument.Kr(terminal.Value))</span></div>
+                <div class="rad"><span>Opptalt</span><span>@(_tellingStartet ? KassaDokument.Kr(talt) : "–")</span></div>
+                <div class="rad"><span>Kassedifferanse</span><span>@(_tellingStartet ? KassaDokument.Kr(difK) : "–")</span></div><hr>
+                <div class="midt">@(_lukket is null ? "FORELØPIG" : $"LUKKET {_lukket.Lukket:HH:mm}")</div>
+            </div>
+            <div style="padding:12px 16px 16px;display:grid;gap:8px">
+                @if (_lukket is not null)
+                {
+                    <a class="ks-knapp sek" href="@($"/kassa/dagsoppgjor/{_lukket.Id}/rapport?skriv=1")" target="_blank" rel="noopener"><KassaIkon Navn="skriv" />Skriv ut dagsrapport</a>
+                    <button type="button" class="ks-knapp mork" @onclick="NyDag"><KassaIkon Navn="kurv" />Start ny dag</button>
+                }
+                else
+                {
+                    @if (!(kortOk && kontOk) && terminal is not null && _tellingStartet)
+                    {
+                        <label class="ks-felt" style="margin:0"><span>Forklar avviket</span><textarea @bind="_forklaring" placeholder="F.eks. 20 kr gitt feil i veksel"></textarea></label>
+                    }
+                    <button type="button" class="ks-knapp mork" disabled="@(terminal is null || !_tellingStartet || _lagrer || (!(kortOk && kontOk) && string.IsNullOrWhiteSpace(_forklaring)))" @onclick="Lukk"><KassaIkon Navn="las" />@(_lagrer ? "Lukker …" : "Lukk dagen")</button>
+                    <span style="font-size:12.5px;color:var(--dempet);text-align:center">@(terminal is null || !_tellingStartet ? "Fullfør steg 1 og 2 først" : kortOk && kontOk ? "Alt stemmer" : "Avvik må forklares")</span>
+                }
+                @if (_feil is not null)
+                {
+                    <p class="ks-feil">@_feil</p>
+                }
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <p class="ks-tom">Laster …</p>
+}
+
+@code {
+    private sealed record Gruppe(string Navn, int Antall, decimal Belop, decimal Mva);
+
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly int[] Valorer = [1000, 500, 200, 100, 50, 20, 10, 5, 1];
+
+    private KassaService.DagTall? _t;
+    private List<KassaService.Mvalinje> _mva = [];
+    private List<Gruppe> _grupper = [];
+    private List<KasseDagsoppgjor> _tidligere = [];
+    private KassaDokument.Firma? _firma;
+    private readonly Dictionary<int, int> _telling = [];
+    private bool _tellingStartet;
+    private string? _terminal;
+    private decimal _veksel;
+    private string _vekselTekst = "";
+    private string? _forklaring;
+    private string? _feil;
+    private bool _lagrer;
+    private KasseDagsoppgjor? _lukket;
+
+    private static string Kr(decimal v) => KassaDokument.Kr(v) + " kr";
+
+    private static decimal? Tall(string? s) =>
+        decimal.TryParse((s ?? "").Replace(" ", "").Replace(" ", "").Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _firma = KassaDokument.FraTenant(TenantCtx.Current, await Kassa.OppsettAsync());
+        _veksel = await Kassa.VekselStartAsync();
+        _vekselTekst = KassaDokument.Kr(_veksel);
+        await Last();
+    }
+
+    private async Task Last()
+    {
+        var salg = await Kassa.ApneSalgAsync();
+        _t = KassaService.Summer(salg);
+        var linjer = salg.SelectMany(s => s.Linjer).ToList();
+        _mva = KassaService.MvaFordeling(linjer);
+        _grupper = linjer.GroupBy(l => l.Kategori ?? "Annet").OrderBy(g => g.Key)
+            .Select(g => new Gruppe(g.Key, g.Sum(l => l.Antall), g.Sum(l => l.Belop), g.Sum(l => l.Mva))).ToList();
+        _tidligere = await Db.KasseDagsoppgjor.AsNoTracking().OrderByDescending(o => o.Lukket).Take(7).ToListAsync();
+    }
+
+    private void SettTelling(int valor, string? tekst)
+    {
+        _telling[valor] = int.TryParse(tekst, out var n) && n > 0 ? n : 0;
+        _tellingStartet = true;
+    }
+
+    private void SettVeksel()
+    {
+        if (Tall(_vekselTekst) is { } v && v >= 0)
+        {
+            _veksel = v;
+        }
+
+        _vekselTekst = KassaDokument.Kr(_veksel);
+    }
+
+    private async Task Lukk()
+    {
+        if (Tall(_terminal) is not { } terminal)
+        {
+            return;
+        }
+
+        _lagrer = true;
+        _feil = null;
+        try
+        {
+            var navn = AuthStateTask is null ? null : (await AuthStateTask).User.Identity?.Name;
+            _lukket = await Kassa.LukkDagAsync(terminal, _telling, _veksel, _forklaring, navn);
+            await Last();
+            // Tallene vises fra oppgjøret som ble lukket.
+            _t = new KassaService.DagTall(_lukket.AntallSalg, _lukket.AntallKreditnota, _lukket.Omsetning, _lukket.Mva, 0, 0, 0, 0, _lukket.FraNummer, _lukket.TilNummer)
+                with { Kort = _lukket.KortIKassa, Kontant = _lukket.KontantIKassa };
+            var linjer = await Db.KasseSalgLinjer.AsNoTracking().Where(l => l.KasseSalg!.DagsoppgjorId == _lukket.Id).ToListAsync();
+            _mva = KassaService.MvaFordeling(linjer);
+            _grupper = linjer.GroupBy(l => l.Kategori ?? "Annet").OrderBy(g => g.Key)
+                .Select(g => new Gruppe(g.Key, g.Sum(l => l.Antall), g.Sum(l => l.Belop), g.Sum(l => l.Mva))).Where(g => g.Antall != 0 || g.Belop != 0).ToList();
+        }
+        catch (InvalidOperationException ex)
+        {
+            _feil = ex.Message;
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    private async Task NyDag()
+    {
+        _lukket = null;
+        _telling.Clear();
+        _tellingStartet = false;
+        _terminal = null;
+        _forklaring = null;
+        await Last();
+    }
+
+    private RenderFragment Nokkel(string ikon, string bg, string fg, string tittel, decimal verdi, string under) => __builder =>
+    {
+        <div class="ks-kort ks-nokkel"><span class="top"><i style="background:@bg;color:@fg"><KassaIkon Navn="@ikon" /></i>@tittel</span><b class="tall">@Kr(verdi)</b><span class="under">@under</span></div>
+    };
+}

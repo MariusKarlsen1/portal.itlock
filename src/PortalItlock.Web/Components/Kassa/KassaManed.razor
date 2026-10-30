@@ -1,0 +1,141 @@
+@page "/kassa/maned"
+@layout PortalItlock.Web.Components.Layout.KassaLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Månedsoppgjør</PageTitle>
+<KreverModulVakt Modul="@TilleggsModuler.Kassa" />
+
+@* Alle dagsoppgjør i måneden samlet, med mva per sats og salgslinjene som
+   CSV til regnskapet. Salg som ikke er lukket ennå, vises som «Åpen». *@
+<div class="ks-verktoy">
+    <select class="ks-velger" value="@_valgt" @onchange="VelgManed" aria-label="Måned">
+        @foreach (var m in _maneder)
+        {
+            <option value="@m.ToString("yyyy-MM")">@Nb.TextInfo.ToTitleCase(m.ToString("MMMM yyyy", Nb))</option>
+        }
+    </select>
+    <div class="ks-hoyre">
+        <a class="ks-knapp sek" href="@($"/kassa/salg.csv?ar={_fra.Year}&mnd={_fra.Month}")"><KassaIkon Navn="last" />Salgslinjer (CSV)</a>
+    </div>
+</div>
+
+<div class="ks-nokkeltall">
+    @Nokkel("trend", "var(--aks-lys)", "var(--aks)", "Omsetning", Omsetning, $"{_oppgjor.Count} dager · {_oppgjor.Sum(o => o.AntallSalg) + (_apen?.AntallSalg ?? 0)} salg")
+    @Nokkel("kort", "var(--bla-lys)", "var(--bla)", "Kort", Kort, Omsetning == 0 ? "" : $"{Kort / Omsetning:P0} av omsetningen")
+    @Nokkel("kontant", "var(--gronn-lys)", "var(--gronn)", "Kontant", Kontant, Omsetning == 0 ? "" : $"{Kontant / Omsetning:P0} av omsetningen")
+    @Nokkel("mva", "var(--gul-lys)", "var(--gul)", "Utgående mva", _mva.Sum(m => m.Mva), string.Join(" · ", _mva.Select(m => $"{m.Sats:0.#} %: {KassaDokument.Kr(m.Mva)}")))
+</div>
+
+<div class="ks-info"><KassaIkon Navn="info" /><span>Salgslinjene (CSV) har alle kontantfakturaer og kreditnotaer i måneden med mva per linje, klare til å føres i regnskapet.</span></div>
+
+<div class="ks-kort">
+    <table>
+        <tr><th>Dag</th><th class="h">Salg</th><th class="h">Kort</th><th class="h">Kontant</th><th class="h">Totalt</th><th class="h">Mva</th><th class="h">Kassediff.</th><th>Status</th><th></th></tr>
+        @if (_oppgjor.Count == 0 && _apen is null)
+        {
+            <tr><td colspan="9" class="ks-tom">Ingen salg i måneden.</td></tr>
+        }
+        @foreach (var o in _oppgjor)
+        {
+            <tr>
+                <td>@o.Lukket.ToString("dd.MM.yyyy")</td>
+                <td class="h">@o.AntallSalg</td>
+                <td class="h tall">@KassaDokument.Kr(o.KortIKassa)</td>
+                <td class="h tall">@KassaDokument.Kr(o.KontantIKassa)</td>
+                <td class="h tall"><b>@KassaDokument.Kr(o.Omsetning)</b></td>
+                <td class="h tall">@KassaDokument.Kr(o.Mva)</td>
+                <td class="h tall @(Math.Abs(o.DifferanseKontant) >= 0.5m || Math.Abs(o.DifferanseKort) >= 0.5m ? "ks-avvik" : "")">@KassaDokument.Kr(o.DifferanseKontant + o.DifferanseKort)</td>
+                <td><span class="ks-merke ks-m-kontant"><KassaIkon Navn="las" />Lukket</span></td>
+                <td class="h"><a class="ks-lenke-knapp" href="@($"/kassa/dagsoppgjor/{o.Id}/rapport")" target="_blank" rel="noopener"><KassaIkon Navn="kvittering" />Rapport</a></td>
+            </tr>
+        }
+        @if (_apen is { } a)
+        {
+            <tr>
+                <td>I dag (ikke lukket)</td>
+                <td class="h">@a.AntallSalg</td>
+                <td class="h tall">@KassaDokument.Kr(a.NettoKort)</td>
+                <td class="h tall">@KassaDokument.Kr(a.NettoKontant)</td>
+                <td class="h tall"><b>@KassaDokument.Kr(a.Omsetning)</b></td>
+                <td class="h tall">@KassaDokument.Kr(a.Mva)</td>
+                <td class="h">–</td>
+                <td><span class="ks-merke ks-m-gul">Åpen</span></td>
+                <td></td>
+            </tr>
+        }
+        @if (_oppgjor.Count + (_apen is null ? 0 : 1) > 1)
+        {
+            <tr class="sumrad">
+                <td>Sum</td>
+                <td class="h">@(_oppgjor.Sum(o => o.AntallSalg) + (_apen?.AntallSalg ?? 0))</td>
+                <td class="h tall">@KassaDokument.Kr(Kort)</td>
+                <td class="h tall">@KassaDokument.Kr(Kontant)</td>
+                <td class="h tall">@KassaDokument.Kr(Omsetning)</td>
+                <td class="h tall">@KassaDokument.Kr(_mva.Sum(m => m.Mva))</td>
+                <td class="h tall">@KassaDokument.Kr(_oppgjor.Sum(o => o.DifferanseKontant + o.DifferanseKort))</td>
+                <td></td><td></td>
+            </tr>
+        }
+    </table>
+</div>
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+
+    private List<DateTime> _maneder = [];
+    private string _valgt = "";
+    private DateTime _fra;
+    private List<KasseDagsoppgjor> _oppgjor = [];
+    private KassaService.DagTall? _apen;
+    private List<KassaService.Mvalinje> _mva = [];
+
+    private decimal Kort => _oppgjor.Sum(o => o.KortIKassa) + (_apen?.NettoKort ?? 0);
+    private decimal Kontant => _oppgjor.Sum(o => o.KontantIKassa) + (_apen?.NettoKontant ?? 0);
+    private decimal Omsetning => _oppgjor.Sum(o => o.Omsetning) + (_apen?.Omsetning ?? 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var forste = await Db.KasseSalg.AsNoTracking().OrderBy(s => s.Tidspunkt).Select(s => (DateTime?)s.Tidspunkt).FirstOrDefaultAsync() ?? NorskTid.Idag;
+        var na = new DateTime(NorskTid.Idag.Year, NorskTid.Idag.Month, 1);
+        for (var m = na; m >= new DateTime(forste.Year, forste.Month, 1) && _maneder.Count < 36; m = m.AddMonths(-1))
+        {
+            _maneder.Add(m);
+        }
+
+        _fra = na;
+        _valgt = na.ToString("yyyy-MM");
+        await Last();
+    }
+
+    private async Task VelgManed(ChangeEventArgs e)
+    {
+        if (DateTime.TryParseExact(e.Value?.ToString(), "yyyy-MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
+        {
+            _fra = d;
+            _valgt = d.ToString("yyyy-MM");
+            await Last();
+        }
+    }
+
+    private async Task Last()
+    {
+        var til = _fra.AddMonths(1);
+        _oppgjor = await Db.KasseDagsoppgjor.AsNoTracking().Where(o => o.Lukket >= _fra && o.Lukket < til).OrderBy(o => o.Lukket).ToListAsync();
+        var apne = await Db.KasseSalg.AsNoTracking().Include(s => s.Linjer).Where(s => s.DagsoppgjorId == null && s.Tidspunkt >= _fra && s.Tidspunkt < til).ToListAsync();
+        _apen = apne.Count > 0 ? KassaService.Summer(apne) : null;
+        var ider = _oppgjor.Select(o => o.Id).ToList();
+        var linjer = await Db.KasseSalgLinjer.AsNoTracking().Where(l => l.KasseSalg!.DagsoppgjorId != null && ider.Contains(l.KasseSalg.DagsoppgjorId!.Value)).ToListAsync();
+        _mva = KassaService.MvaFordeling(linjer.Concat(apne.SelectMany(s => s.Linjer)));
+    }
+
+    private RenderFragment Nokkel(string ikon, string bg, string fg, string tittel, decimal verdi, string under) => __builder =>
+    {
+        <div class="ks-kort ks-nokkel"><span class="top"><i style="background:@bg;color:@fg"><KassaIkon Navn="@ikon" /></i>@tittel</span><b class="tall">@(KassaDokument.Kr(verdi)) kr</b><span class="under">@under</span></div>
+    };
+}

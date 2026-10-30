@@ -172,6 +172,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<CeGodkjenning> CeGodkjenninger => Set<CeGodkjenning>();
     public DbSet<CeGodkjenningMedia> CeGodkjenningMedia => Set<CeGodkjenningMedia>();
     public DbSet<CeMaleGrenseverdier> CeMaleGrenseverdier => Set<CeMaleGrenseverdier>();
+    public DbSet<KasseVare> KasseVarer => Set<KasseVare>();
+    public DbSet<KasseSalg> KasseSalg => Set<KasseSalg>();
+    public DbSet<KasseSalgLinje> KasseSalgLinjer => Set<KasseSalgLinje>();
+    public DbSet<KasseDagsoppgjor> KasseDagsoppgjor => Set<KasseDagsoppgjor>();
+    public DbSet<KasseOppsett> KasseOppsett => Set<KasseOppsett>();
     public DbSet<Ressursplan> Ressursplaner => Set<Ressursplan>();
     public DbSet<TripletexSyncTilstand> TripletexSyncTilstand => Set<TripletexSyncTilstand>();
     public DbSet<Inntektskonto> Inntektskontoer => Set<Inntektskonto>();
@@ -481,6 +486,15 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         });
 
         modelBuilder.Entity<Dor>().HasIndex(d => new { d.ProsjektId, d.IfcGuid });
+
+        // Kassa: nummerserien for kontantfaktura/kreditnota skal være unik.
+        modelBuilder.Entity<KasseSalg>().HasIndex(s => s.Nummer).IsUnique();
+        modelBuilder.Entity<KasseSalg>().HasIndex(s => s.DagsoppgjorId);
+        modelBuilder.Entity<KasseSalg>().HasOne(s => s.KrediterSalg).WithMany().HasForeignKey(s => s.KrediterSalgId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<KasseSalg>().HasOne(s => s.Dagsoppgjor).WithMany(d => d.Salg).HasForeignKey(s => s.DagsoppgjorId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<KasseSalgLinje>().HasOne(l => l.KasseSalg).WithMany(s => s.Linjer).HasForeignKey(l => l.KasseSalgId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<KasseVare>().HasOne(v => v.Component).WithMany().HasForeignKey(v => v.ComponentId).OnDelete(DeleteBehavior.SetNull);
+        modelBuilder.Entity<KasseDagsoppgjor>().Ignore(d => d.TilBank);
 
         modelBuilder.Entity<Dor>()
             .HasMany(d => d.Funksjoner)
