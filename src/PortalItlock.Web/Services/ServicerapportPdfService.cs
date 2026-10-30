@@ -8,8 +8,8 @@ namespace PortalItlock.Web.Services;
 // utseende som arbeidsrapporten: status og utført arbeid, anbefalinger, neste
 // planlagte service, byttede deler per dør, sjekkliste, bilder og
 // signaturlinjer, med organisasjonens egen logo, kontaktinfo og farge.
-// Rapporten starter alltid med en egen forside (RapportMal.Forside) med
-// forsideteksten fra runden (Servicerunde.Forside) når den er valgt.
+// Rapporten bruker malen «Sandbånd» uten egen forside; forsideteksten fra
+// runden (Servicerunde.Forside) blir innledningen når den er valgt.
 public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     public async Task<byte[]?> GenerateAsync(int servicerundeId)
@@ -40,41 +40,29 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
         var utfortAv = runde.UtfortAvBruker?.Navn;
         var erUtfort = !runde.ErPlanlagt;
 
-        void Topp(QuestPDF.Infrastructure.IContainer header) => header.Column(col =>
-            RapportMal.Topp(col, org, pdfLogo, "Servicerapport", prosjekt?.Navn,
-                $"Nr. {runde.Id}", runde.Dato, erUtfort, "Planlagt"));
-
         var document = Document.Create(doc =>
         {
-            // Mal "Klassisk med forside": alltid en forside, med forsideteksten
-            // fra runden (hvis valgt) under tittelen.
-            var kundeLinje = string.Join(" · ", new[] { kunde?.Navn, adresse }.Where(s => !string.IsNullOrWhiteSpace(s)));
-            doc.Page(page => RapportMal.Forside(page, org, pdfLogo,
-                $"Servicerapport · {runde.Dato:dd.MM.yyyy}",
-                prosjekt?.Navn ?? "Servicerapport",
-                kundeLinje,
-                $"Nr. {runde.Id}",
-                runde.Forside,
-                (erUtfort ? "Utført" : "Planlagt", runde.Dato.ToString("dd.MM.yyyy")),
-                ("Utført av", utfortAv),
-                ("Neste service", runde.NesteServiceDato?.ToString("dd.MM.yyyy"))));
-
+            // Mal «Sandbånd»: kunde og nøkkeltall i båndet øverst, forsideteksten
+            // fra runden (hvis valgt) som innledning, deretter selve rapporten.
             doc.Page(page =>
             {
                 RapportMal.Side(page);
-                Topp(page.Header());
+                page.Header().Column(col => RapportMal.Topp(col, org, pdfLogo, "Servicerapport", prosjekt?.Navn,
+                    $"Nr. {runde.Id}", runde.Dato, erUtfort, "Planlagt",
+                    ("Kunde", kunde?.Navn), ("Kontaktperson", kontakt), ("Adresse", adresse),
+                    ("Utført av", utfortAv), ("Neste service", runde.NesteServiceDato?.ToString("dd.MM.yyyy"))));
 
-                page.Content().PaddingTop(14).Column(col =>
+                page.Content().PaddingTop(16).Column(col =>
                 {
                     col.Spacing(14);
 
-                    RapportMal.InfoBoks(col, org,
-                        ("Kunde", kunde?.Navn), ("Kontaktperson", kontakt), ("Adresse", adresse),
-                        ("Serviceavtale", prosjekt?.Navn), ("Utført", runde.Dato.ToString("dd.MM.yyyy")), ("Utført av", utfortAv));
+                    if (!string.IsNullOrWhiteSpace(runde.Forside))
+                    {
+                        col.Item().Column(c => ForsideRenderer.Render(c, runde.Forside));
+                    }
 
                     RapportMal.Seksjon(col, "Status og utført arbeid", org, runde.StatusBeskrivelse);
                     RapportMal.Anbefalinger(col, org, runde.Anbefalinger);
-                    RapportMal.Seksjon(col, "Neste planlagte service", org, runde.NesteServiceDato?.ToString("dd.MM.yyyy"));
 
                     RapportMal.Tabell(col, "Byttede deler", org, ["Dør", "Hva ble byttet", "Hva var galt"], [60, -2, -2],
                         runde.Deler.OrderBy(d => d.Dato).Select(d => new[] { d.Dor?.Dornummer ?? "-", d.Beskrivelse, d.Feil ?? "-" }),

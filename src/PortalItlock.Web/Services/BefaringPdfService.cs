@@ -6,7 +6,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class BefaringPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class BefaringPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     private static readonly Color Sand = PdfStil.Sand;
     private static readonly Color SandBorder = PdfStil.SandBorder;
@@ -33,27 +33,14 @@ public class BefaringPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 page.Margin(1.8f, Unit.Centimetre);
                 page.DefaultTextStyle(x => x.FontSize(9).FontColor(Ink));
 
+                var org = RapportProfil.Fra(tenantContext.Current);
                 page.Header().Column(col =>
                 {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Column(c =>
-                        {
-                            c.Item().Text("BEFARINGSRAPPORT").FontSize(8).Bold().FontColor(Accent).LetterSpacing(0.08f);
-                            c.Item().PaddingTop(2).Text(befaring.Navn).FontSize(19).Bold();
-                            c.Item().PaddingTop(3).Row(meta =>
-                            {
-                                meta.AutoItem().Text($"Dato {befaring.Dato?.ToString("dd.MM.yyyy") ?? "-"}").FontSize(8).FontColor(Colors.Grey.Darken1);
-                                meta.AutoItem().PaddingLeft(12).Text($"Befart av {befaring.BefartAv ?? "-"}").FontSize(8).FontColor(Colors.Grey.Darken1);
-                                if (!string.IsNullOrWhiteSpace(befaring.SystemNr))
-                                {
-                                    meta.AutoItem().PaddingLeft(12).Text($"System nr {befaring.SystemNr}").FontSize(8).FontColor(Colors.Grey.Darken1);
-                                }
-                            });
-                        });
-                        row.ConstantItem(120).AlignRight().Element(e => pdfLogo.Render(e, 26));
-                    });
-                    col.Item().PaddingTop(8).BorderBottom(2.5f).BorderColor(Accent);
+                    var hoyre = befaring.Dato?.ToString("dd.MM.yyyy");
+                    col.Item().ShowOnce().Element(e => RapportMal.Band(e, org, pdfLogo, "Befaringsrapport", befaring.Navn,
+                        string.IsNullOrWhiteSpace(befaring.SystemNr) ? null : $"System nr {befaring.SystemNr}",
+                        [("Befart av", befaring.BefartAv)], hoyre, margTopp: 1.8f * 28.3465f));
+                    col.Item().SkipOnce().Element(e => RapportMal.Lopetopp(e, org, "Befaringsrapport", befaring.Navn));
                 });
 
                 page.Content().PaddingTop(12).Column(col =>
@@ -82,16 +69,7 @@ public class BefaringPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     }
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(SandBorder).PaddingTop(6).Row(row =>
-                {
-                    row.RelativeItem().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon}").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-                    row.RelativeItem().AlignRight().Text(t =>
-                    {
-                        t.CurrentPageNumber().FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-                        t.Span(" / ").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-                        t.TotalPages().FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-                    });
-                });
+                RapportMal.Bunn(page.Footer(), org);
             });
         });
 
@@ -128,12 +106,12 @@ public class BefaringPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
     private static void DorfeltBlokk(ColumnDescriptor col, Models.BefaringDorfelt d, string tittel)
     {
-        col.Item().Background(Accent).Padding(7).Row(row =>
+        col.Item().Background(Sand).BorderBottom(1.5f).BorderColor(Accent).Padding(7).Row(row =>
         {
-            row.RelativeItem().Text(tittel).FontSize(11).Bold().FontColor(Colors.White);
+            row.RelativeItem().Text(tittel).FontSize(11).Bold();
             if (!string.IsNullOrWhiteSpace(d.Dornr))
             {
-                row.AutoItem().Background(Color.FromHex("#A5805F")).PaddingVertical(2).PaddingHorizontal(8).Text($"Dør {d.Dornr}").FontSize(8).Bold().FontColor(Colors.White);
+                row.AutoItem().Background(Colors.White).PaddingVertical(2).PaddingHorizontal(8).Text($"Dør {d.Dornr}").FontSize(8).Bold().FontColor(Accent);
             }
         });
 
@@ -253,7 +231,7 @@ public class BefaringPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
             row.Spacing(4);
             foreach (var (label, verdi) in utfylte)
             {
-                row.AutoItem().Background(Accent).PaddingVertical(3).PaddingHorizontal(7).Text($"{label}: {verdi}").FontSize(7.5f).Bold().FontColor(Colors.White);
+                row.AutoItem().Background(Sand).Border(0.75f).BorderColor(SandBorder).PaddingVertical(3).PaddingHorizontal(7).Text($"{label}: {verdi}").FontSize(7.5f).Bold().FontColor(Accent);
             }
         });
     }

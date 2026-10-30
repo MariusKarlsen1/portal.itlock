@@ -6,7 +6,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class TicketRapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class TicketRapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     public async Task<byte[]?> GenerateAsync(int ticketId)
     {
@@ -28,7 +28,7 @@ public class TicketRapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 page.Margin(1.8f, Unit.Centimetre);
                 page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col => PdfStil.Header(col, pdfLogo, $"Sak #{ticket.Id}", ticket.Tittel));
+                page.Header().Column(col => PdfStil.Header(col, RapportProfil.Fra(tenantContext.Current), pdfLogo, 1.8f, $"Sak #{ticket.Id}", ticket.Tittel));
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
@@ -44,7 +44,7 @@ public class TicketRapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     PdfStil.FriSeksjon(col, "Oppsummering", ticket.Sluttoppsummering);
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                RapportMal.Bunn(page.Footer(), RapportProfil.Fra(tenantContext.Current));
             });
         });
 

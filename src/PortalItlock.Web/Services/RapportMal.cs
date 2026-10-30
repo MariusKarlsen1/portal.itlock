@@ -5,9 +5,9 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-// Felles byggesteiner for rapportmalen "Klassisk" (oktober 2026), brukt av
+// Felles byggesteiner for rapportmalen «Sandbånd» (oktober 2026), brukt av
 // arbeidsrapporten og servicerapporten slik at de ser like ut: topp med logo,
-// tittel, rapportnummer og status, nøkkelinfo i en rolig boks, seksjoner med
+// tittel, rapportnummer og status i et lyst sandbånd, nøkkelinfo i et rolig rutenett, seksjoner med
 // små overskrifter, anbefalinger i en markert boks, sjekkliste, bilder,
 // signaturlinjer og bunntekst. Logo, navn, kontaktinfo og farge hentes fra
 // organisasjonen som er logget inn (se RapportProfil). Priser og timer hører
@@ -31,33 +31,98 @@ public static class RapportMal
         page.DefaultTextStyle(x => x.FontSize(9.5f).FontColor(PdfStil.Ink).LineHeight(1.35f));
     }
 
-    public static void Topp(ColumnDescriptor col, RapportProfil org, PdfLogo pdfLogo, string tittel, string? undertittel,
-        string nummer, DateTime dato, bool erUtfort, string statusTekst)
+    // Margene på sider satt opp med Side() - båndet trekkes ut over dem.
+    public const float MargH = 1.8f * 28.3465f;
+    public const float MargTopp = 1.6f * 28.3465f;
+
+    // Sandbåndet (malen «Sandbånd», oktober 2026): organisasjonens lyse farge
+    // helt ut til kantene med en strek i hovedfargen under. Logo og eventuelt
+    // nummer/dato/status øverst, liten etikett, stor tittel, undertittel og en
+    // rad med nøkkeltall. Legges som første element øverst på siden; margH og
+    // margTopp er sidens marger, slik at båndet når helt ut til papirkanten.
+    public static void Band(IContainer container, RapportProfil org, PdfLogo pdfLogo, string etikett, string tittel,
+        string? undertittel, (string Label, string? Verdi)[]? fakta = null, string? hoyre = null,
+        string? status = null, bool statusOk = false, float margH = MargH, float margTopp = MargTopp)
     {
-        col.Item().Row(row =>
-        {
-            row.RelativeItem().Column(v =>
+        container.PaddingHorizontal(-margH).PaddingTop(-margTopp)
+            .Background(org.AksentLys).BorderBottom(2.5f).BorderColor(org.Aksent)
+            .PaddingHorizontal(margH).PaddingTop(margTopp + 4).PaddingBottom(18)
+            .Column(b =>
             {
-                v.Item().Element(e => org.TegnLogo(e, pdfLogo));
-                v.Item().PaddingTop(14).Text(tittel).FontSize(20).Bold().FontColor(PdfStil.Ink);
+                b.Item().Row(row =>
+                {
+                    row.RelativeItem().Element(e => org.TegnLogo(e, pdfLogo, 26));
+                    if (!string.IsNullOrWhiteSpace(hoyre) || !string.IsNullOrWhiteSpace(status))
+                    {
+                        row.AutoItem().AlignMiddle().Column(h =>
+                        {
+                            if (!string.IsNullOrWhiteSpace(hoyre))
+                            {
+                                h.Item().AlignRight().Text(hoyre).FontSize(8.5f).FontColor(Dempet);
+                            }
+                            if (!string.IsNullOrWhiteSpace(status))
+                            {
+                                h.Item().PaddingTop(4).AlignRight()
+                                    .Background(statusOk ? GronnLys : Colors.White).PaddingVertical(2).PaddingHorizontal(8)
+                                    .Text(statusOk ? $"✓ {status}" : status).FontSize(8).Bold().FontColor(statusOk ? Gronn : org.Aksent);
+                            }
+                        });
+                    }
+                });
+                b.Item().PaddingTop(22).Text(etikett.ToUpperInvariant()).FontSize(7).Bold().FontColor(org.Aksent).LetterSpacing(0.08f);
+                b.Item().PaddingTop(3).Text(tittel).FontSize(22).SemiBold().FontColor(PdfStil.Ink).LineHeight(1.1f);
                 if (!string.IsNullOrWhiteSpace(undertittel))
                 {
-                    v.Item().PaddingTop(1).Text(undertittel).FontSize(10).FontColor(Dempet);
+                    b.Item().PaddingTop(3).Text(undertittel).FontSize(10.5f).FontColor(Dempet);
+                }
+
+                var utfylte = (fakta ?? []).Where(f => !string.IsNullOrWhiteSpace(f.Verdi)).ToList();
+                if (utfylte.Count > 0)
+                {
+                    b.Item().PaddingTop(16).Inlined(i =>
+                    {
+                        i.Spacing(10);
+                        i.HorizontalSpacing(28);
+                        foreach (var (label, verdi) in utfylte)
+                        {
+                            i.Item().Column(c =>
+                            {
+                                c.Item().Text(label.ToUpperInvariant()).FontSize(6.8f).Bold().FontColor(Svak).LetterSpacing(0.07f);
+                                c.Item().PaddingTop(1).Text(verdi).FontSize(9.5f).SemiBold();
+                            });
+                        }
+                    });
                 }
             });
-            row.ConstantItem(130).AlignRight().Column(h =>
-            {
-                h.Item().AlignRight().Text("RAPPORT").FontSize(7).Bold().FontColor(Svak).LetterSpacing(0.06f);
-                h.Item().AlignRight().Text(nummer).FontSize(13).Bold();
-                h.Item().AlignRight().Text(dato.ToString("dd.MM.yyyy")).FontSize(9).FontColor(Dempet);
-                h.Item().PaddingTop(5).AlignRight()
-                    .Background(erUtfort ? GronnLys : org.AksentLys).PaddingVertical(2).PaddingHorizontal(8)
-                    .Text(erUtfort ? "✓ Utført" : statusTekst).FontSize(8).Bold().FontColor(erUtfort ? Gronn : org.Aksent);
-            });
-        });
-        col.Item().PaddingTop(10).LineHorizontal(2.5f).LineColor(org.Aksent);
     }
 
+    // Diskret topp på side 2 og videre: tittel til venstre, nummer til høyre og en tynn linje.
+    public static void Lopetopp(IContainer container, RapportProfil org, string tittel, string? hoyre) =>
+        container.PaddingBottom(4).BorderBottom(0.75f).BorderColor(Linje).PaddingBottom(5).Row(row =>
+        {
+            row.RelativeItem().Text(t =>
+            {
+                t.Span(org.Navn).FontSize(8).Bold().FontColor(org.Aksent);
+                t.Span($"  ·  {tittel}").FontSize(8).FontColor(Dempet);
+            });
+            if (!string.IsNullOrWhiteSpace(hoyre))
+            {
+                row.AutoItem().Text(hoyre).FontSize(8).FontColor(Dempet);
+            }
+        });
+
+    // Toppen på rapportene: sandbåndet på første side, en diskret løpetopp på resten.
+    // Legges i page.Header().
+    public static void Topp(ColumnDescriptor col, RapportProfil org, PdfLogo pdfLogo, string tittel, string? undertittel,
+        string nummer, DateTime dato, bool erUtfort, string statusTekst, params (string Label, string? Verdi)[] fakta)
+    {
+        var hoyre = $"{nummer} · {dato:dd.MM.yyyy}";
+        col.Item().ShowOnce().Element(e => Band(e, org, pdfLogo, tittel, undertittel ?? tittel, null, fakta, hoyre,
+            erUtfort ? "Utført" : statusTekst, erUtfort));
+        col.Item().SkipOnce().Element(e => Lopetopp(e, org, tittel, hoyre));
+    }
+
+    // Nøkkelinfo i et rolig rutenett med tynne linjer (ingen fylt boks).
     public static void InfoBoks(ColumnDescriptor col, RapportProfil org, params (string Label, string? Verdi)[] felter)
     {
         var utfylte = felter.Where(f => !string.IsNullOrWhiteSpace(f.Verdi)).ToList();
@@ -66,14 +131,14 @@ public static class RapportMal
             return;
         }
 
-        col.Item().Background(org.AksentLys).Border(0.75f).BorderColor(Linje).Padding(11).Table(table =>
+        col.Item().BorderBottom(0.75f).BorderColor(Linje).PaddingBottom(6).Table(table =>
         {
             table.ColumnsDefinition(c => { c.RelativeColumn(); c.RelativeColumn(); c.RelativeColumn(); });
             foreach (var (label, verdi) in utfylte)
             {
                 table.Cell().PaddingVertical(4).PaddingRight(10).Column(c =>
                 {
-                    c.Item().Text(label.ToUpperInvariant()).FontSize(6.8f).SemiBold().FontColor(Svak).LetterSpacing(0.05f);
+                    c.Item().Text(label.ToUpperInvariant()).FontSize(6.8f).Bold().FontColor(Svak).LetterSpacing(0.07f);
                     c.Item().PaddingTop(1).Text(verdi).FontSize(9.5f).SemiBold();
                 });
             }
@@ -294,61 +359,6 @@ public static class RapportMal
                     c.Item().PaddingTop(3).Text(tekst).FontSize(8.5f).FontColor(Dempet);
                 });
             }
-        });
-    }
-
-    // Egen forside (mal "Klassisk med forside"): logo og nummer øverst, liten
-    // overlinje, stor tittel, kunde/adresse og forsideteksten fra editoren
-    // (med skriftstørrelse, fet, lister, linjeavstand osv.), og en faktarad
-    // nederst over bunnteksten. Detaljene kommer på neste side.
-    public static void Forside(PageDescriptor page, RapportProfil org, PdfLogo pdfLogo, string overlinje, string tittel,
-        string? undertittel, string nummer, string? forsideHtml, params (string Label, string? Verdi)[] fakta)
-    {
-        Side(page);
-        page.Background().Column(bg => bg.Item().Height(298).Background(org.AksentLys));
-
-        page.Content().Column(col =>
-        {
-            col.Item().Row(row =>
-            {
-                row.RelativeItem().Element(e => org.TegnLogo(e, pdfLogo));
-                row.AutoItem().AlignMiddle()
-                    .Background(Colors.White).Border(0.75f).BorderColor(Linje).PaddingVertical(3).PaddingHorizontal(9)
-                    .Text(nummer).FontSize(8.5f).Bold().FontColor(org.Aksent);
-            });
-
-            col.Item().PaddingTop(130).Text(overlinje.ToUpperInvariant()).FontSize(9).Bold().FontColor(org.Aksent).LetterSpacing(0.14f);
-            col.Item().PaddingTop(8).Text(tittel).FontSize(28).Bold().FontColor(PdfStil.Ink).LineHeight(1.1f);
-            if (!string.IsNullOrWhiteSpace(undertittel))
-            {
-                col.Item().PaddingTop(8).Text(undertittel).FontSize(11).FontColor(Dempet);
-            }
-
-            if (!string.IsNullOrWhiteSpace(forsideHtml))
-            {
-                col.Item().PaddingTop(26).PaddingRight(70).DefaultTextStyle(x => x.FontSize(10.5f))
-                    .Column(tekst => ForsideRenderer.Render(tekst, forsideHtml));
-            }
-        });
-
-        page.Footer().Column(f =>
-        {
-            var utfylte = fakta.Where(x => !string.IsNullOrWhiteSpace(x.Verdi)).ToList();
-            if (utfylte.Count > 0)
-            {
-                f.Item().PaddingBottom(18).BorderTop(2).BorderColor(org.Aksent).PaddingTop(10).Row(row =>
-                {
-                    foreach (var (label, verdi) in utfylte)
-                    {
-                        row.RelativeItem().Column(c =>
-                        {
-                            c.Item().Text(label.ToUpperInvariant()).FontSize(6.8f).SemiBold().FontColor(Svak).LetterSpacing(0.05f);
-                            c.Item().PaddingTop(2).Text(verdi).FontSize(10.5f).Bold();
-                        });
-                    }
-                });
-            }
-            f.Item().Element(e => Bunn(e, org));
         });
     }
 

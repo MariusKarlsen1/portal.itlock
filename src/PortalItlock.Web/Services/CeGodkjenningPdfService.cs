@@ -7,7 +7,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
 
     private static readonly Color Sand = PdfStil.Sand;
@@ -37,6 +37,7 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
         var validering = CeValideringsService.Evaluer(ce, dorKomponenter);
         var godkjent = validering.All(v => v.Bestatt);
 
+        var org = RapportProfil.Fra(tenantContext.Current);
         var document = Document.Create(doc =>
         {
             doc.Page(page =>
@@ -47,21 +48,12 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
 
                 page.Header().Column(col =>
                 {
-                    col.Item().Row(row =>
-                    {
-                        row.ConstantItem(75).AlignMiddle().Text("CE").FontSize(32).Bold().FontColor(Colors.Grey.Lighten1).LetterSpacing(0.05f);
-                        row.RelativeItem().PaddingLeft(6).Column(c =>
-                        {
-                            c.Item().Text("Sertifikat for CE-samsvar").FontSize(16).Bold();
-                            c.Item().Text(ce.Sertifiseringsnummer).FontSize(9.5f).FontColor(Colors.Grey.Darken1);
-                            c.Item().PaddingTop(2).Text(t =>
-                            {
-                                t.Span(ce.Status.Visningsnavn()).FontSize(8.5f).Bold().FontColor(Accent);
-                            });
-                        });
-                        row.ConstantItem(150).AlignRight().Element(e => pdfLogo.Render(e, 32));
-                    });
-                    col.Item().PaddingTop(6).LineHorizontal(1).LineColor(SandBorder);
+                    var tittel = string.IsNullOrWhiteSpace(ce.Dornummer) ? "CE-samsvar" : $"Dør {ce.Dornummer}";
+                    var under = string.Join(" · ", new[] { ce.DorTil, ce.Adresse }.Where(x => !string.IsNullOrWhiteSpace(x)));
+                    col.Item().ShowOnce().Element(e => RapportMal.Band(e, org, pdfLogo, "Sertifikat for CE-samsvar", tittel,
+                        string.IsNullOrWhiteSpace(under) ? null : under, null, ce.Sertifiseringsnummer,
+                        ce.Status.Visningsnavn(), godkjent, margH: 1.6f * 28.3465f, margTopp: 1.6f * 28.3465f));
+                    col.Item().SkipOnce().Element(e => RapportMal.Lopetopp(e, org, "Sertifikat for CE-samsvar", ce.Sertifiseringsnummer));
                 });
 
                 page.Content().PaddingTop(12).Column(col =>
@@ -180,8 +172,8 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                             c.Item().Text("Montør").FontSize(11).Bold();
                             FeltGrid(c, 1,
                             [
-                                ("Foretaksnavn", FirmaInfo.Navn), ("Adresse", FirmaInfo.Adresse), ("Postnummer", FirmaInfo.Postnr),
-                                ("Sted", FirmaInfo.Sted), ("Land", "Norge"), ("Telefon / e-post", $"{FirmaInfo.Telefon} / {FirmaInfo.Epost}")
+                                ("Foretaksnavn", org.Navn), ("Org.nr.", org.OrgNr), ("Adresse", org.Adresse), ("Land", "Norge"),
+                                ("Telefon / e-post", string.Join(" / ", new[] { org.Telefon, org.Epost }.Where(x => !string.IsNullOrWhiteSpace(x))))
                             ]);
                         });
                     });
@@ -223,7 +215,7 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                         {
                             FeltGrid(c, 1,
                             [
-                                ("Sted", ce.Dor?.Prosjekt?.Sted ?? FirmaInfo.Sted), ("Dato", ce.UtfortAvDato?.ToString("dd.MM.yyyy")),
+                                ("Sted", ce.Dor?.Prosjekt?.Sted), ("Dato", ce.UtfortAvDato?.ToString("dd.MM.yyyy")),
                                 ("Navn", ce.UtfortAvNavn), ("Stilling", "Montør")
                             ]);
                             SignaturBoks(c, "Signatur", ce.UtfortAvSignatur);
@@ -240,10 +232,10 @@ public class CeGodkjenningPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     });
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(Colors.Grey.Lighten2).PaddingTop(6).Row(row =>
+                page.Footer().PaddingTop(8).BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(6).Row(row =>
                 {
                     row.RelativeItem().Text(ce.Sertifiseringsnummer).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-                    row.RelativeItem().AlignCenter().Text($"{FirmaInfo.Navn} - Generert av itlock Full Kontroll {DateTime.Now:dd.MM.yyyy HH:mm}").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
+                    row.RelativeItem().AlignCenter().Text($"{org.Navn} · Generert {NorskTid.Na:dd.MM.yyyy HH:mm}").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
                     row.RelativeItem().AlignRight().Text(t =>
                     {
                         t.CurrentPageNumber().FontSize(7.5f).FontColor(Colors.Grey.Darken1);

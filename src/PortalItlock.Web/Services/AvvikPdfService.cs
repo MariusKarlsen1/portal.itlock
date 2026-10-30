@@ -8,7 +8,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
 
@@ -39,7 +39,7 @@ public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 page.Margin(1.8f, Unit.Centimetre);
                 page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Avviksmelding", $"{prosjektNavn} · Dør {dor?.Dornummer}"));
+                page.Header().Column(col => PdfStil.Header(col, RapportProfil.Fra(tenantContext.Current), pdfLogo, 1.8f, "Avviksmelding", $"{prosjektNavn} · Dør {dor?.Dornummer}"));
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
@@ -118,7 +118,7 @@ public class AvvikPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     });
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                RapportMal.Bunn(page.Footer(), RapportProfil.Fra(tenantContext.Current));
             });
         });
 

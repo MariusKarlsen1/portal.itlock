@@ -6,7 +6,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class DorpakkePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class DorpakkePdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     public async Task<byte[]?> GenerateAsync(int pakkeId)
     {
@@ -30,7 +30,7 @@ public class DorpakkePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                 page.Margin(1.8f, Unit.Centimetre);
                 page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col => PdfStil.Header(col, pdfLogo, pakke.Navn, "Dørpakke"));
+                page.Header().Column(col => PdfStil.Header(col, RapportProfil.Fra(tenantContext.Current), pdfLogo, 1.8f, pakke.Navn, "Dørpakke"));
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
@@ -76,9 +76,9 @@ public class DorpakkePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                             table.Header(header =>
                             {
                                 IContainer Hode() => PdfStil.TabellHode(header.Cell());
-                                Hode().Text("Type").FontSize(8).Bold().FontColor(Colors.White);
-                                Hode().Text("Navn").FontSize(8).Bold().FontColor(Colors.White);
-                                Hode().Text("Antall").FontSize(8).Bold().FontColor(Colors.White);
+                                Hode().Text("Type").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                                Hode().Text("Navn").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                                Hode().Text("Antall").FontSize(8).Bold().FontColor(RapportMal.Svak);
                             });
 
                             var j = 0;
@@ -94,7 +94,7 @@ public class DorpakkePdfService(ApplicationDbContext db, PdfLogo pdfLogo)
                     }
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                RapportMal.Bunn(page.Footer(), RapportProfil.Fra(tenantContext.Current));
             });
         });
 

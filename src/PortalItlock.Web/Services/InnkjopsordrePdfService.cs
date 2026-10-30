@@ -41,22 +41,9 @@ public class InnkjopsordrePdfService(ApplicationDbContext db, PdfLogo pdfLogo, I
 
                 page.Header().Column(col =>
                 {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().Column(v =>
-                        {
-                            v.Item().Element(e => org.TegnLogo(e, pdfLogo));
-                            v.Item().PaddingTop(14).Text("Innkjøpsordre").FontSize(20).Bold().FontColor(PdfStil.Ink);
-                            v.Item().PaddingTop(1).Text(ordre.LeverandorNavn).FontSize(10).FontColor(RapportMal.Dempet);
-                        });
-                        row.ConstantItem(140).AlignRight().Column(h =>
-                        {
-                            h.Item().AlignRight().Text("ORDRENUMMER").FontSize(7).Bold().FontColor(RapportMal.Svak).LetterSpacing(0.06f);
-                            h.Item().AlignRight().Text(ordre.Visningsnummer).FontSize(13).Bold();
-                            h.Item().AlignRight().Text((ordre.Sendt ?? ordre.Opprettet).ToString("dd.MM.yyyy")).FontSize(9).FontColor(RapportMal.Dempet);
-                        });
-                    });
-                    col.Item().PaddingTop(10).LineHorizontal(2.5f).LineColor(org.Aksent);
+                    var hoyre = $"{ordre.Visningsnummer} · {(ordre.Sendt ?? ordre.Opprettet):dd.MM.yyyy}";
+                    col.Item().ShowOnce().Element(e => RapportMal.Band(e, org, pdfLogo, "Innkjøpsordre", ordre.LeverandorNavn, null, null, hoyre));
+                    col.Item().SkipOnce().Element(e => RapportMal.Lopetopp(e, org, "Innkjøpsordre", hoyre));
                 });
 
                 page.Content().PaddingTop(14).Column(col =>

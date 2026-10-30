@@ -10,7 +10,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, IWebHostEnvironment env)
+public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext, IWebHostEnvironment env)
 {
     // Komponenttegninger (wwwroot/img/kobling) legges inn som innebygd SVG.
     // PNG-illustrasjoner pakkes inn i en SVG med bildet som data-URI.
@@ -80,7 +80,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                 page.Margin(1.5f, Unit.Centimetre);
                 page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Koblingsskjema", skjema.Navn));
+                page.Header().Column(col => PdfStil.Header(col, RapportProfil.Fra(tenantContext.Current), pdfLogo, 1.5f, "Koblingsskjema", skjema.Navn));
 
                 page.Content().PaddingTop(10).Column(col =>
                 {
@@ -111,7 +111,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                     });
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                RapportMal.Bunn(page.Footer(), RapportProfil.Fra(tenantContext.Current));
             });
 
             var kabler = streker.Where(s => s.ErKabel).OrderBy(s => s.Navn).ThenBy(s => s.Id).ToList();
@@ -122,9 +122,9 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                     page.Size(PageSizes.A4.Landscape());
                     page.Margin(1.5f, Unit.Centimetre);
                     page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
-                    page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Kabeljournal", skjema.Navn));
+                    page.Header().Column(col => PdfStil.Header(col, RapportProfil.Fra(tenantContext.Current), pdfLogo, 1.5f, "Kabeljournal", skjema.Navn));
                     page.Content().PaddingTop(10).Column(col => Kabeljournal(col, kabler));
-                    page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                    RapportMal.Bunn(page.Footer(), RapportProfil.Fra(tenantContext.Current));
                 });
             }
         });
@@ -329,7 +329,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                 {
                     foreach (var tekst in new[] { "Klemme", "Funksjon", "Leder", "Kobles til", "Merknad" })
                     {
-                        h.Cell().Element(PdfStil.TabellHode).Text(tekst).FontColor(Colors.White).Bold().FontSize(8.5f);
+                        h.Cell().Element(PdfStil.TabellHode).Text(tekst).FontColor(RapportMal.Svak).Bold().FontSize(8.5f);
                     }
                 });
                 for (var i = 0; i < ledere.Count; i++)

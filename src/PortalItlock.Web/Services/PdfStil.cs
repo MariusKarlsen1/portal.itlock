@@ -4,43 +4,25 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-// Delt visuelt språk for genererte PDF-er: nøytral, kommersiell palett
-// (lys grå flate, tynne grå linjer og mørk skifergrå aksent) som alle
+// Delt visuelt språk for genererte PDF-er: rolig, lys palett (lys sand,
+// tynne varme linjer og en dempet mørk aksent, malen «Sandbånd») som alle
 // rapporter og dokumenter i portalen bruker, i stedet for at hver enkelt
 // *PdfService finner opp sin egen stil.
 public static class PdfStil
 {
-    public static readonly Color Sand = Color.FromHex("#F4F5F7");
-    public static readonly Color SandBorder = Color.FromHex("#E1E4E8");
-    public static readonly Color Accent = Color.FromHex("#2F3A45");
+    public static readonly Color Sand = Color.FromHex("#F7F4EF");
+    public static readonly Color SandBorder = Color.FromHex("#E7E1D7");
+    public static readonly Color Accent = Color.FromHex("#4A4540");
     public static readonly Color Ink = Color.FromHex("#292927");
 
-    public static void Header(ColumnDescriptor col, PdfLogo logo, string tittel, string? undertittel = null)
+    // Toppen i malen «Sandbånd»: lyst bånd i organisasjonens farge på første
+    // side, diskret løpetopp på resten. marg er sidens marg i cm.
+    public static void Header(ColumnDescriptor col, RapportProfil org, PdfLogo logo, float marg, string tittel, string? undertittel = null)
     {
-        col.Item().Row(row =>
-        {
-            row.RelativeItem().Column(c =>
-            {
-                c.Item().Text(tittel).FontSize(18).Bold().FontColor(Ink);
-                if (!string.IsNullOrWhiteSpace(undertittel))
-                {
-                    c.Item().PaddingTop(2).Text(undertittel).FontSize(9).FontColor(Colors.Grey.Darken1);
-                }
-            });
-            row.ConstantItem(120).AlignRight().Element(e => logo.Render(e, 22));
-        });
-        col.Item().PaddingTop(6).BorderBottom(2).BorderColor(Accent);
-    }
-
-    public static void FooterRad(RowDescriptor row)
-    {
-        row.RelativeItem().Text($"{FirmaInfo.Navn} - {FirmaInfo.AdresseFull} - Tlf {FirmaInfo.Telefon}").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-        row.RelativeItem().AlignRight().Text(t =>
-        {
-            t.CurrentPageNumber().FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-            t.Span(" / ").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-            t.TotalPages().FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-        });
+        var pt = marg * 28.3465f;
+        col.Item().ShowOnce().PaddingBottom(4).Element(e => RapportMal.Band(e, org, logo, tittel, undertittel ?? tittel, null,
+            hoyre: NorskTid.Idag.ToString("dd.MM.yyyy"), margH: pt, margTopp: pt));
+        col.Item().SkipOnce().Element(e => RapportMal.Lopetopp(e, org, tittel, undertittel));
     }
 
     public static void InfoBoks(ColumnDescriptor col, int kolonner, params (string Label, string? Verdi)[] felter)
@@ -51,7 +33,7 @@ public static class PdfStil
             return;
         }
 
-        col.Item().Background(Sand).Border(1).BorderColor(SandBorder).Padding(10).Table(table =>
+        col.Item().BorderBottom(0.75f).BorderColor(SandBorder).PaddingBottom(4).Table(table =>
         {
             table.ColumnsDefinition(c =>
             {
@@ -65,7 +47,7 @@ public static class PdfStil
             {
                 table.Cell().Padding(3).Column(c =>
                 {
-                    c.Item().Text(label.ToUpperInvariant()).FontSize(6.8f).Bold().FontColor(Accent).LetterSpacing(0.03f);
+                    c.Item().Text(label.ToUpperInvariant()).FontSize(6.8f).Bold().FontColor(RapportMal.Svak).LetterSpacing(0.07f);
                     c.Item().PaddingTop(1).Text(verdi).FontSize(9.3f).SemiBold();
                 });
             }
@@ -99,7 +81,7 @@ public static class PdfStil
     }
 
     public static IContainer TabellHode(IContainer cell) =>
-        cell.Background(Accent).PaddingVertical(5).PaddingHorizontal(6);
+        cell.BorderBottom(1.2f).BorderColor(SandBorder).PaddingVertical(5).PaddingHorizontal(6);
 
     public static IContainer TabellRad(IContainer cell, bool alternerende) =>
         cell.Background(alternerende ? Sand : Colors.White).BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(4).PaddingHorizontal(6);

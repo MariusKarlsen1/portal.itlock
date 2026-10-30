@@ -140,19 +140,19 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITen
 
                         table.Header(h =>
                         {
-                            IContainer Hode() => h.Cell().Background(org.Aksent).PaddingVertical(5).PaddingHorizontal(5);
-                            Hode().Text("#").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Beslagstype").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Varenr").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Varenavn").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Leverandør").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Overflate").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignRight().Text("Antall").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignRight().Text("Plukket").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignRight().Text("Bestilt").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignRight().Text("Må best.").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Forventet").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignCenter().Text("✓").FontSize(7.5f).Bold().FontColor(Colors.White);
+                            IContainer Hode() => h.Cell().BorderBottom(1.2f).BorderColor(PdfStil.SandBorder).PaddingVertical(5).PaddingHorizontal(5);
+                            Hode().Text("#").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Beslagstype").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Varenr").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Varenavn").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Leverandør").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Overflate").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().AlignRight().Text("Antall").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().AlignRight().Text("Plukket").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().AlignRight().Text("Bestilt").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().AlignRight().Text("Må best.").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Forventet").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
+                            Hode().AlignCenter().Text("✓").FontSize(7.5f).Bold().FontColor(RapportMal.Svak);
                         });
 
                         var i = 0;

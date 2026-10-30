@@ -303,7 +303,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                         RenderDorer(col, tilbud, dorer, utprisPerComponent);
                     }
 
-                    col.Item().PaddingTop(20).AlignRight().Width(260).Element(container => RenderTotalsBox(container, utprisVarer, montasjekost, totaltUtenMva, org.Aksent));
+                    col.Item().PaddingTop(20).AlignRight().Width(260).Element(container => RenderTotalsBox(container, utprisVarer, montasjekost, totaltUtenMva, org.Aksent, org.AksentLys));
                 });
 
                 page.Footer().BorderTop(0.5f).BorderColor(SandBorder).PaddingTop(5).Row(row =>
@@ -367,31 +367,31 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
             table.Header(header =>
             {
-                IContainer Hode() => header.Cell().Background(aksent).PaddingVertical(5).PaddingHorizontal(6);
+                IContainer Hode() => header.Cell().BorderBottom(1.2f).BorderColor(SandBorder).PaddingVertical(5).PaddingHorizontal(6);
 
                 if (visVarenummer)
                 {
-                    Hode().Text("Varenr").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().Text("Varenr").FontSize(8).Bold().FontColor(RapportMal.Svak);
                 }
-                Hode().Text("Varenavn").FontSize(8).Bold().FontColor(Colors.White);
-                Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(Colors.White);
+                Hode().Text("Varenavn").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(RapportMal.Svak);
                 if (visOverflate)
                 {
-                    Hode().Text("Overflate").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().Text("Overflate").FontSize(8).Bold().FontColor(RapportMal.Svak);
                 }
-                Hode().Text("Ant.").FontSize(8).Bold().FontColor(Colors.White);
+                Hode().Text("Ant.").FontSize(8).Bold().FontColor(RapportMal.Svak);
                 if (visLevering)
                 {
-                    Hode().Text("Lev.").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().Text("Lev.").FontSize(8).Bold().FontColor(RapportMal.Svak);
                 }
                 if (tilbud.VisEnhetspris)
                 {
                     if (visRabatt)
                     {
-                        Hode().Text("Rabatt").FontSize(8).Bold().FontColor(Colors.White);
+                        Hode().Text("Rabatt").FontSize(8).Bold().FontColor(RapportMal.Svak);
                     }
-                    Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(Colors.White);
-                    Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                    Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(RapportMal.Svak);
                 }
             });
 
@@ -548,7 +548,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         }
     }
 
-    private static void RenderTotalsBox(IContainer container, decimal utprisVarer, decimal montasjekost, decimal totaltUtenMva, Color aksent)
+    private static void RenderTotalsBox(IContainer container, decimal utprisVarer, decimal montasjekost, decimal totaltUtenMva, Color aksent, Color aksentLys)
     {
         var mva = Math.Round(totaltUtenMva * MvaSats, 2);
         var totaltInklMva = totaltUtenMva + mva;
@@ -572,10 +572,10 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             Rad("Totalt uten MVA", totaltUtenMva);
             Rad("MVA (25 %)", mva);
 
-            col.Item().Background(aksent).Padding(9).Row(row =>
+            col.Item().Background(aksentLys).BorderTop(1.5f).BorderColor(aksent).Padding(9).Row(row =>
             {
-                row.RelativeItem().Text("Totalt inkl. MVA").FontSize(11).Bold().FontColor(Colors.White);
-                row.AutoItem().Text(FormatKr(totaltInklMva)).FontSize(12).Bold().FontColor(Colors.White);
+                row.RelativeItem().Text("Totalt inkl. MVA").FontSize(11).Bold();
+                row.AutoItem().Text(FormatKr(totaltInklMva)).FontSize(12).Bold().FontColor(aksent);
             });
         });
     }

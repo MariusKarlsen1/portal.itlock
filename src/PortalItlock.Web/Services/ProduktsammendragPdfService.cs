@@ -7,7 +7,7 @@ using QuestPDF.Infrastructure;
 
 namespace PortalItlock.Web.Services;
 
-public class ProduktsammendragPdfService(ApplicationDbContext db, PdfLogo pdfLogo)
+public class ProduktsammendragPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantContext tenantContext)
 {
     public async Task<byte[]?> GenerateAsync(int prosjektId, string? byggetrinn = null)
     {
@@ -50,7 +50,7 @@ public class ProduktsammendragPdfService(ApplicationDbContext db, PdfLogo pdfLog
                 page.Margin(1.8f, Unit.Centimetre);
                 page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
 
-                page.Header().Column(col => PdfStil.Header(col, pdfLogo, "Produktsammendrag", prosjekt.Navn));
+                page.Header().Column(col => PdfStil.Header(col, RapportProfil.Fra(tenantContext.Current), pdfLogo, 1.8f, "Produktsammendrag", prosjekt.Navn));
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
@@ -71,13 +71,13 @@ public class ProduktsammendragPdfService(ApplicationDbContext db, PdfLogo pdfLog
                         {
                             IContainer Hode() => PdfStil.TabellHode(header.Cell());
 
-                            Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(Colors.White);
-                            Hode().Text("Varenr").FontSize(8).Bold().FontColor(Colors.White);
-                            Hode().Text("Varenavn").FontSize(8).Bold().FontColor(Colors.White);
-                            Hode().Text("Overflate").FontSize(8).Bold().FontColor(Colors.White);
-                            Hode().Text("Enhet").FontSize(8).Bold().FontColor(Colors.White);
-                            Hode().Text("Levering").FontSize(8).Bold().FontColor(Colors.White);
-                            Hode().Text("Antall").FontSize(8).Bold().FontColor(Colors.White);
+                            Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Varenr").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Varenavn").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Overflate").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Enhet").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Levering").FontSize(8).Bold().FontColor(RapportMal.Svak);
+                            Hode().Text("Antall").FontSize(8).Bold().FontColor(RapportMal.Svak);
                         });
 
                         var i = 0;
@@ -97,7 +97,7 @@ public class ProduktsammendragPdfService(ApplicationDbContext db, PdfLogo pdfLog
                     });
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(1).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row => PdfStil.FooterRad(row));
+                RapportMal.Bunn(page.Footer(), RapportProfil.Fra(tenantContext.Current));
             });
         });
 
