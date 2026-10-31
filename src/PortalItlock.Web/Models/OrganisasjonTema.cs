@@ -19,7 +19,10 @@ public sealed record OrganisasjonTema(
     // (Inter Tight) i stedet for Fraunces, og kantfarge for kjølige temaer.
     string? Meny = null,
     bool RenSkrift = false,
-    string? Kant = null)
+    string? Kant = null,
+    // Fargetone (0-360) som alle varme farger i stilarkene flyttes til
+    // (se TemaCss), eller null for å bruke stilarkene som de er.
+    int? Omfarging = null)
 {
     public static readonly OrganisasjonTema Standard = new(
         Id: "Standard",
@@ -46,7 +49,8 @@ public sealed record OrganisasjonTema(
         Bakgrunn: "#EEF1F6",
         Meny: "mork",
         RenSkrift: true,
-        Kant: "#DDE3EC");
+        Kant: "#DDE3EC",
+        Omfarging: 214);
 
     public static readonly IReadOnlyList<OrganisasjonTema> Alle = [Standard, Marinbla];
 

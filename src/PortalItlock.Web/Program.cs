@@ -1494,6 +1494,20 @@ app.MapGet("/foresporselmedia/{id:int}/fil", async (int id, ApplicationDbContext
         : Results.File(media.Data, FilSikkerhet.TryggContentType(media.ContentType), enableRangeProcessing: true);
 }).RequireAuthorization();
 
+// Omfargede stilark for temaer med Omfarging (se TemaCss og App.razor).
+app.MapGet("/tema/{tema}/{fil}", (string tema, string fil, IWebHostEnvironment env, HttpContext ctx) =>
+{
+    var t = PortalItlock.Web.Models.OrganisasjonTema.Alle.FirstOrDefault(x => x.Id == tema);
+    var css = t is null ? null : PortalItlock.Web.Services.TemaCss.HentOmfarget(env.WebRootFileProvider, t, fil);
+    if (css is null)
+    {
+        return Results.NotFound();
+    }
+
+    ctx.Response.Headers.CacheControl = "public, max-age=604800";
+    return Results.Text(css, "text/css; charset=utf-8");
+}).AllowAnonymous();
+
 app.MapGet("/komponent/{id:int}/fdv", async (int id, ApplicationDbContext db) =>
 {
     var komponent = await db.LastFilerAsync(db.Components.FirstOrDefaultAsync(c => c.Id == id));
