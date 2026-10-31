@@ -14,7 +14,12 @@ public sealed record OrganisasjonTema(
     string Sekundaer,
     string SekundaerLys,
     string PrimaerLys,
-    string Bakgrunn)
+    string Bakgrunn,
+    // Mørk sidemeny ("mork") eller den vanlige hvite (null), ren skrift
+    // (Inter Tight) i stedet for Fraunces, og kantfarge for kjølige temaer.
+    string? Meny = null,
+    bool RenSkrift = false,
+    string? Kant = null)
 {
     public static readonly OrganisasjonTema Standard = new(
         Id: "Standard",
@@ -27,16 +32,21 @@ public sealed record OrganisasjonTema(
         PrimaerLys: "#F1EADD",
         Bakgrunn: "#F4F0E9");
 
+    // Marineblå (oktober 2026): mørk marineblå sidemeny, kjølig lys
+    // bakgrunn, blå knapper og ren skrift - profesjonelt og ryddig.
     public static readonly OrganisasjonTema Marinbla = new(
         Id: "Marinbla",
         Navn: "Marineblå",
-        Beskrivelse: "Profesjonell, moderne og tillitsfull. Samme varme bakgrunn som i dag, med marinblå som hovedfarge.",
-        Primaer: "#0A2540",
-        PrimaerHover: "#143A50",
-        Sekundaer: "#1E4E79",
-        SekundaerLys: "#4E7CA7",
-        PrimaerLys: "#EBF1FA",
-        Bakgrunn: "#F7F4EE");
+        Beskrivelse: "Profesjonell og ryddig: mørk marineblå meny, lys kjølig bakgrunn, blå knapper og ren skrift.",
+        Primaer: "#1F4E8C",
+        PrimaerHover: "#173D70",
+        Sekundaer: "#14213D",
+        SekundaerLys: "#5B6680",
+        PrimaerLys: "#E7EEF8",
+        Bakgrunn: "#EEF1F6",
+        Meny: "mork",
+        RenSkrift: true,
+        Kant: "#DDE3EC");
 
     public static readonly IReadOnlyList<OrganisasjonTema> Alle = [Standard, Marinbla];
 
