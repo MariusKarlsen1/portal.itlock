@@ -7,13 +7,90 @@
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 @inject IJSRuntime JS
+@inject PortalItlock.Web.Services.VisningPreferanseService VisningPref
 
 <PageTitle>Serviceavtaler</PageTitle>
 
-<div class="avtale-toppknapp-rad">
-    <button type="button" class="@(_visNyPanel ? "edit-button-active" : "add-knapp")" @onclick="@(() => _visNyPanel = !_visNyPanel)">
-        <Icon Name="plus" />Ny serviceavtale
-    </button>
+@* V2: samme oppsett og stil som Prosjekter - verktøylinje, kart, Kanban (én kolonne
+   per status) og liste i ett kort. Inne på Service-siden står sidehodet der, ellers her. *@
+<div class="@(Innebygd ? "" : $"prosjekter-side {(_full ? "pr-full" : "")}")">
+
+@if (!Innebygd)
+{
+    <div class="side-tittel prosjekt-header">
+        <div class="prosjekt-header-tittel">
+            <span class="prosjekt-header-ikon"><Icon Name="clock" /></span>
+            <h1>Serviceavtaler</h1>
+        </div>
+        <p class="prosjekt-intro">Faste servicebesøk: neste service, årets runder og avvik for hver avtale.</p>
+    </div>
+}
+
+<div class="pr-ramme">
+<div class="prosjekt-toolbar">
+    <label class="sok-felt prosjekt-sok">
+        <Icon Name="search" />
+        <input @bind="_search" @bind:event="oninput" @bind:after="@(() => _side = 1)" placeholder="Søk i avtaler, kunder eller adresser" />
+    </label>
+
+    <div class="prosjekt-toolbar-knapper">
+        <div class="prosjekt-viewtoggle">
+            <button type="button" class="@(_visning == "kanban" ? "aktiv" : "")" @onclick="@(() => VelgVisning("kanban"))"><Icon Name="box" />Kanban</button>
+            <button type="button" class="@(_visning == "liste" ? "aktiv" : "")" @onclick="@(() => VelgVisning("liste"))"><Icon Name="file-text" />Liste</button>
+        </div>
+        <button type="button" class="@(_visNyPanel ? "edit-button-active" : "new-button")" @onclick="@(() => _visNyPanel = !_visNyPanel)"><Icon Name="plus" />Ny serviceavtale</button>
+        <select class="sorter-velger" value="@_sortering" @onchange="@(e => { _sortering = (string)e.Value!; _side = 1; })">
+            <option value="haster">Sorter: Det som haster</option>
+            <option value="neste-service">Sorter: Neste service</option>
+            <option value="navn">Sorter: Navn</option>
+            <option value="kunde">Sorter: Kunde</option>
+            <option value="montor">Sorter: Montør</option>
+            <option value="dorer">Sorter: Dører</option>
+            <option value="avvik">Sorter: Avvik</option>
+        </select>
+        <div class="prosjekt-filterpopup-anker">
+            <button type="button" class="@(AntallAktiveFiltre > 0 ? "edit-button-active" : "filter-button")" @onclick="@(() => _visFilter = !_visFilter)">
+                <Icon Name="filter" />Filtrer@(AntallAktiveFiltre > 0 ? $" ({AntallAktiveFiltre})" : "")
+            </button>
+            @if (_visFilter)
+            {
+                <div class="prosjekt-filterpopup">
+                    <div class="prosjekt-filterpopup-header">
+                        <strong>Filtrer serviceavtaler</strong>
+                        <button type="button" class="prosjekt-filterpopup-lukk" @onclick="@(() => _visFilter = false)" title="Lukk"><Icon Name="x" /></button>
+                    </div>
+
+                    <label class="prosjekt-filterpopup-select-rad">
+                        Status
+                        <select @bind="_hurtigfilter" @bind:after="@(() => _side = 1)">
+                            <option value="alle">Alle</option>
+                            <option value="forfalt">Forfalt</option>
+                            <option value="snart">Nærmer seg</option>
+                            <option value="aktiv">I rute</option>
+                            <option value="utendato">Mangler dato</option>
+                            <option value="avvik">Med åpne avvik</option>
+                        </select>
+                    </label>
+                    <label class="prosjekt-filterpopup-select-rad">
+                        Montør
+                        <select @bind="_montorFilter" @bind:after="@(() => _side = 1)">
+                            <option value="">Alle</option>
+                            @foreach (var m in Montorer)
+                            {
+                                <option value="@m">@m</option>
+                            }
+                        </select>
+                    </label>
+
+                    <div class="prosjekt-filterpopup-bunn">
+                        <button type="button" class="prosjekt-filterpopup-nullstill" @onclick="@(() => { _hurtigfilter = "alle"; _montorFilter = ""; _side = 1; })">Nullstill</button>
+                        <button type="button" class="prosjekt-filterpopup-vis" @onclick="@(() => _visFilter = false)">Vis resultater (@_filtrert.Count)</button>
+                    </div>
+                </div>
+            }
+        </div>
+        <button type="button" class="pr-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
+    </div>
 </div>
 
 @if (_visNyPanel)
@@ -49,180 +126,206 @@
     </div>
 }
 
-@if (_avtaler.Count > 0)
+@if (_avtaler.Any(a => a.Lat.HasValue && a.Lng.HasValue))
 {
-    @* K1 (service-kart-topp.html): kartet øverst, fire klikkbare statustall som
-       filtrerer både kartet og lista, og én liste med det som haster øverst.
-       Klikk en rad for å folde ut historikk, siste runde, avvik og kunde. *@
-    var runderTotalt = _avtaler.Sum(a => a.RunderIAr.Count);
-
-    @if (_avtaler.Any(a => a.Lat.HasValue && a.Lng.HasValue))
-    {
-        <div class="sv9-kart-wrap">
-            <div id="sv9-kart" class="sv9-kart"></div>
-            <div class="sv9-kart-leg">
-                <span><i style="background:#b23b22"></i>Forfalt</span>
-                <span><i style="background:#d9a520"></i>Nærmer seg</span>
-                <span><i style="background:#2e7d4f"></i>I rute</span>
-                <span><i style="background:#9c958a"></i>Mangler dato</span>
-            </div>
+    <div class="sv9-kart-wrap">
+        <div id="sv9-kart" class="sv9-kart"></div>
+        <div class="sv9-kart-leg">
+            <span><i style="background:#b23b22"></i>Forfalt</span>
+            <span><i style="background:#d9a520"></i>Nærmer seg</span>
+            <span><i style="background:#2e7d4f"></i>I rute</span>
+            <span><i style="background:#9c958a"></i>Mangler dato</span>
         </div>
-    }
-
-    <div class="svk-tall">
-        @if (_avtaler.Any(a => a.Avvik.Count > 0))
-        {
-            <button type="button" class="svk-chip @(_hurtigfilter == "avvik" ? "aktiv" : "")" @onclick='@(() => SettHurtigfilter("avvik"))'>
-                <Icon Name="alert" />
-                <b>@_avtaler.Count(a => a.Avvik.Count > 0)</b>
-                <span>Med avvik<small>åpne avvik</small></span>
-            </button>
-        }
-        <div class="svk-sum">
-            @_avtaler.Count avtaler · @_avtaler.Sum(a => a.Dorer) dører
-            <small>@_avtaler.Sum(a => a.RunderIAr.Count(r => r == "u")) av @runderTotalt runder utført i @Ar</small>
-        </div>
-    </div>
-
-    <div class="toolbar">
-        <label class="sok-felt">
-            <Icon Name="search" />
-            <input @bind="_search" @bind:event="oninput" placeholder="Søk i avtaler, kunder eller adresser..." />
-        </label>
-        @if (Montorer.Count > 0)
-        {
-            <label class="dd">
-                Montør:
-                <select @bind="_montorFilter">
-                    <option value="">Alle</option>
-                    @foreach (var m in Montorer)
-                    {
-                        <option value="@m">@m</option>
-                    }
-                </select>
-            </label>
-        }
-        <label class="dd">
-            Sorter:
-            <select @bind="_sortering">
-                <option value="haster">Det som haster</option>
-                <option value="neste-service">Neste service</option>
-                <option value="navn">Navn</option>
-                <option value="kunde">Kunde</option>
-                <option value="montor">Montør</option>
-                <option value="dorer">Dører</option>
-                <option value="avvik">Avvik</option>
-            </select>
-        </label>
     </div>
 }
+
+<p class="result-count">@_filtrert.Count av @_avtaler.Count serviceavtaler</p>
 
 @if (_filtrert.Count == 0)
 {
     <p class="list-empty">@(_avtaler.Count == 0 ? "Ingen serviceavtaler funnet." : "Ingen treff.")</p>
 }
-else
+else if (_visning == "kanban")
 {
-    @* SV6 (service-forslag): alle avtalene i én tabell. Trykk en kolonne for å
-       sortere, klikk velger raden og dobbeltklikk (eller Enter) åpner avtalen.
-       Ingenting folder seg ut under raden lenger. *@
-    <div class="sv6-wrap">
-        <div class="sv6-tabell" role="table">
-            <div class="sv6-rad sv6-hode" role="row">
-                @foreach (var (navn, nokkel) in Kolonner)
+    <div class="prosjekt-kanban">
+        @foreach (var gruppe in KanbanGrupper)
+        {
+            var kolonne = _filtrert.Where(a => a.Gruppe == gruppe).ToList();
+            var farge = GruppeFarge(gruppe);
+
+            <div class="kanban-kolonne kanban-kolonne-@farge">
+                <div class="kanban-kolonne-header">
+                    <span class="kanban-kolonne-dott kanban-kolonne-dott-@farge"></span>
+                    <span class="kanban-kolonne-navn">@GruppeTekst(gruppe)</span>
+                    <span class="kanban-kolonne-teller">@kolonne.Count</span>
+                </div>
+
+                @if (kolonne.Count == 0)
                 {
-                    if (nokkel is null)
-                    {
-                        <span class="sv6-th" role="columnheader">@navn</span>
-                    }
-                    else
-                    {
-                        <button type="button" class="sv6-th @(_sortering == nokkel ? "aktiv" : "")" role="columnheader" @onclick="@(() => SorterEtter(nokkel))">
-                            @navn
-                            @if (_sortering == nokkel)
+                    <p class="kanban-kolonne-tom">Ingen avtaler</p>
+                }
+                @foreach (var a in kolonne)
+                {
+                    <div class="prosjekt-kort-wrap" @key="a.ProsjektId">
+                        <a class="kanban-kort" href="@($"/serviceavtaler/{a.ProsjektId}")">
+                            <span class="kanban-kort-navn">@a.ProsjektNavn</span>
+                            @if (a.Avvik.Count > 0)
                             {
-                                <span class="sv6-pil">@(_synkende ? "▼" : "▲")</span>
+                                <span class="kanban-okonomi rod">@a.Avvik.Count åpne avvik</span>
                             }
-                        </button>
-                    }
+                            <div class="prosjekt-kort-linje">
+                                <Icon Name="users" />
+                                <span>@(a.KundeNavn ?? "Ingen kunde satt")</span>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(a.StedTekst))
+                            {
+                                <div class="prosjekt-kort-linje">
+                                    <Icon Name="map" />
+                                    <span>@a.StedTekst</span>
+                                </div>
+                            }
+                            @if (a.Montor is not null)
+                            {
+                                <span class="team-person">
+                                    <span class="team-avatar" style="background:@Farge(a.Montor)">@Initialer(a.Montor)</span>
+                                    @a.Montor
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="prosjekt-team-tom">Ingen montør satt</span>
+                            }
+                            <div class="kanban-kort-bunn">
+                                @if (a.RunderIAr.Count > 0)
+                                {
+                                    <span class="prosjekt-fremdrift-bar" title="@a.RunderIAr.Count(r => r == "u") av @a.RunderIAr.Count runder utført i @Ar"><span class="prosjekt-fremdrift-fyll" style="width:@(RundeProsent(a))%"></span></span>
+                                }
+                                <span class="prosjekt-fremdrift-tekst">@(a.NesteServiceDato.HasValue ? $"Neste {a.NesteServiceDato:dd.MM.yyyy}" : "Mangler dato")</span>
+                            </div>
+                        </a>
+                        <span class="prosjekt-kort-meny">
+                            <RadMeny Navn="@a.ProsjektNavn" RedigerHref="@($"/serviceavtaler/{a.ProsjektId}?rediger=1")"
+                                     OnSlett="@(() => { _slettId = a.ProsjektId; _slettNavn = a.ProsjektNavn; })" />
+                        </span>
+                    </div>
                 }
             </div>
-            @foreach (var a in SideRader)
-            {
-                <div class="sv6-rad @(_valgtId == a.ProsjektId ? "valgt" : "")" role="row" tabindex="0" @key="a.ProsjektId"
-                     title="Åpne avtalen"
-                     @onclick="@(() => AapneAvtale(a.ProsjektId))"
-                     @onkeydown="@(e => { if (e.Key == "Enter") { AapneAvtale(a.ProsjektId); } })">
-                    <span><span class="sv-pill sv-p-@a.Gruppe">@GruppeTekst(a.Gruppe)</span></span>
-                    <span class="sv6-navn">
-                        <b>@a.ProsjektNavn</b>
-                    </span>
-                    <span class="sv6-kunde">@(a.KundeNavn ?? "Ingen kunde satt")@if (!string.IsNullOrWhiteSpace(a.StedTekst)) {<small> · @a.StedTekst</small>}</span>
-                    <span class="sv6-montor">
-                        @if (a.Montor is not null)
-                        {
-                            <span class="sv-av" style="background:@Farge(a.Montor)">@Initialer(a.Montor)</span>@a.Montor
-                        }
-                        else
-                        {
-                            <span class="sv-mangler">Ingen montør</span>
-                        }
-                    </span>
-                    <span class="sv6-tall">@a.Dorer</span>
-                    <span class="sv6-runder">
-                        <span class="sv-strek">
-                            @foreach (var r in a.RunderIAr)
-                            {
-                                <i class="sv-r-@r" title="@RundeTittel(r)"></i>
-                            }
-                        </span>
-                        <small>@(a.RunderIAr.Count == 0 ? "ingen i år" : $"{a.RunderIAr.Count(r => r == "u")} av {a.RunderIAr.Count}")</small>
-                    </span>
-                    <span class="sv6-neste">
-                        <b class="sv-t-@a.Gruppe">@(a.NesteServiceDato?.ToString("dd.MM.yyyy") ?? "Ikke satt")</b>
-                        <small>@(a.NesteServiceDato.HasValue ? Naar(a.NesteServiceDato) : a.Montor is null ? "mangler dato og montør" : "mangler dato")</small>
-                    </span>
-                    <span class="sv6-avvik">
-                        @if (a.Avvik.Count > 0)
-                        {
-                            <span class="sv-t-forfalt"><Icon Name="alert" />@a.Avvik.Count</span>
-                        }
-                        else
-                        {
-                            <text>–</text>
-                        }
-                    </span>
-                    <span class="sv6-meny">
-                        <RadMeny Navn="@a.ProsjektNavn" RedigerHref="@($"/serviceavtaler/{a.ProsjektId}?rediger=1")"
-                                 OnSlett="@(() => { _slettId = a.ProsjektId; _slettNavn = a.ProsjektNavn; })" />
-                    </span>
-                </div>
-            }
-        </div>
-    </div>
-    var antallFiltrert = _filtrert.Count;
-    var side = GyldigSide(antallFiltrert);
-    var antallSider = Math.Max(1, (antallFiltrert + _perSide - 1) / _perSide);
-    <div class="sv-sider">
-        <span class="sv-fot">Viser @(antallFiltrert == 0 ? 0 : (side - 1) * _perSide + 1)–@Math.Min(side * _perSide, antallFiltrert) av @antallFiltrert serviceavtaler · klikk en rad for å åpne avtalen · trykk en kolonne for å sortere</span>
-        <span class="sv-sider-hoyre">
-            <label class="sv-per-side">Per side
-                <select @bind="_perSide" @bind:after="@(() => _side = 1)">
-                    <option value="10">10</option>
-                    <option value="15">15</option>
-                    <option value="20">20</option>
-                </select>
-            </label>
-            @if (antallSider > 1)
-            {
-                <button type="button" class="sv-side-kn" disabled="@(side <= 1)" @onclick="@(() => _side = side - 1)" aria-label="Forrige side"><Icon Name="chevron-left" /></button>
-                <span class="sv-side-tall">Side @side av @antallSider</span>
-                <button type="button" class="sv-side-kn" disabled="@(side >= antallSider)" @onclick="@(() => _side = side + 1)" aria-label="Neste side"><Icon Name="chevron-right" /></button>
-            }
-        </span>
+        }
     </div>
 }
+else
+{
+    <div class="prosjekt-tablewrap">
+        <table class="prosjekt-table">
+            <thead>
+                <tr class="prosjekt-thr">
+                    <th>Avtale</th>
+                    <th>Kunde</th>
+                    <th>Status</th>
+                    <th>Montør</th>
+                    <th>Dører</th>
+                    <th>Runder @Ar</th>
+                    <th>Neste service</th>
+                    <th>Avvik</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var a in SideRader)
+                {
+                    <tr @key="a.ProsjektId" class="prosjekt-tr" @onclick="@(() => AapneAvtale(a.ProsjektId))">
+                        <td class="prosjekt-td-navn">@a.ProsjektNavn</td>
+                        <td>
+                            @if (a.KundeNavn is null)
+                            {
+                                <span class="pr-tom">—</span>
+                            }
+                            else
+                            {
+                                <div>@a.KundeNavn</div>
+                                @if (!string.IsNullOrWhiteSpace(a.StedTekst))
+                                {
+                                    <small class="sv-under">@a.StedTekst</small>
+                                }
+                            }
+                        </td>
+                        <td><StatusPill Tekst="@GruppeTekst(a.Gruppe)" Ikon="@GruppeIkon(a.Gruppe)" Farge="@GruppeFarge(a.Gruppe)" /></td>
+                        <td>
+                            @if (a.Montor is null)
+                            {
+                                <span class="pr-tom">—</span>
+                            }
+                            else
+                            {
+                                <span class="pr-person"><u>@Initialer(a.Montor)</u>@a.Montor</span>
+                            }
+                        </td>
+                        <td>@a.Dorer</td>
+                        <td>
+                            @if (a.RunderIAr.Count == 0)
+                            {
+                                <span class="pr-tom">—</span>
+                            }
+                            else
+                            {
+                                var utfort = a.RunderIAr.Count(r => r == "u");
+                                <span class="pr-dorer @(utfort == a.RunderIAr.Count ? "ferdig" : "")" title="@utfort av @a.RunderIAr.Count runder utført i @Ar">
+                                    <i><b style="width:@(RundeProsent(a))%"></b></i>@utfort/@a.RunderIAr.Count
+                                </span>
+                            }
+                        </td>
+                        <td>
+                            @if (a.NesteServiceDato is { } neste)
+                            {
+                                <b class="sv-neste sv-neste-@a.Gruppe">@neste.ToString("dd.MM.yyyy")</b>
+                                <small class="sv-under">@Naar(neste)</small>
+                            }
+                            else
+                            {
+                                <span class="pr-tom">Ikke satt</span>
+                            }
+                        </td>
+                        <td>
+                            @if (a.Avvik.Count > 0)
+                            {
+                                <StatusPill Tekst="@($"{a.Avvik.Count} avvik")" Ikon="alert" Farge="rod" />
+                            }
+                            else
+                            {
+                                <span class="pr-tom">—</span>
+                            }
+                        </td>
+                        <td class="sv-meny" @onclick:stopPropagation="true">
+                            <RadMeny Navn="@a.ProsjektNavn" RedigerHref="@($"/serviceavtaler/{a.ProsjektId}?rediger=1")"
+                                     OnSlett="@(() => { _slettId = a.ProsjektId; _slettNavn = a.ProsjektNavn; })" />
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
 
+    var antallSider = AntallSider;
+    @if (antallSider > 1)
+    {
+        var side = GyldigSide(_filtrert.Count);
+        <div class="prosjekt-pagerad">
+            <span class="prosjekt-pagerad-tekst">Viser @((side - 1) * PerSide + 1)-@Math.Min(side * PerSide, _filtrert.Count) av @_filtrert.Count</span>
+            <div class="prosjekt-pager">
+                <button type="button" disabled="@(side <= 1)" @onclick="@(() => _side = side - 1)"><Icon Name="chevron-down" /></button>
+                @for (var i = 1; i <= antallSider; i++)
+                {
+                    var nr = i;
+                    <button type="button" class="@(nr == side ? "aktiv" : "")" @onclick="@(() => _side = nr)">@nr</button>
+                }
+                <button type="button" disabled="@(side >= antallSider)" @onclick="@(() => _side = side + 1)"><Icon Name="chevron-down" /></button>
+            </div>
+        </div>
+    }
+}
+</div>
+
+</div>
 
 <SlettDialog Type="SletteType.Serviceavtale" Id="_slettId" Navn="@_slettNavn" OnLukk="@(() => _slettId = null)" OnSlettet="AvtaleSlettet" />
 
@@ -283,49 +386,79 @@ else
     private string _sortering = "haster";
     private string _montorFilter = "";
     private bool _visNyPanel;
-    private bool _synkende;
-    private int? _valgtId;
+    private bool _visFilter;
+    private string _visning = "liste";
+    private bool _full;
 
-    // Sider i lista: 10, 15 eller 20 per side.
-    private int _perSide = 15;
+    // Inne på Service-siden (fane) står sidehodet og bredden der.
+    [Parameter] public bool Innebygd { get; set; }
+    [Parameter] public bool Full { get; set; }
+    [Parameter] public EventCallback FullEndret { get; set; }
+
+    // Sider i lista: 15 per side.
+    private const int PerSide = 15;
     private int _side = 1;
 
-    private int GyldigSide(int antall) => Math.Clamp(_side, 1, Math.Max(1, (antall + _perSide - 1) / _perSide));
+    private int GyldigSide(int antall) => Math.Clamp(_side, 1, Math.Max(1, (antall + PerSide - 1) / PerSide));
 
     private List<AvtaleRad> SideRader
     {
         get
         {
             var liste = _filtrert;
-            return liste.Skip((GyldigSide(liste.Count) - 1) * _perSide).Take(_perSide).ToList();
+            return liste.Skip((GyldigSide(liste.Count) - 1) * PerSide).Take(PerSide).ToList();
         }
     }
 
-    // Kolonnene i SV6-tabellen. Nøkkel null = kan ikke sorteres.
-    private (string Navn, string? Nokkel)[] Kolonner =>
-    [
-        ("Status", "haster"),
-        ("Avtale", "navn"),
-        ("Kunde", "kunde"),
-        ("Montør", "montor"),
-        ("Dører", "dorer"),
-        ($"Runder {Ar}", null),
-        ("Neste service", "neste-service"),
-        ("Avvik", "avvik"),
-        ("", null)
-    ];
+    private int AntallSider => Math.Max(1, (_filtrert.Count + PerSide - 1) / PerSide);
 
-    // Samme kolonne igjen snur rekkefølgen.
-    private void SorterEtter(string nokkel)
+    private int AntallAktiveFiltre => (_hurtigfilter == "alle" ? 0 : 1) + (string.IsNullOrEmpty(_montorFilter) ? 0 : 1);
+
+    // Kanban: én kolonne per status, det som haster først.
+    private static readonly string[] KanbanGrupper = ["forfalt", "snart", "aktiv", "utendato"];
+
+    private static string GruppeFarge(string gruppe) => gruppe switch
     {
-        if (_sortering == nokkel)
+        "forfalt" => "rod",
+        "snart" => "gul",
+        "utendato" => "noytral",
+        _ => "gronn"
+    };
+
+    private static string GruppeIkon(string gruppe) => gruppe switch
+    {
+        "forfalt" => "alert",
+        "snart" => "clock",
+        "utendato" => "calendar",
+        _ => "check-circle"
+    };
+
+    private static int RundeProsent(AvtaleRad a) =>
+        a.RunderIAr.Count == 0 ? 0 : (int)Math.Round(100.0 * a.RunderIAr.Count(r => r == "u") / a.RunderIAr.Count);
+
+    private async Task VelgVisning(string visning)
+    {
+        _visning = visning;
+        await VisningPref.SettAsync("serviceavtaler", visning);
+    }
+
+    private async Task VekslFull()
+    {
+        if (Innebygd)
         {
-            _synkende = !_synkende;
+            await FullEndret.InvokeAsync();
+            return;
         }
-        else
+
+        _full = !_full;
+        await VisningPref.SettAsync("serviceavtaler-bredde", _full ? "full" : "normal");
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (Innebygd)
         {
-            _sortering = nokkel;
-            _synkende = false;
+            _full = Full;
         }
     }
 
@@ -377,17 +510,22 @@ else
                 _ => liste.OrderBy(Hastegrad).ThenBy(a => a.NesteServiceDato ?? DateTime.MaxValue).ThenBy(a => a.ProsjektNavn).ToList()
             };
 
-            if (_synkende)
-            {
-                sortert.Reverse();
-            }
-
             return sortert;
         }
     }
 
     protected override async Task OnInitializedAsync()
     {
+        _visning = await VisningPref.HentAsync("serviceavtaler", "liste");
+        if (_visning is not ("kanban" or "liste"))
+        {
+            _visning = "liste";
+        }
+        if (!Innebygd)
+        {
+            _full = await VisningPref.HentAsync("serviceavtaler-bredde", "normal") == "full";
+        }
+
         _kunder = await Db.Kunder
             .OrderBy(k => k.Navn)
             .Select(k => new KundeOption { Id = k.Id, Navn = k.Navn })
@@ -548,11 +686,6 @@ else
         }
     }
 
-
-    private void SettHurtigfilter(string filter)
-    {
-        _hurtigfilter = _hurtigfilter == filter ? "alle" : filter;
-    }
 
     // Tidslinje i utfoldingen: inntil tre siste runder, neste service og deretter.
     private static List<TidsPunkt> Tidslinje(AvtaleRad a)
