@@ -115,8 +115,8 @@ public static class TemaCss
         /* ---------- Ensretting for omfarget tema ({{t.Id}}) ---------- */
         html:not([data-theme="dark"]) .fh-flis { background: #fff !important; border: 1px solid var(--itlock-border) !important; box-shadow: 0 1px 2px rgba(15, 27, 51, .04) !important; }
         html:not([data-theme="dark"]) .fh-flis:hover { border-color: {{t.Primaer}} !important; }
-        html:not([data-theme="dark"]) :is(.fh-ikb, .ov-rad-ikon, .lg-lagerikon) { background: {{t.PrimaerLys}} !important; color: {{t.Primaer}} !important; }
-        html:not([data-theme="dark"]) :is(.fh-ikb, .ov-rad-ikon, .lg-lagerikon) svg { color: {{t.Primaer}} !important; }
+        html:not([data-theme="dark"]) :is(.fh-ikb, .ov-rad-ikon, .lg-lagerikon) { background: {{t.PrimaerLys}} !important; color: #111827 !important; }
+        html:not([data-theme="dark"]) :is(.fh-ikb, .ov-rad-ikon, .lg-lagerikon) svg { color: #111827 !important; }
         html:not([data-theme="dark"]) .kanban-kolonne { background: #F6F8FB !important; border: 1px solid var(--itlock-border) !important; }
         html:not([data-theme="dark"]) :is(.fh-kort, .kort, .card) { border-color: var(--itlock-border); }
         html[data-tema-meny="mork"] .sidebar .nav-link svg { color: inherit !important; }
