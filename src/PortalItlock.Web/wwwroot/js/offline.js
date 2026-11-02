@@ -56,17 +56,16 @@
         }
         var banner = document.createElement('div');
         banner.id = 'itlock-offline-banner';
-        banner.textContent = '📴 Ingen tilkobling – viser sist lagrede data';
-        banner.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2000;' +
-            'background:#835e41;color:#fff;text-align:center;padding:0.5rem 1rem;' +
-            'font:600 0.85rem system-ui,sans-serif;display:none;';
+        banner.className = 'fk-pille fk-pille-nett';
+        banner.setAttribute('role', 'status');
+        banner.innerHTML = '<i>!</i>Ingen nett <em>· viser sist lagrede data</em>';
         document.body.appendChild(banner);
         return banner;
     }
 
     function oppdaterStatus() {
         var banner = lagBanner();
-        banner.style.display = navigator.onLine ? 'none' : 'block';
+        banner.classList.toggle('vis', !navigator.onLine);
     }
 
     window.addEventListener('online', oppdaterStatus);
