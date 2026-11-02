@@ -35,21 +35,21 @@ public sealed record OrganisasjonTema(
         PrimaerLys: "#F1EADD",
         Bakgrunn: "#F4F0E9");
 
-    // Marineblå (oktober 2026): mørk marineblå sidemeny, kjølig lys
+    // Marineblå (oktober 2026): mørk marineblå sidemeny, lys grå
     // bakgrunn, blå knapper og ren skrift - profesjonelt og ryddig.
     public static readonly OrganisasjonTema Marinbla = new(
         Id: "Marinbla",
         Navn: "Marineblå",
-        Beskrivelse: "Profesjonell og ryddig: mørk marineblå meny, lys kjølig bakgrunn, blå knapper og ren skrift.",
+        Beskrivelse: "Profesjonell og ryddig: mørk marineblå meny, lys grå bakgrunn, blå knapper og ren skrift.",
         Primaer: "#1F4E8C",
         PrimaerHover: "#173D70",
         Sekundaer: "#14213D",
         SekundaerLys: "#5B6680",
         PrimaerLys: "#E7EEF8",
-        Bakgrunn: "#EEF1F6",
+        Bakgrunn: "#F2F3F5",
         Meny: "mork",
         RenSkrift: true,
-        Kant: "#DDE3EC",
+        Kant: "#E0E3E8",
         Omfarging: 214);
 
     public static readonly IReadOnlyList<OrganisasjonTema> Alle = [Standard, Marinbla];
