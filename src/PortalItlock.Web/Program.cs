@@ -130,6 +130,7 @@ builder.Services.AddHostedService<PrisendringBackgroundService>();
 builder.Services.AddScoped<AvvikPdfService>();
 builder.Services.AddScoped<PlanUtstyrPdfService>();
 builder.Services.AddScoped<EtikettPdfService>();
+builder.Services.AddScoped<DorEtikettPdfService>();
 builder.Services.AddScoped<KoblingsSkjemaPdfService>();
 builder.Services.AddScoped<PlantegningDorPdfService>();
 builder.Services.AddScoped<ServicerapportPdfService>();
@@ -1644,6 +1645,13 @@ app.MapGet("/prosjekt/{id:int}/fdv/pdf", async (int id, string? byggetrinn, Http
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
+// QR-etikett (70 × 40 mm) for én dør - QR-kode-fanen i dørkortet.
+app.MapGet("/dor/{id:int}/etikett.pdf", async (int id, HttpContext context, DorEtikettPdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id, $"{context.Request.Scheme}://{context.Request.Host}");
+    return pdf is null ? Results.NotFound() : Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
 app.MapGet("/dor/{id:int}/qr.png", async (int id, HttpContext context, ApplicationDbContext db) =>
