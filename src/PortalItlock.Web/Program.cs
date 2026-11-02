@@ -1929,11 +1929,17 @@ app.MapGet("/sjekklistepdf/{id:int}", async (int id, ApplicationDbContext db) =>
         : Results.File(pdf.Data, "application/pdf", pdf.Navn);
 }).RequireAuthorization();
 
-app.MapGet("/lagretpdf/{id:int}", async (int id, ApplicationDbContext db) =>
+app.MapGet("/lagretpdf/{id:int}", async (int id, HttpContext context, ApplicationDbContext db) =>
 {
     var pdf = await db.LagredePdfer.FindAsync(id);
-    return pdf is null
-        ? Results.NotFound()
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    // ?vis=1 viser PDF-en i nettleseren (forhåndsvisning), ellers lastes den ned med filnavnet.
+    return context.Request.Query["vis"] == "1"
+        ? Results.File(pdf.Data, "application/pdf")
         : Results.File(pdf.Data, "application/pdf", pdf.Navn);
 }).RequireAuthorization();
 
