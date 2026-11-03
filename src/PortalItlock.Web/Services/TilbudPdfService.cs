@@ -290,7 +290,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
                     if (visSammendrag)
                     {
-                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, arbeidstidTimer, montasjekost, org.Aksent, KodeRader(tilbud));
+                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, arbeidstidTimer, montasjekost, org.Aksent, org.AksentLys, KodeRader(tilbud));
                     }
 
                     if (visDorer)
@@ -300,10 +300,11 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                             col.Item().PageBreak();
                         }
 
-                        RenderDorer(col, tilbud, dorer, utprisPerComponent);
+                        RenderDorer(col, tilbud, dorer, utprisPerComponent, org.Aksent, org.AksentLys);
                     }
 
-                    col.Item().PaddingTop(20).AlignRight().Width(260).Element(container => RenderTotalsBox(container, utprisVarer, montasjekost, totaltUtenMva, org.Aksent));
+                    // Totalboksen deles aldri over to sider.
+                    col.Item().PaddingTop(12).AlignRight().Width(260).PreventPageBreak().Element(container => RenderTotalsBox(container, utprisVarer, montasjekost, totaltUtenMva, org.Aksent, org.AksentLys));
                 });
 
                 page.Footer().BorderTop(0.5f).BorderColor(SandBorder).PaddingTop(5).Row(row =>
@@ -324,7 +325,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         return document.GeneratePdf();
     }
 
-    private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, decimal monteringTimer, decimal montasjekost, Color aksent,
+    private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, decimal monteringTimer, decimal montasjekost, Color aksent, Color aksentLys,
         List<(string Kode, string Navn, decimal Belop)> kodeRader)
     {
         var visVarenummer = !tilbud.SkjulVarenummerISammendrag;
@@ -367,31 +368,31 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
             table.Header(header =>
             {
-                IContainer Hode() => header.Cell().Background(aksent).PaddingVertical(5).PaddingHorizontal(6);
+                IContainer Hode() => header.Cell().Background(LysGra).PaddingVertical(5).PaddingHorizontal(6);
 
                 if (visVarenummer)
                 {
-                    Hode().Text("Varenr").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().Text("Varenr").FontSize(8).Bold().FontColor(Ink);
                 }
-                Hode().Text("Varenavn").FontSize(8).Bold().FontColor(Colors.White);
-                Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(Colors.White);
+                Hode().Text("Varenavn").FontSize(8).Bold().FontColor(Ink);
+                Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(Ink);
                 if (visOverflate)
                 {
-                    Hode().Text("Overflate").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().Text("Overflate").FontSize(8).Bold().FontColor(Ink);
                 }
-                Hode().Text("Ant.").FontSize(8).Bold().FontColor(Colors.White);
+                Hode().Text("Ant.").FontSize(8).Bold().FontColor(Ink);
                 if (visLevering)
                 {
-                    Hode().Text("Lev.").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().Text("Lev.").FontSize(8).Bold().FontColor(Ink);
                 }
                 if (tilbud.VisEnhetspris)
                 {
                     if (visRabatt)
                     {
-                        Hode().Text("Rabatt").FontSize(8).Bold().FontColor(Colors.White);
+                        Hode().Text("Rabatt").FontSize(8).Bold().FontColor(Ink);
                     }
-                    Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(Colors.White);
-                    Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(Ink);
+                    Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(Ink);
                 }
             });
 
@@ -451,22 +452,22 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             // per kode (arbeid, kjøring, småmateriell osv.) når det er valgt.
             if (montasjekost > 0)
             {
-                IContainer Mont(uint span = 1) => table.Cell().ColumnSpan(span).Background(Color.FromHex("#FBF8F3"))
+                IContainer Mont(uint span = 1) => table.Cell().ColumnSpan(span)
                     .BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(5).PaddingHorizontal(6);
 
                 void MontRad(string tekst, decimal belop)
                 {
                     if (tilbud.VisEnhetspris)
                     {
-                        Mont((uint)(totaltAntallKolonner - 1)).Text(tekst).Italic();
-                        Mont().AlignRight().Text(FormatKr(belop)).Italic();
+                        Mont((uint)(totaltAntallKolonner - 1)).Text(tekst);
+                        Mont().AlignRight().Text(FormatKr(belop));
                     }
                     else
                     {
                         Mont((uint)totaltAntallKolonner).Row(r =>
                         {
-                            r.RelativeItem().Text(tekst).Italic();
-                            r.AutoItem().Text(FormatKr(belop)).Italic();
+                            r.RelativeItem().Text(tekst);
+                            r.AutoItem().Text(FormatKr(belop));
                         });
                     }
                 }
@@ -486,15 +487,15 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
                         if (visVarenummer)
                         {
-                            Mont().Text(kode).Italic();
+                            Mont().Text(kode);
                         }
-                        Mont().Text(navn).Italic();
+                        Mont().Text(navn);
                         Mont().Text("");
                         if (visOverflate)
                         {
                             Mont().Text("");
                         }
-                        Mont().Text("1").Italic();
+                        Mont().Text("1");
                         if (visLevering)
                         {
                             Mont().Text("");
@@ -503,8 +504,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                         {
                             Mont().Text("-");
                         }
-                        Mont().AlignRight().Text(FormatKr(belop)).Italic();
-                        Mont().AlignRight().Text(FormatKr(belop)).Italic();
+                        Mont().AlignRight().Text(FormatKr(belop));
+                        Mont().AlignRight().Text(FormatKr(belop));
                     }
                 }
                 else
@@ -533,7 +534,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             .ToList();
     }
 
-    private static void RenderDorer(ColumnDescriptor col, Tilbud tilbud, List<Dor> dorer, Dictionary<int, decimal> utprisPerComponent)
+    private static void RenderDorer(ColumnDescriptor col, Tilbud tilbud, List<Dor> dorer, Dictionary<int, decimal> utprisPerComponent, Color aksent, Color aksentLys)
     {
         var relevanteDorer = dorer.Where(d => d.Komponenter.Any(k => k.Component is not null)).ToList();
 
@@ -544,11 +545,15 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         for (var i = 0; i < relevanteDorer.Count; i++)
         {
             var dor = relevanteDorer[i];
-            col.Item().PaddingTop(i == 0 ? 8 : 16).Column(inner => DorPdfSeksjoner.RenderDorSide(inner, dor, tilbud.VisPrisPerDor, HentUtpris));
+            // Et dørkort flyttes heller til neste side enn å deles (deles bare hvis det er høyere enn en side).
+            col.Item().PaddingTop(i == 0 ? 8 : 16).PreventPageBreak().Column(inner => DorPdfSeksjoner.RenderDorSide(inner, dor, tilbud.VisPrisPerDor, HentUtpris, hodeBak: LysGra, hodeTekst: Ink, visStatus: false));
         }
     }
 
-    private static void RenderTotalsBox(IContainer container, decimal utprisVarer, decimal montasjekost, decimal totaltUtenMva, Color aksent)
+    // Lysegrått på tabelloverskrifter, dørkort og totalen; bare forsiden har firmaets lyse farge.
+    private static readonly Color LysGra = Color.FromHex("#E9ECF0");
+
+    private static void RenderTotalsBox(IContainer container, decimal utprisVarer, decimal montasjekost, decimal totaltUtenMva, Color aksent, Color aksentLys)
     {
         var mva = Math.Round(totaltUtenMva * MvaSats, 2);
         var totaltInklMva = totaltUtenMva + mva;
@@ -557,7 +562,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         {
             void Rad(string label, decimal verdi)
             {
-                col.Item().BorderBottom(0.5f).BorderColor(SandBorder).Padding(8).Row(row =>
+                col.Item().BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(5).PaddingHorizontal(8).Row(row =>
                 {
                     row.RelativeItem().Text(label).FontSize(9.5f);
                     row.AutoItem().Text(FormatKr(verdi)).FontSize(9.5f);
@@ -572,10 +577,10 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             Rad("Totalt uten MVA", totaltUtenMva);
             Rad("MVA (25 %)", mva);
 
-            col.Item().Background(aksent).Padding(9).Row(row =>
+            col.Item().Background(LysGra).PaddingVertical(7).PaddingHorizontal(9).Row(row =>
             {
-                row.RelativeItem().Text("Totalt inkl. MVA").FontSize(11).Bold().FontColor(Colors.White);
-                row.AutoItem().Text(FormatKr(totaltInklMva)).FontSize(12).Bold().FontColor(Colors.White);
+                row.RelativeItem().Text("Totalt inkl. MVA").FontSize(11).Bold().FontColor(Ink);
+                row.AutoItem().Text(FormatKr(totaltInklMva)).FontSize(12).Bold().FontColor(Ink);
             });
         });
     }

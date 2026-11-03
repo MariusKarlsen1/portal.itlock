@@ -19,31 +19,40 @@ public static class DorPdfSeksjoner
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
     private static readonly Color Linje = Color.FromHex("#ECE4D6");
 
+    // hodeBak/hodeTekst: lys topp på dørkortet og beslagstabellen (tilbudet bruker
+    // forsidens lyseblå); uten dem er toppen mørk med hvit tekst som før.
     public static void RenderDorSide(ColumnDescriptor col, Dor dor, bool visPris, Func<DorKomponent, decimal> hentUtpris,
-        Color? aksent = null, Color? aksentLys = null)
+        Color? aksent = null, Color? aksentLys = null, Color? hodeBak = null, Color? hodeTekst = null, bool visStatus = true)
     {
         var farge = aksent ?? PdfStil.Accent;
         var lys = aksentLys ?? PdfStil.Sand;
         var komponenter = dor.Komponenter.Where(k => k.Component is not null).OrderBy(k => k.Component!.Type?.Navn).ThenBy(k => k.Component!.Navn).ToList();
 
         // Fargestripe: dørnummer og dør til til venstre, status til høyre.
-        col.Item().Background(farge).CornerRadiusTopLeft(4).CornerRadiusTopRight(4).PaddingVertical(7).PaddingHorizontal(10).Row(row =>
+        var lysHode = hodeBak is not null;
+        var hBak = hodeBak ?? farge;
+        var hTekst = hodeTekst ?? Colors.White;
+        col.Item().Background(hBak).CornerRadiusTopLeft(4).CornerRadiusTopRight(4).PaddingVertical(7).PaddingHorizontal(10).Row(row =>
         {
             row.RelativeItem().AlignMiddle().Text(t =>
             {
-                t.Span(dor.Dornummer).FontSize(14).Bold().FontColor(Colors.White);
+                t.Span(dor.Dornummer).FontSize(14).Bold().FontColor(hTekst);
                 if (!string.IsNullOrWhiteSpace(dor.DorTil))
                 {
-                    t.Span("   " + dor.DorTil).FontSize(9).FontColor(Color.FromHex("#E8FFFFFF"));
+                    t.Span("   " + dor.DorTil).FontSize(9).FontColor(lysHode ? Colors.Grey.Darken2 : Color.FromHex("#E8FFFFFF"));
                 }
             });
-            row.AutoItem().AlignMiddle().Background(Color.FromHex("#2EFFFFFF")).CornerRadius(8).PaddingVertical(2).PaddingHorizontal(8)
-                .Text(dor.Status.Visningsnavn()).FontSize(7.5f).Bold().FontColor(Colors.White);
+            // Montasjestatus er ikke relevant i et tilbud.
+            if (visStatus)
+            {
+                row.AutoItem().AlignMiddle().Background(lysHode ? Colors.White : Color.FromHex("#2EFFFFFF")).CornerRadius(8).PaddingVertical(2).PaddingHorizontal(8)
+                    .Text(dor.Status.Visningsnavn()).FontSize(7.5f).Bold().FontColor(hTekst);
+            }
         });
 
         col.Item().Border(0.75f).BorderColor(PdfStil.SandBorder).CornerRadiusBottomLeft(4).CornerRadiusBottomRight(4).Padding(11).Column(inner =>
         {
-            RenderInfoGrid(inner, dor, farge);
+            RenderInfoGrid(inner, dor, farge, visStatus);
 
             if (dor.Funksjoner.Count > 0)
             {
@@ -68,7 +77,7 @@ public static class DorPdfSeksjoner
                 });
             }
 
-            RenderBeslagsliste(inner, komponenter, visPris, hentUtpris, farge, lys);
+            RenderBeslagsliste(inner, komponenter, visPris, hentUtpris, farge, lys, hBak, hTekst);
 
             inner.Item().PaddingTop(10).Background(lys).CornerRadius(3).PaddingVertical(7).PaddingHorizontal(9).Column(m =>
             {
@@ -84,7 +93,7 @@ public static class DorPdfSeksjoner
             .Text(tittel).FontSize(8.5f).Bold().FontColor(farge);
     }
 
-    private static void RenderInfoGrid(ColumnDescriptor inner, Dor dor, Color farge)
+    private static void RenderInfoGrid(ColumnDescriptor inner, Dor dor, Color farge, bool visStatus)
     {
         inner.Item().Table(table =>
         {
@@ -109,18 +118,24 @@ public static class DorPdfSeksjoner
             Felt("Rom nr.", dor.Romnr);
             Felt("Etasje", dor.Etasje);
             Felt("Sone", dor.Sone);
-            Felt("Dørtype", dor.Dortype);
-            Felt("B x H", dor.BxH ?? (dor.Bredde is null && dor.Hoyde is null ? null : $"{dor.Bredde} x {dor.Hoyde} mm"));
+            Felt("Dørkonstruksjon", string.IsNullOrWhiteSpace(dor.Dortype) ? null : dor.Dortype + (dor.ToFloyet ? " · 2-fløyet" : " · 1-fløyet"));
+            Felt("Bredde × høyde (mm)", dor.MalTekst);
             Felt("Slagretning", dor.Slagretning);
             Felt("Fri bredde 0,86", dor.FriBredde086 is null ? null : (dor.FriBredde086.Value ? "Ja" : "Nei"));
-            Felt("Status", dor.Status.Visningsnavn());
+            if (visStatus)
+            {
+                Felt("Status", dor.Status.Visningsnavn());
+            }
             Felt("Brann", dor.Brann);
             Felt("Lyd", dor.Lyd);
-            Felt("Montert dato", dor.MontertDato?.ToString("dd.MM.yyyy"));
+            if (visStatus)
+            {
+                Felt("Montert dato", dor.MontertDato?.ToString("dd.MM.yyyy"));
+            }
         });
     }
 
-    private static void RenderBeslagsliste(ColumnDescriptor inner, List<DorKomponent> komponenter, bool visPris, Func<DorKomponent, decimal> hentUtpris, Color farge, Color lys)
+    private static void RenderBeslagsliste(ColumnDescriptor inner, List<DorKomponent> komponenter, bool visPris, Func<DorKomponent, decimal> hentUtpris, Color farge, Color lys, Color hBak, Color hTekst)
     {
         inner.Item().PaddingTop(10).Column(bc =>
         {
@@ -157,20 +172,20 @@ public static class DorPdfSeksjoner
 
                 table.Header(header =>
                 {
-                    IContainer Hode() => header.Cell().Background(farge).PaddingVertical(5).PaddingHorizontal(6);
-                    Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(Colors.White);
-                    Hode().Text("Beskrivelse").FontSize(8).Bold().FontColor(Colors.White);
+                    IContainer Hode() => header.Cell().Background(hBak).PaddingVertical(5).PaddingHorizontal(6);
+                    Hode().Text("Beslagstype").FontSize(8).Bold().FontColor(hTekst);
+                    Hode().Text("Beskrivelse").FontSize(8).Bold().FontColor(hTekst);
                     if (visOverflate)
                     {
-                        Hode().Text("Overflate").FontSize(8).Bold().FontColor(Colors.White);
+                        Hode().Text("Overflate").FontSize(8).Bold().FontColor(hTekst);
                     }
-                    Hode().Text("Enhet").FontSize(8).Bold().FontColor(Colors.White);
-                    Hode().AlignRight().Text("Antall").FontSize(8).Bold().FontColor(Colors.White);
-                    Hode().Text("Levering").FontSize(8).Bold().FontColor(Colors.White);
+                    Hode().Text("Enhet").FontSize(8).Bold().FontColor(hTekst);
+                    Hode().AlignRight().Text("Antall").FontSize(8).Bold().FontColor(hTekst);
+                    Hode().Text("Levering").FontSize(8).Bold().FontColor(hTekst);
                     if (visPris)
                     {
-                        Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(Colors.White);
-                        Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(Colors.White);
+                        Hode().AlignRight().Text("Pris").FontSize(8).Bold().FontColor(hTekst);
+                        Hode().AlignRight().Text("Totalt").FontSize(8).Bold().FontColor(hTekst);
                     }
                 });
 
