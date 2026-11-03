@@ -46,6 +46,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ProsjektVedlegg> ProsjektVedlegg => Set<ProsjektVedlegg>();
     public DbSet<ProsjektMappe> ProsjektMapper => Set<ProsjektMappe>();
     public DbSet<Plantegning> Plantegninger => Set<Plantegning>();
+    public DbSet<ProsjektByggetrinn> ProsjektByggetrinn => Set<ProsjektByggetrinn>();
     public DbSet<Dor> Dorer => Set<Dor>();
     public DbSet<DorKomponent> DorKomponenter => Set<DorKomponent>();
     public DbSet<DorFunksjon> DorFunksjoner => Set<DorFunksjon>();

@@ -1185,15 +1185,23 @@ else
         <div class="prosjekt-layout plantegninger-layout">
             @if (!_erMobilvisning)
             {
-                <div class="p5-topp">
-                    <span class="p5-smule">Klikk en tegning for å plassere og åpne dører.</span>
-                    <input class="p5-inp p5-hoyre" type="text" @bind="_nyPlantegningNavn" @bind:event="oninput" placeholder="Navn, f.eks. 1. etasje (valgfritt)" />
-                    <input class="p5-inp" type="text" @bind="_nyPlantegningByggetrinn" @bind:event="oninput" placeholder="Byggetrinn (valgfritt)" />
-                    <label class="ph-knapp ph-knapp-liten ph-knapp-primar">
-                        <Icon Name="plus" />Last opp plantegning
-                        <InputFile @key="_plantegningInputKey" OnChange="OnPlantegningSelected" accept="image/*,.pdf,application/pdf" style="display:none;" />
-                    </label>
+                @* B1: byggetrinn som kort med tegningene som fliser. Tegninger dras mellom
+                   byggetrinn (eller flyttes med ⋮), og byggetrinnene dras for å endre rekkefølgen. *@
+                <div class="bt-topp">
+                    <label class="bt-sok"><Icon Name="search" /><input type="search" @bind="_tegningSok" @bind:event="oninput" placeholder="Søk i tegninger" /></label>
+                    @if (KanRedigereProsjekt)
+                    {
+                        <button type="button" class="bt-kn" @onclick="StartNyttByggetrinn"><Icon Name="plus" />Nytt byggetrinn</button>
+                        <label class="bt-kn bt-kn-p">
+                            <Icon Name="upload" />Last opp tegning
+                            <InputFile @key="@($"topp-{_plantegningInputKey}")" OnChange="@(e => LastOppTil(e, null))" accept="image/*,.pdf,application/pdf" />
+                        </label>
+                    }
                 </div>
+                @if (KanRedigereProsjekt && _plantegninger.Count > 0)
+                {
+                    <p class="bt-tips"><Icon Name="grip" />Dra tegninger mellom byggetrinn, eller bruk ⋮ på tegningen. Dra byggetrinnene i håndtaket for å endre rekkefølgen.</p>
+                }
 
                 @if (_uploadingPlantegning)
                 {
@@ -1205,7 +1213,7 @@ else
                 }
             }
 
-            @if (_plantegninger.Count > 0)
+            @if (_plantegninger.Count > 0 || (_byggetrinn.Count > 0 && !_erMobilvisning))
             {
                 @if (_erMobilvisning)
                 {
@@ -1246,56 +1254,142 @@ else
                 }
                 else
                 {
-                    @foreach (var gruppe in PlantegningGrupper)
+                    @foreach (var gruppe in SynligeGrupper)
                     {
-                        <div @key="gruppe.Navn" class="plantegning-gruppe p5-tegngruppe @(PlantegningGrupper.Count() > 1 ? "" : "p5-en-gruppe")">
-                            <div class="plantegning-gruppe-header">
-                                <button type="button" class="gruppe-toggle" @onclick="@(() => ToggleGruppe(gruppe.Navn))">
-                                    <span class="gruppe-chevron @(ErGruppeLukket(gruppe.Navn) ? "" : "apen")"><Icon Name="chevron-down" /></span>
-                                    <span class="@CssHidden(_editingGruppe == gruppe.Navn)">@gruppe.Navn <span class="gruppe-count">@gruppe.Plantegninger.Count tegning@(gruppe.Plantegninger.Count == 1 ? "" : "er")</span></span>
-                                </button>
-                                <span class="gruppe-rename-form @CssHidden(_editingGruppe != gruppe.Navn)">
-                                    <input @bind="_gruppeRenameInput" @bind:event="oninput" placeholder="Gruppenavn" />
-                                    <button type="button" class="save-button" @onclick="@(() => LagreGruppeNavn(gruppe.Navn))">Lagre</button>
-                                    <button type="button" class="cancel-button" @onclick="@(() => _editingGruppe = null)">Avbryt</button>
-                                </span>
-                                <button type="button" class="gruppe-rename-button @CssHidden(_editingGruppe == gruppe.Navn)" @onclick="@(() => StartGruppeRename(gruppe.Navn))">Endre navn</button>
-                            </div>
-                            <div class="p5-tegn @CssHidden(ErGruppeLukket(gruppe.Navn))">
-                                @foreach (var p in gruppe.Plantegninger)
+                        var navn = gruppe.Navn;
+                        var erUgruppert = navn == UgruppertNavn;
+                        var dorer = gruppe.Plantegninger.Sum(t => DorerPaPlantegning(t.Id));
+                        var ferdig = gruppe.Plantegninger.Sum(t => FerdigePaPlantegning(t.Id));
+                        <section @key="navn" class="bt-g" data-slipp
+                                 @ondragover:preventDefault="true" @ondrop="@(() => SlippPaGruppe(navn))" @ondrop:preventDefault="true">
+                            <div class="bt-gh" draggable="@((KanRedigereProsjekt && !erUgruppert) ? "true" : "false")" data-dra="gruppe"
+                                 @ondragstart="@(() => { if (!erUgruppert) { _draGruppe = navn; _draTegningId = null; } })">
+                                @if (KanRedigereProsjekt && !erUgruppert)
                                 {
-                                    <div @key="p.Id" class="p5-tg">
-                                        <a class="p5-tg-bilde" href="@($"/plantegning/{p.Id}")">
-                                            <img src="@($"/plantegningbilde/{p.Id}")" alt="" loading="lazy" />
-                                        </a>
-                                        <div class="p5-tg-info">
-                                            <a href="@($"/plantegning/{p.Id}")"><b>@p.Navn</b></a>
-                                            @{ var antallDorer = DorerPaPlantegning(p.Id); }
-                                            <span class="p5-smule">@antallDorer dør@(antallDorer == 1 ? "" : "er")@(string.IsNullOrWhiteSpace(p.Byggetrinn) ? "" : $" · {p.Byggetrinn}")</span>
-                                        </div>
-                                        <div class="p5-tg-handling">
-                                            @if (AlleGruppeNavn.Count() > 1)
-                                            {
-                                                <select class="plantegning-flytt" @onchange="@(e => FlyttPlantegning(p, e.Value?.ToString()))">
-                                                    <option value="">Flytt til...</option>
-                                                    @foreach (var g in AlleGruppeNavn.Where(g => g != gruppe.Navn))
-                                                    {
-                                                        <option value="@g">@g</option>
-                                                    }
-                                                </select>
-                                            }
-                                            <button type="button" class="ikon-btn-fjern" title="Fjern" @onclick="@(() => RemovePlantegning(p))"><Icon Name="x" /></button>
-                                        </div>
-                                    </div>
+                                    <span class="bt-grep" title="Dra for å endre rekkefølgen"><Icon Name="grip" /></span>
                                 }
+                                <span class="bt-ik"><Icon Name="folder" /></span>
+                                @if (_editingGruppe == navn)
+                                {
+                                    <input class="bt-inp" @bind="_gruppeRenameInput" @bind:event="oninput" placeholder="Navn på byggetrinn"
+                                           @onkeydown="@(async e => { if (e.Key == "Enter") { await LagreGruppeNavn(navn); } else if (e.Key == "Escape") { _editingGruppe = null; } })" />
+                                    <button type="button" class="bt-kn bt-kn-p bt-liten" @onclick="@(() => LagreGruppeNavn(navn))">Lagre</button>
+                                    <button type="button" class="bt-kn bt-liten" @onclick="@(() => _editingGruppe = null)">Avbryt</button>
+                                }
+                                else
+                                {
+                                    <b>@navn</b>
+                                    <small>@gruppe.Plantegninger.Count tegning@(gruppe.Plantegninger.Count == 1 ? "" : "er") · @dorer dør@(dorer == 1 ? "" : "er")</small>
+                                    @if (dorer > 0)
+                                    {
+                                        <span class="bt-bar"><i style="width:@(ferdig * 100 / dorer)%"></i></span>
+                                        <small>@(ferdig * 100 / dorer) % ferdig montert</small>
+                                    }
+                                }
+                                <span class="bt-gh-h">
+                                    @if (KanRedigereProsjekt && !erUgruppert && _editingGruppe != navn)
+                                    {
+                                        <button type="button" class="bt-kn bt-liten" @onclick="@(() => StartGruppeRename(navn))"><Icon Name="edit" />Endre navn</button>
+                                        @if (gruppe.Plantegninger.Count == 0)
+                                        {
+                                            <button type="button" class="bt-ikn" title="Slett tomt byggetrinn" @onclick="@(() => SlettByggetrinn(navn))"><Icon Name="trash" /></button>
+                                        }
+                                    }
+                                    <button type="button" class="bt-ikn" title="@(ErGruppeLukket(navn) ? "Vis" : "Skjul")" @onclick="@(() => ToggleGruppe(navn))">
+                                        <span class="bt-chev @(ErGruppeLukket(navn) ? "" : "apen")"><Icon Name="chevron-down" /></span>
+                                    </button>
+                                </span>
                             </div>
-                        </div>
+                            @if (!ErGruppeLukket(navn))
+                            {
+                                <div class="bt-tiles">
+                                    @foreach (var p in gruppe.Plantegninger)
+                                    {
+                                        var tegning = p;
+                                        var antallDorer = DorerPaPlantegning(p.Id);
+                                        var antallFerdig = FerdigePaPlantegning(p.Id);
+                                        <div @key="p.Id" class="bt-t" draggable="@(KanRedigereProsjekt ? "true" : "false")" data-dra="tegning"
+                                             @ondragstart="@(() => { _draTegningId = tegning.Id; _draGruppe = null; })">
+                                            <a class="bt-t-bilde" href="@($"/plantegning/{p.Id}")" draggable="false">
+                                                <img src="@($"/plantegningbilde/{p.Id}")" alt="" loading="lazy" draggable="false" />
+                                            </a>
+                                            @if (KanRedigereProsjekt)
+                                            {
+                                                <span class="bt-t-grep" title="Dra for å flytte"><Icon Name="grip" /></span>
+                                                <button type="button" class="bt-t-meny" title="Flere valg" @onclick="@(() => VekslTegningMeny(tegning.Id))"><Icon Name="more-vertical" /></button>
+                                            }
+                                            <div class="bt-t-inn">
+                                                @if (_redigerTegningId == p.Id)
+                                                {
+                                                    <input class="bt-inp" @bind="_tegningNavnInput" @bind:event="oninput"
+                                                           @onkeydown="@(async e => { if (e.Key == "Enter") { await LagreTegningNavn(tegning); } else if (e.Key == "Escape") { _redigerTegningId = null; } })" />
+                                                    <span class="bt-t-knapper">
+                                                        <button type="button" class="bt-kn bt-kn-p bt-liten" @onclick="@(() => LagreTegningNavn(tegning))">Lagre</button>
+                                                        <button type="button" class="bt-kn bt-liten" @onclick="@(() => _redigerTegningId = null)">Avbryt</button>
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <a href="@($"/plantegning/{p.Id}")"><b>@p.Navn</b></a>
+                                                    <span class="bt-t-meta">
+                                                        <Icon Name="door" />@antallDorer dør@(antallDorer == 1 ? "" : "er")
+                                                        <span class="bt-t-bar"><i style="width:@(antallDorer == 0 ? 0 : antallFerdig * 100 / antallDorer)%"></i></span>
+                                                        @(antallDorer == 0 ? 0 : antallFerdig * 100 / antallDorer) %
+                                                    </span>
+                                                }
+                                            </div>
+                                            @if (_menyTegningId == p.Id)
+                                            {
+                                                <div class="bt-meny">
+                                                    <button type="button" @onclick="@(() => StartTegningNavn(tegning))"><Icon Name="edit" />Gi nytt navn</button>
+                                                    <small>Flytt til</small>
+                                                    @foreach (var mal in AlleGruppeNavn.Where(g => g != navn))
+                                                    {
+                                                        var malNavn = mal;
+                                                        <button type="button" @onclick="@(() => FlyttPlantegning(tegning, malNavn))"><Icon Name="folder" />@malNavn</button>
+                                                    }
+                                                    <button type="button" @onclick="@(() => StartNyttByggetrinn(tegning.Id))"><Icon Name="plus" />Nytt byggetrinn …</button>
+                                                    <hr />
+                                                    @if (_bekreftSlettTegningId == p.Id)
+                                                    {
+                                                        <button type="button" class="bt-rod" @onclick="@(() => RemovePlantegning(tegning))"><Icon Name="trash" />Ja, slett tegningen</button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button type="button" class="bt-rod" @onclick="@(() => _bekreftSlettTegningId = tegning.Id)"><Icon Name="trash" />Slett tegning</button>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                    @if (KanRedigereProsjekt && string.IsNullOrWhiteSpace(_tegningSok))
+                                    {
+                                        <label class="bt-ny-t">
+                                            <Icon Name="upload" />
+                                            <span>@(gruppe.Plantegninger.Count == 0 ? "Last opp første tegning" : "Last opp tegning hit")</span>
+                                            <InputFile @key="@($"{navn}-{_plantegningInputKey}")" OnChange="@(e => LastOppTil(e, erUgruppert ? null : navn))" accept="image/*,.pdf,application/pdf" />
+                                        </label>
+                                    }
+                                </div>
+                            }
+                        </section>
                     }
                 }
             }
-            else
+            else if (_byggetrinn.Count == 0)
             {
                 <p class="list-empty">Ingen plantegninger lastet opp ennå.</p>
+            }
+
+            @if (_visNyttByggetrinn && !_erMobilvisning)
+            {
+                <div class="bt-nygr">
+                    <Icon Name="folder" />
+                    <input class="bt-inp" @bind="_nyttByggetrinnNavn" @bind:event="oninput" placeholder="Navn, f.eks. BT2 · Parkeringskjeller"
+                           @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettByggetrinn(); } else if (e.Key == "Escape") { _visNyttByggetrinn = false; } })" />
+                    <button type="button" class="bt-kn bt-kn-p" @onclick="OpprettByggetrinn">Opprett</button>
+                    <button type="button" class="bt-kn" @onclick="@(() => _visNyttByggetrinn = false)">Avbryt</button>
+                </div>
             }
         </div>
     }
@@ -2443,12 +2537,181 @@ else
     }
     private List<Plantegning> _plantegninger = [];
 
-    private IEnumerable<(string Navn, List<Plantegning> Plantegninger)> PlantegningGrupper =>
-        _plantegninger
-            .GroupBy(p => string.IsNullOrWhiteSpace(p.Byggetrinn) ? "Ugruppert" : p.Byggetrinn!.Trim())
-            .OrderBy(g => g.Key == "Ugruppert" ? 1 : 0)
-            .ThenBy(g => g.Key)
-            .Select(g => (g.Key, g.OrderBy(p => p.Navn).ToList()));
+    // Byggetrinnene i lagret rekkefølge (også tomme), og «Ugruppert» til slutt når den har tegninger.
+    private const string UgruppertNavn = "Ugruppert";
+    private List<ProsjektByggetrinn> _byggetrinn = [];
+
+    private static string GruppeAv(Plantegning p) => string.IsNullOrWhiteSpace(p.Byggetrinn) ? UgruppertNavn : p.Byggetrinn!.Trim();
+
+    private IEnumerable<(string Navn, List<Plantegning> Plantegninger)> PlantegningGrupper
+    {
+        get
+        {
+            foreach (var b in _byggetrinn.OrderBy(b => b.Rekkefolge).ThenBy(b => b.Navn))
+            {
+                yield return (b.Navn, _plantegninger.Where(p => GruppeAv(p) == b.Navn).OrderBy(p => p.Navn).ToList());
+            }
+
+            var ugruppert = _plantegninger.Where(p => GruppeAv(p) == UgruppertNavn).OrderBy(p => p.Navn).ToList();
+            if (ugruppert.Count > 0)
+            {
+                yield return (UgruppertNavn, ugruppert);
+            }
+        }
+    }
+
+    // Søket filtrerer tegningene; byggetrinn uten treff skjules mens man søker.
+    private IEnumerable<(string Navn, List<Plantegning> Plantegninger)> SynligeGrupper =>
+        string.IsNullOrWhiteSpace(_tegningSok)
+            ? PlantegningGrupper
+            : PlantegningGrupper
+                .Select(g => (g.Navn, g.Plantegninger.Where(p => p.Navn.Contains(_tegningSok.Trim(), StringComparison.OrdinalIgnoreCase)).ToList()))
+                .Where(g => g.Item2.Count > 0);
+
+    private string _tegningSok = "";
+    private int? _draTegningId;
+    private string? _draGruppe;
+    private int? _menyTegningId;
+    private int? _bekreftSlettTegningId;
+    private int? _redigerTegningId;
+    private string _tegningNavnInput = "";
+    private bool _visNyttByggetrinn;
+    private string _nyttByggetrinnNavn = "";
+    private int? _nyttByggetrinnForTegning;
+
+    private int FerdigePaPlantegning(int plantegningId) =>
+        _dorer.Count(d => d.PlantegningId == plantegningId && d.Status == MontasjeStatus.FerdigMontert);
+
+    private void VekslTegningMeny(int id)
+    {
+        _menyTegningId = _menyTegningId == id ? null : id;
+        _bekreftSlettTegningId = null;
+    }
+
+    private void StartTegningNavn(Plantegning p)
+    {
+        _menyTegningId = null;
+        _redigerTegningId = p.Id;
+        _tegningNavnInput = p.Navn;
+    }
+
+    private async Task LagreTegningNavn(Plantegning p)
+    {
+        if (!KanRedigereProsjekt || string.IsNullOrWhiteSpace(_tegningNavnInput))
+        {
+            return;
+        }
+
+        p.Navn = _tegningNavnInput.Trim();
+        await Db.SaveChangesAsync();
+        _redigerTegningId = null;
+    }
+
+    private void StartNyttByggetrinn() => StartNyttByggetrinn(null);
+
+    private void StartNyttByggetrinn(int? forTegning)
+    {
+        _menyTegningId = null;
+        _visNyttByggetrinn = true;
+        _nyttByggetrinnNavn = "";
+        _nyttByggetrinnForTegning = forTegning;
+    }
+
+    private async Task OpprettByggetrinn()
+    {
+        if (!KanRedigereProsjekt || !Id.HasValue)
+        {
+            return;
+        }
+
+        var navn = _nyttByggetrinnNavn.Trim();
+        if (navn.Length == 0 || navn == UgruppertNavn)
+        {
+            return;
+        }
+
+        if (!_byggetrinn.Any(b => string.Equals(b.Navn, navn, StringComparison.OrdinalIgnoreCase)))
+        {
+            var neste = _byggetrinn.Count == 0 ? 0 : _byggetrinn.Max(b => b.Rekkefolge) + 1;
+            Db.ProsjektByggetrinn.Add(new ProsjektByggetrinn { ProsjektId = Id.Value, Navn = navn, Rekkefolge = neste });
+        }
+        else
+        {
+            navn = _byggetrinn.First(b => string.Equals(b.Navn, navn, StringComparison.OrdinalIgnoreCase)).Navn;
+        }
+
+        if (_nyttByggetrinnForTegning is int tegningId && _plantegninger.FirstOrDefault(p => p.Id == tegningId) is { } tegning)
+        {
+            tegning.Byggetrinn = navn;
+        }
+
+        await Db.SaveChangesAsync();
+        _visNyttByggetrinn = false;
+        _nyttByggetrinnForTegning = null;
+        await ReloadPlantegninger();
+    }
+
+    private async Task SlettByggetrinn(string navn)
+    {
+        if (!KanRedigereProsjekt || _plantegninger.Any(p => GruppeAv(p) == navn))
+        {
+            return;
+        }
+
+        Db.ProsjektByggetrinn.RemoveRange(_byggetrinn.Where(b => b.Navn == navn));
+        await Db.SaveChangesAsync();
+        await ReloadPlantegninger();
+    }
+
+    // Slipp på et byggetrinn: en tegning flyttes dit, et byggetrinn legges foran det.
+    private async Task SlippPaGruppe(string malGruppe)
+    {
+        if (!KanRedigereProsjekt)
+        {
+            return;
+        }
+
+        if (_draTegningId is int tegningId && _plantegninger.FirstOrDefault(p => p.Id == tegningId) is { } tegning)
+        {
+            _draTegningId = null;
+            if (GruppeAv(tegning) != malGruppe)
+            {
+                await FlyttPlantegning(tegning, malGruppe);
+            }
+
+            return;
+        }
+
+        if (_draGruppe is { } fra && fra != malGruppe && malGruppe != UgruppertNavn)
+        {
+            _draGruppe = null;
+            var rekke = _byggetrinn.OrderBy(b => b.Rekkefolge).ThenBy(b => b.Navn).ToList();
+            var flyttes = rekke.FirstOrDefault(b => b.Navn == fra);
+            if (flyttes is null)
+            {
+                return;
+            }
+
+            rekke.Remove(flyttes);
+            var foran = rekke.FindIndex(b => b.Navn == malGruppe);
+            rekke.Insert(foran < 0 ? rekke.Count : foran, flyttes);
+            for (var i = 0; i < rekke.Count; i++)
+            {
+                rekke[i].Rekkefolge = i;
+            }
+
+            await Db.SaveChangesAsync();
+        }
+
+        _draGruppe = null;
+    }
+
+    private Task LastOppTil(InputFileChangeEventArgs e, string? byggetrinn)
+    {
+        _nyPlantegningByggetrinn = byggetrinn ?? "";
+        _nyPlantegningNavn = "";
+        return OnPlantegningSelected(e);
+    }
 
     private IEnumerable<string> AlleGruppeNavn => PlantegningGrupper.Select(g => g.Navn);
 
@@ -2869,6 +3132,8 @@ else
 
             _form = existing;
             _plantegninger = existing.Plantegninger;
+            // Byggetrinnene (også tomme) og rekkefølgen deres.
+            await ReloadPlantegninger();
             _vedlegg = existing.Vedlegg;
             _mapper = await Db.ProsjektMapper
                 .Where(m => m.ProsjektId == Id.Value)
@@ -3279,12 +3544,29 @@ else
         }
 
         var nyttNavn = string.IsNullOrWhiteSpace(_gruppeRenameInput) ? null : _gruppeRenameInput.Trim();
-        var berorte = _plantegninger.Where(p =>
-            (string.IsNullOrWhiteSpace(p.Byggetrinn) ? "Ugruppert" : p.Byggetrinn!.Trim()) == gammeltNavn);
+        if (nyttNavn == UgruppertNavn)
+        {
+            return;
+        }
+
+        var berorte = _plantegninger.Where(p => GruppeAv(p) == gammeltNavn);
 
         foreach (var p in berorte)
         {
             p.Byggetrinn = nyttNavn;
+        }
+
+        // Byggetrinnet beholder plassen sin i rekkefølgen med nytt navn; tomt navn fjerner det.
+        foreach (var b in _byggetrinn.Where(b => b.Navn == gammeltNavn).ToList())
+        {
+            if (nyttNavn is null || _byggetrinn.Any(x => x != b && string.Equals(x.Navn, nyttNavn, StringComparison.OrdinalIgnoreCase)))
+            {
+                Db.ProsjektByggetrinn.Remove(b);
+            }
+            else
+            {
+                b.Navn = nyttNavn;
+            }
         }
 
         await Db.SaveChangesAsync();
@@ -3304,7 +3586,8 @@ else
             return;
         }
 
-        p.Byggetrinn = nyGruppe == "Ugruppert" ? null : nyGruppe;
+        p.Byggetrinn = nyGruppe == UgruppertNavn ? null : nyGruppe;
+        _menyTegningId = null;
         await Db.SaveChangesAsync();
         await ReloadPlantegninger();
     }
@@ -3319,6 +3602,8 @@ else
         // Filen ligger i samme rad (PlantegningFil) og må lastes for at EF skal slette raden.
         await Db.Entry(p).Reference(x => x.Fil).LoadAsync();
         Db.Plantegninger.Remove(p);
+        _menyTegningId = null;
+        _bekreftSlettTegningId = null;
         await Db.SaveChangesAsync();
         await ReloadPlantegninger();
     }
@@ -3328,6 +3613,30 @@ else
         _plantegninger = await Db.Plantegninger
             .Where(p => p.ProsjektId == Id!.Value)
             .ToListAsync();
+        _byggetrinn = await Db.ProsjektByggetrinn
+            .Where(b => b.ProsjektId == Id!.Value)
+            .ToListAsync();
+
+        // Byggetrinn som er skrevet inn andre steder (f.eks. ved opplasting fra serviceavtalen)
+        // legges til bakerst, så de også kan sorteres og stå tomme.
+        var mangler = _plantegninger
+            .Select(GruppeAv)
+            .Where(n => n != UgruppertNavn && !_byggetrinn.Any(b => b.Navn == n))
+            .Distinct()
+            .OrderBy(n => n)
+            .ToList();
+        if (mangler.Count > 0)
+        {
+            var neste = _byggetrinn.Count == 0 ? 0 : _byggetrinn.Max(b => b.Rekkefolge) + 1;
+            foreach (var n in mangler)
+            {
+                var b = new ProsjektByggetrinn { ProsjektId = Id!.Value, Navn = n, Rekkefolge = neste++ };
+                Db.ProsjektByggetrinn.Add(b);
+                _byggetrinn.Add(b);
+            }
+
+            await Db.SaveChangesAsync();
+        }
     }
 
     // Vedlegg

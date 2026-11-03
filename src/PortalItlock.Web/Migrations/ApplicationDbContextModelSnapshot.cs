@@ -5887,6 +5887,29 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ProsjektBudsjettJusteringer");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ProsjektByggetrinn", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProsjektId");
+
+                    b.ToTable("ProsjektByggetrinn");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ProsjektEtterkalkyle", b =>
                 {
                     b.Property<int>("Id")
@@ -9454,6 +9477,17 @@ namespace PortalItlock.Web.Migrations
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ProsjektBudsjettJustering", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
+                        .WithMany()
+                        .HasForeignKey("ProsjektId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Prosjekt");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ProsjektByggetrinn", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
                         .WithMany()
