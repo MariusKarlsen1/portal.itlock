@@ -60,184 +60,93 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITen
             .Where(p => p.ProsjektId == prosjektId)
             .ToListAsync();
 
-        // Enkel utskriftsvennlig mal: organisasjonens logo og farge, prosjektinfo,
-        // tabell med avkrysningsrute, sumrad, "Må bestilles" per leverandør og
-        // signaturlinjer. Liggende A4 slik at alle kolonnene får plass.
+        // P1 (liste-pdf-forslag.html): stående A4 i tilbudets stil - én liste nedover der det
+        // som er plukket fylles inn for hånd, rute for OK og signatur nederst. Lager og
+        // bestilling følges opp i lagermodulen og står ikke her.
         var org = RapportProfil.Fra(tenantContext.Current);
         var kunde = prosjekt.KundeId is { } kid ? await db.Kunder.FindAsync(kid) : null;
         var byggetrinnTekst = valgteByggetrinn is not null ? string.Join(", ", valgteByggetrinn) : "Alle";
-        var lys = Color.FromHex("#ECE4D6");
-
-        var rader = gruppert.Select(g =>
-        {
-            var linje = linjer.FirstOrDefault(l => l.ComponentId == g.ComponentId);
-            var bestilt = linje?.VarerBestilt ?? 0;
-            return new
-            {
-                g.Component,
-                g.Antall,
-                Plukket = linje?.AntallPlukket ?? 0,
-                Bestilt = bestilt,
-                Forventet = linje?.ForventetLevert,
-                MaBestilles = Math.Max(g.Antall - bestilt, 0)
-            };
-        }).ToList();
+        var plukketPer = linjer.GroupBy(l => l.ComponentId).ToDictionary(g => g.Key, g => g.Max(l => l.AntallPlukket));
+        var sum = gruppert.Sum(g => g.Antall);
 
         var document = Document.Create(doc =>
         {
             doc.Page(page =>
             {
-                page.Size(PageSizes.A4.Landscape());
-                page.Margin(1.4f, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(8.5f).FontColor(PdfStil.Ink));
-
-                page.Header().Column(col =>
-                {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().AlignBottom().Column(c =>
-                        {
-                            c.Item().Text("Plukkliste").FontSize(18).Bold();
-                            c.Item().PaddingTop(2).Text(prosjekt.Navn).FontSize(9.5f).FontColor(Colors.Grey.Darken1);
-                        });
-                        row.ConstantItem(160).AlignBottom().AlignRight().Element(e => org.TegnLogo(e, pdfLogo, 24));
-                    });
-                    col.Item().PaddingTop(6).BorderBottom(2).BorderColor(org.Aksent);
-                    col.Item().PaddingTop(6).Row(row =>
-                    {
-                        void Felt(string etikett, string verdi) => row.RelativeItem().Column(c =>
-                        {
-                            c.Item().Text(etikett.ToUpperInvariant()).FontSize(6.5f).Bold().FontColor(org.Aksent).LetterSpacing(0.06f);
-                            c.Item().Text(verdi).FontSize(9).SemiBold();
-                        });
-                        Felt("Kunde", kunde?.Navn ?? "-");
-                        Felt("Byggetrinn", byggetrinnTekst);
-                        Felt("Utskrevet", DateTime.Now.ToString("dd.MM.yyyy"));
-                        Felt("Varer / stk", $"{rader.Count} varer · {rader.Sum(r => r.Antall)} stk");
-                        Felt("Må bestilles", $"{rader.Sum(r => r.MaBestilles)} stk");
-                    });
-                });
+                ListePdfStil.Side(page);
+                ListePdfStil.Topp(page, org, pdfLogo, "Plukkliste", prosjekt.Navn);
 
                 page.Content().PaddingTop(12).Column(col =>
                 {
+                    ListePdfStil.Info(col,
+                        ("Kunde", kunde?.Navn ?? "–"),
+                        ("Prosjekt", $"P-{prosjekt.Id}"),
+                        ("Byggetrinn", byggetrinnTekst),
+                        ("Utskrevet", DateTime.Now.ToString("dd.MM.yyyy")),
+                        ("Varer / stk", $"{gruppert.Count} varer · {sum} stk"));
+
                     col.Item().Table(table =>
                     {
                         table.ColumnsDefinition(c =>
                         {
                             c.ConstantColumn(22);
-                            c.RelativeColumn(1.3f);
-                            c.RelativeColumn(1.4f);
-                            c.RelativeColumn(3f);
-                            c.RelativeColumn(1.5f);
+                            c.RelativeColumn(4.2f);
+                            c.RelativeColumn(1.7f);
                             c.RelativeColumn(1f);
-                            c.RelativeColumn(0.8f);
-                            c.RelativeColumn(0.8f);
-                            c.RelativeColumn(0.8f);
                             c.RelativeColumn(1f);
-                            c.RelativeColumn(1.1f);
-                            c.ConstantColumn(34);
+                            c.ConstantColumn(32);
                         });
 
                         table.Header(h =>
                         {
-                            IContainer Hode() => h.Cell().Background(org.Aksent).PaddingVertical(5).PaddingHorizontal(5);
-                            Hode().Text("#").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Beslagstype").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Varenr").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Varenavn").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Leverandør").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Overflate").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignRight().Text("Antall").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignRight().Text("Plukket").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignRight().Text("Bestilt").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignRight().Text("Må best.").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().Text("Forventet").FontSize(7.5f).Bold().FontColor(Colors.White);
-                            Hode().AlignCenter().Text("✓").FontSize(7.5f).Bold().FontColor(Colors.White);
+                            ListePdfStil.HodeTekst(h.Cell(), "#");
+                            ListePdfStil.HodeTekst(h.Cell(), "Vare");
+                            ListePdfStil.HodeTekst(h.Cell(), "Leverandør");
+                            ListePdfStil.HodeTekst(h.Cell(), "Antall", hoyre: true);
+                            ListePdfStil.HodeTekst(h.Cell(), "Plukket", midt: true);
+                            ListePdfStil.HodeTekst(h.Cell(), "OK", midt: true);
                         });
 
-                        var i = 0;
-                        foreach (var r in rader)
+                        for (var n = 0; n < gruppert.Count; n++)
                         {
-                            i++;
-                            IContainer Rad() => table.Cell().BorderBottom(0.5f).BorderColor(lys).PaddingVertical(4).PaddingHorizontal(5);
-                            Rad().Text(i.ToString()).FontColor(Colors.Grey.Darken1);
-                            Rad().Text(r.Component.Type?.Navn ?? "");
-                            Rad().Text(r.Component.Produktkode ?? "").FontColor(Colors.Grey.Darken2);
-                            Rad().Text(r.Component.Navn).SemiBold();
-                            Rad().Text(r.Component.Leverandor ?? "").FontColor(Colors.Grey.Darken2);
-                            Rad().Text(r.Component.Overflate ?? "").FontColor(Colors.Grey.Darken2);
-                            Rad().AlignRight().Text($"{r.Antall} {r.Component.Enhet ?? "stk"}").Bold();
-                            Rad().AlignRight().Text(r.Plukket.ToString());
-                            Rad().AlignRight().Text(r.Bestilt.ToString());
-                            var ma = Rad().AlignRight().Text(r.MaBestilles.ToString());
-                            if (r.MaBestilles > 0)
+                            var g = gruppert[n];
+                            var zebra = n % 2 == 1;
+                            var plukket = plukketPer.GetValueOrDefault(g.ComponentId);
+                            ListePdfStil.Rad(table.Cell(), zebra).Text((n + 1).ToString()).FontSize(8).FontColor(ListePdfStil.Mut);
+                            ListePdfStil.Vare(ListePdfStil.Rad(table.Cell(), zebra), g.Component.Navn, g.Component.Produktkode, g.Component.Type?.Navn);
+                            ListePdfStil.Rad(table.Cell(), zebra).Text(g.Component.Leverandor ?? "").FontSize(8.5f);
+                            ListePdfStil.Rad(table.Cell(), zebra).AlignRight().Text($"{g.Antall} {(g.Component.Enhet ?? "stk").ToLowerInvariant()}").FontSize(8.8f).Bold();
+                            // Allerede plukket står med; ellers en strek å skrive på.
+                            if (plukket > 0)
                             {
-                                ma.Bold().FontColor(Color.FromHex("#C2412B"));
+                                ListePdfStil.Rad(table.Cell(), zebra).AlignCenter().Text($"{Math.Min(plukket, g.Antall)}").FontSize(8.8f).Bold();
                             }
-                            Rad().Text(r.Forventet?.ToString("dd.MM.yy") ?? "");
-                            Rad().AlignCenter().AlignMiddle().Width(10).Height(10).Border(0.8f).BorderColor(Colors.Grey.Darken1);
+                            else
+                            {
+                                ListePdfStil.Rad(table.Cell(), zebra).AlignCenter().AlignBottom().Width(34).Height(11).BorderBottom(0.8f).BorderColor(Colors.Grey.Medium);
+                            }
+                            ListePdfStil.Rad(table.Cell(), zebra).AlignCenter().AlignMiddle().Width(10).Height(10).Border(0.8f).BorderColor(Colors.Grey.Medium)
+                                .Background(plukket >= g.Antall ? ListePdfStil.LysGra : Colors.White)
+                                .AlignCenter().AlignMiddle().Text(plukket >= g.Antall ? "✓" : "").FontSize(7).Bold();
                         }
 
-                        IContainer Sum() => table.Cell().Background(Color.FromHex("#FBF8F3")).PaddingVertical(5).PaddingHorizontal(5);
-                        Sum();
-                        table.Cell().ColumnSpan(5).Background(Color.FromHex("#FBF8F3")).PaddingVertical(5).PaddingHorizontal(5).Text("Totalt").Bold();
-                        Sum().AlignRight().Text(rader.Sum(r => r.Antall).ToString()).Bold();
-                        Sum().AlignRight().Text(rader.Sum(r => r.Plukket).ToString()).Bold();
-                        Sum().AlignRight().Text(rader.Sum(r => r.Bestilt).ToString()).Bold();
-                        Sum().AlignRight().Text(rader.Sum(r => r.MaBestilles).ToString()).Bold().FontColor(Color.FromHex("#C2412B"));
-                        Sum();
-                        Sum();
+                        ListePdfStil.SumRad(table.Cell()).Text("");
+                        ListePdfStil.SumRad(table.Cell().ColumnSpan(2)).Text("Totalt").Bold();
+                        ListePdfStil.SumRad(table.Cell()).AlignRight().Text($"{sum} stk").Bold();
+                        ListePdfStil.SumRad(table.Cell().ColumnSpan(2)).Text("");
                     });
 
-                    var maBestilles = rader.Where(r => r.MaBestilles > 0).ToList();
-                    if (maBestilles.Count > 0)
+                    col.Item().PaddingTop(26).ShowEntire().Row(row =>
                     {
-                        col.Item().PaddingTop(16).Text("Må bestilles").FontSize(11).Bold().FontColor(org.Aksent);
-                        col.Item().PaddingTop(4).Table(t =>
+                        foreach (var felt in new[] { "Plukket av", "Dato", "Kontrollert av" })
                         {
-                            t.ColumnsDefinition(c =>
-                            {
-                                c.RelativeColumn(1.6f);
-                                c.RelativeColumn(1.4f);
-                                c.RelativeColumn(4f);
-                                c.RelativeColumn(1f);
-                            });
-                            foreach (var gruppe in maBestilles.GroupBy(r => string.IsNullOrWhiteSpace(r.Component.Leverandor) ? "Uten leverandør" : r.Component.Leverandor!))
-                            {
-                                t.Cell().ColumnSpan(4).Background(org.AksentLys).PaddingVertical(3).PaddingHorizontal(5).Text(gruppe.Key).Bold();
-                                foreach (var r in gruppe)
-                                {
-                                    t.Cell().BorderBottom(0.5f).BorderColor(lys).PaddingVertical(3).PaddingHorizontal(5).Text("");
-                                    t.Cell().BorderBottom(0.5f).BorderColor(lys).PaddingVertical(3).PaddingHorizontal(5).Text(r.Component.Produktkode ?? "").FontColor(Colors.Grey.Darken2);
-                                    t.Cell().BorderBottom(0.5f).BorderColor(lys).PaddingVertical(3).PaddingHorizontal(5).Text(r.Component.Navn);
-                                    t.Cell().BorderBottom(0.5f).BorderColor(lys).PaddingVertical(3).PaddingHorizontal(5).AlignRight().Text($"{r.MaBestilles} stk").Bold();
-                                }
-                            }
-                        });
-                    }
-
-                    col.Item().PaddingTop(28).Row(row =>
-                    {
-                        void Signatur(string tekst) => row.RelativeItem().PaddingRight(24).BorderTop(0.8f).BorderColor(PdfStil.Ink).PaddingTop(3)
-                            .Text(tekst).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-                        Signatur("Plukket av");
-                        Signatur("Dato");
-                        Signatur("Kontrollert av");
+                            row.RelativeItem().PaddingRight(14).BorderTop(0.8f).BorderColor(Colors.Grey.Medium).PaddingTop(3)
+                                .Text(felt).FontSize(7.5f).FontColor(ListePdfStil.Mut);
+                        }
                     });
                 });
 
-                page.Footer().BorderTop(0.5f).BorderColor(PdfStil.SandBorder).PaddingTop(5).Row(row =>
-                {
-                    row.RelativeItem().Text(org.Bunntekst).FontSize(7).FontColor(Colors.Grey.Darken1);
-                    row.AutoItem().Text(x =>
-                    {
-                        x.DefaultTextStyle(s => s.FontSize(7).FontColor(Colors.Grey.Darken1));
-                        x.Span($"Plukkliste · {prosjekt.Navn} · side ");
-                        x.CurrentPageNumber();
-                        x.Span(" / ");
-                        x.TotalPages();
-                    });
-                });
+                ListePdfStil.Bunn(page, org, "Plukkliste");
             });
         });
 

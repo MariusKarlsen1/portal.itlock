@@ -22,7 +22,7 @@ public static class DorPdfSeksjoner
     // hodeBak/hodeTekst: lys topp på dørkortet og beslagstabellen (tilbudet bruker
     // forsidens lyseblå); uten dem er toppen mørk med hvit tekst som før.
     public static void RenderDorSide(ColumnDescriptor col, Dor dor, bool visPris, Func<DorKomponent, decimal> hentUtpris,
-        Color? aksent = null, Color? aksentLys = null, Color? hodeBak = null, Color? hodeTekst = null, bool visStatus = true, decimal montasje = 0)
+        Color? aksent = null, Color? aksentLys = null, Color? hodeBak = null, Color? hodeTekst = null, bool visStatus = true, decimal montasje = 0, bool fullLevering = false)
     {
         var farge = aksent ?? PdfStil.Accent;
         var lys = aksentLys ?? PdfStil.Sand;
@@ -77,7 +77,7 @@ public static class DorPdfSeksjoner
                 });
             }
 
-            RenderBeslagsliste(inner, komponenter, visPris, hentUtpris, farge, lys, hBak, hTekst, montasje);
+            RenderBeslagsliste(inner, komponenter, visPris, hentUtpris, farge, lys, hBak, hTekst, montasje, fullLevering);
 
             inner.Item().PaddingTop(10).Background(lys).CornerRadius(3).PaddingVertical(7).PaddingHorizontal(9).Column(m =>
             {
@@ -135,7 +135,7 @@ public static class DorPdfSeksjoner
         });
     }
 
-    private static void RenderBeslagsliste(ColumnDescriptor inner, List<DorKomponent> komponenter, bool visPris, Func<DorKomponent, decimal> hentUtpris, Color farge, Color lys, Color hBak, Color hTekst, decimal montasje)
+    private static void RenderBeslagsliste(ColumnDescriptor inner, List<DorKomponent> komponenter, bool visPris, Func<DorKomponent, decimal> hentUtpris, Color farge, Color lys, Color hBak, Color hTekst, decimal montasje, bool fullLevering)
     {
         inner.Item().PaddingTop(10).Column(bc =>
         {
@@ -202,7 +202,7 @@ public static class DorPdfSeksjoner
                     }
                     Rad().Text(k.Enhet ?? k.Component.Enhet ?? "Stk").FontSize(8.5f);
                     Rad().AlignRight().Text(k.Antall.ToString()).FontSize(8.5f).Bold();
-                    Rad().Text(k.LevertAv.Visningsnavn()).FontSize(8.5f);
+                    Rad().Text(fullLevering ? ListePdfStil.Levering(k.LevertAv) : k.LevertAv.Visningsnavn()).FontSize(8.5f);
                     if (visPris)
                     {
                         var utpris = visPrisPaLinje ? hentUtpris(k) : 0m;

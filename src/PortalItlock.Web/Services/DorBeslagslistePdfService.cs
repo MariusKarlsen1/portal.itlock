@@ -51,33 +51,18 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo,
         // Mal L14: avsenderen (logo, farge, bunntekst) er organisasjonen som er logget inn.
         var org = RapportProfil.Fra(tenantContext.Current);
 
+        // B1 (liste-pdf-forslag.html): dørkortene som i tilbuds-PDF-en (lysegrå topp, uten
+        // status). Er det plass til flere dører på en side står de etter hverandre; et dørkort
+        // som ikke får plass flyttes til neste side i stedet for å deles.
         var document = Document.Create(doc =>
         {
             doc.Page(page =>
             {
-                page.Size(PageSizes.A4);
-                page.Margin(1.8f, Unit.Centimetre);
-                page.DefaultTextStyle(x => x.FontSize(9).FontColor(PdfStil.Ink));
-
+                ListePdfStil.Side(page);
                 var undertittel = string.Join(" · ", new[] { prosjekt.Navn, valgteByggetrinn is not null ? $"Byggetrinn {string.Join(", ", valgteByggetrinn)}" : null }.Where(s => !string.IsNullOrWhiteSpace(s)));
-                page.Header().Column(col =>
-                {
-                    col.Item().Row(row =>
-                    {
-                        row.RelativeItem().AlignBottom().Column(c =>
-                        {
-                            c.Item().Text("Beslagsliste").FontSize(18).Bold().FontColor(PdfStil.Ink);
-                            if (!string.IsNullOrWhiteSpace(undertittel))
-                            {
-                                c.Item().PaddingTop(2).Text(undertittel).FontSize(9).FontColor(Colors.Grey.Darken1);
-                            }
-                        });
-                        row.ConstantItem(150).AlignBottom().AlignRight().Element(e => org.TegnLogo(e, pdfLogo, 24));
-                    });
-                    col.Item().PaddingTop(6).BorderBottom(2).BorderColor(org.Aksent);
-                });
+                ListePdfStil.Topp(page, org, pdfLogo, "Beslagsliste", undertittel);
 
-                page.Content().PaddingTop(14).Column(col =>
+                page.Content().PaddingTop(12).Column(col =>
                 {
                     if (dorer.Count == 0)
                     {
@@ -87,25 +72,14 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo,
 
                     for (var i = 0; i < dorer.Count; i++)
                     {
-                        DorPdfSeksjoner.RenderDorSide(col, dorer[i], visPris: false, hentUtpris: _ => 0m, org.Aksent, org.AksentLys);
-                        if (i < dorer.Count - 1)
-                        {
-                            col.Item().PageBreak();
-                        }
+                        var dor = dorer[i];
+                        col.Item().PaddingTop(i == 0 ? 0 : 16).PreventPageBreak().Column(inner =>
+                            DorPdfSeksjoner.RenderDorSide(inner, dor, visPris: false, hentUtpris: _ => 0m,
+                                hodeBak: ListePdfStil.LysGra, hodeTekst: ListePdfStil.Ink, visStatus: false, fullLevering: true));
                     }
                 });
 
-                page.Footer().PaddingTop(8).BorderTop(0.75f).BorderColor(PdfStil.SandBorder).PaddingTop(6).Row(row =>
-                {
-                    row.RelativeItem().Text(org.Bunntekst).FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-                    row.AutoItem().AlignRight().Text(t =>
-                    {
-                        t.DefaultTextStyle(s => s.FontSize(7.5f).FontColor(Colors.Grey.Darken1));
-                        t.CurrentPageNumber();
-                        t.Span(" / ");
-                        t.TotalPages();
-                    });
-                });
+                ListePdfStil.Bunn(page, org, "Beslagsliste");
             });
         });
 
