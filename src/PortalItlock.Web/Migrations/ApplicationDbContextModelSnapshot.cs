@@ -7314,6 +7314,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("FristforlengelseDager")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("GodkjentDato")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("GyldigTil")
                         .HasColumnType("TEXT");
 

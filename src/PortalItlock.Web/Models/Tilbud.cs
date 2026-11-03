@@ -41,6 +41,10 @@ public class Tilbud
     // TilbudSkjema.razor/StatusEndret) - fryser dato og sum på
     // sendetidspunktet til bruk i Tilbudsreserve-rapporten.
     public DateTime? SendtDato { get; set; }
+
+    // Settes når status endres til Godkjent (TilbudSkjema/StatusEndret), og
+    // nullstilles hvis tilbudet settes tilbake fra Godkjent.
+    public DateTime? GodkjentDato { get; set; }
     public decimal? SendtSum { get; set; }
 
     // Settes automatisk når Status endres til Avslatt (se

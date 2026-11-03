@@ -14,7 +14,9 @@ public static class TilbudBeregningHelper
 
         var estimertArbeidstidTimerMedRigg = (tilbud.EstimertTimerOverride ?? 0) * (1 + (tilbud.RiggDriftProsent ?? 0) / 100m);
         var kalkulertMontasjekost = Math.Round(tilbud.Timepris * estimertArbeidstidTimerMedRigg, 2);
-        var montasjekost = tilbud.Montasjekost ?? kalkulertMontasjekost;
+        var montasjekost = tilbud.BrukerKodelinjer
+            ? KodeLinjeBeregner.Totalt(tilbud.KodeLinjer, utprisVarer).Salg
+            : tilbud.Montasjekost ?? kalkulertMontasjekost;
 
         return utprisVarer + montasjekost;
     }
