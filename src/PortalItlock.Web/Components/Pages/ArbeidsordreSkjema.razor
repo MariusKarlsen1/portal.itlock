@@ -193,13 +193,15 @@ else if (_ordre is not null)
     <div class="@FaneKlasse("dorbeslag")">
     @{
         var dbRader = DorbeslagRader();
+        var dbSok = _dbSok.Trim();
         var dbVis = dbRader.Where(r => _dbFilter switch
         {
             "plukke" => !r.Plukket,
             "plukket" => r.Plukket,
             "mangler" => r.Mangler,
             _ => true
-        }).OrderBy(r => r.Plukket).ToList();
+        }).Where(r => dbSok.Length == 0 || r.Navn.Contains(dbSok, StringComparison.OrdinalIgnoreCase) || (r.Undertekst ?? "").Contains(dbSok, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(r => r.Plukket).ToList();
         var dbMangler = dbRader.Count(r => r.Mangler);
     }
     <section class="ordre-section db">
@@ -222,9 +224,12 @@ else if (_ordre is not null)
             </span>
         </div>
 
+        @* D1 (arbeidsordre-forslag.html): søk og filter, varene i tabell med annenhver
+           grå/hvit rad og bunnlinje med hvor mye som er plukket. *@
         @if (dbRader.Count > 0)
         {
             <div class="db-filter" role="group" aria-label="Filter">
+                <input class="db-sokfelt" type="search" @bind="_dbSok" @bind:event="oninput" placeholder="Søk vare eller artikkelnr …" aria-label="Søk i dørbeslag" />
                 @foreach (var (nokkel, navn, antall) in new[]
                 {
                     ("alle", "Alle", dbRader.Count),
@@ -281,55 +286,84 @@ else if (_ordre is not null)
         }
         else
         {
-            <div class="db-rader">
-                @foreach (var r in dbVis)
-                {
-                    <div @key="r.Nokkel" class="db-rad @(r.Plukket ? "ok" : "")">
-                        <button type="button" class="db-ring" disabled="@(r.FraBil || !KanEndreOrdre)" aria-pressed="@(r.Plukket ? "true" : "false")"
-                                aria-label="@(r.Plukket ? "Plukket" : "Ikke plukket"): @r.Navn" @onclick="@(() => VekslePlukket(r))">
-                            @if (r.Plukket) {<Icon Name="check" />}
-                        </button>
-                        <span class="db-navn">
-                            <b>@r.Navn</b>
-                            @if (!string.IsNullOrWhiteSpace(r.Undertekst))
-                            {
-                                <small>@r.Undertekst</small>
-                            }
-                        </span>
-                        <span class="db-status">
-                            @if (r.FraBil)
-                            {
-                                <span class="ao-frabil">fra bilen</span>
-                            }
-                            else
-                            {
-                                @StatusChip(r.ComponentId, r.Antall, r.Plukket)
-                                @if (!_reserverAuto && KanEndreOrdre && !r.Plukket && VareStatus(r.ComponentId, false)?.Klasse == "ledig")
-                                {
-                                    <button type="button" class="db-reserver" @onclick="@(() => ReserverVare(r.ComponentId))">Reserver</button>
-                                }
-                            }
-                        </span>
-                        @if (r.Vare is { } v && KanEndreOrdre && !_erMobilvisning)
+            <div class="db-tabwrap">
+                <table class="db-tab">
+                    <thead>
+                        <tr>
+                            <th class="db-c">Plukket</th>
+                            <th>Vare</th>
+                            <th class="db-h">Antall</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in dbVis)
                         {
-                            <span class="db-rediger">
-                                <label class="db-tallfelt" title="Antall"><input type="number" min="1" @bind="v.Antall" @bind:after="@(() => LagreVare(v))" aria-label="Antall @v.Navn" /><span>stk</span></label>
-                            </span>
+                            <tr @key="r.Nokkel" class="@(r.Plukket ? "ok" : "")">
+                                <td class="db-c">
+                                    <button type="button" class="db-ring" disabled="@(r.FraBil || !KanEndreOrdre)" aria-pressed="@(r.Plukket ? "true" : "false")"
+                                            aria-label="@(r.Plukket ? "Plukket" : "Ikke plukket"): @r.Navn" @onclick="@(() => VekslePlukket(r))">
+                                        @if (r.Plukket) {<Icon Name="check" />}
+                                    </button>
+                                </td>
+                                <td class="db-navn">
+                                    <b>@r.Navn</b>
+                                    @if (!string.IsNullOrWhiteSpace(r.Undertekst))
+                                    {
+                                        <small>@r.Undertekst</small>
+                                    }
+                                </td>
+                                <td class="db-h">
+                                    @if (r.Vare is { } v && KanEndreOrdre && !_erMobilvisning)
+                                    {
+                                        <label class="db-tallfelt" title="Antall"><input type="number" min="1" @bind="v.Antall" @bind:after="@(() => LagreVare(v))" aria-label="Antall @v.Navn" /><span>stk</span></label>
+                                    }
+                                    else
+                                    {
+                                        <b class="db-ant">@r.Antall @(r.Enhet ?? "stk")</b>
+                                    }
+                                </td>
+                                <td class="db-status">
+                                    @if (r.FraBil)
+                                    {
+                                        <span class="ao-frabil">fra bilen</span>
+                                    }
+                                    else if (r.Plukket)
+                                    {
+                                        <span class="db-pill db-pill-ok"><Icon Name="check" />Plukket</span>
+                                    }
+                                    else if (VareStatus(r.ComponentId, false) is null)
+                                    {
+                                        <span class="db-pill db-pill-gul">Å plukke</span>
+                                    }
+                                    else
+                                    {
+                                        @StatusChip(r.ComponentId, r.Antall, r.Plukket)
+                                        @if (!_reserverAuto && KanEndreOrdre && VareStatus(r.ComponentId, false)?.Klasse == "ledig")
+                                        {
+                                            <button type="button" class="db-reserver" @onclick="@(() => ReserverVare(r.ComponentId))">Reserver</button>
+                                        }
+                                    }
+                                </td>
+                                <td class="db-h">
+                                    @if (r.Vare is { } fv && KanEndreOrdre)
+                                    {
+                                        <button type="button" class="db-fjern" title="Fjern @fv.Navn" aria-label="Fjern @fv.Navn" @onclick="@(() => FjernVare(fv))"><Icon Name="x" /></button>
+                                    }
+                                </td>
+                            </tr>
                         }
-                        else
-                        {
-                            <span class="db-ant">@r.Antall @(r.Enhet ?? "stk")</span>
-                        }
-                        @if (r.Vare is { } fv && KanEndreOrdre)
-                        {
-                            <button type="button" class="db-fjern" title="Fjern @fv.Navn" aria-label="Fjern @fv.Navn" @onclick="@(() => FjernVare(fv))"><Icon Name="x" /></button>
-                        }
-                        else
-                        {
-                            <span></span>
-                        }
-                    </div>
-                }
+                    </tbody>
+                </table>
+                <div class="db-fot">
+                    <span><b>@dbRader.Count(r => r.Plukket) av @dbRader.Count</b> plukket</span>
+                    @if (dbMangler > 0)
+                    {
+                        <span><b class="db-rod">@dbMangler</b> mangler</span>
+                    }
+                    <span class="db-fot-h">Huk av når varen er lagt i bilen</span>
+                </div>
             </div>
         }
     </section>
@@ -588,9 +622,10 @@ else if (_ordre is not null)
     {
     <div class="@FaneKlasse("timefoering")">
     <section class="ordre-section">
-        <h2>
-            Registrerte timer <span class="sum-timer">(@_sumTimer.ToString("N1", Kultur) t totalt)</span>
-            <StatusPill Tekst="@_ordre.Status.Visningsnavn()" Ikon="@_ordre.Status.PillIkon()" Farge="@_ordre.Status.PillFarge()" />
+        @* T1 (arbeidsordre-forslag.html): «Registrerte timer» med antall og sum, tabell med
+           annenhver grå/hvit rad og bunnlinje med sum totalt og per montør. *@
+        <h2 class="tf-hode">
+            <Icon Name="clock" />Registrerte timer <span class="sum-timer">@_registreringer.Count @(_registreringer.Count == 1 ? "føring" : "føringer") · @_sumTimer.ToString("N1", Kultur) t</span>
             <button type="button" class="tf-ny" @onclick="ApneTimer"><Icon Name="plus" />Før timer</button>
         </h2>
 
@@ -606,7 +641,7 @@ else if (_ordre is not null)
                         <th>Dato</th>
                         <th>Montør</th>
                         <th>Type</th>
-                        <th>Timer</th>
+                        <th class="timer-cell">Timer</th>
                         @if (ArbeidKoder().Count > 0)
                         {
                             <th>Kode</th>
@@ -619,9 +654,9 @@ else if (_ordre is not null)
                     {
                         <tr @key="r.Id">
                             <td>@r.Dato.ToString("dd.MM.yyyy")</td>
-                            <td>@r.MontorNavn</td>
+                            <td><span class="tf-person"><span class="tf-av">@Initialer(r.MontorNavn ?? "")</span>@r.MontorNavn</span></td>
                             <td>@r.Type.Visningsnavn()</td>
-                            <td class="timer-cell">@r.Timer.ToString("N1", Kultur) t</td>
+                            <td class="timer-cell"><b>@r.Timer.ToString("N1", Kultur) t</b></td>
                             @if (ArbeidKoder().Count > 0)
                             {
                                 <td>
@@ -646,6 +681,13 @@ else if (_ordre is not null)
                     }
                 </tbody>
             </table>
+            <div class="tf-fot">
+                <span><b>@_sumTimer.ToString("N1", Kultur) t</b> totalt</span>
+                @foreach (var g in _registreringer.GroupBy(r => r.MontorNavn).OrderByDescending(g => g.Sum(r => r.Timer)))
+                {
+                    <span>@g.Key <b>@g.Sum(r => r.Timer).ToString("N1", Kultur) t</b></span>
+                }
+            </div>
         }
     </section>
     @if (VisKjoringOgTillegg) { @KjoringOgTillegg() }
@@ -658,12 +700,7 @@ else if (_ordre is not null)
             <h2>Sjekkliste @if (_sjekkpunkter.Count > 0) { <span class="sj-tall">(@SjekkFerdig/@_sjekkpunkter.Count)</span> }</h2>
             @if (_sjekkpunkter.Count > 0 && KanEndreOrdre)
             {
-                <details class="sj-mer">
-                    <summary aria-label="Mer"><Icon Name="more-horizontal" /></summary>
-                    <div class="sj-mer-liste">
-                        <button type="button" @onclick="FjernSjekkliste"><Icon Name="trash" />Fjern sjekkliste</button>
-                    </div>
-                </details>
+                <button type="button" class="sj-fjern-kn" @onclick="FjernSjekkliste"><Icon Name="trash" />Fjern sjekkliste</button>
             }
         </div>
 
@@ -675,8 +712,8 @@ else if (_ordre is not null)
             }
             else
             {
-                <p class="sj-hint">Velg dørtype for å legge til sjekklisten.</p>
                 <div class="sj-maler">
+                    <span class="sj-hint">Velg dørtype for å legge til sjekklisten:</span>
                     @foreach (var m in _maler)
                     {
                         <button type="button" class="sj-mal" disabled="@(!KanEndreOrdre)" @onclick="@(() => BrukMalAsync(m.Id))">
@@ -689,27 +726,62 @@ else if (_ordre is not null)
         }
         else
         {
-            <div class="sj-punkter">
-                @foreach (var p in _sjekkpunkter.OrderBy(p => p.Rekkefolge))
-                {
-                    <label @key="p.Id" class="sj-rad @(p.Fullfort ? "ok" : "")">
-                        <input type="checkbox" class="sj-boks" @bind="p.Fullfort" @bind:after="@(() => LagreSjekkpunkt(p))" />
-                        <span class="sj-ring" aria-hidden="true">@if (p.Fullfort) {<Icon Name="check" />}</span>
-                        <span class="sj-tekst">@p.Tekst</span>
-                        @if (p.Fullfort && p.FullfortDato is { } fd)
+            @* S1 (arbeidsordre-forslag.html): punktene i tabell med OK / Avvik / Ikke aktuelt og
+               kommentar, og bunnlinje med antall kontrollert, avvik og PDF. *@
+            <div class="sj-tabwrap">
+                <table class="sj-tab">
+                    <thead>
+                        <tr>
+                            <th class="sj-nr">#</th>
+                            <th>Punkt</th>
+                            <th>Resultat</th>
+                            <th>Kommentar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in _sjekkpunkter.OrderBy(p => p.Rekkefolge))
                         {
-                            <span class="sj-meta" title="@fd.ToString("dd.MM.yyyy HH:mm")">@(p.FullfortAvBruker?.Initialer) @(fd.Date == DateTime.Today ? fd.ToString("HH:mm") : fd.ToString("dd.MM"))</span>
+                            var punkt = p;
+                            <tr @key="p.Id" class="@(p.Resultat == SjekkpunktResultat.Avvik ? "avvik" : p.Fullfort ? "ok" : "")">
+                                <td class="sj-nr">@(_sjekkpunkter.OrderBy(x => x.Rekkefolge).ToList().IndexOf(p) + 1)</td>
+                                <td>
+                                    <b>@p.Tekst</b>
+                                    @if (p.Resultat is not null && p.FullfortDato is { } fd)
+                                    {
+                                        <small class="sj-meta" title="@fd.ToString("dd.MM.yyyy HH:mm")">@(p.FullfortAvBruker?.Initialer) @(fd.Date == DateTime.Today ? fd.ToString("HH:mm") : fd.ToString("dd.MM"))</small>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="sj-seg" role="group" aria-label="Resultat for @p.Tekst">
+                                        @foreach (var (verdi, tekst, ikon) in new (SjekkpunktResultat, string, string?)[] { (SjekkpunktResultat.Ok, "OK", "check"), (SjekkpunktResultat.Avvik, "Avvik", "alert-triangle"), (SjekkpunktResultat.IkkeAktuelt, "Ikke aktuelt", null) })
+                                        {
+                                            var valgt = punkt.Resultat == verdi;
+                                            <button type="button" class="@(valgt ? $"pa sj-{verdi}" : "")" aria-pressed="@(valgt ? "true" : "false")" disabled="@(!KanFerdigmelde)"
+                                                    @onclick="@(() => SettSjekkResultat(punkt, valgt ? null : verdi))">
+                                                @if (ikon is not null) {<Icon Name="@ikon" />}@tekst
+                                            </button>
+                                        }
+                                    </span>
+                                </td>
+                                <td>
+                                    <input class="sj-kommentar" value="@p.Kommentar" placeholder="Valgfri kommentar …" disabled="@(!KanFerdigmelde)"
+                                           @onchange="@(e => LagreSjekkKommentar(punkt, e.Value?.ToString()))" aria-label="Kommentar til @p.Tekst" />
+                                </td>
+                            </tr>
                         }
-                    </label>
-                }
-            </div>
-
-            <div class="sj-bunn">
-                <button type="button" class="sj-pdf-knapp" @onclick="VisSjekklistePdfForhandsvisning"><Icon Name="file-text" />Lagre som PDF</button>
-                @foreach (var pdf in _lagredeSjekklistePdfer.OrderByDescending(p => p.OpprettetDato))
-                {
-                    <a @key="pdf.Id" class="sj-pdf" href="@($"/sjekklistepdf/{pdf.Id}")" target="_blank" title="@pdf.Navn"><Icon Name="file-text" />@pdf.OpprettetDato.ToString("dd.MM HH:mm")</a>
-                }
+                    </tbody>
+                </table>
+                <div class="sj-bunn">
+                    <span><b>@SjekkFerdig av @_sjekkpunkter.Count</b> kontrollert</span>
+                    <span><b class="@(_sjekkpunkter.Any(x => x.Resultat == SjekkpunktResultat.Avvik) ? "sj-rod" : "")">@_sjekkpunkter.Count(x => x.Resultat == SjekkpunktResultat.Avvik)</b> avvik</span>
+                    <span class="sj-bunn-h">
+                        @foreach (var pdf in _lagredeSjekklistePdfer.OrderByDescending(p => p.OpprettetDato))
+                        {
+                            <a @key="pdf.Id" class="sj-pdf" href="@($"/sjekklistepdf/{pdf.Id}")" target="_blank" title="@pdf.Navn"><Icon Name="file-text" />@pdf.OpprettetDato.ToString("dd.MM HH:mm")</a>
+                        }
+                        <button type="button" class="sj-pdf-knapp" @onclick="VisSjekklistePdfForhandsvisning"><Icon Name="file-text" />Lagre som PDF</button>
+                    </span>
+                </div>
             </div>
 
             <PdfPreviewModal Url="@_sjekklistePdfPreviewUrl" Tittel="Forhåndsvisning av sjekkliste" SaveMessage="@_sjekklistePdfSavedMessage"
@@ -1106,6 +1178,7 @@ else if (_ordre is not null)
         : _ordre.Varer.Count(v => v.LagtTilAvBrukerId is null && v.Plukket);
 
     private int SjekkFerdig => _sjekkpunkter.Count(p => p.Fullfort);
+    private string _dbSok = "";
     private bool HarKundeInfo => !string.IsNullOrWhiteSpace(_ordre?.KundeInfoForJobb) || _kundeBilder.Count > 0;
 
     private static int Prosent(decimal del, decimal total) => total <= 0 ? 0 : (int)Math.Min(100, Math.Round(del / total * 100));
@@ -2085,6 +2158,53 @@ else if (_ordre is not null)
         punkt.FullfortAvBruker = punkt.Fullfort ? _naverendeBruker : null;
 
         await OppdaterKartFargeAsync();
+    }
+
+    // OK og ikke aktuelt er fullført, avvik er det ikke (samme regel som i montørappen).
+    // Trykk på valgt svar igjen for å nullstille.
+    private async Task SettSjekkResultat(ArbeidsordreSjekkpunkt punkt, SjekkpunktResultat? resultat)
+    {
+        if (!KanFerdigmelde)
+        {
+            return;
+        }
+
+        var entitet = await Db.ArbeidsordreSjekkpunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Resultat = resultat;
+        entitet.Fullfort = resultat is SjekkpunktResultat.Ok or SjekkpunktResultat.IkkeAktuelt;
+        entitet.FullfortDato = resultat is null ? null : DateTime.Now;
+        entitet.FullfortAvBrukerId = resultat is null ? null : _naverendeBrukerId;
+        await Db.SaveChangesAsync();
+
+        punkt.Resultat = entitet.Resultat;
+        punkt.Fullfort = entitet.Fullfort;
+        punkt.FullfortDato = entitet.FullfortDato;
+        punkt.FullfortAvBruker = resultat is null ? null : _naverendeBruker;
+
+        await OppdaterKartFargeAsync();
+    }
+
+    private async Task LagreSjekkKommentar(ArbeidsordreSjekkpunkt punkt, string? kommentar)
+    {
+        if (!KanFerdigmelde)
+        {
+            return;
+        }
+
+        var entitet = await Db.ArbeidsordreSjekkpunkter.FirstOrDefaultAsync(p => p.Id == punkt.Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.Kommentar = string.IsNullOrWhiteSpace(kommentar) ? null : kommentar.Trim();
+        await Db.SaveChangesAsync();
+        punkt.Kommentar = entitet.Kommentar;
     }
 
     private async Task FjernSjekkliste()
