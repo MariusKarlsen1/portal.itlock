@@ -102,9 +102,12 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
         var linjer = await BuildLinjerAsync(tilbud);
 
-        var monteringMinutterPerComponent = await db.MonteringLinjer
+        // Samme vare kan stå flere ganger - første treff gjelder.
+        var monteringMinutterPerComponent = (await db.MonteringLinjer
             .Where(m => m.ProsjektId == tilbud.ProsjektId && m.ComponentId != null)
-            .ToDictionaryAsync(m => m.ComponentId!.Value, m => m.Minutter);
+            .ToListAsync())
+            .GroupBy(m => m.ComponentId!.Value)
+            .ToDictionary(g => g.Key, g => g.First().Minutter);
 
         // Rabatten vises bare når «Vis rabatt» er huket av. Rabatt på veiledende uten egen
         // rabatt på linjen bruker satsen på tilbudet (prosjekttilbud), som i tilbudet.
@@ -133,8 +136,11 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         var montasjekost = tilbud.Montasjekost ?? kalkulertMontasjekost;
         var totaltUtenMva = utprisVarer + montasjekost;
 
+        // Samme vare kan stå på flere linjer i tilbudet (f.eks. med ulik pris) - på dørene
+        // brukes prisen fra den første linjen vi leverer selv.
         var utprisPerComponent = linjer.Where(l => l.ComponentId.HasValue)
-            .ToDictionary(l => l.ComponentId!.Value, l => l.Utpris);
+            .GroupBy(l => l.ComponentId!.Value)
+            .ToDictionary(g => g.Key, g => (g.FirstOrDefault(l => l.LevertAv == LevertAv.F) ?? g.First()).Utpris);
 
         var dorer = new List<Dor>();
         if (tilbud.VisAlleDorerFraBeslagsliste)
