@@ -1770,15 +1770,16 @@ app.MapGet("/lager/eksport/bevegelser.csv", async (DateTime? fra, DateTime? til,
     return Results.File(await rapport.BevegelserCsvAsync(start, slutt), "text/csv; charset=utf-8", $"Lagerbevegelser-{start:yyyy-MM-dd}-{slutt:yyyy-MM-dd}.csv");
 }).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
 
-app.MapGet("/ce/{id:int}/pdf", async (int id, HttpContext context, CeGodkjenningPdfService service) =>
+app.MapGet("/ce/{id:int}/pdf", async (int id, HttpContext context, ApplicationDbContext db, CeGodkjenningPdfService service) =>
 {
-    var pdf = await service.GenerateAsync(id);
+    var pdf = await service.GenerateAsync(id, $"{context.Request.Scheme}://{context.Request.Host}");
     if (pdf is null)
     {
         return Results.NotFound();
     }
 
-    var filnavn = $"CE-godkjenning-{id}-itlock-AS.pdf";
+    var nummer = await db.CeGodkjenninger.Where(c => c.Id == id).Select(c => c.Sertifiseringsnummer).FirstOrDefaultAsync();
+    var filnavn = $"CE-sertifikat-{string.Concat((nummer ?? id.ToString()).Select(t => Path.GetInvalidFileNameChars().Contains(t) ? '-' : t))}.pdf";
     var disposisjon = new ContentDispositionHeaderValue("inline");
     disposisjon.SetHttpFileName(filnavn);
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
@@ -1830,7 +1831,7 @@ app.MapGet("/ce/m/{token}", async (string token, ApplicationDbContext db, ITenan
 
 // "Last ned PDF-er" for valgte rader på /ce-godkjenninger: én PDF per
 // CE-godkjenning, samlet i en zip-fil (navngitt etter sertifikatnummeret).
-app.MapGet("/ce/pdf-samlet", async (string? ider, ApplicationDbContext db, CeGodkjenningPdfService service) =>
+app.MapGet("/ce/pdf-samlet", async (string? ider, HttpContext context, ApplicationDbContext db, CeGodkjenningPdfService service) =>
 {
     var idListe = (ider ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries)
         .Select(s => int.TryParse(s, out var n) ? n : 0)
@@ -1853,7 +1854,7 @@ app.MapGet("/ce/pdf-samlet", async (string? ider, ApplicationDbContext db, CeGod
         var brukteNavn = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var id in idListe.Where(numre.ContainsKey))
         {
-            var pdf = await service.GenerateAsync(id);
+            var pdf = await service.GenerateAsync(id, $"{context.Request.Scheme}://{context.Request.Host}");
             if (pdf is null)
             {
                 continue;
