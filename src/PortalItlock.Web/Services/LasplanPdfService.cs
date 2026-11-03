@@ -81,14 +81,18 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenant
         // antall, annenhver nøkkelkolonne tonet, skillelinje for hver 5. sylinder,
         // signaturlinjer og bunntekst fra organisasjonen.
         var org = RapportProfil.Fra(tenantContext.Current);
-        var dempet = Color.FromHex("#6B6863");
-        var svak = Color.FromHex("#8A857C");
-        var lysLinje = Color.FromHex("#ECE4D6");
-        var gruppeLinje = Color.FromHex("#D9CDB9");
-        var sand = Color.FromHex("#FBF8F3");
-        var rammeFarge = Color.FromHex("#E3DCCF");
+        // N1 (lasplan-pdf-forslag.html): samme oppsett som før, men med de lysegrå fargene
+        // fra de andre PDF-ene (ListePdfStil) og uten «Godkjent og signert»-boksen nederst.
+        var dempet = ListePdfStil.Mut;
+        var svak = Color.FromHex("#8A93A3");
+        var lysLinje = ListePdfStil.Linje;
+        var gruppeLinje = Color.FromHex("#CBD2DC");
+        var sand = ListePdfStil.LysGra;
+        var rammeFarge = Color.FromHex("#DCE1E8");
+        var nokkelHode = ListePdfStil.LysGra;
+        var nokkelCelle = Color.FromHex("#F1F3F6");
 
-        IContainer Tone(IContainer c, int k) => k % 2 == 0 ? c.Background(org.AksentLys) : c;
+        IContainer Tone(IContainer c, int k) => c.Background(nokkelCelle);
 
         var document = Document.Create(doc =>
         {
@@ -131,38 +135,9 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenant
                         Matrise(col.Item(), del);
                     }
 
-                    // Godkjent av kunden (eller internt): navn, dato og signatur. Ellers
-                    // tomme signaturlinjer som før, til papirsignering.
-                    if (prosjekt.LasplanStatus == LasplanStatus.Godkjent && prosjekt.LasplanGodkjentDato is { } godkjentDato)
-                    {
-                        byte[]? signatur = null;
-                        if (prosjekt.LasplanSignatur is { } sig && sig.StartsWith("data:image/png;base64,", StringComparison.Ordinal))
-                        {
-                            try
-                            {
-                                signatur = Convert.FromBase64String(sig["data:image/png;base64,".Length..]);
-                            }
-                            catch (FormatException)
-                            {
-                                signatur = null;
-                            }
-                        }
-                        col.Item().PaddingTop(24).ShowEntire().Border(0.6f).BorderColor(rammeFarge).Padding(8).Row(row =>
-                        {
-                            row.Spacing(16);
-                            row.RelativeItem().Column(c =>
-                            {
-                                c.Item().Text("GODKJENT OG SIGNERT").FontSize(6).Bold().FontColor(org.Aksent).LetterSpacing(0.08f);
-                                c.Item().PaddingTop(2).Text(prosjekt.LasplanGodkjentAv + (prosjekt.LasplanGodkjentFirma is null ? "" : $", {prosjekt.LasplanGodkjentFirma}")).FontSize(9).SemiBold();
-                                c.Item().Text(godkjentDato.ToString("dd.MM.yyyy HH:mm")).FontSize(7.5f).FontColor(dempet);
-                            });
-                            if (signatur is not null)
-                            {
-                                row.ConstantItem(150).Height(46).AlignRight().Image(signatur).FitArea();
-                            }
-                        });
-                    }
-                    else
+                    // Godkjent låsplan står på låsplan-siden; uten godkjenning får PDF-en
+                    // tomme signaturlinjer til papirsignering.
+                    if (prosjekt.LasplanStatus != LasplanStatus.Godkjent)
                     {
                         col.Item().PaddingTop(30).ShowEntire().Row(row =>
                         {
@@ -195,13 +170,13 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenant
                         table.Header(header =>
                         {
                             // Infoboks i hjørnet, med luft ned til streken over overskriftsraden.
-                            header.Cell().BorderBottom(0.8f).BorderColor(org.Aksent).PaddingBottom(9)
-                                .Border(0.6f).BorderColor(rammeFarge).Padding(5).Column(c =>
+                            header.Cell().PaddingBottom(9)
+                                .Background(ListePdfStil.Stripe).Border(0.6f).BorderColor(rammeFarge).Padding(5).Column(c =>
                                 {
                                     c.Spacing(3);
                                     void Felt(string etikett, string? verdi) => c.Item().Column(f =>
                                     {
-                                        f.Item().Text(etikett.ToUpperInvariant()).FontSize(5.5f).Bold().FontColor(org.Aksent).LetterSpacing(0.08f);
+                                        f.Item().Text(etikett.ToUpperInvariant()).FontSize(5.5f).Bold().FontColor(dempet).LetterSpacing(0.08f);
                                         f.Item().Text(string.IsNullOrWhiteSpace(verdi) ? "–" : verdi).FontSize(7.5f).SemiBold();
                                     });
                                     Felt("Låsplan systemnr.", prosjekt.LasplanSystemnr);
@@ -209,19 +184,19 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenant
                                     Felt("Prosjektnummer", prosjekt.LasplanProsjektnummer);
                                     Felt("Utarbeidet av / dato", prosjekt.LasplanUtarbeidetAv);
                                 });
-                            header.Cell().ColumnSpan(4).BorderBottom(0.8f).BorderColor(org.Aksent);
+                            header.Cell().ColumnSpan(4);
 
                             for (var k = 0; k < nokler.Count; k++)
                             {
                                 var n = nokler[k];
-                                Tone(header.Cell().BorderBottom(0.8f).BorderColor(org.Aksent), k).AlignBottom().PaddingBottom(2).Column(c =>
+                                header.Cell().Background(nokkelHode).AlignBottom().PaddingBottom(2).Column(c =>
                                 {
                                     c.Item().Height(62).RotateLeft().AlignMiddle().Text(n.Navn).FontSize(7).SemiBold();
-                                    c.Item().PaddingTop(2).AlignCenter().Text(n.Merking ?? "").FontSize(7).Bold().FontColor(org.Aksent);
+                                    c.Item().PaddingTop(2).AlignCenter().Text(n.Merking ?? "").FontSize(7).Bold();
                                 });
                             }
 
-                            IContainer Overskrift(IContainer c) => c.Background(sand).BorderBottom(0.6f).BorderColor(rammeFarge).PaddingVertical(3).PaddingHorizontal(4);
+                            IContainer Overskrift(IContainer c) => c.Background(sand).BorderBottom(0.6f).BorderColor(gruppeLinje).PaddingVertical(3).PaddingHorizontal(4);
                             void Kol(string tekst, bool midt = false)
                             {
                                 var celle = Overskrift(header.Cell());
@@ -235,7 +210,7 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenant
                             for (var k = 0; k < nokler.Count; k++)
                             {
                                 // Antall nøkler står i samme rad som «Ant.»-overskriften.
-                                Tone(header.Cell().Background(sand), k).BorderBottom(0.6f).BorderColor(rammeFarge).PaddingVertical(3).AlignCenter()
+                                header.Cell().Background(nokkelHode).BorderBottom(0.6f).BorderColor(gruppeLinje).PaddingVertical(3).AlignCenter()
                                     .Text(nokler[k].Antall.ToString()).FontSize(6.5f).Bold();
                             }
                         });
@@ -269,7 +244,7 @@ public class LasplanPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenant
                                 var celle = Tone(table.Cell(), k).BorderBottom(grenseTykk).BorderColor(grense).PaddingVertical(2.5f).AlignCenter();
                                 if (Apner(nokler[k], rad))
                                 {
-                                    celle.Text("X").Bold().FontColor(org.Aksent);
+                                    celle.Text("X").Bold().FontColor(ListePdfStil.Ink);
                                 }
                             }
                         }
