@@ -1676,6 +1676,21 @@ app.MapGet("/avvik/{id:int}/pdf", async (int id, HttpContext context, AvvikPdfSe
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
+// Avviksrapport med alle avvik på et prosjekt.
+app.MapGet("/prosjekter/{id:int}/avvik/pdf", async (int id, HttpContext context, AvvikPdfService service) =>
+{
+    var pdf = await service.GenerateForProsjektAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName($"Avviksrapport-prosjekt-{id}.pdf");
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
+}).RequireAuthorization();
+
 app.MapGet("/innkjop/{id:int}/pdf", async (int id, HttpContext context, ApplicationDbContext db, InnkjopsordrePdfService service) =>
 {
     var nummer = await db.Innkjopsordrer.Where(o => o.Id == id).Select(o => (int?)o.Nummer).FirstOrDefaultAsync();
