@@ -67,6 +67,7 @@ public class SletteService(ApplicationDbContext db)
         ["Prosjekt"] = ("prosjekt", "prosjekter"),
         ["Ressursplan"] = ("hendelse i kalenderen", "hendelser i kalenderen"),
         ["ProsjektVedlegg"] = ("vedlegg", "vedlegg"),
+        ["ProsjektLenke"] = ("lenke", "lenker"),
         ["ArbeidsordreMedia"] = ("bilde", "bilder"),
         ["ArbeidsordreVarer"] = ("varelinje", "varelinjer"),
         ["ArbeidsordreVare"] = ("varelinje", "varelinjer"),

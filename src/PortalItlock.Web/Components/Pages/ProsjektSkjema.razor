@@ -1486,16 +1486,39 @@ else
         <div class="prosjekt-layout vedlegg-layout">
             @if (!_mappeApnet)
             {
-                <div class="p5-topp">
-                    <label class="p5-sok">
-                        <Icon Name="search" />
-                        <input @bind="_vedleggSok" @bind:event="oninput" placeholder="Søk mappe eller fil" />
-                    </label>
-                    <button type="button" class="p5-chip pa">Alle <em>@SynligeVedleggMapper.Sum(g => g.Filer.Count)</em></button>
-                    <input class="p5-inp p5-hoyre" @bind="_nyMappeNavn" @bind:event="oninput"
-                           @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettMappe(); } })"
-                           placeholder="Navn på ny mappe" />
-                    <button type="button" class="ph-knapp ph-knapp-liten ph-knapp-primar" @onclick="OpprettMappe"><Icon Name="plus" />Ny mappe</button>
+                @* V1 (vedlegg-forslag.html): søk og Alle / PDF / Bilder til venstre, Ny mappe og
+                   Last opp filer til høyre, mappene i en tabell med annenhver grå/hvit rad og
+                   koblingsskjema som eget kort under. *@
+                var alleFiler = VedleggGruppert.SelectMany(g => g.Filer).ToList();
+                var mapperVist = SynligeVedleggMapper
+                    .Select(g => (Gruppe: g, Filer: g.Filer.Where(f => PasserVedleggType(f)).ToList()))
+                    .Where(x => _vedleggType == "alle" || x.Filer.Count > 0)
+                    .ToList();
+                <div class="ve-topp">
+                    <input class="ve-sok" type="search" @bind="_vedleggSok" @bind:event="oninput" placeholder="Søk mappe eller fil …" aria-label="Søk" />
+                    @foreach (var (verdi, tekst) in new[] { ("alle", "Alle"), ("pdf", "PDF"), ("bilde", "Bilder") })
+                    {
+                        var antall = alleFiler.Count(f => verdi == "alle" || VedleggType(f) == verdi);
+                        <button type="button" class="ve-chip @(_vedleggType == verdi ? "pa" : "")" @onclick="@(() => _vedleggType = verdi)">@tekst <em>@antall</em></button>
+                    }
+                    <span class="ve-hoyre">
+                        @if (_visNyMappe)
+                        {
+                            <input class="ve-inp" @bind="_nyMappeNavn" @bind:event="oninput" autofocus
+                                   @onkeydown="@(async e => { if (e.Key == "Enter") { await OpprettMappe(); _visNyMappe = !string.IsNullOrEmpty(_vedleggFeil); } else if (e.Key == "Escape") { _visNyMappe = false; } })"
+                                   placeholder="Navn på ny mappe" />
+                            <button type="button" class="ve-kn ve-kn-p" disabled="@string.IsNullOrWhiteSpace(_nyMappeNavn)" @onclick="@(async () => { await OpprettMappe(); _visNyMappe = !string.IsNullOrEmpty(_vedleggFeil); })">Opprett</button>
+                            <button type="button" class="ve-kn" @onclick="@(() => { _visNyMappe = false; _nyMappeNavn = ""; })">Avbryt</button>
+                        }
+                        else
+                        {
+                            <button type="button" class="ve-kn" @onclick="@(() => { _visNyMappe = true; _vedleggFeil = null; })"><Icon Name="plus" />Ny mappe</button>
+                            <label class="ve-kn ve-kn-p ve-opp" title="Filer uten mappe havner i «Ukategorisert»">
+                                <Icon Name="upload" />Last opp filer
+                                <InputFile OnChange="@(e => LastOppVedlegg(e, null))" multiple />
+                            </label>
+                        }
+                    </span>
                 </div>
 
                 @if (!string.IsNullOrEmpty(_vedleggFeil))
@@ -1503,39 +1526,117 @@ else
                     <p class="form-error">@_vedleggFeil</p>
                 }
 
-                @if (SynligeVedleggMapper.Count == 0)
-                {
-                    <p class="list-empty">@(string.IsNullOrWhiteSpace(_vedleggSok) ? "Ingen mapper opprettet ennå. Lag den første over." : "Ingen treff på søket.")</p>
-                }
-                else
-                {
-                    <div class="p5-tegn">
-                        @foreach (var gruppe in SynligeVedleggMapper)
-                        {
-                            <button type="button" @key="@(gruppe.MappeId?.ToString() ?? "ukategorisert")"
-                                    class="p5-tg p5-mappe" @onclick="@(() => ApneMappe(gruppe.MappeId))">
-                                <span class="p5-tg-bilde p5-mappe-ikon"><Icon Name="folder" /></span>
-                                <span class="p5-tg-info"><b>@gruppe.Navn</b><span class="p5-smule">@gruppe.Filer.Count fil@(gruppe.Filer.Count == 1 ? "" : "er")</span></span>
-                            </button>
-                        }
+                <div class="ve-k">
+                    @if (mapperVist.Count == 0)
+                    {
+                        <p class="ve-ingen">@(string.IsNullOrWhiteSpace(_vedleggSok) && _vedleggType == "alle" ? "Ingen mapper opprettet ennå. Trykk «Ny mappe» for å lage den første, eller last opp filer direkte." : "Ingen treff.")</p>
+                    }
+                    else
+                    {
+                        <table class="ve-tab">
+                            <thead><tr><th>Mappe</th><th class="c">Filer</th><th>Sist endret</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var (gruppe, filer) in mapperVist)
+                                {
+                                    var mappeId = gruppe.MappeId;
+                                    var sist = gruppe.Filer.Count == 0 ? (DateTime?)null : gruppe.Filer.Max(f => f.OpprettetDato);
+                                    <tr @key="@(mappeId?.ToString() ?? "ukategorisert")" class="ve-klikk" @onclick="@(() => ApneMappe(mappeId))">
+                                        <td><span class="ve-n"><span class="ve-mi @(mappeId is null ? "ve-mi-u" : "")"><Icon Name="folder" /></span><b>@gruppe.Navn</b></span></td>
+                                        <td class="c">@filer.Count</td>
+                                        <td class="ve-mut">@(sist is { } d ? d.ToLocalTime().ToString("dd.MM.yyyy") : "–")</td>
+                                        <td class="ve-h ve-pil"><Icon Name="chevron-right" /></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    <div class="ve-fot">
+                        <span><b>@_mapper.Count</b> @(_mapper.Count == 1 ? "mappe" : "mapper")</span>
+                        <span><b>@alleFiler.Count</b> @(alleFiler.Count == 1 ? "fil" : "filer")</span>
+                        <span class="ve-hoyre">Åpne en mappe for å laste opp filer rett i den</span>
                     </div>
-                }
+                </div>
+
+                @* Lenker til filer som ligger andre steder (OneDrive, SharePoint, Dalux …). *@
+                <div class="ve-k">
+                    <div class="ve-th">
+                        Lenker <small>@_lenker.Count</small>
+                        <span class="ve-hoyre">
+                            @if (!_visNyLenke)
+                            {
+                                <button type="button" class="ve-kn ve-kn-l" @onclick="@(() => { _visNyLenke = true; _lenkeFeil = null; })"><Icon Name="plus" />Legg til lenke</button>
+                            }
+                        </span>
+                    </div>
+                    @if (_visNyLenke)
+                    {
+                        <div class="ve-lenkeskjema">
+                            <input class="ve-inp" @bind="_nyLenkeNavn" @bind:event="oninput" placeholder="Navn, f.eks. Tegninger i Dalux" aria-label="Navn på lenken" />
+                            <input class="ve-inp ve-inp-url" type="url" @bind="_nyLenkeUrl" @bind:event="oninput" placeholder="https://…" aria-label="Adresse"
+                                   @onkeydown="@(async e => { if (e.Key == "Enter") { await LeggTilLenke(); } })" />
+                            <button type="button" class="ve-kn ve-kn-p" @onclick="LeggTilLenke" disabled="@string.IsNullOrWhiteSpace(_nyLenkeUrl)">Lagre</button>
+                            <button type="button" class="ve-kn" @onclick="@(() => { _visNyLenke = false; _nyLenkeNavn = ""; _nyLenkeUrl = ""; _lenkeFeil = null; })">Avbryt</button>
+                            @if (!string.IsNullOrEmpty(_lenkeFeil))
+                            {
+                                <span class="ve-feil">@_lenkeFeil</span>
+                            }
+                        </div>
+                    }
+                    @{
+                        var lenkeSok = _vedleggSok.Trim();
+                        var lenkerVist = _lenker.Where(l => lenkeSok.Length == 0 || l.Navn.Contains(lenkeSok, StringComparison.OrdinalIgnoreCase) || l.Url.Contains(lenkeSok, StringComparison.OrdinalIgnoreCase)).ToList();
+                    }
+                    @if (lenkerVist.Count == 0)
+                    {
+                        <p class="ve-ingen">@(_lenker.Count == 0 ? "Ingen lenker ennå. Legg til lenker til mapper i OneDrive, SharePoint, Dalux, Google Drive eller lignende." : "Ingen treff.")</p>
+                    }
+                    else
+                    {
+                        <table class="ve-tab">
+                            <tbody>
+                                @foreach (var l in lenkerVist)
+                                {
+                                    var lenke = l;
+                                    var (kilde, kildeKlasse) = LenkeKilde(l.Url);
+                                    <tr @key="l.Id">
+                                        <td><span class="ve-n"><span class="ve-mi ve-mi-l ve-l-@kildeKlasse"><Icon Name="link" /></span><span><b>@l.Navn</b><small class="ve-url">@l.Url</small></span></span></td>
+                                        <td class="ve-mut">@kilde</td>
+                                        <td class="ve-h ve-nowrap">
+                                            <a class="ve-lenke" href="@l.Url" target="_blank" rel="noopener noreferrer">Åpne <Icon Name="external-link" /></a>
+                                            @if (_slettLenkeId == l.Id)
+                                            {
+                                                <button type="button" class="ve-kn ve-kn-l ve-kn-rod" @onclick="@(() => SlettLenke(lenke))">Fjern</button>
+                                                <button type="button" class="ve-kn ve-kn-l" @onclick="@(() => _slettLenkeId = null)">Avbryt</button>
+                                            }
+                                            else
+                                            {
+                                                <button type="button" class="ve-x" title="Fjern lenken" @onclick="@(() => _slettLenkeId = lenke.Id)"><Icon Name="x" /></button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
 
                 @if (SynligeKoblingsskjemaer.Count > 0)
                 {
-                    <section class="p5-seksjon">
-                        <h4>Koblingsskjema</h4>
-                        <div class="p5-liste">
-                            @foreach (var k in SynligeKoblingsskjemaer)
-                            {
-                                <a class="p5-lr" @key="k.Id" href="@($"/koblingsskjema/{k.Id}")">
-                                    <span class="p5-ik"><Icon Name="file-text" /></span>
-                                    <span><b>@k.Navn</b></span>
-                                    <span class="p5-smule">@(k.Kategori?.Navn ?? "-")</span>
-                                </a>
-                            }
-                        </div>
-                    </section>
+                    <div class="ve-k">
+                        <div class="ve-th">Koblingsskjema <small>@SynligeKoblingsskjemaer.Count</small></div>
+                        <table class="ve-tab">
+                            <tbody>
+                                @foreach (var k in SynligeKoblingsskjemaer)
+                                {
+                                    <tr @key="k.Id">
+                                        <td><span class="ve-n"><span class="ve-mi ve-mi-k"><Icon Name="file-text" /></span><b>@k.Navn</b></span></td>
+                                        <td class="ve-mut">@(k.Kategori?.Navn ?? "–")</td>
+                                        <td class="ve-h"><a class="ve-lenke" href="@($"/koblingsskjema/{k.Id}")">Åpne <Icon Name="chevron-right" /></a></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
                 }
             }
             else
@@ -2957,6 +3058,79 @@ else
     // Ukategorisert vises kun på forsiden når den faktisk inneholder filer -
     // den skal ikke være en mappe man "oppretter"/ser tom, bare et sted filer
     // havner inntil de sorteres i en ekte mappe.
+    private string _vedleggType = "alle";
+    private List<ProsjektLenke> _lenker = [];
+    private bool _visNyLenke;
+    private string _nyLenkeNavn = "";
+    private string _nyLenkeUrl = "";
+    private string? _lenkeFeil;
+    private int? _slettLenkeId;
+
+    // Kjente tjenester får eget navn og farge; alt annet vises med domenet.
+    private static (string Kilde, string Klasse) LenkeKilde(string url)
+    {
+        var host = Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.Host.ToLowerInvariant() : "";
+        return host switch
+        {
+            _ when host.Contains("onedrive") || host.EndsWith("1drv.ms") => ("OneDrive", "od"),
+            _ when host.Contains("sharepoint") => ("SharePoint", "sp"),
+            _ when host.Contains("dalux") => ("Dalux", "dx"),
+            _ when host.Contains("drive.google") || host.Contains("docs.google") => ("Google Drive", "gd"),
+            _ when host.Contains("dropbox") => ("Dropbox", "db"),
+            "" => ("Lenke", "an"),
+            _ => (host.StartsWith("www.") ? host[4..] : host, "an")
+        };
+    }
+
+    private async Task LeggTilLenke()
+    {
+        if (!Id.HasValue)
+        {
+            return;
+        }
+
+        var url = _nyLenkeUrl.Trim();
+        if (!url.Contains("://"))
+        {
+            url = "https://" + url;
+        }
+
+        // Bare vanlige nettadresser - ikke javascript: o.l.
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) || string.IsNullOrEmpty(uri.Host))
+        {
+            _lenkeFeil = "Skriv inn en gyldig adresse som starter med https://";
+            return;
+        }
+
+        var navn = string.IsNullOrWhiteSpace(_nyLenkeNavn) ? LenkeKilde(uri.ToString()).Kilde : _nyLenkeNavn.Trim();
+        var lenke = new ProsjektLenke { ProsjektId = Id.Value, Navn = navn, Url = uri.ToString() };
+        Db.ProsjektLenker.Add(lenke);
+        await Db.SaveChangesAsync();
+
+        _lenker.Add(lenke);
+        _lenker = _lenker.OrderBy(l => l.Navn).ToList();
+        _visNyLenke = false;
+        _nyLenkeNavn = "";
+        _nyLenkeUrl = "";
+        _lenkeFeil = null;
+    }
+
+    private async Task SlettLenke(ProsjektLenke lenke)
+    {
+        Db.ProsjektLenker.Remove(lenke);
+        await Db.SaveChangesAsync();
+        _lenker.Remove(lenke);
+        _slettLenkeId = null;
+    }
+    private bool _visNyMappe;
+
+    private static string VedleggType(ProsjektVedlegg f) =>
+        f.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ? "bilde"
+        : f.ContentType.Contains("pdf", StringComparison.OrdinalIgnoreCase) || f.Filnavn.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ? "pdf"
+        : "annet";
+
+    private bool PasserVedleggType(ProsjektVedlegg f) => _vedleggType == "alle" || VedleggType(f) == _vedleggType;
+
     private List<VedleggMappeGruppe> SynligeVedleggMapper
     {
         get
@@ -3335,6 +3509,10 @@ else
             _mapper = await Db.ProsjektMapper
                 .Where(m => m.ProsjektId == Id.Value)
                 .OrderBy(m => m.Sortering).ThenBy(m => m.Navn)
+                .ToListAsync();
+            _lenker = await Db.ProsjektLenker
+                .Where(l => l.ProsjektId == Id.Value)
+                .OrderBy(l => l.Navn)
                 .ToListAsync();
             _tilbud = existing.Tilbud.OrderByDescending(t => t.OpprettetDato).ToList();
             _monteringLinjer = existing.MonteringLinjer.OrderBy(m => m.Rekkefolge).ToList();

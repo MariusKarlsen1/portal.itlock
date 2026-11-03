@@ -5987,6 +5987,33 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ProsjektEtterkalkyler");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ProsjektLenke", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("OpprettetDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProsjektId");
+
+                    b.ToTable("ProsjektLenker");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ProsjektMappe", b =>
                 {
                     b.Property<int>("Id")
@@ -9511,6 +9538,17 @@ namespace PortalItlock.Web.Migrations
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ProsjektEtterkalkyle", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
+                        .WithMany()
+                        .HasForeignKey("ProsjektId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Prosjekt");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ProsjektLenke", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
                         .WithMany()
