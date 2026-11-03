@@ -27,7 +27,23 @@ public class Dor
     public string? Dortype { get; set; }
     public string? AluProfil { get; set; }
     public bool ToFloyet { get; set; }
+    // Holdes lik Bredde x Hoyde (settes når de lagres); vises ikke som eget felt lenger.
     public string? BxH { get; set; }
+
+    // Målene til visning: bredde × høyde, eller det gamle B x H-feltet om de mangler.
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? MalTekst => Bredde is not null || Hoyde is not null
+        ? $"{Bredde?.ToString() ?? "-"} × {Hoyde?.ToString() ?? "-"}"
+        : string.IsNullOrWhiteSpace(BxH) ? null : BxH;
+
+    // Kalles når Bredde/Hoyde endres, så B x H-feltet (brukt i eldre eksporter) stemmer.
+    public void SynkBxH()
+    {
+        if (Bredde is not null && Hoyde is not null)
+        {
+            BxH = $"{Bredde}x{Hoyde}";
+        }
+    }
     public string? Slagretning { get; set; }
     public string? Notater { get; set; }
 

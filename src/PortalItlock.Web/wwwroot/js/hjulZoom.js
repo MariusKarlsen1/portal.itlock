@@ -45,10 +45,19 @@
     document.addEventListener('pointerdown', function (e) {
         var el = e.target.closest && e.target.closest('[data-hjulzoom]');
         if (!el || e.button !== 0 || tilstand(el).s <= 1.001) return;
-        dra = { el: el, sx: e.clientX, sy: e.clientY, x0: tilstand(el).x, y0: tilstand(el).y, flyttet: false };
+        // Ellers starter nettleseren sin egen «dra bildet» eller tekstmarkering,
+        // og flyttingen stopper halvveis.
+        e.preventDefault();
+        dra = { el: el, id: e.pointerId, sx: e.clientX, sy: e.clientY, x0: tilstand(el).x, y0: tilstand(el).y, flyttet: false };
+    });
+    document.addEventListener('dragstart', function (e) {
+        if (e.target.closest && e.target.closest('[data-hjulzoom]')) e.preventDefault();
     });
     document.addEventListener('pointermove', function (e) {
-        if (!dra) return;
+        if (!dra || e.pointerId !== dra.id) return;
+        // Slapp man knappen utenfor vinduet, avsluttes flyttingen.
+        if (!(e.buttons & 1)) { slutt(); return; }
+        e.preventDefault();
         var dx = e.clientX - dra.sx, dy = e.clientY - dra.sy;
         if (!dra.flyttet && Math.hypot(dx, dy) < TERSKEL) return;
         dra.flyttet = true;
@@ -58,13 +67,16 @@
         z.y = dra.y0 + dy;
         bruk(dra.el);
     });
-    document.addEventListener('pointerup', function () {
+    function slutt() {
         if (!dra) return;
         dra.el.classList.remove('hz-drar');
         // Et klikk rett etter at man har dratt skal ikke åpne en dør.
         if (dra.flyttet) dra.el._hzSlukKlikk = true;
         dra = null;
-    });
+    }
+    document.addEventListener('pointerup', slutt);
+    document.addEventListener('pointercancel', slutt);
+    window.addEventListener('blur', slutt);
     document.addEventListener('click', function (e) {
         var el = e.target.closest && e.target.closest('[data-hjulzoom]');
         if (el && el._hzSlukKlikk) {

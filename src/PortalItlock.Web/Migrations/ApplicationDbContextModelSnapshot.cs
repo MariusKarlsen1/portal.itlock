@@ -2543,6 +2543,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Terskel")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool?>("ToFloyet")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ProsjektId");

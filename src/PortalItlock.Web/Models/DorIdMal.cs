@@ -12,7 +12,12 @@ public class DorIdMal
     public bool? FriBredde086 { get; set; }
     public int? Bredde { get; set; }
     public int? Hoyde { get; set; }
+    // Gammelt fritekstfelt. Innholdet er flyttet til Dorkonstruksjon (migrering
+    // DorIdFloyer); vises ikke lenger.
     public string? Dortype { get; set; }
+
+    // 1-fløyet (false) eller 2-fløyet (true). Synkes til Dor.ToFloyet.
+    public bool? ToFloyet { get; set; }
 
     public string? FargeKarm { get; set; }
     public string? Dorkonstruksjon { get; set; }
