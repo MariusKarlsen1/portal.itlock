@@ -7405,6 +7405,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("VisPrisPerDor")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("VisRabattIPdf")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("OpprinneligTilbudId");

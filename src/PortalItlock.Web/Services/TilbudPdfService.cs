@@ -106,7 +106,24 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             .Where(m => m.ProsjektId == tilbud.ProsjektId && m.ComponentId != null)
             .ToDictionaryAsync(m => m.ComponentId!.Value, m => m.Minutter);
 
-        var visRabatt = linjer.Any(l => l.RabattProsent > 0);
+        // Rabatten vises bare når «Vis rabatt» er huket av. Rabatt på veiledende uten egen
+        // rabatt på linjen bruker satsen på tilbudet (prosjekttilbud), som i tilbudet.
+        var erService = tilbud.Prosjekt?.Status == ProsjektStatus.Serviceavtale;
+        decimal RabattFor(TilbudLinje l)
+        {
+            if (l.Component?.IngenRabattTilgjengelig == true)
+            {
+                return 0;
+            }
+
+            if ((l.PrisType ?? tilbud.PrisType) == TilbudPrisType.Rabatt && l.RabattProsent == 0 && !erService)
+            {
+                return l.Prosentsats ?? tilbud.Prosentsats;
+            }
+
+            return l.RabattProsent;
+        }
+        var visRabatt = tilbud.VisRabattIPdf && linjer.Any(l => !l.ErGruppering && RabattFor(l) > 0);
         var utprisVarer = linjer.Where(l => l.LevertAv == LevertAv.F).Sum(l => l.Utpris * l.Antall);
         var minutter = linjer.Where(l => l.LevertAv == LevertAv.F)
             .Sum(l => ((l.ComponentId.HasValue && monteringMinutterPerComponent.TryGetValue(l.ComponentId.Value, out var m) ? m : null) ?? l.MontasjeMinutter ?? 0) * l.Antall);
@@ -129,6 +146,35 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                 .Include(d => d.Funksjoner)
                 .OrderBy(d => d.Dornummer)
                 .ToListAsync();
+        }
+
+        // Pris per dør: montasjen fordeles på dørene etter minuttene på varene de har
+        // (minutter × antall). Summen over alle dørene er hele montasjen, så totalen er
+        // den samme - montasjen står da på dørene i stedet for i sammendraget.
+        var montasjePerDor = new Dictionary<int, decimal>();
+        if (tilbud.VisPrisPerDor && montasjekost > 0)
+        {
+            var minutterPerVare = linjer.Where(l => l.ComponentId.HasValue && l.LevertAv == LevertAv.F)
+                .GroupBy(l => l.ComponentId!.Value)
+                .ToDictionary(g => g.Key, g => (decimal)((monteringMinutterPerComponent.TryGetValue(g.Key, out var mm) ? mm : null) ?? g.First().MontasjeMinutter ?? 0));
+            var dorMinutter = dorer
+                .Select(d => (d.Id, Minutter: d.Komponenter.Where(k => k.Component is not null && k.LevertAv == LevertAv.F)
+                    .Sum(k => minutterPerVare.GetValueOrDefault(k.ComponentId) * k.Antall)))
+                .Where(x => x.Minutter > 0)
+                .ToList();
+            var totaltMinutter = dorMinutter.Sum(x => x.Minutter);
+            if (totaltMinutter > 0)
+            {
+                var fordelt = 0m;
+                for (var i = 0; i < dorMinutter.Count; i++)
+                {
+                    var andel = i == dorMinutter.Count - 1
+                        ? montasjekost - fordelt
+                        : Math.Round(montasjekost * dorMinutter[i].Minutter / totaltMinutter, 2);
+                    montasjePerDor[dorMinutter[i].Id] = andel;
+                    fordelt += andel;
+                }
+            }
         }
 
         // Mal M7 (tilbudpdf-forslag.html): forsiden med fargekolonne til venstre
@@ -287,10 +333,12 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
                     var visSammendrag = tilbud.SummerAlleBeslag && linjer.Count > 0;
                     var visDorer = tilbud.VisAlleDorerFraBeslagsliste && dorer.Any(d => d.Komponenter.Any(k => k.Component is not null));
+                    var montasjePaDorer = visDorer && montasjePerDor.Count > 0;
 
                     if (visSammendrag)
                     {
-                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, arbeidstidTimer, montasjekost, org.Aksent, org.AksentLys, KodeRader(tilbud));
+                        // Fordeles montasjen på dørene, står den ikke i sammendraget.
+                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, RabattFor, arbeidstidTimer, montasjePaDorer ? 0 : montasjekost, org.Aksent, org.AksentLys, montasjePaDorer ? [] : KodeRader(tilbud));
                     }
 
                     if (visDorer)
@@ -300,7 +348,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                             col.Item().PageBreak();
                         }
 
-                        RenderDorer(col, tilbud, dorer, utprisPerComponent, org.Aksent, org.AksentLys);
+                        RenderDorer(col, tilbud, dorer, utprisPerComponent, montasjePaDorer ? montasjePerDor : null);
                     }
 
                     // Totalboksen deles aldri over to sider.
@@ -325,7 +373,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         return document.GeneratePdf();
     }
 
-    private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, decimal monteringTimer, decimal montasjekost, Color aksent, Color aksentLys,
+    private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, Func<TilbudLinje, decimal> rabattFor, decimal monteringTimer, decimal montasjekost, Color aksent, Color aksentLys,
         List<(string Kode, string Navn, decimal Belop)> kodeRader)
     {
         var visVarenummer = !tilbud.SkjulVarenummerISammendrag;
@@ -441,7 +489,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                     var visPrisPaLinje = l.LevertAv == LevertAv.F;
                     if (visRabatt)
                     {
-                        Rad().Text(l.RabattProsent > 0 ? $"{l.RabattProsent.ToString("N0", Kultur)} %" : "-");
+                        Rad().Text(rabattFor(l) > 0 ? $"{rabattFor(l).ToString("0.#", Kultur)} %" : "-");
                     }
                     Rad().AlignRight().Text(visPrisPaLinje ? FormatKr(l.Utpris) : "–");
                     Rad().AlignRight().Text(visPrisPaLinje ? FormatKr(l.Utpris * l.Antall) : "–");
@@ -534,7 +582,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             .ToList();
     }
 
-    private static void RenderDorer(ColumnDescriptor col, Tilbud tilbud, List<Dor> dorer, Dictionary<int, decimal> utprisPerComponent, Color aksent, Color aksentLys)
+    private static void RenderDorer(ColumnDescriptor col, Tilbud tilbud, List<Dor> dorer, Dictionary<int, decimal> utprisPerComponent, Dictionary<int, decimal>? montasjePerDor)
     {
         var relevanteDorer = dorer.Where(d => d.Komponenter.Any(k => k.Component is not null)).ToList();
 
@@ -546,7 +594,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         {
             var dor = relevanteDorer[i];
             // Et dørkort flyttes heller til neste side enn å deles (deles bare hvis det er høyere enn en side).
-            col.Item().PaddingTop(i == 0 ? 8 : 16).PreventPageBreak().Column(inner => DorPdfSeksjoner.RenderDorSide(inner, dor, tilbud.VisPrisPerDor, HentUtpris, hodeBak: LysGra, hodeTekst: Ink, visStatus: false));
+            col.Item().PaddingTop(i == 0 ? 8 : 16).PreventPageBreak().Column(inner => DorPdfSeksjoner.RenderDorSide(inner, dor, tilbud.VisPrisPerDor, HentUtpris, hodeBak: LysGra, hodeTekst: Ink, visStatus: false, montasje: montasjePerDor?.GetValueOrDefault(dor.Id) ?? 0));
         }
     }
 

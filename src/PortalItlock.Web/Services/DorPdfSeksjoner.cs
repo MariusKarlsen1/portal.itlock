@@ -22,7 +22,7 @@ public static class DorPdfSeksjoner
     // hodeBak/hodeTekst: lys topp på dørkortet og beslagstabellen (tilbudet bruker
     // forsidens lyseblå); uten dem er toppen mørk med hvit tekst som før.
     public static void RenderDorSide(ColumnDescriptor col, Dor dor, bool visPris, Func<DorKomponent, decimal> hentUtpris,
-        Color? aksent = null, Color? aksentLys = null, Color? hodeBak = null, Color? hodeTekst = null, bool visStatus = true)
+        Color? aksent = null, Color? aksentLys = null, Color? hodeBak = null, Color? hodeTekst = null, bool visStatus = true, decimal montasje = 0)
     {
         var farge = aksent ?? PdfStil.Accent;
         var lys = aksentLys ?? PdfStil.Sand;
@@ -77,7 +77,7 @@ public static class DorPdfSeksjoner
                 });
             }
 
-            RenderBeslagsliste(inner, komponenter, visPris, hentUtpris, farge, lys, hBak, hTekst);
+            RenderBeslagsliste(inner, komponenter, visPris, hentUtpris, farge, lys, hBak, hTekst, montasje);
 
             inner.Item().PaddingTop(10).Background(lys).CornerRadius(3).PaddingVertical(7).PaddingHorizontal(9).Column(m =>
             {
@@ -135,7 +135,7 @@ public static class DorPdfSeksjoner
         });
     }
 
-    private static void RenderBeslagsliste(ColumnDescriptor inner, List<DorKomponent> komponenter, bool visPris, Func<DorKomponent, decimal> hentUtpris, Color farge, Color lys, Color hBak, Color hTekst)
+    private static void RenderBeslagsliste(ColumnDescriptor inner, List<DorKomponent> komponenter, bool visPris, Func<DorKomponent, decimal> hentUtpris, Color farge, Color lys, Color hBak, Color hTekst, decimal montasje)
     {
         inner.Item().PaddingTop(10).Column(bc =>
         {
@@ -214,12 +214,22 @@ public static class DorPdfSeksjoner
                         Rad().AlignRight().Text(visPrisPaLinje ? FormatKr(utpris * k.Antall) : "–").FontSize(8.5f);
                     }
                 }
+
+                // Dørens del av montasjen (fordelt etter minuttene på varene).
+                if (visPris && montasje > 0)
+                {
+                    var kolonner = (uint)(visOverflate ? 8 : 7);
+                    table.Cell().ColumnSpan(kolonner - 1).BorderBottom(0.5f).BorderColor(Linje).PaddingVertical(4).PaddingHorizontal(6)
+                        .Text("Montasje").FontSize(8.5f).SemiBold();
+                    table.Cell().BorderBottom(0.5f).BorderColor(Linje).PaddingVertical(4).PaddingHorizontal(6)
+                        .AlignRight().Text(FormatKr(montasje)).FontSize(8.5f);
+                }
             });
 
             if (visPris)
             {
                 bc.Item().AlignRight().PaddingTop(4).Background(lys).PaddingVertical(4).PaddingHorizontal(8)
-                    .Text($"Sum varer: {FormatKr(sumVarer)}").Bold().FontSize(9.5f).FontColor(farge);
+                    .Text($"Sum: {FormatKr(sumVarer + montasje)}").Bold().FontSize(9.5f).FontColor(farge);
             }
         });
     }

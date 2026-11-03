@@ -45,6 +45,9 @@ public class Tilbud
     // Settes når status endres til Godkjent (TilbudSkjema/StatusEndret), og
     // nullstilles hvis tilbudet settes tilbake fra Godkjent.
     public DateTime? GodkjentDato { get; set; }
+
+    // Rabatten (rabatt på veiledende / kunderabatt) vises i PDF-en bare når dette er huket av.
+    public bool VisRabattIPdf { get; set; }
     public decimal? SendtSum { get; set; }
 
     // Settes automatisk når Status endres til Avslatt (se
