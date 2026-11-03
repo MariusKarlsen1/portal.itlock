@@ -26,11 +26,29 @@ public static class KodeLinjeBeregner
             return new(Math.Round(l.Antall * l.Kostpris, 2), Math.Round(l.Antall * l.Salgspris, 2));
         }
 
-        var arbeid = alle.Where(x => x.Type == PrisKodeType.Arbeid && !x.Enhet.ErProsent()).ToList();
+        var arbeid = l.Enhet == PrisKodeEnhet.ProsentMontasje
+            ? MontasjeLinjer(alle)
+            : alle.Where(x => x.Type == PrisKodeType.Arbeid && !x.Enhet.ErProsent()).ToList();
         var (kostGrunnlag, salgGrunnlag) = l.Enhet == PrisKodeEnhet.ProsentVarer
             ? (utprisVarer, utprisVarer)
             : (arbeid.Sum(x => x.Antall * x.Kostpris), arbeid.Sum(x => x.Antall * x.Salgspris));
         return new(Math.Round(kostGrunnlag * l.Kostpris / 100m, 2), Math.Round(salgGrunnlag * l.Salgspris / 100m, 2));
+    }
+
+    // Montasjetimene: linjene merket som montasje, ellers den som følger varenes
+    // montasjetid, ellers den første timelinjen for arbeid.
+    public static List<TilbudKodeLinje> MontasjeLinjer(IEnumerable<TilbudKodeLinje> alle)
+    {
+        var timer = alle.Where(x => x.Type == PrisKodeType.Arbeid && x.Enhet == PrisKodeEnhet.Time)
+            .OrderBy(x => x.Rekkefolge).ThenBy(x => x.Id).ToList();
+        var merket = timer.Where(x => x.ErMontasje).ToList();
+        if (merket.Count > 0)
+        {
+            return merket;
+        }
+
+        var forste = timer.FirstOrDefault(x => x.FraMontasjetid) ?? timer.FirstOrDefault();
+        return forste is null ? [] : [forste];
     }
 
     public static Totaler Totalt(IReadOnlyCollection<TilbudKodeLinje> linjer, decimal utprisVarer)
@@ -71,7 +89,7 @@ public static class KodeLinjeBeregner
         new() { Kode = "200", Navn = "Kjøring", Beskrivelse = "Per kilometer", Type = PrisKodeType.Kjoring, Enhet = PrisKodeEnhet.Km, Kostpris = 4.5m, Salgspris = 9m, Rekkefolge = 4 },
         new() { Kode = "210", Navn = "Utkjøringstillegg", Beskrivelse = "Fast per oppmøte", Type = PrisKodeType.Kjoring, Enhet = PrisKodeEnhet.Stk, Kostpris = 0, Salgspris = 490, Rekkefolge = 5 },
         new() { Kode = "300", Navn = "Småmateriell", Beskrivelse = "Skruer, plugger, lim", Type = PrisKodeType.Materiell, Enhet = PrisKodeEnhet.ProsentVarer, Kostpris = 2, Salgspris = 4, Rekkefolge = 6 },
-        new() { Kode = "400", Navn = "Rigg og drift", Type = PrisKodeType.Tillegg, Enhet = PrisKodeEnhet.ProsentArbeid, Kostpris = 0, Salgspris = 5, Rekkefolge = 7 },
+        new() { Kode = "400", Navn = "Rigg og drift", Type = PrisKodeType.Tillegg, Enhet = PrisKodeEnhet.ProsentMontasje, Kostpris = 5, Salgspris = 5, Rekkefolge = 7 },
     ];
 
     public static TilbudKodeLinje LinjeFra(PrisKode k, decimal antall = 1) => new()
@@ -84,6 +102,7 @@ public static class KodeLinjeBeregner
         Enhet = k.Enhet,
         Antall = k.Enhet.ErProsent() ? 1 : antall,
         Kostpris = k.Kostpris,
-        Salgspris = k.Salgspris
+        Salgspris = k.Salgspris,
+        ErMontasje = k.ErMontasje
     };
 }

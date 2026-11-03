@@ -24,8 +24,10 @@ public enum PrisKodeEnhet
     Dag = 3,
     // Prosent av varenes utpris (for eksempel småmateriell).
     ProsentVarer = 4,
-    // Prosent av arbeidslinjene (for eksempel rigg og drift).
-    ProsentArbeid = 5
+    // Prosent av arbeidslinjene.
+    ProsentArbeid = 5,
+    // Prosent av montasjetimene (rigg og drift): prosent × montasjetimer × timepris.
+    ProsentMontasje = 6
 }
 
 public static class PrisKodeTekst
@@ -46,10 +48,11 @@ public static class PrisKodeTekst
         PrisKodeEnhet.Stk => "stk",
         PrisKodeEnhet.Dag => "dag",
         PrisKodeEnhet.ProsentVarer => "% av varer",
+        PrisKodeEnhet.ProsentMontasje => "% av montasje",
         _ => "% av arbeid"
     };
 
-    public static bool ErProsent(this PrisKodeEnhet e) => e is PrisKodeEnhet.ProsentVarer or PrisKodeEnhet.ProsentArbeid;
+    public static bool ErProsent(this PrisKodeEnhet e) => e is PrisKodeEnhet.ProsentVarer or PrisKodeEnhet.ProsentArbeid or PrisKodeEnhet.ProsentMontasje;
 }
 
 public class PrisKode
@@ -99,6 +102,9 @@ public class TilbudKodeLinje
 
     // Montasjelinjen følger varenes beregnede montasjetid til antallet endres for hånd.
     public bool FraMontasjetid { get; set; }
+
+    // Linjen er montasjetimene (fra montasjekoden). Rigg og drift regnes av disse.
+    public bool ErMontasje { get; set; }
 }
 
 // Kjøring og tillegg montøren fører på arbeidsordren (utkjøringstillegg,

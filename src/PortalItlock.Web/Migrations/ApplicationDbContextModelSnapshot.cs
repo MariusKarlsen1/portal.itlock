@@ -7530,6 +7530,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("Enhet")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("ErMontasje")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("FraMontasjetid")
                         .HasColumnType("INTEGER");
 
