@@ -140,7 +140,6 @@ builder.Services.AddScoped<SjekklistePdfService>();
 builder.Services.AddScoped<LagretPdfService>();
 builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
-builder.Services.AddScoped<BimModellService>();
 builder.Services.AddScoped<KassaService>();
 builder.Services.AddSingleton<KassaParkering>();
 // Bakgrunnsjobbene kjører for hver organisasjon (se OrganisasjonKjorer), og
@@ -1251,19 +1250,6 @@ app.MapGet("/kassa/salg.csv", async (int ar, int mnd, ApplicationDbContext db) =
     var bytes = new System.Text.UTF8Encoding(true).GetBytes(sb.ToString());
     return Results.File(bytes, "text/csv; charset=utf-8", $"kassa-{ar}-{mnd:00}.csv");
 }).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
-
-// Prosjektets BIM-modell (IFC) til 3D-visningen. Fila leses i nettleseren.
-app.MapGet("/prosjekt/{id:int}/modell.ifc", (int id, BimModellService bim, HttpContext ctx) =>
-{
-    var sti = bim.Sti(id);
-    if (!File.Exists(sti))
-    {
-        return Results.NotFound();
-    }
-
-    ctx.Response.Headers.CacheControl = "private, no-cache";
-    return Results.File(sti, "application/octet-stream", $"prosjekt-{id}.ifc", lastModified: File.GetLastWriteTimeUtc(sti), enableRangeProcessing: true);
-}).RequireAuthorization();
 
 app.MapGet("/app/pdfside/komponent/{type}/{kilde}/{id:int}/{side:int}", async (string type, string kilde, int id, int side, ApplicationDbContext db, HttpContext ctx) =>
 {
