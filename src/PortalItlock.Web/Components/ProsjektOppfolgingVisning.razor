@@ -137,9 +137,6 @@ else
                 _fane = "oversikt";
                 _melding = null;
                 _apne.Clear();
-                _vinduFra = FremdriftsplanBeregner.Mandag(DateTime.Today).AddDays(-7);
-                _vinduUker = 10;
-                _forsteLast = true;
             }
 
             _lastetFor = ProsjektId;
@@ -148,7 +145,6 @@ else
         }
     }
 
-    private bool _forsteLast = true;
 
     private async Task LastAsync()
     {
@@ -168,16 +164,6 @@ else
             .GroupBy(t => t.Aktivitet)
             .Select(g => (g.Key, Math.Round(g.Sum(t => Math.Max(0, (decimal)(t.Slutt - t.Start).TotalHours - t.PauseMinutter / 60m)), 1)))
             .OrderByDescending(x => x.Item2).ToList();
-
-        // Første gang: åpne aktivitetene som er forsinket eller går denne uken.
-        if (_forsteLast)
-        {
-            _forsteLast = false;
-            foreach (var a in _f.AapneOppgaver.Select(x => x.Aktivitet.Id).Distinct())
-            {
-                _apne.Add(a);
-            }
-        }
     }
 
     private async Task Lagre(Func<Task> endring, string? melding = null)
@@ -419,32 +405,11 @@ else
     // ======================================================================
     // Fremdriftsplan
     private readonly HashSet<int> _apne = [];
-    private DateTime _vinduFra = FremdriftsplanBeregner.Mandag(DateTime.Today).AddDays(-7);
-    private int _vinduUker = 10;
+    private string _planVisning = "tabell";
     private readonly Dictionary<int, string> _nyOppgave = [];
-
-    private void FlyttVindu(int uker) => _vinduFra = _vinduFra.AddDays(7 * uker);
-
-    private void DenneUken()
-    {
-        _vinduFra = FremdriftsplanBeregner.Mandag(DateTime.Today).AddDays(-7);
-        _vinduUker = 10;
-    }
-
-    private void HeleProsjektet()
-    {
-        if (_f?.Frister is { } fr)
-        {
-            _vinduFra = FremdriftsplanBeregner.Mandag(fr.Start);
-            _vinduUker = Math.Clamp(FremdriftsplanBeregner.UkerMellom(fr.Start, fr.Overlevering) + 1, 4, 80);
-        }
-    }
-
-    private double X(DateTime d) => (d - _vinduFra).TotalDays / (_vinduUker * 7) * 100;
 
     private Task LagPlan()
     {
-        _forsteLast = true;
         return Lagre(() => OppfolgingSvc.LagPlanFraMalAsync(ProsjektId), "Fremdriftsplanen er laget fra malen. Oppgaver i aktiviteter som allerede er passert, er satt til avsluttet. Sjekk datoene, og velg personer til rollene nederst.");
     }
 
@@ -500,197 +465,203 @@ else
             var p = _p!;
             var fr = f.Frister;
             var idag = DateTime.Today;
+            var valgteRoller = _roller.Values.Count(v => v is not null);
         }
-        <div class="pf-fane-topp">
-            <div>
-                <h3>Fremdriftsplan</h3>
-                <p class="pf-dempet">Planen starter når prosjektet er registrert, og fasene regnes fra de tre datoene. Flytt en dato, så flytter fasene og oppgavene seg. Godkjent fristforlengelse på endringene legges til overleveringen.</p>
+        @if (f.HarPlan && fr is not null)
+        {
+            var inn = FremdriftsplanBeregner.UkerMellom(fr.Start, idag) + 1;
+            var igjen = FremdriftsplanBeregner.UkerMellom(idag, fr.Overlevering);
+            <div class="pf-plan-linje">
+                <p class="pf-svarlinje"><b>Uke @inn av @(FremdriftsplanBeregner.UkerMellom(fr.Start, fr.Overlevering) + 1)</b>, @(igjen >= 0 ? $"{igjen} uker til overlevering." : $"{-igjen} uker over fristen.")@(f.ForsinkedeAktiviteter > 0 ? " " : "")@if (f.ForsinkedeAktiviteter > 0) {<b class="pf-rod">@f.ForsinkedeAktiviteter @(f.ForsinkedeAktiviteter == 1 ? "aktivitet" : "aktiviteter")</b>@(" er forsinket.")}</p>
+                <span class="pf-seg" role="group" aria-label="Visning">
+                    <button type="button" class="@(_planVisning == "tabell" ? "aktiv" : "")" aria-pressed="@(_planVisning == "tabell" ? "true" : "false")" @onclick="@(() => _planVisning = "tabell")">Tabell</button>
+                    <button type="button" class="@(_planVisning == "tid" ? "aktiv" : "")" aria-pressed="@(_planVisning == "tid" ? "true" : "false")" @onclick="@(() => _planVisning = "tid")">Tidslinje</button>
+                </span>
             </div>
-        </div>
-        <div class="pf-frister">
-            <label class="pf-felt">Prosjektstart (registrert)
-                <input type="date" class="pf-inn" value="@DatoVerdi(p.StartDato ?? fr?.Start)" @onchange="@(e => EndreProsjekt(x => x.StartDato = LesDato(e)))" />
-                <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Start)}" : "")</small>
-            </label>
-            <label class="pf-felt">Montasjestart
-                <input type="date" class="pf-inn" value="@DatoVerdi(p.MontasjestartDato)" @onchange="@(e => EndreProsjekt(x => x.MontasjestartDato = LesDato(e)))" />
-                <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Montasjestart)}" : "")</small>
-            </label>
-            <label class="pf-felt">Overleveringsfrist
-                <input type="date" class="pf-inn" value="@DatoVerdi(p.OverleveringsfristDato)" @onchange="@(e => EndreProsjekt(x => x.OverleveringsfristDato = LesDato(e)))" />
-                <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Overlevering)}{(f.Fristforlengelse > 0 ? $" · +{f.Fristforlengelse} d fra endringer" : "")}" : "")</small>
-            </label>
-            @if (fr is not null)
+            @if (_planVisning == "tid")
             {
-                var inn = FremdriftsplanBeregner.UkerMellom(fr.Start, idag) + 1;
-                var igjen = FremdriftsplanBeregner.UkerMellom(idag, fr.Overlevering);
-                <div class="pf-ukeboks"><span>Uker</span><b>uke @inn av @(FremdriftsplanBeregner.UkerMellom(fr.Start, fr.Overlevering) + 1)</b><small>@(igjen >= 0 ? $"{igjen} uker til overlevering" : $"{-igjen} uker over fristen")</small></div>
+                @PlanTidslinje(fr)
             }
-        </div>
-
-        @if (!f.HarPlan)
+            else
+            {
+                @PlanTabell(fr)
+            }
+        }
+        else if (!f.HarPlan)
         {
             <div class="pf-tomboks">
                 <b>Ingen fremdriftsplan ennå</b>
-                <p>Malen har fasene fra sjekklisten etter at kontrakten er signert: planlegging, gjennomføring og avslutning, med aktiviteter, oppgaver og roller. Datoer som mangler, fylles inn med forslag du kan endre.</p>
+                <p>Malen har fasene fra sjekklisten etter at kontrakten er signert: planlegging, gjennomføring og avslutning, med aktiviteter, oppgaver og roller. Datoer som mangler, fylles inn med forslag.</p>
                 <span><button type="button" class="pf-knapp pf-knapp-p" @onclick="LagPlan">Lag fremdriftsplan fra malen</button></span>
             </div>
         }
-        else if (fr is not null)
-        {
-            var faser = FremdriftsplanBeregner.Faser(fr);
-            var vt = _vinduFra.AddDays(_vinduUker * 7);
-            var dagBredde = 100.0 / (_vinduUker * 7);
-            <div class="pf-plan-verktoy">
-                <span class="pf-ukevelger">
-                    <button type="button" aria-label="Forrige uke" @onclick="@(() => FlyttVindu(-1))">‹</button>
-                    <span>uke @FremdriftsplanBeregner.Ukenr(_vinduFra)–@FremdriftsplanBeregner.Ukenr(vt.AddDays(-1))</span>
-                    <button type="button" aria-label="Neste uke" @onclick="@(() => FlyttVindu(1))">›</button>
-                </span>
-                <button type="button" class="pf-knapp" @onclick="DenneUken">Denne uken</button>
-                <button type="button" class="pf-knapp" @onclick="HeleProsjektet">Hele prosjektet</button>
-                <span class="pf-vokser"></span>
-                <span class="pf-forklaring">
-                    <span><i class="pf-f-ferdig"></i>Ferdig</span>
-                    <span><i class="pf-f-gjen"></i>Gjenstår</span>
-                    <span><i class="pf-f-idag"></i>I dag</span>
-                    <span><i class="pf-f-frist"></i>Frist</span>
-                    <span><i class="pf-f-sen"></i>Forsinket</span>
-                </span>
-            </div>
-            <div class="pf-gantt-ramme">
-                <div class="pf-gantt">
-                    <div class="pf-g-etikett pf-g-hode">Fase og aktivitet</div>
-                    <div class="pf-g-uker">
-                        @for (var i = 0; i < _vinduUker; i++)
-                        {
-                            var m = _vinduFra.AddDays(i * 7);
-                            <div class="pf-g-uke @(idag >= m && idag < m.AddDays(7) ? "na" : "")" style="left:@Css(i * 100.0 / _vinduUker);width:@Css(100.0 / _vinduUker)"><b><span class="pf-g-ukeord">uke </span>@FremdriftsplanBeregner.Ukenr(m)</b><small>@Dato(m)</small></div>
-                        }
-                    </div>
-                    @foreach (var fase in faser)
-                    {
-                        var akter = _aktiviteter.Where(a => Math.Clamp(a.Fase, 0, 2) == fase.Nr).ToList();
-                        if (akter.Count == 0)
-                        {
-                            continue;
-                        }
 
-                        var fAndel = akter.Average(a => FremdriftsplanBeregner.Andel(a.Oppgaver.Select(t => t.Status)));
-                        DateTime? frist = fase.Nr switch { 0 => fr.Montasjestart, 2 => fr.Overlevering, _ => null };
-                        <div class="pf-g-etikett pf-g-fase"><span class="pf-g-tekst"><b>@fase.Navn</b><small>@Dato(fase.Fra)–@Dato(fase.Til) · uke @FremdriftsplanBeregner.Ukenr(fase.Fra)–@FremdriftsplanBeregner.Ukenr(fase.Til) · @Pst(fAndel)</small></span></div>
-                        <div class="pf-g-spor pf-g-fase">
-                            @Rutenett(dagBredde)
-                            @if (frist is { } fd && fd >= _vinduFra && fd < vt)
-                            {
-                                <span class="pf-g-frist" style="left:@Css(X(fd) + dagBredde / 2)" title="Frist @Dato(fd)"></span>
-                            }
-                            @Stolpe(fase.Fra, fase.Til, fAndel, "pf-g-bar-fase", false)
-                        </div>
-                        @foreach (var a in akter)
-                        {
-                            var akt = a;
-                            var (fra, til) = FremdriftsplanBeregner.AktivitetDatoer(fase, a.DelFra, a.DelTil);
-                            var andel = FremdriftsplanBeregner.Andel(a.Oppgaver.Select(t => t.Status));
-                            var sen = til < idag && andel < 1;
-                            var apen = _apne.Contains(a.Id);
-                            var ferdige = a.Oppgaver.Count(t => t.Status.ErFerdig());
-                            <button type="button" class="pf-g-etikett pf-g-akt @(apen ? "apen" : "")" aria-expanded="@(apen ? "true" : "false")" @onclick="@(() => { if (!_apne.Remove(akt.Id)) _apne.Add(akt.Id); })">
-                                <span class="pf-pil">▶</span>
-                                <span class="pf-g-tekst"><span>@a.Navn</span><small>@(PersonFor(a.Rolle) is { Length: > 0 } n ? n : a.Rolle) · @ferdige av @(a.Oppgaver.Count)@(sen ? " · forsinket" : "")</small></span>
-                            </button>
-                            <div class="pf-g-spor">
-                                @Rutenett(dagBredde)
-                                @Stolpe(fra, til, andel, sen ? "pf-g-bar-sen" : "", true)
-                            </div>
-                            @if (apen)
-                            {
-                                <div class="pf-oppgaver">
-                                    @foreach (var t in a.Oppgaver.OrderBy(x => x.Rekkefolge))
-                                    {
-                                        var oppg = t;
-                                        <div class="pf-oppg @(t.Status.ErFerdig() ? "ferdig" : "")">
-                                            <select class="pf-status pf-status-@((int)t.Status)" aria-label="Status" value="@t.Status" @onchange="@(e => SettStatus(oppg.Id, e))">
-                                                @foreach (var s in Enum.GetValues<PlanOppgaveStatus>())
-                                                {
-                                                    <option value="@s" selected="@(s == t.Status)">@s.Visningsnavn()</option>
-                                                }
-                                            </select>
-                                            <span class="pf-oppg-tekst">@t.Tekst</span>
-                                            <span class="pf-oppg-hvem">@(t.Rolle)@(PersonFor(t.Rolle) is { Length: > 0 } navn ? " · " + navn : "")</span>
-                                            <button type="button" class="pf-x" title="Fjern oppgaven" @onclick="@(() => SlettOppgave(oppg.Id))">×</button>
-                                        </div>
-                                    }
-                                    <div class="pf-oppg-ny">
-                                        <input class="pf-inn" placeholder="Ny oppgave i @a.Navn" value="@_nyOppgave.GetValueOrDefault(a.Id)" @oninput="@(e => _nyOppgave[akt.Id] = e.Value?.ToString() ?? "")" @onkeydown="@(e => e.Key == "Enter" ? LeggTilOppgave(akt) : Task.CompletedTask)" />
-                                        <button type="button" class="pf-knapp" @onclick="@(() => LeggTilOppgave(akt))">Legg til</button>
-                                    </div>
-                                </div>
-                            }
-                        }
-                    }
-                </div>
-            </div>
-
-            <section class="pf-boks">
-                <div class="pf-boks-topp"><h3>Roller på prosjektet</h3><span class="pf-dempet">Velg en person per rolle, så vises oppgavene for rollen hos personen.</span></div>
-                <div class="pf-roller">
-                    @foreach (var r in FremdriftsplanBeregner.Roller)
-                    {
-                        var rolle = r;
-                        var valgt = _roller.GetValueOrDefault(r);
-                        <label class="pf-felt">@r
-                            <select class="pf-inn" @onchange="@(e => SettRolle(rolle, e))">
-                                <option value="" selected="@(valgt is null)">Ingen valgt</option>
-                                @foreach (var b in _brukere)
-                                {
-                                    <option value="@b.Id" selected="@(valgt == b.Id)">@b.Navn</option>
-                                }
-                            </select>
+        <div class="pf-foldrute">
+            <details class="pf-info" open="@(fr is null)">
+                <summary><Icon Name="calendar" />Datoer@(fr is not null ? $" · start {Dato(fr.Start)} · montasje {Dato(fr.Montasjestart)} · overlevering {Dato(fr.Overlevering)}" : "")</summary>
+                <div class="pf-fold-inni">
+                    <p class="pf-dempet">Fasene regnes fra de tre datoene. Flytt en dato, så flytter fasene og oppgavene seg. Godkjent fristforlengelse på endringene legges til overleveringen.</p>
+                    <div class="pf-frister">
+                        <label class="pf-felt">Prosjektstart (registrert)
+                            <input type="date" class="pf-inn" value="@DatoVerdi(p.StartDato ?? fr?.Start)" @onchange="@(e => EndreProsjekt(x => x.StartDato = LesDato(e)))" />
+                            <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Start)}" : "")</small>
                         </label>
-                    }
+                        <label class="pf-felt">Montasjestart
+                            <input type="date" class="pf-inn" value="@DatoVerdi(p.MontasjestartDato)" @onchange="@(e => EndreProsjekt(x => x.MontasjestartDato = LesDato(e)))" />
+                            <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Montasjestart)}" : "")</small>
+                        </label>
+                        <label class="pf-felt">Overleveringsfrist
+                            <input type="date" class="pf-inn" value="@DatoVerdi(p.OverleveringsfristDato)" @onchange="@(e => EndreProsjekt(x => x.OverleveringsfristDato = LesDato(e)))" />
+                            <small>@(fr is not null ? $"uke {FremdriftsplanBeregner.Ukenr(fr.Overlevering)}{(f.Fristforlengelse > 0 ? $" · +{f.Fristforlengelse} d fra endringer" : "")}" : "")</small>
+                        </label>
+                    </div>
                 </div>
-            </section>
-        }
+            </details>
+            @if (f.HarPlan)
+            {
+                <details class="pf-info">
+                    <summary><Icon Name="list" />Roller · @valgteRoller av @FremdriftsplanBeregner.Roller.Length er valgt</summary>
+                    <div class="pf-fold-inni">
+                        <p class="pf-dempet">Velg en person per rolle, så vises oppgavene for rollen hos personen.</p>
+                        <div class="pf-roller">
+                            @foreach (var r in FremdriftsplanBeregner.Roller)
+                            {
+                                var rolle = r;
+                                var valgt = _roller.GetValueOrDefault(r);
+                                <label class="pf-felt">@r
+                                    <select class="pf-inn" @onchange="@(e => SettRolle(rolle, e))">
+                                        <option value="" selected="@(valgt is null)">Ingen valgt</option>
+                                        @foreach (var b in _brukere)
+                                        {
+                                            <option value="@b.Id" selected="@(valgt == b.Id)">@b.Navn</option>
+                                        }
+                                    </select>
+                                </label>
+                            }
+                        </div>
+                    </div>
+                </details>
+            }
+        </div>
     </div>;
 
-    private RenderFragment Rutenett(double dagBredde) => @<text>
-        @for (var i = 1; i < _vinduUker; i++)
-        {
-            <span class="pf-g-linje" style="left:@Css(i * 100.0 / _vinduUker)"></span>
-        }
-        @if (DateTime.Today >= _vinduFra && DateTime.Today < _vinduFra.AddDays(_vinduUker * 7))
-        {
-            <span class="pf-g-idag" style="left:@Css(X(DateTime.Today) + dagBredde / 2)"></span>
-        }
-    </text>;
+    // Status på en aktivitet: forsinket når perioden er over og noe gjenstår.
+    private static (string Tekst, string Klasse) AktivitetStatus(DateTime fra, DateTime til, decimal andel)
+    {
+        var idag = DateTime.Today;
+        return andel >= 1 ? ("Ferdig", "gronn") : til < idag ? ("Forsinket", "rod") : fra <= idag || andel > 0 ? ("Pågår", "bla") : ("Ikke startet", "");
+    }
 
-    private RenderFragment Stolpe(DateTime fra, DateTime til, decimal andel, string klasse, bool visTekstVedPlass) => @<text>
-        @{
-            var vt = _vinduFra.AddDays(_vinduUker * 7);
-            var slutt = til.AddDays(1);
-        }
-        @if (slutt <= _vinduFra)
-        {
-            <span class="pf-g-utenfor pf-g-venstre">‹ @Dato(fra)–@Dato(til)</span>
-        }
-        else if (fra >= vt)
-        {
-            <span class="pf-g-utenfor pf-g-hoyre">@Dato(fra)–@Dato(til) ›</span>
-        }
-        else
-        {
-            var l = Math.Max(0, X(fra));
-            var r = Math.Min(100, X(slutt));
-            <span class="pf-g-bar @klasse" style="left:@Css(l);width:@Css(Math.Max(r - l, 0.8))" title="@Dato(fra)–@Dato(til) · @Pst(andel)">
-                <i style="width:@Css((double)andel * 100)"></i>
-                @if (!visTekstVedPlass || andel > 0.25m)
+    private RenderFragment PlanTabell(FremdriftsplanBeregner.Frister fr) => @<div class="pf-liste-ramme">
+        <table class="pf-liste pf-plan">
+            <thead><tr><th>Aktivitet</th><th>Ansvarlig</th><th>Periode</th><th class="n">Oppgaver</th><th>Status</th></tr></thead>
+            <tbody>
+                @foreach (var fase in FremdriftsplanBeregner.Faser(fr))
                 {
-                    <span>@Pst(andel)</span>
+                    var akter = _aktiviteter.Where(a => Math.Clamp(a.Fase, 0, 2) == fase.Nr).ToList();
+                    if (akter.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    <tr class="pf-plan-fase"><td colspan="5"><b>@fase.Navn</b> <small>uke @FremdriftsplanBeregner.Ukenr(fase.Fra)–@FremdriftsplanBeregner.Ukenr(fase.Til)</small></td></tr>
+                    @foreach (var x in akter)
+                    {
+                        var a = x;
+                        var akt = a;
+                        var (fra, til) = FremdriftsplanBeregner.AktivitetDatoer(fase, a.DelFra, a.DelTil);
+                        var andel = FremdriftsplanBeregner.Andel(a.Oppgaver.Select(t => t.Status));
+                        var (tekst, klasse) = AktivitetStatus(fra, til, andel);
+                        var apen = _apne.Contains(a.Id);
+                        <tr class="pf-plan-rad @(apen ? "apen" : "")" tabindex="0" aria-expanded="@(apen ? "true" : "false")" @onclick="@(() => VekslAktivitet(akt.Id))" @onkeydown="@(e => { if (e.Key == "Enter") VekslAktivitet(akt.Id); })">
+                            <td><Icon Name="@(apen ? "chevron-down" : "chevron-right")" /><b>@a.Navn</b></td>
+                            <td>@(PersonFor(a.Rolle) is { Length: > 0 } n ? n : a.Rolle)</td>
+                            <td>@Dato(fra)–@Dato(til)</td>
+                            <td class="n">@a.Oppgaver.Count(t => t.Status.ErFerdig()) av @a.Oppgaver.Count</td>
+                            <td><span class="pf-chip @(klasse.Length > 0 ? "pf-chip-" + klasse : "")">@tekst</span></td>
+                        </tr>
+                        @if (apen)
+                        {
+                            <tr class="pf-plan-apen">
+                                <td colspan="5">
+                                    <div class="pf-oppgaver">
+                @foreach (var t in a.Oppgaver.OrderBy(x => x.Rekkefolge))
+                {
+                    var oppg = t;
+                    <div class="pf-oppg @(t.Status.ErFerdig() ? "ferdig" : "")">
+                        <select class="pf-status pf-status-@((int)t.Status)" aria-label="Status" value="@t.Status" @onchange="@(e => SettStatus(oppg.Id, e))">
+                            @foreach (var s in Enum.GetValues<PlanOppgaveStatus>())
+                            {
+                                <option value="@s" selected="@(s == t.Status)">@s.Visningsnavn()</option>
+                            }
+                        </select>
+                        <span class="pf-oppg-tekst">@t.Tekst</span>
+                        <span class="pf-oppg-hvem">@(t.Rolle)@(PersonFor(t.Rolle) is { Length: > 0 } navn ? " · " + navn : "")</span>
+                        <button type="button" class="pf-x" title="Fjern oppgaven" @onclick="@(() => SlettOppgave(oppg.Id))">×</button>
+                    </div>
                 }
-            </span>
+                <div class="pf-oppg-ny">
+                    <input class="pf-inn" placeholder="Ny oppgave i @a.Navn" value="@_nyOppgave.GetValueOrDefault(a.Id)" @oninput="@(e => _nyOppgave[akt.Id] = e.Value?.ToString() ?? "")" @onkeydown="@(e => e.Key == "Enter" ? LeggTilOppgave(akt) : Task.CompletedTask)" />
+                    <button type="button" class="pf-knapp" @onclick="@(() => LeggTilOppgave(akt))">Legg til</button>
+                </div>
+            </div>
+                                </td>
+                            </tr>
+                        }
+                    }
+                }
+            </tbody>
+        </table>
+    </div>;
+
+    private void VekslAktivitet(int id)
+    {
+        if (!_apne.Remove(id))
+        {
+            _apne.Add(id);
         }
-    </text>;
+    }
+
+    // Hele prosjektet på én skjerm: rødt er forsinket, blått pågår og grått kommer.
+    private RenderFragment PlanTidslinje(FremdriftsplanBeregner.Frister fr) => @<div class="pf-tid">
+        @{
+            var dager = Math.Max(1, (fr.Overlevering - fr.Start).TotalDays + 1);
+            double X(DateTime d) => (d - fr.Start).TotalDays / dager * 100;
+            var maneder = new List<DateTime> { fr.Start };
+            for (var m = new DateTime(fr.Start.Year, fr.Start.Month, 1).AddMonths(1); m <= fr.Overlevering; m = m.AddMonths(1))
+            {
+                maneder.Add(m);
+            }
+        }
+        <div class="pf-tid-hode">
+            <span>Aktivitet</span>
+            <div class="pf-tid-akse">
+                @foreach (var m in maneder)
+                {
+                    <i style="left:@Css(X(m))">@m.ToString("MMM", Kultur).TrimEnd('.')</i>
+                }
+            </div>
+        </div>
+        @foreach (var fase in FremdriftsplanBeregner.Faser(fr))
+        {
+            @foreach (var a in _aktiviteter.Where(a => Math.Clamp(a.Fase, 0, 2) == fase.Nr))
+            {
+                var (fra, til) = FremdriftsplanBeregner.AktivitetDatoer(fase, a.DelFra, a.DelTil);
+                var andel = FremdriftsplanBeregner.Andel(a.Oppgaver.Select(t => t.Status));
+                var (tekst, klasse) = AktivitetStatus(fra, til, andel);
+                <div class="pf-tid-rad">
+                    <span>@a.Navn<small>@(PersonFor(a.Rolle) is { Length: > 0 } n ? n : a.Rolle) · @a.Oppgaver.Count(t => t.Status.ErFerdig()) av @a.Oppgaver.Count</small></span>
+                    <div class="pf-tid-spor">
+                        @if (DateTime.Today >= fr.Start && DateTime.Today <= fr.Overlevering)
+                        {
+                            <em style="left:@Css(X(DateTime.Today))" title="I dag"></em>
+                        }
+                        <b class="pf-tid-bar @(klasse.Length > 0 ? "pf-tid-" + klasse : "")" style="left:@Css(X(fra));width:@Css(Math.Max(1.2, X(til.AddDays(1)) - X(fra)))" title="@Dato(fra)–@Dato(til) · @tekst"></b>
+                    </div>
+                </div>
+            }
+        }
+    </div>;
 
     // ======================================================================
     // Budsjett og timer
