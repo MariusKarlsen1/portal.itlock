@@ -30,6 +30,17 @@ public class LasUtskifting
 
     public string? Merknad { get; set; }
 
+    public const int AntallFelt = 15;
+
+    // Merknad er frivillig og teller ikke med. Dør 9, karm 4 og hengsling 2.
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public int AntallUtfylt => new[]
+    {
+        TotalMm, UtsideMm, InnsideMm, AvstandDorkantTilSkiltMm, DorFabrikat, DorNummer,
+        Stolpehoyde, Stolpebredde, Overflatebehandling, KarmFabrikat, KarmNummer, KarmAvstand,
+        Skruer, HengslingSide, Slagretning
+    }.Count(v => !string.IsNullOrWhiteSpace(v));
+
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     // Ingen lagret arkiveringsstatus - flyttes automatisk fra "Ny" til

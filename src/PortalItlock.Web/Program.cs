@@ -137,6 +137,7 @@ builder.Services.AddScoped<ServicerapportPdfService>();
 builder.Services.AddScoped<ArbeidsordrePdfService>();
 builder.Services.AddScoped<BefaringPdfService>();
 builder.Services.AddScoped<SjekklistePdfService>();
+builder.Services.AddScoped<LasUtskiftingPdfService>();
 builder.Services.AddScoped<LagretPdfService>();
 builder.Services.AddScoped<TilbudSyncService>();
 builder.Services.AddScoped<CeGodkjenningPdfService>();
@@ -1920,6 +1921,20 @@ app.MapGet("/befaringpdf/{id:int}", async (int id, bool? visning, ApplicationDbC
     return visning == true
         ? Results.File(pdf.Data, "application/pdf")
         : Results.File(pdf.Data, "application/pdf", pdf.Navn);
+}).RequireAuthorization();
+
+app.MapGet("/lasutskifting/{id:int}/pdf", async (int id, HttpContext context, LasUtskiftingPdfService service) =>
+{
+    var pdf = await service.GenerateAsync(id);
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    var disposisjon = new ContentDispositionHeaderValue("inline");
+    disposisjon.SetHttpFileName($"Utskiftning-av-las-{id}.pdf");
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
 app.MapGet("/arbeidsordre/{id:int}/sjekkliste/pdf", async (int id, HttpContext context, SjekklistePdfService service) =>
