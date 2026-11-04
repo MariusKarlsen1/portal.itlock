@@ -30,9 +30,14 @@ public class ProsjektAkonto
     public int? FremdriftProsent { get; set; }
     public DateTime? PlanlagtDato { get; set; }
 
+    // Kunden holder tilbake denne andelen av fakturaen til sluttoppgjøret.
+    public decimal? InnestaaendeProsent { get; set; }
+
     public AkontoStatus Status { get; set; }
     public DateTime? SendtDato { get; set; }
+    // Det som faktisk ble fakturert, altså etter innestående.
     public decimal? SendtBelop { get; set; }
+    public decimal? SendtInnestaaende { get; set; }
     public int? TripletexOrdreId { get; set; }
     public string? TripletexOrdreNummer { get; set; }
     public string? TripletexFeil { get; set; }

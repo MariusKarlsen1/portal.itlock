@@ -241,7 +241,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
 
     // Akonto fra faktureringsplanen under Prosjektøkonomi: én ordrelinje med
     // beløpet, på prosjektets kunde. Sendes bare én gang.
-    public async Task<(bool Ok, string? Feilmelding)> PushAkontoTilTripletexAsync(int akontoId, decimal belop, CancellationToken ct = default)
+    public async Task<(bool Ok, string? Feilmelding)> PushAkontoTilTripletexAsync(int akontoId, decimal belop, decimal innestaaende = 0, CancellationToken ct = default)
     {
         var akonto = await db.ProsjektAkontoer.Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
             .FirstOrDefaultAsync(a => a.Id == akontoId, ct);
@@ -276,6 +276,11 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         }
 
         var tekst = $"Akonto {akonto.Nr} - {akonto.Milepael}";
+        if (innestaaende > 0)
+        {
+            tekst += $" ({belop + innestaaende:N0} kr minus {innestaaende:N0} kr i innestående)";
+        }
+
         var (ordreId, ordreNummer, ordreFeil) = await tripletex.OpprettOrdreAsync(
             kundeId.Value, $"{akonto.Prosjekt.Navn} - {tekst}", [new TripletexService.OrdreLinjeInput(tekst, 1, belop)], ct);
         if (ordreFeil is not null)
@@ -291,6 +296,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         akonto.Status = AkontoStatus.Sendt;
         akonto.SendtDato = DateTime.Now;
         akonto.SendtBelop = belop;
+        akonto.SendtInnestaaende = innestaaende > 0 ? innestaaende : null;
         await db.SaveChangesAsync(ct);
         return (true, null);
     }

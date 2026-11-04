@@ -5841,6 +5841,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("FremdriftProsent")
                         .HasColumnType("INTEGER");
 
+                    b.Property<decimal?>("InnestaaendeProsent")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Milepael")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -5861,6 +5864,9 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("SendtDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("SendtInnestaaende")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Status")

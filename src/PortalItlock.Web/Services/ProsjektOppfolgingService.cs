@@ -15,7 +15,11 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
     // Et av de fire spørsmålene: «Tjener vi penger?» osv.
     public sealed record Svar(string Sporsmal, Niva Niva, string Overskrift, string Tekst);
 
-    public sealed record AkontoRad(ProsjektAkonto Akonto, decimal Belop, bool Klar);
+    // Belop er akontoen før innestående; Netto er det som faktureres.
+    public sealed record AkontoRad(ProsjektAkonto Akonto, decimal Belop, bool Klar, decimal Innestaaende = 0)
+    {
+        public decimal Netto => Belop - Innestaaende;
+    }
 
     public sealed record Endring(int Nr, Tilbud Tilbud, decimal Belop, int DagerVentet);
 
@@ -46,9 +50,12 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         public decimal Fremdrift => O?.Fremdrift ?? 0;
         // Det som er utført, regnet som andel av prosjektsummen.
         public decimal Opptjent => Math.Round(Prosjektsum * Fremdrift, 0);
-        public decimal UtfortIkkeFakturert => Math.Max(0, Opptjent - Fakturert);
+        // Innestående på fakturerte akontoer er opptjent, men holdes tilbake av kunden.
+        public decimal HoldtTilbake => Akontoer.Where(a => a.Akonto.Status != AkontoStatus.Planlagt).Sum(a => a.Innestaaende);
+        public decimal UtfortIkkeFakturert => Math.Max(0, Opptjent - Fakturert - HoldtTilbake);
         public decimal Gjenstar => Math.Max(0, Prosjektsum - Fakturert);
-        public decimal PlanlagtAkonto => Akontoer.Sum(a => a.Belop);
+        public decimal PlanlagtAkonto => Akontoer.Sum(a => a.Netto);
+        public decimal Innestaaende => Akontoer.Sum(a => a.Innestaaende);
         public decimal Sluttoppgjor => Math.Max(0, Prosjektsum - PlanlagtAkonto);
         public AkontoRad? KlarAkonto => Akontoer.FirstOrDefault(a => a.Klar);
         public int EndringerVenter => Endringsmeldinger.Count(e => e.Tilbud.Status == EndringsmeldingStatus.SendtTilKunde && e.DagerVentet >= 7);
@@ -140,14 +147,16 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
             var igjen = kontrakt + tillegg + indeks - pAo.Sum(a => a.Belop);
             foreach (var a in akontoer.Where(a => a.ProsjektId == pid))
             {
-                var belop = a.Status != AkontoStatus.Planlagt && a.SendtBelop is { } sendt ? sendt
+                var sendtAkonto = a.Status != AkontoStatus.Planlagt && a.SendtBelop is not null;
+                var belop = sendtAkonto ? a.SendtBelop!.Value + (a.SendtInnestaaende ?? 0)
                     : a.Prosent is { } pst ? Math.Round(kontrakt * pst / 100m, 0) : a.Belop ?? 0;
+                var innestaaende = sendtAkonto ? a.SendtInnestaaende ?? 0 : Math.Round(belop * (a.InnestaaendeProsent ?? 0) / 100m, 0);
                 if (a.Status != AkontoStatus.Planlagt)
                 {
                     igjen -= belop;
                 }
 
-                pAkonto.Add(new AkontoRad(a, belop, false));
+                pAkonto.Add(new AkontoRad(a, belop, false, innestaaende));
             }
 
             for (var i = 0; i < pAkonto.Count; i++)
@@ -161,9 +170,9 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
                 }
             }
 
-            var fakturert = pAkonto.Where(a => a.Akonto.Status != AkontoStatus.Planlagt).Sum(a => a.Belop) + pAo.Sum(a => a.Belop);
+            var fakturert = pAkonto.Where(a => a.Akonto.Status != AkontoStatus.Planlagt).Sum(a => a.Netto) + pAo.Sum(a => a.Belop);
             var maanedStart = new DateTime(idag.Year, idag.Month, 1);
-            var denneMaaned = pAkonto.Where(a => a.Akonto.SendtDato >= maanedStart).Sum(a => a.Belop) + pAo.Where(a => a.Dato >= maanedStart).Sum(a => a.Belop);
+            var denneMaaned = pAkonto.Where(a => a.Akonto.SendtDato >= maanedStart).Sum(a => a.Netto) + pAo.Where(a => a.Dato >= maanedStart).Sum(a => a.Belop);
 
             var nr = 0;
             var pEndringer = endringer.Where(t => t.ProsjektId == pid).Select(t =>
@@ -272,7 +281,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
         }
         else if (f.KlarAkonto is { } klar)
         {
-            liste.Add(new("Har vi fakturert nok?", Niva.Gul, $"Akonto {klar.Akonto.Nr} er klar", $"{klar.Akonto.Milepael}: {Kr(klar.Belop)} kan sendes til Tripletex. Utført, ikke fakturert: {Kr(f.UtfortIkkeFakturert)}."));
+            liste.Add(new("Har vi fakturert nok?", Niva.Gul, $"Akonto {klar.Akonto.Nr} er klar", $"{klar.Akonto.Milepael}: {Kr(klar.Netto)} kan sendes til Tripletex. Utført, ikke fakturert: {Kr(f.UtfortIkkeFakturert)}."));
         }
         else if (f.UtfortIkkeFakturert > f.Prosjektsum * 0.05m)
         {
@@ -328,7 +337,7 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
 
         if (f.KlarAkonto is { } klar)
         {
-            return ($"Send akonto {klar.Akonto.Nr} · {Kr(klar.Belop)}", Niva.Gul);
+            return ($"Send akonto {klar.Akonto.Nr} · {Kr(klar.Netto)}", Niva.Gul);
         }
 
         if (f.EndringerVenter > 0)

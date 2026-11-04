@@ -242,7 +242,7 @@ else
 
         if (f.KlarAkonto is { } klar)
         {
-            liste.Add(new("file-text", "gul", $"Send akonto {klar.Akonto.Nr} · {Kr(klar.Belop)}", $"{klar.Akonto.Milepael} er nådd.", "Til faktureringen", () => GaFane("faktura")));
+            liste.Add(new("file-text", "gul", $"Send akonto {klar.Akonto.Nr} · {Kr(klar.Netto)}", $"{klar.Akonto.Milepael} er nådd.", "Til faktureringen", () => GaFane("faktura")));
         }
         else if (f.UtfortIkkeFakturert > f.Prosjektsum * 0.05m)
         {
@@ -1054,7 +1054,7 @@ else
     private Task NyAkonto() => Lagre(async () =>
     {
         var nr = (await Db.ProsjektAkontoer.Where(a => a.ProsjektId == ProsjektId).MaxAsync(a => (int?)a.Nr) ?? 0) + 1;
-        Db.ProsjektAkontoer.Add(new ProsjektAkonto { ProsjektId = ProsjektId, Nr = nr, Milepael = $"Akonto {nr}", Prosent = 10 });
+        Db.ProsjektAkontoer.Add(new ProsjektAkonto { ProsjektId = ProsjektId, Nr = nr, Milepael = $"Akonto {nr}", Prosent = 10, InnestaaendeProsent = _f?.Akontoer.LastOrDefault()?.Akonto.InnestaaendeProsent });
     });
 
     private Task EndreAkonto(int id, Action<ProsjektAkonto> endring) => Lagre(async () =>
@@ -1073,16 +1073,44 @@ else
     {
         a.Status = AkontoStatus.Sendt;
         a.SendtDato = DateTime.Now;
-        a.SendtBelop = r.Belop;
+        a.SendtBelop = r.Netto;
+        a.SendtInnestaaende = r.Innestaaende > 0 ? r.Innestaaende : null;
     });
+
+    // Velger om akontoen er prosent av kontrakten eller et fast beløp.
+    private Task SettAkontoType(ProsjektOppfolgingService.AkontoRad r, ChangeEventArgs e) => EndreAkonto(r.Akonto.Id, x =>
+    {
+        if (e.Value?.ToString() == "kr")
+        {
+            x.Belop = r.Belop;
+            x.Prosent = null;
+        }
+        else
+        {
+            x.Prosent = _f is { Kontrakt: > 0 } f ? Math.Round(r.Belop / f.Kontrakt * 100, 2) : 0;
+            x.Belop = null;
+        }
+    });
+
+    // Samme innestående på alle akontoene som ikke er fakturert ennå.
+    private Task SettInnestaaendeAlle(ChangeEventArgs e) => Lagre(async () =>
+    {
+        var prosent = LesProsent(e);
+        foreach (var a in await Db.ProsjektAkontoer.Where(a => a.ProsjektId == ProsjektId && a.Status == AkontoStatus.Planlagt).ToListAsync())
+        {
+            a.InnestaaendeProsent = prosent;
+        }
+    });
+
+    private static decimal? LesProsent(ChangeEventArgs e) => LesTall(e) is { } v && v > 0 ? Math.Min(v, 100) : null;
 
     private Task SendTilTripletex(ProsjektOppfolgingService.AkontoRad r) => Kjor(async () =>
     {
         _sender = true;
         try
         {
-            var (ok, feil) = await TripletexSync.PushAkontoTilTripletexAsync(r.Akonto.Id, r.Belop);
-            _melding = ok ? $"Akonto {r.Akonto.Nr} på {Kr(r.Belop)} er sendt til Tripletex som ordre. Fakturer den der." : $"Tripletex: {feil}";
+            var (ok, feil) = await TripletexSync.PushAkontoTilTripletexAsync(r.Akonto.Id, r.Netto, r.Innestaaende);
+            _melding = ok ? $"Akonto {r.Akonto.Nr} på {Kr(r.Netto)} er sendt til Tripletex som ordre. Fakturer den der." : $"Tripletex: {feil}";
             _meldingFeil = !ok;
         }
         finally
@@ -1099,140 +1127,179 @@ else
             var f = _f!;
             var p = _p!;
             var harTripletex = Tripletex.ErKonfigurert;
+            var klare = f.Akontoer.Count(a => a.Klar);
+            var plan = f.Akontoer.Where(a => a.Akonto.Status == AkontoStatus.Planlagt).Select(a => a.Akonto.InnestaaendeProsent).Distinct().ToList();
         }
-        <div class="pf-to pf-to-faktura">
-            <section class="pf-boks">
-                <div class="pf-boks-topp">
-                    <h3>Faktureringsplan</h3>
-                    @if (f.Akontoer.Count > 0)
-                    {
-                        <button type="button" class="pf-knapp" @onclick="NyAkonto">+ Akonto</button>
-                    }
-                </div>
-                @if (f.Akontoer.Count == 0 && f.Kontrakt <= 0)
-                {
-                    <div class="pf-tomboks">
-                        <b>Ingen kontraktsum ennå</b>
-                        <p>Faktureringsplanen regnes ut fra kontraktsummen, som kommer fra det godkjente tilbudet. Sett tilbudet på prosjektet til Godkjent, så kan du lage planen her.</p>
-                        <span><button type="button" class="pf-knapp" @onclick="@(() => GaTil("tilbud"))">Gå til tilbudene på prosjektet</button></span>
-                    </div>
-                }
-                else if (f.Akontoer.Count == 0)
-                {
-                    <div class="pf-tomboks">
-                        <b>Ingen faktureringsplan</b>
-                        <p>Lag planen én gang ved kontrakt. Forslaget er 20, 30, 25 og 15 % av kontraktsummen, og resten i sluttoppgjøret. Alt kan endres. Hver akonto blir «klar» når fremdriften når milepælen eller datoen.</p>
-                        <span><button type="button" class="pf-knapp pf-knapp-p" @onclick="ForeslaPlan">Foreslå plan</button> <button type="button" class="pf-knapp" @onclick="NyAkonto">Legg til én akonto</button></span>
-                    </div>
-                }
-                else
-                {
-                    <div class="pf-tabellramme">
-                        <table class="pf-tabell pf-akonto pf-kort pf-kort-akonto">
-                            <thead><tr><th>Nr</th><th>Milepæl</th><th class="n">% av kontrakt</th><th class="n">Klar ved utført</th><th>Eller dato</th><th class="n">Beløp</th><th>Status</th><th></th></tr></thead>
-                            <tbody>
-                                @foreach (var r in f.Akontoer)
-                                {
-                                    var rad = r;
-                                    var a = r.Akonto;
-                                    var laast = a.Status != AkontoStatus.Planlagt;
-                                    <tr class="@(r.Klar ? "pf-klar" : "")">
-                                        <td><b>@a.Nr</b></td>
-                                        <td><input class="pf-inn" value="@a.Milepael" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.Milepael = LesTekst(e) ?? x.Milepael))" aria-label="Milepæl" /></td>
-                                        <td class="n"><input class="pf-inn pf-tal pf-smal" inputmode="decimal" value="@(a.Prosent?.ToString("0.##", CultureInfo.InvariantCulture))" placeholder="fast" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.Prosent = LesTall(e)))" aria-label="Prosent av kontrakt" /></td>
-                                        <td class="n"><input class="pf-inn pf-tal pf-smal" inputmode="numeric" value="@a.FremdriftProsent" placeholder="–" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.FremdriftProsent = LesTall(e) is { } v ? (int)Math.Clamp(v, 0, 100) : null))" aria-label="Klar når så mange prosent er utført" /></td>
-                                        <td><input type="date" class="pf-inn" value="@DatoVerdi(a.PlanlagtDato)" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.PlanlagtDato = LesDato(e)))" aria-label="Planlagt dato" /></td>
-                                        <td class="n">
-                                            @if (a.Prosent is null && !laast)
+        <p class="pf-svarlinje"><b class="@(f.UtfortIkkeFakturert > 0 ? "pf-gul" : "")">@Kr(f.UtfortIkkeFakturert)</b> er utført og ikke fakturert.@(klare == 0 ? "" : klare == 1 ? " 1 akonto er klar til å faktureres." : $" {klare} akontoer er klare til å faktureres.")@(f.HoldtTilbake > 0 ? $" {Kr(f.HoldtTilbake)} er holdt tilbake som innestående." : "")</p>
+        @if (f.Akontoer.Count == 0 && f.Kontrakt <= 0)
+        {
+            <div class="pf-tomboks">
+                <b>Ingen kontraktsum ennå</b>
+                <p>Faktureringsplanen regnes ut fra kontraktsummen, som kommer fra det godkjente tilbudet. Sett tilbudet på prosjektet til Godkjent, så kan du lage planen her.</p>
+                <span><button type="button" class="pf-knapp" @onclick="@(() => GaTil("tilbud"))">Gå til tilbudene på prosjektet</button></span>
+            </div>
+        }
+        else if (f.Akontoer.Count == 0)
+        {
+            <div class="pf-tomboks">
+                <b>Ingen faktureringsplan</b>
+                <p>Lag planen én gang ved kontrakt. Forslaget er 20, 30, 25 og 15 % av kontraktsummen, og resten i sluttoppgjøret. Alt kan endres. Hver akonto blir «klar» når fremdriften når milepælen eller datoen.</p>
+                <span><button type="button" class="pf-knapp pf-knapp-p" @onclick="ForeslaPlan">Foreslå plan</button> <button type="button" class="pf-knapp" @onclick="NyAkonto">Legg til én akonto</button></span>
+            </div>
+        }
+        else
+        {
+            <div class="pf-liste-ramme">
+                <table class="pf-liste pf-akontoer">
+                    <thead><tr><th>Akonto</th><th class="n">Beløp</th><th class="n">Innestående</th><th class="n">Til faktura</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var r in f.Akontoer)
+                        {
+                            var rad = r;
+                            var a = r.Akonto;
+                            <tr>
+                                <td><b>@a.Nr</b> @a.Milepael<small>@(a.Prosent is { } pst ? $"{pst.ToString("0.##", Kultur)} % av kontrakt" : "Fast beløp")@(a.FremdriftProsent is { } fp ? $" · klar ved {fp} % utført" : "")@(a.PlanlagtDato is { } pd ? $" · {Dato(pd)}" : "")</small></td>
+                                <td class="n">@Kr(r.Belop)</td>
+                                <td class="n @(r.Innestaaende > 0 ? "" : "pf-mut")">@(r.Innestaaende > 0 ? Kr(r.Innestaaende) : "–")@if (a.InnestaaendeProsent is { } ip && r.Innestaaende > 0) {<small>@ip.ToString("0.##", Kultur) %</small>}</td>
+                                <td class="n"><b>@Kr(r.Netto)</b></td>
+                                <td>
+                                    @switch (a.Status)
+                                    {
+                                        case AkontoStatus.Betalt:
+                                            <span class="pf-chip pf-chip-gronn">Betalt @(a.BetaltDato is { } bd ? Dato(bd) : "")</span>
+                                            break;
+                                        case AkontoStatus.Sendt:
+                                            <span class="pf-chip pf-chip-bla">@(a.TripletexOrdreNummer is { } nr ? $"Ordre {nr}" : "Fakturert") @(a.SendtDato is { } sd ? Dato(sd) : "")</span>
+                                            break;
+                                        default:
+                                            <span class="pf-chip @(r.Klar ? "pf-chip-gul" : "")">@(r.Klar ? "Klar" : "Planlagt")</span>
+                                            break;
+                                    }
+                                </td>
+                                <td class="n">
+                                    @if (a.Status == AkontoStatus.Sendt)
+                                    {
+                                        <button type="button" class="pf-lenke" @onclick="@(() => EndreAkonto(a.Id, x => { x.Status = AkontoStatus.Betalt; x.BetaltDato = DateTime.Today; }))">Marker betalt</button>
+                                    }
+                                    else if (a.Status == AkontoStatus.Planlagt && _bekreftSend == a.Id)
+                                    {
+                                        <span class="pf-bekreft">Send @Kr(r.Netto) til Tripletex?
+                                            <button type="button" class="pf-knapp pf-knapp-ok" disabled="@_sender" @onclick="@(() => SendTilTripletex(rad))">@(_sender ? "Sender …" : "Ja, send")</button>
+                                            <button type="button" class="pf-lenke" @onclick="@(() => _bekreftSend = null)">Avbryt</button>
+                                        </span>
+                                    }
+                                    else if (a.Status == AkontoStatus.Planlagt && r.Klar)
+                                    {
+                                        <span class="pf-akonto-valg">
+                                            @if (harTripletex && r.Netto > 0)
                                             {
-                                                <input class="pf-inn pf-tal" inputmode="decimal" value="@(a.Belop?.ToString("0", CultureInfo.InvariantCulture))" placeholder="Beløp" @onchange="@(e => EndreAkonto(a.Id, x => x.Belop = LesTall(e)))" aria-label="Fast beløp" />
+                                                <button type="button" class="pf-knapp @(r.Akonto.Id == f.KlarAkonto?.Akonto.Id ? "pf-knapp-p" : "")" @onclick="@(() => _bekreftSend = a.Id)">Send til Tripletex</button>
                                             }
-                                            else
-                                            {
-                                                <b>@KrKort(r.Belop)</b>
-                                            }
-                                        </td>
-                                        <td>
-                                            @switch (a.Status)
-                                            {
-                                                case AkontoStatus.Betalt:
-                                                    <span class="pf-chip pf-chip-gronn">Betalt @(a.BetaltDato is { } bd ? Dato(bd) : "")</span>
-                                                    break;
-                                                case AkontoStatus.Sendt:
-                                                    <span class="pf-chip pf-chip-bla">@(a.TripletexOrdreNummer is { } nr ? $"Ordre {nr}" : "Fakturert") @(a.SendtDato is { } sd ? Dato(sd) : "")</span>
-                                                    <button type="button" class="pf-lenke" @onclick="@(() => EndreAkonto(a.Id, x => { x.Status = AkontoStatus.Betalt; x.BetaltDato = DateTime.Today; }))">Marker betalt</button>
-                                                    break;
-                                                default:
-                                                    @if (_bekreftSend == a.Id)
-                                                    {
-                                                        <span class="pf-bekreft">Send @Kr(r.Belop) til Tripletex?
-                                                            <button type="button" class="pf-knapp pf-knapp-ok" disabled="@_sender" @onclick="@(() => SendTilTripletex(rad))">@(_sender ? "Sender …" : "Ja, send")</button>
-                                                            <button type="button" class="pf-lenke" @onclick="@(() => _bekreftSend = null)">Avbryt</button>
-                                                        </span>
-                                                    }
-                                                    else
-                                                    {
-                                                        @if (r.Klar)
-                                                        {
-                                                            <span class="pf-chip pf-chip-gul">Klar</span>
-                                                        }
-                                                        else
-                                                        {
-                                                            <span class="pf-chip">Planlagt</span>
-                                                        }
-                                                        @if (harTripletex && r.Belop > 0)
-                                                        {
-                                                            <button type="button" class="pf-knapp @(r.Klar ? "pf-knapp-ok" : "")" @onclick="@(() => _bekreftSend = a.Id)">Send til Tripletex</button>
-                                                        }
-                                                        <button type="button" class="pf-lenke" @onclick="@(() => MarkerFakturert(rad))">Marker fakturert</button>
-                                                    }
-                                                    @if (!string.IsNullOrEmpty(a.TripletexFeil))
-                                                    {
-                                                        <small class="pf-rod">@a.TripletexFeil</small>
-                                                    }
-                                                    break;
-                                            }
-                                        </td>
-                                        <td>@if (!laast) {<button type="button" class="pf-x" title="Fjern akontoen" @onclick="@(() => SlettAkonto(a.Id))">×</button>}</td>
-                                    </tr>
-                                }
-                                <tr class="pf-sumrad">
-                                    <td></td>
-                                    <td>Sluttoppgjør<small>resten av prosjektsummen</small></td>
-                                    <td class="n">@(f.Kontrakt > 0 ? Pst(Math.Max(0, 1 - f.Akontoer.Where(a => a.Akonto.Prosent is not null).Sum(a => a.Akonto.Prosent!.Value) / 100m)) : "")</td>
-                                    <td class="n">100 %</td>
-                                    <td>@(f.Frister is { } fr ? Dato(fr.Overlevering) : "")</td>
-                                    <td class="n">@KrKort(f.Sluttoppgjor)</td>
-                                    <td></td>
-                                    <td></td>
-                                </tr>
-                            </tbody>
-                        </table>
+                                            <button type="button" class="pf-lenke" @onclick="@(() => MarkerFakturert(rad))">Marker fakturert</button>
+                                        </span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(a.TripletexFeil))
+                                    {
+                                        <small class="pf-rod">@a.TripletexFeil</small>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        <tr>
+                            <td>Sluttoppgjør<small>Resten av prosjektsummen@(f.Innestaaende > 0 ? " og innestående" : "")@(f.Frister is { } fr ? $" · {Dato(fr.Overlevering)}" : "")</small></td>
+                            <td class="n">@Kr(f.Prosjektsum - f.Akontoer.Sum(a => a.Belop))</td>
+                            <td class="n @(f.Innestaaende > 0 ? "" : "pf-mut")">@(f.Innestaaende > 0 ? "+" + Kr(f.Innestaaende) : "–")</td>
+                            <td class="n"><b>@Kr(f.Sluttoppgjor)</b></td>
+                            <td><span class="pf-chip">Planlagt</span></td>
+                            <td></td>
+                        </tr>
+                    </tbody>
+                    <tfoot><tr><td>Sum</td><td class="n">@Kr(f.Prosjektsum)</td><td></td><td class="n">@Kr(f.Akontoer.Sum(a => a.Netto) + f.Sluttoppgjor)</td><td></td><td></td></tr></tfoot>
+                </table>
+            </div>
+            @if (!harTripletex)
+            {
+                <p class="pf-dempet">Tripletex er ikke koblet til. Fakturer akontoen der du pleier, og trykk «Marker fakturert».</p>
+            }
+        }
+
+        <div class="pf-foldrute">
+            @if (f.Akontoer.Count > 0)
+            {
+                <details class="pf-info">
+                    <summary><Icon Name="edit" />Endre planen · @f.Akontoer.Count @(f.Akontoer.Count == 1 ? "akonto" : "akontoer")</summary>
+                    <div class="pf-fold-inni">
+                        <div class="pf-plan-valg">
+                            <label class="pf-akonto-alle">Innestående på alle
+                                <input class="pf-inn pf-tal pf-smal" inputmode="decimal" value="@(plan.Count == 1 ? plan[0]?.ToString("0.##", CultureInfo.InvariantCulture) : "")" placeholder="0" @onchange="SettInnestaaendeAlle" aria-label="Innestående på alle akontoer i prosent" /> %
+                            </label>
+                            <button type="button" class="pf-knapp" @onclick="NyAkonto">+ Akonto</button>
+                        </div>
+                        <div class="pf-liste-ramme">
+                            <table class="pf-liste">
+                                <thead><tr><th>Nr</th><th>Milepæl</th><th>Beløp som</th><th class="n">Verdi</th><th class="n">Innestående %</th><th class="n">Klar ved utført %</th><th>Eller dato</th><th></th></tr></thead>
+                                <tbody>
+                                    @foreach (var r in f.Akontoer)
+                                    {
+                                        var rad = r;
+                                        var a = r.Akonto;
+                                        var laast = a.Status != AkontoStatus.Planlagt;
+                                        <tr>
+                                            <td><b>@a.Nr</b></td>
+                                            <td><input class="pf-inn" value="@a.Milepael" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.Milepael = LesTekst(e) ?? x.Milepael))" aria-label="Milepæl" /></td>
+                                            <td>
+                                                <select class="pf-inn" disabled="@laast" @onchange="@(e => SettAkontoType(rad, e))" aria-label="Prosent eller beløp">
+                                                    <option value="pst" selected="@(a.Prosent is not null)">% av kontrakt</option>
+                                                    <option value="kr" selected="@(a.Prosent is null)">Fast beløp</option>
+                                                </select>
+                                            </td>
+                                            <td class="n">
+                                                @if (a.Prosent is not null)
+                                                {
+                                                    <input class="pf-inn pf-tal pf-smal" inputmode="decimal" value="@(a.Prosent?.ToString("0.##", CultureInfo.InvariantCulture))" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.Prosent = LesTall(e) ?? 0))" aria-label="Prosent av kontrakt" />
+                                                }
+                                                else
+                                                {
+                                                    <input class="pf-inn pf-tal" inputmode="decimal" value="@(a.Belop?.ToString("0", CultureInfo.InvariantCulture))" placeholder="Beløp" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.Belop = LesTall(e)))" aria-label="Fast beløp" />
+                                                }
+                                            </td>
+                                            <td class="n"><input class="pf-inn pf-tal pf-smal" inputmode="decimal" value="@(a.InnestaaendeProsent?.ToString("0.##", CultureInfo.InvariantCulture))" placeholder="0" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.InnestaaendeProsent = LesProsent(e)))" aria-label="Innestående i prosent" /></td>
+                                            <td class="n"><input class="pf-inn pf-tal pf-smal" inputmode="numeric" value="@a.FremdriftProsent" placeholder="–" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.FremdriftProsent = LesTall(e) is { } v ? (int)Math.Clamp(v, 0, 100) : null))" aria-label="Klar når så mange prosent er utført" /></td>
+                                            <td><input type="date" class="pf-inn" value="@DatoVerdi(a.PlanlagtDato)" disabled="@laast" @onchange="@(e => EndreAkonto(a.Id, x => x.PlanlagtDato = LesDato(e)))" aria-label="Planlagt dato" /></td>
+                                            <td class="n">@if (!laast) {<button type="button" class="pf-x" title="Fjern akontoen" @onclick="@(() => SlettAkonto(a.Id))">×</button>}</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                    @if (!harTripletex)
-                    {
-                        <p class="pf-dempet">Tripletex er ikke koblet til. Fakturer akontoen der du pleier, og trykk «Marker fakturert».</p>
-                    }
-                }
-            </section>
-            <section class="pf-boks">
-                <div class="pf-boks-topp"><h3>Prosjektsum</h3></div>
-                <div class="pf-sumboks">
-                    <div><span>Kontraktsum eks. mva</span><b>@Kr(f.Kontrakt)</b></div>
-                    <div><span>Godkjente endringer</span><b>@Kr(f.Endringer)</b></div>
-                    <div><span>Indeksregulering</span><b>@Kr(f.Indeks)</b></div>
-                    <div class="pf-sum"><span>Sum eks. mva</span><span>@Kr(f.Prosjektsum)</span></div>
-                    <div><span>Fakturert</span><b>@Kr(f.Fakturert)</b></div>
-                    <div><span>Utført, ikke fakturert</span><b class="@(f.UtfortIkkeFakturert > 0 ? "pf-gul" : "")">@Kr(f.UtfortIkkeFakturert)</b></div>
-                    <div class="pf-rest"><span>Gjenstår å fakturere</span><span>@Kr(f.Gjenstar)</span></div>
+                </details>
+            }
+            <details class="pf-info">
+                <summary><Icon Name="file-text" />Prosjektsum · gjenstår @Kr(f.Gjenstar)</summary>
+                <div class="pf-fold-inni">
+                    <div class="pf-sumboks">
+                            <div><span>Kontraktsum eks. mva</span><b>@Kr(f.Kontrakt)</b></div>
+                            <div><span>Godkjente endringer</span><b>@Kr(f.Endringer)</b></div>
+                            <div><span>Indeksregulering</span><b>@Kr(f.Indeks)</b></div>
+                            <div class="pf-sum"><span>Sum eks. mva</span><span>@Kr(f.Prosjektsum)</span></div>
+                            <div><span>Fakturert</span><b>@Kr(f.Fakturert)</b></div>
+                            <div><span>Holdt tilbake som innestående</span><b>@Kr(f.HoldtTilbake)</b></div>
+                            <div><span>Utført, ikke fakturert</span><b class="@(f.UtfortIkkeFakturert > 0 ? "pf-gul" : "")">@Kr(f.UtfortIkkeFakturert)</b></div>
+                            <div class="pf-rest"><span>Gjenstår å fakturere</span><span>@Kr(f.Gjenstar)</span></div>
+                        </div>
                 </div>
-                <div class="pf-boks-topp"><h3>Bankgaranti</h3></div>
-                <div class="pf-sumboks">
-                    <div><span>Beløp</span><input class="pf-inn pf-tal" inputmode="decimal" value="@(p.BankgarantiBelop?.ToString("0", CultureInfo.InvariantCulture))" placeholder="@(f.Kontrakt > 0 ? Math.Round(f.Kontrakt * 0.1m).ToString("0", CultureInfo.InvariantCulture) : "")" @onchange="@(e => EndreProsjekt(x => x.BankgarantiBelop = LesTall(e)))" aria-label="Bankgaranti beløp" /></div>
-                    <div><span>Gyldig til</span><input type="date" class="pf-inn" value="@DatoVerdi(p.BankgarantiTil)" @onchange="@(e => EndreProsjekt(x => x.BankgarantiTil = LesDato(e)))" aria-label="Bankgaranti gyldig til" /></div>
+            </details>
+            <details class="pf-info">
+                <summary><Icon Name="shield" />Bankgaranti · @(p.BankgarantiBelop is { } bg ? Kr(bg) + (p.BankgarantiTil is { } til ? $" til {Dato(til)}" : "") : "ikke lagt inn")</summary>
+                <div class="pf-fold-inni">
+                    <div class="pf-sumboks">
+                            <div><span>Beløp</span><input class="pf-inn pf-tal" inputmode="decimal" value="@(p.BankgarantiBelop?.ToString("0", CultureInfo.InvariantCulture))" placeholder="@(f.Kontrakt > 0 ? Math.Round(f.Kontrakt * 0.1m).ToString("0", CultureInfo.InvariantCulture) : "")" @onchange="@(e => EndreProsjekt(x => x.BankgarantiBelop = LesTall(e)))" aria-label="Bankgaranti beløp" /></div>
+                            <div><span>Gyldig til</span><input type="date" class="pf-inn" value="@DatoVerdi(p.BankgarantiTil)" @onchange="@(e => EndreProsjekt(x => x.BankgarantiTil = LesDato(e)))" aria-label="Bankgaranti gyldig til" /></div>
+                        </div>
+                        <p class="pf-dempet">Vanlig er 10 % av kontraktsummen i byggetiden og 3 % i reklamasjonstiden. To uker før datoen vises den under «Venter noe på oss?».</p>
                 </div>
-                <p class="pf-dempet">Vanlig er 10 % av kontraktsummen i byggetiden og 3 % i reklamasjonstiden. To uker før datoen vises den under «Venter noe på oss?».</p>
-            </section>
+            </details>
         </div>
     </div>;
 }
