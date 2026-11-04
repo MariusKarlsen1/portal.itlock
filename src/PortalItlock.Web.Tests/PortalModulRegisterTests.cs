@@ -54,7 +54,7 @@ public class PortalModulRegisterTests
     // sine adresser, men ligger ikke i menyen lenger.
     // Merk at "fravar" IKKE staar her: den ble bare fjernet som duplikat under
     // Brukere og kunder, og ligger fortsatt under Prosjekt, service og tilbud.
-    private static readonly string[] BevisstFjernet = ["nyheter", "notater", "hjemmesidetekster"];
+    private static readonly string[] BevisstFjernet = ["nyheter", "notater", "hjemmesidetekster", "min-dag", "min-bil"];
 
     [Theory]
     [InlineData(BrukerRolle.Montor)]

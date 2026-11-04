@@ -149,7 +149,7 @@ public class ModulRettigheterTests
             .ToList();
 
         Assert.Equal(
-            new[] { "abc-kalkulator", "befaringsliste", "fravar", "lasekasse-utskiftning", "lasutskifting", "min-dag", "timeregistrering" },
+            new[] { "abc-kalkulator", "befaringsliste", "fravar", "lasekasse-utskiftning", "lasutskifting", "timeregistrering" },
             medFullTilgang);
     }
 
