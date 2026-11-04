@@ -126,22 +126,36 @@ public class PackageMatchingService(ApplicationDbContext db)
         return pakker.Select(p => new NestenTreff(p, mangler[p.Id], grupper.Count - 1, grupper.Count)).ToList();
     }
 
-    // Antall komponenter og sum veiledende pris per pakke, til resultatlista.
-    public async Task<Dictionary<int, (int Antall, decimal Sum)>> HentSammendragAsync(IReadOnlyCollection<int> pakkeIder)
+    // Kortene i Finn dørpakke (P2c): antall komponenter, veiledende og netto sum,
+    // navnene på komponentene og hvilke kravverdier pakken har.
+    public sealed record PakkeKortInfo(int Antall, decimal SumVeil, decimal SumNetto, List<string> Komponenter, List<(int VerdiId, string Verdi)> Krav);
+
+    public async Task<Dictionary<int, PakkeKortInfo>> HentKortInfoAsync(IReadOnlyCollection<int> pakkeIder)
     {
         if (pakkeIder.Count == 0)
         {
             return [];
         }
 
-        var rader = await db.PackageComponents
+        var komp = await db.PackageComponents
             .Where(pc => pakkeIder.Contains(pc.PackageId))
-            .Select(pc => new { pc.PackageId, pc.Antall, Pris = pc.Component!.PrisVeiledende })
+            .Select(pc => new { pc.PackageId, pc.Antall, Navn = pc.Component!.Navn, Veil = pc.Component.PrisVeiledende, Netto = pc.Component.PrisNetto })
+            .ToListAsync();
+        var krav = await db.PackageRequirements
+            .Where(k => pakkeIder.Contains(k.PackageId) && k.RequirementValue != null)
+            .Select(k => new { k.PackageId, k.RequirementValueId, Verdi = k.RequirementValue!.Verdi, Rekkefolge = k.RequirementValue.Dimensjon!.Rekkefolge })
             .ToListAsync();
 
-        return rader
-            .GroupBy(r => r.PackageId)
-            .ToDictionary(g => g.Key, g => (g.Count(), g.Sum(r => (r.Pris ?? 0) * r.Antall)));
+        return pakkeIder.Distinct().ToDictionary(id => id, id =>
+        {
+            var k = komp.Where(r => r.PackageId == id).ToList();
+            return new PakkeKortInfo(
+                k.Count,
+                k.Sum(r => (r.Veil ?? 0) * r.Antall),
+                k.Sum(r => (r.Netto ?? 0) * r.Antall),
+                k.Select(r => r.Navn).ToList(),
+                krav.Where(r => r.PackageId == id).OrderBy(r => r.Rekkefolge).Select(r => (r.RequirementValueId, r.Verdi)).ToList());
+        });
     }
 
     // Detaljpanelet trenger komponentene med type og priser. Det er bare én
