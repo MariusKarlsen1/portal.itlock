@@ -755,8 +755,47 @@ else if (_ordre is not null)
         }
         else
         {
-            @* S1 (arbeidsordre-forslag.html): punktene i tabell med OK / Avvik / Ikke aktuelt og
-               kommentar, og bunnlinje med antall kontrollert, avvik og PDF. *@
+            @* K1: søk og filter, «Resten OK» og «Legg til punkt» over tabellen med
+               OK / Avvik / Ikke aktuelt, kommentar og hvem som kontrollerte. *@
+            var sjSok = _sjSok.Trim();
+            var sjAlle = _sjekkpunkter.OrderBy(x => x.Rekkefolge).ToList();
+            var sjVis = sjAlle.Where(x => _sjFilter switch
+            {
+                "ikke" => x.Resultat is null,
+                "avvik" => x.Resultat == SjekkpunktResultat.Avvik,
+                _ => true
+            }).Where(x => sjSok.Length == 0 || x.Tekst.Contains(sjSok, StringComparison.OrdinalIgnoreCase) || (x.Kommentar ?? "").Contains(sjSok, StringComparison.OrdinalIgnoreCase)).ToList();
+            var sjIkke = sjAlle.Count(x => x.Resultat is null);
+            <div class="db-filter sj-verktoy" role="group" aria-label="Filter">
+                <input class="db-sokfelt" type="search" @bind="_sjSok" @bind:event="oninput" placeholder="Søk i punktene …" aria-label="Søk i sjekklisten" />
+                @foreach (var (nokkel, navn, antall) in new[]
+                {
+                    ("alle", "Alle", sjAlle.Count),
+                    ("ikke", "Ikke kontrollert", sjIkke),
+                    ("avvik", "Avvik", sjAlle.Count(x => x.Resultat == SjekkpunktResultat.Avvik))
+                })
+                {
+                    <button type="button" class="db-f @(_sjFilter == nokkel ? "paa" : "")" aria-pressed="@(_sjFilter == nokkel ? "true" : "false")" @onclick="@(() => _sjFilter = nokkel)">@navn <span>@antall</span></button>
+                }
+                <span class="sj-verktoy-h">
+                    @if (KanFerdigmelde && sjIkke > 0)
+                    {
+                        <button type="button" class="sj-restok" title="Merk alle punkter som ikke er kontrollert som OK" @onclick="RestenOk"><Icon Name="check" />Resten OK</button>
+                    }
+                    @if (KanEndreOrdre)
+                    {
+                        <button type="button" class="db-knapp @(_visNyttPunkt ? "paa" : "")" @onclick="@(() => { _visNyttPunkt = !_visNyttPunkt; _nyttPunkt = ""; })"><Icon Name="plus" />Legg til punkt</button>
+                    }
+                </span>
+            </div>
+            @if (_visNyttPunkt && KanEndreOrdre)
+            {
+                <form class="sj-nytt" @onsubmit="LeggTilSjekkpunkt">
+                    <input type="text" @bind="_nyttPunkt" @bind:event="oninput" placeholder="Hva skal kontrolleres?" aria-label="Nytt punkt" autofocus />
+                    <button type="submit" class="sj-pdf-knapp" disabled="@string.IsNullOrWhiteSpace(_nyttPunkt)"><Icon Name="plus" />Legg til</button>
+                    <button type="button" class="db-knapp" @onclick="@(() => _visNyttPunkt = false)">Avbryt</button>
+                </form>
+            }
             <div class="sj-tabwrap">
                 <table class="sj-tab">
                     <thead>
@@ -765,21 +804,20 @@ else if (_ordre is not null)
                             <th>Punkt</th>
                             <th>Resultat</th>
                             <th>Kommentar</th>
+                            <th>Av</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var p in _sjekkpunkter.OrderBy(p => p.Rekkefolge))
+                        @if (sjVis.Count == 0)
+                        {
+                            <tr><td colspan="5" class="sj-ingen">Ingen punkter passer filteret.</td></tr>
+                        }
+                        @foreach (var p in sjVis)
                         {
                             var punkt = p;
                             <tr @key="p.Id" class="@(p.Resultat == SjekkpunktResultat.Avvik ? "avvik" : p.Fullfort ? "ok" : "")">
-                                <td class="sj-nr">@(_sjekkpunkter.OrderBy(x => x.Rekkefolge).ToList().IndexOf(p) + 1)</td>
-                                <td>
-                                    <b>@p.Tekst</b>
-                                    @if (p.Resultat is not null && p.FullfortDato is { } fd)
-                                    {
-                                        <small class="sj-meta" title="@fd.ToString("dd.MM.yyyy HH:mm")">@(p.FullfortAvBruker?.Initialer) @(fd.Date == DateTime.Today ? fd.ToString("HH:mm") : fd.ToString("dd.MM"))</small>
-                                    }
-                                </td>
+                                <td class="sj-nr">@(sjAlle.IndexOf(p) + 1)</td>
+                                <td><b>@p.Tekst</b></td>
                                 <td>
                                     <span class="sj-seg" role="group" aria-label="Resultat for @p.Tekst">
                                         @foreach (var (verdi, tekst, ikon) in new (SjekkpunktResultat, string, string?)[] { (SjekkpunktResultat.Ok, "OK", "check"), (SjekkpunktResultat.Avvik, "Avvik", "alert-triangle"), (SjekkpunktResultat.IkkeAktuelt, "Ikke aktuelt", null) })
@@ -796,12 +834,31 @@ else if (_ordre is not null)
                                     <input class="sj-kommentar" value="@p.Kommentar" placeholder="Valgfri kommentar …" disabled="@(!KanFerdigmelde)"
                                            @onchange="@(e => LagreSjekkKommentar(punkt, e.Value?.ToString()))" aria-label="Kommentar til @p.Tekst" />
                                 </td>
+                                <td class="sj-av">
+                                    @if (p.Resultat is not null && p.FullfortDato is { } fd)
+                                    {
+                                        <span title="@($"{p.FullfortAvBruker?.Navn} {fd:dd.MM.yyyy HH:mm}".Trim())">
+                                            @if (p.FullfortAvBruker is { } fb)
+                                            {
+                                                <span class="tf-av">@Initialer(fb.Navn)</span>
+                                            }
+                                            @(fd.Date == DateTime.Today ? fd.ToString("HH:mm") : fd.ToString("dd.MM"))
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="sj-tom">–</span>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
                 </table>
                 <div class="sj-bunn">
-                    <span><b>@SjekkFerdig av @_sjekkpunkter.Count</b> kontrollert</span>
+                    @{
+                        var sjKontrollert = _sjekkpunkter.Count(x => x.Resultat is not null);
+                    }
+                    <span><b>@sjKontrollert av @_sjekkpunkter.Count</b> kontrollert<i class="db-bar"><i style="width:@(sjKontrollert * 100 / _sjekkpunkter.Count)%"></i></i></span>
                     <span><b class="@(_sjekkpunkter.Any(x => x.Resultat == SjekkpunktResultat.Avvik) ? "sj-rod" : "")">@_sjekkpunkter.Count(x => x.Resultat == SjekkpunktResultat.Avvik)</b> avvik</span>
                     <span class="sj-bunn-h">
                         @foreach (var pdf in _lagredeSjekklistePdfer.OrderByDescending(p => p.OpprettetDato))
@@ -2170,6 +2227,65 @@ else if (_ordre is not null)
         punkt.FullfortDato = entitet.FullfortDato;
         punkt.FullfortAvBruker = resultat is null ? null : _naverendeBruker;
 
+        await OppdaterKartFargeAsync();
+    }
+
+    private string _sjSok = "";
+    private string _sjFilter = "alle";
+    private bool _visNyttPunkt;
+    private string _nyttPunkt = "";
+
+    // «Resten OK»: alle punkter uten svar settes til OK.
+    private async Task RestenOk()
+    {
+        if (!KanFerdigmelde)
+        {
+            return;
+        }
+
+        var ider = _sjekkpunkter.Where(p => p.Resultat is null).Select(p => p.Id).ToList();
+        var entiteter = await Db.ArbeidsordreSjekkpunkter.Where(p => ider.Contains(p.Id)).ToListAsync();
+        var naa = DateTime.Now;
+        foreach (var e in entiteter)
+        {
+            e.Resultat = SjekkpunktResultat.Ok;
+            e.Fullfort = true;
+            e.FullfortDato = naa;
+            e.FullfortAvBrukerId = _naverendeBrukerId;
+        }
+
+        await Db.SaveChangesAsync();
+        foreach (var p in _sjekkpunkter.Where(p => p.Resultat is null))
+        {
+            p.Resultat = SjekkpunktResultat.Ok;
+            p.Fullfort = true;
+            p.FullfortDato = naa;
+            p.FullfortAvBruker = _naverendeBruker;
+        }
+
+        await OppdaterKartFargeAsync();
+    }
+
+    private async Task LeggTilSjekkpunkt()
+    {
+        var tekst = _nyttPunkt.Trim();
+        if (!KanEndreOrdre || tekst.Length == 0)
+        {
+            return;
+        }
+
+        var punkt = new ArbeidsordreSjekkpunkt
+        {
+            ArbeidsordreId = Id,
+            Tekst = tekst,
+            Rekkefolge = _sjekkpunkter.Count == 0 ? 1 : _sjekkpunkter.Max(p => p.Rekkefolge) + 1
+        };
+        Db.ArbeidsordreSjekkpunkter.Add(punkt);
+        await Db.SaveChangesAsync();
+        _sjekkpunkter.Add(punkt);
+        _nyttPunkt = "";
+        _visNyttPunkt = false;
+        _sjFilter = "alle";
         await OppdaterKartFargeAsync();
     }
 
