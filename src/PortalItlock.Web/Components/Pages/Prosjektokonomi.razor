@@ -355,9 +355,6 @@
     private Dictionary<int, ProsjektOppfolgingService.Etterkalkyle> _etterkalkyler = [];
     private HashSet<int> _utkast = [];
 
-    // Gjennomgangen i tre trinn: se tallene, årsak og lærdom, signer.
-    private int GjennomgangTrinn => string.IsNullOrWhiteSpace(_kommentar) && string.IsNullOrWhiteSpace(_gikkBra) && string.IsNullOrWhiteSpace(_gikkDarlig) && string.IsNullOrWhiteSpace(_forbedre) ? 2 : 3;
-
     private Task LagreUtkast() => Kjor(async () =>
     {
         if (_apenProsjekt is not { } p)
@@ -1002,25 +999,22 @@
                 <span>
                     <button type="button" class="ek-tilbake" @onclick="@(() => _apenProsjekt = null)"><Icon Name="arrow-left" />@(HovedFane == "etterkalkyle" ? "Til etterkalkylene" : "Til pågående prosjekter")</button>
                     <h2>@p.Navn</h2>
-                    <p>@(p.Kunde?.Navn ?? "Ingen kunde")@(p.Prosjektleder is { } pl ? $" · prosjektleder {pl.Navn}" : "") · @(p.Status?.Visningsnavn() ?? "Aktiv")@(p.OverlevertDato is { } d ? $" {d:dd.MM.yyyy}" : "")</p>
+                    <p>@(p.Kunde?.Navn ?? "Ingen kunde")@(p.Prosjektleder is { } pl ? $" · PL {pl.Navn}" : "") · @(p.Status?.Visningsnavn() ?? "Aktiv")@(p.OverlevertDato is { } d ? $" {d:dd.MM.yyyy}" : "")</p>
                 </span>
                 <span class="ek-knapper">
+                    @if (_apenEtterkalkyle is { } ekk)
+                    {
+                        <span class="ek-chip @DomKlasse(ekk)">@DomOrd(ekk)</span>
+                    }
                     <a class="ek-knapp" href="@($"/prosjekter/{p.Id}")"><Icon Name="folder" />Åpne prosjektet</a>
                     <a class="ek-knapp" href="@($"/prosjekt/{p.Id}/etterkalkyle/pdf")" target="_blank"><Icon Name="file-text" />PDF</a>
                 </span>
             </div>
-            <div class="ek-etter">
-                <div class="ek-etter-hoved">
-                    <EtterkalkyleVisning ProsjektId="@p.Id" Kjor="@Kjor" Oppdatert="@_lastet" Endret="@EtterkalkyleEndret" />
-                    <details class="ek-grunnlag">
-                        <summary>Per arbeidsordre og grunnlag</summary>
-                        <ProsjektOkonomiPanel ProsjektId="@p.Id" Data="@o" Etterkalkyle="@(o is { Inntekt: > 0 })" UtenNokkeltall="true" />
-                    </details>
-                </div>
-                <div class="ek-etter-side">
-                    @Signering(p)
-                </div>
-            </div>
+            <EtterkalkyleVisning ProsjektId="@p.Id" Kjor="@Kjor" Oppdatert="@_lastet" Endret="@EtterkalkyleEndret">
+                <Vurdering>@Signering(p)</Vurdering>
+                <Bunn>@SigneringBunn()</Bunn>
+                <Grunnlag><ProsjektOkonomiPanel ProsjektId="@p.Id" Data="@o" Etterkalkyle="@(o is { Inntekt: > 0 })" UtenNokkeltall="true" /></Grunnlag>
+            </EtterkalkyleVisning>
         }
         else
         {
@@ -1028,75 +1022,87 @@
         }
     </div>;
 
-    // Gjennomgangen: rett opp tallene, velg årsak og skriv kort hva som skjedde,
-    // og signer. Lærdommen er valgfri og ligger sammenfoldet.
-    private RenderFragment Signering(Prosjekt p) => @<section class="ek-signering @(_apenKontroll is not null ? "ek-signert" : "")">
+    // Vurderingen: velg årsak og skriv kort hva som skjedde. Lærdommen er valgfri
+    // og ligger sammenfoldet. Signeringen står nederst, se SigneringBunn.
+    private RenderFragment Signering(Prosjekt p) => @<section class="ek-vurdering">
         @if (_apenKontroll is { } k)
         {
-            <div class="ek-signert-topp">
-                <span class="ek-signert-ikon"><Icon Name="check" /></span>
-                <div><b>Kontrollert @k.Kontrollert.ToString("dd.MM.yyyy") av @(k.KontrollertAv ?? "–")</b><span>@k.Arsak.Visningsnavn()@(string.IsNullOrWhiteSpace(k.Kommentar) ? "" : $" - {k.Kommentar}")</span></div>
+            <div class="ek-vurdering-topp ek-vurdering-signert"><Icon Name="check" />Kontrollert</div>
+            <div class="ek-vurdering-inni">
+                <div class="ek-signert-tekst"><b>@k.Kontrollert.ToString("dd.MM.yyyy") av @(k.KontrollertAv ?? "–")</b><span>@k.Arsak.Visningsnavn()@(string.IsNullOrWhiteSpace(k.Kommentar) ? "" : $" - {k.Kommentar}")</span></div>
+                <p class="ek-hint">Tallene til venstre er regnet ut på nytt nå. Tallene som ble lagret ved kontroll: tilbudt @Kr(k.Inntekt), kost @Kr(k.FaktiskKost) (budsjett @Kr(k.BudsjettKost)), dekningsgrad @DG(k.FaktiskDekningsgrad).</p>
+                @if (EvalueringSvar(k).Any())
+                {
+                    <dl class="ek-evaluering">
+                        @foreach (var (sporsmal, svar) in EvalueringSvar(k))
+                        {
+                            <div><dt>@sporsmal</dt><dd>@svar</dd></div>
+                        }
+                    </dl>
+                }
             </div>
-            <p class="ek-hint">Tallene til venstre er regnet ut på nytt nå. Tallene som ble lagret ved kontroll: tilbudt @Kr(k.Inntekt), kost @Kr(k.FaktiskKost) (budsjett @Kr(k.BudsjettKost)), dekningsgrad @DG(k.FaktiskDekningsgrad).</p>
-            @if (EvalueringSvar(k).Any())
-            {
-                <dl class="ek-evaluering">
-                    @foreach (var (sporsmal, svar) in EvalueringSvar(k))
-                    {
-                        <div><dt>@sporsmal</dt><dd>@svar</dd></div>
-                    }
-                </dl>
-            }
         }
         else
         {
-            var mangler = _apenEtterkalkyle?.ManglerData == true;
             var trengerKommentar = _arsak != EtterkalkyleArsak.IngenAvvik;
-            var trinn = mangler ? 1 : trengerKommentar && string.IsNullOrWhiteSpace(_kommentar) ? 2 : 3;
             var aapenLaerdom = !string.IsNullOrWhiteSpace(_gikkBra) || !string.IsNullOrWhiteSpace(_gikkDarlig) || !string.IsNullOrWhiteSpace(_forbedre) || !string.IsNullOrWhiteSpace(_forsinkelseEgne) || !string.IsNullOrWhiteSpace(_forsinkelseAndre);
-            <div class="ek-gjennomgang-topp">
-                <h3>Gjennomgang</h3>
-            </div>
-            <ol class="ek-trinn" aria-label="Trinn i gjennomgangen">
-                <li class="@(trinn == 1 ? "na" : "ferdig")">1 Rett opp tallene</li>
-                <li class="@(trinn == 2 ? "na" : trinn > 2 ? "ferdig" : "")">2 Årsak</li>
-                <li class="@(trinn == 3 ? "na" : "")">3 Signer</li>
-            </ol>
-            @if (mangler)
-            {
-                <p class="ek-advarsel">Timer eller varer mangler. Rett opp under «Er tallene komplette?» først. Du kan signere likevel, men da lagres et resultat som ikke stemmer.</p>
-            }
-            <div class="ek-felt-gruppe">
-                <p class="ek-hint">Hva var hovedårsaken?@(_arsakForeslatt ? " Portalen har foreslått en ut fra det største avviket." : "")@(_apenUtkast ? " Utkastet ditt er hentet fram." : "")</p>
-                <div class="ek-arsaker">
-                    @foreach (var a in Enum.GetValues<EtterkalkyleArsak>())
+            <div class="ek-vurdering-topp">Din vurdering</div>
+            <div class="ek-vurdering-inni">
+                <label class="ek-felt">Hovedårsak
+                    <select aria-label="Hovedårsak" @onchange="VelgArsak">
+                        @foreach (var a in Enum.GetValues<EtterkalkyleArsak>())
+                        {
+                            <option value="@a" selected="@(_arsak == a)">@a.Visningsnavn()</option>
+                        }
+                    </select>
+                    @if (_arsakForeslatt || _apenUtkast)
                     {
-                        var arsak = a;
-                        <button type="button" class="ek-arsak @(_arsak == arsak ? "aktiv" : "")" aria-pressed="@(_arsak == arsak ? "true" : "false")" @onclick="@(() => { _arsak = arsak; _arsakForeslatt = false; })">@arsak.Visningsnavn()</button>
+                        <small>@(_arsakForeslatt ? "Foreslått av portalen ut fra det største avviket." : "Utkastet ditt er hentet fram.")</small>
                     }
-                </div>
+                </label>
+                <label class="ek-felt">Hva skjedde? @(trengerKommentar ? "(må fylles ut)" : "(valgfritt)")
+                    <textarea rows="3" @bind="_kommentar" @bind:event="oninput" placeholder="@(trengerKommentar ? "Skriv kort hva som skjedde, så neste tilbud treffer bedre." : "Valgfritt")"></textarea>
+                </label>
+                @if (trengerKommentar && string.IsNullOrWhiteSpace(_kommentar) && _apenEtterkalkyle is { } ek)
+                {
+                    <button type="button" class="ek-lenke" @onclick="@(() => _kommentar = ek.Forklaring)">Bruk forslag til tekst</button>
+                }
+                <details class="ek-laerdom" open="@aapenLaerdom">
+                    <summary>Lærdom til neste gang (valgfritt)</summary>
+                    <div class="ek-sporsmal">
+                        <label class="ek-felt">Hva gikk bra?<textarea rows="2" @bind="_gikkBra" @bind:event="oninput"></textarea></label>
+                        <label class="ek-felt">Hva gikk dårlig?<textarea rows="2" @bind="_gikkDarlig" @bind:event="oninput"></textarea></label>
+                        <label class="ek-felt">Hva må vi forbedre?<textarea rows="2" @bind="_forbedre" @bind:event="oninput"></textarea>@if (_laerdom.Count > 0) {<small class="ek-forslag">Se <a href="/prosjektokonomi/laerdom">Lærdom</a> for varer der montasjetiden bør justeres.</small>}</label>
+                        <label class="ek-felt">Forsinkelser, egne forhold<textarea rows="2" @bind="_forsinkelseEgne" placeholder="Dager og årsak"></textarea></label>
+                        <label class="ek-felt">Forsinkelser, andre<textarea rows="2" @bind="_forsinkelseAndre" placeholder="Dager og årsak"></textarea>@if (!string.IsNullOrEmpty(_forsinkelseAndre) && !_apenUtkast) {<small class="ek-forslag">Hentet fra fristforlengelsene på endringene</small>}</label>
+                    </div>
+                </details>
             </div>
-            <label class="ek-felt">Kort om hva som skjedde @(trengerKommentar ? "(må fylles ut)" : "(valgfritt)")
-                <textarea rows="3" @bind="_kommentar" @bind:event="oninput" placeholder="@(trengerKommentar ? "For eksempel: kunden ba om to ekstra dører underveis uten endringsmelding." : "Valgfritt")"></textarea>
-            </label>
-            @if (trengerKommentar && string.IsNullOrWhiteSpace(_kommentar) && _apenEtterkalkyle is { } ek)
-            {
-                <button type="button" class="ek-lenke" @onclick="@(() => _kommentar = ek.Forklaring)">Bruk forslag til tekst</button>
-            }
-            <details class="ek-laerdom" open="@aapenLaerdom">
-                <summary>Lærdom til neste gang (valgfritt)</summary>
-                <div class="ek-sporsmal">
-                    <label class="ek-felt">Hva gikk bra?<textarea rows="2" @bind="_gikkBra" @bind:event="oninput"></textarea></label>
-                    <label class="ek-felt">Hva gikk dårlig?<textarea rows="2" @bind="_gikkDarlig" @bind:event="oninput"></textarea></label>
-                    <label class="ek-felt">Hva må vi forbedre?<textarea rows="2" @bind="_forbedre" @bind:event="oninput"></textarea>@if (_laerdom.Count > 0) {<small class="ek-forslag">Se <a href="/prosjektokonomi/laerdom">Lærdom</a> for varer der montasjetiden bør justeres.</small>}</label>
-                    <label class="ek-felt">Forsinkelser, egne forhold<textarea rows="2" @bind="_forsinkelseEgne" placeholder="Dager og årsak"></textarea></label>
-                    <label class="ek-felt">Forsinkelser, andre<textarea rows="2" @bind="_forsinkelseAndre" placeholder="Dager og årsak"></textarea>@if (!string.IsNullOrEmpty(_forsinkelseAndre) && !_apenUtkast) {<small class="ek-forslag">Hentet fra fristforlengelsene på endringene</small>}</label>
-                </div>
-            </details>
-            <span class="ek-knapper ek-knapper-hoyre">
-                <button type="button" class="ek-knapp" @onclick="LagreUtkast">Lagre utkast</button>
-                <button type="button" class="ek-knapp ek-knapp-ok" @onclick="Kontroller"><Icon Name="check" />Signer som kontrollert</button>
-            </span>
         }
     </section>;
+
+    private void VelgArsak(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<EtterkalkyleArsak>(e.Value?.ToString(), out var arsak))
+        {
+            _arsak = arsak;
+            _arsakForeslatt = false;
+        }
+    }
+
+    // Linjen nederst: det som gjenstår før signering, og knappene.
+    private RenderFragment SigneringBunn() => @<text>
+        @if (_apenKontroll is null)
+        {
+            var mangler = _apenEtterkalkyle?.ManglerData == true;
+            var trengerKommentar = _arsak != EtterkalkyleArsak.IngenAvvik && string.IsNullOrWhiteSpace(_kommentar);
+            <div class="ek-signerlinje">
+                <span class="@(mangler ? "ek-rod" : "")">@(mangler ? "Timer eller varer mangler. Du kan signere likevel, men da lagres et resultat som ikke stemmer." : trengerKommentar ? "Skriv hva som skjedde, så kan du signere." : "Klar til å signeres.")</span>
+                <span class="ek-knapper">
+                    <button type="button" class="ek-knapp" @onclick="LagreUtkast">Lagre utkast</button>
+                    <button type="button" class="ek-knapp ek-knapp-ok" @onclick="Kontroller"><Icon Name="check" />Signer som kontrollert</button>
+                </span>
+            </div>
+        }
+    </text>;
 }
