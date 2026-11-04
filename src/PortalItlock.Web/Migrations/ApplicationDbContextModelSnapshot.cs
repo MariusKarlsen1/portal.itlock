@@ -5296,6 +5296,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("FraUtstyrId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Knekkpunkter")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Notat")
                         .HasColumnType("TEXT");
 
@@ -5319,6 +5322,12 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
+
+                    b.Property<double>("Bredde")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("Hoyde")
+                        .HasColumnType("REAL");
 
                     b.Property<string>("Notat")
                         .HasColumnType("TEXT");

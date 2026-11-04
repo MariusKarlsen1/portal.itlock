@@ -113,25 +113,14 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITen
         sb.Append(CultureInfo.InvariantCulture,
             $"<image xlink:href='data:{plantegning.ContentType};base64,{base64}' href='data:{plantegning.ContentType};base64,{base64}' x='0' y='0' width='{bildeBredde}' height='{bildeHoyde}' preserveAspectRatio='none' />");
 
-        var ikonStorrelse = diagonal * 0.013;
-        var skala = ikonStorrelse / 24.0;
-        var fontSize = diagonal * 0.005;
-        var haloRadius = ikonStorrelse * 0.62;
+        var ikonStorrelse = diagonal * 0.02;
+        var fontSize = diagonal * 0.0062;
 
-        // Kabler tegnes over gloriene, men under selve symbolene, slik at
-        // kabelen alltid er synlig helt inn til utstyret - selv når to
-        // enheter står tett og gloriene deres ellers ville dekket streken.
-        foreach (var u in utstyr)
-        {
-            var cx = (u.PosX / 100.0) * bildeBredde;
-            var cy = (u.PosY / 100.0) * bildeHoyde;
+        double Px(double pst, bool x) => pst / 100.0 * (x ? bildeBredde : bildeHoyde);
 
-            // Hvit "glorie" bak symbolet for kontrast mot tegningen, tilsvarer
-            // drop-shadow-haloen rundt symbolet på skjermen.
-            sb.Append(CultureInfo.InvariantCulture,
-                $"<circle cx='{Inv(cx)}' cy='{Inv(cy)}' r='{Inv(haloRadius)}' fill='white' opacity='0.85' />");
-        }
-
+        // Kabler først (under symbolene), som myke kurver gjennom knekkpunktene -
+        // samme kurve som på skjermen (KabelSti). En hvit kant under streken
+        // gjør den lett å se også over mørke linjer i tegningen.
         foreach (var f in forbindelser)
         {
             if (!utstyrById.TryGetValue(f.FraUtstyrId, out var fra) || !utstyrById.TryGetValue(f.TilUtstyrId, out var til))
@@ -139,50 +128,84 @@ public class PlanUtstyrPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITen
                 continue;
             }
 
-            var x1 = (fra.PosX / 100.0) * bildeBredde;
-            var y1 = (fra.PosY / 100.0) * bildeHoyde;
-            var x2 = (til.PosX / 100.0) * bildeBredde;
-            var y2 = (til.PosY / 100.0) * bildeHoyde;
+            var punkter = new List<(double X, double Y)> { (Px(fra.PosX, true), Px(fra.PosY, false)) };
+            punkter.AddRange(KabelSti.Les(f.Knekkpunkter).Select(k => (Px(k.X, true), Px(k.Y, false))));
+            punkter.Add((Px(til.PosX, true), Px(til.PosY, false)));
+            var d = KabelSti.Kurve(punkter);
             var dash = SkalerStrekMonster(f.Type.StrekMonster(), diagonal);
             var dashAttr = dash is null ? "" : $"stroke-dasharray='{dash}'";
 
             sb.Append(CultureInfo.InvariantCulture,
-                $"<line x1='{Inv(x1)}' y1='{Inv(y1)}' x2='{Inv(x2)}' y2='{Inv(y2)}' stroke='{f.Type.Farge()}' stroke-width='{Inv(strekbredde)}' {dashAttr} />");
+                $"<path d='{d}' fill='none' stroke='white' stroke-opacity='0.85' stroke-width='{Inv(strekbredde * 2.4)}' stroke-linecap='round' stroke-linejoin='round' />");
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<path d='{d}' fill='none' stroke='{f.Type.Farge()}' stroke-width='{Inv(strekbredde)}' stroke-linecap='round' stroke-linejoin='round' {dashAttr} />");
         }
 
+        // Symbolene i riktig størrelse (Bredde/Hoyde per utstyr), med en hvit
+        // glorie bak for kontrast mot tegningen.
+        var opptatt = new List<(double X, double Y, double W, double H)>();
+        var ikoner = new List<(PlanUtstyr U, double Cx, double Cy, double W, double H)>();
         foreach (var u in utstyr)
         {
-            var cx = (u.PosX / 100.0) * bildeBredde;
-            var cy = (u.PosY / 100.0) * bildeHoyde;
-            var x0 = cx - ikonStorrelse / 2;
-            var y0 = cy - ikonStorrelse / 2;
+            var cx = Px(u.PosX, true);
+            var cy = Px(u.PosY, false);
+            var w = ikonStorrelse * (u.Bredde > 0 ? u.Bredde : 1);
+            var h = ikonStorrelse * (u.Hoyde > 0 ? u.Hoyde : 1);
+            ikoner.Add((u, cx, cy, w, h));
+            opptatt.Add((cx - w / 2, cy - h / 2, w, h));
 
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<ellipse cx='{Inv(cx)}' cy='{Inv(cy)}' rx='{Inv(w * 0.62)}' ry='{Inv(h * 0.62)}' fill='white' opacity='0.85' />");
             var ikonSvg = u.Type.IkonSvg().Replace("currentColor", u.Type.Farge());
             sb.Append(CultureInfo.InvariantCulture,
-                $"<g transform='translate({Inv(x0)},{Inv(y0)}) scale({Inv(skala)})' stroke-linecap='round' stroke-linejoin='round'>{ikonSvg}</g>");
+                $"<g transform='translate({Inv(cx - w / 2)},{Inv(cy - h / 2)}) scale({Inv(w / 24.0)},{Inv(h / 24.0)})' stroke-linecap='round' stroke-linejoin='round'>{ikonSvg}</g>");
+        }
 
-            AppendSentrertLabel(sb, cx, cy + ikonStorrelse / 2 + fontSize * 1.35, u.Type.Kode(), fontSize, "#292927", "white", "#00000026");
+        // Kodene plasseres der de ikke dekker andre symboler eller koder: under,
+        // over, til høyre eller til venstre for symbolet - første ledige plass.
+        foreach (var (u, cx, cy, w, h) in ikoner)
+        {
+            var tekst = u.Type.Kode();
+            var lb = tekst.Length * fontSize * 0.62 + fontSize * 0.6;
+            var lh = fontSize * 1.4;
+            var luft = fontSize * 0.25;
+            var kandidater = new[]
+            {
+                (X: cx - lb / 2, Y: cy + h / 2 + luft),
+                (X: cx - lb / 2, Y: cy - h / 2 - luft - lh),
+                (X: cx + w / 2 + luft, Y: cy - lh / 2),
+                (X: cx - w / 2 - luft - lb, Y: cy - lh / 2),
+                (X: cx + w / 2 + luft, Y: cy + h / 2),
+                (X: cx - w / 2 - luft - lb, Y: cy + h / 2),
+                (X: cx + w / 2 + luft, Y: cy - h / 2 - lh),
+                (X: cx - w / 2 - luft - lb, Y: cy - h / 2 - lh)
+            };
+            var valgt = kandidater
+                .Select(k => (k.X, k.Y, Overlapp: opptatt.Sum(o => Overlapp(k.X, k.Y, lb, lh, o)), Utenfor: k.X < 0 || k.Y < 0 || k.X + lb > bildeBredde || k.Y + lh > bildeHoyde))
+                .OrderBy(k => k.Utenfor)
+                .ThenBy(k => k.Overlapp)
+                .First();
+            opptatt.Add((valgt.X, valgt.Y, lb, lh));
+            AppendLabel(sb, valgt.X, valgt.Y, lb, lh, tekst, fontSize);
         }
 
         sb.Append("</svg>");
         return sb.ToString();
     }
 
-    private static void AppendSentrertLabel(StringBuilder sb, double cx, double baselineY, string tekst, double fontSize, string tekstfarge, string bakgrunnsfarge, string? kantfarge)
+    private static double Overlapp(double x, double y, double w, double h, (double X, double Y, double W, double H) o)
     {
-        if (string.IsNullOrEmpty(tekst))
-        {
-            return;
-        }
+        var ox = Math.Max(0, Math.Min(x + w, o.X + o.W) - Math.Max(x, o.X));
+        var oy = Math.Max(0, Math.Min(y + h, o.Y + o.H) - Math.Max(y, o.Y));
+        return ox * oy;
+    }
 
-        var bredde = tekst.Length * fontSize * 0.62 + fontSize * 0.6;
-        var hoyde = fontSize * 1.4;
-        var kantAttr = kantfarge is null ? "" : $"stroke='{kantfarge}' stroke-width='{Inv(fontSize * 0.06)}'";
-
+    private static void AppendLabel(StringBuilder sb, double x, double y, double w, double h, string tekst, double fontSize)
+    {
         sb.Append(CultureInfo.InvariantCulture,
-            $"<rect x='{Inv(cx - bredde / 2)}' y='{Inv(baselineY - fontSize * 1.05)}' width='{Inv(bredde)}' height='{Inv(hoyde)}' fill='{bakgrunnsfarge}' {kantAttr} />");
+            $"<rect x='{Inv(x)}' y='{Inv(y)}' width='{Inv(w)}' height='{Inv(h)}' rx='{Inv(fontSize * 0.2)}' fill='white' stroke='#00000033' stroke-width='{Inv(fontSize * 0.06)}' />");
         sb.Append(CultureInfo.InvariantCulture,
-            $"<text x='{Inv(cx)}' y='{Inv(baselineY)}' font-size='{Inv(fontSize)}' font-family='Arial, sans-serif' font-weight='bold' fill='{tekstfarge}' text-anchor='middle'>{System.Net.WebUtility.HtmlEncode(tekst)}</text>");
+            $"<text x='{Inv(x + w / 2)}' y='{Inv(y + h * 0.75)}' font-size='{Inv(fontSize)}' font-family='Arial, sans-serif' font-weight='bold' fill='#292927' text-anchor='middle'>{System.Net.WebUtility.HtmlEncode(tekst)}</text>");
     }
 
     private static string? SkalerStrekMonster(string monster, double diagonal)

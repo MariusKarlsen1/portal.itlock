@@ -88,6 +88,14 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
 
     const img = canvasEl.querySelector('img');
 
+    // Nettleserens egen «dra»-funksjon (dra et bilde eller markert tekst) skal
+    // aldri starte på tegningen. Den ga en sirkel med strek over og stoppet
+    // panoreringen til man slapp museknappen.
+    if (img) {
+        img.draggable = false;
+    }
+    wrapEl.addEventListener('dragstart', (e) => e.preventDefault());
+
     // Dørprikkene skal ikke vokse med zoomen - CSS-en ganger størrelsene med
     // --plan-zoom, så den holdes fast på 1.
     canvasEl.style.setProperty('--plan-zoom', 1);
@@ -262,6 +270,13 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
             return;
         }
 
+        // Hindrer at trykk + dra markerer tekst på tegningen (som igjen kunne
+        // starte nettleserens eget dra-forsøk neste gang man trykket).
+        if (e.pointerType === 'mouse') {
+            e.preventDefault();
+            window.getSelection()?.removeAllRanges();
+        }
+
         activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         try {
             wrapEl.setPointerCapture(e.pointerId);
@@ -419,7 +434,7 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
             moved = false;
             startX = e.clientX;
             startY = e.clientY;
-            markerEl.setPointerCapture(e.pointerId);
+            try { markerEl.setPointerCapture(e.pointerId); } catch { /* ukjent peker */ }
         });
 
         markerEl.addEventListener('pointermove', (e) => {
@@ -451,7 +466,7 @@ export function attachMarkers(containerEl, dotNetRef, locked) {
                 return;
             }
             dragging = false;
-            markerEl.releasePointerCapture(e.pointerId);
+            try { markerEl.releasePointerCapture(e.pointerId); } catch { /* allerede sluppet */ }
 
             if (moved && containerEl.dataset.locked !== '1') {
                 const x = parseFloat(markerEl.dataset.x);
@@ -512,7 +527,7 @@ export function attachUtstyrMarkers(containerEl, dotNetRef, locked) {
             moved = false;
             startX = e.clientX;
             startY = e.clientY;
-            markerEl.setPointerCapture(e.pointerId);
+            try { markerEl.setPointerCapture(e.pointerId); } catch { /* ukjent peker */ }
         });
 
         markerEl.addEventListener('pointermove', (e) => {
@@ -532,6 +547,8 @@ export function attachUtstyrMarkers(containerEl, dotNetRef, locked) {
             markerEl.style.top = p.y + '%';
             markerEl.dataset.x = p.x;
             markerEl.dataset.y = p.y;
+            // Kablene følger med mens man drar, ikke først når man slipper.
+            flyttKabelEnder(containerEl, utstyrId, p.x, p.y);
         });
 
         markerEl.addEventListener('pointerup', (e) => {
@@ -539,15 +556,249 @@ export function attachUtstyrMarkers(containerEl, dotNetRef, locked) {
                 return;
             }
             dragging = false;
-            markerEl.releasePointerCapture(e.pointerId);
+            try { markerEl.releasePointerCapture(e.pointerId); } catch { /* allerede sluppet */ }
 
-            if (moved) {
+            if (moved && containerEl.dataset.locked !== '1') {
                 const x = parseFloat(markerEl.dataset.x);
                 const y = parseFloat(markerEl.dataset.y);
                 dotNetRef.invokeMethodAsync('OnUtstyrMoved', utstyrId, x, y);
+            } else if (moved) {
+                // Låst: et lite dra er verken flytting eller klikk.
             } else {
                 dotNetRef.invokeMethodAsync('OnUtstyrClicked', utstyrId);
             }
         });
+    });
+}
+
+// ---------- Kabeltrekk: myke kurver, knekkpunkter og størrelse på utstyr ----------
+
+// Samme kurve som KabelSti.Kurve i C#: Catmull-Rom gjennom punktene, tegnet som
+// kubiske Bézier-kurver. Uten knekkpunkter er det en rett strek.
+function kabelKurve(p) {
+    if (p.length < 2) {
+        return '';
+    }
+    const f = v => Math.round(v * 1000) / 1000;
+    let d = 'M' + f(p[0].x) + ' ' + f(p[0].y);
+    if (p.length === 2) {
+        return d + ' L' + f(p[1].x) + ' ' + f(p[1].y);
+    }
+    for (let i = 0; i < p.length - 1; i++) {
+        const p0 = p[Math.max(0, i - 1)];
+        const p1 = p[i];
+        const p2 = p[i + 1];
+        const p3 = p[Math.min(p.length - 1, i + 2)];
+        const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+        const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+        d += ' C' + f(c1x) + ' ' + f(c1y) + ' ' + f(c2x) + ' ' + f(c2y) + ' ' + f(p2.x) + ' ' + f(p2.y);
+    }
+    return d;
+}
+
+function lesPunkter(pathEl) {
+    return (pathEl.dataset.pts || '').split(';').filter(Boolean).map(s => {
+        const xy = s.split(',').map(Number);
+        return { x: xy[0], y: xy[1] };
+    });
+}
+
+function skrivPunkter(pathEl, punkter) {
+    pathEl.dataset.pts = punkter.map(p => p.x + ',' + p.y).join(';');
+    pathEl.setAttribute('d', kabelKurve(punkter));
+}
+
+// Knekkpunktene (uten endepunktene) slik de lagres: "x,y;x,y".
+function knekkTekst(punkter) {
+    return punkter.slice(1, -1).map(p => (Math.round(p.x * 100) / 100) + ',' + (Math.round(p.y * 100) / 100)).join(';');
+}
+
+function kabelSti(containerEl, fid) {
+    return containerEl.querySelector('path[data-fid="' + fid + '"]');
+}
+
+// Kablene til et utstyr følger med mens det dras.
+function flyttKabelEnder(containerEl, utstyrId, x, y) {
+    const id = String(utstyrId);
+    containerEl.querySelectorAll('path[data-fra="' + id + '"], path[data-til="' + id + '"]').forEach(pathEl => {
+        const punkter = lesPunkter(pathEl);
+        if (punkter.length < 2) {
+            return;
+        }
+        if (pathEl.dataset.fra === id) {
+            punkter[0] = { x, y };
+        }
+        if (pathEl.dataset.til === id) {
+            punkter[punkter.length - 1] = { x, y };
+        }
+        skrivPunkter(pathEl, punkter);
+    });
+    // Håndtakene er utdaterte til siden tegnes på nytt etter slipp.
+    containerEl.querySelectorAll('.kabel-handtak').forEach(h => { h.style.visibility = 'hidden'; });
+}
+
+// Dra «+» midt på en del: lager et nytt knekkpunkt der. Dra et rundt punkt:
+// flytter det. Dobbeltklikk et rundt punkt: fjerner det.
+export function attachKabelHandtak(containerEl, dotNetRef) {
+    containerEl.querySelectorAll('.kabel-handtak').forEach(h => { h.style.visibility = ''; });
+
+    containerEl.querySelectorAll('.kabel-handtak[data-fid]').forEach(handtak => {
+        if (handtak.dataset.dragBound === '1') {
+            return;
+        }
+        handtak.dataset.dragBound = '1';
+
+        const fid = handtak.dataset.fid;
+        let dragging = false;
+        let moved = false;
+        let startX = 0;
+        let startY = 0;
+        let punkter = null;
+        let idx = -1;
+
+        handtak.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) {
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            const pathEl = kabelSti(containerEl, fid);
+            if (!pathEl) {
+                return;
+            }
+            punkter = lesPunkter(pathEl);
+            if (handtak.classList.contains('kabel-midt')) {
+                // Nytt punkt settes inn etter starten av delen det ligger på.
+                const seg = parseInt(handtak.dataset.seg, 10);
+                const a = punkter[seg];
+                const b = punkter[seg + 1];
+                idx = seg + 1;
+                punkter.splice(idx, 0, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+            } else {
+                idx = parseInt(handtak.dataset.idx, 10);
+            }
+            dragging = true;
+            moved = false;
+            startX = e.clientX;
+            startY = e.clientY;
+            try { handtak.setPointerCapture(e.pointerId); } catch { /* ukjent peker */ }
+        });
+
+        handtak.addEventListener('pointermove', (e) => {
+            if (!dragging) {
+                return;
+            }
+            if (!moved && Math.hypot(e.clientX - startX, e.clientY - startY) < 3) {
+                return;
+            }
+            moved = true;
+            const p = getClickPercent(containerEl, e.clientX, e.clientY);
+            punkter[idx] = { x: p.x, y: p.y };
+            handtak.style.left = p.x + '%';
+            handtak.style.top = p.y + '%';
+            const pathEl = kabelSti(containerEl, fid);
+            if (pathEl) {
+                skrivPunkter(pathEl, punkter);
+            }
+        });
+
+        handtak.addEventListener('pointerup', (e) => {
+            if (!dragging) {
+                return;
+            }
+            dragging = false;
+            try { handtak.releasePointerCapture(e.pointerId); } catch { /* allerede sluppet */ }
+            if (moved) {
+                dotNetRef.invokeMethodAsync('OnKabelEndret', parseInt(fid, 10), knekkTekst(punkter));
+            }
+        });
+
+        handtak.addEventListener('click', (e) => e.stopPropagation());
+
+        handtak.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!handtak.classList.contains('kabel-knekk')) {
+                return;
+            }
+            const pathEl = kabelSti(containerEl, fid);
+            if (!pathEl) {
+                return;
+            }
+            const alle = lesPunkter(pathEl);
+            alle.splice(parseInt(handtak.dataset.idx, 10), 1);
+            skrivPunkter(pathEl, alle);
+            dotNetRef.invokeMethodAsync('OnKabelEndret', parseInt(fid, 10), knekkTekst(alle));
+        });
+    });
+
+    // Størrelseshåndtaket i hjørnet av valgt utstyr.
+    containerEl.querySelectorAll('.utstyr-storrelse[data-utstyrid]').forEach(handtak => {
+        if (handtak.dataset.dragBound === '1') {
+            return;
+        }
+        handtak.dataset.dragBound = '1';
+
+        const utstyrId = parseInt(handtak.dataset.utstyrid, 10);
+        const markerEl = handtak.closest('.utstyr-marker');
+        const ikon = markerEl ? markerEl.querySelector('.utstyr-ikon') : null;
+        let dragging = false;
+        let startX = 0;
+        let startY = 0;
+        let startW = 0;
+        let startH = 0;
+        let baseW = 24;
+        let baseH = 24;
+        let bx = 1;
+        let by = 1;
+
+        handtak.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0 || !markerEl || !ikon) {
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            const r = ikon.getBoundingClientRect();
+            const stil = getComputedStyle(markerEl);
+            bx = parseFloat(stil.getPropertyValue('--u-bx')) || 1;
+            by = parseFloat(stil.getPropertyValue('--u-by')) || 1;
+            startW = r.width;
+            startH = r.height;
+            baseW = r.width / bx;
+            baseH = r.height / by;
+            startX = e.clientX;
+            startY = e.clientY;
+            dragging = true;
+            try { handtak.setPointerCapture(e.pointerId); } catch { /* ukjent peker */ }
+        });
+
+        handtak.addEventListener('pointermove', (e) => {
+            if (!dragging) {
+                return;
+            }
+            // Ikonet er sentrert i markøren, så det vokser like mye begge veier.
+            let w = startW + (e.clientX - startX) * 2;
+            let h = startH + (e.clientY - startY) * 2;
+            if (e.shiftKey) {
+                const f = Math.max(w / startW, h / startH);
+                w = startW * f;
+                h = startH * f;
+            }
+            bx = Math.min(5, Math.max(0.4, w / baseW));
+            by = Math.min(5, Math.max(0.4, h / baseH));
+            markerEl.style.setProperty('--u-bx', bx);
+            markerEl.style.setProperty('--u-by', by);
+        });
+
+        handtak.addEventListener('pointerup', (e) => {
+            if (!dragging) {
+                return;
+            }
+            dragging = false;
+            try { handtak.releasePointerCapture(e.pointerId); } catch { /* allerede sluppet */ }
+            dotNetRef.invokeMethodAsync('OnUtstyrResized', utstyrId, bx, by);
+        });
+
+        handtak.addEventListener('click', (e) => e.stopPropagation());
     });
 }

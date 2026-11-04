@@ -22,7 +22,10 @@ public enum PlanUtstyrType
     Node,
     Gateway,
     Hub,
-    Porttelefon
+    Porttelefon,
+    Switch,
+    Dorsentral,
+    DatapunktPoe
 }
 
 public static class PlanUtstyrTypeExtensions
@@ -50,6 +53,9 @@ public static class PlanUtstyrTypeExtensions
         PlanUtstyrType.Gateway => "Gateway",
         PlanUtstyrType.Hub => "Hub",
         PlanUtstyrType.Porttelefon => "Porttelefon",
+        PlanUtstyrType.Switch => "Switch",
+        PlanUtstyrType.Dorsentral => "Dørsentral",
+        PlanUtstyrType.DatapunktPoe => "Datapunkt PoE+",
         _ => type.ToString()
     };
 
@@ -76,6 +82,9 @@ public static class PlanUtstyrTypeExtensions
         PlanUtstyrType.Gateway => "GW",
         PlanUtstyrType.Hub => "HUB",
         PlanUtstyrType.Porttelefon => "PT",
+        PlanUtstyrType.Switch => "SW",
+        PlanUtstyrType.Dorsentral => "DS",
+        PlanUtstyrType.DatapunktPoe => "PoE",
         _ => "?"
     };
 
@@ -102,6 +111,9 @@ public static class PlanUtstyrTypeExtensions
         PlanUtstyrType.Gateway => "#78716c",
         PlanUtstyrType.Hub => "#166534",
         PlanUtstyrType.Porttelefon => "#334155",
+        PlanUtstyrType.Switch => "#0369a1",
+        PlanUtstyrType.Dorsentral => "#b45309",
+        PlanUtstyrType.DatapunktPoe => "#047857",
         _ => "#333333"
     };
 
@@ -267,6 +279,29 @@ public static class PlanUtstyrTypeExtensions
             "<line x1='9.5' y1='11.7' x2='14.5' y2='11.7' stroke='currentColor' stroke-width='1'/>" +
             "<line x1='9.5' y1='13.4' x2='14.5' y2='13.4' stroke='currentColor' stroke-width='1'/>" +
             "<circle cx='12' cy='17.8' r='1.7' fill='currentColor'/>",
+
+        // Switch: bred rackenhet med to rader porter og en statuslampe - bredere
+        // og med flere porter enn huben, så de ikke forveksles.
+        PlanUtstyrType.Switch =>
+            "<rect x='2' y='7' width='20' height='10' rx='1.5' fill='none' stroke='currentColor' stroke-width='1.6'/>" +
+            "<rect x='4.6' y='9.3' width='2.2' height='1.9' fill='currentColor'/><rect x='7.8' y='9.3' width='2.2' height='1.9' fill='currentColor'/>" +
+            "<rect x='11' y='9.3' width='2.2' height='1.9' fill='currentColor'/><rect x='14.2' y='9.3' width='2.2' height='1.9' fill='currentColor'/>" +
+            "<rect x='4.6' y='12.8' width='2.2' height='1.9' fill='currentColor'/><rect x='7.8' y='12.8' width='2.2' height='1.9' fill='currentColor'/>" +
+            "<rect x='11' y='12.8' width='2.2' height='1.9' fill='currentColor'/><rect x='14.2' y='12.8' width='2.2' height='1.9' fill='currentColor'/>" +
+            "<circle cx='19' cy='10.2' r='0.8' fill='currentColor'/>",
+
+        // Dørsentral: kapsling med en dør inni og to statuslamper.
+        PlanUtstyrType.Dorsentral =>
+            "<rect x='3.5' y='3.5' width='17' height='17' rx='2' fill='none' stroke='currentColor' stroke-width='1.6'/>" +
+            "<rect x='8' y='7.5' width='6.5' height='10' fill='none' stroke='currentColor' stroke-width='1.3'/>" +
+            "<circle cx='13' cy='12.8' r='0.7' fill='currentColor'/>" +
+            "<circle cx='17.4' cy='7' r='0.75' fill='currentColor'/><circle cx='17.4' cy='9.6' r='0.75' fill='currentColor'/>",
+
+        // Datapunkt PoE+: samme kontakt som datapunktet, med et lyn for strøm.
+        PlanUtstyrType.DatapunktPoe =>
+            "<path d='M7 4 H17 V13 L14 17 H10 L7 13 Z' fill='none' stroke='currentColor' stroke-width='1.6'/>" +
+            "<path d='M12.9 6.3 L9.9 11.2 H12.1 L10.9 15 L14.2 9.9 H12 Z' fill='currentColor'/>" +
+            "<text x='12' y='22.3' font-size='4.6' font-family='Arial, sans-serif' font-weight='bold' fill='currentColor' text-anchor='middle'>PoE+</text>",
 
         _ => ""
     };
