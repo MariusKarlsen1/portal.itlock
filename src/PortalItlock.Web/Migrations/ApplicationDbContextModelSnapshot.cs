@@ -167,6 +167,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Hentehylle")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Kontaktperson")
+                        .HasColumnType("TEXT");
+
                     b.Property<decimal?>("KostprisTime")
                         .HasColumnType("TEXT");
 

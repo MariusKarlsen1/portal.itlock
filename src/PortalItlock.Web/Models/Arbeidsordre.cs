@@ -37,6 +37,9 @@ public class Arbeidsordre
     public double? Latitude { get; set; }
     public double? Longitude { get; set; }
 
+    // Kontakt for jobben valgt på ordren. Tom: prosjektets kontaktperson. «-»: ingen.
+    public string? Kontaktperson { get; set; }
+
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     public string? UtfortArbeid { get; set; }
