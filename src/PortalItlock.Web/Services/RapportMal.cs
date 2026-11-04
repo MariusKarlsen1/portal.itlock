@@ -99,7 +99,7 @@ public static class RapportMal
 
     // Ren tekst som før, eller formatert tekst fra sluttrapporten (RikTekst):
     // stor tekst, overskrift, fet/kursiv/understrek og lister.
-    private static void Tekst(IContainer container, string tekst)
+    public static void Tekst(IContainer container, string tekst)
     {
         if (!RikTekst.ErFormatert(tekst))
         {

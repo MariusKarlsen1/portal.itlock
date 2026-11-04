@@ -2228,9 +2228,9 @@ app.MapGet("/kundedokument/{id:int}", async (int id, ApplicationDbContext db) =>
         : Results.File(dokument.Data, FilSikkerhet.TryggContentType(dokument.ContentType), dokument.Filnavn);
 }).RequireAuthorization();
 
-app.MapGet("/arbeidsordre/{id:int}/rapport/pdf", async (int id, HttpContext context, ArbeidsordrePdfService service) =>
+app.MapGet("/arbeidsordre/{id:int}/rapport/pdf", async (int id, string? sjekkliste, string? bilder, HttpContext context, ArbeidsordrePdfService service) =>
 {
-    var pdf = await service.GenerateAsync(id);
+    var pdf = await service.GenerateAsync(id, sjekkliste != "0", bilder != "0");
     if (pdf is null)
     {
         return Results.NotFound();
