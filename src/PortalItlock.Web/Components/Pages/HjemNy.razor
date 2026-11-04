@@ -267,10 +267,13 @@
 @if (_valgtKategori is not null && Kategorier.FirstOrDefault(k => k.Nokkel == _valgtKategori) is { } valgtKat)
 {
     var hub = _valgtHub;
-    var harHubber = hub is null && valgtKat.Grupper.SelectMany(g => g.Lenker).Any(l => l.Undermoduler is { Count: > 0 });
+    // Hver gruppe og hub blir én liste. Én liste vises med forklaringstekst, flere
+    // står i to kolonner uten tekst, så alle valgene får plass (M1).
+    var lister = ModalLister(valgtKat, hub);
+    var bred = lister.Count > 1;
 
     <div class="fh-modal-bakteppe" @onclick="LukkKategori">
-        <div class="fh-modal @(harHubber ? "fh-modal-bred" : "")" @onclick:stopPropagation="true">
+        <div class="fh-modal @(bred ? "fh-modal-bred" : "")" @onclick:stopPropagation="true">
             <div class="fh-modal-topp">
                 @if (hub is not null)
                 {
@@ -286,44 +289,35 @@
                 <button type="button" class="fh-modal-rund" @onclick="LukkKategori" aria-label="Lukk"><Icon Name="x" /></button>
             </div>
             <div class="fh-modal-innhold">
-                @if (hub is not null)
+                @if (!bred)
                 {
-                    <div class="fh-modal-lenker">
-                        @foreach (var l in hub.Undermoduler ?? [])
+                    <div class="fh-modal-liste">
+                        @foreach (var l in lister.SelectMany(x => x.Lenker))
                         {
-                            @ModalLenke(l, $"{l.Href}?fra=hjem&rolle={valgtKat.Nokkel}&hub={hub.Href}")
+                            @ModalLenke(l.Lenke, l.Href, true)
                         }
                     </div>
                 }
                 else
                 {
-                    @foreach (var gruppe in valgtKat.Grupper)
-                    {
-                        var vanlige = gruppe.Lenker.Where(l => l.Undermoduler is null or { Count: 0 }).ToList();
-                        var hubber = gruppe.Lenker.Where(l => l.Undermoduler is { Count: > 0 }).ToList();
-
-                        @if (vanlige.Count > 0)
+                    <div class="fh-modal-kolonner">
+                        @for (var kolonne = 0; kolonne < 2; kolonne++)
                         {
-                            <h3 class="fh-modal-gruppe">@gruppe.Navn</h3>
-                            <div class="fh-modal-lenker">
-                                @foreach (var l in vanlige)
+                            var nr = kolonne;
+                            <div class="fh-modal-kolonne">
+                                @foreach (var liste in lister.Where((_, i) => i % 2 == nr))
                                 {
-                                    @ModalLenke(l, $"{l.Href}?fra=hjem&rolle={valgtKat.Nokkel}")
+                                    <div class="fh-modal-liste">
+                                        <h3 class="fh-modal-gruppe">@liste.Navn</h3>
+                                        @foreach (var l in liste.Lenker)
+                                        {
+                                            @ModalLenke(l.Lenke, l.Href, false)
+                                        }
+                                    </div>
                                 }
                             </div>
                         }
-
-                        @foreach (var h in hubber)
-                        {
-                            <h3 class="fh-modal-gruppe"><Icon Name="@h.IconNavn" />@h.Tittel</h3>
-                            <div class="fh-modal-lenker">
-                                @foreach (var l in h.Undermoduler!)
-                                {
-                                    @ModalLenke(l, $"{l.Href}?fra=hjem&rolle={valgtKat.Nokkel}&hub={h.Href}")
-                                }
-                            </div>
-                        }
-                    }
+                    </div>
                 }
             </div>
         </div>
@@ -484,13 +478,42 @@
         .Distinct()
         .Sum(TellerFor);
 
-    private RenderFragment ModalLenke(Lenke l, string href) =>
-        @<a class="fh-modal-lenke" href="@href">
-            <span class="fh-ikb fh-ikb-teller"><Icon Name="@l.IconNavn" />@if (TellerFor(l.Href) is > 0 and var lenkeTeller)
-                {
-                    <i class="fh-teller">@lenkeTeller</i>
-                }</span>
-            <span class="fh-modul-tekst"><b>@l.Tittel</b><small>@l.Beskrivelse</small></span>
+    private sealed record ModalListe(string Navn, List<(Lenke Lenke, string Href)> Lenker);
+
+    private static List<ModalListe> ModalLister(Rolle kategori, Lenke? hub)
+    {
+        var rolle = kategori.Nokkel;
+        if (hub is not null)
+        {
+            return [new(hub.Tittel, (hub.Undermoduler ?? []).Select(l => (l, $"{l.Href}?fra=hjem&rolle={rolle}&hub={hub.Href}")).ToList())];
+        }
+
+        var lister = new List<ModalListe>();
+        foreach (var gruppe in kategori.Grupper)
+        {
+            var vanlige = gruppe.Lenker.Where(l => l.Undermoduler is null or { Count: 0 }).ToList();
+            if (vanlige.Count > 0)
+            {
+                lister.Add(new(gruppe.Navn, vanlige.Select(l => (l, $"{l.Href}?fra=hjem&rolle={rolle}")).ToList()));
+            }
+
+            foreach (var h in gruppe.Lenker.Where(l => l.Undermoduler is { Count: > 0 }))
+            {
+                lister.Add(new(h.Tittel, h.Undermoduler!.Select(l => (l, $"{l.Href}?fra=hjem&rolle={rolle}&hub={h.Href}")).ToList()));
+            }
+        }
+
+        return lister;
+    }
+
+    private RenderFragment ModalLenke(Lenke l, string href, bool medTekst) =>
+        @<a class="fh-modal-rad @(medTekst ? "" : "fh-modal-rad-kort")" href="@href">
+            <Icon Name="@l.IconNavn" />
+            <span class="fh-modal-rad-tekst"><b>@l.Tittel</b>@if (medTekst) {<small>@l.Beskrivelse</small>}</span>
+            @if (TellerFor(l.Href) is > 0 and var lenkeTeller)
+            {
+                <i class="fh-modal-teller">@lenkeTeller</i>
+            }
             <span class="fh-pil">›</span>
         </a>;
 
