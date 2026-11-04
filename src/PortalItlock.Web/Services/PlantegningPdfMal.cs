@@ -55,11 +55,15 @@ public static class PlantegningPdfMal
     public static void Tegning(IContainer container, string svg) =>
         container.PaddingTop(8).Border(0.6f).BorderColor(Ramme).Padding(4).AlignCenter().AlignMiddle().Svg(svg).FitArea();
 
-    public static void Bunn(IContainer container, RapportProfil org, string tittel, Plantegning plantegning, Action<ColumnDescriptor> forklaring)
+    // Uten forklaring (PD1/PU1): listene på side 2 forklarer tegningen.
+    public static void Bunn(IContainer container, RapportProfil org, string tittel, Plantegning plantegning, Action<ColumnDescriptor>? forklaring = null)
     {
         container.Column(col =>
         {
-            col.Item().PaddingTop(6).Column(forklaring);
+            if (forklaring is not null)
+            {
+                col.Item().PaddingTop(6).Column(forklaring);
+            }
             col.Item().PaddingTop(6).BorderTop(0.5f).BorderColor(Ramme).PaddingTop(5).Row(row =>
             {
                 row.RelativeItem().Text(org.Bunntekst).FontSize(7).FontColor(Svak);
@@ -74,6 +78,17 @@ public static class PlantegningPdfMal
             });
         });
     }
+
+    // Overskrift over en tabell på listesiden (side 2), som i listemalen.
+    public static void ListeOverskrift(ColumnDescriptor col, string tittel, string? undertekst) =>
+        col.Item().PaddingTop(10).PaddingBottom(4).Row(r =>
+        {
+            r.AutoItem().Text(tittel).FontSize(10).Bold();
+            if (!string.IsNullOrWhiteSpace(undertekst))
+            {
+                r.AutoItem().PaddingLeft(6).AlignBottom().Text(undertekst).FontSize(8).FontColor(Dempet);
+            }
+        });
 
     // En rad med forklaringer som brytes over flere linjer ved behov.
     public static void ForklaringRad(ColumnDescriptor col, IEnumerable<Action<IContainer>> elementer) =>

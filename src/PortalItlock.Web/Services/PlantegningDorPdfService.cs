@@ -44,8 +44,7 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
 
         var svg = BuildSvg(plantegning, dorer, bildeBredde, bildeHoyde);
 
-        // Mal D1: se PlantegningPdfMal. Forklaringen viser antall dører per status
-        // og hva funksjonsforkortelsene på tegningen betyr.
+        // Mal PD1: se PlantegningPdfMal.
         var org = RapportProfil.Fra(tenantContext.Current);
         const string tittel = "Dørplantegning";
         var funksjoner = dorer.SelectMany(d => d.Funksjoner)
@@ -56,31 +55,74 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
 
         var document = Document.Create(doc =>
         {
+            // PD1: side 1 er bare tegningen, side 2 er dørlisten (som forklarer
+            // status og funksjoner på tegningen).
             doc.Page(page =>
             {
                 PlantegningPdfMal.Side(page);
                 page.Header().Element(e => PlantegningPdfMal.Topp(e, org, pdfLogo, tittel, plantegning));
                 page.Content().Element(e => PlantegningPdfMal.Tegning(e, svg));
-                page.Footer().Element(e => PlantegningPdfMal.Bunn(e, org, tittel, plantegning, col =>
+                page.Footer().Element(e => PlantegningPdfMal.Bunn(e, org, tittel, plantegning));
+            });
+
+            if (dorer.Count == 0)
+            {
+                return;
+            }
+
+            doc.Page(page =>
+            {
+                PlantegningPdfMal.Side(page);
+                page.Header().Element(e => PlantegningPdfMal.Topp(e, org, pdfLogo, $"{tittel} – dørliste", plantegning));
+                page.Content().Column(col =>
                 {
-                    PlantegningPdfMal.ForklaringRad(col,
-                        new[] { MontasjeStatus.FerdigMontert, MontasjeStatus.Montert, MontasjeStatus.IkkeStartet }
-                            .Select(status => (Action<IContainer>)(c => c.Row(r =>
+                    PlantegningPdfMal.ListeOverskrift(col, "Dører på tegningen",
+                        $"{dorer.Count} dører · {dorer.Count(d => d.Status == MontasjeStatus.FerdigMontert)} ferdig montert");
+                    col.Item().Table(table =>
+                    {
+                        table.ColumnsDefinition(cd =>
+                        {
+                            cd.ConstantColumn(62);
+                            cd.ConstantColumn(58);
+                            cd.RelativeColumn(1.4f);
+                            cd.ConstantColumn(48);
+                            cd.RelativeColumn(1.6f);
+                            cd.ConstantColumn(105);
+                            cd.ConstantColumn(78);
+                        });
+                        table.Header(h =>
+                        {
+                            foreach (var kol in new[] { "Dørnr.", "Merke", "Dør til", "Brann", "Funksjoner", "Status", "Kontrollert" })
                             {
-                                r.AutoItem().AlignMiddle().Width(7).Height(7).CornerRadius(3.5f).Background(Color.FromHex(StatusFarge[status]));
-                                r.AutoItem().PaddingLeft(4).Text(t =>
-                                {
-                                    t.Span(status.Visningsnavn()).FontSize(7.5f);
-                                    t.Span($"  {dorer.Count(d => d.Status == status)}").FontSize(7.5f).Bold();
-                                });
-                            }))));
+                                h.Cell().Element(c => ListePdfStil.HodeTekst(c, kol));
+                            }
+                        });
+                        var i = 0;
+                        foreach (var d in dorer.OrderBy(d => d.Dornummer, StringComparer.OrdinalIgnoreCase))
+                        {
+                            var zebra = i++ % 2 == 1;
+                            table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(d.Dornummer).Bold();
+                            table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(d.Romnr ?? "");
+                            table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(d.DorTil ?? "");
+                            table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(string.IsNullOrWhiteSpace(d.Brann) ? "–" : d.Brann);
+                            table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(string.Join(" · ", d.Funksjoner
+                                .Where(f => !string.IsNullOrWhiteSpace(f.Forkortelse)).Select(f => f.Forkortelse)));
+                            table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Row(r =>
+                            {
+                                r.AutoItem().AlignMiddle().Width(7).Height(7).CornerRadius(3.5f).Background(Color.FromHex(StatusFarge[d.Status]));
+                                r.AutoItem().PaddingLeft(4).Text(d.Status.Visningsnavn()).FontSize(8);
+                            });
+                            table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).PaddingTop(10).LineHorizontal(0.6f).LineColor(PlantegningPdfMal.Svak);
+                        }
+                    });
 
                     if (funksjoner.Count > 0)
                     {
-                        col.Item().PaddingTop(3).Text($"Funksjoner: {string.Join(" · ", funksjoner.Select(f => $"{f.Forkortelse} {f.Navn.ToLowerInvariant()}"))}")
-                            .FontSize(7).FontColor(PlantegningPdfMal.Dempet);
+                        col.Item().PaddingTop(6).Text($"Funksjoner: {string.Join(" · ", funksjoner.Select(f => $"{f.Forkortelse} = {f.Navn.ToLowerInvariant()}"))}")
+                            .FontSize(7.5f).FontColor(PlantegningPdfMal.Dempet);
                     }
-                }));
+                });
+                page.Footer().Element(e => PlantegningPdfMal.Bunn(e, org, tittel, plantegning));
             });
         });
 
