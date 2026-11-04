@@ -32,14 +32,8 @@ else
             <span class="pf-topp-hoyre">
                 <span class="pf-chip pf-chip-bla">@(_p.Status?.Visningsnavn() ?? "Aktiv")</span>
                 <a class="pf-knapp" href="@($"/prosjekter/{_p.Id}")"><Icon Name="folder" />Åpne prosjektet</a>
-                <button type="button" class="pf-knapp pf-knapp-p" @onclick="ApneOverlevering">Sett som overlevert</button>
             </span>
         </div>
-
-        @if (_visOverlevering)
-        {
-            @OverleveringPanel()
-        }
 
         <nav class="pf-faner" role="tablist" aria-label="Prosjektøkonomi">
             @Fane("oversikt", "Oversikt", null, "")
@@ -86,9 +80,6 @@ else
     [Parameter] public DateTime Oppdatert { get; set; }
     [Parameter] public string? BrukerNavn { get; set; }
 
-    // Kalles når prosjektet er satt som overlevert, så siden rundt kan åpne etterkalkylen.
-    [Parameter] public EventCallback<int> Overlevert { get; set; }
-
     // Lenken tilbake til lista over pågående prosjekter.
     [Parameter] public EventCallback Tilbake { get; set; }
 
@@ -123,100 +114,6 @@ else
         _fane = fane;
         _melding = null;
     }
-
-    // ---------- Sett som overlevert ----------
-    private bool _visOverlevering;
-    private bool _overleverer;
-    private List<ProsjektOppfolgingService.SjekkPunkt> _sjekk = [];
-    private DateTime _overlevertDato = DateTime.Today;
-    private decimal? _varekost;
-
-    private Task ApneOverlevering() => Kjor(async () =>
-    {
-        _sjekk = await OppfolgingSvc.OverleveringSjekkAsync(ProsjektId);
-        _overlevertDato = DateTime.Today;
-        _varekost = _p?.FaktiskVarekost;
-        _visOverlevering = true;
-        _melding = null;
-    });
-
-    private Task LagreVarekost() => Kjor(async () =>
-    {
-        await OppfolgingSvc.SettFaktiskVarekostAsync(ProsjektId, _varekost);
-        _sjekk = await OppfolgingSvc.OverleveringSjekkAsync(ProsjektId);
-        await LastAsync();
-    });
-
-    private async Task SettOverlevert()
-    {
-        var ok = false;
-        await Kjor(async () =>
-        {
-            _overleverer = true;
-            try
-            {
-                await OppfolgingSvc.SettOverlevertAsync(ProsjektId, _overlevertDato);
-                _visOverlevering = false;
-                ok = true;
-            }
-            finally
-            {
-                _overleverer = false;
-            }
-        });
-
-        if (ok)
-        {
-            await Overlevert.InvokeAsync(ProsjektId);
-        }
-    }
-
-    private RenderFragment OverleveringPanel() => @<section class="pf-overlevering" aria-label="Sett som overlevert">
-        @{
-            var mangler = _sjekk.Count(s => !s.Ok);
-        }
-        <div class="pf-boks-topp">
-            <div><h3>Sett prosjektet som overlevert</h3><p class="pf-dempet">Prosjektet flyttes til Etterkalkyle, og prosjektleder og administratorene får e-post med hvordan det gikk. @(mangler > 0 ? $"{mangler} ting bør sjekkes først, men du kan overlevere likevel." : "Alt ser ut til å være på plass.")</p></div>
-        </div>
-        <div class="pf-sjekk">
-            @foreach (var s in _sjekk)
-            {
-                <div class="pf-sjekk-rad @(s.Ok ? "ok" : "gul")">
-                    <span class="pf-sjekk-ik">@(s.Ok ? "✓" : "!")</span>
-                    <span class="pf-sjekk-tekst">
-                        <b>@s.Tittel</b><small>@s.Tekst</small>
-                        @if (s.Handling == "varer")
-                        {
-                            <span class="pf-sjekk-felt">
-                                <input class="pf-inn pf-tal" inputmode="decimal" placeholder="Faktisk varekost" value="@(_varekost?.ToString("0", CultureInfo.InvariantCulture))" @onchange="@(e => _varekost = LesTall(e))" aria-label="Faktisk varekost" />
-                                <button type="button" class="pf-knapp" @onclick="LagreVarekost">Lagre</button>
-                            </span>
-                        }
-                    </span>
-                    @if (s.Handling == "faktura")
-                    {
-                        <button type="button" class="pf-knapp" @onclick="@(() => { _visOverlevering = false; _fane = "faktura"; })">Til fakturering</button>
-                    }
-                    else if (s.Handling == "tilbud")
-                    {
-                        <button type="button" class="pf-knapp" @onclick="@(() => GaTil("tilbud"))">Til tilbudene</button>
-                    }
-                    else if (s.Handling == "timer")
-                    {
-                        <a class="pf-knapp" href="/timegodkjenning">Godkjenn timer</a>
-                    }
-                </div>
-            }
-        </div>
-        <div class="pf-overlevering-bunn">
-            <label class="pf-felt">Overlevert dato
-                <input type="date" class="pf-inn" value="@DatoVerdi(_overlevertDato)" @onchange="@(e => _overlevertDato = LesDato(e) ?? DateTime.Today)" />
-            </label>
-            <span class="pf-vokser"></span>
-            <button type="button" class="pf-knapp" @onclick="@(() => _visOverlevering = false)">Avbryt</button>
-            <button type="button" class="pf-knapp pf-knapp-p" disabled="@_overleverer" @onclick="SettOverlevert">@(_overleverer ? "Overleverer …" : "Sett som overlevert")</button>
-        </div>
-    </section>;
 
     private ProsjektOppfolgingService.Oppfolging? _f;
     private Prosjekt? _p;
@@ -369,12 +266,12 @@ else
         if (o is { OverTimer: > 0 })
         {
             liste.Add(new("clock", "rod", $"Timene er {(o.FaktiskTimer - o.BudsjettTimer).ToString("0.#", Kultur)} t over tilbudet",
-                $"{o.FaktiskTimer.ToString("0.#", Kultur)} t brukt av {o.BudsjettTimer.ToString("0.#", Kultur)} t. Er noe av det ekstraarbeid, skal kunden betale for det.", "Lag endringsmelding", NyEndringsmelding));
+                $"{o.FaktiskTimer.ToString("0.#", Kultur)} t brukt av {o.BudsjettTimer.ToString("0.#", Kultur)} t. Er noe av det ekstraarbeid, skal kunden betale for det.", "Åpne prosjektet", () => Til($"/prosjekter/{ProsjektId}")));
         }
 
         if (o is { OverVarer: > 0 })
         {
-            liste.Add(new("box", "rod", $"Varene er {Kr(o.OverVarer)} over tilbudet", "Ekstra varer bør faktureres som endringsmelding.", "Lag endringsmelding", NyEndringsmelding));
+            liste.Add(new("box", "rod", $"Varene er {Kr(o.OverVarer)} over tilbudet", "Ekstra varer bør faktureres som endringsmelding.", "Åpne prosjektet", () => Til($"/prosjekter/{ProsjektId}")));
         }
 
         if (f.ForsinkedeAktiviteter > 0)
@@ -1035,27 +932,6 @@ else
     private Task EndreTilbud(int tilbudId, Action<Tilbud> endring) => Lagre(async () =>
         endring(await Db.Tilbud.FirstAsync(t => t.Id == tilbudId)));
 
-    private Task NyEndringsmelding() => Kjor(async () =>
-    {
-        var hoved = await Db.Tilbud.AsNoTracking()
-            .Where(t => t.ProsjektId == ProsjektId && t.Type == TilbudType.Tilbud)
-            .OrderByDescending(t => t.Status == EndringsmeldingStatus.Godkjent).ThenBy(t => t.Id)
-            .FirstOrDefaultAsync();
-        var tilbud = new Tilbud
-        {
-            ProsjektId = ProsjektId,
-            Tittel = "Endringsmelding/tillegg",
-            Type = TilbudType.Endringsmelding,
-            OpprinneligTilbudId = hoved?.Id,
-            ByggetrinnFilter = hoved?.ByggetrinnFilter,
-        };
-        Db.Tilbud.Add(tilbud);
-        await Db.SaveChangesAsync();
-        Db.TilbudHendelser.Add(new TilbudHendelse { TilbudId = tilbud.Id, Beskrivelse = "Tilbudet ble opprettet som endringsmelding/tillegg fra Prosjektøkonomi" });
-        await Db.SaveChangesAsync();
-        Nav.NavigateTo($"/tilbud/{tilbud.Id}");
-    });
-
     private static (string Tekst, string Klasse) EndringStatus(ProsjektOppfolgingService.Endring e) => e.Tilbud.Status switch
     {
         EndringsmeldingStatus.Godkjent => ("Godkjent", "gronn"),
@@ -1064,130 +940,135 @@ else
         _ => ("Utkast", "")
     };
 
-    // Samme oppsett som sammendraget nederst i tilbudet, summert for prosjektet.
+    // Samme tall som sammendraget nederst i tilbudet, summert for prosjektet.
     // Montering er arbeid pluss kjøring og tillegg, som i tilbudet.
-    private RenderFragment Sammendrag(ProsjektOkonomiService.Okonomi o) => @<div class="pf-sammendrag">
+    private RenderFragment Sammendrag(ProsjektOkonomiService.Okonomi o) => @<div class="pf-liste-ramme">
         @{
             var mKost = o.BudsjettTimekost + o.BudsjettAndre;
             var mSalg = o.SalgArbeid + o.SalgAndre;
             var kost = o.BudsjettVarer + mKost;
         }
-        <div class="pf-boks">
-            <h3>Varer</h3>
-            <div class="pf-sumboks">
-                <div><span>Varekost</span><b>@Kr(o.BudsjettVarer)</b></div>
-                <div><span>Utpris</span><b>@Kr(o.SalgVarer)</b></div>
-                <div><span>DG</span><b>@DG(o.SalgVarer > 0 ? (o.SalgVarer - o.BudsjettVarer) / o.SalgVarer : null)</b></div>
-                <div class="pf-sum"><span>DB</span><span>@Kr(o.SalgVarer - o.BudsjettVarer)</span></div>
-            </div>
-        </div>
-        <div class="pf-boks">
-            <h3>Montering · @o.BudsjettTimer.ToString("0.#", Kultur) t</h3>
-            <div class="pf-sumboks">
-                <div><span>Kost</span><b>@Kr(mKost)</b></div>
-                <div><span>Utpris</span><b>@Kr(mSalg)</b></div>
-                <div><span>DG</span><b>@DG(mSalg > 0 ? (mSalg - mKost) / mSalg : null)</b></div>
-                <div class="pf-sum"><span>DB</span><span>@Kr(mSalg - mKost)</span></div>
-            </div>
-        </div>
-        <div class="pf-boks">
-            <h3>Totalt</h3>
-            <div class="pf-sumboks">
-                <div><span>Kost</span><b>@Kr(kost)</b></div>
-                <div><span>Utpris eks. mva</span><b>@Kr(o.Inntekt)</b></div>
-                <div><span>DG</span><b>@DG(o.BudsjettDekningsgrad)</b></div>
-                <div class="pf-sum"><span>DB</span><span>@Kr(o.Inntekt - kost)</span></div>
-                <div><span>Inkl. mva</span><b>@Kr(o.Inntekt * 1.25m)</b></div>
-            </div>
-        </div>
+        <table class="pf-liste">
+            <thead><tr><th>Slik er tilbudet satt sammen</th><th class="n">Varer</th><th class="n">Montering · @o.BudsjettTimer.ToString("0.#", Kultur) t</th><th class="n">Totalt</th></tr></thead>
+            <tbody>
+                <tr><td>Kost</td><td class="n">@Kr(o.BudsjettVarer)</td><td class="n">@Kr(mKost)</td><td class="n">@Kr(kost)</td></tr>
+                <tr><td>Utpris eks. mva</td><td class="n">@Kr(o.SalgVarer)</td><td class="n">@Kr(mSalg)</td><td class="n">@Kr(o.Inntekt)</td></tr>
+                <tr><td>Utpris inkl. mva</td><td class="n pf-mut">–</td><td class="n pf-mut">–</td><td class="n">@Kr(o.Inntekt * 1.25m)</td></tr>
+                <tr><td>Dekningsgrad</td><td class="n">@DG(o.SalgVarer > 0 ? (o.SalgVarer - o.BudsjettVarer) / o.SalgVarer : null)</td><td class="n">@DG(mSalg > 0 ? (mSalg - mKost) / mSalg : null)</td><td class="n">@DG(o.BudsjettDekningsgrad)</td></tr>
+            </tbody>
+            <tfoot><tr><td>Fortjeneste</td><td class="n">@Kr(o.SalgVarer - o.BudsjettVarer)</td><td class="n">@Kr(mSalg - mKost)</td><td class="n">@Kr(o.Inntekt - kost)</td></tr></tfoot>
+        </table>
     </div>;
 
+    // Tilbud og endringsmeldinger lages inne på prosjektet og havner her.
     private RenderFragment EndringerFane() => @<div class="pf-fane">
         @{
             var f = _f!;
+            var o = f.O;
+            var tilbud = o?.Tilbud.Where(t => !t.ErEndring).ToList() ?? [];
+            var venter = f.Endringsmeldinger.Where(e => e.Tilbud.Status == EndringsmeldingStatus.SendtTilKunde).Sum(e => e.Belop);
         }
-        @if (f.O is { Tilbud.Count: > 0 } o)
+        @if (tilbud.Count == 0 && f.Endringsmeldinger.Count == 0)
         {
-            var visAndre = o.Tilbud.Any(t => t.SalgAndre != 0 || t.AndreKost != 0);
-            <section class="pf-boks">
-                <div class="pf-boks-topp"><h3>Godkjente tilbud og endringer</h3><span class="pf-dempet">Budsjettet er summen av disse, låst da de ble godkjent. Det som venter på kunden eller er avslått, er ikke med.</span></div>
-                <div class="pf-tabellramme">
-                    <table class="pf-tabell pf-kort pf-kort-grunnlag">
-                        <thead><tr><th>Tilbud</th><th class="n">Varer</th><th class="n">Arbeid</th>@if (visAndre) {<th class="n">Kjøring og tillegg</th>}<th class="n">Kunden betaler</th><th class="n">Fortjeneste</th></tr></thead>
-                        <tbody>
-                            @foreach (var t in o.Tilbud)
-                            {
-                                <tr>
-                                    <td><a href="@($"/tilbud/{t.Id}")"><b>@t.Tittel</b></a><small>@(t.ErEndring ? "Endringsmelding" : "Tilbud") · låst @t.Laast.ToString("dd.MM.yyyy")</small></td>
-                                    <td class="n" data-label="Varer">@KrKort(t.SalgVarer)<small>kost @KrKort(t.Varekost)</small></td>
-                                    <td class="n" data-label="Arbeid">@KrKort(t.SalgArbeid)<small>@t.Timer.ToString("0.#", Kultur) t · kost @KrKort(t.Timekost)</small></td>
-                                    @if (visAndre)
-                                    {
-                                        <td class="n" data-label="Kjøring og tillegg">@KrKort(t.SalgAndre)<small>kost @KrKort(t.AndreKost)</small></td>
-                                    }
-                                    <td class="n" data-label="Kunden betaler"><b>@KrKort(t.Salgssum)</b></td>
-                                    <td class="n @(t.Salgssum - t.Kost < 0 ? "pf-rod" : "")" data-label="Fortjeneste">@KrKort(t.Salgssum - t.Kost)<small>DG @DG(t.Salgssum > 0 ? (t.Salgssum - t.Kost) / t.Salgssum : null)</small></td>
-                                </tr>
-                            }
-                            <tr class="pf-sumrad">
-                                <td>Prosjektets budsjett</td>
-                                <td class="n" data-label="Varer">@KrKort(o.SalgVarer)</td>
-                                <td class="n" data-label="Arbeid">@KrKort(o.SalgArbeid)</td>
-                                @if (visAndre)
-                                {
-                                    <td class="n" data-label="Kjøring og tillegg">@KrKort(o.SalgAndre)</td>
-                                }
-                                <td class="n" data-label="Kunden betaler">@KrKort(o.Inntekt)</td>
-                                <td class="n" data-label="Fortjeneste">@KrKort(o.TilbudtFortjeneste)</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-            @Sammendrag(o)
-        }
-        <div class="pf-fane-topp">
-            <div>
-                <h3>Endringsmeldinger</h3>
-                <p class="pf-dempet">Godkjente endringer legges til prosjektsummen. Fristforlengelse flytter overleveringsfristen i fremdriftsplanen.</p>
-            </div>
-            <button type="button" class="pf-knapp pf-knapp-p" @onclick="NyEndringsmelding">+ Ny endringsmelding</button>
-        </div>
-        @if (f.Endringsmeldinger.Count == 0)
-        {
-            <div class="pf-tomboks"><b>Ingen endringsmeldinger</b><p>Tillegg og endringer underveis lages som endringsmeldinger, og havner her med beløp og status.</p></div>
+            <div class="pf-tomboks"><b>Ingen tilbud ennå</b><p>Tilbud og endringsmeldinger lages inne på prosjektet, og havner her med beløp og status.</p></div>
         }
         else
         {
-            <div class="pf-tabellramme">
-                <table class="pf-tabell pf-kort pf-kort-endringer">
-                    <thead><tr><th>Nr</th><th>Beskrivelse</th><th>Sendt</th><th>Status</th><th class="n">Beløp eks. mva</th><th class="n">Frist + dager</th><th>Berørte fag</th></tr></thead>
+            <p class="pf-svarlinje"><b>@Kr(o?.Inntekt ?? 0)</b> er godkjent på prosjektet.@(venter != 0 ? " " : "")@if (venter != 0) {<b class="pf-gul">@Kr(venter)</b>@(" venter på svar.")}</p>
+            <div class="pf-liste-ramme">
+                <table class="pf-liste">
+                    <thead><tr><th>Tilbud og endringer</th><th>Status</th><th class="n">Kunden betaler</th><th class="n">Fortjeneste</th></tr></thead>
                     <tbody>
+                        @foreach (var t in tilbud)
+                        {
+                            <tr>
+                                <td><a class="pf-rad-lenke" href="@($"/tilbud/{t.Id}")">@t.Tittel</a><small>Tilbud · låst @t.Laast.ToString("dd.MM.yyyy")</small></td>
+                                <td><span class="pf-chip pf-chip-gronn">Godkjent</span></td>
+                                <td class="n">@Kr(t.Salgssum)</td>
+                                <td class="n @(t.Salgssum - t.Kost < 0 ? "pf-rod" : "")">@Kr(t.Salgssum - t.Kost)<small>DG @DG(t.Salgssum > 0 ? (t.Salgssum - t.Kost) / t.Salgssum : null)</small></td>
+                            </tr>
+                        }
                         @foreach (var e in f.Endringsmeldinger)
                         {
                             var t = e.Tilbud;
                             var (tekst, klasse) = EndringStatus(e);
+                            var godkjent = o?.Tilbud.FirstOrDefault(x => x.Id == t.Id);
                             <tr>
-                                <td><b>E@(e.Nr)</b></td>
-                                <td><a href="@($"/tilbud/{t.Id}")">@t.Tittel</a></td>
-                                <td>@(t.SendtDato is { } s ? Dato(s) : "–")</td>
+                                <td><a class="pf-rad-lenke" href="@($"/tilbud/{t.Id}")">E@(e.Nr) @t.Tittel</a><small>Endringsmelding@(t.SendtDato is { } s ? $" · sendt {Dato(s)}" : "")@(string.IsNullOrWhiteSpace(t.BerorteFag) ? "" : $" · {t.BerorteFag}")@(t.FristforlengelseDager is > 0 ? $" · frist + {t.FristforlengelseDager} dager" : "")</small></td>
                                 <td><span class="pf-chip @(klasse.Length > 0 ? "pf-chip-" + klasse : "")">@tekst</span></td>
-                                <td class="n">@KrKort(e.Belop)</td>
-                                <td class="n"><input class="pf-inn pf-tal pf-smal" inputmode="numeric" value="@t.FristforlengelseDager" placeholder="0" @onchange="@(ev => EndreTilbud(t.Id, x => x.FristforlengelseDager = LesTall(ev) is { } d && d > 0 ? (int)d : null))" aria-label="Fristforlengelse i dager" /></td>
-                                <td><input class="pf-inn" value="@t.BerorteFag" placeholder="F.eks. elektro" @onchange="@(ev => EndreTilbud(t.Id, x => x.BerorteFag = LesTekst(ev)))" aria-label="Berørte fag" /></td>
+                                <td class="n">@Kr(e.Belop)</td>
+                                @if (godkjent is not null)
+                                {
+                                    <td class="n @(godkjent.Salgssum - godkjent.Kost < 0 ? "pf-rod" : "")">@Kr(godkjent.Salgssum - godkjent.Kost)<small>DG @DG(godkjent.Salgssum > 0 ? (godkjent.Salgssum - godkjent.Kost) / godkjent.Salgssum : null)</small></td>
+                                }
+                                else
+                                {
+                                    <td class="n pf-mut">–</td>
+                                }
                             </tr>
                         }
-                        <tr class="pf-sumrad">
-                            <td></td>
-                            <td>Sum godkjente</td>
-                            <td></td>
-                            <td></td>
-                            <td class="n">@KrKort(f.Endringsmeldinger.Where(e => e.Tilbud.Status == EndringsmeldingStatus.Godkjent).Sum(e => e.Belop))</td>
-                            <td class="n">@(f.Fristforlengelse > 0 ? $"{f.Fristforlengelse} d" : "–")</td>
-                            <td></td>
-                        </tr>
                     </tbody>
+                    <tfoot><tr><td>Godkjent</td><td></td><td class="n">@Kr(o?.Inntekt ?? 0)</td><td class="n">@Kr(o?.TilbudtFortjeneste ?? 0)</td></tr></tfoot>
                 </table>
+            </div>
+
+            <div class="pf-foldrute">
+                @if (o is { Tilbud.Count: > 0 })
+                {
+                    var visAndre = o.Tilbud.Any(t => t.SalgAndre != 0 || t.AndreKost != 0);
+                    <details class="pf-info">
+                        <summary><Icon Name="list" />Slik er tilbudet satt sammen · fortjeneste @Kr(o.TilbudtFortjeneste)</summary>
+                        <div class="pf-fold-inni">
+                            @Sammendrag(o)
+                            <div class="pf-liste-ramme">
+                                <table class="pf-liste">
+                                    <thead><tr><th>Per tilbud</th><th class="n">Varer</th><th class="n">Arbeid</th>@if (visAndre) {<th class="n">Kjøring og tillegg</th>}<th class="n">Kunden betaler</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var t in o.Tilbud)
+                                        {
+                                            <tr>
+                                                <td>@t.Tittel</td>
+                                                <td class="n">@Kr(t.SalgVarer)<small>kost @Kr(t.Varekost)</small></td>
+                                                <td class="n">@Kr(t.SalgArbeid)<small>@t.Timer.ToString("0.#", Kultur) t · kost @Kr(t.Timekost)</small></td>
+                                                @if (visAndre)
+                                                {
+                                                    <td class="n">@Kr(t.SalgAndre)<small>kost @Kr(t.AndreKost)</small></td>
+                                                }
+                                                <td class="n">@Kr(t.Salgssum)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </details>
+                }
+                @if (f.Endringsmeldinger.Count > 0)
+                {
+                    <details class="pf-info">
+                        <summary><Icon Name="calendar" />Frist og berørte fag · @f.Endringsmeldinger.Count @(f.Endringsmeldinger.Count == 1 ? "endringsmelding" : "endringsmeldinger")</summary>
+                        <div class="pf-fold-inni">
+                            <p class="pf-dempet">Fristforlengelse flytter overleveringsfristen i fremdriftsplanen.</p>
+                            <div class="pf-liste-ramme">
+                                <table class="pf-liste">
+                                    <thead><tr><th>Endringsmelding</th><th class="n">Frist + dager</th><th>Berørte fag</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var e in f.Endringsmeldinger)
+                                        {
+                                            var t = e.Tilbud;
+                                            <tr>
+                                                <td><b>E@(e.Nr)</b> @t.Tittel</td>
+                                                <td class="n"><input class="pf-inn pf-tal pf-smal" inputmode="numeric" value="@t.FristforlengelseDager" placeholder="0" @onchange="@(ev => EndreTilbud(t.Id, x => x.FristforlengelseDager = LesTall(ev) is { } d && d > 0 ? (int)d : null))" aria-label="Fristforlengelse i dager" /></td>
+                                                <td><input class="pf-inn" value="@t.BerorteFag" placeholder="F.eks. elektro" @onchange="@(ev => EndreTilbud(t.Id, x => x.BerorteFag = LesTekst(ev)))" aria-label="Berørte fag" /></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                    <tfoot><tr><td>Sum godkjent</td><td class="n">@(f.Fristforlengelse > 0 ? $"{f.Fristforlengelse} dager" : "–")</td><td></td></tr></tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    </details>
+                }
             </div>
         }
     </div>;

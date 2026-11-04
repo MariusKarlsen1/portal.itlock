@@ -431,65 +431,6 @@ public class ProsjektOppfolgingService(ApplicationDbContext db, ProsjektOkonomiS
     // ======================================================================
     // Overlevering og etterkalkyle
 
-    public sealed record SjekkPunkt(bool Ok, string Tittel, string Tekst, string? Handling = null);
-
-    // Det som bør være på plass før prosjektet settes som overlevert. Ingen av
-    // punktene stopper overleveringen; de vises som en påminnelse.
-    public async Task<List<SjekkPunkt>> OverleveringSjekkAsync(int prosjektId)
-    {
-        var f = await HentAsync(prosjektId);
-        var p = await db.Prosjekter.AsNoTracking().FirstAsync(x => x.Id == prosjektId);
-        var dorer = await db.Dorer.AsNoTracking().Where(d => d.ProsjektId == prosjektId)
-            .GroupBy(d => 1).Select(g => new { Alle = g.Count(), Ferdig = g.Count(d => d.Status == MontasjeStatus.FerdigMontert) }).FirstOrDefaultAsync();
-        var liste = new List<SjekkPunkt>();
-
-        if (dorer is { Alle: > 0 })
-        {
-            liste.Add(new(dorer.Ferdig == dorer.Alle, dorer.Ferdig == dorer.Alle ? "Alle dører er ferdig montert" : "Ikke alle dører er ferdig montert",
-                $"{dorer.Ferdig} av {dorer.Alle} dører"));
-        }
-
-        if (f.O is null)
-        {
-            liste.Add(new(false, "Prosjektet har ikke noe godkjent tilbud",
-                "Etterkalkylen får ingen kalkyle å sammenligne med. Finnes det et tilbud, sett det til Godkjent først.", "tilbud"));
-        }
-
-        if (f.O is { } o)
-        {
-            liste.Add(o.FaktiskTimerVenter > 0
-                ? new(false, "Noen timer venter på godkjenning", $"{o.FaktiskTimerVenter.ToString("0.#", ProsjektplanTekst.Kultur)} t venter. De er tatt med i tallene.", "timer")
-                : new(true, "Alle timer er godkjent", $"{o.FaktiskTimer.ToString("0.#", ProsjektplanTekst.Kultur)} t på prosjektet"));
-            liste.Add(o.VarerFraLager || o.VarerManuell
-                ? new(true, "Varekost er registrert", o.VarerFraLager ? "Faktisk forbruk fra lageret" : $"Lagt inn: {Kr(o.FaktiskVarer)}")
-                : new(false, "Varer er anslått, ikke registrert", "Legg inn faktisk varekost, for eksempel fra Tripletex, så blir etterkalkylen riktig.", "varer"));
-        }
-
-        if (f.Prosjektsum > 0)
-        {
-            liste.Add(f.Gjenstar <= 1
-                ? new(true, "Prosjektsummen er fakturert", $"{Kr(f.Fakturert)} av {Kr(f.Prosjektsum)}")
-                : new(false, "Ikke alt er fakturert", $"{Kr(f.Gjenstar)} gjenstår av prosjektsummen {Kr(f.Prosjektsum)}", "faktura"));
-        }
-
-        if (p.BankgarantiBelop is > 0)
-        {
-            liste.Add(new(true, "Husk å nedskrive bankgarantien", "Vanlig er 3 % av kontraktsummen i reklamasjonstiden."));
-        }
-
-        return liste;
-    }
-
-    // Prosjektet flyttes til Etterkalkyle. E-posten til prosjektleder og
-    // administratorene sendes fra ApplicationDbContext når statusen lagres.
-    public async Task SettOverlevertAsync(int prosjektId, DateTime dato)
-    {
-        var p = await db.Prosjekter.FirstAsync(x => x.Id == prosjektId);
-        p.Status = ProsjektStatus.Overlevert;
-        p.OverlevertDato = dato.Date;
-        await db.SaveChangesAsync();
-    }
-
     public async Task SettFaktiskVarekostAsync(int prosjektId, decimal? belop)
     {
         var p = await db.Prosjekter.FirstAsync(x => x.Id == prosjektId);
