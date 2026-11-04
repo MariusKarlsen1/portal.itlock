@@ -380,6 +380,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("Antall")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("AntallPlukket")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("ArbeidsordreId")
                         .HasColumnType("INTEGER");
 
@@ -7606,6 +7609,9 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Antall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AntallPlukket")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Beskrivelse")

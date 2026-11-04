@@ -27,6 +27,8 @@ public class TilbudLinje
     public string? Beskrivelse { get; set; }
 
     public bool Plukket { get; set; }
+    // Delvis plukket (når Plukket er false). Er hele antallet plukket, er Plukket true.
+    public int AntallPlukket { get; set; }
     public DateTime? PlukketDato { get; set; }
     public int? PlukketAvBrukerId { get; set; }
     public Bruker? PlukketAvBruker { get; set; }
