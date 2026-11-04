@@ -241,12 +241,10 @@ public static class PortalModulRegister
             "Befaring, verktøy og oversikt",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Min dag", "Dagens jobber", "min-dag", "calendar"),
                     new Lenke("Befaringsliste", "Notater fra befaring", "befaringsliste", "eye"),
                     new Lenke("Utskiftning av lås", "Sjekkliste for utskiftning", "lasutskifting", "tool"),
                     new Lenke("Utskiftning av låskasse", "Søk opp gammel lås, se hva du trenger.", "lasekasse-utskiftning", "tool"),
                     new Lenke("ABC-kalkulator", "Finn riktige skilt og skruelengder", "abc-kalkulator", "tool"),
-                    new Lenke("Min bil", "Varer i bilen, bruk og retur", "min-bil", "map-pin", null, ModulTilgang.Alle, KreverModul: TilleggsModuler.Lager),
                 ]),
             ]),
 
