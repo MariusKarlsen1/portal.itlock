@@ -1908,11 +1908,17 @@ app.MapGet("/befaring/{id:int}/pdf", async (int id, HttpContext context, Befarin
     return Results.File(pdf, "application/pdf");
 }).RequireAuthorization();
 
-app.MapGet("/befaringpdf/{id:int}", async (int id, ApplicationDbContext db) =>
+app.MapGet("/befaringpdf/{id:int}", async (int id, bool? visning, ApplicationDbContext db) =>
 {
     var pdf = await db.BefaringPdfer.FindAsync(id);
-    return pdf is null
-        ? Results.NotFound()
+    if (pdf is null)
+    {
+        return Results.NotFound();
+    }
+
+    // Uten filnavn åpnes PDF-en i nettleseren i stedet for å lastes ned.
+    return visning == true
+        ? Results.File(pdf.Data, "application/pdf")
         : Results.File(pdf.Data, "application/pdf", pdf.Navn);
 }).RequireAuthorization();
 
