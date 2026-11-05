@@ -1104,12 +1104,21 @@ app.MapGet("/befaringvedlegg/{id:int}", async (int id, ApplicationDbContext db) 
     return vedlegg is null ? Results.NotFound() : Results.File(vedlegg.Data, FilSikkerhet.TryggContentType(vedlegg.ContentType));
 }).RequireAuthorization();
 
-app.MapGet("/systemvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
+app.MapGet("/systemvedlegg/{id:int}", async (int id, bool? visning, ApplicationDbContext db) =>
 {
     var vedlegg = await db.SystemVedlegg.FindAsync(id);
-    return vedlegg is null
-        ? Results.NotFound()
-        : Results.File(vedlegg.Data, FilSikkerhet.TryggContentType(vedlegg.ContentType), vedlegg.Filnavn);
+    if (vedlegg is null)
+    {
+        return Results.NotFound();
+    }
+
+    // Uten filnavn vises filen i nettleseren. Det gjelder bare PDF og bilder.
+    var type = FilSikkerhet.TryggContentType(vedlegg.ContentType);
+    var kanVises = type.Equals("application/pdf", StringComparison.OrdinalIgnoreCase)
+        || (type.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !type.Contains("svg", StringComparison.OrdinalIgnoreCase));
+    return visning == true && kanVises
+        ? Results.File(vedlegg.Data, type)
+        : Results.File(vedlegg.Data, type, vedlegg.Filnavn);
 }).RequireAuthorization();
 
 app.MapGet("/nokkelsystem/{id:int}/bilde", async (int id, ApplicationDbContext db) =>

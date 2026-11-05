@@ -67,9 +67,9 @@ else
             @if (Id.HasValue)
             {
                 <div class="k-handl">
-                    @if (Lasplan is { } lp)
+                    @if (Lasplan is { } toppPlan)
                     {
-                        <a class="k-knapp" href="@($"/systemvedlegg/{lp.Id}")" target="_blank"><Icon Name="file-text" />Låsplan</a>
+                        <button type="button" class="k-knapp" @onclick="@(() => AapneLasplan(toppPlan))"><Icon Name="file-text" />Låsplan</button>
                     }
                     <button type="button" class="k-knapp @(_fane == "info" ? "k-knapp-pa" : "")" @onclick='@(() => VelgFane("info"))'><Icon Name="edit" />Rediger</button>
                     <button type="button" class="k-knapp k-knapp-p" @onclick="NyUtlevering"><Icon Name="plus" />Ny utlevering</button>
@@ -184,7 +184,6 @@ else
     private int? _redigerKvitteringId;
     private string _kvFilter = "alle";
     private string _kvSok = "";
-    private string _vedleggFilter = "";
 
     private string? TypeOgFabrikat => string.Join(" · ", new[] { _form.Type, _form.Fabrikat }.Where(s => !string.IsNullOrWhiteSpace(s)));
     private int AntallUsignert => _kvitteringer.Count(k => k.Id > 0 && k.Signatur is null);
@@ -216,23 +215,97 @@ else
         };
     }
 
-    private static (string Emoji, string Bakgrunn) HendelseIkon(string beskrivelse) => beskrivelse switch
+    // Hendelsene er lagret som "Hva: detalj". Delt i to her, som Historikk på tilbud.
+    private static (string Ikon, string Farge, string Tittel, string Detalj) HendelseVisning(string beskrivelse)
     {
-        var b when b.Contains("Vedlegg", StringComparison.OrdinalIgnoreCase) => ("📎", "var(--k-bla-l)"),
-        var b when b.Contains("Rekvirent", StringComparison.OrdinalIgnoreCase) => ("👤", "var(--k-lilla-l)"),
-        var b when b.Contains("nøkkel", StringComparison.OrdinalIgnoreCase) => ("🔑", "var(--k-gul-l)"),
-        var b when b.Contains("sign", StringComparison.OrdinalIgnoreCase) => ("✍️", "var(--k-ok-l)"),
-        var b when b.Contains("Notat", StringComparison.OrdinalIgnoreCase) => ("📝", "var(--k-gra-l)"),
-        _ => ("•", "var(--k-gra-l)")
+        var skille = beskrivelse.IndexOf(':');
+        var start = skille < 0 ? beskrivelse : beskrivelse[..skille];
+        var detalj = skille < 0 ? "" : beskrivelse[(skille + 1)..].Trim();
+        return start switch
+        {
+            "Ny nøkkel registrert" => ("lock", "blaa", "Nøkkel utlevert", detalj),
+            "Rekvirent lagt til" => ("users", "teal", start, detalj),
+            "Vedlegg lastet opp" => ("file-text", "gronn", start, detalj),
+            "Låsplan byttet" => ("file-text", "gronn", start, detalj),
+            "Notat oppdatert" => ("edit", "noytral", start, detalj),
+            _ => ("clock", "noytral", start, detalj)
+        };
+    }
+
+    private List<SystemVedlegg> AndreVedlegg => _vedlegg
+        .Where(v => !ReferenceEquals(v, Lasplan))
+        .OrderByDescending(v => v.OpprettetDato)
+        .ToList();
+
+    private static bool KanForhandsvises(SystemVedlegg v) =>
+        v.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase)
+        || (v.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !v.ContentType.Contains("svg", StringComparison.OrdinalIgnoreCase));
+
+    private static string FilMerke(SystemVedlegg v) => v.ContentType.ToLowerInvariant() switch
+    {
+        "application/pdf" => "PDF",
+        var t when t.StartsWith("image/") => "BILDE",
+        var t when t.Contains("spreadsheet") || t.Contains("excel") => "XLS",
+        var t when t.Contains("wordprocessing") || t.Contains("msword") => "DOC",
+        _ => "FIL"
     };
 
-    private static (string Emoji, string Bakgrunn) VedleggIkon(string? type) => type switch
+    private static string FilFarge(SystemVedlegg v) => FilMerke(v) switch
     {
-        "Låsplan" => ("📐", "var(--k-bla-l)"),
-        "Sikkerhetsskjema" => ("🛡️", "var(--k-ok-l)"),
-        "Bestillingsskjema" => ("🧾", "var(--k-gul-l)"),
-        _ => ("📄", "var(--k-gra-l)")
+        "PDF" => "ky-rod",
+        "XLS" => "ky-gronnfil",
+        "DOC" => "ky-blafil",
+        _ => "ky-grafil"
     };
+
+    private static string Storrelse(SystemVedlegg v) => v.Data.Length >= 1_000_000
+        ? $"{v.Data.Length / 1_000_000d:0.0} MB"
+        : $"{Math.Max(1, v.Data.Length / 1000)} KB";
+
+    private bool _visAlleHendelser;
+    private int? _fjernVedleggId;
+    private bool _lastOppApen;
+    private bool _byttLasplan;
+    private string? _vedleggVisUrl;
+    private string _vedleggVisNavn = "";
+
+    private void VisVedlegg(SystemVedlegg v)
+    {
+        _fane = "vedlegg";
+        _vedleggVisNavn = v.Filnavn;
+        _vedleggVisUrl = $"/systemvedlegg/{v.Id}?visning=true";
+    }
+
+    private void LastOppVedlegg(string type)
+    {
+        _fane = "vedlegg";
+        _valgtVedleggType = type;
+        _byttLasplan = false;
+        _vedleggFeil = null;
+        _lastOppApen = true;
+    }
+
+    private void ByttLasplan()
+    {
+        LastOppVedlegg("Låsplan");
+        _byttLasplan = true;
+    }
+
+    private void AapneLasplan(SystemVedlegg plan)
+    {
+        _fane = "vedlegg";
+        if (KanForhandsvises(plan))
+        {
+            VisVedlegg(plan);
+        }
+    }
+
+    private void LukkLastOpp()
+    {
+        _lastOppApen = false;
+        _byttLasplan = false;
+        _vedleggFeil = null;
+    }
 
     private static readonly System.Globalization.CultureInfo Kultur = new("nb-NO");
 
@@ -630,11 +703,11 @@ else
                                 <span><b>Låsplan</b><small>@(Lasplan is null ? "Ikke lastet opp" : Lasplan.Filnavn)</small></span>
                                 @if (Lasplan is { } plan)
                                 {
-                                    <a class="k-knapp k-knapp-s" href="@($"/systemvedlegg/{plan.Id}")" target="_blank" rel="noopener">Åpne</a>
+                                    <button type="button" class="k-knapp k-knapp-s" @onclick="@(() => AapneLasplan(plan))">Åpne</button>
                                 }
                                 else
                                 {
-                                    <button type="button" class="k-knapp k-knapp-s" @onclick='@(() => VelgFane("vedlegg"))'>Last opp</button>
+                                    <button type="button" class="k-knapp k-knapp-s" @onclick='@(() => LastOppVedlegg("Låsplan"))'>Last opp</button>
                                 }
                             </div>
                             <div class="ky-rad">
@@ -941,87 +1014,205 @@ else
             }
         </div>;
 
+    // L1: låsplanen stort øverst som Siste versjon på tilbud, og andre vedlegg i
+    // listen under. PDF og bilder åpnes i forhåndsvisning.
     private RenderFragment Vedlegg() =>
-        @<div class="k-fp">
+        @<div class="ky-flate">
             @if (!Id.HasValue)
             {
                 <span class="k-smule">Lagre systemet først for å kunne legge til vedlegg.</span>
             }
             else
             {
-                <div class="k-slipp">
-                    <span>📎 Last opp sikkerhetsskjema, bestillingsskjema, låsplan og annen dokumentasjon</span>
-                    <div class="k-rad">
-                        <select class="k-inp k-auto-bredde" @bind="_valgtVedleggType">
-                            <option value="">Velg type</option>
-                            <option value="Sikkerhetsskjema">Sikkerhetsskjema</option>
-                            <option value="Bestillingsskjema">Bestillingsskjema</option>
-                            <option value="Låsplan">Låsplan</option>
-                            <option value="Annet">Annet</option>
-                        </select>
-                        <label class="k-knapp k-knapp-p">
-                            <Icon Name="upload" />Velg filer
-                            <InputFile OnChange="OnVedleggSelected" multiple style="display:none;" />
-                        </label>
-                    </div>
-                    @if (_uploadingVedlegg)
+                <section class="ky-kort">
+                    <div class="ky-hode">Låsplan</div>
+                    @if (Lasplan is { } lp)
                     {
-                        <span class="k-smule">Laster opp...</span>
+                        <div class="ky-hero">
+                            @if (KanForhandsvises(lp))
+                            {
+                                <button type="button" class="ky-ark" title="Åpne" aria-label="@($"Åpne {lp.Filnavn}")" @onclick="@(() => VisVedlegg(lp))"><span></span><span></span><span class="k"></span><span></span><span class="k"></span><span></span><em class="@FilFarge(lp)">@FilMerke(lp)</em></button>
+                            }
+                            else
+                            {
+                                <span class="ky-ark"><span></span><span></span><span class="k"></span><span></span><span class="k"></span><span></span><em class="@FilFarge(lp)">@FilMerke(lp)</em></span>
+                            }
+                            <div class="ky-hero-tekst">
+                                <b>@lp.Filnavn</b>
+                                <dl>
+                                    <div><dt>Lastet opp</dt><dd>@lp.OpprettetDato.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</dd></div>
+                                    <div><dt>Størrelse</dt><dd>@Storrelse(lp)</dd></div>
+                                </dl>
+                                <div class="ky-hero-knapper">
+                                    @if (KanForhandsvises(lp))
+                                    {
+                                        <button type="button" class="ky-kn ky-kn-p" @onclick="@(() => VisVedlegg(lp))"><Icon Name="file-text" />Åpne @(FilMerke(lp) == "PDF" ? "PDF" : "")</button>
+                                    }
+                                    <a class="ky-kn" href="@($"/systemvedlegg/{lp.Id}")" download="@lp.Filnavn"><Icon Name="download" />Last ned</a>
+                                    <button type="button" class="ky-kn" @onclick="ByttLasplan"><Icon Name="upload" />Bytt</button>
+                                    @if (_fjernVedleggId == lp.Id)
+                                    {
+                                        <span class="ky-fjern">
+                                            Fjerne låsplanen?
+                                            <button type="button" class="k-knapp k-knapp-s k-rod-tekst" @onclick="@(() => RemoveVedlegg(lp))">Ja, fjern</button>
+                                            <button type="button" class="k-knapp k-knapp-s" @onclick="@(() => _fjernVedleggId = null)">Nei</button>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="ky-kn ky-kn-fare" @onclick="@(() => _fjernVedleggId = lp.Id)"><Icon Name="trash" />Fjern</button>
+                                    }
+                                </div>
+                            </div>
+                        </div>
                     }
-                    @if (!string.IsNullOrEmpty(_vedleggFeil))
+                    else
                     {
-                        <span class="form-error">@_vedleggFeil</span>
+                        <div class="ky-hero ky-hero-tom">
+                            <span class="ky-ark"><span></span><span></span><span class="k"></span><span></span><span class="k"></span><span></span></span>
+                            <div class="ky-hero-tekst">
+                                <b>Ingen låsplan lastet opp</b>
+                                <span>Last opp låsplanen, så ligger den klar her og på Oversikt.</span>
+                                <div class="ky-hero-knapper">
+                                    <button type="button" class="ky-kn ky-kn-p" @onclick='@(() => LastOppVedlegg("Låsplan"))'><Icon Name="upload" />Last opp låsplan</button>
+                                </div>
+                            </div>
+                        </div>
                     }
-                </div>
-                @if (_vedlegg.Count > 0)
-                {
-                    <div class="k-fp-topp">
-                        <button type="button" class="k-chip @(_vedleggFilter == "" ? "pa" : "")" @onclick='@(() => _vedleggFilter = "")'>Alle <em>@_vedlegg.Count</em></button>
-                        @foreach (var type in _vedlegg.Select(v => string.IsNullOrWhiteSpace(v.Type) ? "Ukategorisert" : v.Type!).Distinct().OrderBy(t => t))
-                        {
-                            var ty = type;
-                            <button type="button" class="k-chip @(_vedleggFilter == ty ? "pa" : "")" @onclick="@(() => _vedleggFilter = ty)">@ty <em>@_vedlegg.Count(v => (string.IsNullOrWhiteSpace(v.Type) ? "Ukategorisert" : v.Type) == ty)</em></button>
-                        }
+                </section>
+
+                <section class="ky-kort">
+                    <div class="ky-hode">
+                        <span class="ky-hode-tittel">Andre vedlegg <em>@AndreVedlegg.Count</em></span>
+                        <button type="button" class="ky-ny" @onclick='@(() => LastOppVedlegg("Annet"))'><Icon Name="upload" />Last opp</button>
                     </div>
-                    <div class="k-vedl">
-                        @foreach (var v in _vedlegg.Where(v => _vedleggFilter == "" || (string.IsNullOrWhiteSpace(v.Type) ? "Ukategorisert" : v.Type) == _vedleggFilter))
+                    @if (AndreVedlegg.Count == 0)
+                    {
+                        <p class="ky-tom">Ingen andre vedlegg ennå.</p>
+                    }
+                    <div class="ky-rader">
+                        @foreach (var v in AndreVedlegg)
                         {
                             var vd = v;
-                            var (emoji, bg) = VedleggIkon(vd.Type);
-                            <div class="k-vk2">
-                                <a class="k-vk2-fb" style="background:@bg" href="@($"/systemvedlegg/{vd.Id}")" target="_blank">@emoji</a>
-                                <div class="k-vk2-fi">
+                            <div class="ky-fil" @key="vd.Id">
+                                <span class="ky-filik"><Icon Name="file-text" /><i class="@FilFarge(vd)">@FilMerke(vd)</i></span>
+                                <span class="ky-filnavn">
                                     <b title="@vd.Filnavn">@vd.Filnavn</b>
-                                    <span class="k-smule">@(string.IsNullOrWhiteSpace(vd.Type) ? "Ukategorisert" : vd.Type) · @vd.OpprettetDato.ToLocalTime().ToString("dd.MM.yyyy")</span>
-                                    <span class="k-rad"><a class="k-lenke" href="@($"/systemvedlegg/{vd.Id}")" target="_blank">Åpne</a><button type="button" class="k-lenke k-rod-tekst" @onclick="@(() => RemoveVedlegg(vd))">Fjern</button></span>
-                                </div>
+                                    <small>@(string.IsNullOrWhiteSpace(vd.Type) ? "Ukategorisert" : vd.Type) · @vd.OpprettetDato.ToLocalTime().ToString("dd.MM.yyyy HH:mm") · @Storrelse(vd)</small>
+                                </span>
+                                @if (_fjernVedleggId == vd.Id)
+                                {
+                                    <span class="ky-fjern">
+                                        Fjerne filen?
+                                        <button type="button" class="k-knapp k-knapp-s k-rod-tekst" @onclick="@(() => RemoveVedlegg(vd))">Ja, fjern</button>
+                                        <button type="button" class="k-knapp k-knapp-s" @onclick="@(() => _fjernVedleggId = null)">Nei</button>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="ky-filvalg">
+                                        @if (KanForhandsvises(vd))
+                                        {
+                                            <button type="button" title="Åpne" aria-label="@($"Åpne {vd.Filnavn}")" @onclick="@(() => VisVedlegg(vd))"><Icon Name="eye" /></button>
+                                        }
+                                        <a href="@($"/systemvedlegg/{vd.Id}")" download="@vd.Filnavn" title="Last ned" aria-label="@($"Last ned {vd.Filnavn}")"><Icon Name="download" /></a>
+                                        <button type="button" title="Fjern" aria-label="@($"Fjern {vd.Filnavn}")" @onclick="@(() => _fjernVedleggId = vd.Id)"><Icon Name="trash" /></button>
+                                    </span>
+                                }
                             </div>
                         }
                     </div>
+                </section>
+
+                @if (_lastOppApen)
+                {
+                    <div class="ky-lys">
+                        <div class="ky-vindu" role="dialog" aria-modal="true" aria-label="@(_byttLasplan ? "Bytt låsplan" : "Last opp vedlegg")">
+                            <div class="ky-vindu-hode">
+                                <b>@(_byttLasplan ? "Bytt låsplan" : "Last opp vedlegg")</b>
+                                <button type="button" title="Lukk" aria-label="Lukk" @onclick="LukkLastOpp"><Icon Name="x" /></button>
+                            </div>
+                            <div class="ky-vindu-innhold">
+                                @if (!_byttLasplan)
+                                {
+                                    <label class="k-felt2">
+                                        Type
+                                        <select class="k-inp" @bind="_valgtVedleggType">
+                                            <option value="Låsplan">Låsplan</option>
+                                            <option value="Sikkerhetsskjema">Sikkerhetsskjema</option>
+                                            <option value="Bestillingsskjema">Bestillingsskjema</option>
+                                            <option value="Annet">Annet</option>
+                                        </select>
+                                    </label>
+                                }
+                                else
+                                {
+                                    <p class="ky-oppsummering">Den nye filen erstatter <b>@Lasplan?.Filnavn</b>.</p>
+                                }
+                                <label class="ky-drop">
+                                    <Icon Name="upload" />
+                                    <b>@(_uploadingVedlegg ? "Laster opp..." : "Dra filer hit, eller trykk for å velge")</b>
+                                    <small>PDF, bilde, Word eller Excel, maks 20 MB</small>
+                                    @if (_byttLasplan)
+                                    {
+                                        <InputFile OnChange="OnVedleggSelected" disabled="@_uploadingVedlegg" />
+                                    }
+                                    else
+                                    {
+                                        <InputFile OnChange="OnVedleggSelected" multiple disabled="@_uploadingVedlegg" />
+                                    }
+                                </label>
+                                @if (!string.IsNullOrEmpty(_vedleggFeil))
+                                {
+                                    <p class="form-error ky-feil">@_vedleggFeil</p>
+                                }
+                            </div>
+                            <div class="ky-vindu-fot">
+                                <button type="button" class="k-knapp k-knapp-s" @onclick="LukkLastOpp">Avbryt</button>
+                            </div>
+                        </div>
+                    </div>
                 }
+
+                <PdfPreviewModal Url="@_vedleggVisUrl" Tittel="@_vedleggVisNavn" OnClose="@(() => _vedleggVisUrl = null)" />
             }
         </div>;
 
+    // A1: samme tidslinje som Historikk på tilbud. Er det mange hendelser vises
+    // de nyeste, og resten ligger bak Se alle.
+    private const int AktivitetVises = 10;
+
     private RenderFragment Aktivitet() =>
-        @<div class="k-fp">
+        @<div class="ky-flate">
             @if (_hendelser.Count == 0)
             {
-                <span class="k-smule">Ingen aktivitet registrert ennå.</span>
+                <p class="ky-tom">Ingen aktivitet registrert ennå.</p>
             }
-            <div class="k-seksjon">
-                @foreach (var h in _hendelser)
+            else
+            {
+                <div class="tidslinje">
+                    @foreach (var h in _visAlleHendelser ? _hendelser : _hendelser.Take(AktivitetVises))
+                    {
+                        var (ikon, farge, tittel, detalj) = HendelseVisning(h.Beskrivelse);
+                        <div class="hend" @key="h.Id">
+                            <div class="hend-linje"></div>
+                            <div class="hend-ikon hend-ikon-@farge"><Icon Name="@ikon" /></div>
+                            <div class="hend-body">
+                                <div>
+                                    <div class="hend-tittel">@tittel</div>
+                                    <div class="hend-meta">@(h.UtfortAvBruker?.Navn ?? "Ukjent bruker") · @h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</div>
+                                </div>
+                                <div class="hend-beskrivelse">@detalj</div>
+                            </div>
+                        </div>
+                    }
+                </div>
+                @if (_hendelser.Count > AktivitetVises)
                 {
-                    var (emoji, bg) = HendelseIkon(h.Beskrivelse);
-                    <div class="k-tli">
-                        <span class="k-ik" style="background:@bg">@emoji</span>
-                        <div><b>@h.Beskrivelse</b><small>@(h.UtfortAvBruker?.Navn ?? "Ukjent") · @h.Tidspunkt.ToString("d. MMM yyyy HH:mm", Kultur)</small></div>
-                        <span></span>
+                    <div class="ky-mer">
+                        <button type="button" class="k-knapp k-knapp-s" @onclick="@(() => _visAlleHendelser = !_visAlleHendelser)">@(_visAlleHendelser ? "Vis færre" : $"Se alle ({_hendelser.Count})")</button>
                     </div>
                 }
-            </div>
-            @if (_hendelser.Count >= 20)
-            {
-                <span class="k-smule">Viser de 20 siste hendelsene.</span>
             }
         </div>;
 
@@ -1233,7 +1424,6 @@ else
             .Where(h => h.NokkelsystemId == Id.Value)
             .Include(h => h.UtfortAvBruker)
             .OrderByDescending(h => h.Tidspunkt)
-            .Take(20)
             .ToListAsync();
     }
 
@@ -1371,10 +1561,12 @@ else
 
         _vedleggFeil = null;
         _uploadingVedlegg = true;
+        var gammelPlan = _byttLasplan ? Lasplan : null;
+        var lagtTil = 0;
 
         try
         {
-            foreach (var file in e.GetMultipleFiles(10))
+            foreach (var file in e.GetMultipleFiles(_byttLasplan ? 1 : 10))
             {
                 if (file.Size > 20_000_000)
                 {
@@ -1398,11 +1590,24 @@ else
                 };
 
                 Db.SystemVedlegg.Add(vedlegg);
-                LoggHendelse($"Vedlegg lastet opp: {file.Name}");
+                LoggHendelse(gammelPlan is null ? $"Vedlegg lastet opp: {file.Name}" : $"Låsplan byttet: {file.Name}");
+                lagtTil++;
+            }
+
+            // Den gamle låsplanen fjernes først når den nye faktisk er med.
+            if (gammelPlan is not null && lagtTil > 0)
+            {
+                Db.SystemVedlegg.Remove(gammelPlan);
+                _vedlegg.Remove(gammelPlan);
             }
 
             await Db.SaveChangesAsync();
             await LastHendelserAsync();
+
+            if (_vedleggFeil is null)
+            {
+                LukkLastOpp();
+            }
         }
         finally
         {
@@ -1415,6 +1620,7 @@ else
         Db.SystemVedlegg.Remove(v);
         await Db.SaveChangesAsync();
         _vedlegg.Remove(v);
+        _fjernVedleggId = null;
     }
 
     private async Task Lagre()
