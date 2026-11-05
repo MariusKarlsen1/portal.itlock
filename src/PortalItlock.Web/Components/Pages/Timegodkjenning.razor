@@ -17,7 +17,8 @@
 <KreverModulVakt Modul="@PortalItlock.Web.Models.TilleggsModuler.Timer" />
 
 @* Godkjenninger (godkjenninger-valgt.html, med kort): ett kort med fanene
-   Timer (ukeark per montør + forklaringsboks for valgt dag), Fravær (søknader
+   Timer (alle timelister som venter, med uka som åpnes på raden, og ukearket
+   under Godkjent), Fravær (søknader
    med kalender der hver dag kan godkjennes/avslås, og melding til montøren) og
    Oversikt (periode, lønnseksport, grafer, sammendrag og detaljer). *@
 <div class="tg-kort @(_full ? "tg-full" : "")">
@@ -35,9 +36,9 @@
     <div class="tg-faner">
         <button type="button" class="@(_aktivFane == "timer" ? "aktiv" : "")" @onclick='@(() => _aktivFane = "timer")'>
             <Icon Name="clock" />Timer
-            @if (_totalVenterTimer > 0)
+            @if (_timelister.Count > 0)
             {
-                <i class="tg-teller">@_totalVenterTimer</i>
+                <i class="tg-teller">@_timelister.Count</i>
             }
         </button>
         <button type="button" class="@(_aktivFane == "fravar" ? "aktiv" : "")" @onclick='@(() => _aktivFane = "fravar")'>
@@ -54,193 +55,359 @@
 
     @if (_aktivFane == "timer")
     {
-        var montorRader = UkeMontorer;
-        var overtid = _ukeRegs.Where(r => r.Type is TimeregistreringType.Overtid50 or TimeregistreringType.Overtid100).Sum(r => r.TotalTimer);
-        var merknadsdager = montorRader.Sum(m => UkeDager.Count(d => Merknader(m.Id, d).Count > 0));
-        <div class="tg-kpi">
-            <div class="tg-kpi-hoved">
-                <span class="tg-lbl">Timelister som venter</span>
-                <b>@montorRader.Count(m => _ukeRegs.Any(r => r.MontorId == m.Id && r.Status == TimeregistreringStatus.Venter)) av @montorRader.Count</b>
-                <small>montører i uke @_valgtUke</small>
-            </div>
-            <div class="tg-kpi-gul">
-                <span class="tg-lbl">Overtid i uka</span>
-                <b>@FormatTimer(overtid)</b>
-                <small>@(OvertidTekst())</small>
-            </div>
-            <div class="@(merknadsdager > 0 ? "tg-kpi-rod" : "")">
-                <span class="tg-lbl">Merknader</span>
-                <b>@merknadsdager</b>
-                <small>dager med lang dag, helg eller overtid</small>
-            </div>
-            <div>
-                <span class="tg-lbl">Timer uke @_valgtUke</span>
-                <b>@FormatTimer(_ukeRegs.Sum(r => r.TotalTimer))</b>
-                <small>@_totalVenterTimer venter totalt</small>
+        <div class="tg-ko-verktoy">
+            @if (_koFilter != "godkjent")
+            {
+                <label class="tg-sok">
+                    <Icon Name="search" />
+                    <input type="search" placeholder="Søk etter montør" aria-label="Søk etter montør" @bind="_koSok" @bind:event="oninput" @bind:after="LukkBekreft" />
+                </label>
+            }
+            <div class="tg-valg">
+                <button type="button" class="@(_koFilter == "venter" ? "aktiv" : "")" @onclick='@(() => VelgFilter("venter"))'>Venter <i>@_timelister.Count</i></button>
+                <button type="button" class="@(_koFilter == "merknad" ? "aktiv" : "")" @onclick='@(() => VelgFilter("merknad"))'>Merknad <i>@_timelister.Count(t => !t.Klar)</i></button>
+                <button type="button" class="@(_koFilter == "godkjent" ? "aktiv" : "")" @onclick='@(() => VelgFilter("godkjent"))'>Godkjent</button>
             </div>
         </div>
 
-        <div class="tg-verktoy">
-            <div class="tg-ukenav">
-                <button type="button" class="tg-ik" @onclick="ForrigeUke" title="Forrige uke">&lsaquo;</button>
-                <span class="tg-velg-tekst">Uke @_valgtUke · @Mandag.ToString("d.", Kultur)–@Mandag.AddDays(6).ToString("d. MMM", Kultur)</span>
-                <button type="button" class="tg-ik" @onclick="NesteUke" title="Neste uke">&rsaquo;</button>
-            </div>
-            <select class="tg-velg" @bind="_montorId" @bind:after="LastKoAsync">
-                <option value="">Alle montører</option>
-                @foreach (var m in _montorer)
-                {
-                    <option value="@m.Id">@m.Navn</option>
-                }
-            </select>
-            @if (!ErDenneUken)
-            {
-                <button type="button" class="tg-kn tg-kn-s" @onclick="GaTilDenneUken">Denne uken</button>
-            }
-            @foreach (var u in _venterAndreUker.Take(4))
-            {
-                <button type="button" class="tg-chip" title="Timer som venter i en annen uke" @onclick="@(() => GaTilUke(u.Ar, u.Uke))">Uke @u.Uke <i>@u.Antall venter</i></button>
-            }
-        </div>
-
-        @if (montorRader.Count == 0)
+        @if (_koFilter != "godkjent")
         {
-            <p class="list-empty">Ingen timer eller fravær registrert i uke @_valgtUke.</p>
-        }
-        else
-        {
-            <div class="tg-timer">
-                <div class="tg-ark">
-                    <div class="tg-ark-rad tg-ark-hode">
-                        <span>Montør</span>
-                        @foreach (var d in UkeDager)
+            var rader = VisteTimelister;
+            var klare = rader.Where(t => t.Klar).ToList();
+            var antallUker = rader.Select(t => t.Mandag).Distinct().Count();
+            var nr = 0;
+            <div class="tg-ok">
+                <div class="tg-okt">
+                    <span class="tg-okt-tittel">
+                        @(_koFilter == "merknad" ? "Timelister med merknad" : "Timelister som venter")
+                        @if (rader.Count > 0)
                         {
-                            <span class="tg-midt @(d == DateTime.Today ? "tg-idag" : "")">@d.ToString("ddd d.M", Kultur)</span>
+                            <small>@rader.Count @(rader.Count == 1 ? "timeliste" : "timelister") i @antallUker @(antallUker == 1 ? "uke" : "uker")</small>
                         }
-                        <span class="tg-midt">Sum</span>
-                    </div>
-                    @foreach (var m in montorRader)
+                    </span>
+                    @if (KanGodkjenne && klare.Count > 0)
                     {
-                        var venter = _ukeRegs.Any(r => r.MontorId == m.Id && r.Status == TimeregistreringStatus.Venter);
-                        var harMerknad = UkeDager.Any(d => Merknader(m.Id, d).Count > 0);
-                        <div class="tg-ark-rad" @key="m.Id">
-                            <span class="tg-montor">
-                                <span class="tg-av" style="background:@Farge(m.Id)">@Initialer(m.Navn)</span>
-                                <span>
-                                    <b>@m.Navn</b>
-                                    <small>@(!_ukeRegs.Any(r => r.MontorId == m.Id) ? "fravær" : !venter ? "✓ godkjent" : harMerknad ? "⚠ merknad" : "klar")</small>
-                                </span>
+                        @if (_bekreftAlle)
+                        {
+                            <span class="tg-bekreft">
+                                <span>Godkjenne @klare.Count @(klare.Count == 1 ? "timeliste" : "timelister"), @FormatKort(klare.Sum(t => t.VenterTimer))?</span>
+                                <button type="button" class="tg-kn" @onclick="LukkBekreft">Avbryt</button>
+                                <button type="button" class="tg-kn tg-kn-g" @onclick="GodkjennAlleKlare"><Icon Name="check" />Ja, godkjenn</button>
                             </span>
-                            @foreach (var d in UkeDager)
+                        }
+                        else
+                        {
+                            <button type="button" class="tg-kn tg-kn-g" @onclick="@(() => _bekreftAlle = true)"><Icon Name="check" />Godkjenn alle klare (@klare.Count)</button>
+                        }
+                    }
+                </div>
+
+                @if (rader.Count == 0)
+                {
+                    <p class="tg-ok-tom">@(_koFilter == "merknad" ? "Ingen timelister har merknad." : !string.IsNullOrWhiteSpace(_koSok) ? "Fant ingen montør med det navnet." : "Ingen timelister venter på godkjenning.")</p>
+                }
+                else
+                {
+                    <table class="tg-ko">
+                        <thead>
+                            <tr>
+                                <th>Montør</th>
+                                <th>Uke</th>
+                                <th>Timer</th>
+                                <th>Vurdering</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var rad in rader)
                             {
-                                var dag = d;
-                                var timer = DagTimer(m.Id, dag);
-                                var ot = DagOvertid(m.Id, dag);
-                                var fravar = DagFravar(m.Id, dag);
-                                var valgt = _valgtMontorId == m.Id && _valgtDato == dag;
-                                <span class="tg-celle-wrap">
-                                    <button type="button" class="tg-celle tg-celle-@CelleStatus(m.Id, dag) @(timer > 10 ? "tg-celle-lang" : "") @(valgt ? "tg-celle-valgt" : "")"
-                                            title="@($"{m.Navn} {dag:dd.MM}")" @onclick="@(() => VelgDag(m.Id, dag))">
-                                        @if (timer > 0)
+                                var apen = _apenNokkel == rad.Nokkel;
+                                var sone = nr++ % 2 == 1;
+                                <tr class="tg-rad @(sone ? "tg-sone" : "") @(apen ? "tg-rad-apen" : "")" @key="rad.Nokkel" @onclick="@(() => VekslRad(rad))">
+                                    <td data-felt="montor">
+                                        <span class="tg-montor">
+                                            <span class="tg-av" style="background:@Farge(rad.MontorId)">@Initialer(rad.Navn)</span>
+                                            <b>@rad.Navn</b>
+                                        </span>
+                                    </td>
+                                    <td data-felt="uke"><b>Uke @rad.Uke</b> <span class="tg-mut">@rad.Mandag.ToString("d.M", Kultur)–@rad.Mandag.AddDays(6).ToString("d.M", Kultur)</span></td>
+                                    <td data-felt="timer">
+                                        <b>@FormatKort(rad.Timer)</b>
+                                        @if (rad.VenterTimer != rad.Timer)
                                         {
-                                            @timer.ToString("0.#", Kultur)
+                                            <small class="tg-mut">@FormatKort(rad.VenterTimer) venter</small>
                                         }
-                                        else if (fravar is not null)
+                                    </td>
+                                    <td data-felt="vurdering">
+                                        @if (rad.Klar)
                                         {
-                                            <span title="@fravar.Type.Visningsnavn()">☀</span>
+                                            <span class="tg-vurd tg-vurd-klar">Klar</span>
                                         }
                                         else
                                         {
-                                            <span class="tg-mut">·</span>
+                                            <span class="tg-vurd tg-vurd-merknad"><Icon Name="alert-triangle" />@rad.Merknader[0].Kort@(rad.Merknader.Count > 1 ? $" +{rad.Merknader.Count - 1}" : "")</span>
                                         }
-                                        @if (ot > 0)
+                                    </td>
+                                    <td class="tg-rad-knapper" data-felt="knapper" @onclick:stopPropagation="true">
+                                        <button type="button" class="tg-kn" aria-expanded="@(apen ? "true" : "false")" @onclick="@(() => VekslRad(rad))">@(apen ? "Lukk" : "Se")</button>
+                                        @if (KanGodkjenne && rad.Klar && !apen)
                                         {
-                                            <small>+@ot.ToString("0.#", Kultur)</small>
+                                            <button type="button" class="tg-kn tg-kn-g" @onclick="@(() => BehandleFlere(rad.VenterIder, TimeregistreringStatus.Godkjent))"><Icon Name="check" />Godkjenn</button>
                                         }
-                                    </button>
-                                </span>
+                                    </td>
+                                </tr>
+                                @if (apen)
+                                {
+                                    <tr class="tg-detalj" @key="@(rad.Nokkel + "-detalj")">
+                                        <td colspan="5">
+                                            @if (rad.Merknader.Count > 0)
+                                            {
+                                                <div class="tg-note">
+                                                    <Icon Name="alert-triangle" />
+                                                    <span>
+                                                        @foreach (var mk in rad.Merknader)
+                                                        {
+                                                            <span>@mk.Tekst</span>
+                                                        }
+                                                    </span>
+                                                </div>
+                                            }
+
+                                            <div class="tg-dg">
+                                                @foreach (var dag in rad.Dager)
+                                                {
+                                                    var dagensRegs = rad.RegsPa(dag);
+                                                    var dagensFravar = FravarPa(rad.Fravar, rad.MontorId, dag);
+                                                    var dagTimer = dagensRegs.Where(r => r.Status != TimeregistreringStatus.Avslatt).Sum(r => r.TotalTimer);
+                                                    <button type="button" class="tg-dgk tg-dgk-@CelleStatus(dagensRegs, dagensFravar) @(dagTimer > 10 ? "tg-dgk-lang" : "") @(_apenDato == dag ? "tg-dgk-valgt" : "")"
+                                                            aria-pressed="@(_apenDato == dag ? "true" : "false")" @onclick="@(() => VekslDag(dag))">
+                                                        <small>@KortDag(dag)</small>
+                                                        @if (dagensRegs.Count > 0)
+                                                        {
+                                                            <b>@dagensRegs.Sum(r => r.TotalTimer).ToString("0.#", Kultur)</b>
+                                                        }
+                                                        else if (dagensFravar is not null)
+                                                        {
+                                                            <b class="tg-dgk-tekst">@dagensFravar.Type.Visningsnavn()</b>
+                                                        }
+                                                        else
+                                                        {
+                                                            <b>–</b>
+                                                        }
+                                                        @if (dagensRegs.Count > 0 && dagensFravar is not null)
+                                                        {
+                                                            <small>+ @dagensFravar.Type.Visningsnavn()</small>
+                                                        }
+                                                    </button>
+                                                }
+                                            </div>
+
+                                            @if (_apenDato is DateTime apenDag && rad.Dager.Contains(apenDag))
+                                            {
+                                                var dagRegs = rad.RegsPa(apenDag);
+                                                var dagFravar = FravarPa(rad.Fravar, rad.MontorId, apenDag);
+                                                var dagVenterIder = dagRegs.Where(r => r.Status == TimeregistreringStatus.Venter).Select(r => r.Id).ToList();
+                                                <div class="tg-dagdetalj">
+                                                    <div class="tg-dagdetalj-hode">@apenDag.ToString("dddd d. MMMM", Kultur)</div>
+                                                    <div class="tg-forklaring">
+                                                        @foreach (var linje in Forklaring(dagRegs, dagFravar, apenDag))
+                                                        {
+                                                            <span class="tg-forklaring-@linje.Farge"><b>@linje.Tittel</b> @linje.Tekst</span>
+                                                        }
+                                                    </div>
+                                                    @RegListe(dagRegs)
+                                                    @if (KanGodkjenne && dagVenterIder.Count > 0 && dagVenterIder.Count < rad.VenterIder.Count)
+                                                    {
+                                                        <div class="tg-reg-knapper">
+                                                            <button type="button" class="tg-kn tg-kn-s tg-kn-g" @onclick="@(() => BehandleFlere(dagVenterIder, TimeregistreringStatus.Godkjent))">✓ Godkjenn dag</button>
+                                                            <button type="button" class="tg-kn tg-kn-s tg-kn-rod" @onclick="@(() => BehandleFlere(dagVenterIder, TimeregistreringStatus.Avslatt))">✕ Avslå dag</button>
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+
+                                            <div class="tg-fot">
+                                                <span>@rad.VenterIder.Count @(rad.VenterIder.Count == 1 ? "registrering venter" : "registreringer venter")@(_apenDato is null ? " · trykk på en dag for å se hva som er ført" : "")</span>
+                                                @if (KanGodkjenne)
+                                                {
+                                                    <button type="button" class="tg-kn tg-kn-rod" @onclick="@(() => BehandleFlere(rad.VenterIder, TimeregistreringStatus.Avslatt))"><Icon Name="x" />Avslå</button>
+                                                    <button type="button" class="tg-kn tg-kn-g" @onclick="@(() => BehandleFlere(rad.VenterIder, TimeregistreringStatus.Godkjent))"><Icon Name="check" />Godkjenn</button>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
                             }
-                            <b class="tg-midt">@_ukeRegs.Where(r => r.MontorId == m.Id).Sum(r => r.TotalTimer).ToString("0.#", Kultur)</b>
-                        </div>
-                    }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        }
+        else
+        {
+            var montorRader = UkeMontorer;
+            var overtid = _ukeRegs.Where(r => r.Type is TimeregistreringType.Overtid50 or TimeregistreringType.Overtid100).Sum(r => r.TotalTimer);
+            var merknadsdager = montorRader.Sum(m => UkeDager.Count(d => Merknader(m.Id, d).Count > 0));
+            <div class="tg-kpi">
+                <div class="tg-kpi-hoved">
+                    <span class="tg-lbl">Timelister som venter</span>
+                    <b>@montorRader.Count(m => _ukeRegs.Any(r => r.MontorId == m.Id && r.Status == TimeregistreringStatus.Venter)) av @montorRader.Count</b>
+                    <small>montører i uke @_valgtUke</small>
                 </div>
-
-                <div class="tg-dagboks">
-                    @if (_valgtMontorId is int vm && _valgtDato is DateTime vd)
-                    {
-                        var montor = montorRader.FirstOrDefault(x => x.Id == vm);
-                        var regs = DagRegs(vm, vd);
-                        var fravar = DagFravar(vm, vd);
-                        <div class="tg-dag-hode">
-                            <span class="tg-av tg-av-stor" style="background:@Farge(vm)">@Initialer(montor?.Navn)</span>
-                            <span>
-                                <b>@(montor?.Navn ?? "-")</b>
-                                <small>@vd.ToString("dddd d. MMMM", Kultur) · @(regs.Count > 0 ? FormatTimer(regs.Sum(r => r.TotalTimer)) : fravar?.Type.Visningsnavn() ?? "ingen timer")</small>
-                            </span>
-                        </div>
-                        <div class="tg-dag-nav">
-                            <button type="button" class="tg-kn tg-kn-s" disabled="@(vd <= Mandag)" @onclick="@(() => VelgDag(vm, vd.AddDays(-1)))">&lsaquo; @vd.AddDays(-1).ToString("ddd", Kultur)</button>
-                            <button type="button" class="tg-kn tg-kn-s" disabled="@(vd >= Mandag.AddDays(6))" @onclick="@(() => VelgDag(vm, vd.AddDays(1)))">@vd.AddDays(1).ToString("ddd", Kultur) &rsaquo;</button>
-                        </div>
-
-                        <div class="tg-forklaring">
-                            @foreach (var f in Forklaring(vm, vd))
-                            {
-                                <span class="tg-forklaring-@f.Farge"><b>@f.Tittel</b> @f.Tekst</span>
-                            }
-                        </div>
-
-                        @foreach (var r in regs)
-                        {
-                            <div class="tg-reg" @key="r.Id">
-                                <div class="tg-reg-topp">
-                                    <b class="tg-mono">@FormatKl(r.Start)–@FormatKl(r.Slutt)</b>
-                                    <span class="tg-pill tg-pill-@StatusCss(r.Status)">@r.Status.Visningsnavn()</span>
-                                    <b>@FormatTimer(r.TotalTimer)</b>
-                                </div>
-                                @if (r.Arbeidsordre is not null)
-                                {
-                                    <a class="tg-reg-ao" href="@($"/arbeidsordre/{r.ArbeidsordreId}")">@r.Arbeidsordre.Tittel</a>
-                                }
-                                <small>@r.Aktivitet.Visningsnavn() · @r.Type.Visningsnavn() · @r.PauseMinutter min pause@(r.Kilometer > 0 ? $" · {r.Kilometer:N0} km" : "")@(r.Fakturerbar ? "" : " · ikke fakturerbar")</small>
-                                @if (!string.IsNullOrWhiteSpace(r.Kommentar))
-                                {
-                                    <span class="tg-kommentar">💬 «@r.Kommentar»</span>
-                                }
-                                @if (KanGodkjenne && r.Status == TimeregistreringStatus.Venter && regs.Count > 1)
-                                {
-                                    <div class="tg-reg-knapper">
-                                        <button type="button" class="tg-kn tg-kn-s tg-kn-g" @onclick="@(() => Behandle(r.Id, TimeregistreringStatus.Godkjent))">✓ Godkjenn</button>
-                                        <button type="button" class="tg-kn tg-kn-s tg-kn-rod" @onclick="@(() => Behandle(r.Id, TimeregistreringStatus.Avslatt))">✕ Avslå</button>
-                                    </div>
-                                }
-                            </div>
-                        }
-
-                        @if (KanGodkjenne)
-                        {
-                            var dagVenter = regs.Where(r => r.Status == TimeregistreringStatus.Venter).Select(r => r.Id).ToList();
-                            var ukeVenter = _ukeRegs.Where(r => r.MontorId == vm && r.Status == TimeregistreringStatus.Venter).Select(r => r.Id).ToList();
-                            @if (dagVenter.Count > 0)
-                            {
-                                <div class="tg-dag-knapper">
-                                    <button type="button" class="tg-kn tg-kn-g" @onclick="@(() => BehandleFlere(dagVenter, TimeregistreringStatus.Godkjent))">✓ Godkjenn dag</button>
-                                    <button type="button" class="tg-kn tg-kn-rod" @onclick="@(() => BehandleFlere(dagVenter, TimeregistreringStatus.Avslatt))">✕ Avslå dag</button>
-                                </div>
-                            }
-                            @if (ukeVenter.Count > dagVenter.Count)
-                            {
-                                <button type="button" class="tg-kn tg-kn-s" @onclick="@(() => BehandleFlere(ukeVenter, TimeregistreringStatus.Godkjent))">✓ Godkjenn hele uka til @(montor?.Navn.Split(' ')[0]) (@ukeVenter.Count)</button>
-                            }
-                        }
-                    }
-                    else
-                    {
-                        <p class="tg-mut">Trykk på en dag i arket for å se registreringene og godkjenne.</p>
-                    }
+                <div class="tg-kpi-gul">
+                    <span class="tg-lbl">Overtid i uka</span>
+                    <b>@FormatTimer(overtid)</b>
+                    <small>@(OvertidTekst())</small>
+                </div>
+                <div class="@(merknadsdager > 0 ? "tg-kpi-rod" : "")">
+                    <span class="tg-lbl">Merknader</span>
+                    <b>@merknadsdager</b>
+                    <small>dager som bør sjekkes</small>
+                </div>
+                <div>
+                    <span class="tg-lbl">Timer uke @_valgtUke</span>
+                    <b>@FormatTimer(_ukeRegs.Sum(r => r.TotalTimer))</b>
+                    <small>@_totalVenterTimer venter totalt</small>
                 </div>
             </div>
-            <p class="tg-hint">Gul = venter · grønn = godkjent · rød = avslått · blå = fravær · rød ramme = over 10 timer · +1,5 = timer ført som overtid</p>
+
+            <div class="tg-verktoy">
+                <div class="tg-ukenav">
+                    <button type="button" class="tg-ik" @onclick="ForrigeUke" title="Forrige uke">&lsaquo;</button>
+                    <span class="tg-velg-tekst">Uke @_valgtUke · @Mandag.ToString("d.", Kultur)–@Mandag.AddDays(6).ToString("d. MMM", Kultur)</span>
+                    <button type="button" class="tg-ik" @onclick="NesteUke" title="Neste uke">&rsaquo;</button>
+                </div>
+                <select class="tg-velg" @bind="_montorId" @bind:after="LastKoAsync">
+                    <option value="">Alle montører</option>
+                    @foreach (var m in _montorer)
+                    {
+                        <option value="@m.Id">@m.Navn</option>
+                    }
+                </select>
+                @if (!ErDenneUken)
+                {
+                    <button type="button" class="tg-kn tg-kn-s" @onclick="GaTilDenneUken">Denne uken</button>
+                }
+                @foreach (var u in _venterAndreUker.Take(4))
+                {
+                    <button type="button" class="tg-chip" title="Timer som venter i en annen uke" @onclick="@(() => GaTilUke(u.Ar, u.Uke))">Uke @u.Uke <i>@u.Antall venter</i></button>
+                }
+            </div>
+
+            @if (montorRader.Count == 0)
+            {
+                <p class="list-empty">Ingen timer eller fravær registrert i uke @_valgtUke.</p>
+            }
+            else
+            {
+                <div class="tg-timer">
+                    <div class="tg-ark">
+                        <div class="tg-ark-rad tg-ark-hode">
+                            <span>Montør</span>
+                            @foreach (var d in UkeDager)
+                            {
+                                <span class="tg-midt @(d == DateTime.Today ? "tg-idag" : "")">@d.ToString("ddd d.M", Kultur)</span>
+                            }
+                            <span class="tg-midt">Sum</span>
+                        </div>
+                        @foreach (var m in montorRader)
+                        {
+                            var venter = _ukeRegs.Any(r => r.MontorId == m.Id && r.Status == TimeregistreringStatus.Venter);
+                            var harMerknad = UkeDager.Any(d => Merknader(m.Id, d).Count > 0);
+                            <div class="tg-ark-rad" @key="m.Id">
+                                <span class="tg-montor">
+                                    <span class="tg-av" style="background:@Farge(m.Id)">@Initialer(m.Navn)</span>
+                                    <span>
+                                        <b>@m.Navn</b>
+                                        <small>@(!_ukeRegs.Any(r => r.MontorId == m.Id) ? "fravær" : !venter ? "✓ godkjent" : harMerknad ? "⚠ merknad" : "klar")</small>
+                                    </span>
+                                </span>
+                                @foreach (var d in UkeDager)
+                                {
+                                    var dag = d;
+                                    var timer = DagTimer(m.Id, dag);
+                                    var ot = DagOvertid(m.Id, dag);
+                                    var fravar = DagFravar(m.Id, dag);
+                                    var valgt = _valgtMontorId == m.Id && _valgtDato == dag;
+                                    <span class="tg-celle-wrap">
+                                        <button type="button" class="tg-celle tg-celle-@CelleStatus(m.Id, dag) @(timer > 10 ? "tg-celle-lang" : "") @(valgt ? "tg-celle-valgt" : "")"
+                                                title="@($"{m.Navn} {dag:dd.MM}")" @onclick="@(() => VelgDag(m.Id, dag))">
+                                            @if (timer > 0)
+                                            {
+                                                @timer.ToString("0.#", Kultur)
+                                            }
+                                            else if (fravar is not null)
+                                            {
+                                                <span title="@fravar.Type.Visningsnavn()">☀</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="tg-mut">·</span>
+                                            }
+                                            @if (ot > 0)
+                                            {
+                                                <small>+@ot.ToString("0.#", Kultur)</small>
+                                            }
+                                        </button>
+                                    </span>
+                                }
+                                <b class="tg-midt">@_ukeRegs.Where(r => r.MontorId == m.Id).Sum(r => r.TotalTimer).ToString("0.#", Kultur)</b>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="tg-dagboks">
+                        @if (_valgtMontorId is int vm && _valgtDato is DateTime vd)
+                        {
+                            var montor = montorRader.FirstOrDefault(x => x.Id == vm);
+                            var regs = DagRegs(vm, vd);
+                            var fravar = DagFravar(vm, vd);
+                            <div class="tg-dag-hode">
+                                <span class="tg-av tg-av-stor" style="background:@Farge(vm)">@Initialer(montor?.Navn)</span>
+                                <span>
+                                    <b>@(montor?.Navn ?? "-")</b>
+                                    <small>@vd.ToString("dddd d. MMMM", Kultur) · @(regs.Count > 0 ? FormatTimer(regs.Sum(r => r.TotalTimer)) : fravar?.Type.Visningsnavn() ?? "ingen timer")</small>
+                                </span>
+                            </div>
+                            <div class="tg-dag-nav">
+                                <button type="button" class="tg-kn tg-kn-s" disabled="@(vd <= Mandag)" @onclick="@(() => VelgDag(vm, vd.AddDays(-1)))">&lsaquo; @vd.AddDays(-1).ToString("ddd", Kultur)</button>
+                                <button type="button" class="tg-kn tg-kn-s" disabled="@(vd >= Mandag.AddDays(6))" @onclick="@(() => VelgDag(vm, vd.AddDays(1)))">@vd.AddDays(1).ToString("ddd", Kultur) &rsaquo;</button>
+                            </div>
+
+                            <div class="tg-forklaring">
+                                @foreach (var f in Forklaring(regs, fravar, vd))
+                                {
+                                    <span class="tg-forklaring-@f.Farge"><b>@f.Tittel</b> @f.Tekst</span>
+                                }
+                            </div>
+
+                            @RegListe(regs)
+
+                            @if (KanGodkjenne)
+                            {
+                                var dagVenter = regs.Where(r => r.Status == TimeregistreringStatus.Venter).Select(r => r.Id).ToList();
+                                var ukeVenter = _ukeRegs.Where(r => r.MontorId == vm && r.Status == TimeregistreringStatus.Venter).Select(r => r.Id).ToList();
+                                @if (dagVenter.Count > 0)
+                                {
+                                    <div class="tg-dag-knapper">
+                                        <button type="button" class="tg-kn tg-kn-g" @onclick="@(() => BehandleFlere(dagVenter, TimeregistreringStatus.Godkjent))">✓ Godkjenn dag</button>
+                                        <button type="button" class="tg-kn tg-kn-rod" @onclick="@(() => BehandleFlere(dagVenter, TimeregistreringStatus.Avslatt))">✕ Avslå dag</button>
+                                    </div>
+                                }
+                                @if (ukeVenter.Count > dagVenter.Count)
+                                {
+                                    <button type="button" class="tg-kn tg-kn-s" @onclick="@(() => BehandleFlere(ukeVenter, TimeregistreringStatus.Godkjent))">✓ Godkjenn hele uka til @(montor?.Navn.Split(' ')[0]) (@ukeVenter.Count)</button>
+                                }
+                            }
+                        }
+                        else
+                        {
+                            <p class="tg-mut">Trykk på en dag i arket for å se registreringene og godkjenne.</p>
+                        }
+                    </div>
+                </div>
+                <p class="tg-hint">Gul = venter · grønn = godkjent · rød = avslått · blå = fravær · rød ramme = over 10 timer · +1,5 = timer ført som overtid</p>
+            }
         }
     }
     else if (_aktivFane == "fravar")
@@ -622,6 +789,20 @@
 
     private sealed record Forklaringslinje(string Farge, string Tittel, string Tekst);
     private sealed record VentendeUke(int Ar, int Uke, int Antall);
+    private sealed record Merknad(string Kort, string Tekst);
+
+    // Én montør sin uke: alle registreringene i uka, også de som alt er behandlet,
+    // så dagrutene viser hele uka selv om bare én dag venter.
+    private sealed record Timeliste(string Nokkel, int MontorId, string Navn, int Ar, int Uke, DateTime Mandag,
+        List<Models.Timeregistrering> Regs, List<FravarSoknad> Fravar, List<Merknad> Merknader)
+    {
+        public bool Klar => Merknader.Count == 0;
+        public IEnumerable<DateTime> Dager => Enumerable.Range(0, 7).Select(i => Mandag.AddDays(i));
+        public decimal Timer => Regs.Where(r => r.Status != TimeregistreringStatus.Avslatt).Sum(r => r.TotalTimer);
+        public decimal VenterTimer => Regs.Where(r => r.Status == TimeregistreringStatus.Venter).Sum(r => r.TotalTimer);
+        public List<int> VenterIder => Regs.Where(r => r.Status == TimeregistreringStatus.Venter).Select(r => r.Id).ToList();
+        public List<Models.Timeregistrering> RegsPa(DateTime dag) => Regs.Where(r => r.Dato.Date == dag.Date).OrderBy(r => r.Start).ToList();
+    }
 
     private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
     private static readonly string[] Paletten = ["#835e41", "#2054a3", "#2b7a4b", "#7a2b96", "#a1690a", "#b5502d", "#3a6fb5"];
@@ -642,6 +823,14 @@
     private int _totalVenterTimer;
     private int? _valgtMontorId;
     private DateTime? _valgtDato;
+
+    // Køen: alle timelister som venter, uansett uke (én per montør og uke).
+    private List<Timeliste> _timelister = [];
+    private string _koFilter = "venter";
+    private string _koSok = "";
+    private string? _apenNokkel;
+    private DateTime? _apenDato;
+    private bool _bekreftAlle;
 
     // Fravær-fanen
     private List<FravarSoknad> _koFravar = [];
@@ -752,6 +941,7 @@
 
     private static string Farge(int id) => Paletten[Math.Abs(id) % Paletten.Length];
     private static string FormatTimer(decimal value) => value.ToString("N1", Kultur) + " t";
+    private static string FormatKort(decimal value) => value.ToString("0.#", Kultur) + " t";
     private static string FormatKl(TimeSpan t) => t.ToString(@"hh\:mm");
     private static bool ErHelg(DateTime d) => d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
     private static string Pst(decimal verdi, decimal maks) => Math.Max(2, Math.Round(verdi * 100 / maks)).ToString(CultureInfo.InvariantCulture);
@@ -797,17 +987,20 @@
         .Where(r => r.Type is TimeregistreringType.Overtid50 or TimeregistreringType.Overtid100)
         .Sum(r => r.TotalTimer);
 
-    private FravarSoknad? DagFravar(int montorId, DateTime dag) => _ukeFravar
+    private FravarSoknad? DagFravar(int montorId, DateTime dag) => FravarPa(_ukeFravar, montorId, dag);
+
+    private static FravarSoknad? FravarPa(IEnumerable<FravarSoknad> fravar, int montorId, DateTime dag) => fravar
         .Where(f => f.BrukerId == montorId && dag.Date >= f.FraDato.Date && dag.Date <= f.TilDato.Date)
         .OrderBy(f => f.Status == FravarStatus.Godkjent ? 0 : 1)
         .FirstOrDefault();
 
-    private string CelleStatus(int montorId, DateTime dag)
+    private string CelleStatus(int montorId, DateTime dag) => CelleStatus(DagRegs(montorId, dag), DagFravar(montorId, dag));
+
+    private static string CelleStatus(List<Models.Timeregistrering> regs, FravarSoknad? fravar)
     {
-        var regs = DagRegs(montorId, dag);
         if (regs.Count == 0)
         {
-            return DagFravar(montorId, dag) is { } f ? (f.Status == FravarStatus.Godkjent ? "fravar" : "fravar-sokt") : "tom";
+            return fravar is { } f ? (f.Status == FravarStatus.Godkjent ? "fravar" : "fravar-sokt") : "tom";
         }
 
         if (regs.Any(r => r.Status == TimeregistreringStatus.Venter))
@@ -818,13 +1011,22 @@
         return regs.All(r => r.Status == TimeregistreringStatus.Avslatt) ? "avslatt" : "godkjent";
     }
 
-    private List<string> Merknader(int montorId, DateTime dag)
+    private List<string> Merknader(int montorId, DateTime dag) => DagMerknader(DagRegs(montorId, dag), dag);
+
+    // Det som gjør at en dag bør sjekkes. Avslåtte registreringer teller ikke:
+    // de er allerede tatt stilling til.
+    private static List<string> DagMerknader(IEnumerable<Models.Timeregistrering> alle, DateTime dag)
     {
         var liste = new List<string>();
-        var regs = DagRegs(montorId, dag);
+        var regs = alle.Where(r => r.Status != TimeregistreringStatus.Avslatt).ToList();
         if (regs.Count == 0)
         {
             return liste;
+        }
+
+        if (Overlapper(regs))
+        {
+            liste.Add("dobbelt");
         }
 
         if (regs.Sum(r => r.TotalTimer) > 10)
@@ -845,11 +1047,60 @@
         return liste;
     }
 
-    // Forklaringen i boksen: hva som er spesielt med dagen, med vanlige ord.
-    private List<Forklaringslinje> Forklaring(int montorId, DateTime dag)
+    // To registreringer som går over samme tid samme dag er som regel samme jobb ført to ganger.
+    private static bool Overlapper(IEnumerable<Models.Timeregistrering> regs)
     {
-        var regs = DagRegs(montorId, dag);
-        var fravar = DagFravar(montorId, dag);
+        var sortert = regs.Where(r => r.Slutt > r.Start).OrderBy(r => r.Start).ToList();
+        var sisteSlutt = TimeSpan.MinValue;
+        foreach (var r in sortert)
+        {
+            if (r.Start < sisteSlutt)
+            {
+                return true;
+            }
+
+            sisteSlutt = r.Slutt > sisteSlutt ? r.Slutt : sisteSlutt;
+        }
+
+        return false;
+    }
+
+    private static string DagNavn(DateTime dag) => dag.ToString("dddd", Kultur);
+
+    private static string KortDag(DateTime dag)
+    {
+        var navn = dag.ToString("ddd", Kultur).TrimEnd('.');
+        return $"{Stor(navn)} {dag.ToString("d.M", Kultur)}";
+    }
+
+    private static List<Merknad> UkeMerknader(List<Models.Timeregistrering> regs, DateTime mandag)
+    {
+        var liste = new List<Merknad>();
+        foreach (var dag in Enumerable.Range(0, 7).Select(i => mandag.AddDays(i)))
+        {
+            var dagRegs = regs.Where(r => r.Dato.Date == dag).ToList();
+            var navn = DagNavn(dag);
+            var dato = dag.ToString("d.M", Kultur);
+            foreach (var kode in DagMerknader(dagRegs, dag))
+            {
+                liste.Add(kode switch
+                {
+                    "dobbelt" => new Merknad($"Mulig dobbeltført {navn}", $"{Stor(navn)} {dato}: to registreringer overlapper i tid."),
+                    "lang" => new Merknad($"Lang dag {navn}", $"{Stor(navn)} {dato}: {FormatKort(dagRegs.Where(r => r.Status != TimeregistreringStatus.Avslatt).Sum(r => r.TotalTimer))}, over 10 timer. Sjekk at det er avtalt og at pausen er riktig."),
+                    "helg" => new Merknad($"Ført på {navn}", $"{Stor(navn)} {dato}: helgejobb. Sjekk at riktig overtidssats er brukt."),
+                    _ => new Merknad($"Overtid {navn}", $"{Stor(navn)} {dato}: inneholder overtid.")
+                });
+            }
+        }
+
+        return liste;
+    }
+
+    private static string Stor(string tekst) => tekst.Length == 0 ? tekst : char.ToUpper(tekst[0], Kultur) + tekst[1..];
+
+    // Forklaringen i boksen: hva som er spesielt med dagen, med vanlige ord.
+    private static List<Forklaringslinje> Forklaring(List<Models.Timeregistrering> regs, FravarSoknad? fravar, DateTime dag)
+    {
         var linjer = new List<Forklaringslinje>();
 
         if (fravar is not null)
@@ -872,6 +1123,11 @@
         var timer = regs.Sum(r => r.TotalTimer);
         var ot50 = regs.Where(r => r.Type == TimeregistreringType.Overtid50).Sum(r => r.TotalTimer);
         var ot100 = regs.Where(r => r.Type == TimeregistreringType.Overtid100).Sum(r => r.TotalTimer);
+
+        if (Overlapper(regs.Where(r => r.Status != TimeregistreringStatus.Avslatt)))
+        {
+            linjer.Add(new("rod", "Mulig dobbeltført", "– to registreringer overlapper i tid. Sjekk at samme jobb ikke er ført to ganger."));
+        }
 
         if (timer > 10)
         {
@@ -907,6 +1163,119 @@
         }
 
         return linjer;
+    }
+
+    // Registreringene én dag: brukes både i ukearket og når en timeliste er åpnet.
+    private RenderFragment RegListe(List<Models.Timeregistrering> regs) =>
+        @<div class="tg-regs">
+            @foreach (var r in regs)
+            {
+                <div class="tg-reg" @key="r.Id">
+                    <div class="tg-reg-topp">
+                        <b class="tg-mono">@FormatKl(r.Start)–@FormatKl(r.Slutt)</b>
+                        <span class="tg-pill tg-pill-@StatusCss(r.Status)">@r.Status.Visningsnavn()</span>
+                        <b>@FormatTimer(r.TotalTimer)</b>
+                    </div>
+                    @if (r.Arbeidsordre is not null)
+                    {
+                        <a class="tg-reg-ao" href="@($"/arbeidsordre/{r.ArbeidsordreId}")">@r.Arbeidsordre.Tittel</a>
+                    }
+                    <small>@r.Aktivitet.Visningsnavn() · @r.Type.Visningsnavn() · @r.PauseMinutter min pause@(r.Kilometer > 0 ? $" · {r.Kilometer:N0} km" : "")@(r.Fakturerbar ? "" : " · ikke fakturerbar")</small>
+                    @if (!string.IsNullOrWhiteSpace(r.Kommentar))
+                    {
+                        <span class="tg-kommentar">💬 «@r.Kommentar»</span>
+                    }
+                    @if (KanGodkjenne && r.Status == TimeregistreringStatus.Venter && regs.Count > 1)
+                    {
+                        <div class="tg-reg-knapper">
+                            <button type="button" class="tg-kn tg-kn-s tg-kn-g" @onclick="@(() => Behandle(r.Id, TimeregistreringStatus.Godkjent))">✓ Godkjenn</button>
+                            <button type="button" class="tg-kn tg-kn-s tg-kn-rod" @onclick="@(() => Behandle(r.Id, TimeregistreringStatus.Avslatt))">✕ Avslå</button>
+                        </div>
+                    }
+                </div>
+            }
+        </div>;
+
+    // ---------- Køen ----------
+    private List<Timeliste> VisteTimelister => _timelister
+        .Where(t => _koFilter != "merknad" || !t.Klar)
+        .Where(t => string.IsNullOrWhiteSpace(_koSok) || t.Navn.Contains(_koSok.Trim(), StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    private void VelgFilter(string filter)
+    {
+        _koFilter = filter;
+        _bekreftAlle = false;
+    }
+
+    private void LukkBekreft() => _bekreftAlle = false;
+
+    private void VekslRad(Timeliste rad)
+    {
+        _apenNokkel = _apenNokkel == rad.Nokkel ? null : rad.Nokkel;
+        _apenDato = null;
+    }
+
+    private void VekslDag(DateTime dag) => _apenDato = _apenDato == dag ? null : dag;
+
+    private async Task GodkjennAlleKlare()
+    {
+        var ider = VisteTimelister.Where(t => t.Klar).SelectMany(t => t.VenterIder).ToList();
+        _bekreftAlle = false;
+        await BehandleFlere(ider, TimeregistreringStatus.Godkjent);
+    }
+
+    private async Task LastTimelisterAsync()
+    {
+        var ventende = await Db.Timeregistreringer
+            .Where(t => t.Status == TimeregistreringStatus.Venter)
+            .Select(t => new { t.MontorId, t.Dato })
+            .ToListAsync();
+        var nokler = ventende
+            .Select(v => (v.MontorId, Ar: ISOWeek.GetYear(v.Dato), Uke: ISOWeek.GetWeekOfYear(v.Dato)))
+            .ToHashSet();
+
+        if (nokler.Count == 0)
+        {
+            _timelister = [];
+            _apenNokkel = null;
+            _apenDato = null;
+            return;
+        }
+
+        var fra = nokler.Min(n => ISOWeek.ToDateTime(n.Ar, n.Uke, DayOfWeek.Monday));
+        var til = nokler.Max(n => ISOWeek.ToDateTime(n.Ar, n.Uke, DayOfWeek.Monday)).AddDays(7);
+
+        var regs = await Db.Timeregistreringer
+            .Include(t => t.Arbeidsordre)
+            .Where(t => t.Dato >= fra && t.Dato < til)
+            .ToListAsync();
+        var fravar = await Db.FravarSoknader
+            .Where(f => f.Status != FravarStatus.Avslatt && f.FraDato.Date < til && f.TilDato.Date >= fra)
+            .ToListAsync();
+
+        _timelister = regs
+            .GroupBy(r => (r.MontorId, Ar: ISOWeek.GetYear(r.Dato), Uke: ISOWeek.GetWeekOfYear(r.Dato)))
+            .Where(g => nokler.Contains(g.Key))
+            .Select(g =>
+            {
+                var mandag = ISOWeek.ToDateTime(g.Key.Ar, g.Key.Uke, DayOfWeek.Monday);
+                var ukeRegs = g.OrderBy(r => r.Dato).ThenBy(r => r.Start).ToList();
+                var ukeFravar = fravar
+                    .Where(f => f.BrukerId == g.Key.MontorId && f.FraDato.Date <= mandag.AddDays(6) && f.TilDato.Date >= mandag)
+                    .ToList();
+                var navn = _montorer.FirstOrDefault(m => m.Id == g.Key.MontorId)?.Navn ?? "-";
+                return new Timeliste($"{g.Key.MontorId}-{g.Key.Ar}-{g.Key.Uke}", g.Key.MontorId, navn, g.Key.Ar, g.Key.Uke, mandag,
+                    ukeRegs, ukeFravar, UkeMerknader(ukeRegs, mandag));
+            })
+            .OrderByDescending(t => t.Mandag).ThenBy(t => t.Navn)
+            .ToList();
+
+        if (_timelister.All(t => t.Nokkel != _apenNokkel))
+        {
+            _apenNokkel = null;
+            _apenDato = null;
+        }
     }
 
     private string OvertidTekst()
@@ -948,6 +1317,8 @@
 
         _totalVenterTimer = await Db.Timeregistreringer.CountAsync(t => t.Status == TimeregistreringStatus.Venter);
         _totalVenterFravar = await Db.FravarSoknader.CountAsync(f => f.Status == FravarStatus.Venter);
+
+        await LastTimelisterAsync();
 
         var ukeQuery = Db.Timeregistreringer
             .Include(t => t.Arbeidsordre)
@@ -1024,7 +1395,8 @@
             return;
         }
 
-        var regs = await Db.Timeregistreringer.Where(t => ider.Contains(t.Id)).ToListAsync();
+        // Bare det som fortsatt venter, i tilfelle noen andre har behandlet timene imens.
+        var regs = await Db.Timeregistreringer.Where(t => ider.Contains(t.Id) && t.Status == TimeregistreringStatus.Venter).ToListAsync();
         foreach (var reg in regs)
         {
             reg.Status = status;
