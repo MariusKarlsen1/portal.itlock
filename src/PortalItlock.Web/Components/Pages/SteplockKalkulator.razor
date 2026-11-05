@@ -1,0 +1,276 @@
+@page "/steplock-kalkulator"
+@rendermode InteractiveServer
+@* Nettoprisene er forhandlerpriser, så montører ser ikke denne siden. *@
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+
+<PageTitle>StepLock Access</PageTitle>
+
+@* Priskalkulator for StepLock Access (forslag 2C). Regnestykket ligger i
+   StepLockPrisberegner, og alle priser hentes fra komponentregisteret på
+   artikkelnummeret (Produktkode), så de følger med når prisene oppdateres. *@
+<div class="sl-side">
+    <div class="sl-hero">
+        <div class="sl-hero-tall">
+            <small>Per måned</small>
+            <div class="sl-stor">@Kr(R.PerManed)<em> kr</em></div>
+        </div>
+        <div class="sl-hero-tall">
+            <small>Hardware</small>
+            <div class="sl-mid">@Kr(R.Hardware) kr</div>
+        </div>
+        <div class="sl-hero-tall">
+            <small>Første år</small>
+            <div class="sl-mid">@Kr(R.ForsteAr) kr</div>
+        </div>
+        <div class="sl-hero-valg">
+            <span class="sl-tag @(R.Abonnement is null ? "sl-tag-ingen" : "")">@Navn(R.Abonnement)</span>
+            <div class="sl-seg" role="group" aria-label="Prisvisning">
+                <button type="button" class="@(_veiledende ? "" : "aktiv")" @onclick="@(() => _veiledende = false)">Netto</button>
+                <button type="button" class="@(_veiledende ? "aktiv" : "")" @onclick="@(() => _veiledende = true)">Veiledende</button>
+            </div>
+        </div>
+    </div>
+
+    @if (Mangler.Count > 0)
+    {
+        <div class="sl-varsel">
+            <b>Disse artikkelnumrene mangler pris i komponentregisteret, og regnes som 0 kr:</b>
+            <span>@string.Join(", ", Mangler)</span>
+            <a href="/komponenter">Gå til komponentregisteret</a>
+        </div>
+    }
+
+    <div class="sl-planer">
+        @foreach (var (nivaa, kode, porttelefoner, kortlesere) in Planer)
+        {
+            <div class="sl-plan @(R.Abonnement == nivaa ? "aktiv" : "")" @key="nivaa">
+                @if (R.Abonnement == nivaa)
+                {
+                    <span class="sl-plan-merke">Ditt anlegg</span>
+                }
+                <span class="sl-plan-navn">@Navn(nivaa)</span>
+                <b>@Kr(Pris(kode)) <i>kr/mnd</i></b>
+                <small>@porttelefoner</small>
+                <small>@kortlesere</small>
+            </div>
+        }
+    </div>
+
+    <p class="sl-hint @(HintErVarsel ? "sl-hint-varsel" : "")">@Hint</p>
+
+    <div class="sl-rader">
+        <div class="sl-rad">
+            <div class="sl-rad-tekst">
+                <b>Porttelefon</b>
+                <small>@Kr(StepLockPrisberegner.PrisPorttelefon(_tilkPort, Pris)) kr per stk</small>
+                <div class="sl-tilk">
+                    @foreach (var t in new[] { StepLockTilkobling.PoE, StepLockTilkobling.Lte })
+                    {
+                        <button type="button" class="@(_tilkPort == t ? "aktiv" : "")" @onclick="@(() => _tilkPort = t)">@TilkNavn(t)</button>
+                    }
+                </div>
+            </div>
+            <input type="range" min="0" max="30" value="@_tel" aria-label="Antall porttelefoner" @oninput="@(e => _tel = Antall(e))" />
+            <input class="sl-tall" type="number" min="0" value="@_tel" aria-label="Antall porttelefoner" @oninput="@(e => _tel = Antall(e))" />
+            <div class="sl-sum">@Sum(_tel, StepLockPrisberegner.PrisPorttelefon(_tilkPort, Pris))</div>
+        </div>
+
+        <div class="sl-rad">
+            <div class="sl-rad-tekst">
+                <b>Svarapparat</b>
+                <small>@Kr(Pris(StepLockPrisberegner.Svarenhet)) kr per stk</small>
+            </div>
+            <input type="range" min="0" max="30" value="@_svar" aria-label="Antall svarapparater" @oninput="@(e => _svar = Antall(e))" />
+            <input class="sl-tall" type="number" min="0" value="@_svar" aria-label="Antall svarapparater" @oninput="@(e => _svar = Antall(e))" />
+            <div class="sl-sum">@Sum(_svar, Pris(StepLockPrisberegner.Svarenhet))</div>
+        </div>
+
+        <div class="sl-rad">
+            <div class="sl-rad-tekst">
+                <b>Kortleser uten PIN</b>
+                <small>@Kr(StepLockPrisberegner.PrisKortleser(StepLockPrisberegner.Kortleser, _tilkKort, Pris)) kr per stk</small>
+                <div class="sl-tilk">
+                    @foreach (var t in Tilkoblinger)
+                    {
+                        <button type="button" class="@(_tilkKort == t ? "aktiv" : "")" @onclick="@(() => _tilkKort = t)">@TilkNavn(t)</button>
+                    }
+                </div>
+            </div>
+            <input type="range" min="0" max="120" value="@_kort" aria-label="Antall kortlesere uten PIN" @oninput="@(e => _kort = Antall(e))" />
+            <input class="sl-tall" type="number" min="0" value="@_kort" aria-label="Antall kortlesere uten PIN" @oninput="@(e => _kort = Antall(e))" />
+            <div class="sl-sum">@Sum(_kort, StepLockPrisberegner.PrisKortleser(StepLockPrisberegner.Kortleser, _tilkKort, Pris))</div>
+        </div>
+
+        <div class="sl-rad">
+            <div class="sl-rad-tekst">
+                <b>Kortleser med PIN</b>
+                <small>@Kr(StepLockPrisberegner.PrisKortleser(StepLockPrisberegner.Kodeleser, _tilkPin, Pris)) kr per stk</small>
+                <div class="sl-tilk">
+                    @foreach (var t in Tilkoblinger)
+                    {
+                        <button type="button" class="@(_tilkPin == t ? "aktiv" : "")" @onclick="@(() => _tilkPin = t)">@TilkNavn(t)</button>
+                    }
+                </div>
+            </div>
+            <input type="range" min="0" max="120" value="@_pin" aria-label="Antall kortlesere med PIN" @oninput="@(e => _pin = Antall(e))" />
+            <input class="sl-tall" type="number" min="0" value="@_pin" aria-label="Antall kortlesere med PIN" @oninput="@(e => _pin = Antall(e))" />
+            <div class="sl-sum">@Sum(_pin, StepLockPrisberegner.PrisKortleser(StepLockPrisberegner.Kodeleser, _tilkPin, Pris))</div>
+        </div>
+
+        <div class="sl-rad">
+            <div class="sl-rad-tekst">
+                <b>Brikker</b>
+                <small>@Kr(Pris(StepLockPrisberegner.Brikke)) kr per stk</small>
+            </div>
+            <input type="range" min="0" max="500" value="@_bri" aria-label="Antall brikker" @oninput="@(e => _bri = Antall(e))" />
+            <input class="sl-tall" type="number" min="0" value="@_bri" aria-label="Antall brikker" @oninput="@(e => _bri = Antall(e))" />
+            <div class="sl-sum">@Sum(_bri, Pris(StepLockPrisberegner.Brikke))</div>
+        </div>
+    </div>
+
+    <div class="sl-spes">
+        <div class="sl-spes-topp">
+            <b>Spesifikasjon</b>
+            <button type="button" @onclick="@(() => _visAlle = !_visAlle)">@(_visAlle ? "Vis bare valgte" : "Vis alle artikler")</button>
+        </div>
+        @foreach (var l in R.Linjer.Where(l => _visAlle || l.Antall > 0))
+        {
+            <div class="sl-linje" @key="l.Artikkel">
+                <span>@ArtikkelNavn(l.Artikkel)<small>@l.Artikkel</small></span>
+                <i>@l.Antall × @Kr(l.Pris)</i>
+                <b>@(l.Antall > 0 ? Kr(l.Sum) + " kr" : "–")</b>
+            </div>
+        }
+        <div class="sl-linje sl-linje-sum">
+            <span>Sum hardware</span>
+            <b>@Kr(R.Hardware) kr</b>
+        </div>
+    </div>
+
+    <div class="sl-knapper">
+        <button type="button" @onclick="Kopier">@(_kopiert ? "Kopiert" : "Kopier spesifikasjon")</button>
+        <button type="button" @onclick="Nullstill">Nullstill</button>
+    </div>
+
+    <p class="sl-fot">Alle priser eks mva. Forhandlers tillegg for administrasjon og service kan komme i tillegg.</p>
+</div>
+
+@code {
+    private sealed record Artikkel(string Navn, decimal Netto, decimal Veiledende);
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly StepLockTilkobling[] Tilkoblinger = [StepLockTilkobling.PoE, StepLockTilkobling.Dce, StepLockTilkobling.Lte];
+
+    private static readonly (StepLockAbonnement Nivaa, string Kode, string Porttelefoner, string Kortlesere)[] Planer =
+    [
+        (StepLockAbonnement.Basic, StepLockPrisberegner.Basic, "1 porttelefon", "0–4 kortlesere"),
+        (StepLockAbonnement.Standard, StepLockPrisberegner.Standard, "2–10 porttelefoner", "6–15 kortlesere"),
+        (StepLockAbonnement.Premium, StepLockPrisberegner.Premium, "11–20 porttelefoner", "16 eller flere kortlesere")
+    ];
+
+    private Dictionary<string, Artikkel> _artikler = [];
+    private int _tel = 1, _svar, _kort = 6, _pin, _bri;
+    private StepLockTilkobling _tilkPort, _tilkKort, _tilkPin;
+    private bool _veiledende, _visAlle, _kopiert;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var koder = StepLockPrisberegner.AlleKoder;
+        var komponenter = await Db.Components
+            .Where(c => c.Produktkode != null && koder.Contains(c.Produktkode.Trim().ToUpper()))
+            .Select(c => new { c.Produktkode, c.Navn, c.PrisNetto, c.PrisVeiledende, c.Aktiv })
+            .ToListAsync();
+
+        // Finnes artikkelnummeret flere ganger, gjelder det aktive.
+        _artikler = komponenter
+            .GroupBy(c => c.Produktkode!.Trim().ToUpperInvariant())
+            .ToDictionary(g => g.Key, g =>
+            {
+                var c = g.OrderByDescending(x => x.Aktiv).First();
+                return new Artikkel(c.Navn, c.PrisNetto ?? 0, c.PrisVeiledende ?? 0);
+            });
+    }
+
+    private StepLockResultat R => StepLockPrisberegner.Beregn(
+        new StepLockValg(_tel, _svar, _kort, _pin, _bri, _tilkPort, _tilkKort, _tilkPin), Pris);
+
+    private decimal Pris(string kode) => _artikler.TryGetValue(kode, out var a) ? (_veiledende ? a.Veiledende : a.Netto) : 0;
+
+    private string ArtikkelNavn(string kode) => _artikler.TryGetValue(kode, out var a) ? a.Navn : "Mangler i komponentregisteret";
+
+    private List<string> Mangler => StepLockPrisberegner.AlleKoder.Where(k => Pris(k) <= 0).ToList();
+
+    private static string Kr(decimal v) => v.ToString("N0", Kultur);
+
+    private static string Sum(int antall, decimal pris) => antall > 0 ? Kr(antall * pris) + " kr" : "–";
+
+    private static string Navn(StepLockAbonnement? a) => a?.ToString() ?? "Ikke definert";
+
+    private static string TilkNavn(StepLockTilkobling t) => t switch
+    {
+        StepLockTilkobling.Dce => "DCE",
+        StepLockTilkobling.Lte => "4G/LTE",
+        _ => "PoE+"
+    };
+
+    private static int Antall(ChangeEventArgs e) =>
+        int.TryParse(e.Value?.ToString(), out var v) ? Math.Clamp(v, 0, 9999) : 0;
+
+    private bool HintErVarsel => R.Abonnement is null || _tel > 20 || _kort + _pin > 100;
+
+    private string Hint
+    {
+        get
+        {
+            var r = R;
+            if (r.Abonnement is null)
+            {
+                return "Forhandlerarket gir ikke noe abonnement for denne kombinasjonen.";
+            }
+
+            if (_tel > 20 && r.Abonnement == StepLockAbonnement.Basic)
+            {
+                return "Over 20 porttelefoner gir forhandlerarket Basic. Sjekk prisen før den brukes.";
+            }
+
+            if (_tel > 20 || _kort + _pin > 100)
+            {
+                return "Antallet er over det arket dekker. Da gjelder tillegg i prislisten eller pris etter avtale.";
+            }
+
+            return r.Abonnement switch
+            {
+                StepLockAbonnement.Basic => $"Ved 2 porttelefoner eller 6 kortlesere går du til Standard, +{Kr(Pris(StepLockPrisberegner.Standard) - Pris(StepLockPrisberegner.Basic))} kr/mnd.",
+                StepLockAbonnement.Standard => $"Ved 11 porttelefoner eller 16 kortlesere går du til Premium, +{Kr(Pris(StepLockPrisberegner.Premium) - Pris(StepLockPrisberegner.Standard))} kr/mnd.",
+                _ => "Dette er det høyeste abonnementet."
+            };
+        }
+    }
+
+    private void Nullstill()
+    {
+        (_tel, _svar, _kort, _pin, _bri) = (1, 0, 6, 0, 0);
+        _tilkPort = _tilkKort = _tilkPin = StepLockTilkobling.PoE;
+    }
+
+    private async Task Kopier()
+    {
+        var r = R;
+        var linjer = new List<string> { $"StepLock Access ({(_veiledende ? "veiledende" : "netto")}, eks mva)" };
+        linjer.AddRange(r.Linjer.Where(l => l.Antall > 0).Select(l => $"{l.Antall} x {l.Artikkel} {ArtikkelNavn(l.Artikkel)}: {Kr(l.Sum)} kr"));
+        linjer.Add($"Hardware: {Kr(r.Hardware)} kr");
+        linjer.Add($"Abonnement {Navn(r.Abonnement)}: {Kr(r.PerManed)} kr per måned");
+
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", string.Join('\n', linjer));
+        _kopiert = true;
+        StateHasChanged();
+        await Task.Delay(1500);
+        _kopiert = false;
+    }
+}

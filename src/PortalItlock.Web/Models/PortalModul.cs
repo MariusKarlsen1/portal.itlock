@@ -226,6 +226,7 @@ public static class PortalModulRegister
                     new Lenke("Finn dørpakke", "Velg krav og få riktig dørpakke.", "finn-dorpakke", "box"),
                     new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tilbud", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("StepLock-kalkulator", "Sett sammen StepLock Access og se pris på hardware og abonnement.", "steplock-kalkulator", "receipt", null, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield", KreverModul: TilleggsModuler.Ce),
                     new Lenke("Prosjektøkonomi", "Økonomien i pågående prosjekter, og etterkalkyle når de er overlevert.", "prosjektokonomi", "trend-up", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Okonomi),
                     // Begge ligger i venstremenyen og vises derfor ikke som

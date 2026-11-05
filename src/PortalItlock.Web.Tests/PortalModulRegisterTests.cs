@@ -46,8 +46,9 @@ public class PortalModulRegisterTests
     {
         [BrukerRolle.Montor] = ["finn-dorpakke", "systemregister"],
         // Prosjektøkonomi (2026-10-20): ny modul for prosjektleder og admin.
-        [BrukerRolle.Prosjektleder] = ["prosjektokonomi"],
-        [BrukerRolle.Admin] = ["prosjektokonomi"]
+        // StepLock-kalkulator: viser nettopriser, derfor ikke for montører.
+        [BrukerRolle.Prosjektleder] = ["prosjektokonomi", "steplock-kalkulator"],
+        [BrukerRolle.Admin] = ["prosjektokonomi", "steplock-kalkulator"]
     };
 
     // Moduler som bevisst er tatt HELT ut av portalen. Sidene lever videre på
