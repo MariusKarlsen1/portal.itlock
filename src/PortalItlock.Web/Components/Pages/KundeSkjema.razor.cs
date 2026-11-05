@@ -16,7 +16,7 @@ public partial class KundeSkjema
     [SupplyParameterFromQuery(Name = "fane")] public string? Fane { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private enum KundeFane { Oversikt, Oppfolging, Prosjekter, Tilbud, Ordrer, Tickets, Avtaler, Priser, Kontaktpersoner, Detaljer }
+    private enum KundeFane { Oversikt, Oppfolging, Prosjekter, Tilbud, Ordrer, Tickets, Avtaler, Priser, Kontaktpersoner, Dokumenter, Detaljer }
 
     private sealed class ProsjektRad
     {
@@ -44,6 +44,13 @@ public partial class KundeSkjema
     private bool _notFound;
     private int? _loadedId;
     private KundeFane _fane = KundeFane.Oversikt;
+
+    private sealed record DokumentRad(int Id, string Filnavn, DateTime OpprettetDato);
+
+    private List<DokumentRad> _dokumenter = [];
+    private List<KundeHendelse> _hendelser = [];
+    private string? _dokumentFeil;
+    private bool _lasterOppDokument;
     private int? _naverendeBrukerId;
     private Bruker? _naverendeBruker;
 
@@ -613,6 +620,7 @@ public partial class KundeSkjema
             .ToListAsync();
 
         _produktgrupper = await Db.Produktgrupper.AsNoTracking().OrderBy(p => p.Navn).ToListAsync();
+        await LastDokumenterAsync();
         _andreKunder = await Db.Kunder.AsNoTracking().Where(k => k.Id != Id).OrderBy(k => k.Navn).ToListAsync();
         await LastKundeRabatterAsync();
         await LastKundeLisenserAsync();
@@ -620,6 +628,83 @@ public partial class KundeSkjema
         await LastFakturertAsync();
         await LastOppfolgingerAsync();
         NullstillOppfolgingSkjema();
+    }
+
+    // ---------------- Dokumenter og historikk ----------------
+
+    private async Task LastDokumenterAsync()
+    {
+        // Selve filene hentes ikke her, de kan være store.
+        _dokumenter = await Db.KundeDokumenter
+            .Where(d => d.KundeId == Id)
+            .OrderByDescending(d => d.OpprettetDato)
+            .Select(d => new DokumentRad(d.Id, d.Filnavn, d.OpprettetDato))
+            .ToListAsync();
+
+        _hendelser = await Db.KundeHendelser
+            .Where(h => h.KundeId == Id)
+            .Include(h => h.UtfortAvBruker)
+            .OrderByDescending(h => h.Tidspunkt)
+            .Take(20)
+            .ToListAsync();
+    }
+
+    private async Task OnDokumentValgt(InputFileChangeEventArgs e)
+    {
+        _dokumentFeil = null;
+        _lasterOppDokument = true;
+
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                if (file.Size > 20_000_000)
+                {
+                    _dokumentFeil = $"\"{file.Name}\" er for stor (maks 20 MB) og ble hoppet over.";
+                    continue;
+                }
+
+                using var buffer = new MemoryStream();
+                await using (var stream = file.OpenReadStream(maxAllowedSize: 20_000_000))
+                {
+                    await stream.CopyToAsync(buffer);
+                }
+
+                Db.KundeDokumenter.Add(new KundeDokument
+                {
+                    KundeId = Id,
+                    Filnavn = file.Name,
+                    ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                    Data = buffer.ToArray()
+                });
+                Db.KundeHendelser.Add(new KundeHendelse
+                {
+                    KundeId = Id,
+                    Beskrivelse = $"Dokument lastet opp: {file.Name}",
+                    Tidspunkt = DateTime.Now,
+                    UtfortAvBrukerId = _naverendeBrukerId
+                });
+            }
+
+            await Db.SaveChangesAsync();
+            await LastDokumenterAsync();
+        }
+        finally
+        {
+            _lasterOppDokument = false;
+        }
+    }
+
+    private async Task SlettDokument(int id)
+    {
+        var entitet = await Db.KundeDokumenter.FirstOrDefaultAsync(d => d.Id == id);
+        if (entitet is not null)
+        {
+            Db.KundeDokumenter.Remove(entitet);
+            await Db.SaveChangesAsync();
+        }
+
+        await LastDokumenterAsync();
     }
 
     private async Task LastOppfolgingerAsync()
