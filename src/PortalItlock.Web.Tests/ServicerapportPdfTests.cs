@@ -90,4 +90,94 @@ public class ServicerapportPdfTests
 
         Assert.True(ErPdf(ServicerapportPdfService.Bygg(runde, Org, null!)));
     }
+
+    private const string Punkter = """
+        NyttBygg
+        ID26.227 romnr 229 - Automatikken henger skeivt.
+        ID25.105.4 romnr: 105a - Mangler en skilt skrue
+        ID29.214.1 - Romnr: 214 - utvendig albuebryter fungerer ikke
+        Gammelt Bygg
+        14- mangler en skrue i dørvrider
+        19 - Døren er ujevn og stanger i karm.
+        22 - mangler en skrue i vrider.
+        Nødkopper:
+        Har tatt av nødkoppene for å sjekke om rømning er ivaretatt, og alle sitter som de skal.
+        Kritisk:
+        Nytt Bygg
+        YD04.113.1 romnr: 113 - Får ikke opp døren. Rømningsdør.
+        Gammelt Bygg:
+        44- Dørpakningen ligger over dørlukkeren.
+        """;
+
+    [Fact]
+    public void Tolk_DelerOppOverskrifterRaderOgKritisk()
+    {
+        var tolking = ServiceAnbefalinger.Tolk(Punkter);
+
+        Assert.True(tolking.ErLang);
+        Assert.Equal(6, tolking.Antall);
+        Assert.Equal("Gammelt Bygg", tolking.Linjer[4].Tekst);
+        Assert.Equal(ServiceAnbefalinger.LinjeType.Overskrift, tolking.Linjer[4].Type);
+        Assert.Equal("Nødkopper", tolking.Linjer[8].Tekst);
+        Assert.Equal(ServiceAnbefalinger.LinjeType.Avsnitt, tolking.Linjer[9].Type);
+        Assert.Equal("14", tolking.Linjer[5].Dor);
+        Assert.Equal("ID29.214.1", tolking.Linjer[3].Dor);
+        Assert.Equal("Romnr: 214 - utvendig albuebryter fungerer ikke", tolking.Linjer[3].Tekst);
+        Assert.Equal(["YD04.113.1 romnr: 113", "44"], tolking.Kritisk.Select(k => k.Dor));
+    }
+
+    [Fact]
+    public void Tolk_LeserFormatertTekstLikt()
+    {
+        var html = string.Concat(Punkter.Split('\n').Select(l => $"<p>{l.Trim()}</p>"));
+
+        Assert.Equal(ServiceAnbefalinger.Tolk(Punkter).Linjer, ServiceAnbefalinger.Tolk(html).Linjer);
+        Assert.Equal(2, ServiceAnbefalinger.Tolk(html).Kritisk.Count);
+    }
+
+    [Fact]
+    public void Tolk_KortTekstErIkkeLang()
+    {
+        Assert.False(ServiceAnbefalinger.Tolk("Bytt dørlukker innen neste runde.").ErLang);
+        Assert.False(ServiceAnbefalinger.Tolk(null).ErLang);
+    }
+
+    [Fact]
+    public void MedPunkter_ByttverStjernerILinjestart()
+    {
+        Assert.Equal("• Smurt\n• Sjekket 2 * 3", ServiceAnbefalinger.MedPunkter("* Smurt\n* Sjekket 2 * 3"));
+        Assert.Equal("<p>• Smurt</p>", ServiceAnbefalinger.MedPunkter("<p>* Smurt</p>"));
+    }
+
+    [Fact]
+    public void MangePunkter_FaarEgenSideEtterOppsummeringen()
+    {
+        QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+        var runde = Full();
+        runde.Anbefalinger = Punkter;
+
+        Assert.Equal(3, Sider(ServicerapportPdfService.Bygg(runde, Org, null!)));
+    }
+
+    [Fact]
+    public void BareKritiskeLinjer_GirIngenEkstraSide()
+    {
+        QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+        var runde = Full();
+        runde.Anbefalinger = "Kritisk:\n" + string.Join("\n", Enumerable.Range(1, 12).Select(i => $"{i} - Døren må sjekkes."));
+
+        Assert.Equal(2, Sider(ServicerapportPdfService.Bygg(runde, Org, null!)));
+    }
+
+    [Fact]
+    public void SvertLangeTekster_KanLagesUtenFeil()
+    {
+        QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+        var lang = string.Concat(Enumerable.Repeat("Lang tekst uten linjeskift som går over flere sider i rapporten. ", 800));
+        var runde = Full();
+        runde.StatusBeskrivelse = lang;
+        runde.Anbefalinger = lang + "\n12 - " + lang + "\nKritisk:\n44 - " + lang;
+
+        Assert.True(ErPdf(ServicerapportPdfService.Bygg(runde, Org, null!)));
+    }
 }
