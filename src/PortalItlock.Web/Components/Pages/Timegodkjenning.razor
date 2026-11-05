@@ -18,7 +18,7 @@
 
 @* Godkjenninger (godkjenninger-valgt.html, med kort): ett kort med fanene
    Timer (alle timelister som venter, med uka som åpnes på raden, og ukearket
-   under Godkjent), Fravær (søknader
+   under Godkjent), Fravær (alle søknader, med kalender og melding på raden: søknader
    med kalender der hver dag kan godkjennes/avslås, og melding til montøren) og
    Oversikt (periode, lønnseksport, grafer, sammendrag og detaljer). *@
 <div class="tg-kort @(_full ? "tg-full" : "")">
@@ -130,8 +130,8 @@
                                             <b>@rad.Navn</b>
                                         </span>
                                     </td>
-                                    <td data-felt="uke"><b>Uke @rad.Uke</b> <span class="tg-mut">@rad.Mandag.ToString("d.M", Kultur)–@rad.Mandag.AddDays(6).ToString("d.M", Kultur)</span></td>
-                                    <td data-felt="timer">
+                                    <td data-felt="andre"><b>Uke @rad.Uke</b> <span class="tg-mut">@rad.Mandag.ToString("d.M", Kultur)–@rad.Mandag.AddDays(6).ToString("d.M", Kultur)</span></td>
+                                    <td data-felt="tredje">
                                         <b>@FormatKort(rad.Timer)</b>
                                         @if (rad.VenterTimer != rad.Timer)
                                         {
@@ -412,148 +412,282 @@
     }
     else if (_aktivFane == "fravar")
     {
-        <div class="tg-verktoy">
-            <select class="tg-velg" @bind="_montorId" @bind:after="LastKoAsync">
-                <option value="">Alle montører</option>
-                @foreach (var m in _montorer)
-                {
-                    <option value="@m.Id">@m.Navn</option>
-                }
-            </select>
-            <span class="tg-mut">@_koFravar.Count @(_koFravar.Count == 1 ? "søknad venter" : "søknader venter")</span>
+        <div class="tg-ko-verktoy">
+            <label class="tg-sokefelt">
+                <Icon Name="search" />
+                <input type="search" placeholder="Søk etter montør" aria-label="Søk etter montør" @bind="_fravarSok" @bind:event="oninput" @bind:after="LukkBekreftFravar" />
+            </label>
+            <div class="tg-valg">
+                <button type="button" class="@(_fravarFilter == "venter" ? "aktiv" : "")" @onclick='@(() => VelgFravarFilter("venter"))'>Venter <i>@_soknader.Count</i></button>
+                <button type="button" class="@(_fravarFilter == "merknad" ? "aktiv" : "")" @onclick='@(() => VelgFravarFilter("merknad"))'>Merknad <i>@_soknader.Count(x => !x.Klar)</i></button>
+                <button type="button" class="@(_fravarFilter == "behandlet" ? "aktiv" : "")" @onclick='@(() => VelgFravarFilter("behandlet"))'>Behandlet</button>
+            </div>
         </div>
 
-        @if (_koFravar.Count == 0)
+        @if (_fravarFilter == "behandlet")
         {
-            <p class="list-empty">Ingen fraværssøknader venter på godkjenning.</p>
+            var behandlede = VisteBehandlede;
+            var nr = 0;
+            <div class="tg-ok">
+                <div class="tg-okt">
+                    <span class="tg-okt-tittel">Behandlede søknader<small>de siste @_behandlede.Count</small></span>
+                </div>
+                @if (behandlede.Count == 0)
+                {
+                    <p class="tg-ok-tom">@(string.IsNullOrWhiteSpace(_fravarSok) ? "Ingen søknader er behandlet ennå." : "Fant ingen montør med det navnet.")</p>
+                }
+                else
+                {
+                    <table class="tg-ko">
+                        <thead>
+                            <tr>
+                                <th>Montør</th>
+                                <th>Type</th>
+                                <th>Periode</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var f in behandlede)
+                            {
+                                var sone = nr++ % 2 == 1;
+                                <tr class="tg-rad tg-rad-rolig @(sone ? "tg-sone" : "")" @key="f.Id">
+                                    <td data-felt="montor">
+                                        <span class="tg-montor">
+                                            <span class="tg-av" style="background:@Farge(f.BrukerId)">@Initialer(f.Bruker?.Navn)</span>
+                                            <b>@(f.Bruker?.Navn ?? "-")</b>
+                                        </span>
+                                    </td>
+                                    <td data-felt="andre"><span class="tg-type @(f.Type == FravarType.Ferie ? "" : "tg-type-annen")">@f.Type.Visningsnavn()</span></td>
+                                    <td data-felt="tredje">
+                                        <b>@PeriodeKort(f)</b>
+                                        <small class="tg-mut">@DagerTekst(f)</small>
+                                    </td>
+                                    <td data-felt="vurdering">
+                                        <span class="tg-pill tg-pill-@(f.Status == FravarStatus.Godkjent ? "godkjent" : "avslatt")">@f.Status.Visningsnavn()</span>
+                                        @if (f.BehandletDato is DateTime behandlet)
+                                        {
+                                            <small class="tg-mut">@behandlet.ToString("d.M.yyyy", Kultur)</small>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(f.AvslagsBegrunnelse))
+                                        {
+                                            <small class="tg-mut">@f.AvslagsBegrunnelse</small>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
         }
         else
         {
-            <div class="tg-fravar">
-                <div class="tg-sokliste">
-                    @foreach (var f in _koFravar)
+            var rader = VisteSoknader;
+            var klare = rader.Where(x => x.Klar).ToList();
+            var antallMontorer = rader.Select(x => x.Soknad.BrukerId).Distinct().Count();
+            var nr = 0;
+            <div class="tg-ok">
+                <div class="tg-okt">
+                    <span class="tg-okt-tittel">
+                        @(_fravarFilter == "merknad" ? "Søknader med merknad" : "Søknader som venter")
+                        @if (rader.Count > 0)
+                        {
+                            <small>@rader.Count @(rader.Count == 1 ? "søknad" : "søknader") fra @antallMontorer @(antallMontorer == 1 ? "montør" : "montører")</small>
+                        }
+                    </span>
+                    @if (KanGodkjenne && klare.Count > 0)
                     {
-                        <button type="button" @key="f.Id" class="tg-sok @(f.Id == _valgtFravarId ? "aktiv" : "")" @onclick="@(() => VelgFravar(f.Id))">
-                            <span class="tg-av" style="background:@Farge(f.BrukerId)">@Initialer(f.Bruker?.Navn)</span>
-                            <span class="tg-sok-tekst">
-                                <b>@(f.Bruker?.Navn ?? "-")</b>
-                                <small><span class="tg-fravartype">@f.Type.Visningsnavn()</span> · @Periode(f)</small>
+                        @if (_bekreftAlleFravar)
+                        {
+                            <span class="tg-bekreft">
+                                <span>Godkjenne @klare.Count @(klare.Count == 1 ? "søknad" : "søknader")?</span>
+                                <button type="button" class="tg-kn" @onclick="LukkBekreftFravar">Avbryt</button>
+                                <button type="button" class="tg-kn tg-kn-g" @onclick="GodkjennAlleKlareFravar"><Icon Name="check" />Ja, godkjenn</button>
                             </span>
-                            <span class="tg-sok-hoyre">
-                                <b>@Arbeidsdager(f.FraDato, f.TilDato) d</b>
-                                <small>venter @((DateTime.Today - f.OpprettetDato.Date).Days) d</small>
-                            </span>
-                        </button>
+                        }
+                        else
+                        {
+                            <button type="button" class="tg-kn tg-kn-g" @onclick="@(() => _bekreftAlleFravar = true)"><Icon Name="check" />Godkjenn alle klare (@klare.Count)</button>
+                        }
                     }
                 </div>
 
-                @if (_valgtFravar is { } s)
+                @if (rader.Count == 0)
                 {
-                    var andre = AndreBorte(s);
-                    var antallGodkjent = _dagValg.Count(x => x.Value);
-                    var antallAvslatt = _dagValg.Count(x => !x.Value);
-                    <div class="tg-sokdetalj">
-                        <div class="tg-dag-hode">
-                            <span class="tg-av tg-av-stor" style="background:@Farge(s.BrukerId)">@Initialer(s.Bruker?.Navn)</span>
-                            <span>
-                                <b>@(s.Bruker?.Navn ?? "-")</b>
-                                <small>@s.Type.Visningsnavn() · @Periode(s) · @Arbeidsdager(s.FraDato, s.TilDato) arbeidsdager@(s.HeleDagen ? "" : $" · {s.StartTid:HH:mm}–{s.SluttTid:HH:mm}") · sendt @s.OpprettetDato.ToString("dd.MM")</small>
-                            </span>
-                            <span class="tg-pill tg-pill-venter">Venter</span>
-                        </div>
-
-                        @if (!string.IsNullOrWhiteSpace(s.Kommentar))
-                        {
-                            <span class="tg-kommentar">💬 «@s.Kommentar»</span>
-                        }
-
-                        @if (andre.Count > 0)
-                        {
-                            <div class="tg-forklaring">
-                                <span class="tg-forklaring-rod"><b>Borte samtidig:</b> @string.Join(", ", andre.Select(a => $"{a.Bruker?.Navn?.Split(' ')[0]} {Periode(a)}{(a.Status == FravarStatus.Venter ? " (søkt)" : "")}"))</span>
-                            </div>
-                        }
-
-                        @if (KanGodkjenne && _dagValg.Count > 1)
-                        {
-                            <div class="tg-kal-forklaring">
-                                <span><i class="tg-prikk tg-prikk-gronn"></i>Godkjent (@antallGodkjent)</span>
-                                <span><i class="tg-prikk tg-prikk-rod"></i>Avslått (@antallAvslatt)</span>
-                                <span class="tg-mut">Trykk på en dag for å bytte</span>
-                            </div>
-                        }
-
-                        <div class="tg-kalendere">
-                            @foreach (var mnd in Maneder(s))
+                    <p class="tg-ok-tom">@(!string.IsNullOrWhiteSpace(_fravarSok) ? "Fant ingen montør med det navnet." : _fravarFilter == "merknad" ? "Ingen søknader har merknad." : "Ingen fraværssøknader venter på godkjenning.")</p>
+                }
+                else
+                {
+                    <table class="tg-ko">
+                        <thead>
+                            <tr>
+                                <th>Montør</th>
+                                <th>Type</th>
+                                <th>Periode</th>
+                                <th>Vurdering</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var rad in rader)
                             {
-                                <div class="tg-kal">
-                                    <b>@mnd.ToString("MMMM yyyy", Kultur)</b>
-                                    <div class="tg-kal-grid">
-                                        @foreach (var u in new[] { "M", "T", "O", "T", "F", "L", "S" })
+                                var s = rad.Soknad;
+                                var apen = _valgtFravarId == s.Id;
+                                var sone = nr++ % 2 == 1;
+                                <tr class="tg-rad @(sone ? "tg-sone" : "") @(apen ? "tg-rad-apen" : "")" @key="s.Id" @onclick="@(() => VekslSoknad(s.Id))">
+                                    <td data-felt="montor">
+                                        <span class="tg-montor">
+                                            <span class="tg-av" style="background:@Farge(s.BrukerId)">@Initialer(s.Bruker?.Navn)</span>
+                                            <b>@(s.Bruker?.Navn ?? "-")</b>
+                                        </span>
+                                    </td>
+                                    <td data-felt="andre"><span class="tg-type @(s.Type == FravarType.Ferie ? "" : "tg-type-annen")">@s.Type.Visningsnavn()</span></td>
+                                    <td data-felt="tredje">
+                                        <b>@PeriodeKort(s)</b>
+                                        <small class="tg-mut tg-klipp">@DagerTekst(s)@(string.IsNullOrWhiteSpace(s.Kommentar) ? "" : $" · {s.Kommentar}")</small>
+                                    </td>
+                                    <td data-felt="vurdering">
+                                        @if (rad.Klar)
                                         {
-                                            <span class="tg-kal-ukedag">@u</span>
+                                            <span class="tg-vurd tg-vurd-klar">Klar</span>
                                         }
-                                        @for (var i = 0; i < ((int)mnd.DayOfWeek + 6) % 7; i++)
+                                        else
                                         {
-                                            <span></span>
+                                            <span class="tg-vurd tg-vurd-merknad"><Icon Name="alert-triangle" />@rad.Merknader[0].Kort@(rad.Merknader.Count > 1 ? $" +{rad.Merknader.Count - 1}" : "")</span>
                                         }
-                                        @for (var dag = mnd; dag.Month == mnd.Month; dag = dag.AddDays(1))
+                                    </td>
+                                    <td class="tg-rad-knapper" data-felt="knapper" @onclick:stopPropagation="true">
+                                        <button type="button" class="tg-kn" aria-expanded="@(apen ? "true" : "false")" @onclick="@(() => VekslSoknad(s.Id))">@(apen ? "Lukk" : "Se")</button>
+                                        @if (KanGodkjenne && rad.Klar && !apen)
                                         {
-                                            var d = dag;
-                                            var iPerioden = d >= s.FraDato.Date && d <= s.TilDato.Date;
-                                            var harValg = _dagValg.TryGetValue(d, out var godkjent);
-                                            var annen = andre.Any(a => d >= a.FraDato.Date && d <= a.TilDato.Date);
-                                            var klasse = harValg ? (godkjent ? "tg-kal-godkjent" : "tg-kal-avslatt") : iPerioden ? "tg-kal-periode" : ErHelg(d) ? "tg-kal-helg" : "";
-                                            @if (harValg && KanGodkjenne && _dagValg.Count > 1)
+                                            <button type="button" class="tg-kn tg-kn-g" @onclick="@(() => GodkjennSoknad(s.Id))"><Icon Name="check" />Godkjenn</button>
+                                        }
+                                    </td>
+                                </tr>
+                                @if (apen)
+                                {
+                                    var andre = AndreBorte(s);
+                                    var fornavn = Fornavn(s.Bruker?.Navn);
+                                    var antallGodkjent = _dagValg.Count(x => x.Value);
+                                    var antallAvslatt = _dagValg.Count(x => !x.Value);
+                                    <tr class="tg-detalj" @key="@($"{s.Id}-detalj")">
+                                        <td colspan="5">
+                                            @if (rad.Merknader.Count > 0)
                                             {
-                                                <button type="button" class="tg-kal-dag @klasse" title="@(godkjent ? "Godkjent - trykk for å avslå" : "Avslått - trykk for å godkjenne")" @onclick="@(() => _dagValg[d] = !_dagValg[d])">
-                                                    @d.Day
-                                                    @if (annen) { <i class="tg-kal-annen"></i> }
-                                                </button>
+                                                <div class="tg-note">
+                                                    <Icon Name="alert-triangle" />
+                                                    <span>
+                                                        @foreach (var mk in rad.Merknader)
+                                                        {
+                                                            <span>@mk.Tekst</span>
+                                                        }
+                                                    </span>
+                                                </div>
                                             }
                                             else
                                             {
-                                                <span class="tg-kal-dag @klasse">
-                                                    @d.Day
-                                                    @if (annen) { <i class="tg-kal-annen"></i> }
-                                                </span>
+                                                <div class="tg-gnote">
+                                                    <Icon Name="check" />
+                                                    <span>Ingen andre er borte disse dagene@(s.HeleDagen ? $", og {fornavn} har ikke ført timer da." : ".")</span>
+                                                </div>
                                             }
-                                        }
-                                    </div>
-                                </div>
-                            }
-                        </div>
 
-                        @if (KanGodkjenne)
-                        {
-                            <label class="tg-melding">
-                                <span class="tg-lbl">Melding til @(s.Bruker?.Navn?.Split(' ')[0] ?? "montøren")@(antallAvslatt > 0 ? "" : " (valgfritt)")</span>
-                                <textarea rows="2" @bind="_avslagsBegrunnelse" @bind:event="oninput" placeholder="@(antallAvslatt > 0 ? "Forklar hvorfor - f.eks. at noen andre også er borte da" : "Vises for montøren hvis noe avslås")"></textarea>
-                            </label>
-                            <div class="tg-dag-knapper">
-                                @if (antallAvslatt == 0)
-                                {
-                                    <button type="button" class="tg-kn tg-kn-g" @onclick="LagreFravar">✓ Godkjenn@(_dagValg.Count > 1 ? $" alle {_dagValg.Count} dager" : "")</button>
+                                            <div class="tg-kalrad">
+                                            <div class="tg-kalendere">
+                                                @foreach (var mnd in Maneder(s))
+                                                {
+                                                    <div class="tg-kal">
+                                                        <b>@mnd.ToString("MMMM yyyy", Kultur)</b>
+                                                        <div class="tg-kal-grid">
+                                                            @foreach (var u in new[] { "M", "T", "O", "T", "F", "L", "S" })
+                                                            {
+                                                                <span class="tg-kal-ukedag">@u</span>
+                                                            }
+                                                            @for (var i = 0; i < ((int)mnd.DayOfWeek + 6) % 7; i++)
+                                                            {
+                                                                <span></span>
+                                                            }
+                                                            @for (var dag = mnd; dag.Month == mnd.Month; dag = dag.AddDays(1))
+                                                            {
+                                                                var d = dag;
+                                                                var iPerioden = d >= s.FraDato.Date && d <= s.TilDato.Date;
+                                                                var harValg = _dagValg.TryGetValue(d, out var godkjent);
+                                                                var annen = andre.Any(a => d >= a.FraDato.Date && d <= a.TilDato.Date);
+                                                                var klasse = harValg ? (godkjent ? "tg-kal-godkjent" : "tg-kal-avslatt") : iPerioden ? "tg-kal-periode" : ErHelg(d) ? "tg-kal-helg" : "";
+                                                                @if (harValg && KanGodkjenne && _dagValg.Count > 1)
+                                                                {
+                                                                    <button type="button" class="tg-kal-dag @klasse" title="@(godkjent ? "Godkjent - trykk for å avslå" : "Avslått - trykk for å godkjenne")" @onclick="@(() => _dagValg[d] = !_dagValg[d])">
+                                                                        @d.Day
+                                                                        @if (annen) { <i class="tg-kal-annen"></i> }
+                                                                    </button>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <span class="tg-kal-dag @klasse">
+                                                                        @d.Day
+                                                                        @if (annen) { <i class="tg-kal-annen"></i> }
+                                                                    </span>
+                                                                }
+                                                            }
+                                                        </div>
+                                                    </div>
+                                                }
+                                            </div>
+                                                <div class="tg-kalside">
+                                                    @if (KanGodkjenne && _dagValg.Count > 1)
+                                                    {
+                                                        <div class="tg-kal-forklaring">
+                                                            <span><i class="tg-prikk tg-prikk-gronn"></i>Godkjent (@antallGodkjent)</span>
+                                                            <span><i class="tg-prikk tg-prikk-rod"></i>Avslått (@antallAvslatt)</span>
+                                                        </div>
+                                                        <span class="tg-mut">Trykk på en dag for å avslå bare den.</span>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(s.Kommentar))
+                                                    {
+                                                        <span class="tg-kommentar">💬 «@s.Kommentar»</span>
+                                                    }
+                                                    <span class="tg-mut">Sendt @s.OpprettetDato.ToString("d.M.yyyy", Kultur)@(s.HeleDagen ? "" : $" · {s.StartTid:HH:mm}–{s.SluttTid:HH:mm}")</span>
+                                                </div>
+                                            </div>
+
+                                            @if (KanGodkjenne)
+                                            {
+                                                <label class="tg-melding">
+                                                    <span class="tg-lbl">Melding til @fornavn@(antallAvslatt > 0 ? "" : " (valgfritt)")</span>
+                                                    <textarea rows="2" @bind="_avslagsBegrunnelse" @bind:event="oninput" placeholder="@(antallAvslatt > 0 ? "Forklar hvorfor - f.eks. at noen andre også er borte da" : "Vises for montøren hvis noe avslås")"></textarea>
+                                                </label>
+                                            }
+
+                                            <div class="tg-fot">
+                                                <span>@DagerTekst(s)</span>
+                                                @if (KanGodkjenne)
+                                                {
+                                                    @if (antallAvslatt == 0)
+                                                    {
+                                                        <button type="button" class="tg-kn tg-kn-rod" @onclick="AvslaAlleDager"><Icon Name="x" />Avslå</button>
+                                                        <button type="button" class="tg-kn tg-kn-g" @onclick="LagreFravar"><Icon Name="check" />Godkjenn@(_dagValg.Count > 1 ? $" alle {_dagValg.Count} dager" : "")</button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button type="button" class="tg-kn" @onclick="NullstillDagValg">Nullstill</button>
+                                                        @if (antallGodkjent == 0)
+                                                        {
+                                                            <button type="button" class="tg-kn tg-kn-rod" @onclick="LagreFravar"><Icon Name="x" />Avslå søknaden</button>
+                                                        }
+                                                        else
+                                                        {
+                                                            <button type="button" class="tg-kn tg-kn-g" @onclick="LagreFravar"><Icon Name="check" />Lagre: @antallGodkjent godkjent, @antallAvslatt avslått</button>
+                                                        }
+                                                    }
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
                                 }
-                                else if (antallGodkjent == 0)
-                                {
-                                    <button type="button" class="tg-kn tg-kn-rod" @onclick="LagreFravar">✕ Avslå søknaden</button>
-                                }
-                                else
-                                {
-                                    <button type="button" class="tg-kn tg-kn-g" @onclick="LagreFravar">✓ Lagre: @antallGodkjent godkjent, @antallAvslatt avslått</button>
-                                }
-                                @if (antallAvslatt == 0)
-                                {
-                                    <button type="button" class="tg-kn tg-kn-rod" @onclick="AvslaAlleDager">✕ Avslå</button>
-                                }
-                                else
-                                {
-                                    <button type="button" class="tg-kn" @onclick="NullstillDagValg">Nullstill</button>
-                                }
-                            </div>
-                        }
-                    </div>
+                            }
+                        </tbody>
+                    </table>
                 }
             </div>
         }
@@ -791,6 +925,11 @@
     private sealed record VentendeUke(int Ar, int Uke, int Antall);
     private sealed record Merknad(string Kort, string Tekst);
 
+    private sealed record Soknadsrad(FravarSoknad Soknad, List<Merknad> Merknader)
+    {
+        public bool Klar => Merknader.Count == 0;
+    }
+
     // Én montør sin uke: alle registreringene i uka, også de som alt er behandlet,
     // så dagrutene viser hele uka selv om bare én dag venter.
     private sealed record Timeliste(string Nokkel, int MontorId, string Navn, int Ar, int Uke, DateTime Mandag,
@@ -838,6 +977,12 @@
     private int? _valgtFravarId;
     private int _totalVenterFravar;
     private string _avslagsBegrunnelse = "";
+    private List<Soknadsrad> _soknader = [];
+    private List<FravarSoknad> _behandlede = [];
+    private List<(int MontorId, DateTime Dato)> _fravarTimer = [];
+    private string _fravarFilter = "venter";
+    private string _fravarSok = "";
+    private bool _bekreftAlleFravar;
     // Arbeidsdagene i valgt søknad: true = godkjent, false = avslått.
     private Dictionary<DateTime, bool> _dagValg = [];
 
@@ -1356,19 +1501,15 @@
         }
 
         // Fravær-fanen: alle søknader som venter (ikke bare denne uka - de går ofte over flere uker).
-        var fravarQuery = Db.FravarSoknader
+        _koFravar = await Db.FravarSoknader
             .Include(f => f.Bruker)
-            .Where(f => f.Status == FravarStatus.Venter);
-        if (_montorId.HasValue)
-        {
-            fravarQuery = fravarQuery.Where(f => f.BrukerId == _montorId.Value);
-        }
+            .Where(f => f.Status == FravarStatus.Venter)
+            .OrderBy(f => f.FraDato).ThenBy(f => f.Bruker!.Navn)
+            .ToListAsync();
 
-        _koFravar = await fravarQuery.OrderBy(f => f.FraDato).ThenBy(f => f.Bruker!.Navn).ToListAsync();
-
-        if (_valgtFravarId is null || !_koFravar.Any(f => f.Id == _valgtFravarId))
+        if (_valgtFravarId is not null && !_koFravar.Any(f => f.Id == _valgtFravarId))
         {
-            VelgFravar(_koFravar.FirstOrDefault()?.Id);
+            VelgFravar(null);
         }
 
         if (_koFravar.Count > 0)
@@ -1379,11 +1520,30 @@
                 .Include(f => f.Bruker)
                 .Where(f => f.Status != FravarStatus.Avslatt && f.FraDato.Date <= til && f.TilDato.Date >= fra)
                 .ToListAsync();
+
+            var fraDag = fra;
+            var etterSiste = til.AddDays(1);
+            _fravarTimer = (await Db.Timeregistreringer
+                    .Where(t => t.Status != TimeregistreringStatus.Avslatt && t.Dato >= fraDag && t.Dato < etterSiste)
+                    .Select(t => new { t.MontorId, t.Dato })
+                    .ToListAsync())
+                .Select(t => (t.MontorId, t.Dato))
+                .ToList();
         }
         else
         {
             _andreFravar = [];
+            _fravarTimer = [];
         }
+
+        _soknader = _koFravar.Select(f => new Soknadsrad(f, SoknadMerknader(f))).ToList();
+
+        _behandlede = await Db.FravarSoknader
+            .Include(f => f.Bruker)
+            .Where(f => f.Status != FravarStatus.Venter)
+            .OrderByDescending(f => f.BehandletDato).ThenByDescending(f => f.Id)
+            .Take(30)
+            .ToListAsync();
     }
 
     private async Task Behandle(int id, TimeregistreringStatus status) => await BehandleFlere([id], status);
@@ -1410,6 +1570,95 @@
     }
 
     // ---------- Fravær-fanen ----------
+    private List<Soknadsrad> VisteSoknader => _soknader
+        .Where(x => _fravarFilter != "merknad" || !x.Klar)
+        .Where(x => TrefferFravarSok(x.Soknad))
+        .ToList();
+
+    private List<FravarSoknad> VisteBehandlede => _behandlede.Where(TrefferFravarSok).ToList();
+
+    private bool TrefferFravarSok(FravarSoknad f) => string.IsNullOrWhiteSpace(_fravarSok)
+        || (f.Bruker?.Navn ?? "").Contains(_fravarSok.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private void VelgFravarFilter(string filter)
+    {
+        _fravarFilter = filter;
+        _bekreftAlleFravar = false;
+    }
+
+    private void LukkBekreftFravar() => _bekreftAlleFravar = false;
+
+    private void VekslSoknad(int id) => VelgFravar(_valgtFravarId == id ? null : id);
+
+    private async Task GodkjennSoknad(int id)
+    {
+        VelgFravar(id);
+        await LagreFravar();
+    }
+
+    private async Task GodkjennAlleKlareFravar()
+    {
+        var ider = VisteSoknader.Where(x => x.Klar).Select(x => x.Soknad.Id).ToList();
+        _bekreftAlleFravar = false;
+        foreach (var id in ider)
+        {
+            await GodkjennSoknad(id);
+        }
+    }
+
+    private static string Fornavn(string? navn) => string.IsNullOrWhiteSpace(navn) ? "montøren" : navn.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+
+    private static string PeriodeKort(FravarSoknad f) => f.FraDato.Date == f.TilDato.Date ? KortDag(f.FraDato.Date) : Periode(f);
+
+    private static string DagerTekst(FravarSoknad f)
+    {
+        var dager = Arbeidsdager(f.FraDato, f.TilDato);
+        return dager == 1 ? "1 dag" : $"{dager} arbeidsdager";
+    }
+
+    private static bool Overlapper(FravarSoknad a, FravarSoknad b) => a.FraDato.Date <= b.TilDato.Date && a.TilDato.Date >= b.FraDato.Date;
+
+    // Det som bør sjekkes før søknaden godkjennes. Uten merknader er den Klar.
+    private List<Merknad> SoknadMerknader(FravarSoknad s)
+    {
+        var liste = new List<Merknad>();
+        var fornavn = Fornavn(s.Bruker?.Navn);
+        var egne = _andreFravar.Where(a => a.Id != s.Id && a.BrukerId == s.BrukerId && Overlapper(a, s)).ToList();
+
+        if (egne.Any(a => a.Type == s.Type))
+        {
+            liste.Add(new("Søkt to ganger", $"{s.Type.Visningsnavn()} {Periode(s)} er søkt to ganger. Avslå den ene."));
+        }
+
+        if (egne.FirstOrDefault(a => a.Type != s.Type) is { } annen)
+        {
+            liste.Add(new("To søknader samme dag", $"{fornavn} har også søkt {annen.Type.Visningsnavn().ToLower(Kultur)} {Periode(annen)}."));
+        }
+
+        // Fravær deler av dagen kan fint ha timer samme dag.
+        if (s.HeleDagen)
+        {
+            var dager = _fravarTimer
+                .Where(t => t.MontorId == s.BrukerId && t.Dato.Date >= s.FraDato.Date && t.Dato.Date <= s.TilDato.Date)
+                .Select(t => t.Dato.Date)
+                .Distinct()
+                .OrderBy(d => d)
+                .ToList();
+            if (dager.Count > 0)
+            {
+                liste.Add(new("Timer ført samme dag", $"{fornavn} har ført timer {string.Join(", ", dager.Select(d => d.ToString("d.M", Kultur)))}."));
+            }
+        }
+
+        var andre = AndreBorte(s);
+        if (andre.Count > 0)
+        {
+            liste.Add(new("Andre borte samtidig", "Borte samtidig: " + string.Join(", ", andre.Select(a => $"{Fornavn(a.Bruker?.Navn)} {Periode(a)}{(a.Status == FravarStatus.Venter ? " (søkt)" : "")}")) + "."));
+        }
+
+        return liste;
+    }
+
     private void VelgFravar(int? id)
     {
         _valgtFravarId = id;
@@ -1478,7 +1727,7 @@
         }
 
         var soknad = await Db.FravarSoknader.FirstOrDefaultAsync(f => f.Id == valgt.Id);
-        if (soknad is null)
+        if (soknad is null || soknad.Status != FravarStatus.Venter)
         {
             return;
         }
@@ -1537,7 +1786,7 @@
 
         await Db.SaveChangesAsync();
 
-        _valgtFravarId = null;
+        VelgFravar(null);
         await LastKoAsync();
     }
 
