@@ -74,7 +74,9 @@ public partial class KundeSkjema
     private bool _redigerFaktura;
 
     private List<ProsjektRad> _prosjekter = [];
+    private const int ProsjekterPerSide = 10;
     private string _prosjektFilter = "alle";
+    private int _prosjektSide;
     private List<Arbeidsordre> _arbeidsordrer = [];
     private string _ordreFilter = "Alle";
     private List<Tilbud> _tilbudListe = [];
@@ -92,6 +94,8 @@ public partial class KundeSkjema
     private string _nyttNotat = "";
     private bool _visLogg;
     private bool _ofSkjemaApen;
+    private bool _ofVisVarsel;
+    private bool _ofVisNotat;
     private List<KundeOppfolging> _oppfolginger = [];
     private List<Bruker> _ansatte = [];
     private int? _ofRedigerId;
@@ -218,6 +222,30 @@ public partial class KundeSkjema
     };
 
     private IEnumerable<ProsjektRad> FiltrerteProsjekter => _prosjektFilter == "alle" ? _prosjekter : _prosjekter.Where(p => ProsjektGruppe(p.Status) == _prosjektFilter);
+
+    private IEnumerable<(string Navn, string Nokkel, int Antall)> ProsjektFiltre =>
+    [
+        ("Alle", "alle", _prosjekter.Count),
+        ("Pågår", "pagar", _prosjekter.Count(p => ProsjektGruppe(p.Status) == "pagar")),
+        ("Tilbud", "tilbud", _prosjekter.Count(p => ProsjektGruppe(p.Status) == "tilbud")),
+        ("Ferdig", "ferdig", _prosjekter.Count(p => ProsjektGruppe(p.Status) == "ferdig"))
+    ];
+
+    private int AntallProsjektSider => Math.Max(1, (FiltrerteProsjekter.Count() + ProsjekterPerSide - 1) / ProsjekterPerSide);
+
+    // Listen kan bli kortere etter en endring, så siden holdes alltid innenfor.
+    private int ProsjektSideNr => Math.Clamp(_prosjektSide, 0, AntallProsjektSider - 1);
+
+    private IEnumerable<ProsjektRad> ProsjekterPaSiden => FiltrerteProsjekter.Skip(ProsjektSideNr * ProsjekterPerSide).Take(ProsjekterPerSide);
+
+    private void VelgProsjektFilter(string filter)
+    {
+        _prosjektFilter = filter;
+        _prosjektSide = 0;
+    }
+
+    private static string ProsjektLinje(ProsjektRad p) =>
+        string.Join(" · ", new[] { p.System, p.Adresse, p.Ansvarlig }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
     private static string ProsjektKortStatus(ProsjektStatus? s) => s switch
     {
@@ -770,12 +798,35 @@ public partial class KundeSkjema
         _ofGjenta = KundeOppfolgingGjenta.Ikke;
         _ofNotat = null;
         _ofFeil = null;
+        _ofVisVarsel = false;
+        _ofVisNotat = false;
     }
 
     private void NyOppfolgingFraMeny()
     {
         ApneNyOppfolging();
         VelgFane(KundeFane.Oppfolging);
+    }
+
+    private string VarselOppsummering =>
+        !_ofPortal && !_ofEpost
+            ? "Ingen varsel"
+            : "Varsel " + (_ofDagerFor == 0 ? "på dagen kl. 08:00" : VarselNarTekst(_ofDagerFor));
+
+    private string VarselDetaljer
+    {
+        get
+        {
+            var kanal = (_ofPortal, _ofEpost) switch
+            {
+                (true, true) => "I portalen og på e-post",
+                (true, false) => "I portalen",
+                (false, true) => "På e-post",
+                _ => "Du får ikke beskjed"
+            };
+            var gjenta = _ofGjenta == KundeOppfolgingGjenta.Ikke ? "gjentas ikke" : $"gjentas {_ofGjenta.Visningsnavn().ToLower()}";
+            return $"{kanal} · {gjenta}";
+        }
     }
 
     private void ApneNyOppfolging()
@@ -807,6 +858,7 @@ public partial class KundeSkjema
         _ofGjenta = o.Gjenta;
         _ofNotat = o.Notat;
         _ofFeil = null;
+        _ofVisNotat = !string.IsNullOrWhiteSpace(_ofNotat);
         _ofMelding = null;
     }
 
