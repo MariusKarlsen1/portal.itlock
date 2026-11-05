@@ -8,6 +8,7 @@
 @using PortalItlock.Web.Models
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject PortalItlock.Web.Services.VisningPreferanseService VisningPref
 
 <PageTitle>@(Id.HasValue ? $"System {_form.Systemnummer}" : "Nytt system")</PageTitle>
 
@@ -23,7 +24,7 @@
 }
 else
 {
-    <div class="kk">
+    <div class="kk @(_full ? "kk-full" : "")">
         <div class="kk-topp">
             <label class="k-logo-wrap" title="@(Id.HasValue ? "Last opp bilde av bygget" : "")">
                 @if (_form.BildeData is not null)
@@ -66,15 +67,13 @@ else
             @if (Id.HasValue)
             {
                 <div class="k-handl">
-                    @if (!string.IsNullOrWhiteSpace(_form.Telefon))
-                    {
-                        <a class="k-knapp" href="@($"tel:{_form.Telefon}")"><Icon Name="phone" />Ring kontakt</a>
-                    }
                     @if (Lasplan is { } lp)
                     {
                         <a class="k-knapp" href="@($"/systemvedlegg/{lp.Id}")" target="_blank"><Icon Name="file-text" />Låsplan</a>
                     }
+                    <button type="button" class="k-knapp @(_fane == "info" ? "k-knapp-pa" : "")" @onclick='@(() => VelgFane("info"))'><Icon Name="edit" />Rediger</button>
                     <button type="button" class="k-knapp k-knapp-p" @onclick="NyUtlevering"><Icon Name="plus" />Ny utlevering</button>
+                    <button type="button" class="kk-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" aria-label="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
                 </div>
             }
         </div>
@@ -112,9 +111,11 @@ else
                     <div class="k-skill"></div>
                     @FaneKnapp("vedlegg", "folder", "Vedlegg og låsplan", _vedlegg.Count, "")
                     @FaneKnapp("aktivitet", "clock", "Aktivitet", null, "")
-                    <div class="k-skill"></div>
                 }
-                @FaneKnapp("info", "file-text", "Detaljer", null, "")
+                else
+                {
+                    @FaneKnapp("info", "file-text", "Detaljer", null, "")
+                }
             </nav>
 
             <div class="k-hoved">
@@ -265,7 +266,32 @@ else
     private void SignerNa()
     {
         _fane = "nokler";
-        _kvFilter = "usignert";
+        _kvFilter = AntallUsignert > 0 ? "usignert" : "alle";
+    }
+
+    private void SignerRad(NokkelKvittering k)
+    {
+        _fane = "nokler";
+        StartSigner(k);
+    }
+
+    private NokkelKvittering? SisteUtlevering => _kvitteringer
+        .Where(k => k.Id > 0)
+        .OrderByDescending(k => k.Dato)
+        .ThenByDescending(k => k.Id)
+        .FirstOrDefault();
+
+    private bool _full;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _full = await VisningPref.HentAsync("systemkort-bredde", "normal") == "full";
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("systemkort-bredde", _full ? "full" : "normal");
     }
 
     private void StartSigner(NokkelKvittering k)
@@ -377,73 +403,134 @@ else
             }
         </button>;
 
+    // O12: tallene i en lys grå stripe øverst, siste utleveringer til venstre og
+    // rekvirenter og dokumentasjon til høyre.
     private RenderFragment Oversikt() =>
-        @<div class="k-fp">
-            <div class="k-tall4">
-                <button type="button" @onclick='@(() => VelgFane("nokler"))'><span class="k-lbl">Nøkler utlevert</span><b>@TotaltAntallNokler</b><small>@NoklerGruppert.Count nøkkeltyper</small></button>
-                <button type="button" @onclick="SignerNa"><span class="k-lbl">Mangler signatur</span><b class="@(AntallUsignert > 0 ? "k-gul-tekst" : "")">@AntallUsignert</b><small>@(AntallUsignert > 0 ? "trykk for å signere" : "alt er signert")</small></button>
-                <button type="button" @onclick='@(() => VelgFane("rekvirenter"))'><span class="k-lbl">Rekvirenter</span><b>@_rekvirenter.Count</b><small>kan rekvirere nøkler</small></button>
-                <button type="button" @onclick='@(() => VelgFane("vedlegg"))'><span class="k-lbl">Vedlegg</span><b>@_vedlegg.Count</b><small>@(Lasplan is null ? "ingen låsplan" : "låsplan lastet opp")</small></button>
+        @<div class="ky-flate">
+            <div class="ky-stripe">
+                <button type="button" @onclick='@(() => VelgFane("nokler"))'>
+                    <span>Utlevert</span>
+                    <b>@TotaltAntallNokler @(TotaltAntallNokler == 1 ? "nøkkel" : "nøkler")</b>
+                    <small>@NoklerGruppert.Count @(NoklerGruppert.Count == 1 ? "nøkkeltype" : "nøkkeltyper")</small>
+                </button>
+                <button type="button" @onclick='@(() => VelgFane("rekvirenter"))'>
+                    <span>Rekvirenter</span>
+                    <b>@_rekvirenter.Count @(_rekvirenter.Count == 1 ? "rekvirent" : "rekvirenter")</b>
+                    <small>kan bestille nøkler</small>
+                </button>
+                <button type="button" @onclick='@(() => VelgFane("nokler"))'>
+                    <span>Sist utlevert</span>
+                    <b>@(SisteUtlevering?.Dato.ToString("dd.MM.yyyy") ?? "–")</b>
+                    <small>@(SisteUtlevering is { } siste ? $"til {siste.MottakerNavn}" : "ingen ennå")</small>
+                </button>
+                <button type="button" class="@(AntallUsignert > 0 ? "ky-stripe-gul" : "")" @onclick="SignerNa">
+                    <span>Signatur</span>
+                    <b class="@(AntallUsignert == 0 && SisteUtlevering is not null ? "ky-gronn" : "")">@(AntallUsignert > 0 ? $"{AntallUsignert} mangler" : SisteUtlevering is null ? "–" : "Alle signert")</b>
+                    <small>@(AntallUsignert > 0 ? "trykk for å signere" : SisteUtlevering is null ? "ingen utleveringer" : "ingen venter")</small>
+                </button>
             </div>
-            <div class="k-to">
-                <div class="k-seksjon">
-                    <h4>Siste aktivitet <button type="button" class="k-lenke" @onclick='@(() => VelgFane("aktivitet"))'>Se alt</button></h4>
-                    @if (_hendelser.Count == 0)
+
+            <div class="ky-to">
+                <section class="ky-kort">
+                    <div class="ky-hode">Siste utleveringer <button type="button" @onclick='@(() => VelgFane("nokler"))'>Se alle</button></div>
+                    @if (SisteUtlevering is null)
                     {
-                        <span class="k-smule">Ingen aktivitet registrert ennå.</span>
+                        <p class="ky-tom">Ingen nøkler utlevert ennå.</p>
                     }
-                    @foreach (var h in _hendelser.Take(5))
+                    else
                     {
-                        var (emoji, bg) = HendelseIkon(h.Beskrivelse);
-                        <div class="k-tli">
-                            <span class="k-ik" style="background:@bg">@emoji</span>
-                            <div><b>@h.Beskrivelse</b><small>@(h.UtfortAvBruker?.Navn ?? "Ukjent") · @h.Tidspunkt.ToString("d. MMM yyyy HH:mm", Kultur)</small></div>
-                            <span></span>
-                        </div>
-                    }
-                </div>
-                <div class="k-kol">
-                    @if (AntallUsignert > 0)
-                    {
-                        var usignert = _kvitteringer.Where(k => k.Id > 0 && k.Signatur is null).OrderByDescending(k => k.Dato).ToList();
-                        <div class="k-varsel">
-                            <b>✍️ @AntallUsignert utlevering@(AntallUsignert == 1 ? "" : "er") mangler signatur</b>
-                            <span class="k-smule">@string.Join(", ", usignert.Take(3).Select(k => $"{k.MottakerNavn} ({NokkelNokkel(k)})"))@(usignert.Count > 3 ? " …" : "")</span>
-                            <button type="button" class="k-knapp k-knapp-s k-knapp-p k-start" @onclick="SignerNa">Signer nå</button>
-                        </div>
-                    }
-                    <label class="k-bygg">
-                        @if (_form.BildeData is not null)
-                        {
-                            <img src="@($"/nokkelsystem/{Id}/bilde?v={_bildeVersjon}")" alt="Bygningsbilde" />
-                            <span class="k-knapp k-knapp-s k-bygg-knapp">Bytt bilde</span>
-                        }
-                        else
-                        {
-                            <span class="k-bygg-tom"><Icon Name="image" />Last opp bilde av bygget</span>
-                        }
-                        <InputFile OnChange="OnBildeValgt" accept="image/*" style="display:none;" />
-                    </label>
-                    <div class="k-seksjon">
-                        <h4>Nøkler <button type="button" class="k-lenke" @onclick='@(() => VelgFane("nokler"))'>Se alle</button></h4>
-                        @if (NoklerGruppert.Count == 0)
-                        {
-                            <span class="k-smule">Ingen nøkler utlevert ennå.</span>
-                        }
-                        else
-                        {
-                            <div class="k-liste">
-                                @foreach (var g in NoklerGruppert.Take(4))
+                        <table class="ky-tabell">
+                            <thead>
+                                <tr>
+                                    <th>Utlevert til</th>
+                                    <th class="ky-skjul">Nr</th>
+                                    <th>Signatur</th>
+                                    <th class="ky-skjul">Dato</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var k in _kvitteringer.Where(k => k.Id > 0).OrderByDescending(k => k.Dato).ThenByDescending(k => k.Id).Take(5))
                                 {
-                                    <div class="k-lr">
-                                        <span class="k-ik" style="background:#f3e9dc"><Icon Name="lock" /></span>
-                                        <div><b>@(g.Nummer is null ? "" : $"{g.Nummer} · ")@(string.IsNullOrWhiteSpace(g.Betegnelse) ? "Ikke angitt" : g.Betegnelse)</b><small>sist utlevert @g.SistUtlevert.ToString("dd.MM.yyyy")</small></div>
-                                        <span class="k-pill s-gra">@g.Totalt ute</span>
-                                    </div>
+                                    var kv = k;
+                                    <tr class="@(kv.Signatur is null ? "ky-mangler" : "")" @key="kv.Id">
+                                        <td>
+                                            <span class="ky-celle">
+                                                <span class="ky-av">@Initialer(kv.MottakerNavn)</span>
+                                                <b>@kv.MottakerNavn</b>
+                                            </span>
+                                        </td>
+                                        <td class="ky-skjul">
+                                            @if (!string.IsNullOrWhiteSpace(kv.Nokkelnummer))
+                                            {
+                                                <span class="ky-nr">@kv.Nokkelnummer</span>
+                                            }
+                                            else
+                                            {
+                                                <text>–</text>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (kv.Signatur is not null)
+                                            {
+                                                <img class="k-sig" src="@($"/nokkelkvittering/{kv.Id}/signatur.png?v={kv.SignertDato?.Ticks}")" alt="Signatur fra @kv.MottakerNavn" title="@($"Signert {kv.SignertDato:dd.MM.yyyy HH:mm}")" />
+                                            }
+                                            else
+                                            {
+                                                <button type="button" class="ky-signer" @onclick="@(() => SignerRad(kv))">Signer</button>
+                                            }
+                                        </td>
+                                        <td class="ky-skjul k-mono">@kv.Dato.ToString("dd.MM.yyyy")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+
+                <div class="ky-kolonne">
+                    <section class="ky-kort">
+                        <div class="ky-hode">Rekvirenter <button type="button" @onclick='@(() => VelgFane("rekvirenter"))'>Se alle</button></div>
+                        @if (_rekvirenter.Count == 0)
+                        {
+                            <p class="ky-tom">Ingen rekvirenter lagt til ennå.</p>
+                        }
+                        <div class="ky-rader">
+                            @foreach (var r in _rekvirenter.Take(4))
+                            {
+                                <div class="ky-rad">
+                                    <span class="ky-celle">
+                                        <span class="ky-av">@Initialer(r.Navn)</span>
+                                        <span><b>@r.Navn</b><small>@r.Rolle</small></span>
+                                    </span>
+                                    @if (!string.IsNullOrWhiteSpace(r.Telefon))
+                                    {
+                                        <a href="@($"tel:{r.Telefon}")">@r.Telefon</a>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </section>
+
+                    <section class="ky-kort">
+                        <div class="ky-hode">Dokumentasjon</div>
+                        <div class="ky-rader">
+                            <div class="ky-rad">
+                                <span><b>Låsplan</b><small>@(Lasplan is null ? "Ikke lastet opp" : Lasplan.Filnavn)</small></span>
+                                @if (Lasplan is { } plan)
+                                {
+                                    <a class="k-knapp k-knapp-s" href="@($"/systemvedlegg/{plan.Id}")" target="_blank" rel="noopener">Åpne</a>
+                                }
+                                else
+                                {
+                                    <button type="button" class="k-knapp k-knapp-s" @onclick='@(() => VelgFane("vedlegg"))'>Last opp</button>
                                 }
                             </div>
-                        }
-                    </div>
+                            <div class="ky-rad">
+                                <span><b>Vedlegg</b><small>@(_vedlegg.Count == 1 ? "1 fil" : $"{_vedlegg.Count} filer")</small></span>
+                                <button type="button" class="k-knapp k-knapp-s" @onclick='@(() => VelgFane("vedlegg"))'>Åpne</button>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
         </div>;
