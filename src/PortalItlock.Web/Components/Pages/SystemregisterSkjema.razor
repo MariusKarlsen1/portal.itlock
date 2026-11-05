@@ -107,8 +107,7 @@ else
                 @if (Id.HasValue)
                 {
                     @FaneKnapp("oversikt", "grid", "Oversikt", null, "")
-                    @FaneKnapp("nokler", "lock", "Nøkler", TotaltAntallNokler, "")
-                    @FaneKnapp("kvitteringer", "receipt", "Utleveringer", AntallUsignert > 0 ? AntallUsignert : _kvitteringer.Count, AntallUsignert > 0 ? "g" : "")
+                    @FaneKnapp("nokler", "lock", "Nøkler", TotaltAntallNokler, AntallUsignert > 0 ? "g" : "")
                     @FaneKnapp("rekvirenter", "users", "Rekvirenter", _rekvirenter.Count, "")
                     <div class="k-skill"></div>
                     @FaneKnapp("vedlegg", "folder", "Vedlegg og låsplan", _vedlegg.Count, "")
@@ -126,9 +125,6 @@ else
                         break;
                     case "nokler":
                         @Nokler()
-                        break;
-                    case "kvitteringer":
-                        @Utleveringer()
                         break;
                     case "rekvirenter":
                         @Rekvirenter()
@@ -205,15 +201,6 @@ else
             || (k.Nokkelnummer?.Contains(_kvSok, StringComparison.OrdinalIgnoreCase) ?? false))
         .OrderByDescending(k => k.Dato);
 
-    // «Hvem har hva»: mottakere som rader, nøkkelnummer som kolonner.
-    private List<string> MatriseNokler => _kvitteringer
-        .Where(k => k.Id > 0)
-        .Select(NokkelNokkel)
-        .Distinct()
-        .OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase)
-        .Take(10)
-        .ToList();
-
     private static string NokkelNokkel(NokkelKvittering k) => string.IsNullOrWhiteSpace(k.Nokkelnummer) ? (k.NokkelBetegnelse ?? "?") : k.Nokkelnummer!;
 
     private static readonly string[] AvatarFarger = ["#7a2b96", "#2054a3", "#2b7a4b", "#835e41", "#b0322a", "#9a5b12"];
@@ -256,16 +243,121 @@ else
         _savedMessage = null;
     }
 
+    // Ny utlevering og signering skjer i samme vindu. En ny utlevering er ikke
+    // sporet før den lagres, så Lukk etterlater ingenting.
+    private NokkelKvittering? _utlevering;
+    private bool _utlBareSigner;
+    private bool _signaturKlar;
+    private bool _utlLagrer;
+    private string? _utlFeil;
+    private const string SignaturCanvas = "utlevering-signatur";
+
     private void NyUtlevering()
     {
-        _fane = "kvitteringer";
-        LeggTilKvittering();
+        _fane = "nokler";
+        _kvFilter = "alle";
+        _utlevering = new NokkelKvittering { MottakerNavn = "", Dato = DateTime.Today };
+        _utlBareSigner = false;
+        _utlFeil = null;
+        _signaturKlar = false;
     }
 
     private void SignerNa()
     {
-        _fane = "kvitteringer";
+        _fane = "nokler";
         _kvFilter = "usignert";
+    }
+
+    private void StartSigner(NokkelKvittering k)
+    {
+        _utlevering = k;
+        _utlBareSigner = true;
+        _utlFeil = null;
+        _signaturKlar = false;
+    }
+
+    private void LukkUtlevering()
+    {
+        _utlevering = null;
+        _utlFeil = null;
+        _signaturKlar = false;
+    }
+
+    private async Task TomSignatur()
+    {
+        await JS.InvokeVoidAsync("signatur.clear", SignaturCanvas);
+    }
+
+    private async Task<byte[]?> HentSignatur()
+    {
+        if (await JS.InvokeAsync<bool>("signatur.isEmpty", SignaturCanvas))
+        {
+            return null;
+        }
+
+        return Convert.FromBase64String(await JS.InvokeAsync<string>("signatur.getPngBase64", SignaturCanvas));
+    }
+
+    private async Task Utlever(bool medSignatur)
+    {
+        if (_utlevering is not { } k || _utlLagrer)
+        {
+            return;
+        }
+
+        k.MottakerNavn = k.MottakerNavn.Trim();
+        if (k.MottakerNavn.Length == 0)
+        {
+            _utlFeil = "Skriv hvem som får nøkkelen.";
+            return;
+        }
+
+        if (k.Antall < 1)
+        {
+            _utlFeil = "Antall må være minst 1.";
+            return;
+        }
+
+        byte[]? signatur = null;
+        if (medSignatur)
+        {
+            signatur = await HentSignatur();
+            if (signatur is null)
+            {
+                _utlFeil = "Mottakeren må signere, eller velg Signer senere.";
+                return;
+            }
+        }
+
+        _utlLagrer = true;
+        try
+        {
+            _nyeKvitteringer.Add(k);
+            await Lagre();
+            if (_error is not null)
+            {
+                _nyeKvitteringer.Remove(k);
+                _utlFeil = _error;
+                _error = null;
+                return;
+            }
+
+            if (signatur is not null)
+            {
+                k.Signatur = signatur;
+                k.SignertDato = DateTime.Now;
+                await Db.SaveChangesAsync();
+            }
+
+            _savedMessage = signatur is null
+                ? $"Utlevert til {k.MottakerNavn}. Signatur mangler."
+                : $"Utlevert til {k.MottakerNavn} og signert.";
+            LukkUtlevering();
+        }
+        finally
+        {
+            _utlLagrer = false;
+        }
     }
 
     private void NyRekvirent()
@@ -273,17 +365,6 @@ else
         var r = new Rekvirent { Navn = "" };
         _rekvirenter.Add(r);
         _redigerRekvirent = r;
-    }
-
-    private async Task LagreOgSigner()
-    {
-        var nye = _nyeKvitteringer.ToList();
-        await Lagre();
-        if (_error is null && nye.Count > 0)
-        {
-            _kvFilter = "alle";
-            StartSigner(nye[^1]);
-        }
     }
 
 
@@ -367,88 +448,122 @@ else
             </div>
         </div>;
 
+    // Én fane for nøkler og utleveringer: hver rad er en utlevering med signaturen
+    // i tabellen. Har mottakeren signert, er det ingen knapp på raden. Tallene
+    // står på Oversikt.
     private RenderFragment Nokler() =>
-        @<div class="k-fp">
-            <div class="k-opps k-opps3">
-                <div><b>@TotaltAntallNokler</b><span>nøkler / kort utlevert</span></div>
-                <div><b>@NoklerGruppert.Count</b><span>nøkkeltyper</span></div>
-                <div><b>@_kvitteringer.Where(k => k.Id > 0).Select(k => k.MottakerNavn.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count()</b><span>mottakere</span></div>
-            </div>
-            <div class="k-fp-topp">
-                <span class="k-smule">Oversikten regnes ut fra utleveringene.</span>
-                <button type="button" class="k-knapp k-knapp-s k-knapp-p k-auto" @onclick="NyUtlevering"><Icon Name="plus" />Ny utlevering</button>
-            </div>
-            @if (NoklerGruppert.Count == 0)
+        @<div class="ky-flate">
+            @if (AntallUsignert > 0 || _kvitteringer.Count(k => k.Id > 0) > 5 || !string.IsNullOrWhiteSpace(_kvSok))
             {
-                <span class="k-smule">Ingen nøkler registrert ennå.</span>
+                <div class="ky-topp">
+                    <label class="k-sokf"><Icon Name="search" /><input @bind="_kvSok" @bind:event="oninput" placeholder="Søk etter nøkkel eller person" aria-label="Søk etter nøkkel eller person" /></label>
+                    @if (AntallUsignert > 0 || _kvFilter == "usignert")
+                    {
+                        <button type="button" class="k-chip @(_kvFilter == "alle" ? "pa" : "")" @onclick='@(() => _kvFilter = "alle")'>Alle <em>@_kvitteringer.Count(k => k.Id > 0)</em></button>
+                        <button type="button" class="k-chip @(_kvFilter == "usignert" ? "pa" : "")" @onclick='@(() => _kvFilter = "usignert")'>Mangler signatur <em>@AntallUsignert</em></button>
+                    }
+                </div>
             }
-            else
-            {
-                <table class="k-tab">
-                    <thead><tr><th>Nøkkel / kort</th><th>Nr</th><th class="c">Utlevert</th><th class="c">Mottakere</th><th>Sist utlevert</th></tr></thead>
-                    <tbody>
-                        @foreach (var g in NoklerGruppert)
-                        {
-                            var mottakere = _kvitteringer.Where(k => k.Id > 0 && k.NokkelBetegnelse == g.Betegnelse && k.Nokkelnummer == g.Nummer).Select(k => k.MottakerNavn).Distinct().Count();
-                            <tr class="k-redig">
-                                <td><b>@(string.IsNullOrWhiteSpace(g.Betegnelse) ? "Ikke angitt" : g.Betegnelse)</b></td>
-                                <td class="k-mono">@(g.Nummer ?? "–")</td>
-                                <td class="c"><b>@g.Totalt</b></td>
-                                <td class="c">@mottakere</td>
-                                <td class="k-mono">@g.SistUtlevert.ToString("dd.MM.yyyy")</td>
+
+            <section class="ky-kort">
+                <div class="ky-hode">Nøkler</div>
+                @if (!FiltrerteKvitteringer.Any())
+                {
+                    <p class="ky-tom">@(_kvitteringer.Any(k => k.Id > 0) ? "Ingen treff." : "Ingen nøkler utlevert ennå. Trykk Ny utlevering for å starte.")</p>
+                }
+                else
+                {
+                    <table class="ky-tabell">
+                        <thead>
+                            <tr>
+                                <th>Nøkkel</th>
+                                <th class="ky-skjul">Nr</th>
+                                <th class="ky-skjul">Antall</th>
+                                <th>Utlevert til</th>
+                                <th class="ky-skjul">Rekvirert av</th>
+                                <th>Signatur</th>
+                                <th class="ky-skjul">Dato</th>
+                                <th></th>
                             </tr>
-                        }
-                    </tbody>
-                </table>
-
-                <div class="k-seksjon">
-                    <h4>Hvem har hva</h4>
-                    <div class="k-nmat" style="grid-template-columns: 170px repeat(@MatriseNokler.Count, minmax(0, 1fr))">
-                        <div class="hd rn">Mottaker</div>
-                        @foreach (var n in MatriseNokler)
-                        {
-                            <div class="hd">@n</div>
-                        }
-                        @foreach (var mottaker in _kvitteringer.Where(k => k.Id > 0).GroupBy(k => k.MottakerNavn.Trim(), StringComparer.OrdinalIgnoreCase).OrderBy(g => g.Key))
-                        {
-                            <div class="rn">@mottaker.Key</div>
-                            @foreach (var n in MatriseNokler)
+                        </thead>
+                        <tbody>
+                            @foreach (var k in FiltrerteKvitteringer)
                             {
-                                var antall = mottaker.Where(k => NokkelNokkel(k) == n).Sum(k => k.Antall);
-                                <div class="@(antall > 0 ? "x" : "o")">@(antall == 0 ? "–" : antall == 1 ? "✓" : $"{antall} stk")</div>
+                                var kv = k;
+                                @if (_redigerKvitteringId == kv.Id)
+                                {
+                                    <tr class="ky-endre" @key="kv.Id">
+                                        <td colspan="8">
+                                            <div class="ky-endre-felt">
+                                                <label class="k-felt2">Nøkkel<input class="k-inp" @bind="kv.NokkelBetegnelse" /></label>
+                                                <label class="k-felt2">Nr<input class="k-inp" @bind="kv.Nokkelnummer" /></label>
+                                                <label class="k-felt2">Antall<input class="k-inp" type="number" min="1" @bind="kv.Antall" /></label>
+                                                <label class="k-felt2">Utlevert til<input class="k-inp" @bind="kv.MottakerNavn" /></label>
+                                                <label class="k-felt2">Rekvirert av<input class="k-inp" @bind="kv.RekvirertAv" /></label>
+                                                <label class="k-felt2">Dato<input class="k-inp" type="date" @bind="kv.Dato" /></label>
+                                            </div>
+                                            <div class="ky-endre-valg">
+                                                @if (kv.Signatur is not null)
+                                                {
+                                                    <button type="button" class="k-lenke k-rod-tekst" @onclick="@(() => FjernSignatur(kv))">Fjern signatur</button>
+                                                }
+                                                <button type="button" class="k-lenke k-rod-tekst" @onclick="@(() => FjernKvitteringRad(kv))">Fjern utlevering</button>
+                                                <button type="button" class="k-knapp k-knapp-s" @onclick="@(() => _redigerKvitteringId = null)">Ferdig</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                                else
+                                {
+                                    <tr class="@(kv.Signatur is null ? "ky-mangler" : "")" @key="kv.Id">
+                                        <td>
+                                            <span class="ky-celle">
+                                                <span class="ky-rute"><Icon Name="lock" /></span>
+                                                <span>
+                                                    <b>@(string.IsNullOrWhiteSpace(kv.NokkelBetegnelse) ? "Ikke angitt" : kv.NokkelBetegnelse)</b>
+                                                    <small class="ky-smal">@kv.Nokkelnummer</small>
+                                                </span>
+                                            </span>
+                                        </td>
+                                        <td class="ky-skjul">
+                                            @if (!string.IsNullOrWhiteSpace(kv.Nokkelnummer))
+                                            {
+                                                <span class="ky-nr">@kv.Nokkelnummer</span>
+                                            }
+                                            else
+                                            {
+                                                <text>–</text>
+                                            }
+                                        </td>
+                                        <td class="ky-skjul">@kv.Antall stk</td>
+                                        <td>
+                                            <span class="ky-celle">
+                                                <span class="ky-av">@Initialer(kv.MottakerNavn)</span>
+                                                <b>@kv.MottakerNavn</b>
+                                            </span>
+                                        </td>
+                                        <td class="ky-skjul">@(kv.RekvirertAv ?? "–")</td>
+                                        <td>
+                                            @if (kv.Signatur is not null)
+                                            {
+                                                <img class="k-sig" src="@($"/nokkelkvittering/{kv.Id}/signatur.png?v={kv.SignertDato?.Ticks}")" alt="Signatur fra @kv.MottakerNavn" title="@($"Signert {kv.SignertDato:dd.MM.yyyy HH:mm}")" />
+                                            }
+                                            else
+                                            {
+                                                <button type="button" class="ky-signer" @onclick="@(() => StartSigner(kv))">Signer</button>
+                                            }
+                                        </td>
+                                        <td class="ky-skjul k-mono">@kv.Dato.ToString("dd.MM.yyyy")</td>
+                                        <td class="ky-valg"><button type="button" title="Endre" aria-label="@($"Endre utlevering til {kv.MottakerNavn}")" @onclick="@(() => _redigerKvitteringId = kv.Id)"><Icon Name="edit" /></button></td>
+                                    </tr>
+                                }
                             }
-                        }
-                    </div>
-                </div>
-            }
-        </div>;
+                        </tbody>
+                    </table>
+                }
+            </section>
 
-    private RenderFragment Utleveringer() =>
-        @<div class="k-fp">
-            <div class="k-fp-topp">
-                <label class="k-sokf"><Icon Name="search" /><input @bind="_kvSok" @bind:event="oninput" placeholder="Søk mottaker eller nøkkel …" /></label>
-                <button type="button" class="k-chip @(_kvFilter == "alle" ? "pa" : "")" @onclick='@(() => _kvFilter = "alle")'>Alle <em>@_kvitteringer.Count(k => k.Id > 0)</em></button>
-                <button type="button" class="k-chip @(_kvFilter == "usignert" ? "pa" : "")" @onclick='@(() => _kvFilter = "usignert")'>Mangler signatur <em>@AntallUsignert</em></button>
-                <button type="button" class="k-chip @(_kvFilter == "signert" ? "pa" : "")" @onclick='@(() => _kvFilter = "signert")'>Signert <em>@_kvitteringer.Count(k => k.Id > 0 && k.Signatur is not null)</em></button>
-                <button type="button" class="k-knapp k-knapp-s k-knapp-p k-auto" @onclick="LeggTilKvittering"><Icon Name="plus" />Ny utlevering</button>
-            </div>
-
-            @foreach (var k in _nyeKvitteringer)
-            {
-                var kv = k;
-                <div class="k-nykv">
-                    <div class="k-rad"><b>Ny utlevering</b><span class="k-smule">– fyll ut, lagre, og la mottakeren signere på skjermen</span><button type="button" class="k-lenke k-rod-tekst k-auto" @onclick="@(() => FjernKvitteringRad(kv))">Fjern</button></div>
-                    <div class="k-g6">
-                        <label class="k-felt2">Dato<input class="k-inp" type="date" @bind="kv.Dato" /></label>
-                        <label class="k-felt2">Mottaker<input class="k-inp" @bind="kv.MottakerNavn" placeholder="Navn på mottaker" /></label>
-                        <label class="k-felt2">Nøkkel / kort<input class="k-inp" @bind="kv.NokkelBetegnelse" placeholder="F.eks. Hovednøkkel" /></label>
-                        <label class="k-felt2">Nøkkelnr<input class="k-inp" @bind="kv.Nokkelnummer" placeholder="F.eks. K1, K4" /></label>
-                        <label class="k-felt2">Antall<input class="k-inp" type="number" min="1" @bind="kv.Antall" /></label>
-                        <label class="k-felt2">Rekvirert av<input class="k-inp" list="rekvirent-navn" @bind="kv.RekvirertAv" /></label>
-                    </div>
-                </div>
-            }
-            @if (_nyeKvitteringer.Count > 0)
+            @if (_utlevering is { } u)
             {
                 <datalist id="rekvirent-navn">
                     @foreach (var r in _rekvirenter.Where(r => !string.IsNullOrWhiteSpace(r.Navn)))
@@ -456,86 +571,65 @@ else
                         <option value="@r.Navn"></option>
                     }
                 </datalist>
-                <div class="k-rad k-hoyre">
-                    <button type="button" class="k-knapp k-knapp-s" @onclick="Lagre">Lagre</button>
-                    <button type="button" class="k-knapp k-knapp-s k-knapp-p" @onclick="LagreOgSigner">✍️ Lagre og signer</button>
-                </div>
-            }
-
-            @if (!FiltrerteKvitteringer.Any() && _nyeKvitteringer.Count == 0)
-            {
-                <span class="k-smule">Ingen utleveringer @(_kvFilter == "alle" ? "registrert ennå" : "i denne kategorien").</span>
-            }
-            else if (FiltrerteKvitteringer.Any())
-            {
-                <table class="k-tab">
-                    <thead><tr><th>Dato</th><th>Mottaker</th><th>Nøkkel / kort</th><th>Nr</th><th class="c">Antall</th><th>Rekvirert av</th><th>Signatur</th><th></th></tr></thead>
-                    <tbody>
-                        @foreach (var k in FiltrerteKvitteringer)
-                        {
-                            var kv = k;
-                            @if (_redigerKvitteringId == kv.Id)
+                <div class="ky-lys">
+                    <div class="ky-vindu" role="dialog" aria-modal="true" aria-label="@(_utlBareSigner ? "Signer utlevering" : "Ny utlevering")">
+                        <div class="ky-vindu-hode">
+                            <b>@(_utlBareSigner ? "Signer utlevering" : "Ny utlevering")</b>
+                            <button type="button" title="Lukk" aria-label="Lukk" @onclick="LukkUtlevering"><Icon Name="x" /></button>
+                        </div>
+                        <div class="ky-vindu-innhold">
+                            @if (_utlBareSigner)
                             {
-                                <tr class="k-redig k-redig-aktiv" @key="kv.Id">
-                                    <td><input class="k-inp" type="date" @bind="kv.Dato" /></td>
-                                    <td><input class="k-inp" @bind="kv.MottakerNavn" /></td>
-                                    <td><input class="k-inp" @bind="kv.NokkelBetegnelse" /></td>
-                                    <td><input class="k-inp k-smal" @bind="kv.Nokkelnummer" /></td>
-                                    <td><input class="k-inp k-smal" type="number" min="1" @bind="kv.Antall" /></td>
-                                    <td><input class="k-inp" @bind="kv.RekvirertAv" /></td>
-                                    <td>
-                                        @if (kv.Signatur is not null)
-                                        {
-                                            <button type="button" class="k-lenke k-rod-tekst" @onclick="@(() => FjernSignatur(kv))">Fjern signatur</button>
-                                        }
-                                    </td>
-                                    <td class="h k-nowrap">
-                                        <button type="button" class="k-lenke" @onclick="@(() => _redigerKvitteringId = null)">Ferdig</button>
-                                        · <button type="button" class="k-lenke k-rod-tekst" @onclick="@(() => FjernKvitteringRad(kv))">Fjern</button>
-                                    </td>
-                                </tr>
+                                <p class="ky-oppsummering"><b>@u.MottakerNavn</b> · @(u.NokkelBetegnelse ?? "Nøkkel") @u.Nokkelnummer · @u.Antall stk · @u.Dato.ToString("dd.MM.yyyy")</p>
                             }
                             else
                             {
-                                <tr class="k-redig" @key="kv.Id">
-                                    <td class="k-mono">@kv.Dato.ToString("dd.MM.yyyy")</td>
-                                    <td><b>@kv.MottakerNavn</b></td>
-                                    <td>@(kv.NokkelBetegnelse ?? "–")</td>
-                                    <td class="k-mono">@(kv.Nokkelnummer ?? "–")</td>
-                                    <td class="c">@kv.Antall</td>
-                                    <td>@(kv.RekvirertAv ?? "–")</td>
-                                    <td>
-                                        @if (kv.Signatur is not null)
-                                        {
-                                            <img class="k-sig" src="@($"/nokkelkvittering/{kv.Id}/signatur.png?v={kv.SignertDato?.Ticks}")" alt="Signatur" title="@($"Signert {kv.SignertDato:dd.MM.yyyy HH:mm}")" />
-                                        }
-                                        else if (_signerendeKvitteringId != kv.Id)
-                                        {
-                                            <button type="button" class="k-knapp k-knapp-s k-knapp-p" @onclick="@(() => StartSigner(kv))">✍️ Signer</button>
-                                        }
-                                    </td>
-                                    <td class="h"><span class="k-ikb"><button type="button" title="Endre" @onclick="@(() => _redigerKvitteringId = kv.Id)"><Icon Name="edit" /></button></span></td>
-                                </tr>
+                                <div class="ky-felt">
+                                    <label class="k-felt2">Nøkkel<input class="k-inp" list="nokkel-navn" @bind="u.NokkelBetegnelse" placeholder="F.eks. Hovednøkkel" /></label>
+                                    <label class="k-felt2">Nr<input class="k-inp" list="nokkel-nummer" @bind="u.Nokkelnummer" placeholder="F.eks. K1" /></label>
+                                    <label class="k-felt2">Utlevert til<input class="k-inp" @bind="u.MottakerNavn" @bind:event="oninput" placeholder="Navn på mottaker" /></label>
+                                    <label class="k-felt2">Rekvirert av<input class="k-inp" list="rekvirent-navn" @bind="u.RekvirertAv" /></label>
+                                    <label class="k-felt2">Antall<input class="k-inp" type="number" min="1" @bind="u.Antall" /></label>
+                                    <label class="k-felt2">Dato<input class="k-inp" type="date" @bind="u.Dato" /></label>
+                                </div>
+                                <datalist id="nokkel-navn">
+                                    @foreach (var n in NoklerGruppert.Select(g => g.Betegnelse).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct())
+                                    {
+                                        <option value="@n"></option>
+                                    }
+                                </datalist>
+                                <datalist id="nokkel-nummer">
+                                    @foreach (var n in NoklerGruppert.Select(g => g.Nummer).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct())
+                                    {
+                                        <option value="@n"></option>
+                                    }
+                                </datalist>
                             }
-                            @if (_signerendeKvitteringId == kv.Id)
+                            <div class="ky-signatur">
+                                <span>Signatur</span>
+                                <canvas id="@SignaturCanvas" width="520" height="160" aria-label="Signaturfelt"></canvas>
+                                <small>Signer med fingeren eller pennen</small>
+                            </div>
+                            @if (!string.IsNullOrEmpty(_utlFeil))
                             {
-                                <tr class="k-redig" @key="@($"sig-{kv.Id}")">
-                                    <td colspan="8">
-                                        <div class="k-signer">
-                                            <span class="k-smule">Signatur for <b>@kv.MottakerNavn</b> – @(kv.NokkelBetegnelse ?? "nøkkel") @kv.Nokkelnummer</span>
-                                            <canvas id="@($"sig-canvas-{kv.Id}")" width="500" height="180" class="signatur-canvas"></canvas>
-                                            <div class="k-rad">
-                                                <button type="button" class="k-knapp k-knapp-s" @onclick="@(() => RensSignatur(kv))">Tøm</button>
-                                                <button type="button" class="k-knapp k-knapp-s" @onclick="AvbrytSigner">Avbryt</button>
-                                                <button type="button" class="k-knapp k-knapp-s k-knapp-p" @onclick="@(() => LagreSignatur(kv))">Lagre signatur</button>
-                                            </div>
-                                        </div>
-                                    </td>
-                                </tr>
+                                <p class="form-error ky-feil">@_utlFeil</p>
                             }
-                        }
-                    </tbody>
-                </table>
+                        </div>
+                        <div class="ky-vindu-fot">
+                            <button type="button" class="k-knapp k-knapp-s ky-tom-knapp" @onclick="TomSignatur">Tøm</button>
+                            @if (_utlBareSigner)
+                            {
+                                <button type="button" class="k-knapp k-knapp-s" @onclick="LukkUtlevering">Avbryt</button>
+                                <button type="button" class="k-knapp k-knapp-s k-knapp-p" disabled="@_utlLagrer" @onclick="LagreSignatur">Lagre signatur</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="k-knapp k-knapp-s" disabled="@_utlLagrer" @onclick="@(() => Utlever(false))">Signer senere</button>
+                                <button type="button" class="k-knapp k-knapp-s k-knapp-p" disabled="@_utlLagrer" @onclick="@(() => Utlever(true))">Utlever og signer</button>
+                            }
+                        </div>
+                    </div>
+                </div>
             }
         </div>;
 
@@ -785,8 +879,6 @@ else
     private int? _naverendeBrukerId;
 
     [Inject] private IJSRuntime JS { get; set; } = default!;
-    private int? _signerendeKvitteringId;
-    private int? _sisteInitialisertCanvasId;
 
     private sealed record NokkelGruppe(string? Betegnelse, string? Nummer, int Totalt, DateTime SistUtlevert);
 
@@ -833,6 +925,7 @@ else
         _error = null;
         _notFound = false;
         _nyeKvitteringer = [];
+        _utlevering = null;
         _fane = Id.HasValue ? "oversikt" : "info";
 
         if (Id.HasValue)
@@ -907,20 +1000,12 @@ else
 
     private void HurtigRegistrerNokkel()
     {
-        _fane = "kvitteringer";
-        LeggTilKvittering();
+        NyUtlevering();
     }
 
     private void LeggTilRekvirent()
     {
         _rekvirenter.Add(new Rekvirent { Navn = "" });
-    }
-
-    private void LeggTilKvittering()
-    {
-        // Legges i en egen, ikke-sporet liste til Lagre() trykkes, slik at en påbegynt
-        // tom kvittering ikke blir lagret som bifangst når f.eks. en signatur lagres.
-        _nyeKvitteringer.Add(new NokkelKvittering { MottakerNavn = "", Dato = DateTime.Today });
     }
 
     private void FjernKvitteringRad(NokkelKvittering k)
@@ -931,46 +1016,48 @@ else
         }
     }
 
-    private void StartSigner(NokkelKvittering k)
+    private async Task LagreSignatur()
     {
-        _signerendeKvitteringId = k.Id;
-    }
-
-    private void AvbrytSigner()
-    {
-        _signerendeKvitteringId = null;
-        _sisteInitialisertCanvasId = null;
-    }
-
-    private async Task RensSignatur(NokkelKvittering k)
-    {
-        await JS.InvokeVoidAsync("signatur.clear", $"sig-canvas-{k.Id}");
-    }
-
-    private async Task LagreSignatur(NokkelKvittering k)
-    {
-        var canvasId = $"sig-canvas-{k.Id}";
-        var tom = await JS.InvokeAsync<bool>("signatur.isEmpty", canvasId);
-        if (tom)
+        if (_utlevering is not { } k || _utlLagrer)
         {
             return;
         }
 
-        var base64 = await JS.InvokeAsync<string>("signatur.getPngBase64", canvasId);
-        var entitet = await Db.NokkelKvitteringer.FirstOrDefaultAsync(x => x.Id == k.Id);
-        if (entitet is null)
+        var signatur = await HentSignatur();
+        if (signatur is null)
         {
+            _utlFeil = "Mottakeren må signere først.";
             return;
         }
 
-        entitet.Signatur = Convert.FromBase64String(base64);
-        entitet.SignertDato = DateTime.Now;
-        await Db.SaveChangesAsync();
+        _utlLagrer = true;
+        try
+        {
+            var entitet = await Db.NokkelKvitteringer.FirstOrDefaultAsync(x => x.Id == k.Id);
+            if (entitet is null)
+            {
+                LukkUtlevering();
+                return;
+            }
 
-        k.Signatur = entitet.Signatur;
-        k.SignertDato = entitet.SignertDato;
-        _signerendeKvitteringId = null;
-        _sisteInitialisertCanvasId = null;
+            entitet.Signatur = signatur;
+            entitet.SignertDato = DateTime.Now;
+            await Db.SaveChangesAsync();
+
+            k.Signatur = entitet.Signatur;
+            k.SignertDato = entitet.SignertDato;
+            _savedMessage = $"{k.MottakerNavn} har signert.";
+            if (AntallUsignert == 0)
+            {
+                _kvFilter = "alle";
+            }
+
+            LukkUtlevering();
+        }
+        finally
+        {
+            _utlLagrer = false;
+        }
     }
 
     private async Task FjernSignatur(NokkelKvittering k)
@@ -991,10 +1078,10 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (_signerendeKvitteringId.HasValue && _sisteInitialisertCanvasId != _signerendeKvitteringId)
+        if (_utlevering is not null && !_signaturKlar && _fane == "nokler")
         {
-            await JS.InvokeVoidAsync("signatur.init", $"sig-canvas-{_signerendeKvitteringId}");
-            _sisteInitialisertCanvasId = _signerendeKvitteringId;
+            _signaturKlar = true;
+            await JS.InvokeVoidAsync("signatur.init", SignaturCanvas);
         }
     }
 
