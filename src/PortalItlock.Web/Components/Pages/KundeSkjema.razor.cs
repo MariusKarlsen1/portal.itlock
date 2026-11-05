@@ -51,6 +51,7 @@ public partial class KundeSkjema
     private List<KundeHendelse> _hendelser = [];
     private string? _dokumentFeil;
     private bool _lasterOppDokument;
+    private bool _visAllAktivitet;
     private int? _naverendeBrukerId;
     private Bruker? _naverendeBruker;
 
@@ -185,7 +186,7 @@ public partial class KundeSkjema
             liste.AddRange(_arbeidsordrer.Select(a => a.FakturertDato is { } fd
                 ? new AktivitetRad("receipt", "var(--k-ok-l)", $"AO-{a.Id:0000} fakturert", a.Tittel, null, fd, $"/arbeidsordre/{a.Id}")
                 : new AktivitetRad("tool", "var(--k-bla-l)", $"Arbeidsordre AO-{a.Id:0000} – {a.Tittel}", $"{OrdreStatusTekst(a.Status)}{(a.Prosjekt is null ? "" : $" · {a.Prosjekt.Navn}")}", a.AnsvarligMontor?.Navn, a.OpprettetDato.ToLocalTime(), $"/arbeidsordre/{a.Id}")));
-            return liste.OrderByDescending(a => a.Dato).Take(8).ToList();
+            return liste.OrderByDescending(a => a.Dato).Take(30).ToList();
         }
     }
 
