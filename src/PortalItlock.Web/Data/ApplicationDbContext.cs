@@ -632,6 +632,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Ressursplan>()
+            .HasOne(r => r.Arbeidsordre)
+            .WithMany()
+            .HasForeignKey(r => r.ArbeidsordreId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Ressursplan>()
             .HasOne(r => r.OpprettetAvBruker)
             .WithMany()
             .HasForeignKey(r => r.OpprettetAvBrukerId)

@@ -6589,6 +6589,9 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("ArbeidsordreId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("Dato")
                         .HasColumnType("TEXT");
 
@@ -6620,6 +6623,8 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ArbeidsordreId");
 
                     b.HasIndex("MontorId");
 
@@ -9675,6 +9680,11 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Ressursplan", b =>
                 {
+                    b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
+                        .WithMany()
+                        .HasForeignKey("ArbeidsordreId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("PortalItlock.Web.Models.Bruker", "Montor")
                         .WithMany()
                         .HasForeignKey("MontorId")
@@ -9685,6 +9695,8 @@ namespace PortalItlock.Web.Migrations
                         .WithMany()
                         .HasForeignKey("OpprettetAvBrukerId")
                         .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Arbeidsordre");
 
                     b.Navigation("Montor");
 
