@@ -108,7 +108,6 @@ else
                     @FaneKnapp("oversikt", "grid", "Oversikt", null, "")
                     @FaneKnapp("nokler", "lock", "Nøkler", TotaltAntallNokler, AntallUsignert > 0 ? "g" : "")
                     @FaneKnapp("rekvirenter", "users", "Rekvirenter", _rekvirenter.Count, "")
-                    <div class="k-skill"></div>
                     @FaneKnapp("vedlegg", "folder", "Vedlegg og låsplan", _vedlegg.Count, "")
                     @FaneKnapp("aktivitet", "clock", "Aktivitet", null, "")
                 }
@@ -150,10 +149,10 @@ else
                     <p class="save-success">@_savedMessage</p>
                 }
 
-                @if (HarUlagredeEndringer || _fane is "info" or "rekvirenter")
+                @if (HarUlagredeEndringer || _fane == "info")
                 {
                     <div class="k-lagrebar">
-                        <span class="k-smule">@(Id.HasValue ? "Endringer i detaljer, rekvirenter og nye utleveringer lagres samlet." : "Systemet opprettes når du lagrer.")</span>
+                        <span class="k-smule">@(Id.HasValue ? "Husk å lagre endringene." : "Systemet opprettes når du lagrer.")</span>
                         <button type="button" class="k-knapp k-knapp-p" @onclick="Lagre"><Icon Name="check" />@(Id.HasValue ? "Lagre endringer" : "Lagre system")</button>
                     </div>
                 }
@@ -182,7 +181,6 @@ else
     // ---------------- Systemkort S1: faner ----------------
 
     private bool _redigerInfo;
-    private Rekvirent? _redigerRekvirent;
     private int? _redigerKvitteringId;
     private string _kvFilter = "alle";
     private string _kvSok = "";
@@ -386,11 +384,125 @@ else
         }
     }
 
+    private bool _rekApen;
+    private Rekvirent? _rekEndrer;
+    private string _rekNavn = "";
+    private string? _rekRolle;
+    private string? _rekTelefon;
+    private string? _rekEpost;
+    private string? _rekFeil;
+    private bool _rekBekreftFjern;
+    private bool _rekLagrer;
+
     private void NyRekvirent()
     {
-        var r = new Rekvirent { Navn = "" };
-        _rekvirenter.Add(r);
-        _redigerRekvirent = r;
+        _rekEndrer = null;
+        _rekNavn = "";
+        _rekRolle = _rekTelefon = _rekEpost = null;
+        _rekFeil = null;
+        _rekBekreftFjern = false;
+        _rekApen = true;
+    }
+
+    private void EndreRekvirent(Rekvirent r)
+    {
+        _rekEndrer = r;
+        _rekNavn = r.Navn;
+        _rekRolle = r.Rolle;
+        _rekTelefon = r.Telefon;
+        _rekEpost = r.Epost;
+        _rekFeil = null;
+        _rekBekreftFjern = false;
+        _rekApen = true;
+    }
+
+    private void LukkRekvirent()
+    {
+        _rekApen = false;
+        _rekEndrer = null;
+        _rekFeil = null;
+    }
+
+    private static string? Rens(string? verdi) => string.IsNullOrWhiteSpace(verdi) ? null : verdi.Trim();
+
+    private async Task LagreRekvirent()
+    {
+        if (_rekLagrer)
+        {
+            return;
+        }
+
+        var navn = _rekNavn.Trim();
+        if (navn.Length == 0)
+        {
+            _rekFeil = "Rekvirenten må ha et navn.";
+            return;
+        }
+
+        _rekLagrer = true;
+        try
+        {
+            var ny = _rekEndrer is null;
+            var r = _rekEndrer ?? new Rekvirent { Navn = navn };
+            if (ny)
+            {
+                _rekvirenter.Add(r);
+            }
+
+            r.Navn = navn;
+            r.Rolle = Rens(_rekRolle);
+            r.Telefon = Rens(_rekTelefon);
+            r.Epost = Rens(_rekEpost);
+
+            await Lagre();
+            if (_error is not null)
+            {
+                if (ny)
+                {
+                    _rekvirenter.Remove(r);
+                }
+
+                _rekFeil = _error;
+                _error = null;
+                return;
+            }
+
+            _savedMessage = ny ? $"{navn} er lagt til." : $"{navn} er oppdatert.";
+            LukkRekvirent();
+        }
+        finally
+        {
+            _rekLagrer = false;
+        }
+    }
+
+    private async Task FjernRekvirent()
+    {
+        if (_rekEndrer is not { } r || _rekLagrer)
+        {
+            return;
+        }
+
+        _rekLagrer = true;
+        try
+        {
+            _rekvirenter.Remove(r);
+            await Lagre();
+            if (_error is not null)
+            {
+                _rekvirenter.Add(r);
+                _rekFeil = _error;
+                _error = null;
+                return;
+            }
+
+            _savedMessage = $"{r.Navn} er fjernet.";
+            LukkRekvirent();
+        }
+        finally
+        {
+            _rekLagrer = false;
+        }
     }
 
 
@@ -720,54 +832,111 @@ else
             }
         </div>;
 
+    // R1 + R2: rekvirentene i samme tabell som Nøkler. Ny og Endre skjer i et
+    // vindu som lagrer med en gang.
     private RenderFragment Rekvirenter() =>
-        @<div class="k-fp">
-            <div class="k-fp-topp">
-                <span class="k-smule">Personer hos kunden som kan rekvirere nøkler og kort til dette systemet.</span>
-                <button type="button" class="k-knapp k-knapp-s k-knapp-p k-auto" @onclick="NyRekvirent"><Icon Name="plus" />Legg til rekvirent</button>
-            </div>
-            @if (_rekvirenter.Count == 0)
+        @<div class="ky-flate">
+            <section class="ky-kort">
+                <div class="ky-hode">Rekvirenter <button type="button" class="ky-ny" @onclick="NyRekvirent"><Icon Name="plus" />Legg til rekvirent</button></div>
+                @if (_rekvirenter.Count == 0)
+                {
+                    <p class="ky-tom">Ingen rekvirenter lagt til ennå.</p>
+                }
+                else
+                {
+                    <table class="ky-tabell">
+                        <thead>
+                            <tr>
+                                <th>Navn</th>
+                                <th class="ky-skjul">Rolle</th>
+                                <th>Telefon</th>
+                                <th class="ky-skjul">E-post</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in _rekvirenter)
+                            {
+                                var rk = r;
+                                <tr @key="rk">
+                                    <td>
+                                        <span class="ky-celle">
+                                            <span class="ky-av">@Initialer(rk.Navn)</span>
+                                            <span>
+                                                <b>@rk.Navn</b>
+                                                <small class="ky-smal">@rk.Rolle</small>
+                                            </span>
+                                        </span>
+                                    </td>
+                                    <td class="ky-skjul">@(string.IsNullOrWhiteSpace(rk.Rolle) ? "–" : rk.Rolle)</td>
+                                    <td>
+                                        @if (!string.IsNullOrWhiteSpace(rk.Telefon))
+                                        {
+                                            <a class="ky-lenke" href="@($"tel:{rk.Telefon}")">@rk.Telefon</a>
+                                        }
+                                        else
+                                        {
+                                            <text>–</text>
+                                        }
+                                    </td>
+                                    <td class="ky-skjul">
+                                        @if (!string.IsNullOrWhiteSpace(rk.Epost))
+                                        {
+                                            <a class="ky-lenke" href="@($"mailto:{rk.Epost}")">@rk.Epost</a>
+                                        }
+                                        else
+                                        {
+                                            <text>–</text>
+                                        }
+                                    </td>
+                                    <td class="ky-valg"><button type="button" title="Endre" aria-label="@($"Endre {rk.Navn}")" @onclick="@(() => EndreRekvirent(rk))"><Icon Name="edit" /></button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+
+            @if (_rekApen)
             {
-                <span class="k-smule">Ingen rekvirenter lagt til ennå.</span>
-            }
-            else
-            {
-                <div class="k-liste">
-                    @foreach (var r in _rekvirenter)
-                    {
-                        var rk = r;
-                        @if (rk.Id == 0 || ReferenceEquals(_redigerRekvirent, rk))
-                        {
-                            <div class="k-lr k-lr-redig">
-                                <span class="k-av" style="background:@AvatarFarge(string.IsNullOrWhiteSpace(rk.Navn) ? "?" : rk.Navn)">@Initialer(string.IsNullOrWhiteSpace(rk.Navn) ? "?" : rk.Navn)</span>
-                                <div class="k-redig-felt">
-                                    <input class="k-inp" @bind="rk.Navn" placeholder="Navn" />
-                                    <input class="k-inp" @bind="rk.Rolle" placeholder="Rolle (valgfritt)" />
-                                    <input class="k-inp" @bind="rk.Telefon" placeholder="Telefon" />
-                                    <input class="k-inp" @bind="rk.Epost" placeholder="E-post" />
-                                </div>
-                                <span class="k-rad">
-                                    @if (rk.Id > 0)
-                                    {
-                                        <button type="button" class="k-knapp k-knapp-s" @onclick="@(() => _redigerRekvirent = null)">Ferdig</button>
-                                    }
-                                    <button type="button" class="k-knapp k-knapp-s k-rod-tekst" @onclick="@(() => _rekvirenter.Remove(rk))">Fjern</button>
-                                </span>
+                <div class="ky-lys">
+                    <div class="ky-vindu" role="dialog" aria-modal="true" aria-label="@(_rekEndrer is null ? "Ny rekvirent" : "Endre rekvirent")">
+                        <div class="ky-vindu-hode">
+                            <b>@(_rekEndrer is null ? "Ny rekvirent" : "Endre rekvirent")</b>
+                            <button type="button" title="Lukk" aria-label="Lukk" @onclick="LukkRekvirent"><Icon Name="x" /></button>
+                        </div>
+                        <div class="ky-vindu-innhold">
+                            <div class="ky-felt">
+                                <label class="k-felt2">Navn<input class="k-inp" @bind="_rekNavn" @bind:event="oninput" placeholder="Navn" /></label>
+                                <label class="k-felt2">Rolle<input class="k-inp" @bind="_rekRolle" placeholder="F.eks. Driftsleder" /></label>
+                                <label class="k-felt2">Telefon<input class="k-inp" type="tel" @bind="_rekTelefon" placeholder="Telefon" /></label>
+                                <label class="k-felt2">E-post<input class="k-inp" type="email" @bind="_rekEpost" placeholder="E-post" /></label>
                             </div>
-                        }
-                        else
-                        {
-                            <div class="k-lr">
-                                <span class="k-av" style="background:@AvatarFarge(rk.Navn)">@Initialer(rk.Navn)</span>
-                                <div><b>@rk.Navn @if (!string.IsNullOrWhiteSpace(rk.Rolle)) {<span class="k-pill s-gra k-pill-liten">@rk.Rolle</span>}</b><small>@string.Join(" · ", new[] { rk.Telefon, rk.Epost }.Where(s => !string.IsNullOrWhiteSpace(s)))</small></div>
-                                <span class="k-ikb">
-                                    @if (!string.IsNullOrWhiteSpace(rk.Telefon)) { <a href="@($"tel:{rk.Telefon}")" title="Ring"><Icon Name="phone" /></a> }
-                                    @if (!string.IsNullOrWhiteSpace(rk.Epost)) { <a href="@($"mailto:{rk.Epost}")" title="E-post"><Icon Name="mail" /></a> }
-                                    <button type="button" title="Endre" @onclick="@(() => _redigerRekvirent = rk)"><Icon Name="edit" /></button>
-                                </span>
-                            </div>
-                        }
-                    }
+                            @if (!string.IsNullOrEmpty(_rekFeil))
+                            {
+                                <p class="form-error ky-feil">@_rekFeil</p>
+                            }
+                        </div>
+                        <div class="ky-vindu-fot">
+                            @if (_rekEndrer is not null)
+                            {
+                                @if (_rekBekreftFjern)
+                                {
+                                    <span class="ky-fjern ky-tom-knapp">
+                                        Fjerne rekvirenten?
+                                        <button type="button" class="k-knapp k-knapp-s k-rod-tekst" disabled="@_rekLagrer" @onclick="FjernRekvirent">Ja, fjern</button>
+                                        <button type="button" class="k-knapp k-knapp-s" @onclick="@(() => _rekBekreftFjern = false)">Nei</button>
+                                    </span>
+                                }
+                                else
+                                {
+                                    <button type="button" class="k-knapp k-knapp-s k-rod-tekst ky-tom-knapp" @onclick="@(() => _rekBekreftFjern = true)">Fjern</button>
+                                }
+                            }
+                            <button type="button" class="k-knapp k-knapp-s" @onclick="LukkRekvirent">Avbryt</button>
+                            <button type="button" class="k-knapp k-knapp-s k-knapp-p" disabled="@_rekLagrer" @onclick="LagreRekvirent">@(_rekEndrer is null ? "Legg til" : "Lagre")</button>
+                        </div>
+                    </div>
                 </div>
             }
         </div>;
@@ -1082,17 +1251,12 @@ else
     private void HurtigLeggTilRekvirent()
     {
         _fane = "rekvirenter";
-        LeggTilRekvirent();
+        NyRekvirent();
     }
 
     private void HurtigRegistrerNokkel()
     {
         NyUtlevering();
-    }
-
-    private void LeggTilRekvirent()
-    {
-        _rekvirenter.Add(new Rekvirent { Navn = "" });
     }
 
     private void FjernKvitteringRad(NokkelKvittering k)
@@ -1305,7 +1469,6 @@ else
 
         _opprinneligNotater = _form.Notater;
         _redigerInfo = false;
-        _redigerRekvirent = null;
         _redigerKvitteringId = null;
 
         if (Id.HasValue)
