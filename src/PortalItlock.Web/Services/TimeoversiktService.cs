@@ -93,6 +93,8 @@ public class TimeoversiktService(ApplicationDbContext db, PdfLogo pdfLogo, ITena
     // lønnsslipp) med arbeidstid, overtid, avspasering, fravær og kjøring, pluss
     // en totalboks. Bakerst kommer registreringene per ansatt til kontroll.
     // Navn, logo og farge hentes fra organisasjonen som er logget inn.
+    // Lønnsgrunnlag (forslag N1): ren hvit topp, tallene i fire tynne bokser og én
+    // tabell med tynne linjer. Registreringene følger på egne sider, til kontroll.
     public byte[] GenererPdf(List<Timeregistrering> registreringer, List<FravarSoknad> fravar, decimal venterTimer,
         DateTime fra, DateTime til, string? montorNavn)
     {
@@ -102,189 +104,303 @@ public class TimeoversiktService(ApplicationDbContext db, PdfLogo pdfLogo, ITena
         var periode = PeriodeTekst(fra, til);
         var helManed = fra.Day == 1 && fra.Month == til.Month && fra.Year == til.Year
             && til.Day == DateTime.DaysInMonth(til.Year, til.Month);
-        var tittelPeriode = helManed ? Stor(fra.ToString("MMMM yyyy", Kultur)) : periode;
+        var maned = fra.ToString("MMMM yyyy", Kultur);
+        var periodeTittel = helManed ? $"{Stor(maned)} · {fra.Day}.–{til.Day}. {fra.ToString("MMMM", Kultur)}" : periode;
+        var undertittel = montorNavn is null ? periodeTittel : $"{periodeTittel} · {montorNavn}";
+        var bunntekst = $"{org.Navn} · Lønnsgrunnlag {(helManed ? maned : periode)} · laget {DateTime.Today:dd.MM.yyyy}";
+
+        var fravarDager = ansatte.Sum(a => a.Fravar.Sum(f => f.Dager));
+        var fravarTimer = ansatte.Sum(a => a.Fravar.Sum(f => f.Timer));
+        var fravarTotal = FravarTekst(fravarDager, fravarTimer);
+        var km = ansatte.Sum(a => a.Km);
 
         var document = Document.Create(container =>
         {
             container.Page(page =>
             {
                 RapportMal.Side(page);
-
                 page.Content().Column(col =>
                 {
-                    col.Spacing(12);
+                    col.Spacing(11);
+                    col.Item().Element(e => Tittel(e, org, "Lønnsgrunnlag", undertittel));
 
-                    // Topp
                     col.Item().Row(row =>
                     {
-                        row.RelativeItem().Column(v =>
-                        {
-                            v.Item().Element(e => org.TegnLogo(e, pdfLogo, 26));
-                            v.Item().PaddingTop(12).Text("Lønnsgrunnlag").FontSize(22).Bold();
-                            v.Item().Text(string.Join(" · ", new[]
-                            {
-                                tittelPeriode,
-                                montorNavn ?? $"{ansatte.Count} {(ansatte.Count == 1 ? "ansatt" : "ansatte")}",
-                                FormatTimer(totalTimer)
-                            })).FontSize(10).FontColor(RapportMal.Dempet);
-                        });
-                        row.ConstantItem(150).AlignRight().Column(h =>
-                        {
-                            h.Item().AlignRight().Text("Periode").FontSize(8).FontColor(RapportMal.Dempet);
-                            h.Item().AlignRight().Text(periode).FontSize(12).Bold();
-                            h.Item().AlignRight().Text($"Laget {DateTime.Today:dd.MM.yyyy}").FontSize(8).FontColor(RapportMal.Svak);
-                        });
+                        row.Spacing(6);
+                        Tall(row, "Godkjente timer", FormatKort(totalTimer), org.Aksent);
+                        Tall(row, "Ansatte", ansatte.Count.ToString(Kultur), null);
+                        Tall(row, "Fravær", fravarTotal.Length > 0 ? fravarTotal : "Ingen", null);
+                        Tall(row, "Kjørt", KmTekst(km), null);
                     });
-                    col.Item().LineHorizontal(2).LineColor(org.Aksent);
 
                     if (ansatte.Count == 0)
                     {
-                        col.Item().PaddingTop(10).Text("Ingen godkjente timer eller fravær i perioden.").FontColor(RapportMal.Dempet);
+                        col.Item().PaddingVertical(10).Text("Ingen godkjente timer eller fravær i perioden.").FontColor(Mut);
                     }
                     else
                     {
-                        // To kolonner med én boks per ansatt, totalen som siste boks.
-                        var bokser = ansatte.Select(a => (a.Navn, a.Sum, Linjer: a.Linjer(), ErTotal: false)).ToList();
-                        bokser.Add(("Totalt", totalTimer, TotalLinjer(ansatte), true));
-
-                        col.Item().Table(table =>
+                        col.Item().Element(e => AnsattTabell(e, ansatte, org));
+                        col.Item().Column(sum =>
                         {
-                            table.ColumnsDefinition(c =>
+                            sum.Item().LineHorizontal(1.5f).LineColor(PdfStil.Ink);
+                            sum.Item().PaddingTop(6).PaddingHorizontal(3).Row(r =>
                             {
-                                c.RelativeColumn();
-                                c.RelativeColumn();
+                                var deler = new List<string> { "Totalt" };
+                                if (fravarTotal.Length > 0) deler.Add($"{fravarTotal} fravær");
+                                if (km > 0) deler.Add(KmTekst(km));
+                                r.RelativeItem().AlignBottom().Text(string.Join(" · ", deler)).FontColor(Mut);
+                                r.AutoItem().Text(FormatKort(totalTimer)).FontSize(12).Bold();
                             });
-
-                            foreach (var b in bokser)
-                            {
-                                table.Cell().Padding(5).Element(e => TegnBoks(e, b.Navn, b.Sum, b.Linjer, b.ErTotal, org));
-                            }
                         });
                     }
 
-                    if (venterTimer > 0)
-                    {
-                        col.Item().Background(Color.FromHex("#FDF6EA")).Padding(8).Text(t =>
-                        {
-                            t.Span($"{FormatTimer(venterTimer)} venter på godkjenning").Bold().FontColor(Color.FromHex("#5A4212"));
-                            t.Span(" og er ikke med. Godkjenn dem i Timegodkjenning og lag PDF-en på nytt.").FontColor(Color.FromHex("#6F531A"));
-                        });
-                    }
-                    else
-                    {
-                        col.Item().Background(Color.FromHex("#EEF6F0")).Padding(8)
-                            .Text("✓ Alle timer i perioden er godkjent").Bold().FontColor(Color.FromHex("#2E7D4F"));
-                    }
+                    col.Item().Element(e => StatusBoks(e, venterTimer));
 
-                    // Signatur
-                    col.Item().PaddingTop(30).Row(row =>
+                    // Signaturene står nederst på siden.
+                    col.Item().Extend().AlignBottom().PaddingTop(24).Row(row =>
                     {
                         row.RelativeItem().Element(e => Signatur(e, "Godkjent av"));
-                        row.ConstantItem(34);
+                        row.ConstantItem(26);
                         row.RelativeItem().Element(e => Signatur(e, "Mottatt av lønn"));
                     });
+                });
+                page.Footer().Element(e => Bunn(e, bunntekst));
+            });
 
-                    // Registreringene per ansatt, til kontroll
-                    if (ansatte.Count > 0)
+            // Registreringene per ansatt, til kontroll.
+            if (ansatte.Count > 0)
+            {
+                container.Page(page =>
+                {
+                    RapportMal.Side(page);
+                    page.Header().PaddingBottom(10).Element(e => Tittel(e, org, "Registreringer", $"{(helManed ? Stor(maned) : periode)} · godkjente timer"));
+                    page.Content().Column(col =>
                     {
-                        col.Item().PageBreak();
-                        col.Item().Text("Registreringer").FontSize(15).Bold();
-
+                        col.Spacing(13);
                         foreach (var a in ansatte)
                         {
-                            col.Item().PaddingTop(4).Column(blokk =>
+                            col.Item().EnsureSpace(70).Column(blokk =>
                             {
-                                blokk.Item().Row(r =>
+                                blokk.Item().PaddingBottom(5).Row(r =>
                                 {
-                                    r.RelativeItem().Text(a.Navn).FontSize(11).Bold();
-                                    r.AutoItem().Text($"{FormatTimer(a.Sum)}{(a.Km > 0 ? $" · {a.Km.ToString("N0", Kultur)} km" : "")}")
-                                        .FontSize(9).Bold().FontColor(RapportMal.Dempet);
+                                    r.RelativeItem().Element(e => Navn(e, a.Navn, org, 10.5f));
+                                    r.Spacing(4);
+                                    if (a.Sum > 0) r.AutoItem().AlignMiddle().Element(e => Merke(e, FormatKort(a.Sum)));
+                                    if (a.Km > 0) r.AutoItem().AlignMiddle().Element(e => Merke(e, KmTekst(a.Km)));
                                 });
-                                blokk.Item().PaddingTop(2).LineHorizontal(1).LineColor(PdfStil.Ink);
-                                blokk.Item().Table(table =>
-                                {
-                                    table.ColumnsDefinition(c =>
-                                    {
-                                        c.ConstantColumn(62);
-                                        c.ConstantColumn(118);
-                                        c.RelativeColumn();
-                                        c.ConstantColumn(44);
-                                        c.ConstantColumn(40);
-                                    });
-
-                                    foreach (var rad in a.Rader)
-                                    {
-                                        table.Cell().Element(Celle).Text(rad.Dato);
-                                        table.Cell().Element(Celle).Text(t =>
-                                        {
-                                            t.Span(rad.Tid).FontColor(rad.ErFravar ? FravarFarge(rad.Tid) : PdfStil.Ink);
-                                            if (rad.Type is not null)
-                                            {
-                                                t.Span($"  {rad.Type}").Bold();
-                                            }
-                                        });
-                                        table.Cell().Element(Celle).Text(rad.Beskrivelse);
-                                        table.Cell().Element(Celle).AlignRight().Text(rad.Km);
-                                        table.Cell().Element(Celle).AlignRight().Text(rad.Timer);
-                                    }
-                                });
+                                blokk.Item().Element(e => RegistreringTabell(e, a));
                             });
                         }
-                    }
-                });
-
-                page.Footer().PaddingTop(6).Row(row =>
-                {
-                    row.RelativeItem().Text($"{org.Navn} · Lønnsgrunnlag {(helManed ? fra.ToString("MMMM yyyy", Kultur) : periode)}").FontSize(7).FontColor(RapportMal.Svak);
-                    row.AutoItem().Text(t =>
-                    {
-                        t.DefaultTextStyle(x => x.FontSize(7).FontColor(RapportMal.Svak));
-                        t.Span("Side ");
-                        t.CurrentPageNumber();
-                        t.Span(" av ");
-                        t.TotalPages();
                     });
+                    page.Footer().Element(e => Bunn(e, bunntekst));
                 });
-            });
+            }
         });
 
         return document.GeneratePdf();
     }
 
-    private static IContainer Celle(IContainer c) =>
-        c.BorderBottom(0.5f).BorderColor(RapportMal.Linje).PaddingVertical(3).PaddingHorizontal(3);
+    private static readonly Color Mut = Color.FromHex("#66708A");
+    private static readonly Color Strek = Color.FromHex("#E6EAF1");
+    private static readonly Color Tom = Color.FromHex("#B1B8C7");
 
-    private static void TegnBoks(IContainer container, string navn, decimal sum, List<(string Etikett, string Verdi, Color? Farge)> linjer,
-        bool erTotal, RapportProfil org)
-    {
-        var boks = erTotal
-            ? container.Background(org.AksentLys).Padding(10)
-            : container.Border(0.7f).BorderColor(RapportMal.Linje).Padding(10);
-
-        boks.Column(c =>
+    private void Tittel(IContainer container, RapportProfil org, string tittel, string undertittel) =>
+        container.Row(row =>
         {
-            c.Item().Row(r =>
+            row.RelativeItem().Column(v =>
             {
-                r.RelativeItem().Text(navn).FontSize(11).Bold();
-                r.AutoItem().Text(FormatTimer(sum)).FontSize(11).Bold();
+                v.Item().Text(tittel).FontSize(21).Bold();
+                v.Item().Text(undertittel).FontSize(10).FontColor(Mut);
             });
-            c.Item().PaddingTop(4);
-            foreach (var (etikett, verdi, farge) in linjer)
+            row.ConstantItem(150).AlignRight().Element(e => org.TegnLogo(e, pdfLogo, 26));
+        });
+
+    private static void Tall(RowDescriptor row, string etikett, string verdi, Color? farge) =>
+        row.RelativeItem().Border(0.75f).BorderColor(Strek).CornerRadius(8).PaddingVertical(7).PaddingHorizontal(9).Column(c =>
+        {
+            c.Item().Text(etikett).FontSize(7.5f).FontColor(Mut);
+            c.Item().Text(verdi).FontSize(13).Bold().FontColor(farge ?? PdfStil.Ink);
+        });
+
+    private static void AnsattTabell(IContainer container, List<AnsattSum> ansatte, RapportProfil org)
+    {
+        // Avspasering får bare kolonne når noen faktisk har det.
+        var harAvspasering = ansatte.Any(a => a.Avspasering > 0);
+
+        container.Table(table =>
+        {
+            table.ColumnsDefinition(c =>
             {
-                c.Item().Row(r =>
+                c.RelativeColumn(2.3f);
+                c.ConstantColumn(40);
+                c.ConstantColumn(40);
+                c.ConstantColumn(44);
+                if (harAvspasering)
                 {
-                    r.RelativeItem().Text(etikett).FontSize(8.5f).FontColor(farge ?? RapportMal.Dempet);
-                    r.AutoItem().Text(verdi).FontSize(8.5f).FontColor(farge ?? PdfStil.Ink);
+                    c.ConstantColumn(44);
+                }
+
+                c.RelativeColumn(1.8f);
+                c.ConstantColumn(46);
+                c.ConstantColumn(46);
+            });
+
+            table.Header(h =>
+            {
+                Hode(h.Cell(), "Ansatt");
+                Hode(h.Cell().AlignRight(), "Normal");
+                Hode(h.Cell().AlignRight(), "OT 50 %");
+                Hode(h.Cell().AlignRight(), "OT 100 %");
+                if (harAvspasering)
+                {
+                    Hode(h.Cell().AlignRight(), "Avspas.");
+                }
+
+                Hode(h.Cell().PaddingLeft(6), "Fravær");
+                Hode(h.Cell().AlignRight(), "Kjørt");
+                Hode(h.Cell().AlignRight(), "Sum");
+            });
+
+            foreach (var a in ansatte)
+            {
+                table.Cell().Element(Rad).Element(e => Navn(e, a.Navn, org, 9.5f));
+                TimerCelle(table.Cell(), a.Normal);
+                TimerCelle(table.Cell(), a.Overtid50);
+                TimerCelle(table.Cell(), a.Overtid100);
+                if (harAvspasering)
+                {
+                    TimerCelle(table.Cell(), a.Avspasering);
+                }
+
+                var merker = a.Fravar.GroupBy(f => f.Type)
+                    .Select(g => $"{g.Key} {KortFravar(g.Sum(f => f.Dager), g.Sum(f => f.Timer))}")
+                    .ToList();
+                table.Cell().Element(Rad).PaddingLeft(6).Element(e =>
+                {
+                    if (merker.Count == 0)
+                    {
+                        e.Text("–").FontColor(Tom);
+                        return;
+                    }
+
+                    e.Inlined(i =>
+                    {
+                        i.Spacing(3);
+                        foreach (var m in merker)
+                        {
+                            i.Item().Element(x => Merke(x, m));
+                        }
+                    });
                 });
+
+                table.Cell().Element(Rad).AlignRight().Text(a.Km > 0 ? KmTekst(a.Km) : "–").FontColor(a.Km > 0 ? PdfStil.Ink : Tom);
+                table.Cell().Element(Rad).AlignRight().Text(FormatKort(a.Sum)).Bold();
             }
         });
     }
 
+    private static void RegistreringTabell(IContainer container, AnsattSum a) =>
+        container.Table(table =>
+        {
+            table.ColumnsDefinition(c =>
+            {
+                c.ConstantColumn(66);
+                c.ConstantColumn(104);
+                c.RelativeColumn();
+                c.ConstantColumn(36);
+                c.ConstantColumn(38);
+            });
+
+            table.Header(h =>
+            {
+                Hode(h.Cell(), "Dato");
+                Hode(h.Cell(), "Tid");
+                Hode(h.Cell(), "Arbeid");
+                Hode(h.Cell().AlignRight(), "Km");
+                Hode(h.Cell().AlignRight(), "Timer");
+            });
+
+            foreach (var rad in a.Rader)
+            {
+                table.Cell().Element(Rad).Text(rad.Dato).Bold();
+                table.Cell().Element(Rad).Text(t =>
+                {
+                    t.Span(rad.Tid).FontColor(rad.ErFravar ? FravarFarge(rad.Tid) : Mut);
+                    if (rad.Type is not null)
+                    {
+                        t.Span($"  {rad.Type}").Bold();
+                    }
+                });
+                table.Cell().Element(Rad).Text(rad.Beskrivelse);
+                table.Cell().Element(Rad).AlignRight().Text(rad.Km);
+                table.Cell().Element(Rad).AlignRight().Text(rad.Timer).Bold();
+            }
+        });
+
+    private static void Hode(IContainer cell, string tekst) =>
+        cell.PaddingHorizontal(3).PaddingBottom(4).Text(tekst.ToUpper(Kultur)).FontSize(6.5f).Bold().FontColor(Mut).LetterSpacing(0.05f);
+
+    private static IContainer Rad(IContainer c) =>
+        c.BorderTop(0.6f).BorderColor(Strek).PaddingVertical(4.5f).PaddingHorizontal(3).AlignMiddle();
+
+    private static void TimerCelle(IContainer cell, decimal timer) =>
+        cell.Element(Rad).AlignRight().Text(timer > 0 ? timer.ToString("N1", Kultur) : "–").FontColor(timer > 0 ? PdfStil.Ink : Tom);
+
+    private static void Navn(IContainer container, string navn, RapportProfil org, float storrelse) =>
+        container.Row(r =>
+        {
+            r.Spacing(6);
+            r.AutoItem().AlignMiddle().Width(17).Height(17).Background(org.AksentLys).CornerRadius(8.5f)
+                .AlignCenter().AlignMiddle().Text(Initialer(navn)).FontSize(6.5f).Bold().FontColor(org.Aksent);
+            r.RelativeItem().AlignMiddle().Text(navn).FontSize(storrelse).Bold();
+        });
+
+    private static void Merke(IContainer container, string tekst) =>
+        container.Border(0.6f).BorderColor(Strek).CornerRadius(7).PaddingVertical(1).PaddingHorizontal(6)
+            .Text(tekst).FontSize(7.5f).SemiBold();
+
+    private static void StatusBoks(IContainer container, decimal venterTimer)
+    {
+        var venter = venterTimer > 0;
+        container
+            .Background(Color.FromHex(venter ? "#FEFAF0" : "#F2FAF5"))
+            .Border(0.75f).BorderColor(Color.FromHex(venter ? "#EBD9A8" : "#BFE0CC"))
+            .CornerRadius(8).PaddingVertical(7).PaddingHorizontal(10)
+            .Text(t =>
+            {
+                var farge = Color.FromHex(venter ? "#6A4F10" : "#1F7A45");
+                t.DefaultTextStyle(x => x.FontColor(farge));
+                if (venter)
+                {
+                    t.Span($"{FormatKort(venterTimer)} venter på godkjenning").Bold();
+                    t.Span(" og er ikke med. Godkjenn dem og lag PDF-en på nytt.");
+                }
+                else
+                {
+                    t.Span("✓ Alle timer i perioden er godkjent").Bold();
+                }
+            });
+    }
+
     private static void Signatur(IContainer container, string tittel) =>
-        container.BorderTop(0.7f).BorderColor(PdfStil.Ink).PaddingTop(4).Column(c =>
+        container.BorderTop(0.75f).BorderColor(PdfStil.Ink).PaddingTop(4).Column(c =>
         {
             c.Item().Text(tittel).FontSize(8.5f).Bold();
-            c.Item().Text("Navn, dato og signatur").FontSize(7.5f).FontColor(RapportMal.Dempet);
+            c.Item().Text("Navn, dato og signatur").FontSize(7.5f).FontColor(Mut);
+        });
+
+    private static void Bunn(IContainer container, string tekst) =>
+        container.PaddingTop(6).Row(row =>
+        {
+            row.RelativeItem().Text(tekst).FontSize(7).FontColor(RapportMal.Svak);
+            row.AutoItem().Text(t =>
+            {
+                t.DefaultTextStyle(x => x.FontSize(7).FontColor(RapportMal.Svak));
+                t.Span("Side ");
+                t.CurrentPageNumber();
+                t.Span(" av ");
+                t.TotalPages();
+            });
         });
 
     private static readonly Color Blaa = Color.FromHex("#2457C5");
@@ -376,45 +492,10 @@ public class TimeoversiktService(ApplicationDbContext db, PdfLogo pdfLogo, ITena
         return (dager, 0);
     }
 
-    private static List<(string, string, Color?)> TotalLinjer(List<AnsattSum> ansatte)
-    {
-        var linjer = new List<(string, string, Color?)>
-        {
-            ("Arbeidstid", FormatTimer(ansatte.Sum(a => a.Normal)), null)
-        };
-
-        var ot = ansatte.Sum(a => a.Overtid50 + a.Overtid100);
-        if (ot > 0)
-        {
-            linjer.Add(("Overtid", FormatTimer(ot), null));
-        }
-
-        var avsp = ansatte.Sum(a => a.Avspasering);
-        if (avsp > 0)
-        {
-            linjer.Add(("Avspasering", FormatTimer(avsp), null));
-        }
-
-        var dager = ansatte.Sum(a => a.Fravar.Sum(f => f.Dager));
-        var timer = ansatte.Sum(a => a.Fravar.Sum(f => f.Timer));
-        if (dager > 0 || timer > 0)
-        {
-            linjer.Add(("Fravær", FravarTekst(dager, timer), null));
-        }
-
-        var km = ansatte.Sum(a => a.Km);
-        if (km > 0)
-        {
-            linjer.Add(("Kjøring", $"{km.ToString("N0", Kultur)} km", null));
-        }
-
-        return linjer;
-    }
-
     private static string FravarTekst(int dager, decimal timer) => string.Join(" + ", new[]
     {
         dager > 0 ? $"{dager} {(dager == 1 ? "dag" : "dager")}" : null,
-        timer > 0 ? FormatTimer(timer) : null
+        timer > 0 ? FormatKort(timer) : null
     }.Where(s => s is not null));
 
     private static string PeriodeTekst(DateTime fra, DateTime til) =>
@@ -424,7 +505,26 @@ public class TimeoversiktService(ApplicationDbContext db, PdfLogo pdfLogo, ITena
 
     private static string Stor(string s) => s.Length == 0 ? s : char.ToUpper(s[0], Kultur) + s[1..];
 
-    private static string FormatTimer(decimal value) => value.ToString("N1", Kultur) + " t";
+    private static string FormatKort(decimal value) => value.ToString("N1", Kultur) + " t";
+
+    private static string KmTekst(decimal km) => $"{km.ToString("N0", Kultur)} km";
+
+    private static string KortFravar(int dager, decimal timer) => string.Join(" + ", new[]
+    {
+        dager > 0 ? $"{dager} d" : null,
+        timer > 0 ? FormatKort(timer) : null
+    }.Where(s => s is not null));
+
+    private static string Initialer(string navn)
+    {
+        var deler = navn.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return deler.Length switch
+        {
+            0 => "?",
+            1 => deler[0][..1].ToUpper(Kultur),
+            _ => (deler[0][..1] + deler[^1][..1]).ToUpper(Kultur)
+        };
+    }
 
     private sealed record DetaljRad(DateTime Sortering, string Dato, string Tid, string? Type, string Beskrivelse, string Km, string Timer, bool ErFravar);
 
@@ -439,25 +539,5 @@ public class TimeoversiktService(ApplicationDbContext db, PdfLogo pdfLogo, ITena
         public List<(string Type, int Dager, decimal Timer)> Fravar { get; } = [];
         public List<DetaljRad> Rader { get; set; } = [];
         public decimal Sum => Normal + Overtid50 + Overtid100 + Avspasering;
-
-        // Bare det som faktisk finnes - ingen tomme linjer.
-        public List<(string, string, Color?)> Linjer()
-        {
-            var linjer = new List<(string, string, Color?)>();
-            if (Normal > 0) linjer.Add(("Arbeidstid", FormatTimer(Normal), null));
-            if (Overtid50 > 0) linjer.Add(("Overtid 50 %", FormatTimer(Overtid50), null));
-            if (Overtid100 > 0) linjer.Add(("Overtid 100 %", FormatTimer(Overtid100), null));
-            if (Avspasering > 0) linjer.Add(("Avspasering", FormatTimer(Avspasering), null));
-            foreach (var g in Fravar.GroupBy(f => f.Type))
-            {
-                var tekst = FravarTekst(g.Sum(f => f.Dager), g.Sum(f => f.Timer));
-                if (tekst.Length > 0)
-                {
-                    linjer.Add((g.Key, tekst, FravarFarge(g.Key)));
-                }
-            }
-            if (Km > 0) linjer.Add(("Kjøring", $"{Km.ToString("N0", Kultur)} km", null));
-            return linjer;
-        }
     }
 }
