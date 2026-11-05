@@ -62,7 +62,6 @@ public partial class KundeSkjema
     private int _bildeVersjon;
     private bool _slarOppOrgNr;
     private string? _orgNrFeil;
-    private string? _brregMelding;
     private List<BronnoysundClient.Sokeresultat> _navnForslag = [];
     private bool _visNavnForslag;
     private bool _sokerNavn;
@@ -70,13 +69,19 @@ public partial class KundeSkjema
 
     private bool _visNyttMeny;
     private bool _visNyttTilbud;
-    private bool _redigerFirma;
-    private bool _redigerFaktura;
 
     private List<ProsjektRad> _prosjekter = [];
     private const int ProsjekterPerSide = 10;
     private string _prosjektFilter = "alle";
     private int _prosjektSide;
+    private int _ordreSide;
+    private int _ticketSide;
+    private bool _visArshjul;
+    private bool _visHistorikk;
+    private bool _redigerPaslag;
+    private int? _redigerLisensId;
+    private int? _redigerRabattId;
+    private int? _bekreftDokumentId;
     private List<Arbeidsordre> _arbeidsordrer = [];
     private string _ordreFilter = "Alle";
     private List<Tilbud> _tilbudListe = [];
@@ -231,7 +236,9 @@ public partial class KundeSkjema
         ("Ferdig", "ferdig", _prosjekter.Count(p => ProsjektGruppe(p.Status) == "ferdig"))
     ];
 
-    private int AntallProsjektSider => Math.Max(1, (FiltrerteProsjekter.Count() + ProsjekterPerSide - 1) / ProsjekterPerSide);
+    private static int AntallSider(int antall) => Math.Max(1, (antall + ProsjekterPerSide - 1) / ProsjekterPerSide);
+
+    private int AntallProsjektSider => AntallSider(FiltrerteProsjekter.Count());
 
     // Listen kan bli kortere etter en endring, så siden holdes alltid innenfor.
     private int ProsjektSideNr => Math.Clamp(_prosjektSide, 0, AntallProsjektSider - 1);
@@ -719,14 +726,28 @@ public partial class KundeSkjema
 
     private async Task SlettDokument(int id)
     {
+        _bekreftDokumentId = null;
         var entitet = await Db.KundeDokumenter.FirstOrDefaultAsync(d => d.Id == id);
         if (entitet is not null)
         {
             Db.KundeDokumenter.Remove(entitet);
+            Db.KundeHendelser.Add(new KundeHendelse
+            {
+                KundeId = Id,
+                Beskrivelse = $"Dokument fjernet: {entitet.Filnavn}",
+                Tidspunkt = DateTime.Now,
+                UtfortAvBrukerId = _naverendeBrukerId
+            });
             await Db.SaveChangesAsync();
         }
 
         await LastDokumenterAsync();
+    }
+
+    private static string FilType(string filnavn)
+    {
+        var type = Path.GetExtension(filnavn).TrimStart('.').ToUpperInvariant();
+        return type.Length is 0 or > 4 ? "FIL" : type;
     }
 
     private async Task LastOppfolgingerAsync()
@@ -1057,6 +1078,21 @@ public partial class KundeSkjema
         _lisensMelding = "Lagret.";
     }
 
+    private async Task LagreLisensRad(KundeLisens l)
+    {
+        await LagreLisens(l);
+        if (_lisensFeil is null)
+        {
+            _redigerLisensId = null;
+        }
+    }
+
+    private async Task AvbrytLisens()
+    {
+        _redigerLisensId = null;
+        await LastKundeLisenserAsync();
+    }
+
     private async Task SlettLisens(KundeLisens l)
     {
         var entitet = await Db.KundeLisenser.FirstOrDefaultAsync(x => x.Id == l.Id);
@@ -1125,6 +1161,32 @@ public partial class KundeSkjema
         await Db.SaveChangesAsync();
         _rabattFeil = null;
         _rabattMelding = "Lagret.";
+    }
+
+    private async Task LagreRabattRad(KundeRabatt r)
+    {
+        await LagreRabatt(r);
+        _redigerRabattId = null;
+    }
+
+    private async Task AvbrytRabatt()
+    {
+        _redigerRabattId = null;
+        await LastKundeRabatterAsync();
+    }
+
+    private async Task LagrePaslagRad()
+    {
+        await LagreFastPaslag();
+        _redigerPaslag = false;
+    }
+
+    private void AvbrytPaslag()
+    {
+        var felt = Db.Entry(_kunde!).Property(k => k.FastPaslagProsent);
+        felt.CurrentValue = felt.OriginalValue;
+        felt.IsModified = false;
+        _redigerPaslag = false;
     }
 
     private async Task SlettRabatt(KundeRabatt r)
@@ -1302,17 +1364,6 @@ public partial class KundeSkjema
     }
 
     // «Oppdater» i Brreg-stripen på Detaljer: hent og lagre med en gang.
-    private async Task OppdaterFraBrreg()
-    {
-        _brregMelding = null;
-        await SlaOppOrgNr();
-        if (_orgNrFeil is null)
-        {
-            await Db.SaveChangesAsync();
-            _brregMelding = $"navn og adresse er oppdatert fra registeret ({DateTime.Now:dd.MM.yyyy}).";
-        }
-    }
-
     private async Task AutoLagre() => await Db.SaveChangesAsync();
 
     private async Task LastOppBilde(InputFileChangeEventArgs e)
@@ -1354,8 +1405,6 @@ public partial class KundeSkjema
         _error = null;
         await Db.SaveChangesAsync();
         _savedMessage = "Lagret.";
-        _redigerFirma = false;
-        _redigerFaktura = false;
     }
 
     // ---------------- Kontaktpersoner ----------------
