@@ -91,6 +91,7 @@ public partial class KundeSkjema
     private List<KundeOppfolgingNotat> _notater = [];
     private string _nyttNotat = "";
     private bool _visLogg;
+    private bool _ofSkjemaApen;
     private List<KundeOppfolging> _oppfolginger = [];
     private List<Bruker> _ansatte = [];
     private int? _ofRedigerId;
@@ -195,15 +196,6 @@ public partial class KundeSkjema
             .Concat(_notater.Select(n => new UtfortRad(n.OpprettetDato, "edit", n.Tekst.Length > 80 ? n.Tekst[..80] + "…" : n.Tekst, n.OpprettetAvBruker?.Navn ?? "", null, true)))
             .OrderByDescending(u => u.Dato)
             .ToList();
-
-    private string ForhandsvisVarselDato
-    {
-        get
-        {
-            var frist = (_ofDato ?? DateOnly.FromDateTime(DateTime.Today)).ToDateTime(_ofTid);
-            return Stor(frist.AddDays(-_ofDagerFor).ToString("dddd d. MMM", Kultur)) + " 08:00";
-        }
-    }
 
     private string ForhandsvisFrist
     {
@@ -363,6 +355,7 @@ public partial class KundeSkjema
         {
             _ofKontakt = t.KontaktpersonNavn;
         }
+        _ofSkjemaApen = true;
         VelgFane(KundeFane.Oppfolging);
     }
 
@@ -781,13 +774,27 @@ public partial class KundeSkjema
 
     private void NyOppfolgingFraMeny()
     {
-        NullstillOppfolgingSkjema();
+        ApneNyOppfolging();
         VelgFane(KundeFane.Oppfolging);
+    }
+
+    private void ApneNyOppfolging()
+    {
+        NullstillOppfolgingSkjema();
+        _ofMelding = null;
+        _ofSkjemaApen = true;
+    }
+
+    private void LukkOppfolgingSkjema()
+    {
+        NullstillOppfolgingSkjema();
+        _ofSkjemaApen = false;
     }
 
     private void RedigerOppfolging(KundeOppfolging o)
     {
         _ofRedigerId = o.Id;
+        _ofSkjemaApen = true;
         _ofTittel = o.Tittel;
         _ofType = o.Type;
         _ofDato = DateOnly.FromDateTime(o.Frist);
@@ -861,7 +868,7 @@ public partial class KundeSkjema
         _ofMelding = _ofPortal || _ofEpost
             ? $"Lagret – varsel {Stor(o.VarselDato.ToString("dddd d. MMMM", Kultur))}."
             : "Lagret (uten varsel).";
-        NullstillOppfolgingSkjema();
+        LukkOppfolgingSkjema();
     }
 
     private async Task UtsettOppfolging(KundeOppfolging o)
