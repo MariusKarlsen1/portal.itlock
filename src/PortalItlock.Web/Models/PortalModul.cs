@@ -146,8 +146,7 @@ public static class PortalModulRegister
     [
         new Lenke("Kunde", "Topp 20 kunder etter omsetning, for valgt periode (portalens egne data).", "rapporter/kunde", "users"),
         new Lenke("Produkt", "Salg pr. vare, med mulighet for å filtrere på periode og kunde.", "rapporter/produkt", "box"),
-        new Lenke("Resultatrapport", "Omsetning pr. inntektskonto for valgt periode.", "rapporter/resultat", "receipt"),
-        new Lenke("Kontoplan", "Opprett og vedlikehold inntektskontoene som kan settes på varer.", "rapporter/kontoplan", "settings"),
+        new Lenke("Resultatrapport", "Omsetning pr. kundetype for valgt periode.", "rapporter/resultat", "receipt"),
         new Lenke("Fakturaoversikt", "Fakturaer sendt fra Tripletex, hentet direkte derfra.", "rapporter/fakturaer", "receipt"),
         new Lenke("Salg per kunde", "Faktisk fakturert salg pr. kunde, hentet direkte fra Tripletex.", "rapporter/salg-per-kunde", "users"),
         new Lenke("Tilbudsreserve", "Alle tilbud sendt til kunde, med dato og sum, og total tilbudsreserve som fortsatt venter på svar.", "rapporter/tilbudsreserve", "receipt"),
@@ -202,7 +201,7 @@ public static class PortalModulRegister
                     new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings", OppsettUndermoduler),
                     new Lenke("Komponenter og priser", "Komponentregister, prisimport, leverandører, rabattgrupper og produktgrupper samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler),
                     new Lenke("Brukere og kunder", "Brukere, kundetilgang og driftslisenser samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler),
-                    new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt", RapporterUndermoduler),
+                    new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre", "rapportermodul", "receipt", RapporterUndermoduler),
                 ]),
             ]),
     ];
@@ -317,7 +316,7 @@ public static class PortalModulRegister
                     new Lenke("Oppsett og maler", "Dørpakker, krav, sjekklister, tilvalg og dokumenter samlet på ett sted", "oppsettmodul", "settings", OppsettUndermoduler, ModulTilgang.KunAdmin),
                     new Lenke("Komponenter og priser", "Komponentregister, prisimport, leverandører, rabattgrupper og produktgrupper samlet på ett sted", "komponentprismodul", "box", KomponentPrisUndermoduler, ModulTilgang.KunAdmin),
                     new Lenke("Brukere og kunder", "Brukere, kundetilgang og driftslisenser samlet på ett sted", "brukerkundemodul", "users", BrukerKundeUndermoduler, ModulTilgang.KunAdmin),
-                    new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre, pluss kontoplan", "rapportermodul", "receipt", RapporterUndermoduler, ModulTilgang.KunAdmin),
+                    new Lenke("Rapporter", "Kunde-, produkt- og resultatrapport beregnet fra egne arbeidsordre", "rapportermodul", "receipt", RapporterUndermoduler, ModulTilgang.KunAdmin),
                 ]),
             ]),
     ];
