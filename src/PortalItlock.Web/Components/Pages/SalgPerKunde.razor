@@ -1,7 +1,9 @@
 @page "/rapporter/salg-per-kunde"
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
 @using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject TripletexService Tripletex
 @inject ApplicationDbContext Db
@@ -9,9 +11,12 @@
 
 <PageTitle>Salg per kunde - Full Kontroll</PageTitle>
 
-<RapportRamme Tittel="Salg per kunde" Undertittel="Faktisk fakturert salg per kunde. Kreditnotaer er trukket fra." Ikon="users" Kilde="tripletex"
-              KildeTekst="@(_hentet is null ? "Fra Tripletex" : $"Fra Tripletex – hentet {_hentet:HH:mm}")"
-              Periode="_periode" OnPeriodeEndret="HentRapport" VisSammenlign="true" Laster="_laster" OnEksporter="Eksporter">
+@* S3 (Prototype salg per kunde.html): samme kort som de andre rapportene. Salget deles i felt
+   per kundetype (fra kundekortet, matchet på navn) som kan klikkes for å filtrere tabellen. *@
+<RapportRamme Tittel="Salg per kunde" Undertittel="Faktisk fakturert salg, kreditnotaer trukket fra" Ikon="users" Kilde="tripletex"
+              KildeTekst="@(_hentet is null ? "Tripletex" : $"Tripletex – hentet {_hentet:HH:mm}")"
+              Periode="_periode" OnPeriodeEndret="HentRapport" VisSammenlign="true" Laster="_laster" OnEksporter="Eksporter"
+              SomKundekort="true" Gruppe="Salg og kunder">
     <Handlinger>
         <button type="button" class="rr-knapp" @onclick="HentRapport" disabled="@_laster">↻ Oppdater</button>
         <a class="rr-knapp" href="/rapporter/kunde">Kunderapport (portalen)</a>
@@ -32,6 +37,10 @@
             decimal? totalFor = Sml ? _forrige.Values.Sum(f => f.Sum) : null;
             var ikkeFakturert = _rader.Sum(IkkeFakturert) + _bareIPortalen.Values.Sum();
             var kunderIkkeFakturert = _rader.Count(r => IkkeFakturert(r) > 0) + _bareIPortalen.Count;
+            var typer = _rader.GroupBy(r => r.Type)
+                .Select(g => (Type: g.Key, Sum: g.Sum(r => r.Sum), Antall: g.Count()))
+                .OrderBy(t => t.Type is null).ThenByDescending(t => t.Sum)
+                .ToList();
             <div class="rr-kpis">
                 <div class="rr-kpi"><small>Fakturert</small><b>@RapportPeriode.Kr(total)</b><span><RapportDelta Naa="total" For="totalFor" /> @(Sml ? $"mot {_periode.SmlTekst}" : "i perioden")</span></div>
                 <div class="rr-kpi"><small>Kunder</small><b>@_rader.Count</b><span>med minst én faktura</span></div>
@@ -40,13 +49,44 @@
             </div>
 
             <div class="rr-tile">
+                <div class="rr-tile-t"><h2>Per kundetype</h2><small>Klikk for å filtrere</small></div>
+                <div class="spk-typer">
+                    @foreach (var t in typer)
+                    {
+                        var type = t.Type;
+                        <button type="button" class="spk-type @(ErValgt(type) ? "pa" : "")" @onclick="() => VelgType(type)">
+                            <small>@TypeNavn(type) · @t.Antall @(t.Antall == 1 ? "kunde" : "kunder")</small>
+                            <b>@RapportPeriode.Kr(t.Sum)</b>
+                            <span class="spk-linje"><i style="width:@Pst(t.Sum, total)"></i></span>
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <div class="rr-tile">
                 <div class="rr-tile-t">
                     <h2>Fakturert per kunde</h2>
-                    <label class="rr-sok"><Icon Name="search" /><input type="search" placeholder="Finn kunde …" @bind="_sok" @bind:event="oninput" /></label>
+                    <span class="spk-verktoy">
+                        <span class="spk-chips">
+                            <button type="button" class="spk-chip @(!_typeValgt ? "pa" : "")" @onclick="() => _typeValgt = false">Alle</button>
+                            @foreach (var t in typer)
+                            {
+                                var type = t.Type;
+                                <button type="button" class="spk-chip @(ErValgt(type) ? "pa" : "")" @onclick="() => { _typeValgt = true; _type = type; }">@TypeNavn(type)</button>
+                            }
+                        </span>
+                        <label class="rr-sok"><Icon Name="search" /><input type="search" placeholder="Finn kunde …" @bind="_sok" @bind:event="oninput" /></label>
+                    </span>
                 </div>
                 @{
-                    var liste = _rader.Where(r => string.IsNullOrWhiteSpace(_sok) || r.Navn.Contains(_sok.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
-                    var maks = liste.Count == 0 ? 0 : liste.Max(r => r.Sum);
+                    var liste = _rader
+                        .Where(r => !_typeValgt || r.Type == _type)
+                        .Where(r => string.IsNullOrWhiteSpace(_sok) || r.Navn.Contains(_sok.Trim(), StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    var maks = _rader.Count == 0 ? 0 : _rader.Max(r => r.Sum);
+                    var listeSum = liste.Sum(r => r.Sum);
+                    var listeAntall = liste.Sum(r => r.Antall);
+                    var listeFor = liste.Sum(ForrigeSum);
                 }
                 <div class="rr-tabwrap">
                     <table class="rr-tab">
@@ -54,31 +94,36 @@
                             <tr>
                                 <th>#</th>
                                 <th>Kunde</th>
+                                <th>Kundetype</th>
                                 <th>Andel</th>
                                 <th class="n">Fakturaer</th>
-                                <th class="n">Snitt per faktura</th>
+                                <th class="n">Snitt</th>
                                 <th class="n">Fakturert</th>
                                 @if (Sml)
                                 {
+                                    <th class="n">@(char.ToUpper(_periode.SmlTekst[0]) + _periode.SmlTekst[1..])</th>
                                     <th class="n">Endring</th>
                                 }
-                                <th class="n">Ferdigmeldt, ikke fakturert</th>
+                                <th class="n" title="Ferdigmeldt i portalen, ikke fakturert">Ikke fakturert</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach (var (r, i) in liste.Select((r, i) => (r, i)))
                             {
                                 var ikke = IkkeFakturert(r);
+                                var f = ForrigeSum(r);
                                 <tr>
                                     <td class="plass">@(i + 1)</td>
-                                    <td><span class="rr-navn"><span class="rr-av">@RapportData.Initialer(r.Navn)</span><span>@r.Navn</span></span></td>
+                                    <td><span class="rr-navn spk-navn"><span class="rr-av">@RapportData.Initialer(r.Navn)</span><span>@r.Navn</span></span></td>
+                                    <td><span class="spk-tp @(r.Type is KundeType.Privatperson or null ? "" : "b")">@TypeNavn(r.Type)</span></td>
                                     <td><span class="rr-andel"><span class="rr-bar"><i style="width:@Pst(r.Sum, maks)"></i></span><span>@RapportPeriode.Prosent(r.Sum, total)</span></span></td>
                                     <td class="n">@r.Antall</td>
                                     <td class="n">@RapportPeriode.Kr(r.Antall == 0 ? 0 : r.Sum / r.Antall)</td>
                                     <td class="n"><b>@RapportPeriode.Kr(r.Sum)</b></td>
                                     @if (Sml)
                                     {
-                                        <td class="n"><RapportDelta Naa="r.Sum" For="(_forrige.TryGetValue(Nokkel(r.Navn), out var f) ? f.Sum : 0)" /></td>
+                                        <td class="n dempet">@(f == 0 ? "–" : RapportPeriode.Kr(f))</td>
+                                        <td class="n"><RapportDelta Naa="r.Sum" For="f" /></td>
                                     }
                                     <td class="n">@if (ikke > 0){<span class="rr-pille rr-p-gul">@RapportPeriode.Kr(ikke)</span>}else{<span class="dempet">–</span>}</td>
                                 </tr>
@@ -86,15 +131,16 @@
                         </tbody>
                         <tfoot>
                             <tr>
-                                <td colspan="3">Totalt (@_rader.Count kunder)</td>
-                                <td class="n">@antallFakturaer</td>
-                                <td class="n">@RapportPeriode.Kr(antallFakturaer == 0 ? 0 : total / antallFakturaer)</td>
-                                <td class="n">@RapportPeriode.Kr(total)</td>
+                                <td colspan="4">Totalt (@liste.Count @(liste.Count == 1 ? "kunde" : "kunder"))</td>
+                                <td class="n">@listeAntall</td>
+                                <td class="n">@RapportPeriode.Kr(listeAntall == 0 ? 0 : listeSum / listeAntall)</td>
+                                <td class="n">@RapportPeriode.Kr(listeSum)</td>
                                 @if (Sml)
                                 {
-                                    <td class="n"><RapportDelta Naa="total" For="totalFor" /></td>
+                                    <td class="n dempet">@RapportPeriode.Kr(listeFor)</td>
+                                    <td class="n"><RapportDelta Naa="listeSum" For="listeFor" /></td>
                                 }
-                                <td class="n">@RapportPeriode.Kr(_rader.Sum(IkkeFakturert))</td>
+                                <td class="n">@RapportPeriode.Kr(liste.Sum(IkkeFakturert))</td>
                             </tr>
                         </tfoot>
                     </table>
@@ -122,8 +168,10 @@
     private string? _feil;
     private DateTime? _hentet;
     private string _sok = "";
+    private bool _typeValgt;
+    private KundeType? _type;
 
-    private sealed record KundeRad(string Navn, int Antall, decimal Sum);
+    private sealed record KundeRad(string Navn, int Antall, decimal Sum, KundeType? Type = null);
     private List<KundeRad> _rader = [];
     private Dictionary<string, KundeRad> _forrige = [];
     // Portalens ferdigmeldte omsetning per kunde (samme periode), matchet på navn.
@@ -133,6 +181,23 @@
     private bool Sml => _periode.Sammenlign;
 
     private static string Nokkel(string navn) => navn.Trim().ToLowerInvariant();
+
+    private static string TypeNavn(KundeType? t) => t?.Visningsnavn() ?? "Ikke satt";
+
+    private bool ErValgt(KundeType? t) => _typeValgt && _type == t;
+
+    private void VelgType(KundeType? t)
+    {
+        if (ErValgt(t))
+        {
+            _typeValgt = false;
+            return;
+        }
+        _typeValgt = true;
+        _type = t;
+    }
+
+    private decimal ForrigeSum(KundeRad r) => _forrige.TryGetValue(Nokkel(r.Navn), out var f) ? f.Sum : 0;
 
     private decimal IkkeFakturert(KundeRad r) =>
         Math.Max(0, _portal.GetValueOrDefault(Nokkel(r.Navn)) - r.Sum);
@@ -164,7 +229,17 @@
                 return;
             }
 
-            _rader = Grupper(fakturaer);
+            // Kundetypen settes på kundekortet; Tripletex-kunden matches på navn.
+            var typer = (await Db.Kunder.AsNoTracking().Select(k => new { k.Navn, k.Type }).ToListAsync())
+                .GroupBy(k => Nokkel(k.Navn))
+                .ToDictionary(g => g.Key, g => g.Select(k => k.Type).FirstOrDefault(t => t is not null));
+            _rader = Grupper(fakturaer)
+                .Select(r => r with { Type = typer.GetValueOrDefault(Nokkel(r.Navn)) })
+                .ToList();
+            if (_typeValgt && !_rader.Any(r => r.Type == _type))
+            {
+                _typeValgt = false;
+            }
             _hentet = DateTime.Now;
 
             _forrige = [];
@@ -199,10 +274,10 @@
 
     private async Task Eksporter()
     {
-        var rader = new List<object?[]> { new object?[] { "Plass", "Kunde", "Fakturaer", "Fakturert", Sml ? $"Sammenligning ({_periode.SmlTekst})" : null, "Ferdigmeldt, ikke fakturert" } };
+        var rader = new List<object?[]> { new object?[] { "Plass", "Kunde", "Kundetype", "Fakturaer", "Fakturert", Sml ? $"Sammenligning ({_periode.SmlTekst})" : null, "Ferdigmeldt, ikke fakturert" } };
         rader.AddRange(_rader.Select((r, i) => new object?[]
         {
-            i + 1, r.Navn, r.Antall, r.Sum, Sml ? (_forrige.TryGetValue(Nokkel(r.Navn), out var f) ? f.Sum : 0) : null, IkkeFakturert(r)
+            i + 1, r.Navn, TypeNavn(r.Type), r.Antall, r.Sum, Sml ? ForrigeSum(r) : null, IkkeFakturert(r)
         }));
         await JS.InvokeVoidAsync("rapport.lastNedCsv", $"Salg per kunde {_periode.Tekst}.csv", RapportData.Csv(rader));
     }
