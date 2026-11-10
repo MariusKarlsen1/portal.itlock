@@ -41,6 +41,12 @@ public sealed record Rolle(string Nokkel, string Tittel, string Beskrivelse, Lis
 
 public static class PortalModulRegister
 {
+    // Kalkulatorene på /kalkulatorer (Prosjekt, service og tilbud).
+    public static readonly List<Lenke> KalkulatorUndermoduler =
+    [
+        new Lenke("StepLock-kalkulator", "Sett sammen StepLock Access og se pris på hardware og abonnement – Basic, Standard eller Premium.", "steplock-kalkulator", "receipt", null, ModulTilgang.FraProsjektleder),
+    ];
+
     private static readonly List<Lenke> BefaringUndermoduler =
     [
         new Lenke("Befaringsliste", "Sjekkliste og notater fra befaring.", "befaringsliste", "check-circle"),
@@ -225,7 +231,8 @@ public static class PortalModulRegister
                     new Lenke("Finn dørpakke", "Velg krav og få riktig dørpakke.", "finn-dorpakke", "box"),
                     new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
                     new Lenke("Tilbud", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
-                    new Lenke("StepLock-kalkulator", "Sett sammen StepLock Access og se pris på hardware og abonnement.", "steplock-kalkulator", "receipt", null, ModulTilgang.FraProsjektleder),
+                    // KA1: kalkulatorene samles i én modul - StepLock ligger bare der, ikke i venstremenyen.
+                    new Lenke("Kalkulatorer", "StepLock-kalkulator og andre kalkulatorer samlet på ett sted.", "kalkulatorer", "receipt", KalkulatorUndermoduler, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield", KreverModul: TilleggsModuler.Ce),
                     new Lenke("Prosjektøkonomi", "Økonomien i pågående prosjekter, og etterkalkyle når de er overlevert.", "prosjektokonomi", "trend-up", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Okonomi),
                     // Begge ligger i venstremenyen og vises derfor ikke som
