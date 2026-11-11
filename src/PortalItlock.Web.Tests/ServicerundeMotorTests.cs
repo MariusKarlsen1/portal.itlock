@@ -96,6 +96,31 @@ public class ServicerundeMotorTests
     }
 
     [Fact]
+    public async Task Fullfor_LagerAvvikEnGangOgLaserRunden()
+    {
+        using var db = LagDb(out var c);
+        var (p, _, _, _) = await LagAvtale(db);
+        p.ServiceGangerPerAr = 2;
+        var id = await ServicerundeMotor.OpprettRunde(db, p.Id, null, new DateTime(2026, 11, 10));
+        var runde = await db.Servicerunder.Include(r => r.Dorer).ThenInclude(d => d.Punkter).SingleAsync(r => r.Id == id);
+        var d = runde.Dorer.Single();
+        d.Punkter[0].Status = ServicerundeDorStatus.Avvik;
+        d.Punkter[0].Kommentar = "Sensor reagerer sent";
+        d.Status = ServicerundeMotor.BeregnStatus(d);
+
+        var nye = await ServicerundeMotor.Fullfor(db, runde, null);
+        var igjen = await ServicerundeMotor.Fullfor(db, runde, null);
+
+        var avvik = Assert.Single(nye);
+        Assert.Empty(igjen);
+        Assert.Contains("Sensor reagerer sent", avvik.Beskrivelse);
+        Assert.Equal(d.DorId, avvik.DorId);
+        Assert.NotNull(runde.FullfortDato);
+        Assert.Equal(new DateTime(2027, 5, 10), runde.NesteServiceDato);
+        Assert.Null(await ServicerundeMotor.PagaendeRunde(db, p.Id));
+    }
+
+    [Fact]
     public void Status_AvvikForanOk()
     {
         var d = new ServicerundeDor { Dornummer = "1", Punkter = [new() { Tekst = "a", Status = "ok" }, new() { Tekst = "b" }] };

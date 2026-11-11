@@ -934,7 +934,7 @@ else
 
     private RenderFragment HistorikkLinje(HistorikkRad h) =>
         @<div class="ds-tli">
-            <span class="ds-tli-ik ds-tli-@h.Type"><Icon Name="@(h.Type switch { "Avvik" => "alert", "Driftsmelding" => "bell", "Komponent" => "box", _ => "edit" })" /></span>
+            <span class="ds-tli-ik ds-tli-@h.Type"><Icon Name="@(h.Type switch { "Avvik" => "alert", "Driftsmelding" => "bell", "Komponent" => "box", "Service" => "tool", _ => "edit" })" /></span>
             <div><b>@h.Tekst</b><small>@h.Type · @h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</small></div>
         </div>;
 
@@ -975,6 +975,10 @@ else
 
     // Komponenthistorikk (fase 2 serviceavtaler): skrives automatisk ved lagring.
     private List<DorKomponentLogg> _komponentLogg = [];
+
+    // Fase 5: fullførte servicerunder på døren i den felles historikken.
+    private sealed record ServiceHist(int Id, DateTime Tidspunkt, string Tekst);
+    private List<ServiceHist> _serviceRunder = [];
     private DorKomponent? _byttFra;
     private int? _byttTilId;
     private DateTime _byttDato = DateTime.Today;
@@ -1133,6 +1137,7 @@ else
             .Concat(_avvik.Select(a => new HistorikkRad { Type = "Avvik", Id = a.Id, Tidspunkt = a.OpprettetDato, Tekst = a.Beskrivelse, Rentekst = a.Beskrivelse, UtfortAv = a.OpprettetAvBruker?.Navn }))
             .Concat(_driftsmeldinger.Select(m => new HistorikkRad { Type = "Driftsmelding", Id = m.Id, Tidspunkt = m.OpprettetDato, Tekst = m.Tekst, Rentekst = m.Tekst, UtfortAv = m.InnmeldtAvBruker?.Navn }))
             .Concat(_komponentLogg.Select(l => new HistorikkRad { Type = "Komponent", Id = l.Id, Tidspunkt = l.Tidspunkt, Tekst = KomponentTekst(l), Rentekst = KomponentTekst(l) }))
+            .Concat(_serviceRunder.Select(s => new HistorikkRad { Type = "Service", Id = s.Id, Tidspunkt = s.Tidspunkt, Tekst = s.Tekst, Rentekst = s.Tekst }))
             .OrderByDescending(h => h.Tidspunkt)
             .ToList();
     private List<CeGodkjenning> _ceGodkjenninger = [];
@@ -1238,6 +1243,15 @@ else
             .OrderByDescending(h => h.Tidspunkt).ToListAsync();
         _komponentLogg = await Db.DorKomponentLogger.AsNoTracking().Where(l => l.DorId == Id)
             .OrderByDescending(l => l.Tidspunkt).ToListAsync();
+        _serviceRunder = (await Db.ServicerundeDorer.AsNoTracking()
+                .Where(d => d.DorId == Id && d.Servicerunde!.FullfortDato != null)
+                .Select(d => new { d.Servicerunde!.Id, d.Servicerunde.Dato, d.Status, Avvik = d.Punkter.Where(p => p.Status == ServicerundeDorStatus.Avvik).Select(p => p.Tekst).ToList(), d.Notat })
+                .ToListAsync())
+            .Select(x => new ServiceHist(x.Id, x.Dato,
+                x.Status == ServicerundeDorStatus.Avvik ? $"Servicerunde: avvik – {string.Join(", ", x.Avvik)}"
+                : x.Status == ServicerundeDorStatus.Ok ? "Servicerunde: alle kontrollpunkter OK" + (string.IsNullOrWhiteSpace(x.Notat) ? "" : $" – {x.Notat}")
+                : "Servicerunde: ikke kontrollert"))
+            .ToList();
 
         _driftsmeldinger = await Db.Driftsmeldinger.Where(m => m.DorId == Id)
             .Include(m => m.InnmeldtAvBruker).Include(m => m.Media)

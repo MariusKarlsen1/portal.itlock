@@ -25,6 +25,10 @@ public class Avvik
     public int? AnsvarligBrukerId { get; set; }
     public Bruker? AnsvarligBruker { get; set; }
 
+    // Fase 5: avviket ble registrert i en servicerunde dør for dør. Brukes også
+    // for å aldri lage samme avvik to ganger.
+    public int? ServicerundeDorId { get; set; }
+
     public int? ArbeidsordreId { get; set; }
     public Arbeidsordre? Arbeidsordre { get; set; }
 

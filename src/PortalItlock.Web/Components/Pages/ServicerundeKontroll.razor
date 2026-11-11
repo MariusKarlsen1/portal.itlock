@@ -55,6 +55,10 @@ else
                 <span><b>@(ok + avvik) av @_dorer.Count</b> dører kontrollert</span>
                 <span>Avvik <b class="@(avvik > 0 ? "rod" : "")">@avvik</b></span>
                 <span>Gjenstår <b>@gjenstar</b></span>
+                @if (_avvikFraRunden.Count > 0)
+                {
+                    <span>Avvik opprettet <b>@_avvikFraRunden.Count</b></span>
+                }
                 <span>Øyeblikksbilde av dører og komponenter fra @_runde.OpprettetDato.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</span>
                 @if (!ferdig)
                 {
@@ -159,18 +163,25 @@ else
                         @foreach (var m in _apneMeldinger.Where(m => m.Melding.DorId == v.DorId))
                         {
                             <div class="srk-varsel rod">
-                                <b>Åpen driftsmelding: @(m.Melding.Tittel ?? m.Melding.Tekst)</b>
+                                <b><a href="@($"/driftsmelding/{m.Melding.Id}")">Åpen driftsmelding: @(m.Melding.Tittel ?? m.Melding.Tekst)</a></b>
                                 <span>@m.Melding.OpprettetDato.ToString("dd.MM.yyyy") · @m.Navn · lukkes ikke av servicerunden</span>
                             </div>
                         }
                         @foreach (var a in _apneAvvik.Where(a => a.DorId == v.DorId))
                         {
                             <div class="srk-varsel gul">
-                                <b>Åpent avvik: @(a.Tittel ?? a.Beskrivelse)</b>
+                                <b><a href="@($"/avvik/{a.Id}")">Åpent avvik @a.NummerTekst: @(a.Tittel ?? a.Beskrivelse)</a></b>
                                 <span>Registrert @a.OpprettetDato.ToString("dd.MM.yyyy") – sjekk om det er utbedret</span>
                             </div>
                         }
 
+                        @if (_avvikFraRunden.TryGetValue(v.Id, out var rundeAvvik))
+                        {
+                            <a class="srk-varsel rod srk-avviklenke" href="@($"/avvik/{rundeAvvik.Id}")">
+                                <b>@rundeAvvik.NummerTekst opprettet fra runden</b>
+                                <span>Følges opp under Avvik og driftsmeldinger – tilbud eller arbeidsordre lages derfra →</span>
+                            </a>
+                        }
                         <div class="srk-under">Kontrollpunkter · @v.Punkter.Count(p => p.Status is not null) av @v.Punkter.Count
                             @if (!ferdig)
                             {
@@ -263,6 +274,14 @@ else
     private List<Avvik> _apneAvvik = [];
     private Dictionary<int, List<TidligereRad>> _tidligere = [];
     private List<Tegning> _tegninger = [];
+    private Dictionary<int, Avvik> _avvikFraRunden = [];
+
+    private async Task LastAvvikFraRunden()
+    {
+        var ider = _dorer.Select(d => d.Id).ToList();
+        _avvikFraRunden = (await Db.Avvik.AsNoTracking().Where(a => a.ServicerundeDorId != null && ider.Contains(a.ServicerundeDorId.Value)).ToListAsync())
+            .GroupBy(a => a.ServicerundeDorId!.Value).ToDictionary(g => g.Key, g => g.First());
+    }
 
     private sealed record TidligereRad(DateTime Dato, string Status, string? Merknad);
     private sealed record Tegning(int Id, string Navn, bool ErBilde);
@@ -312,6 +331,7 @@ else
             return new Tegning(id, navn, f is not null && f.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase));
         }).OrderBy(t => t.Navn).ToList();
         _valgtTegning ??= _valgt?.PlantegningId ?? _tegninger.FirstOrDefault()?.Id;
+        await LastAvvikFraRunden();
     }
 
     private void Velg(ServicerundeDor d)
@@ -384,14 +404,9 @@ else
     private async Task Fullfor()
     {
         if (_runde is null || !KanEndre) return;
-        _runde.FullfortDato = DateTime.Now;
-        _runde.StatusBeskrivelse = ServicerundeMotor.Oppsummering(_dorer);
-        if (_runde.NesteServiceDato is null && _runde.Prosjekt?.ServiceGangerPerAr is > 0 and <= 12 && _runde.Prosjekt.ServiceGangerPerAr is { } g)
-        {
-            _runde.NesteServiceDato = _runde.Dato.Date.AddMonths(12 / g);
-        }
-        await Db.SaveChangesAsync();
+        await ServicerundeMotor.Fullfor(Db, _runde, _brukerId);
         _visFullfor = false;
+        await LastAvvikFraRunden();
     }
 
     private double Pst(int n) => _dorer.Count == 0 ? 0 : Math.Round(100.0 * n / _dorer.Count, 1);

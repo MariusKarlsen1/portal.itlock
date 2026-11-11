@@ -181,6 +181,43 @@ public static class ServicerundeMotor
         : d.Punkter.Count > 0 && d.Punkter.All(p => p.Status is not null) ? ServicerundeDorStatus.Ok
         : ServicerundeDorStatus.IkkeKontrollert;
 
+    /// Fullfører runden: låser den, skriver oppsummeringen, foreslår neste
+    /// service ut fra frekvensen og gjør hver dør med avvik om til et vanlig
+    /// avvik (AVV-nummer) som følges opp der. Kjøres den på nytt, lages ingen
+    /// nye avvik for dører som allerede har fått det.
+    public static async Task<List<Avvik>> Fullfor(ApplicationDbContext db, Servicerunde runde, int? brukerId)
+    {
+        var dorer = runde.Dorer;
+        runde.FullfortDato ??= DateTime.Now;
+        runde.StatusBeskrivelse = Oppsummering(dorer);
+        var prosjekt = runde.Prosjekt ?? await db.Prosjekter.FindAsync(runde.ProsjektId);
+        if (runde.NesteServiceDato is null && prosjekt?.ServiceGangerPerAr is > 0 and <= 12 && prosjekt.ServiceGangerPerAr is { } g)
+        {
+            runde.NesteServiceDato = runde.Dato.Date.AddMonths(12 / g);
+        }
+
+        var ider = dorer.Select(d => d.Id).ToList();
+        var finnes = await db.Avvik.Where(a => a.ServicerundeDorId != null && ider.Contains(a.ServicerundeDorId.Value)).Select(a => a.ServicerundeDorId!.Value).ToListAsync();
+        var nye = new List<Avvik>();
+        foreach (var d in dorer.Where(d => d.Status == ServicerundeDorStatus.Avvik && !finnes.Contains(d.Id)))
+        {
+            var punkter = d.Punkter.Where(p => p.Status == ServicerundeDorStatus.Avvik).OrderBy(p => p.Rekkefolge).ToList();
+            var linjer = punkter.Select(p => string.IsNullOrWhiteSpace(p.Kommentar) ? $"- {p.Tekst}" : $"- {p.Tekst}: {p.Kommentar}");
+            var a = new Avvik
+            {
+                DorId = d.DorId,
+                Tittel = $"Servicerunde {runde.Dato:dd.MM.yyyy}: {punkter.FirstOrDefault()?.Tekst ?? "avvik"}{(punkter.Count > 1 ? $" (+{punkter.Count - 1})" : "")}",
+                Beskrivelse = string.Join("\n", linjer) + (string.IsNullOrWhiteSpace(d.Notat) ? "" : $"\n\nNotat: {d.Notat}"),
+                OpprettetAvBrukerId = brukerId,
+                ServicerundeDorId = d.Id
+            };
+            db.Avvik.Add(a);
+            nye.Add(a);
+        }
+        await db.SaveChangesAsync();
+        return nye;
+    }
+
     public static string Oppsummering(IReadOnlyCollection<ServicerundeDor> dorer)
     {
         var ok = dorer.Count(d => d.Status == ServicerundeDorStatus.Ok);

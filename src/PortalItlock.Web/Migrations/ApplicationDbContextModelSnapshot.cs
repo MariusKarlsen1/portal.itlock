@@ -524,6 +524,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("SendtTilKundeDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ServicerundeDorId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<byte[]>("Signatur")
                         .HasColumnType("BLOB");
 
