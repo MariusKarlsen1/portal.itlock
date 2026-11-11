@@ -379,6 +379,30 @@ public static class PortalModulRegister
 
     // Flat liste over modulene brukeren ser - til venstremenyen. Tar med
     // KunIMeny-modulene, som er hele poenget med dem.
+    // Standard sidemeny for alle brukere (november 2026): bare disse vises til
+    // brukeren selv slår på flere under «Tilpass meny». Moduler organisasjonen
+    // ikke har, vises uansett ikke.
+    public static readonly HashSet<string> StandardIMeny = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "dashbord", "kunngjoringer", "todo",
+        "arbeidsordre", "kalkulatorer", "prosjektokonomi", "timeregistrering", "fravar",
+        "tickets", "lager", "kassa",
+        "oppsettmodul", "komponentprismodul", "brukerkundemodul", "rapportermodul"
+    };
+
+    /// Skjulte lenker for en bruker som ikke har tilpasset menyen selv (SkjulteNavLenker = null).
+    public static HashSet<string> StandardSkjulte(BrukerRolle? rolle, IReadOnlySet<string>? aktiveModuler) =>
+        ModulerFor(rolle, aktiveModuler).Select(l => l.Href)
+            .Concat(["varsler", "ai-assistent"])
+            .Where(h => !StandardIMeny.Contains(h))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// Leser brukerens skjulte lenker: null = standardmenyen, "" = ingenting skjult.
+    public static HashSet<string> LesSkjulte(string? lagret, BrukerRolle? rolle, IReadOnlySet<string>? aktiveModuler) =>
+        lagret is null
+            ? StandardSkjulte(rolle, aktiveModuler)
+            : lagret.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+
     public static List<Lenke> ModulerFor(BrukerRolle? rolle, IReadOnlySet<string>? aktiveModuler = null) => TilgangsfiltrerteKategorier(rolle, aktiveModuler)
         .SelectMany(k => k.Grupper)
         .SelectMany(g => g.Lenker)
