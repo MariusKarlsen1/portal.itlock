@@ -108,6 +108,8 @@ public class Prosjekt
     public string? ServiceGodkjentAv { get; set; }
     // JSON {dørId: kategori} slik dørene var kategorisert da prisen ble godkjent.
     public string? ServiceGodkjentGrunnlag { get; set; }
+    // Versjonen av prisreglene den godkjente prisen bygger på (ServicePrisRegelVersjon).
+    public int? ServiceGodkjentRegelversjon { get; set; }
     /// Avtaleteksten i tilbudet på serviceavtalen (rik tekst). Tom = standardtekst.
     public string? ServiceavtaleTekst { get; set; }
     /// JSON: prislinjene i tilbudet (tjeneste + pris som tekst).

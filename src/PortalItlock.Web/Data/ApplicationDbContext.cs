@@ -62,6 +62,13 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServiceKategoriPris> ServiceKategoriPriser => Set<ServiceKategoriPris>();
     public DbSet<ServicePrisRegel> ServicePrisRegler => Set<ServicePrisRegel>();
     public DbSet<ServicePrisRegelBetingelse> ServicePrisRegelBetingelser => Set<ServicePrisRegelBetingelse>();
+    public DbSet<ServicePrisRegelVersjon> ServicePrisRegelVersjoner => Set<ServicePrisRegelVersjon>();
+    public DbSet<DorKomponentLogg> DorKomponentLogger => Set<DorKomponentLogg>();
+
+    // Settes av siden som lagrer (f.eks. dørkortet) så komponentloggen får med
+    // hvem som gjorde det og eventuelt hvorfor ("Byttet ... med ...").
+    public int? LoggBrukerId { get; set; }
+    public string? LoggMerknad { get; set; }
     public DbSet<DorHendelse> DorHendelser => Set<DorHendelse>();
     public DbSet<Nyhet> Nyheter => Set<Nyhet>();
     public DbSet<Kunngjoring> Kunngjoringer => Set<Kunngjoring>();
@@ -212,7 +219,19 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         NummererAvvik();
         SynkKodelinjer();
         var varsler = FinnVarsler();
+        var komponentEndringer = FinnKomponentEndringer();
         var resultat = base.SaveChanges(acceptAllChangesOnSuccess);
+        if (SkrivKomponentLogg(komponentEndringer))
+        {
+            try
+            {
+                base.SaveChanges(acceptAllChangesOnSuccess);
+            }
+            catch (Exception)
+            {
+                ForkastKomponentLogg();
+            }
+        }
         SendVarsler(varsler);
         return resultat;
     }
@@ -223,9 +242,112 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         NummererAvvik();
         SynkKodelinjer();
         var varsler = FinnVarsler();
+        var komponentEndringer = FinnKomponentEndringer();
         var resultat = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        if (SkrivKomponentLogg(komponentEndringer))
+        {
+            try
+            {
+                await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+            }
+            catch (Exception)
+            {
+                ForkastKomponentLogg();
+            }
+        }
         SendVarsler(varsler);
         return resultat;
+    }
+
+    // ---- Komponentlogg på dører (DorKomponentLogg) ----
+    private sealed record KomponentEndring(DorKomponent Komponent, string Hendelse, int Antall, string? Merknad);
+
+    // Leses før lagring (da vet vi hva som er lagt til, fjernet og endret), men
+    // skrives etter, fordi nye dører først får Id ved lagringen.
+    private List<KomponentEndring> FinnKomponentEndringer()
+    {
+        var liste = new List<KomponentEndring>();
+        var slettedeDorer = ChangeTracker.Entries<Dor>().Where(e => e.State == EntityState.Deleted).Select(e => e.Entity.Id).ToHashSet();
+        foreach (var e in ChangeTracker.Entries<DorKomponent>())
+        {
+            var k = e.Entity;
+            if (slettedeDorer.Contains(k.DorId))
+            {
+                continue;
+            }
+            switch (e.State)
+            {
+                case EntityState.Added:
+                    liste.Add(new(k, DorKomponentHendelse.LagtTil, k.Antall, null));
+                    if (k.Montert)
+                    {
+                        liste.Add(new(k, DorKomponentHendelse.Montert, k.Antall, null));
+                    }
+                    break;
+                case EntityState.Deleted:
+                    liste.Add(new(k, DorKomponentHendelse.Fjernet, (int)(e.Property(x => x.Antall).OriginalValue), null));
+                    break;
+                case EntityState.Modified:
+                    if (e.Property(x => x.Montert).IsModified && k.Montert && !e.Property(x => x.Montert).OriginalValue)
+                    {
+                        liste.Add(new(k, DorKomponentHendelse.Montert, k.Antall, null));
+                    }
+                    if (e.Property(x => x.Antall).IsModified && e.Property(x => x.Antall).OriginalValue != k.Antall)
+                    {
+                        liste.Add(new(k, DorKomponentHendelse.AntallEndret, k.Antall, $"{e.Property(x => x.Antall).OriginalValue} → {k.Antall}"));
+                    }
+                    break;
+            }
+        }
+        return liste;
+    }
+
+    // Feiler lagringen av loggen, skal ikke de ulagrede radene henge igjen og
+    // stoppe neste lagring.
+    private void ForkastKomponentLogg()
+    {
+        foreach (var e in ChangeTracker.Entries<DorKomponentLogg>().Where(e => e.State == EntityState.Added).ToList())
+        {
+            e.State = EntityState.Detached;
+        }
+    }
+
+    private bool SkrivKomponentLogg(List<KomponentEndring> endringer)
+    {
+        if (endringer.Count == 0)
+        {
+            return false;
+        }
+        try
+        {
+            var ider = endringer.Select(x => x.Komponent.ComponentId).Distinct().ToList();
+            var varer = Components.AsNoTracking().Where(c => ider.Contains(c.Id))
+                .Select(c => new { c.Id, c.Navn, c.Produktkode, Type = c.Type != null ? c.Type.Navn : null })
+                .ToDictionary(c => c.Id);
+            foreach (var x in endringer)
+            {
+                varer.TryGetValue(x.Komponent.ComponentId, out var v);
+                DorKomponentLogger.Add(new DorKomponentLogg
+                {
+                    DorId = x.Komponent.DorId,
+                    ComponentId = x.Komponent.ComponentId,
+                    Navn = v?.Navn ?? x.Komponent.Component?.Navn ?? $"Vare {x.Komponent.ComponentId}",
+                    Produktkode = v?.Produktkode,
+                    Komponenttype = v?.Type,
+                    Hendelse = x.Hendelse,
+                    Antall = x.Antall,
+                    Tidspunkt = x.Hendelse == DorKomponentHendelse.Montert && x.Komponent.MontertDato is { } md ? md : DateTime.Now,
+                    BrukerId = x.Hendelse == DorKomponentHendelse.Montert ? x.Komponent.MontertAvBrukerId ?? LoggBrukerId : LoggBrukerId,
+                    Merknad = x.Merknad ?? LoggMerknad
+                });
+            }
+            return true;
+        }
+        catch (Exception)
+        {
+            // Loggen skal aldri stoppe selve lagringen.
+            return false;
+        }
     }
 
     // Nye avvik får neste løpenummer (AVV-0001, AVV-0002 …) i organisasjonen.
@@ -357,6 +479,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             e.Property(b => b.KostPerStk).HasConversion<double>();
         });
         modelBuilder.Entity<VareLagerplass>().HasIndex(p => new { p.ComponentId, p.LagerId }).IsUnique();
+        modelBuilder.Entity<DorKomponentLogg>().HasIndex(l => l.DorId);
+        modelBuilder.Entity<ServicePrisRegelVersjon>().HasIndex(v => v.Versjon).IsUnique();
         modelBuilder.Entity<Lager>().HasOne(l => l.Prosjekt).WithMany().HasForeignKey(l => l.ProsjektId).OnDelete(DeleteBehavior.SetNull);
         modelBuilder.Entity<Innkjopsordre>(e =>
         {

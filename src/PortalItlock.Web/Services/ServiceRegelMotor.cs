@@ -99,7 +99,14 @@ public static class ServiceRegelMotor
     /// kategoriene, så priser som allerede er satt på avtalene gjelder videre.
     public static async Task SikreStandardregler(ApplicationDbContext db)
     {
-        if (await db.ServicePrisRegler.AnyAsync()) return;
+        if (await db.ServicePrisRegler.AnyAsync())
+        {
+            if (!await db.ServicePrisRegelVersjoner.AnyAsync())
+            {
+                await LagreVersjon(db, null);
+            }
+            return;
+        }
         ServicePrisRegelBetingelse T(string v, int i) => new() { Felt = ServiceRegelFelt.Servicetype, Verdi = v, Rekkefolge = i };
         ServicePrisRegelBetingelse F(string v, int i) => new() { Felt = ServiceRegelFelt.Funksjon, Verdi = v, Rekkefolge = i };
         db.ServicePrisRegler.AddRange(
@@ -108,6 +115,45 @@ public static class ServiceRegelMotor
             new ServicePrisRegel { Navn = ServiceKategori.ElektriskSluttstykke, Prioritet = 3, KreverAlle = false, Minutter = 12, Betingelser = [T("Elektrisk sluttstykke", 0), T("Kortleser", 1), T("Magnetlås", 2), T("Motorlås", 3), F("elektrisk sluttstykke", 4)] },
             new ServicePrisRegel { Navn = ServiceKategori.Mekanisk, Prioritet = 9, KreverAlle = true, Minutter = 6 });
         await db.SaveChangesAsync();
+        await LagreVersjon(db, null);
+    }
+
+    // ---- Versjoner av prisreglene ----
+
+    public sealed record RegelKopi(string Navn, int Prioritet, bool KreverAlle, decimal Pris, int Minutter, string? Undertekst, bool Aktiv, List<BetingelseKopi> Betingelser);
+    public sealed record BetingelseKopi(string Felt, string Verdi, bool ErIkke);
+
+    /// Lagrer en fast kopi av alle reglene som neste versjon og returnerer versjonsnummeret.
+    public static async Task<int> LagreVersjon(ApplicationDbContext db, string? avNavn)
+    {
+        var regler = await HentRegler(db);
+        var kopi = regler.Select(r => new RegelKopi(r.Navn, r.Prioritet, r.KreverAlle, r.Pris, r.Minutter, r.Undertekst, r.Aktiv,
+            r.Betingelser.OrderBy(b => b.ErIkke).ThenBy(b => b.Rekkefolge).Select(b => new BetingelseKopi(b.Felt, b.Verdi, b.ErIkke)).ToList())).ToList();
+        var neste = (await db.ServicePrisRegelVersjoner.MaxAsync(v => (int?)v.Versjon) ?? 0) + 1;
+        db.ServicePrisRegelVersjoner.Add(new ServicePrisRegelVersjon
+        {
+            Versjon = neste,
+            AvNavn = avNavn,
+            AntallRegler = kopi.Count,
+            Innhold = JsonSerializer.Serialize(kopi)
+        });
+        await db.SaveChangesAsync();
+        return neste;
+    }
+
+    public static async Task<int?> GjeldendeVersjon(ApplicationDbContext db) =>
+        await db.ServicePrisRegelVersjoner.MaxAsync(v => (int?)v.Versjon);
+
+    public static List<RegelKopi> LesVersjon(string innhold)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<RegelKopi>>(innhold) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     public static Task<List<ServicePrisRegel>> HentRegler(ApplicationDbContext db) =>

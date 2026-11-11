@@ -2600,6 +2600,51 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("DorKomponenter");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.DorKomponentLogg", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Antall")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DorId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Hendelse")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Komponenttype")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Merknad")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Produktkode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Tidspunkt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DorId");
+
+                    b.ToTable("DorKomponentLogger");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.DorMedia", b =>
                 {
                     b.Property<int>("Id")
@@ -5794,6 +5839,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("ServiceGodkjentGrunnlag")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ServiceGodkjentRegelversjon")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal?>("ServiceMinstepris")
                         .HasColumnType("TEXT");
 
@@ -6799,6 +6847,36 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ServicePrisRegelId");
 
                     b.ToTable("ServicePrisRegelBetingelser");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ServicePrisRegelVersjon", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AntallRegler")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AvNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Dato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Innhold")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Versjon")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Versjon")
+                        .IsUnique();
+
+                    b.ToTable("ServicePrisRegelVersjoner");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServiceSjekkliste", b =>

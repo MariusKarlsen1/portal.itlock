@@ -168,12 +168,47 @@ else
                                                     <span class="ds-pill ds-gra">Ikke montert</span>
                                                 }
                                             </td>
-                                            <td><button type="button" class="ds-ikk ds-ikk-liten" title="Fjern beslag" @onclick="@(() => FjernBeslag(dk))"><Icon Name="x" /></button></td>
+                                            <td class="ds-knapper-celle">
+                                                <button type="button" class="ds-ikk ds-ikk-liten" title="Registrer bytte" @onclick="@(() => StartBytte(dk))"><Icon Name="refresh" /></button>
+                                                <button type="button" class="ds-ikk ds-ikk-liten" title="Fjern beslag" @onclick="@(() => FjernBeslag(dk))"><Icon Name="x" /></button>
+                                            </td>
                                         </tr>
                                     }
                                 </tbody>
                             </table>
                         </div>
+                        @if (_byttFra is { } fra)
+                        {
+                            <div class="ds-bytt">
+                                <b>Bytt @fra.Component?.Navn</b>
+                                <span class="ds-bytt-hjelp">Den gamle varen blir liggende i komponenthistorikken med dato for når den ble fjernet.</span>
+                                <div class="ds-bytt-felt">
+                                    <label>Ny vare
+                                        <select @bind="_byttTilId">
+                                            <option value="">Velg vare …</option>
+                                            @foreach (var c in _byttValg)
+                                            {
+                                                <option value="@c.Id">@c.Navn@(string.IsNullOrWhiteSpace(c.Produktkode) ? "" : $" ({c.Produktkode})")</option>
+                                            }
+                                        </select>
+                                    </label>
+                                    <label>Dato<input type="date" @bind="_byttDato" /></label>
+                                    <label class="ds-bytt-bred">Merknad (valgfritt)<input @bind="_byttMerknad" placeholder="F.eks. sluttstykke defekt etter driftsmelding" /></label>
+                                </div>
+                                @if (!string.IsNullOrEmpty(_byttFeil))
+                                {
+                                    <span class="form-error">@_byttFeil</span>
+                                }
+                                <div class="ds-bytt-knapper">
+                                    <button type="button" class="ds-kn" @onclick="@(() => _byttFra = null)">Avbryt</button>
+                                    <button type="button" class="ds-kn ds-kn-p" disabled="@(_byttTilId is null)" @onclick="UtforBytte"><Icon Name="refresh" />Registrer bytte</button>
+                                </div>
+                                @if (_byttValg.Count == 0)
+                                {
+                                    <span class="ds-bytt-hjelp">Fant ingen andre aktive varer med samme komponenttype.</span>
+                                }
+                            </div>
+                        }
                         <span class="ds-sm">@montertAntall av @beslagAntall montert</span>
                     }
                     break;
@@ -899,7 +934,7 @@ else
 
     private RenderFragment HistorikkLinje(HistorikkRad h) =>
         @<div class="ds-tli">
-            <span class="ds-tli-ik ds-tli-@h.Type"><Icon Name="@(h.Type switch { "Avvik" => "alert", "Driftsmelding" => "bell", _ => "edit" })" /></span>
+            <span class="ds-tli-ik ds-tli-@h.Type"><Icon Name="@(h.Type switch { "Avvik" => "alert", "Driftsmelding" => "bell", "Komponent" => "box", _ => "edit" })" /></span>
             <div><b>@h.Tekst</b><small>@h.Type · @h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")</small></div>
         </div>;
 
@@ -937,6 +972,84 @@ else
     private List<Avvik> _avvik = [];
     private List<Driftsmelding> _driftsmeldinger = [];
     private List<DorHendelse> _dorHendelser = [];
+
+    // Komponenthistorikk (fase 2 serviceavtaler): skrives automatisk ved lagring.
+    private List<DorKomponentLogg> _komponentLogg = [];
+    private DorKomponent? _byttFra;
+    private int? _byttTilId;
+    private DateTime _byttDato = DateTime.Today;
+    private string? _byttMerknad;
+    private string? _byttFeil;
+    private List<Component> _byttValg = [];
+
+    private static string KomponentTekst(DorKomponentLogg l) =>
+        $"{DorKomponentHendelse.Tekst(l.Hendelse)}: {l.Navn}{(l.Hendelse == DorKomponentHendelse.AntallEndret ? "" : l.Antall > 1 ? $" ({l.Antall} stk)" : "")}{(string.IsNullOrWhiteSpace(l.Merknad) ? "" : $" – {l.Merknad}")}";
+
+    private async Task StartBytte(DorKomponent dk)
+    {
+        _byttFra = dk;
+        _byttTilId = null;
+        _byttDato = DateTime.Today;
+        _byttMerknad = null;
+        _byttFeil = null;
+        var typeId = dk.Component?.ComponentTypeId;
+        _byttValg = await Db.Components.AsNoTracking()
+            .Where(c => c.Aktiv && c.Id != dk.ComponentId && (typeId == null || c.ComponentTypeId == typeId))
+            .OrderBy(c => c.Navn).Take(500).ToListAsync();
+    }
+
+    private async Task UtforBytte()
+    {
+        if (_byttFra is not { } gml || _byttTilId is not { } tilId || _dor is null)
+        {
+            return;
+        }
+        if (_dor.Komponenter.Any(k => k.ComponentId == tilId))
+        {
+            _byttFeil = "Den nye varen finnes allerede på døren.";
+            return;
+        }
+        var ny = await Db.Components.FindAsync(tilId);
+        if (ny is null)
+        {
+            return;
+        }
+
+        var tekst = $"Byttet {gml.Component?.Navn} → {ny.Navn}";
+        var merknad = string.IsNullOrWhiteSpace(_byttMerknad) ? tekst : $"{tekst} ({_byttMerknad.Trim()})";
+        var tidspunkt = _byttDato.Date == DateTime.Today ? DateTime.Now : _byttDato.Date.AddHours(12);
+
+        Db.DorHendelser.Add(new DorHendelse { DorId = Id, Beskrivelse = merknad, UtfortAvBrukerId = _naverendeBrukerId, Tidspunkt = tidspunkt });
+        var krysser = await Db.NokkelSylindere.Where(ns => ns.DorId == Id && ns.ComponentId == gml.ComponentId).ToListAsync();
+        Db.NokkelSylindere.RemoveRange(krysser);
+        Db.DorKomponenter.Remove(gml);
+        _dor.Komponenter.Remove(gml);
+        Db.DorKomponenter.Add(new DorKomponent
+        {
+            DorId = Id,
+            ComponentId = tilId,
+            Antall = gml.Antall,
+            Enhet = gml.Enhet,
+            Plassering = gml.Plassering,
+            LevertAv = gml.LevertAv,
+            Montert = true,
+            MontertDato = tidspunkt,
+            MontertAvBrukerId = _naverendeBrukerId
+        });
+
+        Db.LoggBrukerId = _naverendeBrukerId;
+        Db.LoggMerknad = merknad;
+        try
+        {
+            await Db.SaveChangesAsync();
+        }
+        finally
+        {
+            Db.LoggMerknad = null;
+        }
+        _byttFra = null;
+        await LastAsync();
+    }
     private List<KoblingsSkjema> _prinsippskisser = [];
     private string _nyPrinsippskisseNavn = "";
     private const int PrinsippskisseKategoriId = 4;
@@ -1019,6 +1132,7 @@ else
         _dorHendelser.Select(h => new HistorikkRad { Type = "Endring", Id = h.Id, Tidspunkt = h.Tidspunkt, Tekst = h.Beskrivelse + (h.UtfortAvBruker is not null ? $" ({h.UtfortAvBruker.Initialer})" : ""), Rentekst = h.Beskrivelse, UtfortAv = h.UtfortAvBruker?.Navn })
             .Concat(_avvik.Select(a => new HistorikkRad { Type = "Avvik", Id = a.Id, Tidspunkt = a.OpprettetDato, Tekst = a.Beskrivelse, Rentekst = a.Beskrivelse, UtfortAv = a.OpprettetAvBruker?.Navn }))
             .Concat(_driftsmeldinger.Select(m => new HistorikkRad { Type = "Driftsmelding", Id = m.Id, Tidspunkt = m.OpprettetDato, Tekst = m.Tekst, Rentekst = m.Tekst, UtfortAv = m.InnmeldtAvBruker?.Navn }))
+            .Concat(_komponentLogg.Select(l => new HistorikkRad { Type = "Komponent", Id = l.Id, Tidspunkt = l.Tidspunkt, Tekst = KomponentTekst(l), Rentekst = KomponentTekst(l) }))
             .OrderByDescending(h => h.Tidspunkt)
             .ToList();
     private List<CeGodkjenning> _ceGodkjenninger = [];
@@ -1062,6 +1176,7 @@ else
             if (brukerClaim is not null && int.TryParse(brukerClaim, out var bid))
             {
                 _naverendeBrukerId = bid;
+                Db.LoggBrukerId = bid;
             }
         }
 
@@ -1121,6 +1236,8 @@ else
 
         _dorHendelser = await Db.DorHendelser.Where(h => h.DorId == Id).Include(h => h.UtfortAvBruker)
             .OrderByDescending(h => h.Tidspunkt).ToListAsync();
+        _komponentLogg = await Db.DorKomponentLogger.AsNoTracking().Where(l => l.DorId == Id)
+            .OrderByDescending(l => l.Tidspunkt).ToListAsync();
 
         _driftsmeldinger = await Db.Driftsmeldinger.Where(m => m.DorId == Id)
             .Include(m => m.InnmeldtAvBruker).Include(m => m.Media)
