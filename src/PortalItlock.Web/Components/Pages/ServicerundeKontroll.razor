@@ -1,0 +1,412 @@
+@page "/servicerunder/{RundeId:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>Servicerunde</PageTitle>
+
+@* Fase 4 serviceavtaler (Prototype serviceavtaler komplett.html, Servicerunder):
+   runden føres dør for dør. Dørliste eller plantegning til venstre, valgt dør med
+   kontrollpunkter til høyre. Alt lagres med en gang. Fullførte runder er
+   skrivebeskyttet og viser øyeblikksbildet slik det var. *@
+@if (_runde is null)
+{
+    <p class="form-error">@(_ikkeFunnet ? "Fant ikke servicerunden." : "Laster …")</p>
+}
+else
+{
+    var ferdig = _runde.FullfortDato is not null;
+    var ok = _dorer.Count(d => d.Status == ServicerundeDorStatus.Ok);
+    var avvik = _dorer.Count(d => d.Status == ServicerundeDorStatus.Avvik);
+    var gjenstar = _dorer.Count - ok - avvik;
+    <div class="srk">
+        <a class="srk-tilbake" href="@($"/serviceavtaler/{_runde.ProsjektId}?fane=service")">← @_avtaleNavn</a>
+        <div class="srk-kort">
+            <div class="srk-topp">
+                <span class="srk-ikon"><Icon Name="tool" /></span>
+                <div class="srk-tittel">
+                    <div class="srk-smule">Serviceavtaler / @_avtaleNavn</div>
+                    <h1>Servicerunde @_runde.Dato.ToString("dd.MM.yyyy")
+                        @if (ferdig)
+                        {
+                            <span class="srk-pill gronn"><Icon Name="lock" />Fullført @_runde.FullfortDato?.ToString("dd.MM.yyyy")</span>
+                        }
+                        else
+                        {
+                            <span class="srk-pill bla">Pågår</span>
+                        }
+                    </h1>
+                </div>
+                <div class="srk-knapper">
+                    @if (!ferdig)
+                    {
+                        <button type="button" class="srk-knapp primaer" @onclick="@(() => _visFullfor = true)"><Icon Name="check" />Fullfør runden</button>
+                    }
+                </div>
+            </div>
+            <div class="srk-info">
+                <span><b>@(ok + avvik) av @_dorer.Count</b> dører kontrollert</span>
+                <span>Avvik <b class="@(avvik > 0 ? "rod" : "")">@avvik</b></span>
+                <span>Gjenstår <b>@gjenstar</b></span>
+                <span>Øyeblikksbilde av dører og komponenter fra @_runde.OpprettetDato.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</span>
+                @if (!ferdig)
+                {
+                    <span class="srk-lagret"><Icon Name="check" />Lagres fortløpende</span>
+                }
+            </div>
+            <div class="srk-fremdrift"><i class="ok" style="width:@Pst(ok)%"></i><i class="av" style="width:@Pst(avvik)%"></i></div>
+
+            @if (_visFullfor && !ferdig)
+            {
+                <div class="srk-fullfor">
+                    <div>
+                        <b>Fullføre runden?</b>
+                        <span>@(gjenstar > 0 ? $"{gjenstar} {(gjenstar == 1 ? "dør er" : "dører er")} ikke kontrollert og blir stående som ikke kontrollert. " : "")Runden låses og kan ikke endres etterpå.</span>
+                    </div>
+                    <button type="button" class="srk-knapp" @onclick="@(() => _visFullfor = false)">Avbryt</button>
+                    <button type="button" class="srk-knapp primaer" @onclick="Fullfor"><Icon Name="lock" />Fullfør og lås</button>
+                </div>
+            }
+
+            <div class="srk-kropp">
+                <div class="srk-venstre">
+                    <div class="srk-verktoy">
+                        <span class="srk-seg">
+                            <button type="button" class="@(_visning == "liste" ? "pa" : "")" @onclick="@(() => _visning = "liste")">Dørliste</button>
+                            <button type="button" class="@(_visning == "plan" ? "pa" : "")" @onclick="@(() => _visning = "plan")" disabled="@(_tegninger.Count == 0)">Plantegning</button>
+                        </span>
+                        <span class="srk-chips">
+                            <button type="button" class="@(_filter == "alle" ? "pa" : "")" @onclick="@(() => _filter = "alle")">Alle <i>@_dorer.Count</i></button>
+                            <button type="button" class="@(_filter == "ikke" ? "pa" : "")" @onclick="@(() => _filter = "ikke")">Ikke kontrollert <i>@gjenstar</i></button>
+                            <button type="button" class="@(_filter == "avvik" ? "pa" : "")" @onclick="@(() => _filter = "avvik")">Avvik <i>@avvik</i></button>
+                        </span>
+                    </div>
+
+                    @if (_visning == "plan" && _tegninger.Count > 0)
+                    {
+                        var tegning = _tegninger.FirstOrDefault(t => t.Id == _valgtTegning) ?? _tegninger[0];
+                        <div class="srk-tegningvalg">
+                            @foreach (var t in _tegninger)
+                            {
+                                var paTegning = _dorer.Where(d => d.PlantegningId == t.Id).ToList();
+                                <button type="button" class="@(t.Id == tegning.Id ? "pa" : "")" @onclick="@(() => _valgtTegning = t.Id)">@t.Navn <i>@paTegning.Count(d => d.Status != ServicerundeDorStatus.IkkeKontrollert)/@paTegning.Count</i></button>
+                            }
+                        </div>
+                        @if (tegning.ErBilde)
+                        {
+                            <div class="srk-plan">
+                                <img src="@($"/plantegningbilde/{tegning.Id}")" alt="@tegning.Navn" />
+                                @foreach (var d in Filtrert.Where(d => d.PlantegningId == tegning.Id && d.PosX.HasValue && d.PosY.HasValue))
+                                {
+                                    <button type="button" @key="d.Id" class="srk-pin @d.Status @(d == _valgt ? "valgt" : "")"
+                                            style="left:@d.PosX!.Value.ToString(CultureInfo.InvariantCulture)%;top:@d.PosY!.Value.ToString(CultureInfo.InvariantCulture)%"
+                                            title="@d.Dornummer @d.Rom" @onclick="@(() => Velg(d))">@d.Dornummer</button>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="srk-dempet">Tegningen «@tegning.Navn» er ikke et bilde og kan ikke vises med dørene på. Bruk dørlisten.</p>
+                        }
+                    }
+                    else
+                    {
+                        <div class="srk-liste">
+                            @if (Filtrert.Count == 0)
+                            {
+                                <p class="srk-dempet">Ingen dører her.</p>
+                            }
+                            @foreach (var gruppe in Filtrert.GroupBy(d => string.IsNullOrWhiteSpace(d.Etasje) ? "Uten etasje" : $"{d.Etasje}. etasje"))
+                            {
+                                <div class="srk-etg">@gruppe.Key</div>
+                                @foreach (var d in gruppe)
+                                {
+                                    <button type="button" @key="d.Id" class="srk-rad @(d == _valgt ? "valgt" : "")" @onclick="@(() => Velg(d))">
+                                        <span class="srk-prikk @d.Status"></span>
+                                        <b>@d.Dornummer</b>
+                                        <span class="srk-rom">@d.Rom</span>
+                                        <span class="srk-kat">@d.Kategori</span>
+                                        <span class="srk-pill @PillKlasse(d.Status)">@StatusTekst(d.Status)</span>
+                                    </button>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="srk-hoyre">
+                    @if (_valgt is { } v)
+                    {
+                        var indeks = _dorer.IndexOf(v);
+                        <div class="srk-dorhode">
+                            <div>
+                                <b>Dør @v.Dornummer</b>
+                                <span>@(string.Join(" · ", new[] { v.Rom, string.IsNullOrWhiteSpace(v.Etasje) ? null : $"{v.Etasje}. etasje" }.Where(s => !string.IsNullOrWhiteSpace(s))))</span>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(v.Kategori))
+                            {
+                                <span class="srk-pill bla">@v.Kategori</span>
+                            }
+                        </div>
+
+                        @foreach (var m in _apneMeldinger.Where(m => m.Melding.DorId == v.DorId))
+                        {
+                            <div class="srk-varsel rod">
+                                <b>Åpen driftsmelding: @(m.Melding.Tittel ?? m.Melding.Tekst)</b>
+                                <span>@m.Melding.OpprettetDato.ToString("dd.MM.yyyy") · @m.Navn · lukkes ikke av servicerunden</span>
+                            </div>
+                        }
+                        @foreach (var a in _apneAvvik.Where(a => a.DorId == v.DorId))
+                        {
+                            <div class="srk-varsel gul">
+                                <b>Åpent avvik: @(a.Tittel ?? a.Beskrivelse)</b>
+                                <span>Registrert @a.OpprettetDato.ToString("dd.MM.yyyy") – sjekk om det er utbedret</span>
+                            </div>
+                        }
+
+                        <div class="srk-under">Kontrollpunkter · @v.Punkter.Count(p => p.Status is not null) av @v.Punkter.Count
+                            @if (!ferdig)
+                            {
+                                <button type="button" class="srk-lenke" @onclick="@(() => RestenOk(v))">Resten OK</button>
+                            }
+                        </div>
+                        @foreach (var p in v.Punkter.OrderBy(p => p.Rekkefolge))
+                        {
+                            <div class="srk-punkt" @key="p.Id">
+                                <div class="srk-punkt-r1">
+                                    <div><span>@p.Tekst</span><small>@p.Kilde</small></div>
+                                    <span class="srk-valg">
+                                        <button type="button" class="@(p.Status == ServicerundeDorStatus.Ok ? "ok" : "")" disabled="@ferdig" @onclick="@(() => SettPunkt(v, p, ServicerundeDorStatus.Ok))"><Icon Name="check" />OK</button>
+                                        <button type="button" class="@(p.Status == ServicerundeDorStatus.Avvik ? "av" : "")" disabled="@ferdig" @onclick="@(() => SettPunkt(v, p, ServicerundeDorStatus.Avvik))"><Icon Name="alert" />Avvik</button>
+                                        <button type="button" class="@(p.Status == ServicerundeDorStatus.IkkeRelevant ? "ir" : "")" disabled="@ferdig" title="Ikke relevant for denne døren" @onclick="@(() => SettPunkt(v, p, ServicerundeDorStatus.IkkeRelevant))">I/R</button>
+                                    </span>
+                                </div>
+                                @if (p.Status == ServicerundeDorStatus.Avvik)
+                                {
+                                    @if (ferdig)
+                                    {
+                                        <span class="srk-avviktekst">@p.Kommentar</span>
+                                    }
+                                    else
+                                    {
+                                        <input class="srk-avvikfelt" value="@p.Kommentar" placeholder="Hva er feil, og hva bør gjøres?" @onchange="@(e => LagreKommentar(p, e.Value?.ToString()))" />
+                                    }
+                                }
+                            </div>
+                        }
+
+                        <div class="srk-under">Notat til døren</div>
+                        @if (ferdig)
+                        {
+                            <p class="srk-dempet">@(string.IsNullOrWhiteSpace(v.Notat) ? "Ingen notat." : v.Notat)</p>
+                        }
+                        else
+                        {
+                            <textarea class="srk-notat" placeholder="Notat …" @onchange="@(e => LagreNotat(v, e.Value?.ToString()))">@v.Notat</textarea>
+                        }
+
+                        <div class="srk-under">Komponenter (slik de var i runden)</div>
+                        <div class="srk-komp">
+                            @foreach (var k in ServicerundeMotor.LesKomponenter(v.KomponenterJson))
+                            {
+                                <div><b>@k.Navn</b><span>@(k.Servicetype ?? k.Komponenttype ?? "–")</span></div>
+                            }
+                        </div>
+
+                        @if (_tidligere.TryGetValue(v.DorId, out var tidl) && tidl.Count > 0)
+                        {
+                            <div class="srk-under">Tidligere runder</div>
+                            <div class="srk-tidl">
+                                @foreach (var t in tidl)
+                                {
+                                    <div><b>@t.Dato.ToString("dd.MM.yyyy")</b><span class="srk-pill @PillKlasse(t.Status)">@StatusTekst(t.Status)</span>@if (!string.IsNullOrWhiteSpace(t.Merknad)) {<small>@t.Merknad</small>}</div>
+                                }
+                            </div>
+                        }
+
+                        <div class="srk-navig">
+                            <button type="button" class="srk-knapp" disabled="@(indeks <= 0)" @onclick="@(() => Velg(_dorer[indeks - 1]))">← Forrige</button>
+                            <span>Dør @(indeks + 1) av @_dorer.Count</span>
+                            <button type="button" class="srk-knapp primaer" @onclick="NesteDor">Neste dør →</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="srk-dempet">Velg en dør.</p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int RundeId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Servicerunde? _runde;
+    private bool _ikkeFunnet, _visFullfor;
+    private string _avtaleNavn = "";
+    private List<ServicerundeDor> _dorer = [];
+    private ServicerundeDor? _valgt;
+    private string _visning = "liste", _filter = "alle";
+    private int? _valgtTegning;
+    private int? _brukerId;
+    private List<DriftHelper.MeldingStatus> _apneMeldinger = [];
+    private List<Avvik> _apneAvvik = [];
+    private Dictionary<int, List<TidligereRad>> _tidligere = [];
+    private List<Tegning> _tegninger = [];
+
+    private sealed record TidligereRad(DateTime Dato, string Status, string? Merknad);
+    private sealed record Tegning(int Id, string Navn, bool ErBilde);
+
+    private List<ServicerundeDor> Filtrert => _filter switch
+    {
+        "ikke" => _dorer.Where(d => d.Status == ServicerundeDorStatus.IkkeKontrollert).ToList(),
+        "avvik" => _dorer.Where(d => d.Status == ServicerundeDorStatus.Avvik).ToList(),
+        _ => _dorer
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            _brukerId = (await AuthStateTask).User.VisningsBrukerId();
+        }
+        _runde = await Db.Servicerunder.Include(r => r.Prosjekt)
+            .Include(r => r.Dorer).ThenInclude(d => d.Punkter)
+            .FirstOrDefaultAsync(r => r.Id == RundeId && r.DorForDor);
+        if (_runde is null)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+        _avtaleNavn = _runde.Prosjekt?.Navn ?? "Serviceavtale";
+        _dorer = _runde.Dorer.OrderBy(d => d.Rekkefolge).ToList();
+        _valgt ??= _dorer.FirstOrDefault(d => d.Status == ServicerundeDorStatus.IkkeKontrollert) ?? _dorer.FirstOrDefault();
+
+        var dorIder = _dorer.Select(d => d.DorId).ToList();
+        _apneMeldinger = (await DriftHelper.HentMeldinger(Db, Db.Driftsmeldinger.Where(m => dorIder.Contains(m.DorId)))).Where(m => m.ErApen).ToList();
+        _apneAvvik = await Db.Avvik.AsNoTracking().Where(a => dorIder.Contains(a.DorId) && a.Status != AvvikStatus.Godkjent && a.Status != AvvikStatus.Lukket).ToListAsync();
+
+        var tidligere = await Db.ServicerundeDorer.AsNoTracking()
+            .Where(d => dorIder.Contains(d.DorId) && d.ServicerundeId != RundeId && d.Servicerunde!.FullfortDato != null)
+            .Select(d => new { d.DorId, d.Servicerunde!.Dato, d.Status, d.Notat })
+            .ToListAsync();
+        _tidligere = tidligere.GroupBy(x => x.DorId).ToDictionary(g => g.Key,
+            g => g.OrderByDescending(x => x.Dato).Take(3).Select(x => new TidligereRad(x.Dato, x.Status, x.Notat)).ToList());
+
+        var tegningIder = _dorer.Where(d => d.PlantegningId != null).Select(d => d.PlantegningId!.Value).Distinct().ToList();
+        var finnes = await Db.Plantegninger.AsNoTracking().Where(p => tegningIder.Contains(p.Id)).Select(p => new { p.Id, p.Navn, p.ContentType }).ToListAsync();
+        _tegninger = tegningIder.Select(id =>
+        {
+            var f = finnes.FirstOrDefault(x => x.Id == id);
+            var navn = f?.Navn ?? _dorer.First(d => d.PlantegningId == id).PlantegningNavn ?? "Plantegning";
+            return new Tegning(id, navn, f is not null && f.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase));
+        }).OrderBy(t => t.Navn).ToList();
+        _valgtTegning ??= _valgt?.PlantegningId ?? _tegninger.FirstOrDefault()?.Id;
+    }
+
+    private void Velg(ServicerundeDor d)
+    {
+        _valgt = d;
+        if (d.PlantegningId is { } t)
+        {
+            _valgtTegning = t;
+        }
+    }
+
+    private void NesteDor()
+    {
+        if (_valgt is null) return;
+        var i = _dorer.IndexOf(_valgt);
+        var neste = _dorer.Skip(i + 1).FirstOrDefault(d => d.Status == ServicerundeDorStatus.IkkeKontrollert)
+            ?? _dorer.FirstOrDefault(d => d.Status == ServicerundeDorStatus.IkkeKontrollert)
+            ?? (i + 1 < _dorer.Count ? _dorer[i + 1] : null);
+        if (neste is not null)
+        {
+            Velg(neste);
+        }
+    }
+
+    private bool KanEndre => _runde is { FullfortDato: null };
+
+    private async Task OppdaterDor(ServicerundeDor d)
+    {
+        d.Status = ServicerundeMotor.BeregnStatus(d);
+        d.KontrollertDato = d.Status == ServicerundeDorStatus.IkkeKontrollert ? null : DateTime.Now;
+        d.KontrollertAvBrukerId = d.Status == ServicerundeDorStatus.IkkeKontrollert ? null : _brukerId;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SettPunkt(ServicerundeDor d, ServicerundeDorPunkt p, string status)
+    {
+        if (!KanEndre) return;
+        p.Status = p.Status == status ? null : status;
+        if (p.Status != ServicerundeDorStatus.Avvik)
+        {
+            p.Kommentar = null;
+        }
+        await OppdaterDor(d);
+    }
+
+    private async Task RestenOk(ServicerundeDor d)
+    {
+        if (!KanEndre) return;
+        foreach (var p in d.Punkter.Where(p => p.Status is null))
+        {
+            p.Status = ServicerundeDorStatus.Ok;
+        }
+        await OppdaterDor(d);
+    }
+
+    private async Task LagreKommentar(ServicerundeDorPunkt p, string? tekst)
+    {
+        if (!KanEndre) return;
+        p.Kommentar = string.IsNullOrWhiteSpace(tekst) ? null : tekst.Trim();
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreNotat(ServicerundeDor d, string? tekst)
+    {
+        if (!KanEndre) return;
+        d.Notat = string.IsNullOrWhiteSpace(tekst) ? null : tekst.Trim();
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task Fullfor()
+    {
+        if (_runde is null || !KanEndre) return;
+        _runde.FullfortDato = DateTime.Now;
+        _runde.StatusBeskrivelse = ServicerundeMotor.Oppsummering(_dorer);
+        if (_runde.NesteServiceDato is null && _runde.Prosjekt?.ServiceGangerPerAr is > 0 and <= 12 && _runde.Prosjekt.ServiceGangerPerAr is { } g)
+        {
+            _runde.NesteServiceDato = _runde.Dato.Date.AddMonths(12 / g);
+        }
+        await Db.SaveChangesAsync();
+        _visFullfor = false;
+    }
+
+    private double Pst(int n) => _dorer.Count == 0 ? 0 : Math.Round(100.0 * n / _dorer.Count, 1);
+
+    private static string StatusTekst(string s) => s switch
+    {
+        ServicerundeDorStatus.Ok => "OK",
+        ServicerundeDorStatus.Avvik => "Avvik",
+        _ => "Ikke kontrollert"
+    };
+
+    private static string PillKlasse(string s) => s switch
+    {
+        ServicerundeDorStatus.Ok => "gronn",
+        ServicerundeDorStatus.Avvik => "rod",
+        _ => "gra"
+    };
+}

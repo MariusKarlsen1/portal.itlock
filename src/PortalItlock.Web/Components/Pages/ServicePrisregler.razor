@@ -61,6 +61,7 @@
                 <div style="height:8px"></div>
                 <button type="button" class="spr-fane @(_visning == "ikke" ? "pa" : "")" @onclick="@(() => _visning = "ikke")"><Icon Name="alert" /><span>Ikke kategorisert</span><em>@IkkeKategorisert.Count</em></button>
                 <button type="button" class="spr-fane @(_visning == "typer" ? "pa" : "")" @onclick="@(() => _visning = "typer")"><Icon Name="settings" /><span>Komponenttyper</span></button>
+                <button type="button" class="spr-fane @(_visning == "punkter" ? "pa" : "")" @onclick="@(() => _visning = "punkter")"><Icon Name="check-circle" /><span>Kontrollpunkter</span><em>@_punkter.Count</em></button>
                 <button type="button" class="spr-fane @(_visning == "versjoner" ? "pa" : "")" @onclick="@(() => { _visning = "versjoner"; _valgtVersjon ??= _versjoner.FirstOrDefault(); })"><Icon Name="clock" /><span>Versjoner</span><em>@_versjoner.Count</em></button>
             </nav>
 
@@ -75,7 +76,30 @@
                     </div>
                 }
 
-                @if (_visning == "versjoner")
+                @if (_visning == "punkter")
+                {
+                    <p class="spr-dempet">Kontrollpunktene på hver dør i en servicerunde settes sammen fra servicetypene på døren. Like punkter slås sammen. Dører uten servicetyper får «Generelt». Endringer gjelder nye runder – runder som er startet, beholder punktene de fikk.</p>
+                    @foreach (var type in ServiceRegelMotor.Servicetyper.Append(ServicerundeMotor.Generelt))
+                    {
+                        var liste = _punkter.Where(x => x.Servicetype == type).OrderBy(x => x.Rekkefolge).ToList();
+                        <div class="spr-boks" @key="type">
+                            <div class="spr-boks-t"><h3>@type</h3><small>@liste.Count @(liste.Count == 1 ? "punkt" : "punkter")</small></div>
+                            <div class="spr-betg">
+                                @foreach (var k in liste)
+                                {
+                                    <div class="spr-betg-rad" @key="k">
+                                        <input style="flex:1;min-width:0" value="@k.Tekst" @onchange="@(e => { if (!string.IsNullOrWhiteSpace(e.Value?.ToString())) { k.Tekst = e.Value!.ToString()!.Trim(); Endret(); } })" />
+                                        <button type="button" class="spr-fjern" title="Fjern punktet" @onclick="@(() => FjernPunkt(k))"><Icon Name="x" /></button>
+                                    </div>
+                                }
+                                <div class="spr-betg-rad">
+                                    <input style="flex:1;min-width:0;border-style:dashed" @key="@($"ny{type}{_nyKey}")" placeholder="Nytt punkt – trykk Enter" @onchange="@(e => LeggTilPunkt(type, e.Value?.ToString()))" />
+                                </div>
+                            </div>
+                        </div>
+                    }
+                }
+                else if (_visning == "versjoner")
                 {
                     <div class="spr-boks">
                         <div class="spr-boks-t"><h3>Versjoner av prisreglene</h3><small>Hver lagring blir en ny versjon. Godkjente avtaler beholder versjonen de ble godkjent med.</small></div>
@@ -316,6 +340,26 @@
     private bool _endret, _full;
     private string? _melding;
     private List<ServicePrisRegelVersjon> _versjoner = [];
+    private List<ServiceKontrollpunkt> _punkter = [];
+    private int _nyKey;
+
+    private void LeggTilPunkt(string type, string? tekst)
+    {
+        if (string.IsNullOrWhiteSpace(tekst)) return;
+        var k = new ServiceKontrollpunkt { Servicetype = type, Tekst = tekst.Trim(), Rekkefolge = (_punkter.Where(x => x.Servicetype == type).Select(x => (int?)x.Rekkefolge).Max() ?? -1) + 1 };
+        Db.ServiceKontrollpunkter.Add(k);
+        _punkter.Add(k);
+        _nyKey++;
+        Endret();
+    }
+
+    private void FjernPunkt(ServiceKontrollpunkt k)
+    {
+        _punkter.Remove(k);
+        if (k.Id != 0) Db.ServiceKontrollpunkter.Remove(k);
+        else Db.Entry(k).State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+        Endret();
+    }
     private ServicePrisRegelVersjon? _valgtVersjon;
     private Dictionary<int, int> _avtalerPerVersjon = [];
     [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
@@ -338,6 +382,8 @@
             .Include(d => d.Komponenter).ThenInclude(k => k.Component)
             .Include(d => d.Funksjoner)
             .OrderBy(d => d.ProsjektId).ThenBy(d => d.Dornummer).ToListAsync();
+        await ServicerundeMotor.SikreKontrollpunkter(Db);
+        _punkter = await Db.ServiceKontrollpunkter.OrderBy(k => k.Servicetype).ThenBy(k => k.Rekkefolge).ToListAsync();
         _versjoner = await Db.ServicePrisRegelVersjoner.AsNoTracking().OrderByDescending(v => v.Versjon).ToListAsync();
         _valgtVersjon = _valgtVersjon is null ? null : _versjoner.FirstOrDefault(v => v.Id == _valgtVersjon.Id);
         _avtalerPerVersjon = await Db.Prosjekter.Where(p => p.ServiceGodkjentRegelversjon != null).GroupBy(p => p.ServiceGodkjentRegelversjon!.Value).Select(g => new { g.Key, N = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.N);

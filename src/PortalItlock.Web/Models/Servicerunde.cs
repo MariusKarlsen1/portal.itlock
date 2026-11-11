@@ -22,6 +22,12 @@ public class Servicerunde
     // ServiceavtaleDetalj.razor.
     public bool ErPlanlagt { get; set; }
 
+    // Fase 4: runden føres dør for dør (ServicerundeDor). Den pågår til
+    // FullfortDato er satt, og er skrivebeskyttet etterpå.
+    public bool DorForDor { get; set; }
+    public DateTime? FullfortDato { get; set; }
+    public List<ServicerundeDor> Dorer { get; set; } = [];
+
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     public List<ServicerundeDel> Deler { get; set; } = [];

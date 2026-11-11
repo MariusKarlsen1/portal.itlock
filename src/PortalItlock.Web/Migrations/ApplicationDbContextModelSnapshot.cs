@@ -6749,6 +6749,28 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ServiceKategoriPriser");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ServiceKontrollpunkt", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Servicetype")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Tekst")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ServiceKontrollpunkter");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ServiceMinuttLinje", b =>
                 {
                     b.Property<int>("Id")
@@ -7036,10 +7058,16 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime>("Dato")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("DorForDor")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("ErPlanlagt")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Forside")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("FullfortDato")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("NesteServiceDato")
@@ -7099,6 +7127,103 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ServicerundeId");
 
                     b.ToTable("ServicerundeDeler");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeDor", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DorId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Dornummer")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Etasje")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kategori")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KomponenterJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("KontrollertAvBrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("KontrollertDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Notat")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PlantegningId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PlantegningNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("PosX")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("PosY")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Rom")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ServicerundeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DorId");
+
+                    b.HasIndex("ServicerundeId");
+
+                    b.ToTable("ServicerundeDorer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeDorPunkt", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Kilde")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kommentar")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ServicerundeDorId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Tekst")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServicerundeDorId");
+
+                    b.ToTable("ServicerundeDorPunkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeMedia", b =>
@@ -9994,6 +10119,28 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Servicerunde");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeDor", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Servicerunde", "Servicerunde")
+                        .WithMany("Dorer")
+                        .HasForeignKey("ServicerundeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Servicerunde");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeDorPunkt", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.ServicerundeDor", "ServicerundeDor")
+                        .WithMany("Punkter")
+                        .HasForeignKey("ServicerundeDorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ServicerundeDor");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeMedia", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Servicerunde", "Servicerunde")
@@ -10640,9 +10787,16 @@ namespace PortalItlock.Web.Migrations
                 {
                     b.Navigation("Deler");
 
+                    b.Navigation("Dorer");
+
                     b.Navigation("Media");
 
                     b.Navigation("Sjekkpunkter");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ServicerundeDor", b =>
+                {
+                    b.Navigation("Punkter");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklisteMal", b =>

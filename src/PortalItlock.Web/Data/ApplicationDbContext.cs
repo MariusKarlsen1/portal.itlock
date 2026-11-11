@@ -64,6 +64,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServicePrisRegelBetingelse> ServicePrisRegelBetingelser => Set<ServicePrisRegelBetingelse>();
     public DbSet<ServicePrisRegelVersjon> ServicePrisRegelVersjoner => Set<ServicePrisRegelVersjon>();
     public DbSet<DorKomponentLogg> DorKomponentLogger => Set<DorKomponentLogg>();
+    public DbSet<ServicerundeDor> ServicerundeDorer => Set<ServicerundeDor>();
+    public DbSet<ServicerundeDorPunkt> ServicerundeDorPunkter => Set<ServicerundeDorPunkt>();
+    public DbSet<ServiceKontrollpunkt> ServiceKontrollpunkter => Set<ServiceKontrollpunkt>();
 
     // Settes av siden som lagrer (f.eks. dørkortet) så komponentloggen får med
     // hvem som gjorde det og eventuelt hvorfor ("Byttet ... med ...").
@@ -480,6 +483,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         });
         modelBuilder.Entity<VareLagerplass>().HasIndex(p => new { p.ComponentId, p.LagerId }).IsUnique();
         modelBuilder.Entity<DorKomponentLogg>().HasIndex(l => l.DorId);
+        modelBuilder.Entity<ServicerundeDor>().HasIndex(d => d.DorId);
         modelBuilder.Entity<ServicePrisRegelVersjon>().HasIndex(v => v.Versjon).IsUnique();
         modelBuilder.Entity<Lager>().HasOne(l => l.Prosjekt).WithMany().HasForeignKey(l => l.ProsjektId).OnDelete(DeleteBehavior.SetNull);
         modelBuilder.Entity<Innkjopsordre>(e =>
