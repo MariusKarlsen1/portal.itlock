@@ -1,0 +1,156 @@
+@page "/app/serviceavtale/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>@(_p?.Navn ?? "Serviceavtale")</PageTitle>
+
+@* Én serviceavtale i montørappen: start eller fortsett servicerunden (dørene,
+   plantegningene og kontrollpunktene hentes inn), befaring for å legge til
+   dører, saker og tidligere runder. *@
+<div class="ma">
+    <AppHode Ikon="tool" Tittel="@(_p?.Navn ?? "Serviceavtale")" Under="@(_p?.Kunde?.Navn ?? "Serviceavtale")" Tilbake="/app/serviceavtaler" />
+
+    @if (_p is null)
+    {
+        <p class="ma-tom">@(_ikkeFunnet ? "Fant ikke serviceavtalen." : "Laster …")</p>
+    }
+    else
+    {
+        <div class="ma-liste">
+            @if (!string.IsNullOrWhiteSpace(_p.Adresse))
+            {
+                <a class="ma-rad" href="@($"https://maps.google.com/?q={Uri.EscapeDataString(_p.Adresse)}")" target="_blank">
+                    <Icon Name="map-pin" /><span class="ma-rad-tekst"><b>@_p.Adresse</b><small>Åpne i kart</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
+                </a>
+            }
+            @if (!string.IsNullOrWhiteSpace(_p.Kontaktperson) || !string.IsNullOrWhiteSpace(_p.Telefon))
+            {
+                <a class="ma-rad" href="@(string.IsNullOrWhiteSpace(_p.Telefon) ? null : $"tel:{_p.Telefon}")">
+                    <Icon Name="users" /><span class="ma-rad-tekst"><b>@(_p.Kontaktperson ?? "Kontakt")</b><small>@(_p.Telefon ?? "Ingen telefon")</small></span>
+                </a>
+            }
+            <div class="ma-rad" style="cursor:default">
+                <Icon Name="door" /><span class="ma-rad-tekst"><b>@_dorer @(_dorer == 1 ? "dør" : "dører")</b><small>@_tegninger @(_tegninger == 1 ? "plantegning" : "plantegninger") · @(_neste is { } n ? $"neste runde {MontorApp.Dato(n)}" : "ingen runde planlagt")</small></span>
+            </div>
+        </div>
+
+        <div class="ma-under" style="padding:0.9rem 0.8rem 0">
+            @if (_pagar is { } pr)
+            {
+                <a class="ma-knapp" href="@($"/servicerunder/{pr.Id}")"><Icon Name="tool" />Fortsett servicerunden</a>
+                <p class="ma-teller-tekst" style="text-align:center;font-style:normal">Startet @MontorApp.Dato(pr.Dato) · @pr.Kontrollert av @pr.Dorer dører kontrollert</p>
+            }
+            else if (_dorer == 0)
+            {
+                <a class="ma-knapp" href="@($"/serviceavtaler/{Id}/befaring")"><Icon Name="plus" />Start befaring – legg til dører</a>
+                <p class="ma-teller-tekst" style="text-align:center;font-style:normal">Avtalen har ingen dører ennå. Legg dem til med komponenttyper, så får du prisen med en gang.</p>
+            }
+            else if (_bekreftStart)
+            {
+                <div class="ma-felt" style="margin:0">
+                    <b>Start ny servicerunde?</b>
+                    <span style="font-size:0.9rem;color:var(--itlock-ink-muted)">@_dorer dører, @_tegninger @(_tegninger == 1 ? "plantegning" : "plantegninger") og kontrollpunktene hentes inn som et fast øyeblikksbilde. Så huker du av dør for dør.</span>
+                </div>
+                <button type="button" class="ma-knapp" @onclick="StartRunde" disabled="@_starter"><Icon Name="play" />@(_starter ? "Starter …" : "Start runden")</button>
+                <button type="button" class="ma-knapp sek" @onclick="@(() => _bekreftStart = false)">Avbryt</button>
+            }
+            else
+            {
+                <button type="button" class="ma-knapp" @onclick="@(() => _bekreftStart = true)"><Icon Name="play" />Start servicerunde</button>
+            }
+        </div>
+
+        <div class="ma-gruppe" style="margin-top:1rem">Avtalen</div>
+        <div class="ma-liste">
+            <a class="ma-rad" href="@($"/serviceavtaler/{Id}/befaring")">
+                <Icon Name="plus" /><span class="ma-rad-tekst"><b>Befaring – legg til dører</b><small>Dører med komponenttyper og pris med en gang</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
+            </a>
+            @if (_uspesifisert > 0)
+            {
+                <a class="ma-rad" href="@($"/serviceavtaler/{Id}/spesifiser")">
+                    <Icon Name="tag" /><span class="ma-rad-tekst"><b>Spesifiser komponenter</b><small>@_uspesifisert uten produkt</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
+                </a>
+            }
+            <a class="ma-rad" href="@($"/serviceavtaler/{Id}?fane=avvik")">
+                <Icon Name="alert" /><span class="ma-rad-tekst"><b>Driftsmeldinger og avvik</b><small>@(_apneSaker == 0 ? "Ingen åpne saker" : $"{_apneSaker} åpne saker")</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
+            </a>
+            <a class="ma-rad" href="@($"/serviceavtaler/{Id}")">
+                <Icon Name="map" /><span class="ma-rad-tekst"><b>Plantegning og dører</b><small>Oversikten over avtalen</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
+            </a>
+            <a class="ma-rad" href="@($"/serviceavtaler/{Id}?fane=prising")">
+                <Icon Name="receipt" /><span class="ma-rad-tekst"><b>Prising og tilbud</b><small>Pris per år og tilbud til kunden</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
+            </a>
+        </div>
+
+        @if (_runder.Count > 0)
+        {
+            <div class="ma-gruppe" style="margin-top:1rem">Tidligere runder</div>
+            <div class="ma-liste">
+                @foreach (var r in _runder)
+                {
+                    <a class="ma-rad" href="@($"/servicerunder/{r.Id}")" @key="r.Id">
+                        <Icon Name="check-circle" /><span class="ma-rad-tekst"><b>@MontorApp.Dato(r.Dato)</b><small>@(r.Montor ?? "–") · @r.Dorer dører@(r.Avvik > 0 ? $" · {r.Avvik} avvik" : "")</small></span><span class="ma-pil"><Icon Name="chevron-right" /></span>
+                    </a>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Pagar(int Id, DateTime Dato, int Dorer, int Kontrollert);
+    private sealed record Runde(int Id, DateTime Dato, string? Montor, int Dorer, int Avvik);
+
+    private Prosjekt? _p;
+    private bool _ikkeFunnet, _bekreftStart, _starter;
+    private int _dorer, _tegninger, _apneSaker, _uspesifisert;
+    private DateTime? _neste;
+    private Pagar? _pagar;
+    private List<Runde> _runder = [];
+    private int? _brukerId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var bid))
+        {
+            _brukerId = bid;
+        }
+        _p = await Db.Prosjekter.AsNoTracking().Include(p => p.Kunde).FirstOrDefaultAsync(p => p.Id == Id);
+        if (_p is null)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+        _dorer = await Db.Dorer.CountAsync(d => d.ProsjektId == Id);
+        _tegninger = await Db.Plantegninger.CountAsync(t => t.ProsjektId == Id);
+        _apneSaker = await Db.Avvik.CountAsync(a => a.Dor!.ProsjektId == Id && a.Status != AvvikStatus.Godkjent && a.Status != AvvikStatus.Lukket);
+        _uspesifisert = await Db.DorKomponenter.CountAsync(k => k.Dor!.ProsjektId == Id && k.Component!.ErPlassholder);
+        _neste = await Db.Servicerunder.Where(r => r.ProsjektId == Id && r.ErPlanlagt).OrderBy(r => r.Dato).Select(r => (DateTime?)r.Dato).FirstOrDefaultAsync();
+        _pagar = await Db.Servicerunder.AsNoTracking()
+            .Where(r => r.ProsjektId == Id && r.DorForDor && !r.ErPlanlagt && r.FullfortDato == null)
+            .Select(r => new Pagar(r.Id, r.Dato, r.Dorer.Count, r.Dorer.Count(d => d.Status != ServicerundeDorStatus.IkkeKontrollert)))
+            .FirstOrDefaultAsync();
+        _runder = await Db.Servicerunder.AsNoTracking()
+            .Where(r => r.ProsjektId == Id && r.DorForDor && r.FullfortDato != null)
+            .OrderByDescending(r => r.Dato).Take(6)
+            .Select(r => new Runde(r.Id, r.Dato, r.UtfortAvBruker != null ? r.UtfortAvBruker.Navn : null, r.Dorer.Count, r.Dorer.Count(d => d.Status == ServicerundeDorStatus.Avvik)))
+            .ToListAsync();
+    }
+
+    private async Task StartRunde()
+    {
+        if (_starter) return;
+        _starter = true;
+        var id = await ServicerundeMotor.OpprettRunde(Db, Id, _brukerId, DateTime.Now);
+        Nav.NavigateTo($"/servicerunder/{id}");
+    }
+}

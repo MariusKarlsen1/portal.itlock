@@ -1,0 +1,190 @@
+@page "/app/serviceavtaler"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>Serviceavtaler</PageTitle>
+
+@* Serviceavtaler i montørappen: mine eller alle avtaler, søk, og status på
+   runden (pågår / neste / forfalt). «+» oppretter en ny avtale ute på stedet
+   og går rett til befaringen for å få en pris raskt. *@
+<div class="ma">
+    <AppHode Ikon="tool" Sand="true" Tittel="Serviceavtaler" Under="@(_alle ? "Alle serviceavtaler" : "Mine serviceavtaler")">
+        <span class="ma-skille"></span>
+        <button type="button" class="ma-ikonknapp" @onclick="@(() => { _visNy = true; _feil = null; })" aria-label="Ny serviceavtale"><Icon Name="plus" /></button>
+    </AppHode>
+
+    <div class="ma-sok">
+        <button type="button" class="ma-modus @(!_alle ? "aktiv" : "")" @onclick="@(() => _alle = false)" aria-pressed="@(!_alle)" title="Mine serviceavtaler"><Icon Name="users" /></button>
+        <button type="button" class="ma-modus @(_alle ? "aktiv" : "")" @onclick="@(() => _alle = true)" aria-pressed="@_alle" title="Alle serviceavtaler"><Icon Name="list" /></button>
+        <input type="search" placeholder="Søk" aria-label="Søk" @bind="_sok" @bind:event="oninput" />
+    </div>
+
+    <div class="ma-liste">
+        @if (!_lastet)
+        {
+            <p class="ma-tom">Laster …</p>
+        }
+        else if (Liste.Count == 0)
+        {
+            <p class="ma-tom">@(_alle ? "Ingen serviceavtaler passer søket." : "Du er ikke ansvarlig for noen serviceavtaler. Trykk på listeikonet for å se alle.")</p>
+        }
+        else
+        {
+            @foreach (var a in Liste)
+            {
+                <div class="ma-kort-ramme" @key="a.Id">
+                    <a class="ma-kort" href="@($"/app/serviceavtale/{a.Id}")">
+                        <span class="ma-kort-tekst">
+                            <h3>@a.Navn<em>Service</em></h3>
+                            <span class="ma-linje dempet">
+                                @if (a.PagarRunde)
+                                {
+                                    <i class="ma-prikk ma-prikk-pagaende"></i><span>Runde pågår · @a.Kontrollert av @a.RundeDorer dører</span>
+                                }
+                                else if (a.Neste is { } n)
+                                {
+                                    <i class="ma-prikk @(n.Date < DateTime.Today ? "ma-prikk-ny" : "ma-prikk-klar")"></i><span>@(n.Date < DateTime.Today ? "Forfalt" : "Neste runde") @MontorApp.Dato(n)</span>
+                                }
+                                else
+                                {
+                                    <i class="ma-prikk ma-prikk-klar"></i><span>Ingen runde planlagt</span>
+                                }
+                            </span>
+                            <span class="ma-linje"><Icon Name="users" /><span>@(a.Kunde ?? "Uten kunde")</span></span>
+                            @if (a.Adresse is not null)
+                            {
+                                <span class="ma-linje"><Icon Name="map-pin" /><span>@a.Adresse</span></span>
+                            }
+                            <span class="ma-linje dempet"><Icon Name="door" /><span>@a.Dorer @(a.Dorer == 1 ? "dør" : "dører")@(a.ApneSaker > 0 ? $" · {a.ApneSaker} åpne saker" : "")</span></span>
+                        </span>
+                    </a>
+                </div>
+            }
+        }
+    </div>
+    <div class="ma-bunnlinje">@Liste.Count serviceavtaler</div>
+
+    @if (_visNy)
+    {
+        <div class="ma-ark-bak" @onclick="@(() => _visNy = false)">
+            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Ny serviceavtale">
+                <div class="ma-ark-handtak"></div>
+                <h3 style="margin:0.2rem 0 0.2rem">Ny serviceavtale</h3>
+                <p class="ma-tom" style="padding:0 0 0.4rem;text-align:left">Opprett avtalen her på stedet, og gå rett til befaringen: legg til dører med komponenttyper, så får du prisen med en gang.</p>
+                <label class="ma-felt"><b>Bygg / navn på avtalen</b><input type="text" @bind="_nyNavn" @bind:event="oninput" placeholder="F.eks. Storgata 5 – service" /></label>
+                <label class="ma-felt"><b>Kunde (valgfritt)</b>
+                    <select @bind="_nyKundeId">
+                        <option value="">Ingen kunde ennå</option>
+                        @foreach (var k in _kunder)
+                        {
+                            <option value="@k.Id">@k.Navn</option>
+                        }
+                    </select>
+                </label>
+                <label class="ma-felt"><b>Adresse (valgfritt)</b><input type="text" @bind="_nyAdresse" placeholder="F.eks. Storgata 5, Egersund" /></label>
+                @if (_feil is not null)
+                {
+                    <p class="ma-feil">@_feil</p>
+                }
+                <div class="ma-under">
+                    <button type="button" class="ma-knapp" @onclick="Opprett" disabled="@(string.IsNullOrWhiteSpace(_nyNavn) || _lagrer)"><Icon Name="plus" />Opprett og start befaring</button>
+                    <button type="button" class="ma-knapp sek" @onclick="@(() => _visNy = false)">Avbryt</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Rad(int Id, string Navn, string? Kunde, string? Adresse, int? Ansvarlig, int Dorer, int ApneSaker, DateTime? Neste, bool PagarRunde, int Kontrollert, int RundeDorer);
+
+    private List<Rad> _avtaler = [];
+    private List<Kunde> _kunder = [];
+    private bool _lastet, _alle, _visNy, _lagrer;
+    private string _sok = "";
+    private int? _brukerId;
+    private string _nyNavn = "";
+    private string? _nyAdresse;
+    private int? _nyKundeId;
+    private string? _feil;
+
+    private List<Rad> Liste => _avtaler
+        .Where(a => _alle || a.Ansvarlig == _brukerId)
+        .Where(a => string.IsNullOrWhiteSpace(_sok)
+            || a.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase)
+            || (a.Kunde?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (a.Adresse?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false))
+        .OrderByDescending(a => a.PagarRunde)
+        .ThenBy(a => a.Neste ?? DateTime.MaxValue)
+        .ThenBy(a => a.Navn)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        {
+            _brukerId = id;
+        }
+
+        var prosjekter = await Db.Prosjekter.AsNoTracking()
+            .Where(p => p.Status == ProsjektStatus.Serviceavtale || p.HarServiceavtale)
+            .Select(p => new { p.Id, p.Navn, Kunde = p.Kunde != null ? p.Kunde.Navn : null, p.Adresse, p.AnsvarligMontorId })
+            .ToListAsync();
+        var ider = prosjekter.Select(p => p.Id).ToList();
+        var dorer = await Db.Dorer.AsNoTracking().Where(d => ider.Contains(d.ProsjektId))
+            .GroupBy(d => d.ProsjektId).Select(g => new { g.Key, N = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.N);
+        var planlagt = await Db.Servicerunder.AsNoTracking().Where(r => ider.Contains(r.ProsjektId) && r.ErPlanlagt)
+            .GroupBy(r => r.ProsjektId).Select(g => new { g.Key, D = g.Min(r => r.Dato) }).ToDictionaryAsync(x => x.Key, x => x.D);
+        var pagar = await Db.Servicerunder.AsNoTracking()
+            .Where(r => ider.Contains(r.ProsjektId) && r.DorForDor && !r.ErPlanlagt && r.FullfortDato == null)
+            .Select(r => new { r.ProsjektId, Dorer = r.Dorer.Count, Kontrollert = r.Dorer.Count(d => d.Status != ServicerundeDorStatus.IkkeKontrollert) })
+            .ToListAsync();
+        var avvik = await Db.Avvik.AsNoTracking()
+            .Where(a => ider.Contains(a.Dor!.ProsjektId) && a.Status != AvvikStatus.Godkjent && a.Status != AvvikStatus.Lukket)
+            .GroupBy(a => a.Dor!.ProsjektId).Select(g => new { g.Key, N = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.N);
+
+        _avtaler = prosjekter.Select(p =>
+        {
+            var pa = pagar.FirstOrDefault(x => x.ProsjektId == p.Id);
+            return new Rad(p.Id, p.Navn, p.Kunde, p.Adresse, p.AnsvarligMontorId,
+                dorer.GetValueOrDefault(p.Id), avvik.GetValueOrDefault(p.Id),
+                planlagt.TryGetValue(p.Id, out var d) ? d : null,
+                pa is not null, pa?.Kontrollert ?? 0, pa?.Dorer ?? 0);
+        }).ToList();
+        _alle = _brukerId is null || !_avtaler.Any(a => a.Ansvarlig == _brukerId);
+        _kunder = await Db.Kunder.AsNoTracking().OrderBy(k => k.Navn).ToListAsync();
+        _lastet = true;
+    }
+
+    private async Task Opprett()
+    {
+        var navn = _nyNavn.Trim();
+        if (navn.Length == 0 || _lagrer)
+        {
+            _feil = "Skriv navn på bygget eller avtalen.";
+            return;
+        }
+        _lagrer = true;
+        var p = new Prosjekt
+        {
+            Navn = navn,
+            KundeId = _nyKundeId,
+            Adresse = string.IsNullOrWhiteSpace(_nyAdresse) ? null : _nyAdresse.Trim(),
+            Status = ProsjektStatus.Serviceavtale,
+            AnsvarligMontorId = _brukerId,
+            ServicePrismodell = ServiceavtalePris.Kategorisert,
+            ServiceGangerPerAr = 2
+        };
+        Db.Prosjekter.Add(p);
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo($"/serviceavtaler/{p.Id}/befaring");
+    }
+}
