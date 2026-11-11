@@ -12,4 +12,8 @@ public static class FirmaInfo
     public const string Telefon = "47355441";
     public const string Epost = "marius@itlock.no";
     public const string Kontaktperson = "Marius Karlsen";
+
+    // Eieren av plattformen: innlogging i adminportalen, og skjult bruker i
+    // organisasjonene (kan logge inn ved behov, men vises ikke for kundene).
+    public const string EierEpost = "mkar1801@gmail.com";
 }

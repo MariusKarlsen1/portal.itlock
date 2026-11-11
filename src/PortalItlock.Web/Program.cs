@@ -405,9 +405,29 @@ using (var seedScope = app.Services.CreateScope())
         platformDb.PlattformBrukere.Add(new PlattformBruker
         {
             Navn = "Marius Karlsen",
-            Epost = "marius@itlock.no"
+            Epost = PortalItlock.Web.Services.FirmaInfo.EierEpost
         });
         platformDb.SaveChanges();
+    }
+
+    // Adminportalen: innloggingen flyttes fra marius@itlock.no til eier-e-posten
+    // (samme passord - bare e-posten byttes). marius@itlock.no har ikke lenger tilgang.
+    {
+        var eier = PortalItlock.Web.Services.FirmaInfo.EierEpost;
+        var plattformBrukere = platformDb.PlattformBrukere.ToList();
+        var gammel = plattformBrukere.FirstOrDefault(b => string.Equals(b.Epost?.Trim(), "marius@itlock.no", StringComparison.OrdinalIgnoreCase));
+        if (gammel is not null)
+        {
+            if (plattformBrukere.Any(b => string.Equals(b.Epost?.Trim(), eier, StringComparison.OrdinalIgnoreCase)))
+            {
+                platformDb.PlattformBrukere.Remove(gammel);
+            }
+            else
+            {
+                gammel.Epost = eier;
+            }
+            platformDb.SaveChanges();
+        }
     }
 
     var aktiveTenants = platformDb.Tenants.Where(t => t.Status == TenantStatus.Aktiv).ToList();
@@ -459,6 +479,12 @@ using (var seedScope = app.Services.CreateScope())
                     platformDb.SaveChanges();
                 }
             }
+
+            // Eieren er skjult i alle organisasjoner (kan logge inn ved behov, men
+            // vises ikke for kundene - bare i adminportalen).
+            var eierEpost = PortalItlock.Web.Services.FirmaInfo.EierEpost.ToLower();
+            seedDb.Brukere.Where(b => b.Epost != null && b.Epost.ToLower() == eierEpost && !b.ErSkjult)
+                .ExecuteUpdate(s => s.SetProperty(b => b.ErSkjult, true));
 
             if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
             {

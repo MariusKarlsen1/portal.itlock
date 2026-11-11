@@ -5,6 +5,42 @@ namespace PortalItlock.Web.Data;
 
 public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : DbContext(options)
 {
+    // ---- Skjulte brukere (eier/support) ----
+    // Konteksten fra DI får tjenestene, slik at den vet hvem som er innlogget.
+    // Skjulte brukere filtreres bort for andre innloggede brukere i portalen.
+    // Uten innlogget bruker (innlogging, bakgrunnsjobber, adminportalen og
+    // kontekster laget med new) er filteret av, så innlogging virker som før.
+    private readonly IServiceProvider? _tjenester;
+    private int? _innloggetBrukerId;
+
+    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options, IServiceProvider tjenester) : this(options)
+    {
+        _tjenester = tjenester;
+    }
+
+    public int? InnloggetBrukerId => _innloggetBrukerId ??= FinnInnloggetBruker();
+
+    private int? FinnInnloggetBruker()
+    {
+        if (_tjenester is null) return null;
+        System.Security.Claims.ClaimsPrincipal? bruker = null;
+        try
+        {
+            bruker = _tjenester.GetService(typeof(Microsoft.AspNetCore.Http.IHttpContextAccessor)) is Microsoft.AspNetCore.Http.IHttpContextAccessor h ? h.HttpContext?.User : null;
+            if (bruker?.Identity?.IsAuthenticated != true
+                && _tjenester.GetService(typeof(Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider)) is Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider asp)
+            {
+                var oppgave = asp.GetAuthenticationStateAsync();
+                if (oppgave.IsCompletedSuccessfully) bruker = oppgave.Result.User;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // Utenfor en Blazor-krets er autentiseringstilstanden ikke satt.
+        }
+        return int.TryParse(bruker?.FindFirst("BrukerId")?.Value, out var id) ? id : null;
+    }
+
     // Brukes i LINQ-spørringer (f.eks. SokResultat.razor) for å filtrere
     // tekstsøk I DATABASEN i stedet for å måtte hente hele tabellen til
     // minnet først - EF Core sin Sqlite-provider kan ikke oversette
@@ -852,6 +888,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .HasForeignKey(nr => nr.LasplanReserveId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+
+        modelBuilder.Entity<Bruker>()
+            .HasQueryFilter(b => InnloggetBrukerId == null || !b.ErSkjult || b.Id == InnloggetBrukerId);
 
         modelBuilder.Entity<Bruker>()
             .HasOne(b => b.Kunde)

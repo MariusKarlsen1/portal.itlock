@@ -11,6 +11,9 @@ public class Bruker
     public string? Stilling { get; set; }
     public BrukerRolle Rolle { get; set; } = BrukerRolle.Montor;
     public bool Aktiv { get; set; } = true;
+    // Skjult eier-/supportbruker: vises ikke i organisasjonens portal (brukerlister,
+    // velgere, tilstede osv.) for andre enn brukeren selv. Synlig i adminportalen.
+    public bool ErSkjult { get; set; }
 
     // Sist brukeren logget inn med e-post og passord. Vises i adminportalen.
     public DateTime? SistInnlogget { get; set; }
