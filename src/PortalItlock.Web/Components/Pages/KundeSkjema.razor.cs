@@ -764,7 +764,7 @@ public partial class KundeSkjema
     private async Task LastServiceavtalerAsync()
     {
         var avtaler = await Db.Prosjekter.AsNoTracking()
-            .Where(p => p.KundeId == Id && p.Status == ProsjektStatus.Serviceavtale)
+            .Where(p => p.KundeId == Id && (p.Status == ProsjektStatus.Serviceavtale || p.HarServiceavtale))
             .Select(p => new { p.Id, p.Navn, Dorer = p.Dorer.Count })
             .ToListAsync();
         var ider = avtaler.Select(a => a.Id).ToList();

@@ -90,6 +90,13 @@ public class Prosjekt
 
     public decimal? ServiceTimepris { get; set; }
 
+    // Prosjektet har serviceavtale uten at statusen er endret (fase 3). Et
+    // overlevert prosjekt beholder da status, etterkalkyle og plass under
+    // Ferdigstilte prosjekter, og finnes i tillegg under Serviceavtaler.
+    // Serviceavtale = Status == Serviceavtale || HarServiceavtale.
+    public bool HarServiceavtale { get; set; }
+    public DateTime? ServiceavtaleOpprettet { get; set; }
+
     // Prising på serviceavtalen: 0 = estimat fra varer (service-minutter),
     // 1 = kategorier etter prisregler (ServicePrisRegel).
     public int ServicePrismodell { get; set; }

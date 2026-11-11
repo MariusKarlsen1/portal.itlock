@@ -5715,6 +5715,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("FdvForside")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("HarServiceavtale")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal?>("Indeksregulering")
                         .HasColumnType("TEXT");
 
@@ -5864,6 +5867,9 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<decimal?>("ServiceTimepris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ServiceavtaleOpprettet")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ServiceavtaleTekst")

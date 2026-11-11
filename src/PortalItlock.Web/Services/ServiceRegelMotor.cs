@@ -234,6 +234,43 @@ public static class ServiceRegelMotor
             beregning.Arspris, p.ServiceGodkjentArspris, p.ServiceGodkjentDato, endringer, regelmodell);
     }
 
+    /// Årlig avtaleverdi for mange avtaler på én gang (hovedoversikten): godkjent
+    /// pris hvis den finnes, ellers beregnet med prismodellen på avtalen.
+    public static async Task<Dictionary<int, (decimal Verdi, bool Godkjent)>> Arsverdier(ApplicationDbContext db, IReadOnlyCollection<Prosjekt> prosjekter)
+    {
+        var ider = prosjekter.Select(p => p.Id).ToList();
+        var regler = await HentRegler(db);
+        var typeKart = await HentTypeKart(db);
+        var dorer = await db.Dorer.AsNoTracking().Where(d => ider.Contains(d.ProsjektId))
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component)
+            .Include(d => d.Funksjoner).ToListAsync();
+        var kategoriPriser = await db.ServiceKategoriPriser.AsNoTracking().Where(k => ider.Contains(k.ProsjektId)).ToListAsync();
+        var linjer = await db.ServiceMinuttLinjer.AsNoTracking().Where(l => ider.Contains(l.ProsjektId)).ToListAsync();
+        var svar = new Dictionary<int, (decimal, bool)>();
+        foreach (var p in prosjekter)
+        {
+            if (p.ServiceGodkjentArspris is { } g)
+            {
+                svar[p.Id] = (g, true);
+                continue;
+            }
+            var kp = kategoriPriser.Where(k => k.ProsjektId == p.Id).ToList();
+            Beregning b;
+            if (p.ServicePrismodell == ServiceavtalePris.Kategorisert)
+            {
+                var res = dorer.Where(d => d.ProsjektId == p.Id).Select(d => Klassifiser(d, regler, typeKart)).Where(r => r.Regel is not null).ToList();
+                b = Beregn(p, res.Sum(r => PrisForKategori(r.Regel!, kp)), res.Sum(r => r.Regel!.Minutter), kp);
+            }
+            else
+            {
+                var min = ServiceavtalePris.MinutterPerRunde(linjer.Where(l => l.ProsjektId == p.Id));
+                b = Beregn(p, ServiceavtalePris.PrisPerRunde(min, p.ServiceTimepris), min, []);
+            }
+            svar[p.Id] = (b.Arspris, false);
+        }
+        return svar;
+    }
+
     public static string LagGrunnlag(IEnumerable<(int DorId, string Kategori)> dorer) =>
         JsonSerializer.Serialize(dorer.ToDictionary(d => d.DorId.ToString(CultureInfo.InvariantCulture), d => d.Kategori));
 
