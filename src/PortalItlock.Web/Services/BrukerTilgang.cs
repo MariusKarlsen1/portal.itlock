@@ -69,7 +69,7 @@ public static class BrukerAdministrasjon
             return "Du kan ikke deaktivere deg selv.";
         }
 
-        if (bruker.Rolle == BrukerRolle.Admin && !await db.Brukere.AnyAsync(b => b.Id != brukerId && b.Aktiv && b.SlettetDato == null && b.Rolle == BrukerRolle.Admin))
+        if (bruker.Rolle == BrukerRolle.Admin && !await db.Brukere.AnyAsync(b => b.Id != brukerId && b.Aktiv && !b.ErSkjult && b.SlettetDato == null && b.Rolle == BrukerRolle.Admin))
         {
             return "Organisasjonen må ha minst én aktiv administrator.";
         }
@@ -116,7 +116,7 @@ public static class BrukerAdministrasjon
             return ("Du kan ikke slette deg selv.", false);
         }
 
-        if (bruker.Rolle == BrukerRolle.Admin && bruker.Aktiv && !await db.Brukere.AnyAsync(b => b.Id != brukerId && b.Aktiv && b.SlettetDato == null && b.Rolle == BrukerRolle.Admin))
+        if (bruker.Rolle == BrukerRolle.Admin && bruker.Aktiv && !await db.Brukere.AnyAsync(b => b.Id != brukerId && b.Aktiv && !b.ErSkjult && b.SlettetDato == null && b.Rolle == BrukerRolle.Admin))
         {
             return ("Organisasjonen må ha minst én aktiv administrator.", false);
         }

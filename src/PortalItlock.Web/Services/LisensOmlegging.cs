@@ -12,7 +12,7 @@ public static class LisensOmlegging
     {
         var lisenser = platformDb.TenantLisenser.Where(l => l.TenantId == tenant.Id).ToList();
         int Tildelt(LisensType t) => lisenser.Where(l => l.Type == t).Sum(l => l.AntallTildelt);
-        var aktive = tenantDb.Brukere.Where(b => b.Aktiv).Select(b => b.Rolle).ToList();
+        var aktive = tenantDb.Brukere.Where(b => b.Aktiv && !b.ErSkjult).Select(b => b.Rolle).ToList();
         int IBruk(BrukerRolle r) => aktive.Count(x => x == r);
 
         var gammel = lisenser.FirstOrDefault(l => l.Type == LisensType.Brukere);

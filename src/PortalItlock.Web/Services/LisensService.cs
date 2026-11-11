@@ -18,7 +18,8 @@ public class LisensService(ApplicationDbContext db, PlatformDbContext platformDb
     public async Task<List<Status>> AlleAsync()
     {
         var tildelt = await TildeltAsync();
-        var brukt = await db.Brukere.AsNoTracking().Where(b => b.Aktiv)
+        // Den skjulte eieren tar aldri en lisens.
+        var brukt = await db.Brukere.AsNoTracking().Where(b => b.Aktiv && !b.ErSkjult)
             .GroupBy(b => b.Rolle).Select(g => new { g.Key, Antall = g.Count() })
             .ToDictionaryAsync(g => g.Key, g => g.Antall);
 
@@ -39,7 +40,7 @@ public class LisensService(ApplicationDbContext db, PlatformDbContext platformDb
             return null;
         }
 
-        var brukt = await db.Brukere.CountAsync(b => b.Aktiv && b.Rolle == rolle && (unntaBrukerId == null || b.Id != unntaBrukerId));
+        var brukt = await db.Brukere.CountAsync(b => b.Aktiv && !b.ErSkjult && b.Rolle == rolle && (unntaBrukerId == null || b.Id != unntaBrukerId));
         return brukt >= tildelt
             ? $"Dere har brukt alle {tildelt} {type.Visningsnavn().ToLowerInvariant()}. Ta kontakt med Full Kontroll for å få aktivert flere."
             : null;
