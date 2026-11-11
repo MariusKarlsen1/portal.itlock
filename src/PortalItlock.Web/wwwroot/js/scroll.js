@@ -3,6 +3,16 @@
 // på siden. Knapper som skal hoppe til en seksjon kaller derfor denne i
 // stedet. Ligger i egen fil fordi <script> inne i en komponent ikke kjøres
 // når komponenten rendres av Blazor.
+// Servicerunden: på mobil hopper siden ned til døren når man trykker på den
+// på plantegningen eller går til neste dør (dørpanelet ligger under tegningen).
+window.servicerundeTilDor = function () {
+    if (window.innerWidth > 1000) return;
+    var el = document.querySelector('.srk-hoyre');
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+};
+
 window.scrollTilElement = function (id) {
     var el = document.getElementById(id);
     if (el) {
