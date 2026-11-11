@@ -12,6 +12,7 @@
 @inject ServicerapportPdfService PdfService
 @inject LagretPdfService LagretPdfService
 @inject MobilVerktoylinjeService Verktoylinje
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>@(_prosjekt?.Navn ?? "Serviceavtale")</PageTitle>
 
@@ -28,22 +29,40 @@ else if (_prosjekt is not null)
        tilbake til oversikten. *@
     <a class="back-link" href="@(Verktoylinje.ErMobilvisning ? "/prosjekter?fane=serviceavtaler" : "/serviceavtaler")">&larr; Tilbake til serviceavtaler</a>
 
-    @* Oppsett "Kort med faner" (oktober 2026): samme rolige kort som
-       dashbordet, ticket og arbeidsordre, med en ny Oversikt-fane. *@
-    <div class="sa-hode">
-        <h1>@_prosjekt.Navn</h1>
-        <span class="sa-pill">Serviceavtale</span>
-        @if (_runder.Count > 0)
-        {
-            <span class="sa-pill sa-pill-gronn"><Icon Name="check" />@_runder.Count @(_runder.Count == 1 ? "servicerunde" : "servicerunder")</span>
-        }
-        @if (_naverendeRolle != BrukerRolle.Montor)
-        {
-            <button type="button" class="sa-knapp sa-rediger-avtale" @onclick="ApneRedigerAvtale"><Icon Name="edit" />Rediger avtale</button>
-        }
-    </div>
-
+    @* Avtalekort K1 «Faner øverst» (Prototype serviceavtalekort.html): toppen ligger inne
+       i kortet som på prosjektene – tittel, Rediger avtale, Ny servicerunde og utvid-knapp
+       øverst til høyre, så den grå linjen og fanene. *@
+    <div class="sa-side @(_saFull ? "sa-full" : "")">
     <div class="sa-kort">
+        <div class="sk-hode">
+            <span class="sk-ikon"><Icon Name="tool" /></span>
+            <div class="sk-tittel">
+                <small>Service · Serviceavtaler</small>
+                <h1>@_prosjekt.Navn</h1>
+            </div>
+            <span class="sa-pill">Serviceavtale</span>
+            @if (_dorRunder.Count > 0)
+            {
+                <span class="sa-pill sa-pill-gronn"><Icon Name="check" />@_dorRunder.Count(r => r.FullfortDato is not null) fullført</span>
+            }
+            <span class="sk-sp"></span>
+            @if (_naverendeRolle != BrukerRolle.Montor)
+            {
+                <button type="button" class="sa-knapp" @onclick="ApneRedigerAvtale"><Icon Name="edit" />Rediger avtale</button>
+            }
+            @if (_dorRunder.FirstOrDefault(r => r.FullfortDato is null) is { } paRunde)
+            {
+                <a class="sa-knapp sa-knapp-p" href="@($"/servicerunder/{paRunde.Id}")"><Icon Name="tool" />Fortsett runden</a>
+            }
+            else
+            {
+                <button type="button" class="sa-knapp sa-knapp-p" @onclick="StartFraOversikt"><Icon Name="plus" />Ny servicerunde</button>
+            }
+            @if (!Verktoylinje.ErMobilvisning)
+            {
+                <button type="button" class="sk-utvid" title="@(_saFull ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslSaFull"><Icon Name="@(_saFull ? "minimize" : "maximize")" /></button>
+            }
+        </div>
         <div class="sa-info">
             <span><Icon Name="users" /><b>@(_prosjekt.Kunde?.Navn ?? "Ingen kunde satt")</b>@(string.IsNullOrWhiteSpace(_prosjekt.Kontaktperson) ? "" : $" · {_prosjekt.Kontaktperson}")</span>
             @if (!string.IsNullOrWhiteSpace(_prosjekt.Adresse))
@@ -52,6 +71,10 @@ else if (_prosjekt is not null)
             }
             <span><Icon Name="door" /><b>@_dorer.Count @(_dorer.Count == 1 ? "dør" : "dører")</b></span>
             <span><Icon Name="calendar" />Neste service <b>@(NesteService?.ToString("dd.MM.yyyy") ?? "ikke planlagt")</b></span>
+            @if (_naverendeRolle != BrukerRolle.Montor && _avtaleStatus is { } avs)
+            {
+                <span><Icon Name="receipt" />Årlig verdi <b>@KrKort(avs.Godkjent ?? avs.Beregnet)</b></span>
+            }
             @if (_naverendeRolle != BrukerRolle.Montor)
             {
                 <label class="sa-ansvarlig" title="Personen ser denne serviceavtalen under &quot;Serviceavtaler&quot; på mobil.">
@@ -96,63 +119,69 @@ else if (_prosjekt is not null)
         }
         else if (_activeTab == "rapporter")
         {
-            @* Rapporter: alle servicerapportene fra rundene, med signatur og PDF.
-               FDV-dokumentasjonen ligger under. *@
-            <section class="rp">
-                <div class="rp-topp">
-                    <div>
-                        <b>Servicerapporter</b>
-                        <span>Rapporten lagres automatisk når runden fullføres, og på nytt når kunden signerer.</span>
-                    </div>
+            @* Rapporter R2 «Én liste med filter» (Prototype rapporter enkel.html):
+               servicerapporter og dokumenter (tilbud, FDV) i én liste. *@
+            var visRapp = _rappFilter is "alle" or "sr";
+            var visDok = _rappFilter is "alle" or "dok";
+            <section class="r2">
+                <div class="r2-topp"><b>Rapporter</b></div>
+                <div class="r2-filt">
+                    <button type="button" class="@(_rappFilter == "alle" ? "pa" : "")" @onclick="@(() => _rappFilter = "alle")">Alle (@(_rapporter.Count + _dokumenter.Count + 1))</button>
+                    <button type="button" class="@(_rappFilter == "sr" ? "pa" : "")" @onclick="@(() => _rappFilter = "sr")">Servicerapporter (@_rapporter.Count)</button>
+                    <button type="button" class="@(_rappFilter == "dok" ? "pa" : "")" @onclick="@(() => _rappFilter = "dok")">Dokumenter (@(_dokumenter.Count + 1))</button>
                 </div>
-                @if (_rapporter.Count == 0)
-                {
-                    <p class="sa-tom">Ingen fullførte servicerunder ennå. Rapportene kommer her når en runde er fullført.</p>
-                }
-                else
-                {
-                    <div class="rp-tabwrap">
-                        <table class="rp-tab">
-                            <thead><tr><th>Rapport</th><th>Montør</th><th class="n">Dører</th><th class="n">Avvik</th><th>Kundens signatur</th><th></th></tr></thead>
-                            <tbody>
-                                @foreach (var r in _rapporter)
+                <div class="r2-liste">
+                    @if (visRapp)
+                    {
+                        @foreach (var r in _rapporter)
+                        {
+                            <div class="r2-rad" @key="@($"r{r.RundeId}")">
+                                <span class="r2-ik pdf">PDF</span>
+                                <span class="r2-t">
+                                    <b>Servicerapport @Sesong(r.Dato)</b>
+                                    <small>@r.Dato.ToString("dd.MM.yyyy")@(r.Montor is null ? "" : $" · {r.Montor}") · @r.Dorer dører@(r.Avvik > 0 ? $" · {r.Avvik} avvik" : "")</small>
+                                </span>
+                                <span class="r2-st @(r.SignertAv is null ? "gul" : "ok")">@(r.SignertAv is null ? "Ikke signert" : $"✓ Signert {r.SignertAv}")</span>
+                                @if (r.PdfId is { } pid)
                                 {
-                                    <tr @key="r.RundeId">
-                                        <td><b>Servicerapport @r.Dato.ToString("dd.MM.yyyy")</b><small>@(r.PdfId is null ? "Ikke lagret ennå" : $"Lagret {r.PdfDato:dd.MM.yyyy HH:mm}")</small></td>
-                                        <td>@(r.Montor ?? "–")</td>
-                                        <td class="n">@r.Dorer</td>
-                                        <td class="n @(r.Avvik > 0 ? "sa-rodtekst" : "")">@r.Avvik</td>
-                                        <td>
-                                            @if (r.SignertAv is not null)
-                                            {
-                                                <span class="sa-chip gronn"><Icon Name="check" />@r.SignertAv</span>
-                                            }
-                                            else
-                                            {
-                                                <span class="sa-chip">Ikke signert</span>
-                                            }
-                                        </td>
-                                        <td class="n rp-kn">
-                                            @if (r.PdfId is { } pid)
-                                            {
-                                                <a class="sa-knapp sa-knapp-liten" href="@($"/lagretpdf/{pid}?vis=1")" target="_blank"><Icon Name="file-text" />Vis</a>
-                                                <a class="sa-knapp sa-knapp-liten" href="@($"/lagretpdf/{pid}")" download><Icon Name="download" /></a>
-                                            }
-                                            else
-                                            {
-                                                <a class="sa-knapp sa-knapp-liten" href="@($"/servicerunde/{r.RundeId}/pdf")" target="_blank"><Icon Name="file-text" />Lag PDF</a>
-                                            }
-                                            <a class="sa-knapp sa-knapp-liten" href="@($"/servicerunder/{r.RundeId}")">Åpne runden</a>
-                                        </td>
-                                    </tr>
+                                    <a class="sa-knapp sa-knapp-liten" href="@($"/lagretpdf/{pid}?vis=1")" target="_blank">Vis</a>
+                                    <a class="sa-knapp sa-knapp-liten" href="@($"/lagretpdf/{pid}")" download title="Last ned"><Icon Name="download" /></a>
                                 }
-                            </tbody>
-                        </table>
-                    </div>
-                }
+                                else
+                                {
+                                    <a class="sa-knapp sa-knapp-liten" href="@($"/servicerunde/{r.RundeId}/pdf")" target="_blank">Lag PDF</a>
+                                }
+                                <a class="sa-knapp sa-knapp-liten" href="@($"/servicerunder/{r.RundeId}")">Runden</a>
+                            </div>
+                        }
+                        @if (_rapporter.Count == 0 && _rappFilter == "sr")
+                        {
+                            <p class="r2-tom">Ingen fullførte servicerunder ennå.</p>
+                        }
+                    }
+                    @if (visDok)
+                    {
+                        @foreach (var d in _dokumenter)
+                        {
+                            <div class="r2-rad" @key="@($"d{d.Id}")">
+                                <span class="r2-ik dok">DOK</span>
+                                <span class="r2-t"><b>@d.Tittel</b><small>@d.Navn · @d.Dato.ToString("dd.MM.yyyy")</small></span>
+                                <a class="sa-knapp sa-knapp-liten" href="@($"/lagretpdf/{d.Id}?vis=1")" target="_blank">Vis</a>
+                                <a class="sa-knapp sa-knapp-liten" href="@($"/lagretpdf/{d.Id}")" download title="Last ned"><Icon Name="download" /></a>
+                            </div>
+                        }
+                        <div class="r2-rad">
+                            <span class="r2-ik dok">FDV</span>
+                            <span class="r2-t"><b>FDV-dokumentasjon</b><small>Produktdokumentasjon for komponentene på dørene</small></span>
+                            <button type="button" class="sa-knapp sa-knapp-liten" @onclick="@(() => _visFdv = !_visFdv)">@(_visFdv ? "Skjul" : "Åpne")</button>
+                        </div>
+                    }
+                </div>
             </section>
-            <h3 class="rp-h">FDV-dokumentasjon</h3>
-            <FdvPanel ProsjektId="ProsjektId" />
+            @if (_visFdv && visDok)
+            {
+                <div class="r2-fdv"><FdvPanel ProsjektId="ProsjektId" /></div>
+            }
         }
         else if (_activeTab == "prising" && _naverendeRolle != BrukerRolle.Montor)
         {
@@ -427,6 +456,7 @@ else if (_prosjekt is not null)
         }
         </div>
     </div>
+    </div>
 
     <PdfPreviewModal Url="@_pdfPreviewUrl" Tittel="Forhåndsvisning av servicerapport" SaveMessage="@_pdfSavedMessage"
                       OnSave="LagreServicerapportPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
@@ -530,6 +560,16 @@ else if (_prosjekt is not null)
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender && !_saFullLastet)
+        {
+            _saFullLastet = true;
+            var full = await VisningPref.HentAsync("serviceavtalekort-bredde", "normal") == "full";
+            if (full != _saFull)
+            {
+                _saFull = full;
+                StateHasChanged();
+            }
+        }
         if (RedigerQuery == 1 && !_redigerApnet && _prosjekt is not null)
         {
             _redigerApnet = true;
@@ -1105,6 +1145,16 @@ else if (_prosjekt is not null)
         await VisStartRunde();
     }
 
+    // Avtalekort K1: «utvid» lar kortet følge vindusbredden. Valget huskes per bruker.
+    private bool _saFull, _saFullLastet;
+
+    private async Task VekslSaFull()
+    {
+        _saFull = !_saFull;
+        await VisningPref.SettAsync("serviceavtalekort-bredde", _saFull ? "full" : "normal");
+    }
+
+
     // Servicerunder E1: navn på runden og periode når den gikk over flere dager.
     private static string Sesong(DateTime d) => $"{(d.Month <= 6 ? "Vår" : "Høst")} {d.Year}";
     private static string Periode(DateTime start, DateTime slutt) =>
@@ -1157,6 +1207,7 @@ else if (_prosjekt is not null)
             .ToListAsync();
         _avtaleStatus = _prosjekt is null ? null : await ServiceRegelMotor.HentAvtaleStatus(Db, _prosjekt);
         _uspesifisert = await Db.DorKomponenter.CountAsync(k => k.Dor!.ProsjektId == ProsjektId && k.Component!.ErPlassholder);
+        await LastRapporter();
     }
 
     // Komponenter fra befaringen som bare har type (plassholdere).
@@ -1165,6 +1216,10 @@ else if (_prosjekt is not null)
     // Rapporter-fanen: fullførte runder med siste lagrede PDF og kundens signatur.
     private sealed record RapportRad(int RundeId, DateTime Dato, string? Montor, int Dorer, int Avvik, string? SignertAv, int? PdfId, DateTime? PdfDato);
     private List<RapportRad> _rapporter = [];
+    private sealed record DokumentRad(int Id, string Tittel, string Navn, DateTime Dato);
+    private List<DokumentRad> _dokumenter = [];
+    private string _rappFilter = "alle";
+    private bool _visFdv;
 
     private async Task VisRapporter()
     {
@@ -1197,6 +1252,13 @@ else if (_prosjekt is not null)
             var pdf = pdfer.GetValueOrDefault(r.Id);
             return new RapportRad(r.Id, r.Dato, r.Montor, r.Dorer, r.Avvik, r.KundeSignertAv, pdf?.Id, pdf?.OpprettetDato);
         }).ToList();
+        _dokumenter = (await Db.LagredePdfer.AsNoTracking()
+                .Where(x => x.EntityId == ProsjektId && (x.EntityType == "Serviceavtaletilbud" || x.EntityType == "Fdv"))
+                .OrderByDescending(x => x.OpprettetDato)
+                .Select(x => new { x.Id, x.EntityType, x.Navn, x.OpprettetDato })
+                .ToListAsync())
+            .Select(x => new DokumentRad(x.Id, x.EntityType == "Fdv" ? "FDV-dokumentasjon (PDF)" : "Tilbud på serviceavtale", x.Navn, x.OpprettetDato))
+            .ToList();
     }
 
     // Oversikt: klikk på en dør viser en liten statusboks under tegningen.
