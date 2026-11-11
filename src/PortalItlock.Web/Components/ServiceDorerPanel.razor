@@ -1,0 +1,390 @@
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+@* Serviceavtale → «Dører og beslag» D8 (Prototype serviceavtalemodul komplett PC.html):
+   enkel tabell Dør · Rom · Etasje · Status. Trykk på en dør åpner dørkortet K1 som
+   forhåndsvisning – man blir værende i serviceavtalen og havner ikke i prosjektet. *@
+<section class="sdp">
+    <div class="sdp-topp">
+        <b>Dører og beslag</b>
+        <span class="sdp-mini">@_dorer.Count @(_dorer.Count == 1 ? "dør" : "dører") · @_dorer.Sum(d => d.Beslag.Count) beslag</span>
+        <span class="sdp-sp"></span>
+        @if (KanRedigere)
+        {
+            <button type="button" class="sdp-knapp" @onclick="OnPlantegninger"><Icon Name="map" />Plantegninger</button>
+            <button type="button" class="sdp-knapp" @onclick="OnImporter"><Icon Name="upload" />Importer</button>
+            <a class="sdp-knapp sdp-knapp-p" href="@($"/serviceavtaler/{ProsjektId}/befaring")"><Icon Name="plus" />Befaring</a>
+        }
+    </div>
+
+    @if (!_lastet)
+    {
+        <p class="sdp-tom">Laster dører …</p>
+    }
+    else if (_dorer.Count == 0)
+    {
+        <p class="sdp-tom">Avtalen har ingen dører ennå. Trykk «Befaring» for å legge inn dører med komponenttyper, eller «Importer» for å hente en dørliste.</p>
+    }
+    else
+    {
+        <div class="sdp-wrap">
+            <table class="sdp-tb">
+                <thead><tr><th>Dør</th><th>Rom</th><th>Etasje</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var d in _dorer)
+                    {
+                        <tr @key="d.Id" @onclick="@(() => _valgt = d)">
+                            <td class="sdp-nr"><i class="sdp-dot @d.Farge"></i><b>@d.Dornummer</b></td>
+                            <td>@(d.Rom ?? "–")</td>
+                            <td>@(d.Etasje ?? "–")</td>
+                            <td><StatusPill Tekst="@StatusTekst(d.Farge)" Ikon="@StatusIkon(d.Farge)" Farge="@d.Farge" /></td>
+                            <td class="n"><button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => _valgt = d)" @onclick:stopPropagation="true">Dørkort</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@if (_valgt is { } v)
+{
+    var historikk = Historikk(v);
+    var dok = Dokumenter(v);
+    <div class="sdp-bak" @onclick="@(() => _valgt = null)">
+        <div class="sdp-dlg" @onclick:stopPropagation="true">
+            <div class="sdp-dh">
+                <i class="sdp-dot stor @v.Farge"></i>
+                <span class="sdp-dh-t">Dørkort @v.Dornummer</span>
+                <span class="sdp-mini">@(v.Rom ?? "")@(v.Etasje is null ? "" : $" · {v.Etasje}")</span>
+                @if (!string.IsNullOrWhiteSpace(v.Kategori))
+                {
+                    <StatusPill Tekst="@v.Kategori" Ikon="tag" Farge="blaa" />
+                }
+                <StatusPill Tekst="@StatusTekst(v.Farge)" Ikon="@StatusIkon(v.Farge)" Farge="@v.Farge" />
+                <span class="sdp-sp"></span>
+                <span class="sdp-forh">Forhåndsvisning</span>
+                <button type="button" class="sdp-x" title="Lukk" @onclick="@(() => _valgt = null)">×</button>
+            </div>
+            <div class="sdp-info">
+                <span>Montert <b>@(v.MontertDato?.ToString("dd.MM.yyyy") ?? "–")</b></span>
+                <span>Beslag <b>@v.Beslag.Count</b></span>
+                <span>Sist kontrollert <b>@(v.SistKontrollert?.ToString("dd.MM.yyyy") ?? "ikke ennå")</b></span>
+                <span>Åpne saker <b class="@(v.Saker.Count > 0 ? "sdp-rod" : "")">@v.Saker.Count</b></span>
+            </div>
+            <div class="sdp-db">
+                <div class="sdp-kol">
+                    @if (v.PlantegningId is { } pid && v.TegningErBilde && v.PosX is { } px && v.PosY is { } py)
+                    {
+                        <div class="sdp-plan">
+                            <img src="@($"/plantegningbilde/{pid}")" alt="Plantegning" />
+                            <span class="sdp-pin" style="left:@px.ToString(CultureInfo.InvariantCulture)%;top:@py.ToString(CultureInfo.InvariantCulture)%"><i class="@v.Farge"></i><span>@v.Dornummer</span></span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="sdp-plan sdp-plan-tom"><Icon Name="map" /><span>Døren er ikke plassert på en plantegning.</span></div>
+                    }
+                    <div class="sdp-s">
+                        <div class="sdp-sh"><b>Funksjoner</b></div>
+                        <div class="sdp-chips">
+                            @if (v.Funksjoner.Count == 0)
+                            {
+                                <span class="sdp-mini">Ingen registrert</span>
+                            }
+                            @foreach (var f in v.Funksjoner)
+                            {
+                                <span class="sdp-chip">@f</span>
+                            }
+                        </div>
+                    </div>
+                    <div class="sdp-s">
+                        <div class="sdp-sh"><b>Dørdata</b></div>
+                        @foreach (var (navn, verdi) in Dordata(v))
+                        {
+                            <div class="sdp-rad"><span class="sdp-mini sdp-lbl">@navn</span><b>@verdi</b></div>
+                        }
+                    </div>
+                </div>
+                <div class="sdp-kol">
+                    <div class="sdp-s">
+                        <div class="sdp-sh"><b>Beslag på døren</b><small>@v.Beslag.Count stk</small></div>
+                        @if (v.Beslag.Count == 0)
+                        {
+                            <div class="sdp-rad sdp-mini">Ingen beslag registrert på døren.</div>
+                        }
+                        else
+                        {
+                            <table class="sdp-tb">
+                                <thead><tr><th>Beslag</th><th>Produkt</th><th>Leverandør · varenr</th><th class="n">Ant.</th><th>Montert</th></tr></thead>
+                                <tbody>
+                                    @foreach (var b in v.Beslag)
+                                    {
+                                        <tr>
+                                            <td><b>@b.Type</b></td>
+                                            <td>
+                                                @if (b.ErPlassholder)
+                                                {
+                                                    <span class="sdp-gul">Ikke spesifisert</span>
+                                                }
+                                                else
+                                                {
+                                                    @b.Produkt
+                                                }
+                                            </td>
+                                            <td class="sdp-mini">@(b.Leverandor ?? "–") · @(b.Varenr ?? "–")</td>
+                                            <td class="n">@b.Antall</td>
+                                            <td>@(b.MontertDato?.ToString("dd.MM.yyyy") ?? "–")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </div>
+                    <div class="sdp-to">
+                        <div class="sdp-s">
+                            <div class="sdp-sh"><b>Historikk</b></div>
+                            @if (historikk.Count == 0)
+                            {
+                                <div class="sdp-rad sdp-mini">Ingen hendelser ennå.</div>
+                            }
+                            @foreach (var h in historikk)
+                            {
+                                <div class="sdp-rad">
+                                    <span class="sdp-mini sdp-dato">@h.Dato.ToString("dd.MM.yyyy")</span>
+                                    <span class="sdp-t"><b>@h.Tittel</b>@if (!string.IsNullOrWhiteSpace(h.Tekst)) {<small>@h.Tekst</small>}</span>
+                                    <i class="sdp-dot @h.Farge"></i>
+                                </div>
+                            }
+                        </div>
+                        <div class="sdp-s">
+                            <div class="sdp-sh"><b>Dokumenter og bilder</b></div>
+                            @if (dok.Count == 0)
+                            {
+                                <div class="sdp-rad sdp-mini">Ingen dokumenter eller bilder.</div>
+                            }
+                            @foreach (var x in dok)
+                            {
+                                <div class="sdp-rad">
+                                    <span class="sdp-ik @(x.Type == "IMG" ? "bla" : "rod")">@x.Type</span>
+                                    <span class="sdp-t"><b>@x.Navn</b><small>@x.Kilde</small></span>
+                                    <a class="sdp-knapp sdp-liten" href="@x.Url" target="_blank">Vis</a>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="sdp-df">
+                <span class="sdp-mini">Dørkortet vises her – du blir værende i serviceavtalen.</span>
+                <span class="sdp-sp"></span>
+                <a class="sdp-knapp" href="@($"/dor/{v.Id}/etikett.pdf")" target="_blank"><Icon Name="printer" />Etikett</a>
+                @if (KanRedigere)
+                {
+                    <a class="sdp-knapp" href="@($"/dor/{v.Id}")"><Icon Name="edit" />Rediger</a>
+                }
+                <button type="button" class="sdp-knapp sdp-knapp-p" @onclick="@(() => _valgt = null)">Lukk</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int ProsjektId { get; set; }
+    [Parameter] public bool KanRedigere { get; set; } = true;
+    [Parameter] public EventCallback OnPlantegninger { get; set; }
+    [Parameter] public EventCallback OnImporter { get; set; }
+
+    private sealed record BeslagRad(int ComponentId, string Type, string Produkt, string? Leverandor, string? Varenr, int Antall, DateTime? MontertDato, bool ErPlassholder);
+    private sealed record SakRad(string Tittel, string Status, bool ErAvvik, DateTime Dato);
+    private sealed record HistRad(DateTime Dato, string Tittel, string? Tekst, string Farge);
+    private sealed record DokRad(string Type, string Navn, string Kilde, string Url);
+
+    private sealed class DorRad
+    {
+        public int Id { get; init; }
+        public string Dornummer { get; init; } = "";
+        public string? Rom { get; init; }
+        public string? Etasje { get; init; }
+        public string? Kategori { get; init; }
+        public string Farge { get; set; } = "gronn";
+        public int? PlantegningId { get; init; }
+        public bool TegningErBilde { get; set; }
+        public double? PosX { get; init; }
+        public double? PosY { get; init; }
+        public DateTime? MontertDato { get; init; }
+        public string? Dortype { get; init; }
+        public string? Brann { get; init; }
+        public string? Slagretning { get; init; }
+        public string? Mal { get; init; }
+        public List<string> Funksjoner { get; init; } = [];
+        public List<BeslagRad> Beslag { get; init; } = [];
+        public List<SakRad> Saker { get; set; } = [];
+        public DateTime? SistKontrollert { get; set; }
+        public List<(DateTime Dato, string Status)> Runder { get; set; } = [];
+        public List<(DateTime Dato, string Tekst)> Hendelser { get; set; } = [];
+        public List<(int Id, string Navn)> Bilder { get; set; } = [];
+        public List<DokRad> Dokumenter { get; set; } = [];
+    }
+
+    private List<DorRad> _dorer = [];
+    private DorRad? _valgt;
+    private bool _lastet;
+    private int? _lastetFor;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_lastetFor == ProsjektId)
+        {
+            return;
+        }
+        _lastetFor = ProsjektId;
+        await LastAsync();
+    }
+
+    private async Task LastAsync()
+    {
+        var dorer = await Db.Dorer.AsNoTracking()
+            .Where(d => d.ProsjektId == ProsjektId)
+            .Select(d => new
+            {
+                d.Id, d.Dornummer, Rom = d.Romnr ?? d.DorTil, d.Etasje, d.PlantegningId, d.PosX, d.PosY, d.MontertDato,
+                d.Dortype, d.Brann, d.Slagretning, d.Bredde, d.Hoyde, d.BxH,
+                Funksjoner = d.Funksjoner.Select(f => f.Navn).ToList(),
+                Beslag = d.Komponenter.Select(k => new
+                {
+                    k.ComponentId,
+                    Type = k.Component!.Type != null ? k.Component.Type.Navn : k.Component.Navn,
+                    Produkt = k.Component.Navn,
+                    Leverandor = k.Component.Leverandor ?? k.Component.Produsent,
+                    k.Component.Produktkode, k.Antall, k.MontertDato, k.Component.ErPlassholder
+                }).ToList()
+            })
+            .ToListAsync();
+
+        var tegningIder = dorer.Where(d => d.PlantegningId.HasValue).Select(d => d.PlantegningId!.Value).Distinct().ToList();
+        var bildeTegninger = (await Db.Plantegninger.AsNoTracking()
+                .Where(p => tegningIder.Contains(p.Id))
+                .Select(p => new { p.Id, p.ContentType })
+                .ToListAsync())
+            .Where(p => p.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.Id)
+            .ToHashSet();
+
+        var avvik = await Db.Avvik.AsNoTracking()
+            .Where(a => a.Dor!.ProsjektId == ProsjektId && a.Status != AvvikStatus.Godkjent)
+            .Select(a => new { a.DorId, a.Beskrivelse, a.Status, a.OpprettetDato })
+            .ToListAsync();
+        var meldinger = (await DriftHelper.HentMeldinger(Db, Db.Driftsmeldinger.Where(m => m.Dor!.ProsjektId == ProsjektId)))
+            .Where(m => m.ErApen)
+            .ToList();
+
+        var runder = await Db.ServicerundeDorer.AsNoTracking()
+            .Where(x => x.Servicerunde!.ProsjektId == ProsjektId && x.Servicerunde.FullfortDato != null)
+            .Select(x => new { x.DorId, x.Status, x.Servicerunde!.Dato })
+            .ToListAsync();
+
+        _dorer = dorer
+            .OrderBy(d => d.Dornummer)
+            .Select(d =>
+            {
+                var rad = new DorRad
+                {
+                    Id = d.Id, Dornummer = d.Dornummer, Rom = d.Rom, Etasje = string.IsNullOrWhiteSpace(d.Etasje) ? null : int.TryParse(d.Etasje, out _) ? $"{d.Etasje}. etasje" : d.Etasje, PlantegningId = d.PlantegningId,
+                    PosX = d.PosX, PosY = d.PosY, MontertDato = d.MontertDato, Dortype = d.Dortype, Brann = d.Brann,
+                    Slagretning = d.Slagretning,
+                    Mal = d.Bredde is not null || d.Hoyde is not null ? $"{d.Bredde?.ToString() ?? "?"} × {d.Hoyde?.ToString() ?? "?"}" : d.BxH,
+                    Funksjoner = d.Funksjoner,
+                    Beslag = d.Beslag.Select(b => new BeslagRad(b.ComponentId, b.Type, b.Produkt, b.Leverandor, b.Produktkode, b.Antall, b.MontertDato, b.ErPlassholder)).ToList(),
+                    TegningErBilde = d.PlantegningId is { } pid && bildeTegninger.Contains(pid)
+                };
+                var dm = meldinger.Where(m => m.Melding.DorId == d.Id).ToList();
+                var da = avvik.Where(a => a.DorId == d.Id).ToList();
+                rad.Farge = da.Count > 0 || dm.Any(m => m.Steg != DriftHelper.Steg.UnderArbeid) ? "rod" : dm.Count > 0 ? "gul" : "gronn";
+                rad.Saker = da.Select(a => new SakRad(a.Beskrivelse, a.Status.Visningsnavn(), true, a.OpprettetDato))
+                    .Concat(dm.Select(m => new SakRad(string.IsNullOrWhiteSpace(m.Melding.Tittel) ? m.Melding.Tekst : m.Melding.Tittel, m.Navn, false, m.Melding.OpprettetDato)))
+                    .OrderByDescending(s => s.Dato).ToList();
+                rad.Runder = runder.Where(r => r.DorId == d.Id).OrderByDescending(r => r.Dato).Select(r => (r.Dato, r.Status)).ToList();
+                rad.SistKontrollert = rad.Runder.Count > 0 ? rad.Runder[0].Dato : null;
+                return rad;
+            })
+            .ToList();
+        _lastet = true;
+    }
+
+    // Historikk og dokumenter hentes når dørkortet åpnes – ikke for alle dørene på en gang.
+    private readonly HashSet<int> _detaljerLastet = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_valgt is { } v && _detaljerLastet.Add(v.Id))
+        {
+            v.Hendelser = (await Db.DorHendelser.AsNoTracking()
+                    .Where(h => h.DorId == v.Id)
+                    .OrderByDescending(h => h.Tidspunkt)
+                    .Take(10)
+                    .Select(h => new { h.Tidspunkt, h.Beskrivelse })
+                    .ToListAsync())
+                .Select(h => (h.Tidspunkt, h.Beskrivelse)).ToList();
+            v.Bilder = (await Db.DorMedia.AsNoTracking()
+                    .Where(m => m.DorId == v.Id && m.ContentType.StartsWith("image/"))
+                    .OrderByDescending(m => m.OpprettetDato)
+                    .Take(6)
+                    .Select(m => new { m.Id, m.Filnavn })
+                    .ToListAsync())
+                .Select(m => (m.Id, m.Filnavn)).ToList();
+            var kompIder = v.Beslag.Where(b => !b.ErPlassholder).Select(b => b.ComponentId).Distinct().ToList();
+            var navn = v.Beslag.GroupBy(b => b.ComponentId).ToDictionary(g => g.Key, g => g.First().Produkt);
+            var fdv = await Db.ComponentFdvDokumenter.AsNoTracking()
+                .Where(x => kompIder.Contains(x.ComponentId))
+                .Select(x => new { x.Id, x.ComponentId, x.Filnavn })
+                .ToListAsync();
+            var datablad = await Db.ComponentDatabladDokumenter.AsNoTracking()
+                .Where(x => kompIder.Contains(x.ComponentId))
+                .Select(x => new { x.Id, x.ComponentId, x.Filnavn })
+                .ToListAsync();
+            v.Dokumenter = fdv.Select(x => new DokRad("PDF", $"FDV – {navn.GetValueOrDefault(x.ComponentId)}", x.Filnavn, $"/komponent/fdvdokument/{x.Id}"))
+                .Concat(datablad.Select(x => new DokRad("PDF", $"Produktdatablad – {navn.GetValueOrDefault(x.ComponentId)}", x.Filnavn, $"/komponent/databladdokument/{x.Id}")))
+                .ToList();
+            StateHasChanged();
+        }
+    }
+
+    private static List<HistRad> Historikk(DorRad v) =>
+        v.Runder.Select(r => new HistRad(r.Dato, "Servicerunde", r.Status == ServicerundeDorStatus.Avvik ? "Avvik registrert" : "OK",
+                r.Status == ServicerundeDorStatus.Avvik ? "rod" : "gronn"))
+            .Concat(v.Hendelser.Select(h => new HistRad(h.Dato, h.Tekst, null, "gra")))
+            .Concat(v.MontertDato is { } md ? new[] { new HistRad(md, "Montert", null, "gra") } : Array.Empty<HistRad>())
+            .OrderByDescending(h => h.Dato)
+            .Take(8)
+            .ToList();
+
+    private static List<DokRad> Dokumenter(DorRad v) =>
+        v.Dokumenter.Concat(v.Bilder.Select(b => new DokRad("IMG", "Bilde", b.Navn, $"/dormedia/{b.Id}"))).ToList();
+
+    private static IEnumerable<(string, string)> Dordata(DorRad v)
+    {
+        yield return ("Dørtype", string.IsNullOrWhiteSpace(v.Dortype) ? "–" : v.Dortype);
+        yield return ("Brannklasse", string.IsNullOrWhiteSpace(v.Brann) ? "–" : v.Brann);
+        yield return ("Slagretning", string.IsNullOrWhiteSpace(v.Slagretning) ? "–" : v.Slagretning);
+        yield return ("Mål", string.IsNullOrWhiteSpace(v.Mal) ? "–" : v.Mal);
+    }
+
+    private static string StatusTekst(string farge) => farge switch
+    {
+        "rod" => "Åpen sak",
+        "gul" => "Under arbeid",
+        _ => "I orden"
+    };
+
+    private static string StatusIkon(string farge) => farge switch
+    {
+        "rod" => "alert",
+        "gul" => "tool",
+        _ => "check"
+    };
+}

@@ -6,7 +6,7 @@
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 
-@* Driftsmeldinger og avvik A1 «Én liste» (Prototype driftsmeldinger og avvik enkel.html):
+@* A3 (Prototype serviceavtalemodul komplett PC.html): Type · Dør · Sak · Dato · Status. Tidligere: A1 «Én liste» (Prototype driftsmeldinger og avvik enkel.html):
    driftsmeldinger og avvik i én liste med type, dør, hvor saken kom fra, dato og status.
    Filter Åpne/Alle, og knapper for ny driftsmelding og nytt avvik. *@
 <div class="da">
@@ -62,18 +62,17 @@
            status som farget merke. *@
         <div class="tb-wrap">
             <table class="tb">
-                <thead><tr><th>Type</th><th>Dør</th><th>Sak</th><th>Kilde</th><th>Dato</th><th>Status</th><th></th></tr></thead>
+                <thead><tr><th>Type</th><th>Dør</th><th>Sak</th><th>Dato</th><th>Status</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var s in liste)
                     {
-                        <tr @key="s.Nokkel" class="klikk @(s.Apen ? "" : "lukket")" @onclick="@(() => Nav.NavigateTo(s.Lenke))">
+                        <tr @key="s.Nokkel" class="klikk @(s.Apen ? "" : "lukket")" @onclick="@(() => ApneSak(s))">
                             <td><span class="da-type @(s.ErAvvik ? "av" : "dm")">@(s.ErAvvik ? "Avvik" : "Driftsmelding")</span></td>
                             <td><b>@s.Dor</b>@if (!string.IsNullOrWhiteSpace(s.Rom)) {<small>@s.Rom</small>}</td>
                             <td class="tb-sak">@s.Tittel</td>
-                            <td class="tb-dempet">@s.Kilde</td>
                             <td>@s.Dato.ToString("dd.MM.yyyy")</td>
                             <td><StatusPill Tekst="@s.Status" Ikon="@(s.Farge == "gronn" ? "check" : s.Farge == "gul" ? "clock" : "alert")" Farge="@s.Farge" /></td>
-                            <td class="n"><a class="da-knapp" href="@s.Lenke" @onclick:stopPropagation="true">Åpne</a></td>
+                            <td class="n"><button type="button" class="da-knapp" @onclick="@(() => ApneSak(s))" @onclick:stopPropagation="true">Åpne</button></td>
                         </tr>
                     }
                 </tbody>
@@ -81,6 +80,59 @@
         </div>
     }
 </div>
+
+@* A3: saken åpnes som forhåndsvisning – man blir værende i serviceavtalen.
+   «Åpne hele saken» går til avvik-/driftsmeldingssiden for å behandle den. *@
+@if (_valgtSak is { } vs)
+{
+    <div class="da-bak" @onclick="@(() => _valgtSak = null)">
+        <div class="da-dlg" @onclick:stopPropagation="true">
+            <div class="da-dh">
+                <span class="da-type @(vs.ErAvvik ? "av" : "dm")">@(vs.ErAvvik ? "Avvik" : "Driftsmelding")</span>
+                <span class="da-dh-t">@vs.Tittel</span>
+                <span class="da-sp"></span>
+                <StatusPill Tekst="@vs.Status" Ikon="@(vs.Farge == "gronn" ? "check" : vs.Farge == "gul" ? "clock" : "alert")" Farge="@vs.Farge" />
+                <button type="button" class="da-x" title="Lukk" @onclick="@(() => _valgtSak = null)">×</button>
+            </div>
+            <div class="da-info">
+                <span>Dør <b>@vs.Dor@(string.IsNullOrWhiteSpace(vs.Rom) ? "" : $" {vs.Rom}")</b></span>
+                <span>Dato <b>@vs.Dato.ToString("dd.MM.yyyy")</b></span>
+                @if (_detalj?.Ansvarlig is { } ans)
+                {
+                    <span>Ansvarlig <b>@ans</b></span>
+                }
+                <span>@vs.Kilde</span>
+            </div>
+            <div class="da-db">
+                <div>
+                    <div class="da-lbl">BESKRIVELSE</div>
+                    <div class="da-tekst">@(_detalj?.Beskrivelse ?? vs.Tittel)</div>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_detalj?.Utbedring))
+                {
+                    <div>
+                        <div class="da-lbl">UTBEDRING</div>
+                        <div class="da-tekst">@_detalj.Utbedring</div>
+                    </div>
+                }
+                @if (_detalj is { Bilder.Count: > 0 })
+                {
+                    <div class="da-bilder">
+                        @foreach (var url in _detalj.Bilder)
+                        {
+                            <a href="@url" target="_blank"><img src="@url" alt="Bilde" loading="lazy" /></a>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="da-df">
+                <span class="da-sp"></span>
+                <button type="button" class="da-knapp" @onclick="@(() => _valgtSak = null)">Lukk</button>
+                <a class="da-knapp da-knapp-p" href="@vs.Lenke">Åpne hele saken</a>
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     [Parameter, EditorRequired] public int ProsjektId { get; set; }
@@ -111,6 +163,35 @@
                 m.ErApen, $"/driftsmelding/{m.Melding.Id}")))
         .OrderByDescending(s => s.Apen).ThenByDescending(s => s.Dato)
         .ToList();
+
+    private sealed record SakDetalj(string Beskrivelse, string? Utbedring, string? Ansvarlig, List<string> Bilder);
+    private Sak? _valgtSak;
+    private SakDetalj? _detalj;
+
+    private async Task ApneSak(Sak s)
+    {
+        _valgtSak = s;
+        _detalj = null;
+        if (s.ErAvvik && int.TryParse(s.Nokkel[1..], out var aid))
+        {
+            var a = await Db.Avvik.AsNoTracking().Where(x => x.Id == aid)
+                .Select(x => new { x.Beskrivelse, x.UtbedringBeskrivelse, Ansvarlig = x.AnsvarligBruker != null ? x.AnsvarligBruker.Navn : null })
+                .FirstOrDefaultAsync();
+            var bilder = await Db.AvvikMedia.AsNoTracking().Where(m => m.AvvikId == aid && m.ContentType.StartsWith("image/"))
+                .Select(m => m.Id).ToListAsync();
+            if (a is not null)
+            {
+                _detalj = new SakDetalj(a.Beskrivelse, a.UtbedringBeskrivelse, a.Ansvarlig, bilder.Select(id => $"/avvikmedia/{id}/fil").ToList());
+            }
+        }
+        else if (int.TryParse(s.Nokkel[1..], out var mid))
+        {
+            var tekst = await Db.Driftsmeldinger.AsNoTracking().Where(x => x.Id == mid).Select(x => x.Tekst).FirstOrDefaultAsync();
+            var bilder = await Db.DriftsmeldingMedia.AsNoTracking().Where(m => m.DriftsmeldingId == mid && m.ContentType.StartsWith("image/"))
+                .Select(m => m.Id).ToListAsync();
+            _detalj = new SakDetalj(tekst ?? s.Tittel, null, null, bilder.Select(id => $"/driftsmeldingmedia/{id}/fil").ToList());
+        }
+    }
 
     private string AvvikKilde(Avvik a) =>
         a.ServicerundeDorId is { } id && _rundeNavn.TryGetValue(id, out var n) ? $"Fra servicerunden {n}" : "Registrert manuelt";
