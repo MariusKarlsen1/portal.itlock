@@ -158,6 +158,7 @@ builder.Services.AddScoped<AbonnementService>();
 builder.Services.AddScoped<PlattformFakturaService>();
 builder.Services.AddHostedService<PlattformFakturaBackgroundService>();
 builder.Services.AddScoped<OrganisasjonBackupService>();
+builder.Services.AddScoped<OrganisasjonKopiService>();
 builder.Services.AddHostedService<OrganisasjonBackupBackgroundService>();
 builder.Services.AddScoped<ServiceVarselService>();
 builder.Services.AddHostedService<ServiceVarselBackgroundService>();

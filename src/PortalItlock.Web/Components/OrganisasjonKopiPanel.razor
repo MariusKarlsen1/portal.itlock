@@ -1,0 +1,133 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject PlatformDbContext PlatformDb
+@inject OrganisasjonKopiService Kopi
+
+@* Kopier grunndata og prosjekter fra en annen organisasjon (f.eks. itlock AS) til
+   denne. Det tas en sikkerhetskopi av denne organisasjonen først, og alt kopieres
+   i én transaksjon. Grunndata som finnes fra før (samme navn) gjenbrukes. *@
+<section class="ok-kopi">
+    <h3 class="ok-h3">Kopier fra annen organisasjon</h3>
+    <p class="ok-tekst">Hent grunndata og prosjekter fra en annen organisasjon inn i <b>@Mottaker.Navn</b>. Det tas en sikkerhetskopi først. Det som finnes fra før med samme navn, brukes i stedet for å lage dobbelt.</p>
+
+    <label class="ok-label">Kopier fra
+        <select class="ok-input" value="@(_kildeId?.ToString() ?? "")" @onchange="VelgKilde">
+            <option value="">Velg organisasjon …</option>
+            @foreach (var t in _tenanter)
+            {
+                <option value="@t.Id">@t.Navn</option>
+            }
+        </select>
+    </label>
+
+    @if (_kildeId is not null)
+    {
+        <div class="ok-grupper">
+            <b>Grunndata</b>
+            <div class="ok-sjekk">
+                @foreach (var g in OrganisasjonKopiService.Grupper)
+                {
+                    <label><input type="checkbox" checked="@_grupper.Contains(g.Nokkel)" @onchange="@(e => Veksl(_grupper, g.Nokkel, e.Value is true))" />@g.Navn</label>
+                }
+            </div>
+            <button type="button" class="ok-lenke" @onclick="@(() => { foreach (var g in OrganisasjonKopiService.Grupper) _grupper.Add(g.Nokkel); })">Velg alle</button>
+        </div>
+
+        <div class="ok-grupper">
+            <b>Prosjekter <small>med tilbud, arbeidsordrer, dører, plantegninger og alt som hører til</small></b>
+            <input class="ok-input" placeholder="Søk prosjekt, f.eks. Steinerskolen" @bind="_sok" @bind:event="oninput" />
+            <div class="ok-prosjekter">
+                @foreach (var p in _prosjekter.Where(p => string.IsNullOrWhiteSpace(_sok) || p.Navn.Contains(_sok, StringComparison.OrdinalIgnoreCase) || (p.Kunde?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false)).Take(40))
+                {
+                    <label><input type="checkbox" checked="@_valgteProsjekter.Contains(p.Id)" @onchange="@(e => { if (e.Value is true) _valgteProsjekter.Add(p.Id); else _valgteProsjekter.Remove(p.Id); })" />@p.Navn<small>@p.Kunde</small></label>
+                }
+            </div>
+            @if (_valgteProsjekter.Count > 0)
+            {
+                <small>@_valgteProsjekter.Count valgt</small>
+            }
+        </div>
+
+        <div class="ok-kn">
+            @if (_bekreft)
+            {
+                <span>Kopiere @(_grupper.Count) grunndata-registre og @_valgteProsjekter.Count prosjekter til @Mottaker.Navn?</span>
+                <button type="button" class="ok-btn" @onclick="@(() => _bekreft = false)">Avbryt</button>
+                <button type="button" class="ok-btn ok-btn-p" @onclick="Kjor" disabled="@_kjorer">@(_kjorer ? "Kopierer …" : "Ja, kopier")</button>
+            }
+            else
+            {
+                <button type="button" class="ok-btn ok-btn-p" disabled="@(_grupper.Count == 0 && _valgteProsjekter.Count == 0)" @onclick="@(() => _bekreft = true)">Kopier</button>
+            }
+        </div>
+    }
+
+    @if (_resultat is { } r)
+    {
+        <div class="ok-res @(r.Ok ? "ok" : "feil")">
+            <b>@r.Melding</b>
+            @if (r.Tabeller.Count > 0)
+            {
+                <ul>
+                    @foreach (var (t, n) in r.Tabeller)
+                    {
+                        <li>@t: @n</li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Tenant Mottaker { get; set; } = null!;
+    [Parameter] public string? Av { get; set; }
+
+    private List<Tenant> _tenanter = [];
+    private int? _kildeId;
+    private readonly HashSet<string> _grupper = [];
+    private List<(int Id, string Navn, string? Kunde)> _prosjekter = [];
+    private readonly HashSet<int> _valgteProsjekter = [];
+    private string _sok = "";
+    private bool _bekreft, _kjorer;
+    private OrganisasjonKopiService.Resultat? _resultat;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _tenanter = await PlatformDb.Tenants.AsNoTracking().Where(t => t.Id != Mottaker.Id).OrderBy(t => t.Navn).ToListAsync();
+    }
+
+    private async Task VelgKilde(ChangeEventArgs e)
+    {
+        _kildeId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        _valgteProsjekter.Clear();
+        _prosjekter = [];
+        _resultat = null;
+        if (_tenanter.FirstOrDefault(t => t.Id == _kildeId) is { } kilde)
+        {
+            _prosjekter = await OrganisasjonKopiService.HentProsjekterAsync(kilde);
+        }
+    }
+
+    private static void Veksl(HashSet<string> sett, string verdi, bool pa)
+    {
+        if (pa) sett.Add(verdi); else sett.Remove(verdi);
+    }
+
+    private async Task Kjor()
+    {
+        if (_tenanter.FirstOrDefault(t => t.Id == _kildeId) is not { } kilde || _kjorer) return;
+        _kjorer = true;
+        try
+        {
+            _resultat = await Kopi.KopierAsync(kilde, Mottaker, _grupper.ToList(), _valgteProsjekter.ToList(), Av);
+        }
+        finally
+        {
+            _kjorer = false;
+            _bekreft = false;
+        }
+    }
+}
