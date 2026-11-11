@@ -483,7 +483,7 @@ using (var seedScope = app.Services.CreateScope())
             // Eieren er skjult i alle organisasjoner (kan logge inn ved behov, men
             // vises ikke for kundene - bare i adminportalen).
             var eierEpost = PortalItlock.Web.Services.FirmaInfo.EierEpost.ToLower();
-            seedDb.Brukere.Where(b => b.Epost != null && b.Epost.ToLower() == eierEpost && !b.ErSkjult)
+            seedDb.Brukere.Where(b => b.Epost != null && b.Epost.Trim().ToLower() == eierEpost && !b.ErSkjult)
                 .ExecuteUpdate(s => s.SetProperty(b => b.ErSkjult, true));
 
             if (!seedDb.Brukere.Any(b => b.Rolle == PortalItlock.Web.Models.BrukerRolle.Admin))
@@ -758,6 +758,21 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
     if (tenant is null || bruker is null || !passwordOk || !bruker.Aktiv)
     {
         return Results.Redirect($"/login?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
+    }
+
+    // Eieren skjules i organisasjonen hver gang han logger inn - virker også for
+    // organisasjoner som ikke ble gjennomgått ved oppstart (f.eks. prøveperiode).
+    if (EpostHjelper.ErLik(bruker.Epost, PortalItlock.Web.Services.FirmaInfo.EierEpost) && !bruker.ErSkjult)
+    {
+        try
+        {
+            await using var eierDb = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options);
+            await eierDb.Brukere.Where(b => b.Id == bruker.Id).ExecuteUpdateAsync(s => s.SetProperty(b => b.ErSkjult, true));
+        }
+        catch (Exception)
+        {
+            // Skal aldri stoppe innloggingen.
+        }
     }
 
     // Sist innlogget, vist i adminportalen. Skal aldri stoppe innloggingen.
