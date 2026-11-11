@@ -2155,6 +2155,22 @@ app.MapGet("/leverandorlogo/{id:int}", async (int id, int? w, ApplicationDbConte
     return Results.File(leverandor.LogoData, FilSikkerhet.TryggContentType(leverandor.LogoContentType ?? "application/octet-stream"), leverandor.LogoFilnavn);
 }).RequireAuthorization();
 
+// Logo på en snarvei (forsiden). Egen opplastet logo, ellers den innebygde.
+app.MapGet("/snarveilogo/{id:int}", async (int id, int? w, ApplicationDbContext db) =>
+{
+    var s = await db.Snarveier.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+    if (s is null) return Results.NotFound();
+    if (s.LogoData is null)
+    {
+        return string.IsNullOrWhiteSpace(s.StandardLogo) ? Results.NotFound() : Results.Redirect($"/img/snarveier/{s.StandardLogo}");
+    }
+    if (w is int maks && BildeMiniatyr.Lag(s.LogoData, Math.Clamp(maks, 32, 400)) is { } miniatyr)
+    {
+        return Results.File(miniatyr.Data, miniatyr.ContentType);
+    }
+    return Results.File(s.LogoData, FilSikkerhet.TryggContentType(s.LogoContentType ?? "image/png"));
+}).RequireAuthorization();
+
 // Organisasjonens eget merkevare-bilde (satt av plattformeier på /plattform)
 // - vises i sidemenyen, innloggingssiden osv. for akkurat denne organisasjonen.
 // Ingen RequireAuthorization: må kunne vises på innloggingssiden før man er

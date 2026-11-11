@@ -1,0 +1,197 @@
+@page "/snarveier"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Snarveier</PageTitle>
+
+<a class="back-link" href="/oppsettmodul">&larr; Oppsett</a>
+
+@* Snarveier til viktige ressurser på forsiden: admin legger til, endrer
+   rekkefølge og fjerner snarveier med navn, lenke og logo. *@
+<div class="sv">
+    <div class="sv-hode">
+        <div>
+            <h1>Snarveier til viktige ressurser</h1>
+            <span>Vises på forsiden for alle i organisasjonen. Logoen tilpasses automatisk firkanten.</span>
+        </div>
+        <button type="button" class="sv-knapp sv-knapp-p" @onclick="NySnarvei"><Icon Name="plus" />Ny snarvei</button>
+    </div>
+
+    @if (_red is { } r)
+    {
+        <section class="sv-red">
+            <b>@(r.Id == 0 ? "Ny snarvei" : $"Rediger «{r.Navn}»")</b>
+            <div class="sv-felt">
+                <label>Navn<input @bind="r.Navn" @bind:event="oninput" placeholder="F.eks. Tripletex" /></label>
+                <label>Lenke (URL)<input @bind="r.Url" @bind:event="oninput" placeholder="https://…" /></label>
+                <label>Logo
+                    <span class="sv-logo-rad">
+                        <span class="sv-logo">
+                            @if (_nyLogo is not null)
+                            {
+                                <img src="@($"data:{_nyLogoType};base64,{Convert.ToBase64String(_nyLogo)}")" alt="" />
+                            }
+                            else if (r.Id != 0 && (r.LogoData is not null || r.StandardLogo is not null))
+                            {
+                                <img src="@($"/snarveilogo/{r.Id}?w=96&v={r.Endret.Ticks}")" alt="" />
+                            }
+                            else
+                            {
+                                <b>@(string.IsNullOrWhiteSpace(r.Navn) ? "?" : r.Navn.Trim()[..1].ToUpperInvariant())</b>
+                            }
+                        </span>
+                        <InputFile OnChange="VelgLogo" accept="image/*" />
+                    </span>
+                </label>
+            </div>
+            @if (_feil is not null)
+            {
+                <span class="sv-feil">@_feil</span>
+            }
+            <div class="sv-red-kn">
+                <button type="button" class="sv-knapp" @onclick="@(() => { _red = null; _nyLogo = null; })">Avbryt</button>
+                <button type="button" class="sv-knapp sv-knapp-p" @onclick="Lagre">Lagre</button>
+            </div>
+        </section>
+    }
+
+    <div class="sv-liste">
+        @if (_liste.Count == 0)
+        {
+            <p class="sv-tom">Ingen snarveier ennå. Trykk «Ny snarvei».</p>
+        }
+        @for (var i = 0; i < _liste.Count; i++)
+        {
+            var s = _liste[i];
+            var indeks = i;
+            <div class="sv-rad" @key="s.Id">
+                <span class="sv-logo">
+                    @if (s.LogoData is not null || s.StandardLogo is not null)
+                    {
+                        <img src="@($"/snarveilogo/{s.Id}?w=96&v={s.Endret.Ticks}")" alt="" />
+                    }
+                    else
+                    {
+                        <b>@(s.Navn.Length > 0 ? s.Navn[..1].ToUpperInvariant() : "?")</b>
+                    }
+                </span>
+                <span class="sv-t"><b>@s.Navn</b><small>@s.Url</small></span>
+                <button type="button" class="sv-ikn" title="Flytt opp" disabled="@(indeks == 0)" @onclick="@(() => Flytt(indeks, -1))">↑</button>
+                <button type="button" class="sv-ikn" title="Flytt ned" disabled="@(indeks == _liste.Count - 1)" @onclick="@(() => Flytt(indeks, 1))">↓</button>
+                <button type="button" class="sv-knapp" @onclick="@(() => Rediger(s))">Rediger</button>
+                <button type="button" class="sv-ikn slett @(_slettId == s.Id ? "bekreft" : "")" title="Fjern" @onclick="@(() => Slett(s))">@(_slettId == s.Id ? "Fjern?" : "×")</button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<Snarvei> _liste = [];
+    private Snarvei? _red;
+    private byte[]? _nyLogo;
+    private string? _nyLogoType;
+    private string? _feil;
+    private int? _slettId;
+
+    protected override async Task OnInitializedAsync() => await Last();
+
+    private async Task Last()
+    {
+        _liste = await Db.Snarveier.OrderBy(x => x.Rekkefolge).ThenBy(x => x.Navn).ToListAsync();
+    }
+
+    private void NySnarvei()
+    {
+        _red = new Snarvei { Navn = "", Url = "https://", Rekkefolge = (_liste.Count == 0 ? 0 : _liste.Max(x => x.Rekkefolge) + 1) };
+        _nyLogo = null;
+        _feil = null;
+    }
+
+    private void Rediger(Snarvei s)
+    {
+        _red = s;
+        _nyLogo = null;
+        _feil = null;
+    }
+
+    private async Task VelgLogo(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        var fil = e.File;
+        if (!fil.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            _feil = "Velg en bildefil (PNG, JPG, SVG eller WebP).";
+            return;
+        }
+        if (fil.Size > 2 * 1024 * 1024)
+        {
+            _feil = "Logoen kan være maks 2 MB.";
+            return;
+        }
+        using var ms = new MemoryStream();
+        await fil.OpenReadStream(2 * 1024 * 1024).CopyToAsync(ms);
+        _nyLogo = ms.ToArray();
+        _nyLogoType = fil.ContentType;
+    }
+
+    private async Task Lagre()
+    {
+        if (_red is not { } r) return;
+        r.Navn = r.Navn.Trim();
+        r.Url = r.Url.Trim();
+        if (r.Navn.Length == 0)
+        {
+            _feil = "Skriv et navn.";
+            return;
+        }
+        if (!Uri.TryCreate(r.Url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            _feil = "Lenken må starte med https:// (eller http://).";
+            return;
+        }
+        if (_nyLogo is not null)
+        {
+            r.LogoData = _nyLogo;
+            r.LogoContentType = _nyLogoType;
+        }
+        r.Endret = DateTime.Now;
+        if (r.Id == 0)
+        {
+            Db.Snarveier.Add(r);
+        }
+        await Db.SaveChangesAsync();
+        _red = null;
+        _nyLogo = null;
+        await Last();
+    }
+
+    private async Task Flytt(int indeks, int retning)
+    {
+        var mal = indeks + retning;
+        if (mal < 0 || mal >= _liste.Count) return;
+        (_liste[indeks], _liste[mal]) = (_liste[mal], _liste[indeks]);
+        for (var i = 0; i < _liste.Count; i++)
+        {
+            _liste[i].Rekkefolge = i;
+        }
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task Slett(Snarvei s)
+    {
+        if (_slettId != s.Id)
+        {
+            _slettId = s.Id;
+            return;
+        }
+        _slettId = null;
+        Db.Snarveier.Remove(s);
+        await Db.SaveChangesAsync();
+        if (_red?.Id == s.Id) _red = null;
+        await Last();
+    }
+}

@@ -7412,6 +7412,40 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("SjekklistePunkter");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.Snarvei", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Endret")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LogoContentType")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("LogoData")
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("StandardLogo")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Snarveier");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.SystemVedlegg", b =>
                 {
                     b.Property<int>("Id")

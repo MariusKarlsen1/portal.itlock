@@ -98,6 +98,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PlanlagtPrisendring> PlanlagtePrisendringer => Set<PlanlagtPrisendring>();
     public DbSet<Importhistorikk> Importhistorikk => Set<Importhistorikk>();
     public DbSet<Bruker> Brukere => Set<Bruker>();
+    public DbSet<Snarvei> Snarveier => Set<Snarvei>();
     public DbSet<BrukerPasswordResetToken> BrukerPasswordResetTokener => Set<BrukerPasswordResetToken>();
     public DbSet<Arbeidsordre> Arbeidsordre => Set<Arbeidsordre>();
     public DbSet<Timeregistrering> Timeregistreringer => Set<Timeregistrering>();
