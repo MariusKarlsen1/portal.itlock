@@ -238,8 +238,9 @@ public class SletteService(ApplicationDbContext db)
                 await KjorAsync(tilkobling, tx, $"DELETE FROM \"{rotTabell}\" WHERE \"{pk}\" = @id", id);
                 await tx.CommitAsync();
             }
-            catch (DbException)
+            catch (DbException ex)
             {
+                SisteFeil = ex.Message;
                 await tx.RollbackAsync();
                 return $"Klarte ikke å slette {Tittel(type)} fordi annen informasjon fortsatt peker på den. Fjern koblingene først, eller kontakt support.";
             }
@@ -262,6 +263,9 @@ public class SletteService(ApplicationDbContext db)
         }
         return null;
     }
+
+    // Siste databasefeil ved sletting (for logg og feilsøking).
+    public string? SisteFeil { get; private set; }
 
     private sealed record Fremmednokkel(string Barn, string Kolonne, string Forelder, string ForelderKolonne, string VedSletting, bool Paakrevd);
 
