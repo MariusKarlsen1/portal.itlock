@@ -46,6 +46,8 @@ public class ServicerundeDorPunkt
     public string? Status { get; set; }
     public string? Kommentar { get; set; }
     public int Rekkefolge { get; set; }
+    public string? Standard { get; set; }
+    public bool KreverFoto { get; set; }
 }
 
 public static class ServicerundeDorStatus
@@ -65,4 +67,11 @@ public class ServiceKontrollpunkt
     public required string Servicetype { get; set; }
     public required string Tekst { get; set; }
     public int Rekkefolge { get; set; }
+    // Krav eller standard punktet bygger på, f.eks. «NS-EN 16005».
+    public string? Standard { get; set; }
+    // Montøren skal ta bilde ved dette punktet.
+    public bool KreverFoto { get; set; }
+    // Fast tillegg på én dør (null = felles punkt for servicetypen).
+    public int? DorId { get; set; }
+    public DateTime? EndretDato { get; set; }
 }

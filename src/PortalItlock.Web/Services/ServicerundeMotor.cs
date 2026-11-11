@@ -54,7 +54,7 @@ public static class ServicerundeMotor
         var liste = new List<(string Tekst, List<string> Kilder)>();
         foreach (var t in ordnet)
         {
-            foreach (var p in mal.Where(m => m.Servicetype.Equals(t, StringComparison.OrdinalIgnoreCase)).OrderBy(m => m.Rekkefolge))
+            foreach (var p in mal.Where(m => m.DorId == null && m.Servicetype.Equals(t, StringComparison.OrdinalIgnoreCase)).OrderBy(m => m.Rekkefolge))
             {
                 var finnes = liste.FirstOrDefault(x => x.Tekst.Equals(p.Tekst, StringComparison.OrdinalIgnoreCase));
                 if (finnes.Tekst is null) liste.Add((p.Tekst, [t]));
@@ -66,6 +66,29 @@ public static class ServicerundeMotor
             return PunkterFor([], mal);
         }
         return liste.Select(x => (x.Tekst, string.Join(" + ", x.Kilder))).ToList();
+    }
+
+    public sealed record Punkt(string Tekst, string Kilde, string? Standard, bool KreverFoto);
+
+    /// Sjekklisten for én dør: felles punkter for servicetypene på døren (med krav
+    /// og fotokrav), pluss faste tillegg som er lagt på akkurat denne døren.
+    public static List<Punkt> PunkterForDor(IEnumerable<string> typer, IReadOnlyList<ServiceKontrollpunkt> mal, int dorId)
+    {
+        var felles = mal.Where(m => m.DorId == null).ToList();
+        var liste = PunkterFor(typer, felles).Select(p =>
+        {
+            var kilder = p.Kilde.Split(" + ");
+            var treff = felles.Where(m => m.Tekst.Equals(p.Tekst, StringComparison.OrdinalIgnoreCase) && kilder.Contains(m.Servicetype, StringComparer.OrdinalIgnoreCase)).ToList();
+            return new Punkt(p.Tekst, p.Kilde, treff.Select(m => m.Standard).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)), treff.Any(m => m.KreverFoto));
+        }).ToList();
+        foreach (var m in mal.Where(m => m.DorId == dorId).OrderBy(m => m.Rekkefolge))
+        {
+            if (!liste.Any(x => x.Tekst.Equals(m.Tekst, StringComparison.OrdinalIgnoreCase)))
+            {
+                liste.Add(new Punkt(m.Tekst, "Denne døren", m.Standard, m.KreverFoto));
+            }
+        }
+        return liste;
     }
 
     public sealed record KomponentKopi(string Navn, string? Produktkode, string? Komponenttype, string? Servicetype, bool Montert);
@@ -166,9 +189,9 @@ public static class ServicerundeMotor
                 Rekkefolge = nr++
             };
             var i = 0;
-            foreach (var (tekst, kilde) in PunkterFor(res.Typer, mal))
+            foreach (var p in PunkterForDor(res.Typer, mal, d.Id))
             {
-                rd.Punkter.Add(new ServicerundeDorPunkt { Tekst = tekst, Kilde = kilde, Rekkefolge = i++ });
+                rd.Punkter.Add(new ServicerundeDorPunkt { Tekst = p.Tekst, Kilde = p.Kilde, Standard = p.Standard, KreverFoto = p.KreverFoto, Rekkefolge = i++ });
             }
             runde.Dorer.Add(rd);
         }

@@ -78,26 +78,88 @@
 
                 @if (_visning == "punkter")
                 {
-                    <p class="spr-dempet">Kontrollpunktene på hver dør i en servicerunde settes sammen fra servicetypene på døren. Like punkter slås sammen. Dører uten servicetyper får «Generelt». Endringer gjelder nye runder – runder som er startet, beholder punktene de fikk.</p>
-                    @foreach (var type in ServiceRegelMotor.Servicetyper.Append(ServicerundeMotor.Generelt))
-                    {
-                        var liste = _punkter.Where(x => x.Servicetype == type).OrderBy(x => x.Rekkefolge).ToList();
-                        <div class="spr-boks" @key="type">
-                            <div class="spr-boks-t"><h3>@type</h3><small>@liste.Count @(liste.Count == 1 ? "punkt" : "punkter")</small></div>
-                            <div class="spr-betg">
-                                @foreach (var k in liste)
+                    @* T5 «Sjekklister per komponenttype»: punktene legges inn én gang per
+                       servicetype, med krav/standard og fotokrav. Hver dør får punktene for
+                       typene den har (også dører fra befaringen som bare har typer). Til høyre
+                       vises sjekklisten en valgt dør får. *@
+                    var typeKart = PunktTypeKart;
+                    var valgtListe = _punkter.Where(x => x.DorId == null && x.Servicetype == _punktType).OrderBy(x => x.Rekkefolge).ToList();
+                    <p class="spr-dempet">Kontrollpunktene legges inn én gang per komponenttype. Hver dør i en servicerunde får punktene for typene den har, og like punkter slås sammen. Endringer gjelder nye runder – runder som er startet, beholder punktene de fikk.</p>
+                    <div class="spr-pk">
+                        <div class="spr-boks spr-pk-typer">
+                            @foreach (var type in ServiceRegelMotor.Servicetyper.Append(ServicerundeMotor.Generelt))
+                            {
+                                var n = _punkter.Count(x => x.DorId == null && x.Servicetype == type);
+                                <button type="button" class="@(type == _punktType ? "pa" : "")" @onclick="@(() => _punktType = type)">@type<em>@n</em></button>
+                            }
+                        </div>
+                        <div class="spr-boks">
+                            <div class="spr-boks-t">
+                                <h3>@_punktType</h3>
+                                <small>@(_punktType == ServicerundeMotor.Generelt ? "Brukes på dører uten komponenttyper" : $"Brukes på {_dorer.Count(d => ServiceRegelMotor.TyperPaDor(d, typeKart).Contains(_punktType))} dører på avtalene")</small>
+                            </div>
+                            <div class="spr-pk-tab">
+                                <div class="spr-pk-h"><span>Kontrollpunkt</span><span>Krav / standard</span><span>Foto</span><span></span></div>
+                                @foreach (var k in valgtListe)
                                 {
-                                    <div class="spr-betg-rad" @key="k">
-                                        <input style="flex:1;min-width:0" value="@k.Tekst" @onchange="@(e => { if (!string.IsNullOrWhiteSpace(e.Value?.ToString())) { k.Tekst = e.Value!.ToString()!.Trim(); Endret(); } })" />
+                                    <div class="spr-pk-rad" @key="k">
+                                        <input value="@k.Tekst" @onchange="@(e => { if (!string.IsNullOrWhiteSpace(e.Value?.ToString())) { k.Tekst = e.Value!.ToString()!.Trim(); k.EndretDato = DateTime.Now; Endret(); } })" />
+                                        <input value="@k.Standard" placeholder="F.eks. NS-EN 16005" @onchange="@(e => { k.Standard = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value!.ToString()!.Trim(); k.EndretDato = DateTime.Now; Endret(); })" />
+                                        <label title="Montøren skal ta bilde ved dette punktet"><input type="checkbox" checked="@k.KreverFoto" @onchange="@(e => { k.KreverFoto = e.Value is true; k.EndretDato = DateTime.Now; Endret(); })" /></label>
                                         <button type="button" class="spr-fjern" title="Fjern punktet" @onclick="@(() => FjernPunkt(k))"><Icon Name="x" /></button>
                                     </div>
                                 }
-                                <div class="spr-betg-rad">
-                                    <input style="flex:1;min-width:0;border-style:dashed" @key="@($"ny{type}{_nyKey}")" placeholder="Nytt punkt – trykk Enter" @onchange="@(e => LeggTilPunkt(type, e.Value?.ToString()))" />
+                                <div class="spr-pk-rad">
+                                    <input style="border-style:dashed" @key="@($"ny{_punktType}{_nyKey}")" placeholder="Nytt punkt – trykk Enter" @onchange="@(e => LeggTilPunkt(_punktType, e.Value?.ToString()))" />
                                 </div>
                             </div>
+                            @{ var tillegg = _punkter.Where(x => x.DorId != null).ToList(); }
+                            @if (tillegg.Count > 0)
+                            {
+                                <div class="spr-pk-till">
+                                    <b>Faste tillegg på enkeltdører</b>
+                                    <small>Lagt til fra servicerunden («Fast på døren»). Gjelder bare den døren.</small>
+                                    @foreach (var k in tillegg)
+                                    {
+                                        var dor = _dorer.FirstOrDefault(d => d.Id == k.DorId);
+                                        <div class="spr-pk-trad" @key="k">
+                                            <span class="spr-pk-dor">@(dor is null ? "Dør" : $"Dør {dor.Dornummer}")</span>
+                                            <span>@k.Tekst@if (dor is not null) {<small> · @_prosjektNavn.GetValueOrDefault(dor.ProsjektId)</small>}</span>
+                                            <button type="button" class="spr-fjern" title="Fjern tillegget" @onclick="@(() => FjernPunkt(k))"><Icon Name="x" /></button>
+                                        </div>
+                                    }
+                                </div>
+                            }
                         </div>
-                    }
+                        <div class="spr-boks spr-pk-forh">
+                            <div class="spr-boks-t"><h3>Slik blir sjekklisten på døren</h3></div>
+                            <div class="spr-pk-forh-inn">
+                                <select @bind="_forhDorId">
+                                    <option value="">Velg dør …</option>
+                                    @foreach (var d in _dorer.Take(400))
+                                    {
+                                        <option value="@d.Id">@d.Dornummer · @_prosjektNavn.GetValueOrDefault(d.ProsjektId)</option>
+                                    }
+                                </select>
+                                @if (_dorer.FirstOrDefault(d => d.Id == _forhDorId) is { } fd)
+                                {
+                                    var typer = ServiceRegelMotor.TyperPaDor(fd, typeKart);
+                                    <small>Typer: @(typer.Count == 0 ? "ingen (Generelt)" : string.Join(", ", ServiceRegelMotor.Servicetyper.Where(typer.Contains)))</small>
+                                    @foreach (var pk in ServicerundeMotor.PunkterForDor(typer, _punkter, fd.Id))
+                                    {
+                                        <div class="spr-pk-p">
+                                            <span>☐</span>
+                                            <span>@pk.Tekst<small>@pk.Kilde@if (!string.IsNullOrWhiteSpace(pk.Standard)) {<em>@pk.Standard</em>}@if (pk.KreverFoto) {<em class="foto">Foto</em>}</small></span>
+                                        </div>
+                                    }
+                                }
+                                else
+                                {
+                                    <small>Velg en dør for å se punktene den får i neste runde.</small>
+                                }
+                            </div>
+                        </div>
+                    </div>
                 }
                 else if (_visning == "versjoner")
                 {
@@ -342,11 +404,14 @@
     private List<ServicePrisRegelVersjon> _versjoner = [];
     private List<ServiceKontrollpunkt> _punkter = [];
     private int _nyKey;
+    private string _punktType = ServiceRegelMotor.Servicetyper[0];
+    private int? _forhDorId;
+    private Dictionary<int, string?> PunktTypeKart => _typer.ToDictionary(t => t.Id, ServiceRegelMotor.Servicetype);
 
     private void LeggTilPunkt(string type, string? tekst)
     {
         if (string.IsNullOrWhiteSpace(tekst)) return;
-        var k = new ServiceKontrollpunkt { Servicetype = type, Tekst = tekst.Trim(), Rekkefolge = (_punkter.Where(x => x.Servicetype == type).Select(x => (int?)x.Rekkefolge).Max() ?? -1) + 1 };
+        var k = new ServiceKontrollpunkt { Servicetype = type, Tekst = tekst.Trim(), EndretDato = DateTime.Now, Rekkefolge = (_punkter.Where(x => x.DorId == null && x.Servicetype == type).Select(x => (int?)x.Rekkefolge).Max() ?? -1) + 1 };
         Db.ServiceKontrollpunkter.Add(k);
         _punkter.Add(k);
         _nyKey++;

@@ -1,0 +1,416 @@
+@page "/serviceavtaler/{ProsjektId:int}/befaring"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>Befaring – @(_prosjekt?.Navn ?? "Serviceavtale")</PageTitle>
+
+@if (_prosjekt is null)
+{
+    @if (_ikkeFunnet)
+    {
+        <p class="form-error">Fant ikke serviceavtalen.</p>
+    }
+}
+else
+{
+    <a class="back-link" href="@($"/serviceavtaler/{ProsjektId}")">&larr; @_prosjekt.Navn</a>
+
+    @* Befaring på et bygg dere ikke har hatt jobben på (Prototype tilbud serviceavtale
+       komponenttyper.html, T1 + T2): dørene legges inn med komponenttyper, ikke
+       produkter. Prisreglene ser bare på typene, så kategori og pris vises med en gang.
+       Produktene velges senere under «Spesifiser komponenter» eller i første runde. *@
+    <div class="bf-hode">
+        <div class="bf-tittel">
+            <h1>Befaring</h1>
+            <span>Legg til dører og trykk på komponenttypene. Nøyaktige produkter velges når avtalen er vunnet.</span>
+        </div>
+        <div class="bf-modus">
+            <button type="button" class="@(_modus == "kort" ? "pa" : "")" @onclick="@(() => _modus = "kort")"><Icon Name="door" />Én og én dør</button>
+            <button type="button" class="@(_modus == "tabell" ? "pa" : "")" @onclick="@(() => _modus = "tabell")"><Icon Name="grid" />Tabell</button>
+        </div>
+    </div>
+
+    @if (VisPriser && _prosjekt.ServicePrismodell != ServiceavtalePris.Kategorisert)
+    {
+        <div class="bf-varsel">
+            <span>Avtalen bruker «Estimat fra varer». Befaringen gir pris med prisreglene.</span>
+            <button type="button" class="bf-knapp" @onclick="BrukPrisregler">Bruk prisreglene på avtalen</button>
+        </div>
+    }
+
+    <div class="bf-to @(VisPriser ? "" : "uten-pris")">
+        <div class="bf-hoved">
+            @if (_modus == "kort")
+            {
+                var nyRes = Klassifiser(NyDor());
+                <section class="bf-boks bf-ny">
+                    <div class="bf-felt3">
+                        <label>Dør nr<input @bind="_nyNr" /></label>
+                        <label>Rom<input @bind="_nyRom" placeholder="F.eks. Kontor 3" /></label>
+                        <label>Etasje<input @bind="_nyEtg" placeholder="F.eks. 1" /></label>
+                    </div>
+                    <div class="bf-maler">
+                        <span>Maler:</span>
+                        @foreach (var m in ServiceBefaring.Maler)
+                        {
+                            <button type="button" @onclick="@(() => _nyTyper = [.. m.Typer])">@m.Navn</button>
+                        }
+                    </div>
+                    <div class="bf-chips">
+                        @foreach (var t in ServiceRegelMotor.Servicetyper)
+                        {
+                            <button type="button" class="@(_nyTyper.Contains(t) ? "pa" : "")" @onclick="@(() => VekslNy(t))">@t</button>
+                        }
+                    </div>
+                    <div class="bf-res">
+                        <span class="bf-kat @KatKlasse(nyRes.Kategori)">@nyRes.Kategori</span>
+                        @if (VisPriser)
+                        {
+                            <b>@Kr(PrisPerAr(nyRes)) per år</b>
+                        }
+                        <button type="button" class="bf-knapp bf-knapp-p" @onclick="LeggTilDor" disabled="@(string.IsNullOrWhiteSpace(_nyNr) || _lagrer)"><Icon Name="plus" />Legg til dør</button>
+                    </div>
+                    @if (_melding is not null)
+                    {
+                        <span class="bf-melding">@_melding</span>
+                    }
+                </section>
+
+                <section class="bf-boks">
+                    <div class="bf-boks-t"><b>Dører på avtalen</b><em>@_dorer.Count</em></div>
+                    @if (_dorer.Count == 0)
+                    {
+                        <p class="bf-tom">Ingen dører ennå. Legg til den første over.</p>
+                    }
+                    @foreach (var d in _dorer.OrderByDescending(x => x.Id))
+                    {
+                        var res = Klassifiser(d);
+                        var typer = ServiceRegelMotor.TyperPaDor(d, _typeKart);
+                        <div class="bf-dor" @key="d.Id">
+                            <span class="bf-nr">@d.Dornummer</span>
+                            <div class="bf-dor-t">
+                                <b>@(string.IsNullOrWhiteSpace(d.Romnr) ? "Uten rom" : d.Romnr)@(string.IsNullOrWhiteSpace(d.Etasje) ? "" : $" · {d.Etasje}. etg")</b>
+                                <small>@(typer.Count == 0 ? "Ingen komponenttyper" : string.Join(" · ", ServiceRegelMotor.Servicetyper.Where(typer.Contains)))</small>
+                            </div>
+                            <span class="bf-kat @KatKlasse(res.Kategori)">@res.Kategori</span>
+                            @if (VisPriser)
+                            {
+                                <span class="bf-pris">@Kr(PrisPerAr(res))</span>
+                            }
+                            <button type="button" class="bf-fjern @(_slettId == d.Id ? "bekreft" : "")" title="Fjern døren" @onclick="@(() => SlettDor(d.Id))">@(_slettId == d.Id ? "Fjern?" : "×")</button>
+                        </div>
+                    }
+                </section>
+            }
+            else
+            {
+                <section class="bf-boks">
+                    <div class="bf-boks-t"><b>Dører og komponenttyper</b><em>@_dorer.Count</em><small>Klikk i rutene. ● = spesifisert produkt på døren</small></div>
+                    <div class="bf-tabwrap">
+                        <table class="bf-mx">
+                            <thead>
+                                <tr>
+                                    <th>Dør</th>
+                                    <th>Rom</th>
+                                    @foreach (var t in ServiceRegelMotor.Servicetyper)
+                                    {
+                                        <th class="v"><span>@t</span></th>
+                                    }
+                                    <th>Kategori</th>
+                                    @if (VisPriser)
+                                    {
+                                        <th class="n">Per år</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var d in _dorer)
+                                {
+                                    var res = Klassifiser(d);
+                                    var plass = PlassTyper(d);
+                                    var ekte = EkteTyper(d);
+                                    <tr @key="d.Id">
+                                        <td><b>@d.Dornummer</b></td>
+                                        <td><input value="@d.Romnr" placeholder="Rom" @onchange="@(e => EndreRom(d.Id, e.Value?.ToString()))" /></td>
+                                        @foreach (var t in ServiceRegelMotor.Servicetyper)
+                                        {
+                                            @if (ekte.Contains(t))
+                                            {
+                                                <td class="c ekte" title="Spesifisert produkt på døren">●</td>
+                                            }
+                                            else
+                                            {
+                                                <td class="c @(plass.Contains(t) ? "pa" : "")"><button type="button" title="@t" @onclick="@(() => VekslCelle(d.Id, t))">@(plass.Contains(t) ? "✓" : "")</button></td>
+                                            }
+                                        }
+                                        <td><span class="bf-kat @KatKlasse(res.Kategori)">@res.Kategori</span></td>
+                                        @if (VisPriser)
+                                        {
+                                            <td class="n">@Kr(PrisPerAr(res))</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="bf-fot">
+                        <button type="button" class="bf-knapp" @onclick="@(() => LeggTilFlere(1, false))"><Icon Name="plus" />Ny dør</button>
+                        <button type="button" class="bf-knapp" @onclick="@(() => LeggTilFlere(1, true))" disabled="@(_dorer.Count == 0)">Kopier siste</button>
+                        <button type="button" class="bf-knapp" @onclick="@(() => LeggTilFlere(5, true))" disabled="@(_dorer.Count == 0)">+ 5 like siste</button>
+                        @if (_melding is not null)
+                        {
+                            <span class="bf-melding">@_melding</span>
+                        }
+                    </div>
+                </section>
+            }
+        </div>
+
+        @if (VisPriser)
+        {
+            var b = Beregning();
+            <aside class="bf-boks bf-sum">
+                <div class="bf-boks-t"><b>Pris per år</b><em>@_dorer.Count dører</em></div>
+                <table>
+                    <tbody>
+                        @foreach (var g in _dorer.Select(Klassifiser).Where(r => r.Regel is not null).GroupBy(r => r.Regel!.Id))
+                        {
+                            var regel = g.First().Regel!;
+                            var pris = ServiceRegelMotor.PrisForKategori(regel, _kategoriPriser);
+                            <tr><td><span class="bf-kat @KatKlasse(regel.Navn)">@regel.Navn</span><small>@g.Count() × @Kr(pris) × @Runder runder</small></td><td class="n">@Kr(pris * g.Count() * Runder)</td></tr>
+                        }
+                        @if (b.Tillegg > 0)
+                        {
+                            <tr><td>Oppmøte, reise og tillegg<small>@Kr(b.Tillegg) × @Runder runder</small></td><td class="n">@Kr(b.Tillegg * Runder)</td></tr>
+                        }
+                        @if (b.MinsteprisBrukt)
+                        {
+                            <tr><td colspan="2"><small>Minstepris per runde er brukt</small></td></tr>
+                        }
+                        <tr class="tot"><td>Sum per år</td><td class="n">@Kr(b.Arspris)</td></tr>
+                    </tbody>
+                </table>
+                <div class="bf-sum-fot">
+                    <small>Ca. @Tid(b.MinutterPerRunde) per runde. Tillegg og minstepris settes under Avtale og prising.</small>
+                    <a class="bf-knapp bf-knapp-p" href="@($"/serviceavtaler/{ProsjektId}?fane=prising")"><Icon Name="file-text" />Gå til pris og tilbud</a>
+                </div>
+            </aside>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public int ProsjektId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Prosjekt? _prosjekt;
+    private bool _ikkeFunnet, _lagrer;
+    private BrukerRolle? _rolle;
+    private string _modus = "kort";
+    private List<Dor> _dorer = [];
+    private List<ServicePrisRegel> _regler = [];
+    private Dictionary<int, string?> _typeKart = [];
+    private List<ServiceKategoriPris> _kategoriPriser = [];
+    private Dictionary<string, Component> _plass = [];
+    private HashSet<int> _plassIder = [];
+
+    private string _nyNr = "1", _nyRom = "", _nyEtg = "";
+    private List<string> _nyTyper = ["Dørvrider", "Mekanisk lås"];
+    private string? _melding;
+    private int? _slettId;
+
+    private bool VisPriser => _rolle != BrukerRolle.Montor;
+    private int Runder => _prosjekt is null ? 1 : ServiceavtalePris.RunderPerAr(_prosjekt);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask is not null)
+        {
+            var rolleClaim = (await AuthStateTask).User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+            if (rolleClaim is not null && Enum.TryParse<BrukerRolle>(rolleClaim, out var r)) _rolle = r;
+        }
+        _prosjekt = await Db.Prosjekter.FirstOrDefaultAsync(p => p.Id == ProsjektId);
+        if (_prosjekt is null)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+        await ServiceRegelMotor.SikreStandardregler(Db);
+        _plass = await ServiceBefaring.SikrePlassholdere(Db);
+        _plassIder = _plass.Values.Select(c => c.Id).ToHashSet();
+        _regler = await ServiceRegelMotor.HentRegler(Db);
+        _typeKart = await ServiceRegelMotor.HentTypeKart(Db);
+        _kategoriPriser = await Db.ServiceKategoriPriser.AsNoTracking().Where(k => k.ProsjektId == ProsjektId).ToListAsync();
+        await LastDorer();
+    }
+
+    private async Task LastDorer()
+    {
+        _dorer = await ServiceRegelMotor.HentDorer(Db, ProsjektId);
+        _nyNr = ServiceBefaring.NesteDornummer(_dorer.Select(d => d.Dornummer));
+    }
+
+    private Dor NyDor() => new()
+    {
+        Dornummer = _nyNr,
+        Komponenter = _nyTyper.Where(_plass.ContainsKey).Select(t => new DorKomponent { Component = _plass[t], ComponentId = _plass[t].Id }).ToList()
+    };
+
+    private ServiceRegelMotor.Resultat Klassifiser(Dor d) => ServiceRegelMotor.Klassifiser(d, _regler, _typeKart);
+
+    private decimal PrisPerAr(ServiceRegelMotor.Resultat r) =>
+        r.Regel is null ? 0 : ServiceRegelMotor.PrisForKategori(r.Regel, _kategoriPriser) * Runder;
+
+    private ServiceRegelMotor.Beregning Beregning()
+    {
+        var res = _dorer.Select(Klassifiser).Where(r => r.Regel is not null).ToList();
+        return ServiceRegelMotor.Beregn(_prosjekt!, res.Sum(r => ServiceRegelMotor.PrisForKategori(r.Regel!, _kategoriPriser)), res.Sum(r => r.Regel!.Minutter), _kategoriPriser);
+    }
+
+    private HashSet<string> PlassTyper(Dor d) => d.Komponenter.Where(k => _plassIder.Contains(k.ComponentId))
+        .Select(k => _plass.First(p => p.Value.Id == k.ComponentId).Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private HashSet<string> EkteTyper(Dor d)
+    {
+        var ekte = d.Komponenter.Where(k => !_plassIder.Contains(k.ComponentId)).ToList();
+        return ServiceRegelMotor.TyperPaDor(new Dor { Dornummer = "", Komponenter = ekte }, _typeKart);
+    }
+
+    private void VekslNy(string t)
+    {
+        if (!_nyTyper.Remove(t)) _nyTyper.Add(t);
+    }
+
+    private async Task LeggTilDor()
+    {
+        var nr = _nyNr.Trim();
+        if (nr.Length == 0 || _lagrer) return;
+        if (_dorer.Any(d => string.Equals(d.Dornummer, nr, StringComparison.OrdinalIgnoreCase)))
+        {
+            _melding = $"Dør {nr} finnes allerede på avtalen.";
+            return;
+        }
+        _lagrer = true;
+        try
+        {
+            await LagreNyDor(nr, _nyRom, _nyEtg, _nyTyper);
+            _melding = $"Dør {nr} er lagt til.";
+            _nyRom = "";
+            await LastDorer();
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    private async Task LagreNyDor(string nr, string? rom, string? etg, IEnumerable<string> typer)
+    {
+        var dor = new Dor
+        {
+            ProsjektId = ProsjektId,
+            Dornummer = nr,
+            Romnr = string.IsNullOrWhiteSpace(rom) ? null : rom.Trim(),
+            Etasje = string.IsNullOrWhiteSpace(etg) ? null : etg.Trim()
+        };
+        foreach (var t in typer.Distinct().Where(_plass.ContainsKey))
+        {
+            dor.Komponenter.Add(new DorKomponent { ComponentId = _plass[t].Id, Antall = 1, Montert = true });
+        }
+        Db.Dorer.Add(dor);
+        Db.LoggMerknad = "Befaring";
+        await Db.SaveChangesAsync();
+        Db.LoggMerknad = null;
+        Db.ChangeTracker.Clear();
+    }
+
+    private async Task LeggTilFlere(int antall, bool kopier)
+    {
+        var mal = kopier ? _dorer.OrderByDescending(d => d.Id).FirstOrDefault() : null;
+        var typer = mal is null ? [] : PlassTyper(mal).ToList();
+        for (var i = 0; i < antall; i++)
+        {
+            var nr = ServiceBefaring.NesteDornummer(_dorer.Select(d => d.Dornummer));
+            await LagreNyDor(nr, mal?.Romnr, mal?.Etasje, typer);
+            await LastDorer();
+        }
+        _melding = antall == 1 ? "Dør lagt til." : $"{antall} dører lagt til.";
+    }
+
+    private async Task VekslCelle(int dorId, string type)
+    {
+        if (!_plass.TryGetValue(type, out var komp)) return;
+        var finnes = await Db.DorKomponenter.FirstOrDefaultAsync(k => k.DorId == dorId && k.ComponentId == komp.Id);
+        if (finnes is null)
+        {
+            Db.DorKomponenter.Add(new DorKomponent { DorId = dorId, ComponentId = komp.Id, Antall = 1, Montert = true });
+        }
+        else
+        {
+            Db.DorKomponenter.Remove(finnes);
+        }
+        Db.LoggMerknad = "Befaring";
+        await Db.SaveChangesAsync();
+        Db.LoggMerknad = null;
+        Db.ChangeTracker.Clear();
+        await LastDorer();
+    }
+
+    private async Task EndreRom(int dorId, string? rom)
+    {
+        var d = await Db.Dorer.FirstOrDefaultAsync(x => x.Id == dorId);
+        if (d is null) return;
+        d.Romnr = string.IsNullOrWhiteSpace(rom) ? null : rom.Trim();
+        await Db.SaveChangesAsync();
+        Db.ChangeTracker.Clear();
+        await LastDorer();
+    }
+
+    private async Task SlettDor(int dorId)
+    {
+        if (_slettId != dorId)
+        {
+            _slettId = dorId;
+            return;
+        }
+        _slettId = null;
+        var d = await Db.Dorer.FirstOrDefaultAsync(x => x.Id == dorId);
+        if (d is null) return;
+        try
+        {
+            Db.Dorer.Remove(d);
+            await Db.SaveChangesAsync();
+            _melding = $"Dør {d.Dornummer} er fjernet.";
+        }
+        catch (DbUpdateException)
+        {
+            _melding = $"Dør {d.Dornummer} kan ikke fjernes her fordi den har historikk. Fjern den fra døren.";
+        }
+        Db.ChangeTracker.Clear();
+        await LastDorer();
+    }
+
+    private async Task BrukPrisregler()
+    {
+        var p = await Db.Prosjekter.FirstAsync(x => x.Id == ProsjektId);
+        p.ServicePrismodell = ServiceavtalePris.Kategorisert;
+        await Db.SaveChangesAsync();
+        _prosjekt = p;
+    }
+
+    private static string KatKlasse(string kategori)
+    {
+        var k = kategori.ToLowerInvariant();
+        return k.Contains("automatikk") ? "rod" : k.Contains("rømning") ? "gul" : k.Contains("elektrisk") || k.Contains("adgang") ? "bla" : k == ServiceRegelMotor.IkkeKategorisert.ToLowerInvariant() ? "ingen" : "gra";
+    }
+
+    private static string Kr(decimal v) => "kr " + v.ToString("#,##0", System.Globalization.CultureInfo.GetCultureInfo("nb-NO"));
+    private static string Tid(int min) => min >= 60 ? $"{min / 60} t {min % 60} min" : $"{min} min";
+}

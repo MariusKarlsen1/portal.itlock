@@ -55,6 +55,10 @@ public class Component
 
     public string? Enhet { get; set; }
     public bool Aktiv { get; set; } = true;
+    // Plassholder for en komponenttype uten valgt produkt, f.eks. «Dørautomatikk –
+    // ikke spesifisert». Brukes på befaring/tilbud av serviceavtaler: prisreglene ser
+    // bare på typen, og produktet velges senere (Spesifiser komponenter / runden).
+    public bool ErPlassholder { get; set; }
 
     public bool ILagerstyring { get; set; }
     public int Lagerantall { get; set; }

@@ -1,0 +1,137 @@
+@page "/serviceavtaler/{ProsjektId:int}/spesifiser"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+<PageTitle>Spesifiser komponenter – @(_prosjekt?.Navn ?? "Serviceavtale")</PageTitle>
+
+@if (_prosjekt is not null)
+{
+    <a class="back-link" href="@($"/serviceavtaler/{ProsjektId}")">&larr; @_prosjekt.Navn</a>
+
+    @* T3 «Spesifiser etter godkjent»: dørene fra befaringen har bare komponenttyper.
+       Her velges nøyaktig produkt per type og brukes på alle (eller valgte) dører.
+       Prisen endres ikke så lenge typen er den samme. Det som ikke spesifiseres her,
+       kan montøren spesifisere på døren i servicerunden. *@
+    <div class="sp-hode">
+        <div>
+            <h1>Spesifiser komponenter</h1>
+            <span>Velg produkt for hver komponenttype og bruk det på dørene. Prisen endres ikke så lenge typen er den samme. Resten kan montøren spesifisere i servicerunden.</span>
+        </div>
+    </div>
+
+    <section class="sp-boks">
+        <div class="sp-fram-t">
+            <b>@(_totalt - Gjenstar) av @_totalt spesifisert</b>
+            <span>@(Gjenstar == 0 ? "Alle komponentene er spesifisert." : $"{Gjenstar} {(Gjenstar == 1 ? "komponent" : "komponenter")} gjenstår")</span>
+        </div>
+        <div class="sp-fram"><i style="width:@(_totalt == 0 ? 100 : (_totalt - Gjenstar) * 100 / _totalt)%"></i></div>
+        @if (_melding is not null)
+        {
+            <span class="sp-melding">@_melding</span>
+        }
+    </section>
+
+    @if (_grupper.Count == 0)
+    {
+        <section class="sp-boks"><p class="sp-tom">Ingen komponenter mangler produkt på denne avtalen.</p></section>
+    }
+    @foreach (var g in _grupper)
+    {
+        <section class="sp-boks" @key="g.Type">
+            <div class="sp-gr-h">
+                <div class="sp-gr-t">
+                    <b>@g.Type</b>
+                    <small>@g.Dorer.Count @(g.Dorer.Count == 1 ? "dør" : "dører") uten produkt</small>
+                </div>
+                <input class="sp-sok" placeholder="Søk produkt, varenr. eller produsent" value="@g.Sok" @onchange="@(e => Sok(g, e.Value?.ToString()))" />
+                <select class="sp-velg" @bind="g.ValgtProdukt">
+                    <option value="">@(g.Produkter.Count == 0 ? "Ingen produkter funnet for typen" : "Velg produkt …")</option>
+                    @foreach (var p in g.Produkter)
+                    {
+                        <option value="@p.Id">@p.Navn@(string.IsNullOrWhiteSpace(p.Produktkode) ? "" : $" ({p.Produktkode})")</option>
+                    }
+                </select>
+                <button type="button" class="sp-knapp sp-knapp-p" disabled="@(g.ValgtProdukt is null || g.Valgte.Count == 0)" @onclick="@(() => Bruk(g))">Bruk på @(g.Valgte.Count == g.Dorer.Count ? $"alle {g.Dorer.Count}" : $"{g.Valgte.Count} valgte")</button>
+            </div>
+            <div class="sp-dorer">
+                @foreach (var d in g.Dorer)
+                {
+                    <button type="button" class="@(g.Valgte.Contains(d.Id) ? "pa" : "")" title="Klikk for å ta med eller utelate døren" @onclick="@(() => { if (!g.Valgte.Remove(d.Id)) g.Valgte.Add(d.Id); })">@d.Dornummer@(string.IsNullOrWhiteSpace(d.Romnr) ? "" : $" · {d.Romnr}")</button>
+                }
+            </div>
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public int ProsjektId { get; set; }
+
+    private sealed class Gruppe
+    {
+        public required string Type { get; init; }
+        public List<Dor> Dorer { get; set; } = [];
+        public HashSet<int> Valgte { get; set; } = [];
+        public List<Component> Produkter { get; set; } = [];
+        public int? ValgtProdukt { get; set; }
+        public string? Sok { get; set; }
+    }
+
+    private Prosjekt? _prosjekt;
+    private List<Gruppe> _grupper = [];
+    private int _totalt;
+    private string? _melding;
+    private int Gjenstar => _grupper.Sum(g => g.Dorer.Count);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _prosjekt = await Db.Prosjekter.AsNoTracking().FirstOrDefaultAsync(p => p.Id == ProsjektId);
+        if (_prosjekt is null) return;
+        await Last();
+    }
+
+    private async Task Last()
+    {
+        var typeKart = await ServiceRegelMotor.HentTypeKart(Db);
+        var dorer = await ServiceRegelMotor.HentDorer(Db, ProsjektId);
+        var gamle = _grupper.ToDictionary(g => g.Type);
+        _grupper = [];
+        foreach (var st in ServiceRegelMotor.Servicetyper)
+        {
+            var med = dorer.Where(d => ServiceBefaring.UspesifiserteTyper(d, typeKart).Contains(st)).ToList();
+            if (med.Count == 0) continue;
+            var g = new Gruppe { Type = st, Dorer = med, Valgte = med.Select(d => d.Id).ToHashSet() };
+            if (gamle.TryGetValue(st, out var gml))
+            {
+                g.Sok = gml.Sok;
+                g.ValgtProdukt = gml.ValgtProdukt;
+            }
+            g.Produkter = await ServiceBefaring.ProdukterFor(Db, st, g.Sok);
+            _grupper.Add(g);
+        }
+        // Fremdriften gjelder denne økten: høyeste antall som manglet siden siden ble åpnet.
+        _totalt = Math.Max(_totalt, Gjenstar);
+    }
+
+    private async Task Sok(Gruppe g, string? sok)
+    {
+        g.Sok = sok;
+        g.Produkter = await ServiceBefaring.ProdukterFor(Db, g.Type, sok);
+        if (g.Produkter.All(p => p.Id != g.ValgtProdukt)) g.ValgtProdukt = g.Produkter.Count == 1 ? g.Produkter[0].Id : null;
+    }
+
+    private async Task Bruk(Gruppe g)
+    {
+        if (g.ValgtProdukt is not { } pid) return;
+        var navn = g.Produkter.FirstOrDefault(p => p.Id == pid)?.Navn;
+        var antall = await ServiceBefaring.Spesifiser(Db, g.Valgte, g.Type, pid);
+        Db.ChangeTracker.Clear();
+        _melding = $"{navn} er satt på {antall} {(antall == 1 ? "dør" : "dører")}.";
+        g.ValgtProdukt = null;
+        await Last();
+    }
+}

@@ -19,7 +19,7 @@ public static class ServiceRegelMotor
     public static readonly string[] Servicetyper =
     [
         "Dørautomatikk", "Elektrisk sluttstykke", "Motorlås", "Magnetlås", "Kortleser",
-        "Panikkbeslag", "Nødutstyr", "Dørlukker", "Mekanisk lås", "Sylinder", "Holdemagnet"
+        "Panikkbeslag", "Nødutstyr", "Dørlukker", "Mekanisk lås", "Sylinder", "Holdemagnet", "Dørvrider"
     ];
 
     /// Servicetype utledet fra navnet på komponenttypen når den ikke er satt.
@@ -38,6 +38,7 @@ public static class ServiceRegelMotor
         if (n.Contains("låskasse")) return "Mekanisk lås";
         if (n.Contains("sylinder") && !n.Contains("skrue")) return "Sylinder";
         if (n.Contains("holdemagnet")) return "Holdemagnet";
+        if (n.Contains("vrider") || n.Contains("dørhåndtak")) return "Dørvrider";
         return null;
     }
 

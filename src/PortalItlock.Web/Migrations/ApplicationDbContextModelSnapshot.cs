@@ -1462,6 +1462,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("ErKomplett")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("ErPlassholder")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("ErSylinder")
                         .HasColumnType("INTEGER");
 
@@ -6758,11 +6761,23 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("DorId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("EndretDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("KreverFoto")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Rekkefolge")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Servicetype")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Standard")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Tekst")
@@ -7218,11 +7233,17 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Kommentar")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("KreverFoto")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Rekkefolge")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("ServicerundeDorId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Standard")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
                         .HasColumnType("TEXT");

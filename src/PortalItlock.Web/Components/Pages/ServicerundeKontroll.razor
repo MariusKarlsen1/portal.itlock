@@ -194,6 +194,29 @@ else
                             }
                         </div>
 
+                        @if (!ferdig && _uspesifisert.TryGetValue(v.DorId, out var mangler) && mangler.Count > 0)
+                        {
+                            @* T4: komponenter fra befaringen som bare har type. Montøren velger
+                               modell her; det oppdaterer døren (ikke øyeblikksbildet i runden). *@
+                            <div class="srk-spes">
+                                <div class="srk-spes-t"><span class="srk-pill gul">Spesifiser</span><b>@mangler.Count @(mangler.Count == 1 ? "komponent" : "komponenter") uten produkt</b></div>
+                                @foreach (var type in mangler)
+                                {
+                                    <div class="srk-spes-r" @key="type">
+                                        <b>@type – hvilken modell?</b>
+                                        <input placeholder="Søk" @onchange="@(e => SokProdukt(type, e.Value?.ToString()))" />
+                                        <select @onchange="@(e => SpesifiserPaDor(v, type, e.Value?.ToString()))">
+                                            <option value="">Velg …</option>
+                                            @foreach (var pr in _produkter.GetValueOrDefault(type) ?? [])
+                                            {
+                                                <option value="@pr.Id">@pr.Navn@(string.IsNullOrWhiteSpace(pr.Produktkode) ? "" : $" ({pr.Produktkode})")</option>
+                                            }
+                                        </select>
+                                    </div>
+                                }
+                            </div>
+                        }
+
                         @foreach (var m in _apneMeldinger.Where(m => m.Melding.DorId == v.DorId))
                         {
                             <div class="srk-varsel rod">
@@ -226,7 +249,7 @@ else
                         {
                             <div class="srk-punkt" @key="p.Id">
                                 <div class="srk-punkt-r1">
-                                    <div><span>@p.Tekst</span><small>@p.Kilde</small></div>
+                                    <div><span>@p.Tekst</span><small>@p.Kilde@if (!string.IsNullOrWhiteSpace(p.Standard)) {<em class="srk-krav">@p.Standard</em>}@if (p.KreverFoto) {<em class="srk-krav foto"><Icon Name="camera" />Ta bilde</em>}</small></div>
                                     <span class="srk-valg">
                                         <button type="button" class="@(p.Status == ServicerundeDorStatus.Ok ? "ok" : "")" disabled="@ferdig" @onclick="@(() => SettPunkt(v, p, ServicerundeDorStatus.Ok))"><Icon Name="check" />OK</button>
                                         <button type="button" class="@(p.Status == ServicerundeDorStatus.Avvik ? "av" : "")" disabled="@ferdig" @onclick="@(() => SettPunkt(v, p, ServicerundeDorStatus.Avvik))"><Icon Name="alert" />Avvik</button>
@@ -244,6 +267,15 @@ else
                                         <input class="srk-avvikfelt" value="@p.Kommentar" placeholder="Hva er feil, og hva bør gjøres?" @onchange="@(e => LagreKommentar(p, e.Value?.ToString()))" />
                                     }
                                 }
+                            </div>
+                        }
+
+                        @if (!ferdig)
+                        {
+                            <div class="srk-nyttpunkt">
+                                <input placeholder="Nytt kontrollpunkt for denne døren" @bind="_nyttPunkt" @bind:event="oninput" />
+                                <label title="Punktet kommer med på denne døren i alle senere runder"><input type="checkbox" @bind="_nyttPunktFast" />Fast på døren</label>
+                                <button type="button" class="srk-lenke" disabled="@string.IsNullOrWhiteSpace(_nyttPunkt)" @onclick="@(() => LeggTilPunkt(v))">Legg til</button>
                             </div>
                         }
 
@@ -366,6 +398,7 @@ else
         }).OrderBy(t => t.Navn).ToList();
         _valgtTegning ??= _valgt?.PlantegningId ?? _tegninger.FirstOrDefault()?.Id;
         await LastAvvikFraRunden();
+        await LastUspesifisert();
     }
 
     private void Velg(ServicerundeDor d)
@@ -391,6 +424,57 @@ else
     }
 
     private bool KanEndre => _runde is { FullfortDato: null };
+
+    // T4: komponenter på dørene som bare har type (fra befaringen).
+    private Dictionary<int, List<string>> _uspesifisert = [];
+    private Dictionary<string, List<Component>> _produkter = [];
+    private string _nyttPunkt = "";
+    private bool _nyttPunktFast = true;
+
+    private async Task LastUspesifisert()
+    {
+        var dorIder = _dorer.Select(d => d.DorId).ToList();
+        var typeKart = await ServiceRegelMotor.HentTypeKart(Db);
+        var rader = await Db.DorKomponenter.AsNoTracking()
+            .Where(k => dorIder.Contains(k.DorId) && k.Component!.ErPlassholder)
+            .Select(k => new { k.DorId, k.Component!.ComponentTypeId })
+            .ToListAsync();
+        _uspesifisert = rader
+            .Select(r => (r.DorId, Type: r.ComponentTypeId is { } id ? typeKart.GetValueOrDefault(id) : null))
+            .Where(x => x.Type is not null)
+            .GroupBy(x => x.DorId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Type!).Distinct().ToList());
+        foreach (var t in _uspesifisert.Values.SelectMany(x => x).Distinct().Where(t => !_produkter.ContainsKey(t)))
+        {
+            _produkter[t] = await ServiceBefaring.ProdukterFor(Db, t, null);
+        }
+    }
+
+    private async Task SokProdukt(string type, string? sok) =>
+        _produkter[type] = await ServiceBefaring.ProdukterFor(Db, type, sok);
+
+    private async Task SpesifiserPaDor(ServicerundeDor v, string type, string? verdi)
+    {
+        if (!KanEndre || !int.TryParse(verdi, out var pid)) return;
+        Db.LoggBrukerId = _brukerId;
+        await ServiceBefaring.Spesifiser(Db, [v.DorId], type, pid);
+        Db.LoggBrukerId = null;
+        await LastUspesifisert();
+    }
+
+    private async Task LeggTilPunkt(ServicerundeDor v)
+    {
+        var tekst = _nyttPunkt.Trim();
+        if (!KanEndre || tekst.Length == 0) return;
+        var nr = v.Punkter.Count == 0 ? 0 : v.Punkter.Max(p => p.Rekkefolge) + 1;
+        v.Punkter.Add(new ServicerundeDorPunkt { Tekst = tekst, Kilde = _nyttPunktFast ? "Denne døren" : "Kun denne runden", Rekkefolge = nr });
+        if (_nyttPunktFast)
+        {
+            Db.ServiceKontrollpunkter.Add(new ServiceKontrollpunkt { Servicetype = "Dør", Tekst = tekst, DorId = v.DorId, Rekkefolge = nr, EndretDato = DateTime.Now });
+        }
+        _nyttPunkt = "";
+        await OppdaterDor(v);
+    }
 
     private async Task OppdaterDor(ServicerundeDor d)
     {
