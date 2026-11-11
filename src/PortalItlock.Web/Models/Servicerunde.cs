@@ -26,6 +26,11 @@ public class Servicerunde
     // FullfortDato er satt, og er skrivebeskyttet etterpå.
     public bool DorForDor { get; set; }
     public DateTime? FullfortDato { get; set; }
+
+    // Fase 6: kundens signatur på servicerapporten (tegnet på skjermen).
+    public byte[]? KundeSignatur { get; set; }
+    public string? KundeSignertAv { get; set; }
+    public DateTime? KundeSignertDato { get; set; }
     public List<ServicerundeDor> Dorer { get; set; } = [];
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;

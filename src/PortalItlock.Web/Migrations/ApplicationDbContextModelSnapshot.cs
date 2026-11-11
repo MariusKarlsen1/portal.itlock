@@ -7073,6 +7073,15 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("FullfortDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<byte[]>("KundeSignatur")
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("KundeSignertAv")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("KundeSignertDato")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("NesteServiceDato")
                         .HasColumnType("TEXT");
 

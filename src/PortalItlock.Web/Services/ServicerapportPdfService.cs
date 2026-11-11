@@ -29,18 +29,37 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
 
     public async Task<byte[]?> GenerateAsync(int servicerundeId)
     {
-        var runde = await db.Servicerunder
+        // Lest uten sporing: rapporten legger til midlertidige rader (byttede deler
+        // fra komponentloggen) som aldri skal lagres.
+        var runde = await db.Servicerunder.AsNoTracking()
             .Include(r => r.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(r => r.Prosjekt).ThenInclude(p => p!.Prosjektleder)
             .Include(r => r.UtfortAvBruker)
             .Include(r => r.Deler).ThenInclude(d => d.Dor)
             .Include(r => r.Sjekkpunkter)
+            .Include(r => r.Dorer).ThenInclude(d => d.Punkter)
             .AsSplitQuery()
             .FirstOrDefaultAsync(r => r.Id == servicerundeId);
 
         if (runde is null)
         {
             return null;
+        }
+
+        // Dør for dør: deler som er byttet på dørene mens runden pågikk (komponentloggen).
+        if (runde.DorForDor && runde.Dorer.Count > 0)
+        {
+            var dorIder = runde.Dorer.Select(d => d.DorId).ToList();
+            var fra = runde.Dato.Date;
+            var til = runde.FullfortDato ?? DateTime.Now;
+            var bytter = await db.DorKomponentLogger.AsNoTracking()
+                .Where(l => dorIder.Contains(l.DorId) && l.Hendelse == DorKomponentHendelse.Fjernet && l.Tidspunkt >= fra && l.Tidspunkt <= til && l.Merknad != null)
+                .ToListAsync();
+            foreach (var b in bytter)
+            {
+                var dn = runde.Dorer.First(d => d.DorId == b.DorId).Dornummer;
+                runde.Deler.Add(new ServicerundeDel { Beskrivelse = b.Merknad!, Dor = new Dor { Dornummer = dn }, Dato = b.Tidspunkt });
+            }
         }
 
         runde.Media = await db.ServicerundeMedia
@@ -83,6 +102,10 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                         });
                     }
 
+                    if (runde.DorForDor && runde.Dorer.Count > 0)
+                    {
+                        DorForDor(col, runde.Dorer.OrderBy(d => d.Rekkefolge).ToList());
+                    }
                     ByttedeDeler(col, runde.Deler);
                     Sjekkliste(col, runde.Sjekkpunkter.OrderBy(p => p.Rekkefolge).ToList(), erUtfort);
                     Bilder(col, runde.Media.Select(m => m.Data).ToList());
@@ -343,6 +366,63 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
         }
     }
 
+    // Fase 6: kontrolloversikt og avvik per dør for runder som føres dør for dør.
+    private static void DorForDor(ColumnDescriptor col, List<ServicerundeDor> dorer)
+    {
+        var avvik = dorer.Where(d => d.Status == ServicerundeDorStatus.Avvik).ToList();
+        if (avvik.Count > 0)
+        {
+            col.Item().PaddingTop(16).Column(c =>
+            {
+                Overskrift(c, "Avvik og anbefalte tiltak");
+                c.Item().PaddingTop(4).DefaultTextStyle(x => x.FontSize(9.4f)).Table(table =>
+                {
+                    table.ColumnsDefinition(cd => { cd.ConstantColumn(60); cd.RelativeColumn(2); cd.RelativeColumn(3); });
+                    table.Header(h =>
+                    {
+                        foreach (var kolonne in new[] { "Dør", "Kontrollpunkt", "Beskrivelse" })
+                        {
+                            h.Cell().BorderBottom(0.75f).BorderColor(PdfStil.Ink).PaddingVertical(3.5f).PaddingRight(8).Text(kolonne).FontSize(8).SemiBold().FontColor(Svak);
+                        }
+                    });
+                    foreach (var d in avvik)
+                    {
+                        foreach (var p in d.Punkter.Where(p => p.Status == ServicerundeDorStatus.Avvik).OrderBy(p => p.Rekkefolge))
+                        {
+                            Celle(table).Text(d.Dornummer).SemiBold();
+                            Celle(table).Text(p.Tekst);
+                            Celle(table).Text(string.Join(" ", new[] { p.Kommentar, d.Notat }.Where(s => !string.IsNullOrWhiteSpace(s))) is { Length: > 0 } t ? t : "–");
+                        }
+                    }
+                });
+            });
+        }
+
+        col.Item().PaddingTop(16).Column(c =>
+        {
+            Overskrift(c, $"Kontrolloversikt – {dorer.Count} dører");
+            c.Item().PaddingTop(4).DefaultTextStyle(x => x.FontSize(9.2f)).Table(table =>
+            {
+                table.ColumnsDefinition(cd => { cd.ConstantColumn(60); cd.RelativeColumn(2); cd.RelativeColumn(2); cd.ConstantColumn(90); });
+                table.Header(h =>
+                {
+                    foreach (var kolonne in new[] { "Dør", "Plassering", "Kategori", "Status" })
+                    {
+                        h.Cell().BorderBottom(0.75f).BorderColor(PdfStil.Ink).PaddingVertical(3.5f).PaddingRight(8).Text(kolonne).FontSize(8).SemiBold().FontColor(Svak);
+                    }
+                });
+                foreach (var d in dorer)
+                {
+                    Celle(table).Text(d.Dornummer).SemiBold();
+                    Celle(table).Text(string.Join(" · ", new[] { d.Rom, string.IsNullOrWhiteSpace(d.Etasje) ? null : $"{d.Etasje}. etg" }.Where(s => !string.IsNullOrWhiteSpace(s))) is { Length: > 0 } pl ? pl : "–");
+                    Celle(table).Text(d.Kategori ?? "–");
+                    Celle(table).Text(d.Status switch { ServicerundeDorStatus.Ok => "OK", ServicerundeDorStatus.Avvik => "Avvik", _ => "Ikke kontrollert" })
+                        .FontColor(d.Status == ServicerundeDorStatus.Avvik ? Color.FromHex("#B42318") : PdfStil.Ink);
+                }
+            });
+        });
+    }
+
     private static void ByttedeDeler(ColumnDescriptor col, ICollection<ServicerundeDel> deler)
     {
         if (deler.Count == 0)
@@ -483,16 +563,27 @@ public class ServicerapportPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             string.Join(", ", new[] { runde.UtfortAvBruker?.Navn, org.Navn }.Where(s => !string.IsNullOrWhiteSpace(s))),
             dato
         });
-        var kvittert = string.Join(", ", new[] { kontakt, kunde?.Navn }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        var kvittert = !string.IsNullOrWhiteSpace(runde.KundeSignertAv)
+            ? $"{runde.KundeSignertAv}{(kunde?.Navn is { Length: > 0 } kn ? $", {kn}" : "")} · {runde.KundeSignertDato:dd.MM.yyyy}"
+            : string.Join(", ", new[] { kontakt, kunde?.Navn }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
         col.Item().ExtendVertical().AlignBottom().PaddingTop(20).PaddingBottom(14).ShowEntire().Row(r =>
         {
             r.Spacing(30);
+            var i = 0;
             foreach (var tekst in new[] { utfort, string.IsNullOrWhiteSpace(kvittert) ? "Kunde" : kvittert })
             {
+                var erKunde = i++ == 1;
                 r.RelativeItem().Column(c =>
                 {
-                    c.Item().Height(28);
+                    if (erKunde && runde.KundeSignatur is { Length: > 0 } sig)
+                    {
+                        c.Item().Height(42).AlignLeft().Image(sig).FitHeight();
+                    }
+                    else
+                    {
+                        c.Item().Height(28);
+                    }
                     c.Item().LineHorizontal(0.75f).LineColor(PdfStil.Ink);
                     c.Item().PaddingTop(3).Text(tekst).FontSize(8.4f).FontColor(Svak);
                 });

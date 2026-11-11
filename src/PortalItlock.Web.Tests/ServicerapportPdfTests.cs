@@ -180,4 +180,26 @@ public class ServicerapportPdfTests
 
         Assert.True(ErPdf(ServicerapportPdfService.Bygg(runde, Org, null!)));
     }
+
+    [Fact]
+    public void DorForDor_MedAvvikOgSignatur_GirPdf()
+    {
+        QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+        var runde = new Servicerunde
+        {
+            Id = 7, Dato = new DateTime(2026, 11, 10), StatusBeskrivelse = "2 av 2 dører kontrollert.", DorForDor = true,
+            FullfortDato = new DateTime(2026, 11, 10), KundeSignertAv = "Per Hansen", KundeSignertDato = new DateTime(2026, 11, 10),
+            Prosjekt = new Prosjekt { Navn = "Hinna Park – Bygg B" },
+            Dorer =
+            [
+                new ServicerundeDor { Dornummer = "H-101", Rom = "Hovedinngang", Etasje = "1", Kategori = "Dørautomatikk", Status = ServicerundeDorStatus.Ok, Rekkefolge = 0 },
+                new ServicerundeDor
+                {
+                    Dornummer = "H-102", Rom = "Vindfang", Status = ServicerundeDorStatus.Avvik, Notat = "Bytt sensor", Rekkefolge = 1,
+                    Punkter = [new ServicerundeDorPunkt { Tekst = "Kontroll av sikkerhetssensorer", Status = ServicerundeDorStatus.Avvik, Kommentar = "Reagerer sent" }]
+                }
+            ]
+        };
+        Assert.True(ErPdf(ServicerapportPdfService.Bygg(runde, Org, null!)));
+    }
 }

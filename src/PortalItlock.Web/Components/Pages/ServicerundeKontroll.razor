@@ -9,6 +9,9 @@
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
+@inject ServicerapportPdfService RapportPdf
+@inject LagretPdfService LagretPdf
+@inject IJSRuntime JS
 
 <PageTitle>Servicerunde</PageTitle>
 
@@ -45,6 +48,7 @@ else
                     </h1>
                 </div>
                 <div class="srk-knapper">
+                    <a class="srk-knapp" href="@($"/servicerunde/{_runde.Id}/pdf")" target="_blank"><Icon Name="file-text" />@(ferdig ? "Servicerapport (PDF)" : "Forhåndsvis rapport")</a>
                     @if (!ferdig)
                     {
                         <button type="button" class="srk-knapp primaer" @onclick="@(() => _visFullfor = true)"><Icon Name="check" />Fullfør runden</button>
@@ -76,6 +80,36 @@ else
                     </div>
                     <button type="button" class="srk-knapp" @onclick="@(() => _visFullfor = false)">Avbryt</button>
                     <button type="button" class="srk-knapp primaer" @onclick="Fullfor"><Icon Name="lock" />Fullfør og lås</button>
+                </div>
+            }
+
+            @if (ferdig)
+            {
+                <div class="srk-signatur">
+                    @if (_runde.KundeSignatur is { Length: > 0 })
+                    {
+                        <div>
+                            <b><Icon Name="check" />Signert av kunden</b>
+                            <span>@_runde.KundeSignertAv · @_runde.KundeSignertDato?.ToString("dd.MM.yyyy HH:mm") – signaturen står på servicerapporten</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div>
+                            <b>Kundens signatur</b>
+                            <span>La kunden signere på skjermen. Rapporten lagres på nytt med signaturen.</span>
+                            <input class="srk-signavn" placeholder="Kundens navn" @bind="_signertAv" />
+                        </div>
+                        <canvas id="sig-servicerunde" width="420" height="140"></canvas>
+                        <div class="srk-signknapper">
+                            <button type="button" class="srk-knapp" @onclick="TomSignatur">Tøm</button>
+                            <button type="button" class="srk-knapp primaer" disabled="@string.IsNullOrWhiteSpace(_signertAv)" @onclick="LagreSignatur"><Icon Name="check" />Lagre signatur</button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_signFeil))
+                        {
+                            <span class="form-error">@_signFeil</span>
+                        }
+                    }
                 </div>
             }
 
@@ -407,6 +441,55 @@ else
         await ServicerundeMotor.Fullfor(Db, _runde, _brukerId);
         _visFullfor = false;
         await LastAvvikFraRunden();
+        await LagreRapport();
+    }
+
+    // ---- Fase 6: rapport og kundens signatur ----
+    private string? _signertAv, _signFeil;
+    private bool _signaturKlar;
+
+    // Rapporten lagres automatisk på runden (og vises under rundene på avtalen).
+    private async Task LagreRapport()
+    {
+        if (_runde is null) return;
+        var bytes = await RapportPdf.GenerateAsync(_runde.Id);
+        if (bytes is not null)
+        {
+            await LagretPdf.LagreAsync("Servicerunde", _runde.Id, $"Servicerapport - {_avtaleNavn} - {_runde.Dato:dd.MM.yyyy}.pdf", bytes);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var trengs = _runde is { FullfortDato: not null } r && r.KundeSignatur is not { Length: > 0 };
+        if (trengs && !_signaturKlar)
+        {
+            _signaturKlar = true;
+            await JS.InvokeVoidAsync("signatur.init", "sig-servicerunde");
+        }
+        else if (!trengs)
+        {
+            _signaturKlar = false;
+        }
+    }
+
+    private async Task TomSignatur() => await JS.InvokeVoidAsync("signatur.clear", "sig-servicerunde");
+
+    private async Task LagreSignatur()
+    {
+        if (_runde is null || string.IsNullOrWhiteSpace(_signertAv)) return;
+        var b64 = await JS.InvokeAsync<string?>("signatur.getPngBase64", "sig-servicerunde");
+        if (string.IsNullOrEmpty(b64))
+        {
+            _signFeil = "Signaturfeltet er tomt.";
+            return;
+        }
+        _signFeil = null;
+        _runde.KundeSignatur = Convert.FromBase64String(b64);
+        _runde.KundeSignertAv = _signertAv.Trim();
+        _runde.KundeSignertDato = DateTime.Now;
+        await Db.SaveChangesAsync();
+        await LagreRapport();
     }
 
     private double Pst(int n) => _dorer.Count == 0 ? 0 : Math.Round(100.0 * n / _dorer.Count, 1);

@@ -121,6 +121,27 @@ public class ServicerundeMotorTests
     }
 
     [Fact]
+    public async Task Fullfor_PlanleggerNesteRunde_OgNyRundeBrukerDenPlanlagte()
+    {
+        using var db = LagDb(out var c);
+        var (p, _, _, _) = await LagAvtale(db);
+        p.ServiceGangerPerAr = 12;
+        var idag = DateTime.Today;
+        var id = await ServicerundeMotor.OpprettRunde(db, p.Id, null, idag);
+        var runde = await db.Servicerunder.Include(r => r.Dorer).ThenInclude(d => d.Punkter).SingleAsync(r => r.Id == id);
+        await ServicerundeMotor.Fullfor(db, runde, null);
+        await ServicerundeMotor.Fullfor(db, runde, null);
+
+        var planlagt = await db.Servicerunder.SingleAsync(r => r.ErPlanlagt);
+        Assert.Equal(idag.AddMonths(1), planlagt.Dato);
+
+        var ny = await ServicerundeMotor.OpprettRunde(db, p.Id, null, idag.AddMonths(1));
+        Assert.Equal(planlagt.Id, ny);
+        Assert.Equal(2, await db.Servicerunder.CountAsync());
+        Assert.False(await db.Servicerunder.AnyAsync(r => r.ErPlanlagt));
+    }
+
+    [Fact]
     public void Status_AvvikForanOk()
     {
         var d = new ServicerundeDor { Dornummer = "1", Punkter = [new() { Tekst = "a", Status = "ok" }, new() { Tekst = "b" }] };

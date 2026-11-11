@@ -129,14 +129,17 @@ public static class ServicerundeMotor
             .Include(d => d.Plantegning)
             .OrderBy(d => d.Etasje).ThenBy(d => d.Dornummer).ToListAsync();
 
-        var runde = new Servicerunde
-        {
-            ProsjektId = prosjektId,
-            Dato = dato,
-            UtfortAvBrukerId = brukerId,
-            StatusBeskrivelse = "Pågår",
-            DorForDor = true
-        };
+        // En planlagt runde (fra planleggingen eller forrige fullførte runde) som
+        // forfaller innen 60 dager, tas i bruk i stedet for å lage en ny.
+        var planlagt = await db.Servicerunder
+            .Where(r => r.ProsjektId == prosjektId && r.ErPlanlagt && r.Dato <= dato.Date.AddDays(60))
+            .OrderBy(r => r.Dato).FirstOrDefaultAsync();
+        var runde = planlagt ?? new Servicerunde { ProsjektId = prosjektId, StatusBeskrivelse = "Pågår" };
+        runde.Dato = dato;
+        runde.ErPlanlagt = false;
+        runde.DorForDor = true;
+        runde.StatusBeskrivelse = "Pågår";
+        runde.UtfortAvBrukerId = brukerId ?? runde.UtfortAvBrukerId;
         var nr = 0;
         foreach (var d in dorer)
         {
@@ -169,7 +172,10 @@ public static class ServicerundeMotor
             }
             runde.Dorer.Add(rd);
         }
-        db.Servicerunder.Add(runde);
+        if (planlagt is null)
+        {
+            db.Servicerunder.Add(runde);
+        }
         await db.SaveChangesAsync();
         return runde.Id;
     }
@@ -213,6 +219,19 @@ public static class ServicerundeMotor
             };
             db.Avvik.Add(a);
             nye.Add(a);
+        }
+        // Neste runde planlegges automatisk - men bare hvis det ikke allerede
+        // finnes en planlagt runde fram i tid.
+        if (runde.NesteServiceDato is { } neste && !await db.Servicerunder.AnyAsync(r => r.ProsjektId == runde.ProsjektId && r.ErPlanlagt && r.Dato >= DateTime.Today))
+        {
+            db.Servicerunder.Add(new Servicerunde
+            {
+                ProsjektId = runde.ProsjektId,
+                Dato = neste,
+                ErPlanlagt = true,
+                StatusBeskrivelse = "Planlagt servicerunde",
+                UtfortAvBrukerId = runde.UtfortAvBrukerId
+            });
         }
         await db.SaveChangesAsync();
         return nye;
