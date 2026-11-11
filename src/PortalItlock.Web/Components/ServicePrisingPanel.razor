@@ -9,316 +9,286 @@
 @inject ITenantContext TenantCtx
 @using Microsoft.AspNetCore.Components.Authorization
 
-<div class="prosjekt-layout prising-layout">
-    @* Prising N1 «Kalkulator» (Prototype prising nye forslag.html): alle tall som
-       påvirker prisen til venstre, og prisen med godkjenning og tilbud i en fast
-       boks til høyre. *@
-    <div class="n1">
-    <div class="n1-v">
-    <section class="prising-panel n1-kalk">
-        <div class="prising-panel-header">
-            <span class="prising-panel-ikon"><Icon Name="receipt" /></span>
-            <h2>Priskalkulator</h2>
-            <small>Endre tallene – prisen regnes ut med en gang. Alle beløp eks. mva.</small>
+<div class="pz">
+    @* Prising (november 2026): prisgrunnlag, tillegg og tilbud til venstre, prisen med
+       godkjenning i en fast boks til høyre. Grå overskrifter og ryddige tabeller som
+       på de andre kortene. *@
+    <div class="pz-grid">
+    <div class="pz-v">
+
+    @* ---- Prisgrunnlag ---- *@
+    <section class="pz-s">
+        <div class="pz-sh">
+            <span class="pz-ik"><Icon Name="receipt" /></span>
+            <b>Prisgrunnlag</b>
+            <span class="pz-sp"></span>
+            <span class="pz-seg">
+                <button type="button" class="@(ErKategorisert ? "pa" : "")" @onclick="@(() => SettPrismodell(ServiceavtalePris.Kategorisert))">Prisregler</button>
+                <button type="button" class="@(ErKategorisert ? "" : "pa")" @onclick="@(() => SettPrismodell(ServiceavtalePris.Minutter))">Estimat fra varer</button>
+            </span>
         </div>
-        <div class="n1-felt">
-            <label><span>Prismodell</span>
-                <select value="@_prosjekt!.ServicePrismodell" @onchange="ByttPrismodell">
-                    <option value="@ServiceavtalePris.Kategorisert">Prisregler (kategorier)</option>
-                    <option value="@ServiceavtalePris.Minutter">Estimat fra varer</option>
-                </select>
-            </label>
+
+        @if (ErKategorisert)
+        {
+            <p class="pz-hint">Dørene får kategori ut fra komponenttypene. Prisen per dør kommer fra <a href="/service-prisregler">prisreglene</a> – skriv en egen pris for å overstyre den på denne avtalen.</p>
+            @if (Resultater.Count(x => x.Res.HarKonflikt) is var kon && kon > 0)
+            {
+                <p class="pz-varsel">@kon @(kon == 1 ? "dør treffer" : "dører treffer") to regler med samme prioritet. Første regel brukes – løs det under Prisregler.</p>
+            }
+            <div class="pz-tabwrap">
+                <table class="pz-tab">
+                    <thead>
+                        <tr><th>Kategori</th><th class="n">Dører</th><th class="n">Pris per dør</th><th class="n">Per runde</th><th class="n">Per år</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in Grupper)
+                        {
+                            var r = g.Regel;
+                            var egen = _kategoriPriser.FirstOrDefault(k => !k.ErEgendefinert && k.Kategori == r.Navn);
+                            var pris = ServiceRegelMotor.PrisForKategori(r, _kategoriPriser);
+                            var apen = _apneKategorier.Contains(r.Id);
+                            <tr @key="r.Id">
+                                <td>
+                                    <button type="button" class="pz-kat" @onclick="@(() => VekslKategori(r.Id))"><span class="pz-pil @(apen ? "apen" : "")">›</span><i style="background:@KatFarge(r.Navn)"></i>@r.Navn</button>
+                                    <small>@r.Minutter min per dør@(string.IsNullOrWhiteSpace(r.Undertekst) ? "" : $" · {r.Undertekst}")</small>
+                                </td>
+                                <td class="n">@g.Dorer.Count</td>
+                                <td class="n">
+                                    <span class="pz-inp @(egen?.Pris is not null ? "egen" : "")">
+                                        <input value="@(egen?.Pris?.ToString("0.##", Kultur))" placeholder="@r.Pris.ToString("0.##", Kultur)" @onchange="@(e => SettKategoriPris(r, e.Value?.ToString()))" />
+                                        <em>kr</em>
+                                    </span>
+                                </td>
+                                <td class="n">@Kr(g.Dorer.Count * pris)</td>
+                                <td class="n"><b>@Kr(g.Dorer.Count * pris * Runder)</b></td>
+                                <td class="n">
+                                    @if (egen?.Pris is not null)
+                                    {
+                                        <button type="button" class="pz-lenke" title="Bruk prisen fra prisreglene (@Kr(r.Pris))" @onclick="@(() => SettKategoriPris(r, null))">Standard</button>
+                                    }
+                                </td>
+                            </tr>
+                            @if (apen)
+                            {
+                                @foreach (var x in g.Dorer)
+                                {
+                                    <tr class="pz-dor" @key="@($"d{x.Dor.Id}")">
+                                        <td colspan="6"><b>@x.Dor.Dornummer</b>@(string.IsNullOrWhiteSpace(x.Dor.Romnr) ? "" : $" · {x.Dor.Romnr}") <small>@(x.Res.Typer.Count == 0 ? "Ingen komponenter med servicetype" : string.Join(", ", x.Res.Typer))@(x.Res.HarKonflikt ? " · konflikt" : "")</small></td>
+                                    </tr>
+                                }
+                            }
+                        }
+                        @if (Resultater.Where(x => x.Res.Regel is null).ToList() is { Count: > 0 } ikke)
+                        {
+                            <tr class="pz-ikke">
+                                <td><span class="pz-kat"><i style="background:#C7C7C6"></i>Ikke kategorisert</span><small>@string.Join(", ", ikke.Select(x => x.Dor.Dornummer).Take(12)) – får ingen pris</small></td>
+                                <td class="n">@ikke.Count</td>
+                                <td class="n">–</td>
+                                <td class="n">–</td>
+                                <td class="n">–</td>
+                                <td></td>
+                            </tr>
+                        }
+                        @foreach (var kp in _kategoriPriser.Where(k => k.ErEgendefinert))
+                        {
+                            <tr @key="kp.Id" class="pz-egen">
+                                <td>
+                                    <input class="pz-navn" @bind="kp.Kategori" @bind:after="@(() => LagreKategoriPris(kp))" />
+                                    <small>Egen linje · pris × antall × ganger i året</small>
+                                </td>
+                                <td class="n"><span class="pz-inp smal"><input @bind="kp.ManueltAntall" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" /></span></td>
+                                <td class="n"><span class="pz-inp"><input @bind="kp.Pris" @bind:after="@(() => LagreKategoriPris(kp))" /><em>kr</em></span></td>
+                                <td class="n"><span class="pz-inp smal"><input @bind="kp.KravServicePrAar" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" /><em>g/år</em></span></td>
+                                <td class="n"><b>@Kr(SumRad(kp, kp.ManueltAntall ?? 0))</b></td>
+                                <td class="n"><button type="button" class="pz-x" title="Fjern linjen" @onclick="@(() => FjernKategoriLinje(kp))">×</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr><td>Sum dører</td><td class="n">@Resultater.Count(x => x.Res.Regel is not null)</td><td></td><td class="n">@Kr(Beregning.Grunnlag)</td><td class="n">@Kr(Beregning.Grunnlag * Runder + Beregning.EgneLinjer)</td><td></td></tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div class="pz-fot">
+                <input @bind="_nyEgenLinjeNavn" @bind:event="oninput" placeholder="Egen linje, f.eks. «Batteriskifte Salto»" />
+                <button type="button" class="pz-knapp" @onclick="LeggTilEgenLinje" disabled="@string.IsNullOrWhiteSpace(_nyEgenLinjeNavn)"><Icon Name="plus" />Legg til linje</button>
+            </div>
+        }
+        else
+        {
+            <p class="pz-hint">Servicetiden hentes fra varene på dørene og ganges med timeprisen. Minuttene kan endres.</p>
+            @if (!string.IsNullOrEmpty(_syncMessage))
+            {
+                <p class="pz-ok">@_syncMessage</p>
+            }
+            @if (_serviceMinuttLinjer.Count == 0)
+            {
+                <p class="pz-tom">Ingen varer hentet ennå. Trykk «Hent fra dørene» for å hente alt som er registrert på dørene.</p>
+            }
+            else
+            {
+                <div class="pz-tabwrap">
+                    <table class="pz-tab">
+                        <thead><tr><th>Vare</th><th class="n">Antall</th><th>Enhet</th><th class="n">Minutter</th><th class="n">Sum</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var l in _serviceMinuttLinjer)
+                            {
+                                <tr @key="l.Id">
+                                    <td>@l.Navn@if (l.ComponentId.HasValue) {<button type="button" class="pz-lenke" @onclick="@(() => HentMinuttFraVare(l))">hent minutter fra varen</button>}</td>
+                                    <td class="n"><span class="pz-inp smal"><input @bind="l.Antall" @bind:after="LagreServiceMinutt" /></span></td>
+                                    <td>@l.Enhet</td>
+                                    <td class="n"><span class="pz-inp smal"><input @bind="l.Minutter" @bind:after="LagreServiceMinutt" placeholder="0" /><em>min</em></span></td>
+                                    <td class="n">@FormatTid((l.Minutter ?? 0) * l.Antall)</td>
+                                    <td class="n"><button type="button" class="pz-x" title="Fjern" @onclick="@(() => FjernServiceMinuttLinje(l))">×</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr><td>Sum per runde</td><td></td><td></td><td></td><td class="n">@FormatTid(TotaltServiceMinutter)</td><td></td></tr>
+                        </tfoot>
+                    </table>
+                </div>
+            }
+            <div class="pz-fot">
+                <button type="button" class="pz-knapp" @onclick="SynkServiceMinutter"><Icon Name="trend-up" />Hent fra dørene</button>
+                <span class="pz-sp"></span>
+                <label class="pz-tp">Timepris <span class="pz-inp"><input @bind="_prosjekt!.ServiceTimepris" @bind:after="LagreTimepris" /><em>kr/t</em></span></label>
+            </div>
+        }
+    </section>
+
+    @* ---- Tillegg og vilkår ---- *@
+    <section class="pz-s">
+        <div class="pz-sh">
+            <span class="pz-ik"><Icon Name="calendar" /></span>
+            <b>Runder og tillegg</b>
+            <span class="pz-sp"></span>
+            <small>Legges på hver runde, uansett prismodell. Eks. mva.</small>
+        </div>
+        <div class="pz-felt">
             <label><span>Runder i året</span>
                 <select value="@(_prosjekt!.ServiceGangerPerAr?.ToString() ?? "")" @onchange="EndreRunder">
                     <option value="">Ikke satt (1)</option>
                     @foreach (var g in new[] { 1, 2, 3, 4, 6, 12 })
                     {
-                        <option value="@g">@g @(g == 1 ? "runde" : "runder")</option>
+                        <option value="@g">@g @(g == 1 ? "runde" : "runder") i året</option>
                     }
                 </select>
             </label>
-            <label><span>Oppmøte / kjøring per runde</span><span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceOppmote)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceOppmote = v, e.Value))" /><span class="input-suffix">kr</span></span></label>
-            <label><span>Reise / bompenger per runde</span><span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceReise)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceReise = v, e.Value))" /><span class="input-suffix">kr</span></span></label>
-            <label><span>Fast tillegg per runde</span><span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceFastTillegg)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceFastTillegg = v, e.Value))" /><span class="input-suffix">kr</span></span></label>
-            <label><span>Minstepris per runde</span><span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceMinstepris)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceMinstepris = v, e.Value))" /><span class="input-suffix">kr</span></span></label>
-            <label><span>Avtalerabatt</span><span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceRabattProsent)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceRabattProsent = v is > 100 ? 100 : v, e.Value))" /><span class="input-suffix">%</span></span></label>
+            <label><span>Oppmøte / kjøring per runde</span><span class="pz-inp bred"><input value="@Tall(_prosjekt!.ServiceOppmote)" placeholder="0" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceOppmote = v, e.Value))" /><em>kr</em></span></label>
+            <label><span>Reise / bompenger per runde</span><span class="pz-inp bred"><input value="@Tall(_prosjekt!.ServiceReise)" placeholder="0" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceReise = v, e.Value))" /><em>kr</em></span></label>
+            <label><span>Fast tillegg per runde</span><span class="pz-inp bred"><input value="@Tall(_prosjekt!.ServiceFastTillegg)" placeholder="0" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceFastTillegg = v, e.Value))" /><em>kr</em></span></label>
+            <label><span>Minstepris per runde</span><span class="pz-inp bred"><input value="@Tall(_prosjekt!.ServiceMinstepris)" placeholder="Ingen" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceMinstepris = v, e.Value))" /><em>kr</em></span></label>
+            <label><span>Avtalerabatt</span><span class="pz-inp bred"><input value="@Tall(_prosjekt!.ServiceRabattProsent)" placeholder="0" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceRabattProsent = v is > 100 ? 100 : v, e.Value))" /><em>%</em></span></label>
         </div>
     </section>
 
-    @if (!ErKategorisert)
-    {
-    <section class="prising-panel">
-        <div class="prising-panel-header">
-            <span class="prising-panel-ikon"><Icon Name="clock" /></span>
-            <h2>Service-minutter</h2>
+    @* ---- Tilbud ---- *@
+    <section class="pz-s">
+        <div class="pz-sh">
+            <span class="pz-ik"><Icon Name="file-text" /></span>
+            <b>Tilbud på serviceavtalen</b>
+            <span class="pz-sp"></span>
+            <button type="button" class="pz-knapp" @onclick="@(() => _visAvtaletekst = !_visAvtaletekst)"><Icon Name="edit" />@(_visAvtaletekst ? "Skjul avtaletekst" : "Rediger avtaletekst")</button>
+            <button type="button" class="pz-knapp pz-knapp-p" @onclick="ForhandsvisTilbud"><Icon Name="file-text" />Lag tilbud (PDF)</button>
         </div>
-        <p class="section-hint">Henter serviceestimatet fra varene på dørene. Minuttene kan endres.</p>
-
-        <div class="varer-toolbar">
-            <button type="button" class="knapp knapp-primaer" @onclick="SynkServiceMinutter"><Icon Name="trend-up" />Synk</button>
-        </div>
-        @if (!string.IsNullOrEmpty(_syncMessage))
+        @if (_visAvtaletekst)
         {
-            <p class="save-success">@_syncMessage</p>
+            <div class="pz-tekst">
+                <div class="pz-tekst-topp">
+                    <span>PDF-en viser kunde, antall besøk og dører øverst, så avtaleteksten. Hver overskrift blir en seksjon.</span>
+                    @if (_forsideMaler.Count > 0)
+                    {
+                        <select @bind="_valgtMalId">
+                            <option value="">Hent fra mal …</option>
+                            @foreach (var m in _forsideMaler)
+                            {
+                                <option value="@m.Id">@m.Navn</option>
+                            }
+                        </select>
+                        <button type="button" class="pz-knapp" @onclick="BrukMal" disabled="@(_valgtMalId is null)">Bruk</button>
+                    }
+                    <button type="button" class="pz-knapp" @onclick="BrukStandardtekst">Standardtekst</button>
+                </div>
+                <ForsideTekstRedigering @bind-Value="_avtaleTekst" Rows="12" Placeholder="Tom = standardteksten brukes" />
+                <div class="pz-tekst-kn">
+                    @if (!string.IsNullOrEmpty(_tilbudMelding))
+                    {
+                        <span class="pz-ok">@_tilbudMelding</span>
+                    }
+                    <button type="button" class="pz-knapp" @onclick="LagreTilbud">Lagre teksten</button>
+                </div>
+            </div>
         }
-
-        @if (_serviceMinuttLinjer.Count == 0)
+        @if (_lagredeTilbud.Count > 0)
         {
-            <p class="list-empty">Ingen varer lagt til ennå. Trykk "Synk" for å hente inn alt som er registrert på dørene i avtalen.</p>
+            <div class="pz-tilbud"><LagredePdfListe Pdfer="_lagredeTilbud" /></div>
         }
         else
         {
-            <div class="dorer-table-wrap">
-                <table class="dorer-table">
-                    <thead>
-                        <tr><th>Navn</th><th>Antall</th><th>Enhet</th><th>Minutter</th><th></th><th></th></tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var l in _serviceMinuttLinjer)
-                        {
-                            <tr @key="l.Id">
-                                <td>@l.Navn</td>
-                                <td><input class="antall-input" @bind="l.Antall" @bind:after="LagreServiceMinutt" /></td>
-                                <td>@l.Enhet</td>
-                                <td><input class="antall-input" @bind="l.Minutter" @bind:after="LagreServiceMinutt" placeholder="min" /></td>
-                                <td>
-                                    @if (l.ComponentId.HasValue)
-                                    {
-                                        <button type="button" class="knapp" @onclick="@(() => HentMinuttFraVare(l))">Hent minutt fra vare</button>
-                                    }
-                                </td>
-                                <td><button type="button" class="icon-button" title="Fjern" @onclick="@(() => FjernServiceMinuttLinje(l))"><Icon Name="x" /></button></td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        }
-
-        <div class="prising-sum-rad">
-            <span>Totalt: <strong>@FormatTid(TotaltServiceMinutter)</strong></span>
-            <label class="timepris-felt">
-                Timepris
-                <span class="input-suffix-wrap">
-                    <input class="antall-input" @bind="_prosjekt!.ServiceTimepris" @bind:after="LagreTimepris" />
-                    <span class="input-suffix">kr/t</span>
-                </span>
-            </label>
-            <span>Pris per runde: <strong>@FormatKr(ServiceMinutterPris)</strong></span>
-            <span>Årspris (@Runder @(Runder == 1 ? "runde" : "runder")): <strong>@FormatKr(Arspris)</strong></span>
-        </div>
-    </section>
-    }
-    else
-    {
-    <section class="prising-panel">
-        <div class="prising-panel-header">
-            <span class="prising-panel-ikon"><Icon Name="tag" /></span>
-            <h2>Kategorier etter prisregler</h2>
-            <a class="pr-regellenke" href="/service-prisregler">Prisregler →</a>
-        </div>
-        <p class="section-hint">Dørene får kategori automatisk ut fra komponenttypene som er registrert på dem. Prisen kommer fra prisreglene – skriv inn en egen pris her for å overstyre den på denne avtalen.</p>
-
-        @if (Resultater.Count(x => x.Res.HarKonflikt) is var kon && kon > 0)
-        {
-            <p class="pr-varsel">@kon @(kon == 1 ? "dør treffer" : "dører treffer") to regler med samme prioritet. Første regel brukes – løs det under Prisregler.</p>
-        }
-
-        <div class="dorer-table-wrap">
-        <table class="kategori-tabell">
-            <thead>
-                <tr>
-                    <th>Kategori</th>
-                    <th>Antall dører</th>
-                    <th>Pris pr dør pr runde</th>
-                    <th>Sum per runde</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var g in Grupper)
-                {
-                    var r = g.Regel;
-                    var egen = _kategoriPriser.FirstOrDefault(k => !k.ErEgendefinert && k.Kategori == r.Navn);
-                    var apen = _apneKategorier.Contains(r.Id);
-                    <tr @key="r.Id" class="pr-katrad">
-                        <td>
-                            <button type="button" class="pr-utvid" @onclick="@(() => VekslKategori(r.Id))"><span class="@(apen ? "apen" : "")">›</span>@r.Navn</button>
-                            @if (!string.IsNullOrWhiteSpace(r.Undertekst))
-                            {
-                                <span class="kategori-undertekst">@r.Undertekst</span>
-                            }
-                        </td>
-                        <td>@g.Dorer.Count</td>
-                        <td>
-                            <span class="input-suffix-wrap">
-                                <input class="antall-input" value="@(egen?.Pris?.ToString("0.##", Kultur))" placeholder="@r.Pris.ToString("0.##", Kultur)" @onchange="@(e => SettKategoriPris(r, e.Value?.ToString()))" />
-                                <span class="input-suffix">kr</span>
-                            </span>
-                        </td>
-                        <td class="kategori-sum">@FormatKr(g.Dorer.Count * ServiceRegelMotor.PrisForKategori(r, _kategoriPriser))</td>
-                    </tr>
-                    @if (apen)
-                    {
-                        @foreach (var x in g.Dorer)
-                        {
-                            <tr class="pr-dorrad" @key="@($"d{x.Dor.Id}")">
-                                <td colspan="2"><b>@x.Dor.Dornummer</b> @x.Dor.DorTil<small>@(x.Res.Typer.Count == 0 ? "Ingen komponenter med servicetype" : string.Join(", ", x.Res.Typer))</small></td>
-                                <td colspan="2">Regel: @r.Navn (prioritet @r.Prioritet)@(x.Res.HarKonflikt ? " · konflikt" : "")</td>
-                            </tr>
-                        }
-                    }
-                }
-                @if (Resultater.Where(x => x.Res.Regel is null).ToList() is { Count: > 0 } ikke)
-                {
-                    <tr class="pr-ikke">
-                        <td>Ikke kategorisert<span class="kategori-undertekst">@string.Join(", ", ikke.Select(x => x.Dor.Dornummer))</span></td>
-                        <td>@ikke.Count</td>
-                        <td>–</td>
-                        <td class="kategori-sum">@FormatKr(0)</td>
-                    </tr>
-                }
-                @foreach (var kp in _kategoriPriser.Where(k => k.ErEgendefinert))
-                {
-                    <tr @key="kp.Id">
-                        <td>
-                            <input class="kategori-egendefinert-navn" @bind="kp.Kategori" @bind:after="@(() => LagreKategoriPris(kp))" />
-                            <span class="kategori-undertekst">egen linje · pris × antall × ganger i året</span>
-                        </td>
-                        <td>
-                            <input class="antall-input" @bind="kp.ManueltAntall" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" />
-                        </td>
-                        <td>
-                            <span class="input-suffix-wrap">
-                                <input class="antall-input" @bind="kp.Pris" @bind:after="@(() => LagreKategoriPris(kp))" />
-                                <span class="input-suffix">kr</span>
-                            </span>
-                            <span class="input-suffix-wrap">
-                                <input class="antall-input" @bind="kp.KravServicePrAar" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" />
-                                <span class="input-suffix">g/år</span>
-                            </span>
-                        </td>
-                        <td class="kategori-sum">
-                            @FormatKr(SumRad(kp, kp.ManueltAntall ?? 0))
-                            <button type="button" class="icon-button" title="Fjern" @onclick="@(() => FjernKategoriLinje(kp))"><Icon Name="x" /></button>
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-        </div>
-
-        <div class="egen-linje-rad">
-            <input @bind="_nyEgenLinjeNavn" @bind:event="oninput" placeholder="Navn på egen linje, f.eks. Batteriskifte Salto" />
-            <button type="button" class="knapp" @onclick="LeggTilEgenLinje" disabled="@string.IsNullOrWhiteSpace(_nyEgenLinjeNavn)"><Icon Name="plus" />Legg til egen linje</button>
-        </div>
-    </section>
-    }
-
-    @* Tilbud på serviceavtalen: avtaleteksten som kommer med i PDF-en. *@
-    <section class="prising-panel">
-        <div class="prising-panel-header">
-            <span class="prising-panel-ikon"><Icon Name="file-text" /></span>
-            <h2>Tilbud på serviceavtalen</h2>
-        </div>
-        <p class="section-hint">PDF-en viser avtaleteksten med kunde, antall besøk og dører øverst. Hver overskrift i teksten blir en egen seksjon. Priser og signaturer kommer ikke med.</p>
-
-        <div class="pr-felt">
-            <div class="pr-felt-topp">
-                <b>Avtaletekst</b>
-                @if (_forsideMaler.Count > 0)
-                {
-                    <select @bind="_valgtMalId">
-                        <option value="">Hent fra mal …</option>
-                        @foreach (var m in _forsideMaler)
-                        {
-                            <option value="@m.Id">@m.Navn</option>
-                        }
-                    </select>
-                    <button type="button" class="knapp" @onclick="BrukMal" disabled="@(_valgtMalId is null)">Bruk</button>
-                }
-                <button type="button" class="knapp" @onclick="BrukStandardtekst">Bruk standardtekst</button>
-            </div>
-            <ForsideTekstRedigering @bind-Value="_avtaleTekst" Rows="14" Placeholder="Tom = standardteksten brukes" />
-        </div>
-
-        <div class="pr-lagre">
-            @if (!string.IsNullOrEmpty(_tilbudMelding))
-            {
-                <span class="save-success">@_tilbudMelding</span>
-            }
-            <button type="button" class="knapp" @onclick="LagreTilbud">Lagre</button>
-            <button type="button" class="knapp knapp-primaer" @onclick="ForhandsvisTilbud"><Icon Name="file-text" />Lagre og forhåndsvis PDF</button>
-        </div>
-
-        @if (_lagredeTilbud.Count > 0)
-        {
-            <div class="pr-felt">
-                <b>Lagrede tilbud</b>
-                <LagredePdfListe Pdfer="_lagredeTilbud" />
-            </div>
+            <p class="pz-tom">Ingen tilbud laget ennå. «Lag tilbud (PDF)» lager tilbudet med avtaleteksten@(string.IsNullOrWhiteSpace(_avtaleTekst) ? " (standardteksten)" : "").</p>
         }
     </section>
-
     </div>
 
     @{ var endringer = KategoriEndringer; var godkjent = _prosjekt!.ServiceGodkjentArspris; }
-    <aside class="n1-res">
-        <div class="n1-big">
+    <aside class="pz-res">
+        <div class="pz-big">
             <small>Pris per år eks. mva</small>
-            <b>@FormatKr(Beregning.Arspris)</b>
-            <span>@FormatKr(Beregning.ArsprisInklMva) inkl. mva · @FormatKr(Beregning.PerRunde) per runde × @Runder</span>
+            <b>@Kr(Beregning.Arspris)</b>
+            <span>@Kr(Beregning.ArsprisInklMva) inkl. mva</span>
         </div>
-        <div class="n1-lin">
-            <div><span>@(ErKategorisert ? "Dører etter kategori" : "Service-minutter × timepris")</span><b>@FormatKr(Beregning.Grunnlag)</b></div>
-            <div><span>Tillegg per runde</span><b>@FormatKr(Beregning.Tillegg)</b></div>
+        <div class="pz-lin">
+            <div><span>@(ErKategorisert ? "Dører" : "Servicetid × timepris") per runde</span><b>@Kr(Beregning.Grunnlag)</b></div>
+            <div><span>Tillegg per runde</span><b>@Kr(Beregning.Tillegg)</b></div>
             @if (Beregning.MinsteprisBrukt)
             {
-                <div><span>Minstepris brukt</span><b>@FormatKr(_prosjekt.ServiceMinstepris ?? 0)</b></div>
+                <div><span>Minstepris brukt</span><b>@Kr(_prosjekt.ServiceMinstepris ?? 0)</b></div>
             }
             @if (_prosjekt.ServiceRabattProsent is > 0)
             {
                 <div><span>Avtalerabatt</span><b>−@(_prosjekt.ServiceRabattProsent?.ToString("0.##", Kultur)) %</b></div>
             }
+            <div class="sterk"><span>Per runde</span><b>@Kr(Beregning.PerRunde)</b></div>
+            <div><span>× runder i året</span><b>@Runder</b></div>
             @if (Beregning.EgneLinjer > 0)
             {
-                <div><span>Egne linjer per år</span><b>@FormatKr(Beregning.EgneLinjer)</b></div>
+                <div><span>Egne linjer per år</span><b>@Kr(Beregning.EgneLinjer)</b></div>
             }
             <div><span>Tid per runde</span><b>@FormatTid(Beregning.MinutterPerRunde)</b></div>
-            <div><span>Godkjent pris</span><b>@(godkjent is { } gk ? FormatKr(gk) : "Ikke godkjent")</b></div>
-            @if (godkjent is { } g2 && Math.Abs(Beregning.Arspris - g2) >= 0.5m)
+        </div>
+        <div class="pz-godk @(godkjent is null ? "ingen" : TrengerGodkjenning ? "avvik" : "ok")">
+            @if (godkjent is null)
             {
-                <div><span>Endring</span><b class="@(Beregning.Arspris > g2 ? "opp" : "ned")">@(Beregning.Arspris > g2 ? "+" : "−")@FormatKr(Math.Abs(Beregning.Arspris - g2))</b></div>
+                <b>Prisen er ikke godkjent</b>
+                <span>Godkjenn når prisen er avtalt med kunden. Senere endringer på dørene endrer ikke godkjent pris.</span>
+            }
+            else if (TrengerGodkjenning)
+            {
+                <b>Godkjent @Kr(godkjent.Value) – ny beregning @(Beregning.Arspris > godkjent ? "+" : "−")@Kr(Math.Abs(Beregning.Arspris - godkjent.Value))</b>
+                <span>@_prosjekt.ServiceGodkjentDato?.ToString("dd.MM.yyyy")@(string.IsNullOrWhiteSpace(_prosjekt.ServiceGodkjentAv) ? "" : $" · {_prosjekt.ServiceGodkjentAv}")</span>
+            }
+            else
+            {
+                <b><Icon Name="check" />Godkjent @Kr(godkjent.Value)</b>
+                <span>@_prosjekt.ServiceGodkjentDato?.ToString("dd.MM.yyyy")@(string.IsNullOrWhiteSpace(_prosjekt.ServiceGodkjentAv) ? "" : $" · {_prosjekt.ServiceGodkjentAv}")@(_prosjekt.ServiceGodkjentRegelversjon is { } rv ? $" · prisregler v{rv}" : "")</span>
+            }
+            @if (endringer.Count > 0)
+            {
+                <ul>
+                    @foreach (var e in endringer.Take(6))
+                    {
+                        <li><b>@e.Dor</b> @e.Tekst</li>
+                    }
+                </ul>
             }
         </div>
-        @if (godkjent is not null)
-        {
-            <div class="n1-godk @(TrengerGodkjenning ? "avvik" : "")">
-                @if (TrengerGodkjenning)
-                {
-                    <b>Ny beregning avviker fra godkjent pris</b>
-                }
-                else
-                {
-                    <b><Icon Name="check" />Godkjent</b>
-                }
-                <span>@_prosjekt.ServiceGodkjentDato?.ToString("dd.MM.yyyy")@(string.IsNullOrWhiteSpace(_prosjekt.ServiceGodkjentAv) ? "" : $" · {_prosjekt.ServiceGodkjentAv}")@(_prosjekt.ServiceGodkjentRegelversjon is { } rv ? $" · prisregler v{rv}" : "")</span>
-                @if (endringer.Count > 0)
-                {
-                    <ul class="pr-endringer">
-                        @foreach (var e in endringer.Take(6))
-                        {
-                            <li><b>@e.Dor</b> @e.Tekst</li>
-                        }
-                    </ul>
-                }
-            </div>
-        }
-        <div class="n1-kn">
+        <div class="pz-kn">
             @if (TrengerGodkjenning)
             {
-                <button type="button" class="knapp knapp-primaer" @onclick="GodkjennPris"><Icon Name="check" />@(godkjent is null ? "Godkjenn pris" : "Godkjenn ny pris")</button>
+                <button type="button" class="pz-knapp pz-knapp-p" @onclick="GodkjennPris"><Icon Name="check" />@(godkjent is null ? "Godkjenn prisen" : "Godkjenn ny pris")</button>
             }
-            <button type="button" class="knapp @(TrengerGodkjenning ? "" : "knapp-primaer")" @onclick="ForhandsvisTilbud"><Icon Name="file-text" />Lag tilbud (PDF)</button>
+            <button type="button" class="pz-knapp @(TrengerGodkjenning ? "" : "pz-knapp-p")" @onclick="ForhandsvisTilbud"><Icon Name="file-text" />Lag tilbud (PDF)</button>
         </div>
     </aside>
     </div>
@@ -702,7 +672,20 @@
 
         var timer = minutter / 60;
         var rest = minutter % 60;
-        return timer > 0 ? $"{timer}t {rest}min" : $"{rest} min";
+        return timer > 0 ? (rest == 0 ? $"{timer} t" : $"{timer} t {rest} min") : $"{rest} min";
+    }
+
+    private bool _visAvtaletekst;
+
+    private Task SettPrismodell(int modell) => ByttPrismodell(new ChangeEventArgs { Value = modell.ToString() });
+
+    // Hele kroner med mellomrom, som ellers i portalen: «kr 6 360».
+    private static string Kr(decimal v) => "kr " + Math.Round(v).ToString("#,##0", Kultur);
+
+    private static string KatFarge(string navn)
+    {
+        var n = navn.ToLowerInvariant();
+        return n.Contains("automatikk") ? "#B42318" : n.Contains("rømning") ? "#D99A0B" : n.Contains("elektrisk") || n.Contains("adgang") ? "#1F4E8C" : "#7A818A";
     }
 
     private string FormatKr(decimal verdi) => $"{verdi.ToString("N2", Kultur)} kr";
