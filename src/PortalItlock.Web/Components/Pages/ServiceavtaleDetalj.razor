@@ -78,7 +78,7 @@ else if (_prosjekt is not null)
         </div>
 
         <nav class="sa-faner">
-            <button type="button" class="@FaneKlasse("oversikt")" @onclick="@(() => _activeTab = "oversikt")"><Icon Name="grid" />Oversikt</button>
+            <button type="button" class="@FaneKlasse("oversikt")" @onclick="VisOversikt"><Icon Name="grid" />Oversikt</button>
             <button type="button" class="@FaneKlasse("service")" @onclick="@(() => _activeTab = "service")"><Icon Name="tool" />Service @if (_runder.Count > 0) {<em>@_runder.Count</em>}</button>
             <button type="button" class="@FaneKlasse("dorer")" @onclick="@(() => _activeTab = "dorer")"><Icon Name="door" />Dører @if (_dorer.Count > 0) {<em>@_dorer.Count</em>}</button>
             <button type="button" class="@FaneKlasse("plantegninger")" @onclick="@(() => _activeTab = "plantegninger")"><Icon Name="map" />Plantegninger</button>
@@ -166,7 +166,37 @@ else if (_prosjekt is not null)
                     <b>@_dorer.Count</b>
                     <span>på avtalen</span>
                 </div>
+                @if (_avtaleStatus is { } st)
+                {
+                    <button type="button" class="so-t so-t-knapp" @onclick="@(() => _activeTab = "prising")">
+                        <small>Avtaleverdi</small>
+                        <b>@KrKort(st.Godkjent ?? st.Beregnet)</b>
+                        <span>@(st.Godkjent is null ? "per år · ikke godkjent" : st.PrisAvviker ? $"per år · ny beregning {KrKort(st.Beregnet)}" : $"per år · godkjent {st.GodkjentDato:dd.MM.yyyy}")</span>
+                    </button>
+                }
             </div>
+
+            @if (_avtaleStatus is { } sv && Oppmerksomhet(sv) is { Count: > 0 } saker)
+            {
+                <section class="so-oppm">
+                    <div class="sa-tile-t"><h3>Krever oppmerksomhet</h3></div>
+                    @foreach (var sak in saker)
+                    {
+                        <div class="so-oppm-rad">
+                            <span class="sa-ik @sak.Farge"><Icon Name="@sak.Ikon" /></span>
+                            <span><b>@sak.Tittel</b><small>@sak.Tekst</small></span>
+                            @if (sak.Lenke is { } lenke)
+                            {
+                                <a class="sa-knapp" href="@lenke">@sak.Knapp</a>
+                            }
+                            else
+                            {
+                                <button type="button" class="sa-knapp" @onclick="@(() => _activeTab = "prising")">@sak.Knapp</button>
+                            }
+                        </div>
+                    }
+                </section>
+            }
 
             <div class="so-to">
                 <div class="so-venstre">
@@ -223,6 +253,22 @@ else if (_prosjekt is not null)
                 </div>
 
                 <aside class="so-hoyre">
+                    @if (_avtaleStatus is { Kategorier.Count: > 0 } ks)
+                    {
+                        <div class="sa-tile-t"><h4>Dører per kategori</h4>@if (_naverendeRolle != BrukerRolle.Montor) {<button type="button" class="sa-lenke" @onclick="@(() => _activeTab = "prising")">Prising →</button>}</div>
+                        <div class="so-kat">
+                            @{ var maks = ks.Kategorier.Max(k => k.Antall); }
+                            @foreach (var k in ks.Kategorier)
+                            {
+                                <div><span>@k.Navn</span><b>@k.Antall</b><span class="so-kat-bar"><i style="width:@(100 * k.Antall / Math.Max(1, maks))%"></i></span></div>
+                            }
+                            @if (ks.IkkeKategorisert > 0)
+                            {
+                                <div class="so-kat-ikke"><span>Ikke kategorisert</span><b>@ks.IkkeKategorisert</b><span></span></div>
+                            }
+                        </div>
+                        <hr />
+                    }
                     <h4>Avtalen</h4>
                     <div class="so-fakta">
                         <div><small>Kunde</small><b>@(_prosjekt.Kunde?.Navn ?? "Ikke satt")</b></div>
@@ -918,6 +964,7 @@ else if (_prosjekt is not null)
             .ToList();
 
         await LastRunderAsync();
+        await LastAvtaleStatus();
     }
 
     // Sjekklistene fra Oppsett → Sjekkliste for servicerunder. Avtalen bruker
@@ -1136,6 +1183,58 @@ else if (_prosjekt is not null)
     }
 
     // ---------- runder ----------
+    // Fase 1 serviceavtaler: kategorier og pris fra prisreglene på Oversikt.
+    private ServiceRegelMotor.AvtaleStatus? _avtaleStatus;
+
+    private async Task LastAvtaleStatus()
+    {
+        _avtaleStatus = _prosjekt is null ? null : await ServiceRegelMotor.HentAvtaleStatus(Db, _prosjekt);
+    }
+
+    private async Task VisOversikt()
+    {
+        _activeTab = "oversikt";
+        if (_prosjekt is not null)
+        {
+            await Db.Entry(_prosjekt).ReloadAsync();
+        }
+        await LastAvtaleStatus();
+    }
+
+    private static string KrKort(decimal v) => "kr " + v.ToString("#,##0", System.Globalization.CultureInfo.GetCultureInfo("nb-NO"));
+
+    private sealed record OppmSak(string Farge, string Ikon, string Tittel, string Tekst, string Knapp, string? Lenke = null);
+
+    private List<OppmSak> Oppmerksomhet(ServiceRegelMotor.AvtaleStatus st)
+    {
+        var l = new List<OppmSak>();
+        if (_naverendeRolle == BrukerRolle.Montor)
+        {
+            return l;
+        }
+        if (st.Endringer > 0)
+        {
+            l.Add(new("gul", "tag", $"{st.Endringer} {(st.Endringer == 1 ? "dør har" : "dører har")} endret servicekategori", "Siden prisen ble godkjent. Avtaleprisen endres ikke før du godkjenner på nytt.", "Se prising"));
+        }
+        if (st.Godkjent is null)
+        {
+            l.Add(new("gul", "receipt", "Avtaleprisen er ikke godkjent", $"Beregnet {KrKort(st.Beregnet)} per år eks. mva.", "Godkjenn"));
+        }
+        else if (st.PrisAvviker && st.Endringer == 0)
+        {
+            l.Add(new("gul", "receipt", "Ny beregning avviker fra godkjent pris", $"Godkjent {KrKort(st.Godkjent.Value)} – beregnet nå {KrKort(st.Beregnet)} per år.", "Se prising"));
+        }
+        if (st.Regelmodell && st.IkkeKategorisert > 0)
+        {
+            l.Add(new("rod", "alert", $"{st.IkkeKategorisert} {(st.IkkeKategorisert == 1 ? "dør er" : "dører er")} ikke kategorisert", "Ingen prisregel treffer – dørene får ingen pris.", "Prisregler", "/service-prisregler"));
+        }
+        if (st.Regelmodell && st.Konflikter > 0)
+        {
+            l.Add(new("rod", "alert", $"{st.Konflikter} {(st.Konflikter == 1 ? "dør treffer" : "dører treffer")} to prisregler", "Første regel brukes til konflikten er løst.", "Prisregler", "/service-prisregler"));
+        }
+        return l;
+    }
+
     private async Task LastRunderAsync()
     {
         var alle = await Db.Servicerunder

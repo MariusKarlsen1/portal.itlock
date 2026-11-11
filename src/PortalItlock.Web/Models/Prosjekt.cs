@@ -90,8 +90,24 @@ public class Prosjekt
 
     public decimal? ServiceTimepris { get; set; }
 
-    // Prising på serviceavtalen: 0 = service-minutter (standard), 1 = kategorisert årspris.
+    // Prising på serviceavtalen: 0 = estimat fra varer (service-minutter),
+    // 1 = kategorier etter prisregler (ServicePrisRegel).
     public int ServicePrismodell { get; set; }
+
+    // Tillegg per servicerunde som gjelder begge prismodellene (eks. mva).
+    public decimal? ServiceOppmote { get; set; }
+    public decimal? ServiceReise { get; set; }
+    public decimal? ServiceFastTillegg { get; set; }
+    public decimal? ServiceMinstepris { get; set; }
+    public decimal? ServiceRabattProsent { get; set; }
+
+    // Godkjent avtalepris. Endres aldri automatisk når dørene eller reglene
+    // endres - prising viser avviket og noen må godkjenne på nytt.
+    public decimal? ServiceGodkjentArspris { get; set; }
+    public DateTime? ServiceGodkjentDato { get; set; }
+    public string? ServiceGodkjentAv { get; set; }
+    // JSON {dørId: kategori} slik dørene var kategorisert da prisen ble godkjent.
+    public string? ServiceGodkjentGrunnlag { get; set; }
     /// Avtaleteksten i tilbudet på serviceavtalen (rik tekst). Tom = standardtekst.
     public string? ServiceavtaleTekst { get; set; }
     /// JSON: prislinjene i tilbudet (tjeneste + pris som tekst).

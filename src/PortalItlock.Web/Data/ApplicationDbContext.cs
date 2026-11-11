@@ -60,6 +60,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<MonteringLinje> MonteringLinjer => Set<MonteringLinje>();
     public DbSet<ServiceMinuttLinje> ServiceMinuttLinjer => Set<ServiceMinuttLinje>();
     public DbSet<ServiceKategoriPris> ServiceKategoriPriser => Set<ServiceKategoriPris>();
+    public DbSet<ServicePrisRegel> ServicePrisRegler => Set<ServicePrisRegel>();
+    public DbSet<ServicePrisRegelBetingelse> ServicePrisRegelBetingelser => Set<ServicePrisRegelBetingelse>();
     public DbSet<DorHendelse> DorHendelser => Set<DorHendelse>();
     public DbSet<Nyhet> Nyheter => Set<Nyhet>();
     public DbSet<Kunngjoring> Kunngjoringer => Set<Kunngjoring>();

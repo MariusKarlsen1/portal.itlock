@@ -7,6 +7,7 @@
 @inject LagretPdfService LagretPdfService
 @inject ServiceavtaleTilbudPdfService TilbudPdf
 @inject ITenantContext TenantCtx
+@using Microsoft.AspNetCore.Components.Authorization
 
 <div class="prosjekt-layout prising-layout">
     <div class="prising-header">
@@ -19,14 +20,14 @@
         <label class="pr-modell">
             <span>Prismodell</span>
             <select value="@_prosjekt!.ServicePrismodell" @onchange="ByttPrismodell">
-                <option value="@ServiceavtalePris.Minutter">Service-minutter (standard)</option>
-                <option value="@ServiceavtalePris.Kategorisert">Kategorisert årspris</option>
+                <option value="@ServiceavtalePris.Minutter">Estimat fra varer (service-minutter)</option>
+                <option value="@ServiceavtalePris.Kategorisert">Kategorier etter prisregler</option>
             </select>
         </label>
         <div class="pr-arspris">
             <small>Årspris eks. mva</small>
             <b>@FormatKr(Arspris)</b>
-            <span>@(ErKategorisert ? "kategorisert" : $"{FormatKr(ServiceMinutterPris)} per runde × {Runder} {(Runder == 1 ? "runde" : "runder")} i året")</span>
+            <span>@FormatKr(Beregning.PerRunde) per runde × @Runder @(Runder == 1 ? "runde" : "runder") i året</span>
         </div>
         <span class="pr-sp"></span>
         <button type="button" class="knapp knapp-primaer" @onclick="ForhandsvisTilbud"><Icon Name="file-text" />Lag tilbud (PDF)</button>
@@ -101,48 +102,67 @@
     <section class="prising-panel">
         <div class="prising-panel-header">
             <span class="prising-panel-ikon"><Icon Name="tag" /></span>
-            <h2>Kategorisert årspris</h2>
+            <h2>Kategorier etter prisregler</h2>
+            <a class="pr-regellenke" href="/service-prisregler">Prisregler →</a>
         </div>
-        <p class="section-hint">Dørene grupperes automatisk etter beslag/funksjon. Fyll inn pris pr dør og krav til service pr år for hver kategori.</p>
+        <p class="section-hint">Dørene får kategori automatisk ut fra komponenttypene som er registrert på dem. Prisen kommer fra prisreglene – skriv inn en egen pris her for å overstyre den på denne avtalen.</p>
+
+        @if (Resultater.Count(x => x.Res.HarKonflikt) is var kon && kon > 0)
+        {
+            <p class="pr-varsel">@kon @(kon == 1 ? "dør treffer" : "dører treffer") to regler med samme prioritet. Første regel brukes – løs det under Prisregler.</p>
+        }
 
         <div class="dorer-table-wrap">
         <table class="kategori-tabell">
             <thead>
                 <tr>
-                    <th>Beskrivelse</th>
+                    <th>Kategori</th>
                     <th>Antall dører</th>
-                    <th>Pris pr dør</th>
-                    <th>Krav til service pr år</th>
-                    <th>Sum (eks mva)</th>
+                    <th>Pris pr dør pr runde</th>
+                    <th>Sum per runde</th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var kategori in ServiceKategori.Rekkefolge)
+                @foreach (var g in Grupper)
                 {
-                    var kp = _kategoriPriser.First(k => k.Kategori == kategori);
-                    var antall = AntallDorerIKategori(kategori);
-                    <tr @key="kategori" class="@(antall == 0 ? "kategori-rad-tom" : "")">
+                    var r = g.Regel;
+                    var egen = _kategoriPriser.FirstOrDefault(k => !k.ErEgendefinert && k.Kategori == r.Navn);
+                    var apen = _apneKategorier.Contains(r.Id);
+                    <tr @key="r.Id" class="pr-katrad">
                         <td>
-                            @kategori
-                            @if (ServiceKategori.Undertekst(kategori) is { } undertekst)
+                            <button type="button" class="pr-utvid" @onclick="@(() => VekslKategori(r.Id))"><span class="@(apen ? "apen" : "")">›</span>@r.Navn</button>
+                            @if (!string.IsNullOrWhiteSpace(r.Undertekst))
                             {
-                                <span class="kategori-undertekst">@undertekst</span>
+                                <span class="kategori-undertekst">@r.Undertekst</span>
                             }
                         </td>
-                        <td>@antall</td>
+                        <td>@g.Dorer.Count</td>
                         <td>
                             <span class="input-suffix-wrap">
-                                <input class="antall-input" @bind="kp.Pris" @bind:after="@(() => LagreKategoriPris(kp))" />
+                                <input class="antall-input" value="@(egen?.Pris?.ToString("0.##", Kultur))" placeholder="@r.Pris.ToString("0.##", Kultur)" @onchange="@(e => SettKategoriPris(r, e.Value?.ToString()))" />
                                 <span class="input-suffix">kr</span>
                             </span>
                         </td>
-                        <td>
-                            <span class="input-suffix-wrap">
-                                <input class="antall-input" @bind="kp.KravServicePrAar" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" />
-                                <span class="input-suffix">gang(er)</span>
-                            </span>
-                        </td>
-                        <td class="kategori-sum">@FormatKr(SumRad(kp, antall))</td>
+                        <td class="kategori-sum">@FormatKr(g.Dorer.Count * ServiceRegelMotor.PrisForKategori(r, _kategoriPriser))</td>
+                    </tr>
+                    @if (apen)
+                    {
+                        @foreach (var x in g.Dorer)
+                        {
+                            <tr class="pr-dorrad" @key="@($"d{x.Dor.Id}")">
+                                <td colspan="2"><b>@x.Dor.Dornummer</b> @x.Dor.DorTil<small>@(x.Res.Typer.Count == 0 ? "Ingen komponenter med servicetype" : string.Join(", ", x.Res.Typer))</small></td>
+                                <td colspan="2">Regel: @r.Navn (prioritet @r.Prioritet)@(x.Res.HarKonflikt ? " · konflikt" : "")</td>
+                            </tr>
+                        }
+                    }
+                }
+                @if (Resultater.Where(x => x.Res.Regel is null).ToList() is { Count: > 0 } ikke)
+                {
+                    <tr class="pr-ikke">
+                        <td>Ikke kategorisert<span class="kategori-undertekst">@string.Join(", ", ikke.Select(x => x.Dor.Dornummer))</span></td>
+                        <td>@ikke.Count</td>
+                        <td>–</td>
+                        <td class="kategori-sum">@FormatKr(0)</td>
                     </tr>
                 }
                 @foreach (var kp in _kategoriPriser.Where(k => k.ErEgendefinert))
@@ -150,6 +170,7 @@
                     <tr @key="kp.Id">
                         <td>
                             <input class="kategori-egendefinert-navn" @bind="kp.Kategori" @bind:after="@(() => LagreKategoriPris(kp))" />
+                            <span class="kategori-undertekst">egen linje · pris × antall × ganger i året</span>
                         </td>
                         <td>
                             <input class="antall-input" @bind="kp.ManueltAntall" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" />
@@ -159,11 +180,9 @@
                                 <input class="antall-input" @bind="kp.Pris" @bind:after="@(() => LagreKategoriPris(kp))" />
                                 <span class="input-suffix">kr</span>
                             </span>
-                        </td>
-                        <td>
                             <span class="input-suffix-wrap">
                                 <input class="antall-input" @bind="kp.KravServicePrAar" @bind:after="@(() => LagreKategoriPris(kp))" placeholder="1" />
-                                <span class="input-suffix">gang(er)</span>
+                                <span class="input-suffix">g/år</span>
                             </span>
                         </td>
                         <td class="kategori-sum">
@@ -173,12 +192,6 @@
                     </tr>
                 }
             </tbody>
-            <tfoot>
-                <tr class="kategori-total-rad">
-                    <td colspan="4">Sum kategorier (eks mva)</td>
-                    <td class="kategori-sum">@FormatKr(KategoriTotalSum)</td>
-                </tr>
-            </tfoot>
         </table>
         </div>
 
@@ -188,6 +201,71 @@
         </div>
     </section>
     }
+
+    @* Tillegg per runde og beregnet pris - gjelder begge prismodellene. *@
+    <section class="prising-panel">
+        <div class="prising-panel-header">
+            <span class="prising-panel-ikon"><Icon Name="receipt" /></span>
+            <h2>Tillegg og avtalepris</h2>
+        </div>
+        <p class="section-hint">Tilleggene legges på hver servicerunde, uansett prismodell. Alle beløp er eks. mva.</p>
+        <div class="pr-tillegg">
+            <label>Kjøring / oppmøte per runde<span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceOppmote)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceOppmote = v, e.Value))" /><span class="input-suffix">kr</span></span></label>
+            <label>Reise / bompenger per runde<span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceReise)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceReise = v, e.Value))" /><span class="input-suffix">kr</span></span></label>
+            <label>Fast tillegg per runde<span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceFastTillegg)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceFastTillegg = v, e.Value))" /><span class="input-suffix">kr</span></span></label>
+            <label>Minstepris per runde<span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceMinstepris)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceMinstepris = v, e.Value))" /><span class="input-suffix">kr</span></span></label>
+            <label>Avtalerabatt<span class="input-suffix-wrap"><input class="antall-input" value="@Tall(_prosjekt!.ServiceRabattProsent)" @onchange="@(e => SettTillegg(v => _prosjekt!.ServiceRabattProsent = v is > 100 ? 100 : v, e.Value))" /><span class="input-suffix">%</span></span></label>
+        </div>
+
+        <table class="pr-sum">
+            <tbody>
+                <tr><td>@(ErKategorisert ? "Dører etter kategori" : "Service-minutter × timepris") per runde</td><td>@FormatKr(Beregning.Grunnlag)</td></tr>
+                <tr><td>Tillegg per runde</td><td>@FormatKr(Beregning.Tillegg)</td></tr>
+                @if (Beregning.MinsteprisBrukt)
+                {
+                    <tr><td>Minstepris brukt</td><td>@FormatKr(_prosjekt!.ServiceMinstepris ?? 0)</td></tr>
+                }
+                @if (_prosjekt!.ServiceRabattProsent is > 0)
+                {
+                    <tr><td>Avtalerabatt</td><td>−@(_prosjekt.ServiceRabattProsent?.ToString("0.##", Kultur)) %</td></tr>
+                }
+                <tr class="pr-sterk"><td>Pris per servicerunde</td><td>@FormatKr(Beregning.PerRunde)</td></tr>
+                <tr><td>× @Runder @(Runder == 1 ? "runde" : "runder") i året@(Beregning.EgneLinjer > 0 ? " + egne linjer" : "")</td><td>@(Beregning.EgneLinjer > 0 ? "+ " + FormatKr(Beregning.EgneLinjer) : "")</td></tr>
+                <tr class="pr-sterk"><td>Årlig avtaleverdi eks. mva</td><td>@FormatKr(Beregning.Arspris)</td></tr>
+                <tr><td>Årlig avtaleverdi inkl. mva</td><td>@FormatKr(Beregning.ArsprisInklMva)</td></tr>
+                <tr><td>Estimert tid per runde</td><td>@FormatTid(Beregning.MinutterPerRunde)</td></tr>
+            </tbody>
+        </table>
+
+        @{ var endringer = KategoriEndringer; }
+        <div class="pr-godkjent @(TrengerGodkjenning ? "avvik" : "")">
+            <div>
+                @if (_prosjekt!.ServiceGodkjentArspris is { } godkjent)
+                {
+                    <b>Godkjent avtalepris: @FormatKr(godkjent) per år</b>
+                    <span>@_prosjekt.ServiceGodkjentDato?.ToString("dd.MM.yyyy")@(string.IsNullOrWhiteSpace(_prosjekt.ServiceGodkjentAv) ? "" : $" · {_prosjekt.ServiceGodkjentAv}")@(TrengerGodkjenning ? $" · ny beregning avviker med {FormatKr(Beregning.Arspris - godkjent)} per år" : " · stemmer med beregningen")</span>
+                }
+                else
+                {
+                    <b>Avtaleprisen er ikke godkjent ennå</b>
+                    <span>Godkjenn når prisen er avtalt med kunden. Senere endringer på dørene eller reglene endrer ikke den godkjente prisen.</span>
+                }
+                @if (endringer.Count > 0)
+                {
+                    <ul class="pr-endringer">
+                        @foreach (var e in endringer.Take(8))
+                        {
+                            <li><b>@e.Dor</b> @e.Tekst</li>
+                        }
+                    </ul>
+                }
+            </div>
+            @if (TrengerGodkjenning)
+            {
+                <button type="button" class="knapp knapp-primaer" @onclick="GodkjennPris"><Icon Name="check" />Godkjenn @FormatKr(Beregning.Arspris)</button>
+            }
+        </div>
+    </section>
 
     @* Tilbud på serviceavtalen: avtaleteksten som kommer med i PDF-en. *@
     <section class="prising-panel">
@@ -254,16 +332,131 @@
     private decimal ServiceMinutterTimer => TotaltServiceMinutter / 60m;
     private decimal ServiceMinutterPris => (_prosjekt?.ServiceTimepris ?? 0) * ServiceMinutterTimer;
 
-    private int AntallDorerIKategori(string kategori) =>
-        _dorer.Count(d => DorServiceKategoriHelper.KategoriserDor(d) == kategori);
 
     private static decimal SumRad(ServiceKategoriPris kp, int antall) =>
         (kp.Pris ?? 0) * antall * (kp.KravServicePrAar ?? 0);
 
-    private decimal KategoriTotalSum => _kategoriPriser.Sum(kp => SumRad(kp, kp.ErEgendefinert ? kp.ManueltAntall ?? 0 : AntallDorerIKategori(kp.Kategori)));
     private bool ErKategorisert => _prosjekt?.ServicePrismodell == ServiceavtalePris.Kategorisert;
     private int Runder => _prosjekt is null ? 1 : ServiceavtalePris.RunderPerAr(_prosjekt);
-    private decimal Arspris => ErKategorisert ? KategoriTotalSum : ServiceMinutterPris * Runder;
+    private decimal Arspris => Beregning.Arspris;
+
+    // ---- Prisregler (Kategorier etter prisregler) ----
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private List<ServicePrisRegel> _regler = [];
+    private Dictionary<int, string?> _typeKart = [];
+    private List<(Dor Dor, ServiceRegelMotor.Resultat Res)>? _resultater;
+    private readonly HashSet<int> _apneKategorier = [];
+
+    private List<(Dor Dor, ServiceRegelMotor.Resultat Res)> Resultater =>
+        _resultater ??= _dorer.Select(d => (d, ServiceRegelMotor.Klassifiser(d, _regler, _typeKart))).ToList();
+
+    private sealed record KategoriGruppe(ServicePrisRegel Regel, List<(Dor Dor, ServiceRegelMotor.Resultat Res)> Dorer);
+
+    // Alle aktive regler som har dører, pluss regler med egen pris på avtalen.
+    private List<KategoriGruppe> Grupper => _regler
+        .Select(r => new KategoriGruppe(r, Resultater.Where(x => x.Res.Regel?.Id == r.Id).ToList()))
+        .Where(g => g.Dorer.Count > 0)
+        .ToList();
+
+    private decimal RegelGrunnlag => Resultater.Where(x => x.Res.Regel is not null).Sum(x => ServiceRegelMotor.PrisForKategori(x.Res.Regel!, _kategoriPriser));
+    private int RegelMinutter => Resultater.Where(x => x.Res.Regel is not null).Sum(x => x.Res.Regel!.Minutter);
+
+    private ServiceRegelMotor.Beregning Beregning => _prosjekt is null
+        ? new ServiceRegelMotor.Beregning(0, 0, 0, 1, 0, 0, 0, false)
+        : ErKategorisert
+            ? ServiceRegelMotor.Beregn(_prosjekt, RegelGrunnlag, RegelMinutter, _kategoriPriser)
+            : ServiceRegelMotor.Beregn(_prosjekt, ServiceMinutterPris, TotaltServiceMinutter, []);
+
+    private bool TrengerGodkjenning => _prosjekt is not null &&
+        (_prosjekt.ServiceGodkjentArspris is not { } g || Math.Abs(g - Beregning.Arspris) >= 0.5m);
+
+    private sealed record KategoriEndring(string Dor, string Tekst);
+
+    // Dører som har fått annen kategori (eller er nye) siden prisen ble godkjent.
+    private List<KategoriEndring> KategoriEndringer
+    {
+        get
+        {
+            if (_prosjekt?.ServiceGodkjentGrunnlag is not { } json || !ErKategorisert)
+            {
+                return [];
+            }
+            var forrige = ServiceRegelMotor.LesGrunnlag(json);
+            var liste = new List<KategoriEndring>();
+            foreach (var (dor, res) in Resultater)
+            {
+                if (!forrige.TryGetValue(dor.Id, out var gml))
+                {
+                    liste.Add(new(dor.Dornummer, $"er ny siden godkjenningen – {res.Kategori}"));
+                }
+                else if (gml != res.Kategori)
+                {
+                    liste.Add(new(dor.Dornummer, $"{gml} → {res.Kategori}"));
+                }
+            }
+            var fjernet = forrige.Keys.Except(_dorer.Select(d => d.Id)).Count();
+            if (fjernet > 0)
+            {
+                liste.Add(new("", $"{fjernet} {(fjernet == 1 ? "dør" : "dører")} er fjernet siden godkjenningen"));
+            }
+            return liste;
+        }
+    }
+
+    private void VekslKategori(int regelId)
+    {
+        if (!_apneKategorier.Remove(regelId))
+        {
+            _apneKategorier.Add(regelId);
+        }
+    }
+
+    private async Task SettKategoriPris(ServicePrisRegel r, string? verdi)
+    {
+        var pris = LesTall(verdi);
+        var kp = _kategoriPriser.FirstOrDefault(k => !k.ErEgendefinert && k.Kategori == r.Navn);
+        if (kp is null)
+        {
+            if (pris is null)
+            {
+                return;
+            }
+            kp = new ServiceKategoriPris { ProsjektId = ProsjektId, Kategori = r.Navn };
+            Db.ServiceKategoriPriser.Add(kp);
+            _kategoriPriser.Add(kp);
+        }
+        kp.Pris = pris;
+        await Db.SaveChangesAsync();
+    }
+
+    private static string Tall(decimal? v) => v?.ToString("0.##", Kultur) ?? "";
+
+    private static decimal? LesTall(object? v)
+    {
+        var t = v?.ToString()?.Replace(" ", "").Replace(" ", "").Replace(',', '.');
+        return decimal.TryParse(t, NumberStyles.Number, CultureInfo.InvariantCulture, out var d) && d >= 0 ? d : null;
+    }
+
+    private async Task SettTillegg(Action<decimal?> sett, object? verdi)
+    {
+        sett(LesTall(verdi));
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task GodkjennPris()
+    {
+        if (_prosjekt is null)
+        {
+            return;
+        }
+        var navn = AuthStateTask is null ? null : (await AuthStateTask).User.Identity?.Name;
+        _prosjekt.ServiceGodkjentArspris = Beregning.Arspris;
+        _prosjekt.ServiceGodkjentDato = DateTime.Now;
+        _prosjekt.ServiceGodkjentAv = navn;
+        _prosjekt.ServiceGodkjentGrunnlag = ErKategorisert ? ServiceRegelMotor.LagGrunnlag(Resultater.Select(x => (x.Dor.Id, x.Res.Kategori))) : null;
+        await Db.SaveChangesAsync();
+    }
+
 
     // Tilbud på serviceavtalen
     private sealed class PrislinjeRad
@@ -373,18 +566,10 @@
             .Where(k => k.ProsjektId == ProsjektId)
             .ToListAsync();
 
-        var manglerKategorier = ServiceKategori.Rekkefolge.Where(k => _kategoriPriser.All(kp => kp.Kategori != k)).ToList();
-        if (manglerKategorier.Count > 0)
-        {
-            foreach (var kategori in manglerKategorier)
-            {
-                var kp = new ServiceKategoriPris { ProsjektId = ProsjektId, Kategori = kategori };
-                Db.ServiceKategoriPriser.Add(kp);
-                _kategoriPriser.Add(kp);
-            }
-
-            await Db.SaveChangesAsync();
-        }
+        await ServiceRegelMotor.SikreStandardregler(Db);
+        _regler = await ServiceRegelMotor.HentRegler(Db);
+        _typeKart = await ServiceRegelMotor.HentTypeKart(Db);
+        _resultater = null;
     }
 
     private async Task SynkServiceMinutter()
