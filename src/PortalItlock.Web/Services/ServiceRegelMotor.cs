@@ -19,7 +19,7 @@ public static class ServiceRegelMotor
     public static readonly string[] Servicetyper =
     [
         "Dørautomatikk", "Elektrisk sluttstykke", "Motorlås", "Magnetlås", "Kortleser",
-        "Panikkbeslag", "Nødutstyr", "Dørlukker", "Mekanisk lås", "Sylinder", "Holdemagnet", "Dørvrider"
+        "Panikkbeslag", "Nødutstyr", "Dørlukker", "Mekanisk lås", "Sylinder", "Holdemagnet", "Dørvrider", "Skilt"
     ];
 
     /// Servicetype utledet fra navnet på komponenttypen når den ikke er satt.
@@ -39,6 +39,7 @@ public static class ServiceRegelMotor
         if (n.Contains("sylinder") && !n.Contains("skrue")) return "Sylinder";
         if (n.Contains("holdemagnet")) return "Holdemagnet";
         if (n.Contains("vrider") || n.Contains("dørhåndtak")) return "Dørvrider";
+        if (n.Contains("skilt")) return "Skilt";
         return null;
     }
 
@@ -73,6 +74,13 @@ public static class ServiceRegelMotor
             : typer.Contains(b.Verdi.Trim());
         var har = r.Betingelser.Where(b => !b.ErIkke).ToList();
         var ikke = r.Betingelser.Where(b => b.ErIkke);
+        if (r.BareDisse)
+        {
+            // Døren skal ha minst én av typene, og ingen typer utenfor listen.
+            var tillatt = har.Where(b => b.Felt == ServiceRegelFelt.Servicetype)
+                .Select(b => b.Verdi.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return tillatt.Count > 0 && typer.Count > 0 && typer.All(tillatt.Contains) && ikke.All(b => !Oppfylt(b));
+        }
         var okHar = har.Count == 0 || (r.KreverAlle ? har.All(Oppfylt) : har.Any(Oppfylt));
         return okHar && ikke.All(b => !Oppfylt(b));
     }
@@ -114,14 +122,14 @@ public static class ServiceRegelMotor
             new ServicePrisRegel { Navn = ServiceKategori.Automatikk, Prioritet = 1, KreverAlle = false, Minutter = 25, Undertekst = "inkl. resertifisering av CE", Betingelser = [T("Dørautomatikk", 0), F("automatikk", 1)] },
             new ServicePrisRegel { Navn = ServiceKategori.Romningsdorer, Prioritet = 2, KreverAlle = false, Minutter = 12, Betingelser = [T("Panikkbeslag", 0), T("Nødutstyr", 1), F("rømning", 2), F("panikk", 3)] },
             new ServicePrisRegel { Navn = ServiceKategori.ElektriskSluttstykke, Prioritet = 3, KreverAlle = false, Minutter = 12, Betingelser = [T("Elektrisk sluttstykke", 0), T("Kortleser", 1), T("Magnetlås", 2), T("Motorlås", 3), F("elektrisk sluttstykke", 4)] },
-            new ServicePrisRegel { Navn = ServiceKategori.Mekanisk, Prioritet = 9, KreverAlle = true, Minutter = 6 });
+            new ServicePrisRegel { Navn = ServiceKategori.Mekanisk, Prioritet = 4, BareDisse = true, Minutter = 6, Betingelser = [T("Sylinder", 0), T("Dørvrider", 1), T("Skilt", 2), T("Mekanisk lås", 3)] });
         await db.SaveChangesAsync();
         await LagreVersjon(db, null);
     }
 
     // ---- Versjoner av prisreglene ----
 
-    public sealed record RegelKopi(string Navn, int Prioritet, bool KreverAlle, decimal Pris, int Minutter, string? Undertekst, bool Aktiv, List<BetingelseKopi> Betingelser);
+    public sealed record RegelKopi(string Navn, int Prioritet, bool KreverAlle, decimal Pris, int Minutter, string? Undertekst, bool Aktiv, List<BetingelseKopi> Betingelser, bool BareDisse = false);
     public sealed record BetingelseKopi(string Felt, string Verdi, bool ErIkke);
 
     /// Lagrer en fast kopi av alle reglene som neste versjon og returnerer versjonsnummeret.
@@ -129,7 +137,7 @@ public static class ServiceRegelMotor
     {
         var regler = await HentRegler(db);
         var kopi = regler.Select(r => new RegelKopi(r.Navn, r.Prioritet, r.KreverAlle, r.Pris, r.Minutter, r.Undertekst, r.Aktiv,
-            r.Betingelser.OrderBy(b => b.ErIkke).ThenBy(b => b.Rekkefolge).Select(b => new BetingelseKopi(b.Felt, b.Verdi, b.ErIkke)).ToList())).ToList();
+            r.Betingelser.OrderBy(b => b.ErIkke).ThenBy(b => b.Rekkefolge).Select(b => new BetingelseKopi(b.Felt, b.Verdi, b.ErIkke)).ToList(), r.BareDisse)).ToList();
         var neste = (await db.ServicePrisRegelVersjoner.MaxAsync(v => (int?)v.Versjon) ?? 0) + 1;
         db.ServicePrisRegelVersjoner.Add(new ServicePrisRegelVersjon
         {

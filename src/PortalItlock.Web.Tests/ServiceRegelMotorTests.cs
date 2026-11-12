@@ -138,4 +138,14 @@ public class ServiceRegelMotorTests
         Assert.Equal("Kun automatikk", les[7]);
         Assert.Empty(ServiceRegelMotor.LesGrunnlag("ikke json"));
     }
+    [Fact]
+    public void BareDisse_gjelder_bare_dorer_uten_andre_beslag()
+    {
+        var mekanisk = new ServicePrisRegel { Navn = "Mekanisk", BareDisse = true, Betingelser = [Har("Sylinder"), Har("Dørvrider"), Har("Skilt")] };
+        HashSet<string> T(params string[] t) => new(t, StringComparer.OrdinalIgnoreCase);
+        Assert.True(ServiceRegelMotor.Treffer(mekanisk, T("Sylinder"), []));
+        Assert.True(ServiceRegelMotor.Treffer(mekanisk, T("Sylinder", "Dørvrider", "Skilt"), []));
+        Assert.False(ServiceRegelMotor.Treffer(mekanisk, T("Sylinder", "Dørvrider", "Skilt", "Dørautomatikk"), []));
+        Assert.False(ServiceRegelMotor.Treffer(mekanisk, T(), []));
+    }
 }

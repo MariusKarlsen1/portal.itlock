@@ -6838,6 +6838,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("Aktiv")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("BareDisse")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime?>("EndretDato")
                         .HasColumnType("TEXT");
 

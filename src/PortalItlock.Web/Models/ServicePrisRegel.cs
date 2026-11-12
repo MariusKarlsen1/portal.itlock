@@ -19,6 +19,11 @@ public class ServicePrisRegel
     // "Har ikke"-betingelser (ekskluderinger) må alltid være oppfylt.
     public bool KreverAlle { get; set; } = true;
 
+    // «Bare disse»: døren har minst én av komponenttypene i regelen og ingen andre.
+    // F.eks. Mekanisk = bare sylinder, dørvrider, skilt – en dør som også har
+    // automatikk faller utenfor. Når true brukes ikke KreverAlle.
+    public bool BareDisse { get; set; }
+
     // Pris per dør per servicerunde (eks. mva).
     public decimal Pris { get; set; }
 
