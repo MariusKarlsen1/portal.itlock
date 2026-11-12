@@ -5718,6 +5718,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Epost")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("ErServiceoppdrag")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal?>("FaktiskVarekost")
                         .HasColumnType("TEXT");
 

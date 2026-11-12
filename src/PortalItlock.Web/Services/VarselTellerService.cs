@@ -71,7 +71,7 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
         if (visUtvidet)
         {
             var serviceProsjektIder = await db.Prosjekter
-                .Where(p => (p.Status == ProsjektStatus.Serviceavtale || p.HarServiceavtale))
+                .Where(p => ((p.Status == ProsjektStatus.Serviceavtale && !p.ErServiceoppdrag) || p.HarServiceavtale))
                 .Select(p => p.Id)
                 .ToListAsync();
 

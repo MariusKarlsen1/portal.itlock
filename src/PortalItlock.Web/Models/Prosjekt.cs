@@ -95,6 +95,11 @@ public class Prosjekt
     // Ferdigstilte prosjekter, og finnes i tillegg under Serviceavtaler.
     // Serviceavtale = Status == Serviceavtale || HarServiceavtale.
     public bool HarServiceavtale { get; set; }
+
+    // Prosjekt laget fra «Tilbud service» (enkeltoppdrag, f.eks. innleie). Har
+    // status Serviceavtale for å høre til service-tilbudene, men er ikke en
+    // serviceavtale og skal ikke vises i Serviceavtaler.
+    public bool ErServiceoppdrag { get; set; }
     public DateTime? ServiceavtaleOpprettet { get; set; }
 
     // Prising på serviceavtalen: 0 = estimat fra varer (service-minutter),

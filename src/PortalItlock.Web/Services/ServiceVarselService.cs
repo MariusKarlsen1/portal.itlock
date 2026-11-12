@@ -10,7 +10,7 @@ public class ServiceVarselService(ApplicationDbContext db, EmailService epost, V
     public async Task<List<(Prosjekt Prosjekt, DateTime NesteServiceDato)>> FinnNaerForfallAsync()
     {
         var serviceProsjekter = await db.Prosjekter
-            .Where(p => (p.Status == ProsjektStatus.Serviceavtale || p.HarServiceavtale))
+            .Where(p => ((p.Status == ProsjektStatus.Serviceavtale && !p.ErServiceoppdrag) || p.HarServiceavtale))
             .ToListAsync();
 
         var naerForfall = new List<(Prosjekt Prosjekt, DateTime NesteServiceDato)>();
@@ -90,7 +90,7 @@ public class ServiceVarselService(ApplicationDbContext db, EmailService epost, V
             .Include(r => r.Prosjekt).ThenInclude(p => p!.Kunde)
             .Where(r => !r.OppfolgingsTicketOpprettet
                 && r.NesteServiceDato != null && r.NesteServiceDato.Value.Date <= terskel
-                && (r.Prosjekt!.Status == ProsjektStatus.Serviceavtale || r.Prosjekt!.HarServiceavtale))
+                && ((r.Prosjekt!.Status == ProsjektStatus.Serviceavtale && !r.Prosjekt!.ErServiceoppdrag) || r.Prosjekt!.HarServiceavtale))
             .ToListAsync();
 
         // Kun den seneste runden per prosjekt er den reelle "neste service" - de andre er
