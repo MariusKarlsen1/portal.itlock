@@ -35,22 +35,30 @@ window.richtext = (function () {
     // execCommand er upålitelig i den situasjonen - direkte DOM-manipulasjon av den
     // lagrede Range'n er upåvirket av hvor fokus befinner seg.
     function applyFontSizeToRange(id, px) {
-        const range = savedRanges[id];
         const el = document.getElementById(id);
-        if (!range || !el) {
+        if (!el || !savedRanges[id]) {
             return;
         }
 
-        const span = document.createElement('span');
-        span.style.fontSize = px + 'px';
-        try {
-            range.surroundContents(span);
-        } catch (e) {
-            // Range spenner over flere elementer - surroundContents feiler da.
-            const content = range.extractContents();
-            span.appendChild(content);
-            range.insertNode(span);
-        }
+        // Gjenopprett markeringen og la nettleseren merke teksten med <font size=7>
+        // (fungerer også over flere avsnitt), og bytt så ut merkene med span med
+        // riktig px-størrelse. Gamle størrelser inni markeringen fjernes, så den
+        // nye størrelsen faktisk vises.
+        restoreSelectionAndFocus(id);
+        document.execCommand('styleWithCSS', false, false);
+        document.execCommand('fontSize', false, '7');
+        el.querySelectorAll('font[size="7"]').forEach((f) => {
+            const span = document.createElement('span');
+            span.style.fontSize = px + 'px';
+            while (f.firstChild) { span.appendChild(f.firstChild); }
+            span.querySelectorAll('[style]').forEach((n) => {
+                n.style.fontSize = '';
+                if (!n.getAttribute('style')) { n.removeAttribute('style'); }
+            });
+            span.querySelectorAll('font[size]').forEach((n) => n.removeAttribute('size'));
+            f.replaceWith(span);
+        });
+        delete savedRanges[id];
 
         const ref = editors[id];
         if (ref) {
@@ -230,8 +238,34 @@ window.richtext = (function () {
         el.addEventListener('paste', (e) => {
             e.preventDefault();
             const text = (e.clipboardData || window.clipboardData).getData('text/plain');
-            document.execCommand('insertText', false, text);
+            const sel = window.getSelection();
+            const alt = !el.textContent.trim()
+                || (sel && sel.rangeCount > 0 && sel.toString().trim() === el.textContent.trim());
+            if (alt) {
+                // Erstatter alt: rene avsnitt, uten formateringen som sto der før.
+                const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                el.innerHTML = text.replace(/\r/g, '').split('\n').map((l) => `<p>${l.trim() ? esc(l) : '<br>'}</p>`).join('');
+                const r = document.createRange();
+                r.selectNodeContents(el);
+                r.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(r);
+                dotnetRef.invokeMethodAsync('OnHtmlChanged', el.innerHTML);
+            } else {
+                document.execCommand('insertText', false, text);
+            }
         });
+
+        // Knappene i verktøylinjen skal ikke ta fokus fra teksten (da forsvinner
+        // markeringen). Avsnittstype-valget husker markeringen før det åpnes.
+        const toolbar = el.parentElement ? el.parentElement.querySelector('.rte-toolbar') : null;
+        if (toolbar) {
+            toolbar.querySelectorAll('button').forEach((b) => b.addEventListener('mousedown', (ev) => ev.preventDefault()));
+            const blokk = toolbar.querySelector('select[title="Avsnittstype"]');
+            if (blokk) {
+                blokk.addEventListener('mousedown', () => saveAnyRangeFor(id));
+            }
+        }
 
         el.addEventListener('mouseup', () => setTimeout(() => updateFloatingBarPosition(id, el), 0));
         el.addEventListener('keyup', () => setTimeout(() => updateFloatingBarPosition(id, el), 0));
@@ -268,6 +302,10 @@ window.richtext = (function () {
     }
 
     function formatBlock(id, tag) {
+        if (savedRanges[id]) {
+            restoreSelectionAndFocus(id);
+            delete savedRanges[id];
+        }
         exec(id, 'formatBlock', tag);
     }
 
