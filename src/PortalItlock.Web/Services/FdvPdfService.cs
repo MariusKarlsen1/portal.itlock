@@ -107,15 +107,29 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantCont
             vareDeler.Add((vare.Navn, vare.Navn, undertittel, vedlegg.Data));
         }
 
+        // Samme PDF (likt innhold) på flere varer tas med bare én gang; tittelen
+        // viser da alle varene den gjelder.
+        static string Nokkel(byte[] data) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data));
+        var unikeVarer = vareDeler
+            .OrderBy(d => d.Navn, StringComparer.CurrentCultureIgnoreCase)
+            .GroupBy(d => Nokkel(d.Data))
+            .Select(g => (Tittel: string.Join(" / ", g.Select(d => d.Tittel).Distinct()), g.First().Undertittel, g.First().Data, Nokkel: g.Key))
+            .ToList();
+        var brukt = unikeVarer.Select(u => u.Nokkel).ToHashSet();
+
         var deler = new List<(string Seksjon, string Tittel, string? Undertittel, byte[] Data)>();
         var nr = 0;
-        foreach (var del in vareDeler.OrderBy(d => d.Navn, StringComparer.CurrentCultureIgnoreCase))
+        foreach (var del in unikeVarer)
         {
             deler.Add(($"fdv-{nr++}", del.Tittel, del.Undertittel, del.Data));
         }
         var forsteVedlegg = nr;
         foreach (var vedlegg in ekstraVedlegg)
         {
+            if (!brukt.Add(Nokkel(vedlegg.Data)))
+            {
+                continue;
+            }
             deler.Add(($"fdv-{nr++}", vedlegg.Navn, "Vedlegg", vedlegg.Data));
         }
 
