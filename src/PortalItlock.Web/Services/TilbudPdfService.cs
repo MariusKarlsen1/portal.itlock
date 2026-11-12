@@ -41,12 +41,13 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             ? null
             : tilbud.ByggetrinnFilter.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
 
-        var linjer = tilbud.Linjer.OrderBy(l => l.Rekkefolge).ToList();
+        // Ld/Le leveres av dørprodusent/elektro og skal ikke stå på tilbudet.
+        var linjer = tilbud.Linjer.Where(l => l.ErGruppering || l.LevertAv == LevertAv.F).OrderBy(l => l.Rekkefolge).ToList();
 
         if (valgteByggetrinn is not null)
         {
             var antallPerComponent = await db.DorKomponenter
-                .Where(dk => dk.Dor!.ProsjektId == tilbud.ProsjektId
+                .Where(dk => dk.Dor!.ProsjektId == tilbud.ProsjektId && dk.LevertAv == LevertAv.F
                     && dk.Dor.Plantegning != null && valgteByggetrinn.Contains(dk.Dor.Plantegning.Byggetrinn))
                 .GroupBy(dk => dk.ComponentId)
                 .Select(g => new { ComponentId = g.Key, Antall = g.Sum(x => x.Antall) })

@@ -34,8 +34,18 @@ public class TilbudSyncService(ApplicationDbContext db)
             return;
         }
 
-        var antall = dorKomponenter.Sum(dk => dk.Antall);
-        var levertAv = dorKomponenter[0].LevertAv;
+        // Bare det vi leverer (F) kommer på tilbudet; Ld/Le står bare på døren.
+        var antall = dorKomponenter.Where(dk => dk.LevertAv == LevertAv.F).Sum(dk => dk.Antall);
+        var levertAv = LevertAv.F;
+        if (antall == 0)
+        {
+            foreach (var t in tilbudListe)
+            {
+                db.TilbudLinjer.RemoveRange(t.Linjer.Where(l => l.ComponentId == componentId));
+            }
+            await db.SaveChangesAsync();
+            return;
+        }
         var innpris = component.PrisNetto ?? 0;
 
         foreach (var tilbud in tilbudListe)
