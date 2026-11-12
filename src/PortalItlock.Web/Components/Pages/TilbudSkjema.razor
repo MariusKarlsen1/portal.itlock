@@ -187,7 +187,30 @@ else if (_tilbud is not null)
                                 {
                                     <div class="tk-kunde-linje"><b>@kunde.Navn</b><small>fra prosjektet @_tilbud.Prosjekt.Navn</small></div>
                                 }
-                                <label class="tk-felt">Kontaktperson<input @bind="_tilbud.KontaktpersonNavn" @bind:event="oninput" @bind:after="AutoLagreDebounced" /></label>
+                                @if (_kontakter.Count > 0)
+                                {
+                                    @* Kontaktpersonene på kundekortet: velg én, så fylles telefon og e-post inn. *@
+                                    var valg = KontaktValg;
+                                    <label class="tk-felt">Kontaktperson
+                                        <select value="@valg" @onchange="VelgKontakt">
+                                            <option value="">Velg kontaktperson …</option>
+                                            @for (var i = 0; i < _kontakter.Count; i++)
+                                            {
+                                                var k = _kontakter[i];
+                                                <option value="@i">@k.Navn@(string.IsNullOrWhiteSpace(k.Rolle) ? "" : $" ({k.Rolle})")</option>
+                                            }
+                                            <option value="annen">Annen person …</option>
+                                        </select>
+                                    </label>
+                                    @if (valg == "annen")
+                                    {
+                                        <label class="tk-felt">Navn<input @bind="_tilbud.KontaktpersonNavn" @bind:event="oninput" @bind:after="AutoLagreDebounced" placeholder="Navn på kontaktperson" /></label>
+                                    }
+                                }
+                                else
+                                {
+                                    <label class="tk-felt">Kontaktperson<input @bind="_tilbud.KontaktpersonNavn" @bind:event="oninput" @bind:after="AutoLagreDebounced" /></label>
+                                }
                                 <div class="tk-ff tk-ff2">
                                     <label class="tk-felt">Telefon<input @bind="_tilbud.KontaktpersonTelefon" @bind:event="oninput" @bind:after="AutoLagreDebounced" /></label>
                                     <label class="tk-felt">E-post<input @bind="_tilbud.KontaktpersonEpost" @bind:event="oninput" @bind:after="AutoLagreDebounced" /></label>
@@ -762,6 +785,90 @@ else if (_tilbud is not null)
     [Parameter] public int Id { get; set; }
 
     private enum Fane { Oversikt, Info, Varelinjer, Pdf, Historikk }
+
+    // ---------- Kontaktperson fra kundekortet ----------
+
+    private sealed record KontaktValgRad(string Navn, string? Rolle, string? Telefon, string? Epost);
+    private List<KontaktValgRad> _kontakter = [];
+    private bool _kontaktAnnen;
+
+    private async Task LastKontakterAsync()
+    {
+        _kontakter = [];
+        if (_tilbud?.Prosjekt?.KundeId is not { } kundeId)
+        {
+            return;
+        }
+
+        _kontakter = await Db.KundeKontaktpersoner.AsNoTracking()
+            .Where(k => k.KundeId == kundeId)
+            .OrderBy(k => k.Navn)
+            .Select(k => new KontaktValgRad(k.Navn, k.Rolle, k.Telefon, k.Epost))
+            .ToListAsync();
+
+        // Kontaktpersonen som står direkte på kunden (eldre felt) tas med hvis den mangler i lista.
+        var kunde = _tilbud.Prosjekt.Kunde;
+        if (!string.IsNullOrWhiteSpace(kunde?.Kontaktperson)
+            && !_kontakter.Any(k => k.Navn.Equals(kunde.Kontaktperson.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            _kontakter.Insert(0, new KontaktValgRad(kunde.Kontaktperson.Trim(), null, kunde.Telefon, kunde.Epost));
+        }
+    }
+
+    // "" = ingen valgt, indeks = person fra kundekortet, "annen" = skrevet inn selv.
+    private string KontaktValg
+    {
+        get
+        {
+            if (_tilbud is null)
+            {
+                return "";
+            }
+            var navn = _tilbud.KontaktpersonNavn?.Trim();
+            var i = string.IsNullOrEmpty(navn) ? -1 : _kontakter.FindIndex(k => k.Navn.Equals(navn, StringComparison.OrdinalIgnoreCase));
+            if (i >= 0 && !_kontaktAnnen)
+            {
+                return i.ToString();
+            }
+            return _kontaktAnnen || !string.IsNullOrEmpty(navn) ? "annen" : "";
+        }
+    }
+
+    private async Task VelgKontakt(ChangeEventArgs e)
+    {
+        if (_tilbud is null)
+        {
+            return;
+        }
+
+        var verdi = e.Value?.ToString() ?? "";
+        if (verdi == "annen")
+        {
+            _kontaktAnnen = true;
+            if (_kontakter.Any(k => k.Navn.Equals(_tilbud.KontaktpersonNavn?.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                _tilbud.KontaktpersonNavn = null;
+                _tilbud.KontaktpersonTelefon = null;
+                _tilbud.KontaktpersonEpost = null;
+            }
+        }
+        else if (int.TryParse(verdi, out var i) && i >= 0 && i < _kontakter.Count)
+        {
+            var k = _kontakter[i];
+            _kontaktAnnen = false;
+            _tilbud.KontaktpersonNavn = k.Navn;
+            _tilbud.KontaktpersonTelefon = k.Telefon;
+            _tilbud.KontaktpersonEpost = k.Epost;
+        }
+        else
+        {
+            _kontaktAnnen = false;
+            _tilbud.KontaktpersonNavn = null;
+            _tilbud.KontaktpersonTelefon = null;
+            _tilbud.KontaktpersonEpost = null;
+        }
+        await AutoLagreDebounced();
+    }
     private Fane _aktivFane = Fane.Varelinjer;
 
     private string MenyKlasse(Fane fane) => _aktivFane == fane ? "tk-fane tk-fane-aktiv" : "tk-fane";
@@ -911,6 +1018,7 @@ else if (_tilbud is not null)
 
         _loadedId = Id;
         _aktivFane = Fane.Varelinjer;
+        _kontaktAnnen = false;
         _visGenerer = false;
         _pdfPreviewUrl = null;
         _savedMessage = null;
@@ -931,6 +1039,12 @@ else if (_tilbud is not null)
 
         if (_tilbud is not null)
         {
+            // Nytt tilbud (ingen linjer ennå): start på Info.
+            if (_tilbud.Linjer.Count == 0 && _tilbud.KodeLinjer.Count == 0)
+            {
+                _aktivFane = Fane.Info;
+            }
+            await LastKontakterAsync();
             _sisteLoggetStatus = _tilbud.Status;
             _hendelser = await Db.TilbudHendelser
                 .Include(h => h.UtfortAvBruker)
