@@ -1,4 +1,7 @@
 @page "/service-prisregler"
+@page "/service-sjekklister"
+@page "/serviceavtale-oppsett"
+@inject NavigationManager Nav
 @rendermode InteractiveServer
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 @using System.Globalization
@@ -8,7 +11,7 @@
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
 
-<PageTitle>Prisregler for service</PageTitle>
+<PageTitle>Oppsett for serviceavtaler</PageTitle>
 
 @* Prisregler for serviceavtaler (Prototype serviceavtaler komplett.html, fane
    "Kategorier og prisregler"): reglene i grå meny til venstre sortert etter
@@ -25,8 +28,8 @@
         <div class="spr-topp">
             <span class="spr-ikon"><Icon Name="tag" /></span>
             <div class="spr-tittel">
-                <div class="spr-smule"><NavLink href="/oppsettmodul">Oppsett</NavLink> / Service</div>
-                <h1>Prisregler for service</h1>
+                <div class="spr-smule"><NavLink href="/oppsettmodul">Oppsett</NavLink> / Serviceavtaler</div>
+                <h1>Oppsett for serviceavtaler</h1>
             </div>
             <div class="spr-knapper">
                 <button type="button" class="spr-knapp primaer" @onclick="NyRegel"><Icon Name="plus" />Ny regel</button>
@@ -47,21 +50,10 @@
 
         <div class="spr-kropp">
             <nav class="spr-meny">
-                <div class="spr-liste">
-                    @foreach (var r in _regler.OrderBy(r => r.Prioritet).ThenBy(r => r.Id))
-                    {
-                        var antall = AntallMedKategori(r);
-                        var kon = Konflikter.Any(k => k.Konflikt.Contains(r));
-                        <button type="button" class="spr-fane @(_visning == "regel" && _valgt == r ? "pa" : "") @(r.Aktiv ? "" : "av")" @onclick="@(() => Velg(r))">
-                            <span class="spr-prio">@r.Prioritet</span>
-                            <span>@r.Navn<small class="@(kon ? "r" : "")">@Kr(r.Pris) · @antall @(antall == 1 ? "dør" : "dører")@(kon ? " · konflikt" : "")</small></span>
-                        </button>
-                    }
-                </div>
-                <div style="height:8px"></div>
+                <button type="button" class="spr-fane @(_visning is "tabell" or "regel" ? "pa" : "")" @onclick="@(() => _visning = "tabell")"><Icon Name="tag" /><span>Prisregler</span><em>@_regler.Count</em></button>
                 <button type="button" class="spr-fane @(_visning == "ikke" ? "pa" : "")" @onclick="@(() => _visning = "ikke")"><Icon Name="alert" /><span>Ikke kategorisert</span><em>@IkkeKategorisert.Count</em></button>
                 <button type="button" class="spr-fane @(_visning == "typer" ? "pa" : "")" @onclick="@(() => _visning = "typer")"><Icon Name="settings" /><span>Komponenttyper</span></button>
-                <button type="button" class="spr-fane @(_visning == "punkter" ? "pa" : "")" @onclick="@(() => _visning = "punkter")"><Icon Name="check-circle" /><span>Kontrollpunkter</span><em>@_punkter.Count</em></button>
+                <button type="button" class="spr-fane @(_visning == "punkter" ? "pa" : "")" @onclick="@(() => _visning = "punkter")"><Icon Name="check-circle" /><span>Sjekklister</span><em>@_punkter.Count</em></button>
                 <button type="button" class="spr-fane @(_visning == "versjoner" ? "pa" : "")" @onclick="@(() => { _visning = "versjoner"; _valgtVersjon ??= _versjoner.FirstOrDefault(); })"><Icon Name="clock" /><span>Versjoner</span><em>@_versjoner.Count</em></button>
             </nav>
 
@@ -76,7 +68,95 @@
                     </div>
                 }
 
-                @if (_visning == "punkter")
+                @if (_visning == "tabell")
+                {
+                    @* PR1 (Prototype sjekklister og prisregler.html): én rad per regel. «Døren har»
+                       = beslagene døren må ha. Øverste regel som passer vinner, så kombinasjonene
+                       (f.eks. automatikk + sluttstykke) legges over enkeltbeslagene. *@
+                    var rekke = Rekkefolge;
+                    <p class="spr-dempet">Regelen passer når døren har <b>alle</b> beslagene i raden. Øverste regel som passer vinner – legg kombinasjonene øverst og enkeltbeslag under. Prisen er per dør per runde.</p>
+                    <div class="spr-boks">
+                        <div class="spr-tabell">
+                            <table class="spr-pr1">
+                                <thead><tr><th style="width:76px">Rekke</th><th style="width:190px">Kategori</th><th>Døren har</th><th style="text-align:right;width:120px">Pris per runde</th><th style="text-align:right;width:90px">Minutter</th><th style="text-align:right;width:60px">Dører</th><th style="width:76px"></th></tr></thead>
+                                <tbody>
+                                    @for (var i = 0; i < rekke.Count; i++)
+                                    {
+                                        var r = rekke[i];
+                                        var idx = i;
+                                        var reserve = ErReserve(r);
+                                        var har = r.Betingelser.Where(b => !b.ErIkke).OrderBy(b => b.Rekkefolge).ToList();
+                                        <tr @key="r" class="@(r.Aktiv ? "" : "spr-av")">
+                                            <td class="spr-rekke">
+                                                <b>@(i + 1)</b>
+                                                @if (!reserve)
+                                                {
+                                                    <button type="button" class="spr-pil" title="Flytt opp" disabled="@(idx == 0)" @onclick="@(() => Flytt(r, -1))">↑</button>
+                                                    <button type="button" class="spr-pil" title="Flytt ned" disabled="@(idx >= rekke.Count - 1 || ErReserve(rekke[idx + 1]))" @onclick="@(() => Flytt(r, 1))">↓</button>
+                                                }
+                                            </td>
+                                            <td><input class="spr-in" value="@r.Navn" @onchange="@(e => { r.Navn = e.Value?.ToString()?.Trim() is { Length: > 0 } v ? v : r.Navn; Endret(); })" /></td>
+                                            <td>
+                                                @if (reserve)
+                                                {
+                                                    <span class="spr-hjelp">Alle andre dører</span>
+                                                }
+                                                else
+                                                {
+                                                    @for (var j = 0; j < har.Count; j++)
+                                                    {
+                                                        @if (j > 0) {<span class="spr-pluss">@(r.KreverAlle ? "+" : "eller")</span>}
+                                                        <span class="spr-har">@(har[j].Felt == ServiceRegelFelt.Funksjon ? $"funksjon «{har[j].Verdi}»" : har[j].Verdi)</span>
+                                                    }
+                                                    @foreach (var b in r.Betingelser.Where(b => b.ErIkke))
+                                                    {
+                                                        <span class="spr-har ikke">ikke @b.Verdi</span>
+                                                    }
+                                                    <button type="button" class="spr-knapp liten" @onclick="@(() => _harRegel = r)">Endre</button>
+                                                }
+                                            </td>
+                                            <td style="text-align:right"><input class="spr-in tall" inputmode="decimal" value="@r.Pris.ToString("0.##", Kultur)" @onchange="@(e => { if (LesTall(e.Value) is { } v) { r.Pris = v; Endret(); } })" /></td>
+                                            <td style="text-align:right"><input class="spr-in tall" type="number" min="0" value="@r.Minutter" @onchange="@(e => { if (int.TryParse(e.Value?.ToString(), out var m) && m >= 0) { r.Minutter = m; Endret(); } })" /></td>
+                                            <td style="text-align:right">@AntallMedKategori(r)</td>
+                                            <td style="text-align:right;white-space:nowrap">
+                                                <button type="button" class="spr-fjern" title="Avansert – alle innstillinger for regelen" @onclick="@(() => Velg(r))"><Icon Name="settings" /></button>
+                                                @if (!reserve)
+                                                {
+                                                    <button type="button" class="spr-fjern" title="Slett regelen" @onclick="@(() => SlettRegel(r))"><Icon Name="x" /></button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                    <tr class="spr-ny"><td></td><td colspan="6"><button type="button" class="spr-knapp primaer liten" @onclick="NyKombinasjon"><Icon Name="plus" />Ny regel</button></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    var test = TestDor();
+                    <div class="spr-boks">
+                        <div class="spr-boks-t"><h3>Test en dør</h3><small>Trykk på beslagene en dør har</small></div>
+                        <div class="spr-test">
+                            <div class="spr-chips">
+                                @foreach (var t in ServiceRegelMotor.Servicetyper)
+                                {
+                                    <button type="button" class="spr-chip @(_testTyper.Contains(t) ? "pa" : "")" @onclick="@(() => { if (!_testTyper.Remove(t)) { _testTyper.Add(t); } })">@t</button>
+                                }
+                            </div>
+                            <div class="spr-test-res">
+                                @if (test is null)
+                                {
+                                    <span>Ingen regel passer – døren får ingen pris.</span>
+                                }
+                                else
+                                {
+                                    <span>Treffer regel @(rekke.IndexOf(test) + 1)</span><span class="spr-har">@test.Navn</span><span class="spr-sp"></span><b>@Kr(test.Pris)</b><span>per runde · @test.Minutter min</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (_visning == "punkter")
                 {
                     @* T5 «Sjekklister per komponenttype»: punktene legges inn én gang per
                        servicetype, med krav/standard og fotokrav. Hver dør får punktene for
@@ -264,6 +344,7 @@
                 }
                 else if (_valgt is { } r)
                 {
+                    <button type="button" class="spr-knapp liten" style="justify-self:start" @onclick="@(() => _visning = "tabell")">&larr; Alle prisregler</button>
                     <div class="spr-klar">@Klartekst(r)</div>
 
                     <div class="spr-boks">
@@ -378,6 +459,38 @@
         </div>
     </div>
 
+    @if (_harRegel is { } hr)
+    {
+        var valgt = hr.Betingelser.Where(b => !b.ErIkke && b.Felt == ServiceRegelFelt.Servicetype).Select(b => b.Verdi).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        <div class="spr-bak" @onclick="@(() => _harRegel = null)">
+            <div class="spr-dlg" @onclick:stopPropagation="true">
+                <div class="spr-dlg-h"><b>Døren har – @hr.Navn</b><button type="button" class="spr-x" @onclick="@(() => _harRegel = null)">×</button></div>
+                <div class="spr-dlg-b">
+                    <span class="spr-hjelp">Kryss av beslagene døren må ha for å få denne regelen.</span>
+                    <div class="spr-chips">
+                        @foreach (var t in ServiceRegelMotor.Servicetyper)
+                        {
+                            <button type="button" class="spr-chip @(valgt.Contains(t) ? "pa" : "")" @onclick="@(() => VekslHar(hr, t))">@(valgt.Contains(t) ? "✓ " : "")@t</button>
+                        }
+                    </div>
+                    <div class="spr-dlg-valg">
+                        <span>Døren må ha</span>
+                        <span class="spr-seg">
+                            <button type="button" class="@(hr.KreverAlle ? "pa" : "")" @onclick="@(() => { hr.KreverAlle = true; Endret(); })">Alle</button>
+                            <button type="button" class="@(!hr.KreverAlle ? "pa" : "")" @onclick="@(() => { hr.KreverAlle = false; Endret(); })">Minst én</button>
+                        </span>
+                    </div>
+                    <div class="spr-dlg-sum">@(valgt.Count == 0 ? "Ingen beslag valgt" : string.Join(hr.KreverAlle ? " + " : " eller ", ServiceRegelMotor.Servicetyper.Where(valgt.Contains)))</div>
+                    @if (hr.Betingelser.Any(b => b.Felt == ServiceRegelFelt.Funksjon || b.ErIkke))
+                    {
+                        <span class="spr-hjelp">Regelen har også dørfunksjon eller unntak – de endres under «Avansert».</span>
+                    }
+                </div>
+                <div class="spr-dlg-f"><button type="button" class="spr-knapp primaer" @onclick="@(() => _harRegel = null)">Ferdig</button></div>
+            </div>
+        </div>
+    }
+
     @if (_endret)
     {
         <div class="spr-lagrebar">
@@ -398,7 +511,7 @@
     private Dictionary<int, string> _prosjektNavn = [];
     private Dictionary<int, int> _varerPerType = [];
     private ServicePrisRegel? _valgt;
-    private string _visning = "regel";
+    private string _visning = "tabell";
     private bool _endret, _full;
     private string? _melding;
     private List<ServicePrisRegelVersjon> _versjoner = [];
@@ -431,7 +544,14 @@
 
     private sealed record DorResultat(Dor Dor, ServiceRegelMotor.Resultat Resultat);
 
-    protected override async Task OnInitializedAsync() => await Last();
+    protected override async Task OnInitializedAsync()
+    {
+        if (Nav.Uri.Contains("/service-sjekklister", StringComparison.OrdinalIgnoreCase))
+        {
+            _visning = "punkter";
+        }
+        await Last();
+    }
 
     private async Task Last()
     {
@@ -482,6 +602,71 @@
         var unntak = ikke.Count == 0 ? "" : $", men ikke {string.Join(" eller ", ikke)}";
         return $"{start}{unntak}, blir «{r.Navn}» og koster {Kr(r.Pris)} per dør per runde.{(r.Aktiv ? "" : " Regelen er slått av.")}";
     }
+
+    // ---- PR1: tabellen ----
+    private ServicePrisRegel? _harRegel;
+    private readonly HashSet<string> _testTyper = new(StringComparer.OrdinalIgnoreCase) { "Dørautomatikk", "Elektrisk sluttstykke" };
+
+    private static bool ErReserve(ServicePrisRegel r) => !r.Betingelser.Any(b => !b.ErIkke);
+
+    // Reglene i den rekkefølgen de prøves; reserveregelen («alle andre dører») sist.
+    private List<ServicePrisRegel> Rekkefolge => _regler
+        .OrderBy(r => ErReserve(r)).ThenBy(r => r.Prioritet).ThenBy(r => r.Id).ToList();
+
+    private void Nummerer(List<ServicePrisRegel> liste)
+    {
+        var n = 1;
+        foreach (var r in liste)
+        {
+            r.Prioritet = ErReserve(r) ? 99 : n++;
+        }
+    }
+
+    private void Flytt(ServicePrisRegel r, int retning)
+    {
+        var liste = Rekkefolge;
+        var i = liste.IndexOf(r);
+        var j = i + retning;
+        if (i < 0 || j < 0 || j >= liste.Count || ErReserve(liste[j]))
+        {
+            return;
+        }
+        (liste[i], liste[j]) = (liste[j], liste[i]);
+        Nummerer(liste);
+        Endret();
+    }
+
+    private void VekslHar(ServicePrisRegel r, string type)
+    {
+        var b = r.Betingelser.FirstOrDefault(x => !x.ErIkke && x.Felt == ServiceRegelFelt.Servicetype && x.Verdi.Equals(type, StringComparison.OrdinalIgnoreCase));
+        if (b is null)
+        {
+            r.Betingelser.Add(new ServicePrisRegelBetingelse { Felt = ServiceRegelFelt.Servicetype, Verdi = type, Rekkefolge = r.Betingelser.Count });
+        }
+        else
+        {
+            FjernBetingelse(r, b);
+        }
+        Endret();
+    }
+
+    private void NyKombinasjon()
+    {
+        var r = new ServicePrisRegel { Navn = "Ny regel", KreverAlle = true, Pris = 0, Minutter = 10 };
+        Db.ServicePrisRegler.Add(r);
+        _regler.Add(r);
+        // Nye regler legges øverst, så en ny kombinasjon vinner over enkeltbeslagene.
+        var liste = Rekkefolge;
+        liste.Remove(r);
+        liste.Insert(0, r);
+        Nummerer(liste);
+        Endret();
+        _harRegel = r;
+    }
+
+    // «Test en dør»: samme regler som motoren, men bare beslagstypene som er krysset av.
+    private ServicePrisRegel? TestDor() => Rekkefolge.Where(r => r.Aktiv)
+        .FirstOrDefault(r => ServiceRegelMotor.Treffer(r, _testTyper, []));
 
     private void Velg(ServicePrisRegel r)
     {
