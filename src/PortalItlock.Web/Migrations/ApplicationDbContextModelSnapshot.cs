@@ -374,6 +374,31 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ArbeidsordreSjekkpunkter");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreTilbud", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ArbeidsordreId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("LagtTilDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TilbudId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TilbudId");
+
+                    b.HasIndex("ArbeidsordreId", "TilbudId")
+                        .IsUnique();
+
+                    b.ToTable("ArbeidsordreTilbud");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreVare", b =>
                 {
                     b.Property<int>("Id")
@@ -8603,6 +8628,25 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("FullfortAvBruker");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreTilbud", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
+                        .WithMany("EkstraTilbud")
+                        .HasForeignKey("ArbeidsordreId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Tilbud", "Tilbud")
+                        .WithMany()
+                        .HasForeignKey("TilbudId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Arbeidsordre");
+
+                    b.Navigation("Tilbud");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreVare", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
@@ -10586,6 +10630,8 @@ namespace PortalItlock.Web.Migrations
 
             modelBuilder.Entity("PortalItlock.Web.Models.Arbeidsordre", b =>
                 {
+                    b.Navigation("EkstraTilbud");
+
                     b.Navigation("KodeLinjer");
 
                     b.Navigation("Media");

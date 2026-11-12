@@ -144,9 +144,11 @@ public class PlukkService(ApplicationDbContext db, LagerService lager)
                     .Where(v => v.ArbeidsordreId == r.ArbeidsordreId && v.ComponentId == r.ComponentId && v.Plukket && v.PlukketDato >= fra)
                     .SumAsync(v => (int?)v.Antall) ?? 0;
                 // Varene fra tilbudet som er hakt av som plukket på arbeidsordren.
-                var tilbudId = r.Arbeidsordre?.TilbudId;
-                montert += tilbudId is null ? 0 : await db.TilbudLinjer.AsNoTracking()
-                    .Where(l => l.TilbudId == tilbudId && l.ComponentId == r.ComponentId && l.Plukket && l.PlukketDato >= fra)
+                var tilbudIder = r.ArbeidsordreId is { } aoId
+                    ? await ArbeidsordreTilbudHelper.TilbudIderAsync(db, aoId, r.Arbeidsordre?.TilbudId)
+                    : [];
+                montert += tilbudIder.Count == 0 ? 0 : await db.TilbudLinjer.AsNoTracking()
+                    .Where(l => tilbudIder.Contains(l.TilbudId) && l.ComponentId == r.ComponentId && l.Plukket && l.PlukketDato >= fra)
                     .SumAsync(l => (int?)l.Antall) ?? 0;
                 tekst = "Plukket på arbeidsordren";
             }

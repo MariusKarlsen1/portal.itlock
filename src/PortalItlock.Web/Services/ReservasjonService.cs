@@ -124,24 +124,25 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
     private async Task<List<(int ArbeidsordreId, int ComponentId, int Antall)>> TilbudBehovAsync(int? arbeidsordreId)
     {
         var ordre = await db.Arbeidsordre.AsNoTracking()
-            .Where(a => a.TilbudId != null && AapneArbeidsordre.Contains(a.Status))
+            .Where(a => (a.TilbudId != null || a.EkstraTilbud.Any()) && AapneArbeidsordre.Contains(a.Status))
             .Where(a => arbeidsordreId == null || a.Id == arbeidsordreId)
             .Where(a => a.ProsjektId == null || !db.DorKomponenter.Any(k => k.Dor!.ProsjektId == a.ProsjektId && k.LevertAv == LevertAv.F && k.ComponentId != 0))
-            .Select(a => new { a.Id, TilbudId = a.TilbudId!.Value })
+            .Select(a => new { a.Id, a.TilbudId })
             .ToListAsync();
         if (ordre.Count == 0)
         {
             return [];
         }
 
-        var tilbudIder = ordre.Select(o => o.TilbudId).Distinct().ToList();
+        var perOrdre = await ArbeidsordreTilbudHelper.TilbudIderAsync(db, ordre.Select(o => (o.Id, o.TilbudId)));
+        var tilbudIder = perOrdre.Values.SelectMany(x => x).Distinct().ToList();
         var linjer = await db.TilbudLinjer.AsNoTracking()
             .Where(l => tilbudIder.Contains(l.TilbudId) && l.ComponentId != null && !l.ErGruppering && !l.Plukket && l.Antall > 0 && l.LevertAv == LevertAv.F)
             .Select(l => new { l.TilbudId, ComponentId = l.ComponentId!.Value, l.Antall })
             .ToListAsync();
 
         return ordre
-            .SelectMany(o => linjer.Where(l => l.TilbudId == o.TilbudId).Select(l => (o.Id, l.ComponentId, l.Antall)))
+            .SelectMany(o => linjer.Where(l => perOrdre[o.Id].Contains(l.TilbudId)).Select(l => (o.Id, l.ComponentId, l.Antall)))
             .GroupBy(x => (x.Id, x.ComponentId))
             .Select(g => (g.Key.Id, g.Key.ComponentId, g.Sum(x => x.Antall)))
             .ToList();

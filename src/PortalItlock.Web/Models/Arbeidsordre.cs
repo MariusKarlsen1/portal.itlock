@@ -23,6 +23,9 @@ public class Arbeidsordre
     public int? TilbudId { get; set; }
     public Tilbud? Tilbud { get; set; }
 
+    // Flere tilbud på samme arbeidsordre (i tillegg til TilbudId over).
+    public List<ArbeidsordreTilbud> EkstraTilbud { get; set; } = [];
+
     public ArbeidsordreStatus Status { get; set; } = ArbeidsordreStatus.Ny;
     public ArbeidsordrePrioritet Prioritet { get; set; } = ArbeidsordrePrioritet.Normal;
     public ArbeidsordreType? Type { get; set; }
