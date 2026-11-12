@@ -6918,6 +6918,9 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Gruppe")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Rekkefolge")
                         .HasColumnType("INTEGER");
 

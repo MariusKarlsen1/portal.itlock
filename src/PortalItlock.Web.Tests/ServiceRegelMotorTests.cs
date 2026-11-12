@@ -148,4 +148,29 @@ public class ServiceRegelMotorTests
         Assert.False(ServiceRegelMotor.Treffer(mekanisk, T("Sylinder", "Dørvrider", "Skilt", "Dørautomatikk"), []));
         Assert.False(ServiceRegelMotor.Treffer(mekanisk, T(), []));
     }
+
+    [Fact]
+    public void Kravgrupper_og_mellom_radene_en_av_i_raden()
+    {
+        // Automatikk m/adgangskontroll: automatikk OG (kortleser ELLER sentral).
+        var r = new ServicePrisRegel
+        {
+            Navn = "Automatikk m/adgangskontroll", KreverAlle = true,
+            Betingelser = [new() { Verdi = "Dørautomatikk", Gruppe = 1 }, new() { Verdi = "Kortleser", Gruppe = 2 }, new() { Verdi = "Sentral", Gruppe = 2 }]
+        };
+        HashSet<string> M(params string[] t) => new(t, StringComparer.OrdinalIgnoreCase);
+        Assert.True(ServiceRegelMotor.Treffer(r, M("Dørautomatikk", "Kortleser"), []));
+        Assert.True(ServiceRegelMotor.Treffer(r, M("Dørautomatikk", "Sentral", "Sylinder"), []));
+        Assert.False(ServiceRegelMotor.Treffer(r, M("Dørautomatikk", "Elektrisk sluttstykke"), []));
+        Assert.False(ServiceRegelMotor.Treffer(r, M("Kortleser", "Sentral"), []));
+    }
+
+    [Fact]
+    public void Nye_servicetyper_fra_komponentnavn()
+    {
+        Assert.Equal("Skyvedørsautomatikk", ServiceRegelMotor.StandardServicetype("Skyvedørsautomatikk Besam"));
+        Assert.Equal("Koordinator", ServiceRegelMotor.StandardServicetype("Koordinator"));
+        Assert.Equal("Sentral", ServiceRegelMotor.StandardServicetype("ARX sentral"));
+        Assert.Equal("Dørautomatikk", ServiceRegelMotor.StandardServicetype("Dørautomatikk slagdør"));
+    }
 }

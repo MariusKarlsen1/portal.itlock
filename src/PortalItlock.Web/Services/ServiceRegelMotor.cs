@@ -18,8 +18,8 @@ public static class ServiceRegelMotor
 {
     public static readonly string[] Servicetyper =
     [
-        "Dørautomatikk", "Elektrisk sluttstykke", "Motorlås", "Magnetlås", "Kortleser",
-        "Panikkbeslag", "Nødutstyr", "Dørlukker", "Mekanisk lås", "Sylinder", "Holdemagnet", "Dørvrider", "Skilt"
+        "Dørautomatikk", "Skyvedørsautomatikk", "Elektrisk sluttstykke", "Motorlås", "Magnetlås", "Kortleser", "Sentral",
+        "Koordinator", "Panikkbeslag", "Nødutstyr", "Dørlukker", "Mekanisk lås", "Sylinder", "Holdemagnet", "Dørvrider", "Skilt"
     ];
 
     /// Servicetype utledet fra navnet på komponenttypen når den ikke er satt.
@@ -28,6 +28,9 @@ public static class ServiceRegelMotor
     {
         var n = (komponenttype ?? "").Trim().ToLowerInvariant();
         if (n.Length == 0) return null;
+        if (n.Contains("skyvedør")) return "Skyvedørsautomatikk";
+        if (n.Contains("koordinator")) return "Koordinator";
+        if (n.Contains("sentral")) return "Sentral";
         if (n.Contains("dørautomatikk") || n.Contains("klemsikring") || n.Contains("kelmsikring")) return "Dørautomatikk";
         if (n.Contains("kortleser")) return "Kortleser";
         if (n.Contains("panikkbeslag")) return "Panikkbeslag";
@@ -81,7 +84,10 @@ public static class ServiceRegelMotor
                 .Select(b => b.Verdi.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
             return tillatt.Count > 0 && typer.Count > 0 && typer.All(tillatt.Contains) && ikke.All(b => !Oppfylt(b));
         }
-        var okHar = har.Count == 0 || (r.KreverAlle ? har.All(Oppfylt) : har.Any(Oppfylt));
+        // Krav-grupper: gruppe > 0 = «en av», alle gruppene må stemme («og»).
+        var okHar = har.Count == 0 || (r.KreverAlle
+            ? har.Where(b => b.Gruppe <= 0).All(Oppfylt) && har.Where(b => b.Gruppe > 0).GroupBy(b => b.Gruppe).All(g => g.Any(Oppfylt))
+            : har.Any(Oppfylt));
         return okHar && ikke.All(b => !Oppfylt(b));
     }
 
@@ -130,14 +136,14 @@ public static class ServiceRegelMotor
     // ---- Versjoner av prisreglene ----
 
     public sealed record RegelKopi(string Navn, int Prioritet, bool KreverAlle, decimal Pris, int Minutter, string? Undertekst, bool Aktiv, List<BetingelseKopi> Betingelser, bool BareDisse = false);
-    public sealed record BetingelseKopi(string Felt, string Verdi, bool ErIkke);
+    public sealed record BetingelseKopi(string Felt, string Verdi, bool ErIkke, int Gruppe = 0);
 
     /// Lagrer en fast kopi av alle reglene som neste versjon og returnerer versjonsnummeret.
     public static async Task<int> LagreVersjon(ApplicationDbContext db, string? avNavn)
     {
         var regler = await HentRegler(db);
         var kopi = regler.Select(r => new RegelKopi(r.Navn, r.Prioritet, r.KreverAlle, r.Pris, r.Minutter, r.Undertekst, r.Aktiv,
-            r.Betingelser.OrderBy(b => b.ErIkke).ThenBy(b => b.Rekkefolge).Select(b => new BetingelseKopi(b.Felt, b.Verdi, b.ErIkke)).ToList(), r.BareDisse)).ToList();
+            r.Betingelser.OrderBy(b => b.ErIkke).ThenBy(b => b.Rekkefolge).Select(b => new BetingelseKopi(b.Felt, b.Verdi, b.ErIkke, b.Gruppe)).ToList(), r.BareDisse)).ToList();
         var neste = (await db.ServicePrisRegelVersjoner.MaxAsync(v => (int?)v.Versjon) ?? 0) + 1;
         db.ServicePrisRegelVersjoner.Add(new ServicePrisRegelVersjon
         {

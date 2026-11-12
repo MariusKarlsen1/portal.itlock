@@ -57,6 +57,11 @@ public class ServicePrisRegelBetingelse
     public bool ErIkke { get; set; }
 
     public int Rekkefolge { get; set; }
+
+    // Krav-gruppe (P1 Prising av dører): betingelser med samme gruppe (> 0) er
+    // «en av» – minst én må stemme. Alle gruppene må stemme («og»). Gruppe 0 =
+    // hver betingelse er et eget krav (slik reglene var før).
+    public int Gruppe { get; set; }
 }
 
 public static class ServiceRegelFelt
