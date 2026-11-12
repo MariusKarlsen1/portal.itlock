@@ -29,6 +29,9 @@ public static class PortalFakturaer
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(a => a.KodeLinjer)
             .Include(a => a.Tilbud!).ThenInclude(t => t.Linjer)
+            .Include(a => a.Tilbud!).ThenInclude(t => t.KodeLinjer)
+            .Include(a => a.EkstraTilbud).ThenInclude(x => x.Tilbud!).ThenInclude(t => t.Linjer)
+            .Include(a => a.EkstraTilbud).ThenInclude(x => x.Tilbud!).ThenInclude(t => t.KodeLinjer)
             .Include(a => a.Varer)
             .AsSplitQuery()
             .ToListAsync();
