@@ -6801,12 +6801,18 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("KreverFoto")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Rekkefolge")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Servicetype")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("SkruddAv")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Standard")
                         .HasColumnType("TEXT");

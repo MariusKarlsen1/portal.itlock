@@ -346,8 +346,23 @@ else if (_prosjekt is not null)
     @if (_redAvtale is { } ra)
     {
         <div class="sr-overlay" @onclick="@(() => _redAvtale = null)">
-            <div class="sr-modal" role="dialog" aria-modal="true" aria-label="Rediger avtale" @onclick:stopPropagation="true">
+            <div class="sr-modal @(_redFane == "sjekk" ? "sr-modal-sjekk" : "")" role="dialog" aria-modal="true" aria-label="Rediger avtale" @onclick:stopPropagation="true">
                 <div class="sr-hode"><h3>Rediger avtale</h3><button type="button" class="sr-lukk" aria-label="Lukk" @onclick="@(() => _redAvtale = null)"><Icon Name="x" /></button></div>
+                <div class="sj-faner">
+                    <button type="button" class="@(_redFane == "avtalen" ? "pa" : "")" @onclick="@(() => _redFane = "avtalen")">Avtalen</button>
+                    <button type="button" class="@(_redFane == "sjekk" ? "pa" : "")" @onclick="VisSjekkpunkter">Sjekkpunkter @if (_sjLastet) {<em>@SjAktive</em>}</button>
+                </div>
+                @if (_redFane == "sjekk")
+                {
+                    @SjekkpunktFane()
+                    <div class="sr-fot">
+                        <span class="sj-lagret"><Icon Name="check" />Lagres med en gang · gjelder nye servicerunder</span>
+                        <span class="sr-sp"></span>
+                        <button type="button" class="sa-knapp sa-knapp-p" @onclick="@(() => _redAvtale = null)">Ferdig</button>
+                    </div>
+                }
+                else
+                {
                 <div class="sr-kropp">
                     <label class="sa-felt">Navn på avtalen<input @bind="ra.Navn" @bind:event="oninput" /></label>
                     <div class="sa-to">
@@ -422,6 +437,7 @@ else if (_prosjekt is not null)
                     <button type="button" class="sa-knapp" @onclick="@(() => _redAvtale = null)">Avbryt</button>
                     <button type="button" class="sa-knapp sa-knapp-p" @onclick="LagreAvtale">Lagre</button>
                 </div>
+                }
             </div>
         </div>
     }
@@ -1483,12 +1499,246 @@ else if (_prosjekt is not null)
     }
 
     private RedAvtale? _redAvtale;
+
+    // ---------- M8 (Prototype rediger avtale sjekkpunkter.html): sjekkpunktene for avtalen ----------
+    // Standardpunktene per beslagstype kommer fra Oppsett for serviceavtaler. På avtalen kan
+    // de skrus av, og avtalen kan få egne punkter per beslag, for alle dører eller på én dør.
+    private string _redFane = "avtalen";
+    private bool _sjLastet;
+    private List<ServiceKontrollpunkt> _sjPunkter = [];
+    private List<(int Id, string Nr, HashSet<string> Typer)> _sjDorer = [];
+    private string? _sjApen;
+    private readonly Dictionary<string, string> _sjNy = [];
+    private int? _sjDorValgt;
+    private string _sjDorTekst = "";
+
+    private static readonly Dictionary<string, string> SjIkon = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Dørautomatikk"] = "⇄", ["Elektrisk sluttstykke"] = "⚡", ["Motorlås"] = "⚙", ["Magnetlås"] = "🧲", ["Kortleser"] = "▤",
+        ["Panikkbeslag"] = "⎯", ["Nødutstyr"] = "✚", ["Dørlukker"] = "↩", ["Mekanisk lås"] = "🔒", ["Sylinder"] = "⚿",
+        ["Holdemagnet"] = "◉", ["Dørvrider"] = "⌐", ["Skilt"] = "▭", [ServicerundeMotor.Generelt] = "▢", [ServicerundeMotor.AlleDorer] = "★"
+    };
+
+    private async Task VisSjekkpunkter()
+    {
+        _redFane = "sjekk";
+        if (!_sjLastet)
+        {
+            await LastSjekkpunkter();
+        }
+    }
+
+    private async Task LastSjekkpunkter()
+    {
+        await ServicerundeMotor.SikreKontrollpunkter(Db);
+        var typeKart = await ServiceRegelMotor.HentTypeKart(Db);
+        var dorer = await ServiceRegelMotor.HentDorer(Db, ProsjektId);
+        _sjDorer = dorer.Select(d => (d.Id, d.Dornummer, ServiceRegelMotor.TyperPaDor(d, typeKart))).ToList();
+        var dorIder = _sjDorer.Select(d => (int?)d.Id).ToList();
+        _sjPunkter = await Db.ServiceKontrollpunkter
+            .Where(k => (k.ProsjektId == null && k.DorId == null) || k.ProsjektId == ProsjektId || dorIder.Contains(k.DorId))
+            .OrderBy(k => k.Rekkefolge).ToListAsync();
+        _sjDorValgt ??= _sjDorer.FirstOrDefault().Id;
+        _sjLastet = true;
+    }
+
+    // Beslagstypene på avtalen (i fast rekkefølge), «Generelt» for dører uten beslag, og «Alle dører».
+    private List<string> SjTyper
+    {
+        get
+        {
+            var typer = ServiceRegelMotor.Servicetyper.Where(t => _sjDorer.Any(d => d.Typer.Contains(t))).ToList();
+            if (_sjDorer.Any(d => !ServiceRegelMotor.Servicetyper.Any(d.Typer.Contains)))
+            {
+                typer.Add(ServicerundeMotor.Generelt);
+            }
+            typer.Add(ServicerundeMotor.AlleDorer);
+            return typer;
+        }
+    }
+
+    private List<string> SjDorerMed(string type) => type == ServicerundeMotor.AlleDorer
+        ? _sjDorer.Select(d => d.Nr).ToList()
+        : type == ServicerundeMotor.Generelt
+            ? _sjDorer.Where(d => !ServiceRegelMotor.Servicetyper.Any(d.Typer.Contains)).Select(d => d.Nr).ToList()
+            : _sjDorer.Where(d => d.Typer.Contains(type)).Select(d => d.Nr).ToList();
+
+    private IEnumerable<ServiceKontrollpunkt> SjStandard(string type) =>
+        _sjPunkter.Where(k => k.ProsjektId == null && k.DorId == null && k.Servicetype.Equals(type, StringComparison.OrdinalIgnoreCase));
+
+    private IEnumerable<ServiceKontrollpunkt> SjEgne(string type) =>
+        _sjPunkter.Where(k => k.ProsjektId == ProsjektId && !k.SkruddAv && k.DorId == null && k.Servicetype.Equals(type, StringComparison.OrdinalIgnoreCase));
+
+    private bool SjErAv(string type, string tekst) =>
+        _sjPunkter.Any(k => k.ProsjektId == ProsjektId && k.SkruddAv && k.Servicetype.Equals(type, StringComparison.OrdinalIgnoreCase) && k.Tekst.Equals(tekst, StringComparison.OrdinalIgnoreCase));
+
+    private int SjAntall(string type) => SjStandard(type).Count(p => !SjErAv(type, p.Tekst)) + SjEgne(type).Count();
+
+    private IEnumerable<ServiceKontrollpunkt> SjDorPunkter => _sjPunkter.Where(k => k.DorId != null);
+
+    private int SjAktive => SjTyper.Sum(SjAntall) + SjDorPunkter.Count();
+
+    private async Task SjVeksle(string type, string tekst)
+    {
+        var av = _sjPunkter.FirstOrDefault(k => k.ProsjektId == ProsjektId && k.SkruddAv && k.Servicetype.Equals(type, StringComparison.OrdinalIgnoreCase) && k.Tekst.Equals(tekst, StringComparison.OrdinalIgnoreCase));
+        if (av is not null)
+        {
+            Db.ServiceKontrollpunkter.Remove(av);
+            _sjPunkter.Remove(av);
+        }
+        else
+        {
+            var ny = new ServiceKontrollpunkt { Servicetype = type, Tekst = tekst, ProsjektId = ProsjektId, SkruddAv = true, EndretDato = DateTime.Now };
+            Db.ServiceKontrollpunkter.Add(ny);
+            _sjPunkter.Add(ny);
+        }
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SjLeggTil(string type)
+    {
+        var tekst = _sjNy.GetValueOrDefault(type)?.Trim();
+        if (string.IsNullOrEmpty(tekst))
+        {
+            return;
+        }
+        var nr = (_sjPunkter.Where(k => k.ProsjektId == ProsjektId).Select(k => (int?)k.Rekkefolge).Max() ?? 100) + 1;
+        var ny = new ServiceKontrollpunkt { Servicetype = type, Tekst = tekst, ProsjektId = ProsjektId, Rekkefolge = nr, EndretDato = DateTime.Now };
+        Db.ServiceKontrollpunkter.Add(ny);
+        _sjPunkter.Add(ny);
+        _sjNy[type] = "";
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SjFjern(ServiceKontrollpunkt k)
+    {
+        Db.ServiceKontrollpunkter.Remove(k);
+        _sjPunkter.Remove(k);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SjLeggTilDor()
+    {
+        var tekst = _sjDorTekst.Trim();
+        if (tekst.Length == 0 || _sjDorValgt is not { } dorId)
+        {
+            return;
+        }
+        var nr = (_sjPunkter.Where(k => k.DorId == dorId).Select(k => (int?)k.Rekkefolge).Max() ?? 0) + 1;
+        var ny = new ServiceKontrollpunkt { Servicetype = "Dør", Tekst = tekst, DorId = dorId, Rekkefolge = nr, EndretDato = DateTime.Now };
+        Db.ServiceKontrollpunkter.Add(ny);
+        _sjPunkter.Add(ny);
+        _sjDorTekst = "";
+        await Db.SaveChangesAsync();
+    }
+
+    private RenderFragment SjekkpunktFane() => __builder =>
+    {
+        <div class="sr-kropp sj-kropp">
+            <div class="sj-hjelp"><Icon Name="info" /><span>Hver dør får <b>standardpunktene</b> for beslagene sine (fra Oppsett for serviceavtaler). Skru av det som ikke passer på denne avtalen, eller legg til egne punkter. Montøren huker bare av «Sjekket» per dør – punktene kommer på rapporten.</span></div>
+            @if (!_sjLastet)
+            {
+                <p class="sa-dempet">Laster …</p>
+            }
+            else if (_sjDorer.Count == 0)
+            {
+                <p class="sa-dempet">Avtalen har ingen dører ennå. Legg inn dører under «Dører og beslag» først.</p>
+            }
+            else
+            {
+                <div class="sj-kort">
+                    @foreach (var type in SjTyper)
+                    {
+                        var t = type;
+                        var apen = _sjApen == t;
+                        var dorer = SjDorerMed(t);
+                        var egne = SjEgne(t).ToList();
+                        var av = SjStandard(t).Count(p => SjErAv(t, p.Tekst));
+                        <div class="sj-k @(apen ? "apen" : "")" @key="t">
+                            <div class="sj-k-hode">
+                                <span class="sj-ik">@(SjIkon.GetValueOrDefault(t) ?? "•")</span>
+                                <span class="sj-k-t"><b>@t</b><small>@SjAntall(t) punkter@(egne.Count > 0 ? $" · +{egne.Count} egne" : "")@(av > 0 ? $" · {av} av" : "")</small></span>
+                                <button type="button" class="sa-knapp sa-knapp-liten" @onclick="@(() => _sjApen = apen ? null : t)">@(apen ? "Skjul" : "Vis punkter")</button>
+                            </div>
+                            <div class="sj-dorer">
+                                @foreach (var nr in dorer.Take(12))
+                                {
+                                    <span>@nr</span>
+                                }
+                                @if (dorer.Count > 12)
+                                {
+                                    <span>+@(dorer.Count - 12)</span>
+                                }
+                            </div>
+                            @if (apen)
+                            {
+                                <div class="sj-punkter">
+                                    @foreach (var p in SjStandard(t))
+                                    {
+                                        var tekst = p.Tekst;
+                                        var erAv = SjErAv(t, tekst);
+                                        <div class="sj-p @(erAv ? "av" : "")" @key="p.Id">
+                                            <span class="sj-p-t">@tekst</span>
+                                            <span class="sj-merke">Standard</span>
+                                            <button type="button" class="sj-sw @(erAv ? "" : "pa")" title="@(erAv ? "Skrudd av på denne avtalen" : "I bruk")" @onclick="@(() => SjVeksle(t, tekst))"></button>
+                                        </div>
+                                    }
+                                    @foreach (var e in egne)
+                                    {
+                                        var punkt = e;
+                                        <div class="sj-p" @key="punkt.Id">
+                                            <span class="sj-p-t">@punkt.Tekst</span>
+                                            <span class="sj-merke avt">Avtalen</span>
+                                            <button type="button" class="sj-x" title="Fjern" @onclick="@(() => SjFjern(punkt))">×</button>
+                                        </div>
+                                    }
+                                    @if (!SjStandard(t).Any() && egne.Count == 0)
+                                    {
+                                        <p class="sa-dempet" style="margin:6px 12px">Ingen punkter ennå.</p>
+                                    }
+                                </div>
+                            }
+                            <div class="sj-ny">
+                                <input placeholder="+ Nytt punkt" value="@(_sjNy.GetValueOrDefault(t))" @oninput="@(e => _sjNy[t] = e.Value?.ToString() ?? "")" @onkeydown="@(e => e.Key == "Enter" ? SjLeggTil(t) : Task.CompletedTask)" />
+                                <button type="button" class="sa-knapp sa-knapp-liten" @onclick="@(() => SjLeggTil(t))">Legg til</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="sj-k sj-enkelt">
+                    <div class="sj-k-hode"><span class="sj-ik">◎</span><span class="sj-k-t"><b>Ekstra på enkeltdører</b><small>Punkter som bare gjelder én dør</small></span></div>
+                    @foreach (var k in SjDorPunkter)
+                    {
+                        var punkt = k;
+                        <div class="sj-p" @key="punkt.Id">
+                            <b class="sj-p-nr">@(_sjDorer.FirstOrDefault(d => d.Id == punkt.DorId).Nr)</b>
+                            <span class="sj-p-t">@punkt.Tekst</span>
+                            <button type="button" class="sj-x" title="Fjern" @onclick="@(() => SjFjern(punkt))">×</button>
+                        </div>
+                    }
+                    <div class="sj-ny">
+                        <select @bind="_sjDorValgt">
+                            @foreach (var d in _sjDorer)
+                            {
+                                <option value="@d.Id">@d.Nr</option>
+                            }
+                        </select>
+                        <input placeholder="Punkt for valgt dør" @bind="_sjDorTekst" @bind:event="oninput" />
+                        <button type="button" class="sa-knapp sa-knapp-liten" @onclick="SjLeggTilDor">Legg til</button>
+                    </div>
+                </div>
+            }
+        </div>
+    };
     private string? _redAvtaleFeil;
     private List<(int Id, string Navn)> _kunderValg = [];
 
     private async Task ApneRedigerAvtale()
     {
         _bekreftFlytt = false;
+        _redFane = "avtalen";
+        _sjLastet = false;
         if (_prosjekt is null)
         {
             return;

@@ -73,5 +73,11 @@ public class ServiceKontrollpunkt
     public bool KreverFoto { get; set; }
     // Fast tillegg på én dør (null = felles punkt for servicetypen).
     public int? DorId { get; set; }
+    // Gjelder bare denne serviceavtalen (null = standard for alle avtaler).
+    // Servicetype «Alle dører» = punktet gjelder alle dørene på avtalen.
+    public int? ProsjektId { get; set; }
+    // Sammen med ProsjektId: standardpunktet med samme type og tekst er skrudd
+    // av på denne avtalen.
+    public bool SkruddAv { get; set; }
     public DateTime? EndretDato { get; set; }
 }

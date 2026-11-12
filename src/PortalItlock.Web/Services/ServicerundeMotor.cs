@@ -72,15 +72,41 @@ public static class ServicerundeMotor
 
     /// Sjekklisten for én dør: felles punkter for servicetypene på døren (med krav
     /// og fotokrav), pluss faste tillegg som er lagt på akkurat denne døren.
-    public static List<Punkt> PunkterForDor(IEnumerable<string> typer, IReadOnlyList<ServiceKontrollpunkt> mal, int dorId)
+    public const string AlleDorer = "Alle dører";
+
+    /// Felles punkter for en avtale: standardpunktene (uten de som er skrudd av
+    /// på avtalen) og avtalens egne punkter per servicetype.
+    public static List<ServiceKontrollpunkt> FellesFor(IReadOnlyList<ServiceKontrollpunkt> mal, int? prosjektId)
     {
-        var felles = mal.Where(m => m.DorId == null).ToList();
+        var standard = mal.Where(m => m.DorId == null && m.ProsjektId == null).ToList();
+        if (prosjektId is null) return standard;
+        var av = mal.Where(m => m.ProsjektId == prosjektId && m.SkruddAv).ToList();
+        return standard
+            .Where(s => !av.Any(a => a.Servicetype.Equals(s.Servicetype, StringComparison.OrdinalIgnoreCase) && a.Tekst.Equals(s.Tekst, StringComparison.OrdinalIgnoreCase)))
+            .Concat(mal.Where(m => m.ProsjektId == prosjektId && !m.SkruddAv && m.DorId == null && m.Servicetype != AlleDorer).OrderBy(m => m.Rekkefolge))
+            .ToList();
+    }
+
+    public static List<Punkt> PunkterForDor(IEnumerable<string> typer, IReadOnlyList<ServiceKontrollpunkt> mal, int dorId, int? prosjektId = null)
+    {
+        var felles = FellesFor(mal, prosjektId);
         var liste = PunkterFor(typer, felles).Select(p =>
         {
             var kilder = p.Kilde.Split(" + ");
             var treff = felles.Where(m => m.Tekst.Equals(p.Tekst, StringComparison.OrdinalIgnoreCase) && kilder.Contains(m.Servicetype, StringComparer.OrdinalIgnoreCase)).ToList();
             return new Punkt(p.Tekst, p.Kilde, treff.Select(m => m.Standard).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)), treff.Any(m => m.KreverFoto));
         }).ToList();
+        // Avtalens punkter for alle dører.
+        if (prosjektId is not null)
+        {
+            foreach (var m in mal.Where(m => m.ProsjektId == prosjektId && !m.SkruddAv && m.DorId == null && m.Servicetype == AlleDorer).OrderBy(m => m.Rekkefolge))
+            {
+                if (!liste.Any(x => x.Tekst.Equals(m.Tekst, StringComparison.OrdinalIgnoreCase)))
+                {
+                    liste.Add(new Punkt(m.Tekst, AlleDorer, m.Standard, m.KreverFoto));
+                }
+            }
+        }
         foreach (var m in mal.Where(m => m.DorId == dorId).OrderBy(m => m.Rekkefolge))
         {
             if (!liste.Any(x => x.Tekst.Equals(m.Tekst, StringComparison.OrdinalIgnoreCase)))
@@ -189,7 +215,7 @@ public static class ServicerundeMotor
                 Rekkefolge = nr++
             };
             var i = 0;
-            foreach (var p in PunkterForDor(res.Typer, mal, d.Id))
+            foreach (var p in PunkterForDor(res.Typer, mal, d.Id, prosjektId))
             {
                 rd.Punkter.Add(new ServicerundeDorPunkt { Tekst = p.Tekst, Kilde = p.Kilde, Standard = p.Standard, KreverFoto = p.KreverFoto, Rekkefolge = i++ });
             }
