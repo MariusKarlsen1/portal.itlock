@@ -194,8 +194,10 @@ public class LasplanGodkjenningService(ApplicationDbContext db, EmailService epo
             });
             try
             {
-                sendt = await epost.SendAsync(p.LasplanSendtTil, $"Låsplan til godkjenning: {p.Navn}", html,
-                    svarTil: string.IsNullOrWhiteSpace(avsenderEpost) ? null : avsenderEpost, fraOrganisasjonId: tenant.Id);
+                // E-post til kunder er slått av: lenken sendes av brukeren selv.
+                _ = html;
+                sendt = false;
+                await Task.CompletedTask;
             }
             catch (Exception ex)
             {
