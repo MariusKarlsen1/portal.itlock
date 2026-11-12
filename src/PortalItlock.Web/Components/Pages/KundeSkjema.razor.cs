@@ -628,6 +628,7 @@ public partial class KundeSkjema
             .OrderByDescending(a => a.OpprettetDato)
             .ToListAsync();
 
+        await TilbudSendtFiks.SikreAsync(Db);
         _tilbudListe = await Db.Tilbud
             .AsNoTracking()
             .Where(t => t.Prosjekt!.KundeId == Id)

@@ -3,6 +3,7 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
 @using PortalItlock.Web.Services
 @inject TripletexService Tripletex
+@inject PortalItlock.Web.Data.ApplicationDbContext Db
 @inject IJSRuntime JS
 
 <PageTitle>Fakturaoversikt - Full Kontroll</PageTitle>
@@ -10,8 +11,8 @@
 @* F1 (Prototype fakturaoversikt.html): samme kort som de andre rapportene - fire
    nøkkeltall og fakturaene i én tabell med statusfaner. Utestående etter alder
    er tatt bort. *@
-<RapportRamme Tittel="Fakturaoversikt" Undertittel="Selve faktureringen skjer i Tripletex" Ikon="receipt" Kilde="tripletex"
-              KildeTekst="@(_hentet is null ? "Tripletex" : $"Tripletex – hentet {_hentet:HH:mm}")"
+<RapportRamme Tittel="Fakturaoversikt" Undertittel="Fakturerte arbeidsordre og kassasalg i portalen" Ikon="receipt" Kilde="portal"
+              KildeTekst="Fra portalen – fakturerte ordre og kassa"
               Periode="_periode" OnPeriodeEndret="HentRapport" Laster="_laster" OnEksporter="Eksporter"
               SomKundekort="true" Gruppe="Økonomi">
     <Handlinger>
@@ -41,13 +42,13 @@
         else if (_harHentet)
         {
             var fakturert = _fakturaer.Sum(Netto);
-            var ubetalte = _fakturaer.Where(ErUbetalt).ToList();
-            var forfalte = ubetalte.Where(ErForfalt).ToList();
+            var ao = _fakturaer.Where(f => f.OrdreNummer == PortalFakturaer.Arbeidsordre).ToList();
+            var kassa = _fakturaer.Where(f => f.OrdreNummer == PortalFakturaer.Kassa).ToList();
             var vanlige = _fakturaer.Count(f => !f.ErKreditnota);
             <div class="rr-kpis">
                 <div class="rr-kpi"><small>Fakturert</small><b>@RapportPeriode.Kr(fakturert)</b><span>@vanlige fakturaer@(_fakturaer.Count > vanlige ? $", {_fakturaer.Count - vanlige} kreditnota" : "")</span></div>
-                <div class="rr-kpi @(ubetalte.Count > 0 ? "gul" : "")"><small>Utestående</small><b>@RapportPeriode.Kr(ubetalte.Sum(f => f.Utestaende))</b><span>@ubetalte.Count @(ubetalte.Count == 1 ? "faktura" : "fakturaer")</span></div>
-                <div class="rr-kpi @(forfalte.Count > 0 ? "varsel" : "")"><small>Forfalt</small><b>@RapportPeriode.Kr(forfalte.Sum(f => f.Utestaende))</b><span>@(forfalte.Count == 0 ? "ingen forfalte" : $"{forfalte.Count} {(forfalte.Count == 1 ? "faktura" : "fakturaer")} – følg opp")</span></div>
+                <div class="rr-kpi"><small>Arbeidsordre</small><b>@RapportPeriode.Kr(ao.Sum(Netto))</b><span>@ao.Count @(ao.Count == 1 ? "ordre" : "ordre")</span></div>
+                <div class="rr-kpi"><small>Kassa</small><b>@RapportPeriode.Kr(kassa.Sum(Netto))</b><span>@kassa.Count @(kassa.Count == 1 ? "salg" : "salg")</span></div>
                 <div class="rr-kpi"><small>Snitt per faktura</small><b>@RapportPeriode.Kr(vanlige == 0 ? 0 : _fakturaer.Where(f => !f.ErKreditnota).Sum(f => f.Belop) / vanlige)</b><span>eks. kreditnotaer</span></div>
             </div>
 
@@ -67,28 +68,22 @@
                         <table class="rr-tab">
                             <thead>
                                 <tr>
-                                    <th>Faktura</th>
+                                    <th>Nummer</th>
                                     <th>Kunde</th>
-                                    <th>Dato</th>
-                                    <th>Forfall</th>
-                                    <th class="n">Beløp</th>
-                                    <th class="n">Utestående</th>
-                                    <th>Status</th>
-                                    <th class="n">Over forfall</th>
+                                    <th>Fakturert</th>
+                                    <th>Type</th>
+                                    <th class="n">Beløp eks. mva</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach (var f in liste)
                                 {
                                     <tr>
-                                        <td><b>@(f.Nummer?.ToString() ?? "-")</b>@if (!string.IsNullOrWhiteSpace(f.OrdreNummer)){<small>Ordre @f.OrdreNummer</small>}</td>
+                                        <td>@if (f.OrdreNummer == PortalFakturaer.Arbeidsordre){<a href="@($"/arbeidsordre/{f.Id}")"><b>AO-@f.Id</b></a>}else{<b>Kassa @f.Nummer</b>}</td>
                                         <td>@(f.KundeNavn ?? "-")</td>
                                         <td>@(f.Dato?.ToString("dd.MM.yyyy") ?? "-")</td>
-                                        <td>@(f.Forfallsdato?.ToString("dd.MM.yyyy") ?? "-")</td>
-                                        <td class="n">@RapportPeriode.Kr(Netto(f))</td>
-                                        <td class="n">@if (ErUbetalt(f)){<b>@RapportPeriode.Kr(f.Utestaende)</b>}else{<span class="dempet">–</span>}</td>
                                         <td><span class="rr-pille @StatusCss(f)">@StatusTekst(f)</span></td>
-                                        <td class="n">@if (ErForfalt(f)){<span class="rapport-forfalt">@DagerForfalt(f) dager</span>}</td>
+                                        <td class="n">@RapportPeriode.Kr(Netto(f))</td>
                                     </tr>
                                 }
                             </tbody>
@@ -96,8 +91,6 @@
                                 <tr>
                                     <td colspan="4">Sum (@liste.Count)</td>
                                     <td class="n">@RapportPeriode.Kr(liste.Sum(Netto))</td>
-                                    <td class="n">@RapportPeriode.Kr(liste.Where(ErUbetalt).Sum(f => f.Utestaende))</td>
-                                    <td colspan="2"></td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -122,9 +115,8 @@
     private static readonly (string Key, string Navn, string Css)[] Faner =
     [
         ("alle", "Alle", ""),
-        ("ubetalt", "Ikke betalt", "g"),
-        ("forfalt", "Forfalt", "r"),
-        ("betalt", "Betalt", ""),
+        ("ao", "Arbeidsordre", ""),
+        ("kassa", "Kassa", ""),
         ("kreditnota", "Kreditnota", "")
     ];
 
@@ -142,9 +134,8 @@
 
     private List<TripletexService.TripletexFaktura> Filtrert(string fane) => fane switch
     {
-        "ubetalt" => _fakturaer.Where(ErUbetalt).ToList(),
-        "forfalt" => _fakturaer.Where(ErForfalt).OrderByDescending(DagerForfalt).ToList(),
-        "betalt" => _fakturaer.Where(f => !f.ErKreditnota && f.Utestaende <= 0).ToList(),
+        "ao" => _fakturaer.Where(f => f.OrdreNummer == PortalFakturaer.Arbeidsordre).ToList(),
+        "kassa" => _fakturaer.Where(f => f.OrdreNummer == PortalFakturaer.Kassa).ToList(),
         "kreditnota" => _fakturaer.Where(f => f.ErKreditnota).ToList(),
         _ => _fakturaer
     };
@@ -164,10 +155,10 @@
     }
 
     private static string StatusTekst(TripletexService.TripletexFaktura f) =>
-        f.ErKreditnota ? "Kreditnota" : f.Utestaende <= 0 ? "Betalt" : ErForfalt(f) ? "Forfalt" : "Ikke betalt";
+        f.ErKreditnota ? "Kreditnota" : f.OrdreNummer == PortalFakturaer.Kassa ? "Kassa" : "Arbeidsordre";
 
     private static string StatusCss(TripletexService.TripletexFaktura f) =>
-        f.ErKreditnota ? "rr-p-gra" : f.Utestaende <= 0 ? "rr-p-gronn" : ErForfalt(f) ? "rr-p-rod" : "rr-p-gul";
+        f.ErKreditnota ? "rr-p-gra" : f.OrdreNummer == PortalFakturaer.Kassa ? "rr-p-gul" : "rr-p-gronn";
 
     protected override async Task OnInitializedAsync() => await HentRapport();
 
@@ -177,7 +168,7 @@
         _feil = null;
         try
         {
-            var (fakturaer, feil) = await Tripletex.HentFakturaerAsync(_periode.Fra, _periode.Til);
+            var (fakturaer, feil) = await PortalFakturaer.HentAsync(Db, _periode.Fra, _periode.Til);
             if (feil is not null)
             {
                 _feil = feil;
@@ -198,10 +189,10 @@
 
     private async Task Eksporter()
     {
-        var rader = new List<object?[]> { new object?[] { "Fakturanr", "Ordre", "Kunde", "Dato", "Forfall", "Beløp", "Utestående", "Status", "Dager over forfall" } };
+        var rader = new List<object?[]> { new object?[] { "Nummer", "Type", "Kunde", "Fakturert", "Beløp eks. mva" } };
         rader.AddRange(Synlige.Select(f => new object?[]
         {
-            f.Nummer, f.OrdreNummer, f.KundeNavn, f.Dato, f.Forfallsdato, Netto(f), ErUbetalt(f) ? f.Utestaende : 0, StatusTekst(f), ErForfalt(f) ? DagerForfalt(f) : null
+            f.OrdreNummer == PortalFakturaer.Arbeidsordre ? $"AO-{f.Id}" : $"Kassa {f.Nummer}", StatusTekst(f), f.KundeNavn, f.Dato, Netto(f)
         }));
         await JS.InvokeVoidAsync("rapport.lastNedCsv", $"Fakturaoversikt {_periode.Tekst}.csv", RapportData.Csv(rader));
     }
