@@ -244,7 +244,10 @@ public static class ServicerundeMotor
     {
         var dorer = runde.Dorer;
         runde.FullfortDato ??= DateTime.Now;
-        runde.StatusBeskrivelse = Oppsummering(dorer);
+        if (ErStandardStatus(runde.StatusBeskrivelse))
+        {
+            runde.StatusBeskrivelse = Oppsummering(dorer);
+        }
         var prosjekt = runde.Prosjekt ?? await db.Prosjekter.FindAsync(runde.ProsjektId);
         if (runde.NesteServiceDato is null && prosjekt?.ServiceGangerPerAr is > 0 and <= 12 && prosjekt.ServiceGangerPerAr is { } g)
         {
@@ -285,6 +288,10 @@ public static class ServicerundeMotor
         await db.SaveChangesAsync();
         return nye;
     }
+
+    /// Statusen runden får når den startes (ikke skrevet av montøren).
+    public static bool ErStandardStatus(string? s) =>
+        string.IsNullOrWhiteSpace(RikTekst.TilTekst(s)) || s!.Trim() is "Pågår" or "Planlagt servicerunde" or "Runde startet fra plan";
 
     public static string Oppsummering(IReadOnlyCollection<ServicerundeDor> dorer)
     {
