@@ -83,11 +83,38 @@ else if (_tilbud is not null)
                 }
                 else
                 {
-                    <button type="button" class="tk-kn" @onclick="OpprettArbeidsordre"><Icon Name="tool" />Opprett arbeidsordre</button>
+                    <button type="button" class="tk-kn" @onclick="ApneAoValg"><Icon Name="tool" />Arbeidsordre …</button>
                 }
                 <button type="button" class="tk-kn tk-kn-p" @onclick="Lagre"><Icon Name="check" />Lagre</button>
             </div>
         </div>
+
+        @if (_aoValg)
+        {
+            @* Tilbudet legges som regel til ordren som finnes i prosjektet. Endringsmeldinger
+               o.l. kan få sin egen ordre - fortsatt i samme prosjekt. *@
+            <div class="tk-ao-bak" @onclick="@(() => _aoValg = false)"></div>
+            <div class="tk-ao-dlg" role="dialog" aria-modal="true" aria-label="Arbeidsordre for tilbudet">
+                <h3>Arbeidsordre for tilbudet</h3>
+                <p class="tk-ao-hjelp">Velg om tilbudet skal høre til en ordre som finnes i prosjektet, eller få sin egen ordre (f.eks. en endringsmelding).</p>
+                @foreach (var o in _prosjektAo)
+                {
+                    var id = o.Id;
+                    <label class="tk-ao-rad @(_aoValgt == id ? "pa" : "")">
+                        <input type="radio" name="tk-ao" checked="@(_aoValgt == id)" @onchange="@(() => _aoValgt = id)" />
+                        <span><b>Legg til AO-@o.Id @o.Tittel</b><small>@o.Status.Visningsnavn()@(o.Antall > 0 ? $" · {o.Antall} tilbud fra før" : "")</small></span>
+                    </label>
+                }
+                <label class="tk-ao-rad @(_aoValgt == 0 ? "pa" : "")">
+                    <input type="radio" name="tk-ao" checked="@(_aoValgt == 0)" @onchange="@(() => _aoValgt = 0)" />
+                    <span><b>Ny arbeidsordre</b><small>Egen ordre for dette tilbudet, i samme prosjekt</small></span>
+                </label>
+                <div class="tk-ao-knapper">
+                    <button type="button" class="tk-kn" @onclick="@(() => _aoValg = false)">Avbryt</button>
+                    <button type="button" class="tk-kn tk-kn-p" @onclick="BekreftAoValg"><Icon Name="check" />@(_aoValgt == 0 ? "Opprett ny ordre" : "Legg til ordren")</button>
+                </div>
+            </div>
+        }
 
         <div class="tk-info">
             <span><Icon Name="folder" /><b>@(_tilbud.Prosjekt?.Kunde?.Navn ?? _tilbud.Prosjekt?.Navn ?? "-")</b></span>
@@ -1270,6 +1297,72 @@ else if (_tilbud is not null)
         }
 
         return funnet;
+    }
+
+    private sealed record ProsjektAo(int Id, string Tittel, ArbeidsordreStatus Status, int Antall);
+    private bool _aoValg;
+    private int _aoValgt;
+    private List<ProsjektAo> _prosjektAo = [];
+
+    // Har prosjektet åpne arbeidsordre, velges det om tilbudet skal høre til en av
+    // dem (forhåndsvalgt) eller få en egen ordre. Ellers lages ordren med en gang.
+    private async Task ApneAoValg()
+    {
+        if (_tilbud is null)
+        {
+            return;
+        }
+
+        _prosjektAo = (await Db.Arbeidsordre.AsNoTracking()
+                .Where(a => a.ProsjektId == _tilbud.ProsjektId && a.Status != ArbeidsordreStatus.Fakturert)
+                .OrderByDescending(a => a.OpprettetDato)
+                .Select(a => new { a.Id, a.Tittel, a.Status, Hoved = a.TilbudId != null ? 1 : 0, Ekstra = a.EkstraTilbud.Count })
+                .ToListAsync())
+            .Select(a => new ProsjektAo(a.Id, a.Tittel, a.Status, a.Hoved + a.Ekstra))
+            .ToList();
+
+        if (_prosjektAo.Count == 0)
+        {
+            await OpprettArbeidsordre();
+            return;
+        }
+
+        _aoValgt = _prosjektAo[0].Id;
+        _aoValg = true;
+    }
+
+    private async Task BekreftAoValg()
+    {
+        if (_tilbud is null)
+        {
+            return;
+        }
+
+        if (_aoValgt == 0)
+        {
+            _aoValg = false;
+            await OpprettArbeidsordre();
+            return;
+        }
+
+        var ordre = await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.Id == _aoValgt);
+        if (ordre is null)
+        {
+            return;
+        }
+
+        if (ordre.TilbudId is null)
+        {
+            ordre.TilbudId = _tilbud.Id;
+        }
+        else if (ordre.TilbudId != _tilbud.Id && !await Db.ArbeidsordreTilbud.AnyAsync(x => x.ArbeidsordreId == ordre.Id && x.TilbudId == _tilbud.Id))
+        {
+            Db.ArbeidsordreTilbud.Add(new ArbeidsordreTilbud { ArbeidsordreId = ordre.Id, TilbudId = _tilbud.Id });
+        }
+        await Db.SaveChangesAsync();
+        _aoValg = false;
+        _lenketArbeidsordreId = ordre.Id;
+        _savedMessage = $"Tilbudet er lagt til AO-{ordre.Id}.";
     }
 
     private async Task OpprettArbeidsordre()
