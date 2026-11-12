@@ -92,12 +92,19 @@
                         @foreach (var dk in Dor.Komponenter)
                         {
                             <div @key="dk.ComponentId" class="mobil-beslag-kort">
+                                @if (!dk.MonteresAvOss)
+                                {
+                                    <span class="mobil-beslag-montert-knapp beslag-ikke-oss" title="@dk.LevertAv.Forklaring()">@dk.LevertAv.Visningsnavn()</span>
+                                }
+                                else
+                                {
                                 <button type="button" class="mobil-beslag-montert-knapp @(dk.Montert ? "montert" : "")" title="@(dk.Montert ? "Montert - trykk for å angre" : "Ikke montert - trykk for å markere som montert")" @onclick="@(() => ToggleBeslagMontert(dk))">
                                     @if (dk.Montert)
                                     {
                                         <Icon Name="check-circle" />
                                     }
                                 </button>
+                                }
                                 <button type="button" class="mobil-beslag-info" @onclick="@(() => _mobilValgtBeslag = dk)">
                                     <span class="mobil-beslag-navn">@dk.Component?.Navn</span>
                                     <span class="mobil-beslag-meta">@dk.Antall @dk.Enhet@(dk.Plassering.HasValue ? $" · {dk.Plassering}" : "")</span>
@@ -582,10 +589,10 @@ else
             <h2>Beslag</h2>
             @if (Dor.Komponenter.Count > 0)
             {
-                var antMontert = Dor.Komponenter.Count(k => k.Montert);
-                var antBeslag = Dor.Komponenter.Count;
+                var antMontert = Dor.Komponenter.Count(k => k.MonteresAvOss && k.Montert);
+                var antBeslag = Dor.Komponenter.Count(k => k.MonteresAvOss);
                 <span class="bs-teller">@antMontert av @antBeslag montert</span>
-                <span class="bs-bar"><i style="width:@(antMontert * 100 / antBeslag)%"></i></span>
+                <span class="bs-bar"><i style="width:@(antBeslag == 0 ? 0 : antMontert * 100 / antBeslag)%"></i></span>
                 <span class="bs-hode-knapper">
                     <button type="button" class="bs-kn" disabled="@(_valgteBeslagComponentIds.Count == 0)"
                             title="@(_valgteBeslagComponentIds.Count == 0 ? "Huk av beslag i listen først" : "Kopier de valgte beslagene til andre dører")"
@@ -731,13 +738,19 @@ else
                             </select>
                         </td>
                         <td>
-                            <select class="beslag-velg" @bind="dk.LevertAv" aria-label="Levert av" title="@dk.LevertAv.Forklaring()">
+                            <select class="beslag-velg" @bind="dk.LevertAv" @bind:after="@(() => LevertAvEndret(dk))" aria-label="Levert av" title="@dk.LevertAv.Forklaring()">
                                 <option value="@LevertAv.F">F</option>
                                 <option value="@LevertAv.Ld">Ld</option>
                                 <option value="@LevertAv.Le">Le</option>
                             </select>
                         </td>
                         <td>
+                            @if (!dk.MonteresAvOss)
+                            {
+                                <span class="beslag-status beslag-ikke-oss" title="@dk.LevertAv.Forklaring()">@(dk.LevertAv == LevertAv.Ld ? "Dørprodusent" : "Elektro")</span>
+                            }
+                            else
+                            {
                             <button type="button" class="beslag-status @(dk.Montert ? "beslag-status-montert" : "beslag-status-ikke-montert")"
                                     title="@(dk.Montert ? $"Montert {dk.MontertDato:dd.MM.yyyy HH:mm}{(dk.MontertAvBruker is not null ? $" av {dk.MontertAvBruker.Initialer}" : "")} - trykk for å angre" : "Trykk for å merke som montert")"
                                     @onclick="@(() => ToggleBeslagMontert(dk))">
@@ -750,6 +763,7 @@ else
                                     <text>Ikke montert</text>
                                 }
                             </button>
+                            }
                         </td>
                         <td><button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => RemoveKomponent(dk))"><Icon Name="x" /></button></td>
                     </tr>
@@ -1439,7 +1453,7 @@ else
     private async Task MerkAlleMontert()
     {
         var naa = DateTime.Now;
-        foreach (var dk in Dor.Komponenter.Where(k => !k.Montert))
+        foreach (var dk in Dor.Komponenter.Where(k => k.MonteresAvOss && !k.Montert))
         {
             dk.Montert = true;
             dk.MontertDato = naa;
@@ -1454,6 +1468,10 @@ else
 
     private async Task ToggleBeslagMontert(DorKomponent dk)
     {
+        if (!dk.MonteresAvOss)
+        {
+            return;
+        }
         dk.Montert = !dk.Montert;
         dk.MontertDato = dk.Montert ? DateTime.Now : null;
         dk.MontertAvBrukerId = dk.Montert ? _naverendeBrukerId : null;
@@ -1463,15 +1481,29 @@ else
         await OnSaved.InvokeAsync();
     }
 
+    // Ld/Le leveres ikke av oss: montert-status nullstilles og telles ikke.
+    private async Task LevertAvEndret(DorKomponent dk)
+    {
+        if (!dk.MonteresAvOss && dk.Montert)
+        {
+            dk.Montert = false;
+            dk.MontertDato = null;
+            dk.MontertAvBrukerId = null;
+            dk.MontertAvBruker = null;
+        }
+        OppdaterStatusFraBeslag();
+        await Task.CompletedTask;
+    }
+
     private void OppdaterStatusFraBeslag()
     {
-        var antallTotalt = Dor.Komponenter.Sum(k => k.Antall);
+        var antallTotalt = Dor.Komponenter.Where(k => k.MonteresAvOss).Sum(k => k.Antall);
         if (antallTotalt == 0)
         {
             return;
         }
 
-        var antallMontert = Dor.Komponenter.Where(k => k.Montert).Sum(k => k.Antall);
+        var antallMontert = Dor.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.Antall);
         var status = antallMontert == 0
             ? MontasjeStatus.IkkeStartet
             : antallMontert < antallTotalt

@@ -14,6 +14,10 @@ public class DorKomponent
     public LevertAv LevertAv { get; set; } = LevertAv.F;
 
     public bool Montert { get; set; }
+
+    // Bare beslag vi leverer (F) monteres og hakes av av oss. Ld/Le leveres
+    // komplett av dørprodusent/elektro. Ikke lagret - regnes fra LevertAv.
+    public bool MonteresAvOss => LevertAv == LevertAv.F;
     public DateTime? MontertDato { get; set; }
 
     public int? MontertAvBrukerId { get; set; }
