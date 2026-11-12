@@ -59,6 +59,10 @@
                     {
                         <span class="ks-merke ks-m-gra">Kreditert</span>
                     }
+                    @if (_erAdmin)
+                    {
+                        <button type="button" class="ks-lenke-knapp" style="color:var(--rod)" title="Slett salget helt (bare testdata)" @onclick="@(() => _slett = salg)" @onclick:stopPropagation="true"><KassaIkon Navn="x" />Slett test</button>
+                    }
                 </td>
             </tr>
         }
@@ -95,6 +99,31 @@
     </div>
 }
 
+@if (_slett is { } sl)
+{
+    <div class="ks-bak" @onclick="@(() => _slett = null)">
+        <div class="ks-modal" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Slett testsalg">
+            <div class="ks-modal-topp">
+                <span class="ks-mik" style="background:var(--rod-lys);color:var(--rod)"><KassaIkon Navn="x" /></span>
+                <div><h2>Slette salg @sl.Nummer?</h2><p>Bare for testdata – salget forsvinner helt</p></div>
+                <button type="button" class="ks-x" aria-label="Lukk" @onclick="@(() => _slett = null)"><KassaIkon Navn="x" /></button>
+            </div>
+            <div class="ks-modal-inn">
+                <p style="margin:0">@sl.Tidspunkt.ToString("dd.MM.yyyy HH:mm") · @KassaDokument.Kr(sl.Total) · @string.Join(", ", sl.Linjer.Select(l => $"{Math.Abs(l.Antall)} × {l.Navn}"))</p>
+                <div class="ks-info gul" style="margin:0"><KassaIkon Navn="varsel" /><span>Salget og eventuelle kreditnotaer for det slettes for godt, og fjernes fra rapportene. Bruk dette bare på testsalg – ekte salg rettes med kreditnota. Kan ikke angres.</span></div>
+                @if (_feil is not null)
+                {
+                    <p class="ks-feil">@_feil</p>
+                }
+            </div>
+            <div class="ks-modal-bunn">
+                <button type="button" class="ks-knapp sek" @onclick="@(() => _slett = null)">Avbryt</button>
+                <button type="button" class="ks-knapp rod" disabled="@_lagrer" @onclick="SlettTestsalg"><KassaIkon Navn="x" />@(_lagrer ? "Sletter …" : "Slett salget")</button>
+            </div>
+        </div>
+    </div>
+}
+
 @if (_kvittering is { } kv)
 {
     <KassaKvittering SalgId="kv" OnLukk="@(() => _kvittering = null)" />
@@ -115,6 +144,36 @@
     private string? _melding;
     private bool _lagrer;
     private int? _kvittering;
+    private KasseSalg? _slett;
+    private bool _erAdmin;
+
+    private async Task SlettTestsalg()
+    {
+        if (_slett is null || !_erAdmin)
+        {
+            return;
+        }
+        _lagrer = true;
+        _feil = null;
+        try
+        {
+            var bruker = AuthStateTask is null ? null : (await AuthStateTask).User;
+            var brukerId = int.TryParse(bruker?.FindFirst("BrukerId")?.Value, out var id) ? id : (int?)null;
+            var nr = _slett.Nummer;
+            var antall = await Kassa.SlettTestsalgAsync(_slett.Id, brukerId, bruker?.Identity?.Name);
+            _slett = null;
+            _melding = antall > 1 ? $"Salg {nr} og kreditnotaen for det er slettet." : $"Salg {nr} er slettet.";
+            await Last();
+        }
+        catch (InvalidOperationException ex)
+        {
+            _feil = ex.Message;
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
 
     private List<KasseSalg> Filtrert => _salg
         .Where(s => string.IsNullOrWhiteSpace(_sok) || s.Nummer.ToString().Contains(_sok.Trim())
@@ -122,7 +181,11 @@
             || s.Linjer.Any(l => l.Navn.Contains(_sok.Trim(), StringComparison.CurrentCultureIgnoreCase)))
         .OrderByDescending(s => s.Nummer).ToList();
 
-    protected override Task OnInitializedAsync() => Last();
+    protected override async Task OnInitializedAsync()
+    {
+        _erAdmin = AuthStateTask is not null && (await AuthStateTask).User.IsInRole("Admin");
+        await Last();
+    }
 
     private async Task Last()
     {

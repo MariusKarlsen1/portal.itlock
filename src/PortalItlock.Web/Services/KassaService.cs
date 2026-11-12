@@ -230,6 +230,42 @@ public partial class KassaService(ApplicationDbContext db, LagerService lager, T
         return kred;
     }
 
+    // Sletter et salg som er testdata helt, sammen med kreditnotaer for det.
+    // Bare for admin - vanlige salg rettes med kreditnota. Lagerbevegelsen
+    // reverseres, og dagsoppgjør som blir tomme slettes (ellers regnes de om).
+    public async Task<int> SlettTestsalgAsync(int salgId, int? brukerId, string? brukerNavn)
+    {
+        var salg = await db.KasseSalg.Include(s => s.Linjer).FirstOrDefaultAsync(s => s.Id == salgId)
+            ?? throw new InvalidOperationException("Fant ikke salget.");
+        var kreditnotaer = await db.KasseSalg.Include(s => s.Linjer).Where(s => s.KrediterSalgId == salg.Id).ToListAsync();
+        var alle = kreditnotaer.Append(salg).ToList();
+
+        foreach (var s in alle)
+        {
+            await LagerAsync(s, 1, $"Slettet testsalg {s.Nummer}", brukerId, brukerNavn);
+        }
+
+        var oppgjorIder = alle.Where(s => s.DagsoppgjorId != null).Select(s => s.DagsoppgjorId!.Value).Distinct().ToList();
+        db.KasseSalgLinjer.RemoveRange(alle.SelectMany(s => s.Linjer));
+        db.KasseSalg.RemoveRange(alle);
+        await db.SaveChangesAsync();
+
+        foreach (var oppgjor in await db.KasseDagsoppgjor.Include(d => d.Salg).Where(d => oppgjorIder.Contains(d.Id)).ToListAsync())
+        {
+            if (oppgjor.Salg.Count == 0)
+            {
+                db.KasseDagsoppgjor.Remove(oppgjor);
+            }
+            else
+            {
+                oppgjor.Omsetning = oppgjor.Salg.Sum(s => s.Total);
+                oppgjor.Mva = oppgjor.Salg.Sum(s => s.Mva);
+            }
+        }
+        await db.SaveChangesAsync();
+        return alle.Count;
+    }
+
     // Neste nummer i serien. Den unike indeksen hindrer dobbeltnummer hvis to
     // kasser lagrer samtidig; da prøves neste nummer.
     private async Task LagreMedNummerAsync(KasseSalg salg)
