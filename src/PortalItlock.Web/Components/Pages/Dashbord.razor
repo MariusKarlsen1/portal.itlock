@@ -437,9 +437,23 @@
         {
             _alle = await Db.Tilbud.AsNoTracking()
                 .Include(t => t.Prosjekt).ThenInclude(p => p!.Kunde)
-                .Where(t => t.SendtDato != null)
-                .OrderByDescending(t => t.SendtDato)
+                .Where(t => t.SendtDato != null
+                    || t.Status == EndringsmeldingStatus.Godkjent
+                    || t.Status == EndringsmeldingStatus.Avslatt)
                 .ToListAsync();
+
+            // Tilbud som ble godkjent/avslått uten å være «sendt» i portalen har
+            // verken sendt-dato eller frosset sum: bruk svardatoen og regn summen.
+            var utenSum = _alle.Where(t => t.SendtSum is null).Select(t => t.Id).ToList();
+            var summer = utenSum.Count == 0 ? []
+                : (await Db.Tilbud.AsNoTracking().Where(t => utenSum.Contains(t.Id)).Include(t => t.Linjer).ToListAsync())
+                    .ToDictionary(t => t.Id, TilbudBeregningHelper.BeregnTotaltUtenMva);
+            foreach (var t in _alle)
+            {
+                t.SendtDato ??= t.GodkjentDato ?? t.AvslattDato?.ToLocalTime().Date ?? t.OpprettetDato;
+                t.SendtSum ??= summer.GetValueOrDefault(t.Id);
+            }
+            _alle = _alle.OrderByDescending(t => t.SendtDato).ToList();
             _venterAlle = _alle.Where(t => t.Status == EndringsmeldingStatus.SendtTilKunde).ToList();
 
             _aktiveProsjekter = (await Db.Prosjekter.AsNoTracking()
@@ -558,7 +572,7 @@
     {
         var frister = new List<FristRad>();
 
-        var serviceProsjekter = await Db.Prosjekter.AsNoTracking().Where(p => (p.Status == ProsjektStatus.Serviceavtale || p.HarServiceavtale)).ToListAsync();
+        var serviceProsjekter = await Db.Prosjekter.AsNoTracking().Where(p => ((p.Status == ProsjektStatus.Serviceavtale && !p.ErServiceoppdrag) || p.HarServiceavtale)).ToListAsync();
         if (serviceProsjekter.Count > 0)
         {
             var ider = serviceProsjekter.Select(p => p.Id).ToList();
