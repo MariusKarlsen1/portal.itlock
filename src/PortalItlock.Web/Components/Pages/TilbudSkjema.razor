@@ -79,7 +79,8 @@ else if (_tilbud is not null)
                 }
                 @if (_lenketArbeidsordreId.HasValue)
                 {
-                    <a class="tk-kn" href="@($"/arbeidsordre/{_lenketArbeidsordreId}")"><Icon Name="tool" />Åpne arbeidsordre</a>
+                    <a class="tk-kn" href="@($"/arbeidsordre/{_lenketArbeidsordreId}")"><Icon Name="tool" />Åpne AO-@_lenketArbeidsordreId</a>
+                    <button type="button" class="tk-kn" title="Flytt tilbudet til en annen ordre eller en egen ordre" @onclick="ApneAoValg">Bytt ordre</button>
                 }
                 else
                 {
@@ -95,20 +96,24 @@ else if (_tilbud is not null)
                o.l. kan få sin egen ordre - fortsatt i samme prosjekt. *@
             <div class="tk-ao-bak" @onclick="@(() => _aoValg = false)"></div>
             <div class="tk-ao-dlg" role="dialog" aria-modal="true" aria-label="Arbeidsordre for tilbudet">
-                <h3>Arbeidsordre for tilbudet</h3>
-                <p class="tk-ao-hjelp">Velg om tilbudet skal høre til en ordre som finnes i prosjektet, eller få sin egen ordre (f.eks. en endringsmelding).</p>
+                <h3>@(_lenketArbeidsordreId is { } naaAo ? $"Bytt ordre for tilbudet (nå AO-{naaAo})" : "Arbeidsordre for tilbudet")</h3>
+                <p class="tk-ao-hjelp">Tilbudet kan få sin egen ordre, eller legges til en ordre som finnes i prosjektet. Alle ordrene hører fortsatt til samme prosjekt.</p>
+                <label class="tk-ao-rad @(_aoValgt == 0 ? "pa" : "")">
+                    <input type="radio" name="tk-ao" checked="@(_aoValgt == 0)" @onchange="@(() => _aoValgt = 0)" />
+                    <span><b>Ny arbeidsordre</b><small>Egen ordre for dette tilbudet, i samme prosjekt</small></span>
+                </label>
+                @if (_prosjektAo.Count > 0)
+                {
+                    <span class="tk-ao-skille">eller legg til en ordre i prosjektet</span>
+                }
                 @foreach (var o in _prosjektAo)
                 {
                     var id = o.Id;
                     <label class="tk-ao-rad @(_aoValgt == id ? "pa" : "")">
                         <input type="radio" name="tk-ao" checked="@(_aoValgt == id)" @onchange="@(() => _aoValgt = id)" />
-                        <span><b>Legg til AO-@o.Id @o.Tittel</b><small>@o.Status.Visningsnavn()@(o.Antall > 0 ? $" · {o.Antall} tilbud fra før" : "")</small></span>
+                        <span><b>AO-@o.Id @o.Tittel</b><small>@o.Status.Visningsnavn()@(o.Antall > 0 ? $" · {o.Antall} tilbud fra før" : "")</small></span>
                     </label>
                 }
-                <label class="tk-ao-rad @(_aoValgt == 0 ? "pa" : "")">
-                    <input type="radio" name="tk-ao" checked="@(_aoValgt == 0)" @onchange="@(() => _aoValgt = 0)" />
-                    <span><b>Ny arbeidsordre</b><small>Egen ordre for dette tilbudet, i samme prosjekt</small></span>
-                </label>
                 <div class="tk-ao-knapper">
                     <button type="button" class="tk-kn" @onclick="@(() => _aoValg = false)">Avbryt</button>
                     <button type="button" class="tk-kn tk-kn-p" @onclick="BekreftAoValg"><Icon Name="check" />@(_aoValgt == 0 ? "Opprett ny ordre" : "Legg til ordren")</button>
@@ -1314,20 +1319,21 @@ else if (_tilbud is not null)
         }
 
         _prosjektAo = (await Db.Arbeidsordre.AsNoTracking()
-                .Where(a => a.ProsjektId == _tilbud.ProsjektId && a.Status != ArbeidsordreStatus.Fakturert)
+                .Where(a => a.ProsjektId == _tilbud.ProsjektId && a.Status != ArbeidsordreStatus.Fakturert && a.Id != _lenketArbeidsordreId)
                 .OrderByDescending(a => a.OpprettetDato)
                 .Select(a => new { a.Id, a.Tittel, a.Status, Hoved = a.TilbudId != null ? 1 : 0, Ekstra = a.EkstraTilbud.Count })
                 .ToListAsync())
             .Select(a => new ProsjektAo(a.Id, a.Tittel, a.Status, a.Hoved + a.Ekstra))
             .ToList();
 
-        if (_prosjektAo.Count == 0)
+        if (_prosjektAo.Count == 0 && _lenketArbeidsordreId is null)
         {
             await OpprettArbeidsordre();
             return;
         }
 
-        _aoValgt = _prosjektAo[0].Id;
+        // Ingenting er forhåndsvalgt mot en annen ordre – «Ny arbeidsordre» er standard.
+        _aoValgt = 0;
         _aoValg = true;
     }
 
@@ -1338,6 +1344,7 @@ else if (_tilbud is not null)
             return;
         }
 
+        await FjernFraNaavaerendeOrdre();
         if (_aoValgt == 0)
         {
             _aoValg = false;
@@ -1363,6 +1370,30 @@ else if (_tilbud is not null)
         _aoValg = false;
         _lenketArbeidsordreId = ordre.Id;
         _savedMessage = $"Tilbudet er lagt til AO-{ordre.Id}.";
+    }
+
+    // «Bytt ordre»: tilbudet tas ut av ordren det ligger på nå. Var det hovedtilbudet,
+    // blir neste tilbud på ordren hovedtilbud. Timer og varer på ordren blir der de er.
+    private async Task FjernFraNaavaerendeOrdre()
+    {
+        if (_tilbud is null || _lenketArbeidsordreId is not { } aoId)
+        {
+            return;
+        }
+        var ordre = await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.Id == aoId);
+        var ekstra = await Db.ArbeidsordreTilbud.Where(x => x.ArbeidsordreId == aoId).OrderBy(x => x.Id).ToListAsync();
+        Db.ArbeidsordreTilbud.RemoveRange(ekstra.Where(x => x.TilbudId == _tilbud.Id));
+        if (ordre is not null && ordre.TilbudId == _tilbud.Id)
+        {
+            var neste = ekstra.FirstOrDefault(x => x.TilbudId != _tilbud.Id);
+            ordre.TilbudId = neste?.TilbudId;
+            if (neste is not null)
+            {
+                Db.ArbeidsordreTilbud.Remove(neste);
+            }
+        }
+        await Db.SaveChangesAsync();
+        _lenketArbeidsordreId = null;
     }
 
     private async Task OpprettArbeidsordre()
