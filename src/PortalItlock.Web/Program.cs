@@ -202,6 +202,12 @@ builder.Services.AddHttpClient<ResendReceivingClient>(client =>
 {
     client.BaseAddress = new Uri("https://api.resend.com/");
 });
+// Adresseforslag (Kartverket, åpent API uten nøkkel).
+builder.Services.AddHttpClient<AdresseSokService>(client =>
+{
+    client.BaseAddress = new Uri("https://ws.geonorge.no/");
+    client.Timeout = TimeSpan.FromSeconds(4);
+});
 builder.Services.AddHttpClient<GeocodingService>(client =>
 {
     client.BaseAddress = new Uri("https://nominatim.openstreetmap.org/");

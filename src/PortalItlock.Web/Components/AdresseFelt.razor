@@ -1,0 +1,85 @@
+@using PortalItlock.Web.Services
+@inject AdresseSokService AdresseSok
+@implements IDisposable
+
+@* Adressefelt med forslag fra Kartverket. Velger man et forslag, fylles også
+   postnr og sted ut via Valgt. *@
+<input @key="_versjon" value="@Value" list="@_listeId" autocomplete="off" placeholder="@Placeholder" disabled="@Disabled"
+       @oninput="Skriver" @onchange="Endret" />
+<datalist id="@_listeId">
+    @foreach (var t in _forslag)
+    {
+        <option value="@t.Visning"></option>
+    }
+</datalist>
+
+@code {
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public EventCallback<AdresseTreff> Valgt { get; set; }
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private readonly string _listeId = "adr-" + Guid.NewGuid().ToString("N")[..8];
+    private List<AdresseTreff> _forslag = [];
+    private CancellationTokenSource? _cts;
+    private AdresseTreff? _sisteValgt;
+    private int _versjon;
+
+    private async Task Skriver(ChangeEventArgs e)
+    {
+        var tekst = e.Value?.ToString() ?? "";
+        // Valgt fra listen: nettleseren setter hele forslagsteksten i feltet.
+        if (_forslag.FirstOrDefault(f => f.Visning == tekst) is { } treff)
+        {
+            await Velg(treff);
+            return;
+        }
+
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+        try
+        {
+            await Task.Delay(250, ct);
+            var nye = await AdresseSok.SokAsync(tekst, ct);
+            if (!ct.IsCancellationRequested)
+            {
+                _forslag = nye;
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task Endret(ChangeEventArgs e)
+    {
+        var tekst = e.Value?.ToString() ?? "";
+        if (_sisteValgt is not null && tekst == _sisteValgt.Visning)
+        {
+            return;
+        }
+        if (_forslag.FirstOrDefault(f => f.Visning == tekst) is { } treff)
+        {
+            await Velg(treff);
+            return;
+        }
+        Value = tekst;
+        await ValueChanged.InvokeAsync(tekst);
+    }
+
+    private async Task Velg(AdresseTreff treff)
+    {
+        _cts?.Cancel();
+        _sisteValgt = treff;
+        _versjon++; // nytt input-element, så feltet viser bare gateadressen
+        Value = treff.Adresse;
+        _forslag = [];
+        await ValueChanged.InvokeAsync(treff.Adresse);
+        await Valgt.InvokeAsync(treff);
+    }
+
+    public void Dispose() => _cts?.Cancel();
+}

@@ -6,10 +6,12 @@ namespace PortalItlock.Web.Services;
 public class PostnummerService
 {
     private readonly Lazy<Dictionary<string, string>> _register;
+    private readonly Lazy<Dictionary<string, string>> _stedTilPostnr;
 
     public PostnummerService(IWebHostEnvironment env)
     {
         _register = new Lazy<Dictionary<string, string>>(() => LastRegister(env.ContentRootPath));
+        _stedTilPostnr = new Lazy<Dictionary<string, string>>(() => LastStedTilPostnr(env.ContentRootPath));
     }
 
     public string? SlaOpp(string? postnr)
@@ -20,6 +22,40 @@ public class PostnummerService
         }
 
         return _register.Value.TryGetValue(postnr.Trim(), out var sted) ? sted : null;
+    }
+
+    /// Postnummer for et poststed (gate-/kombinerte nummer, ikke postbokser).
+    /// Har stedet flere, brukes det laveste. Ukjent sted gir null.
+    public string? SlaOppPostnr(string? sted)
+    {
+        if (string.IsNullOrWhiteSpace(sted))
+        {
+            return null;
+        }
+        return _stedTilPostnr.Value.TryGetValue(sted.Trim().ToUpperInvariant(), out var nr) ? nr : null;
+    }
+
+    private static Dictionary<string, string> LastStedTilPostnr(string contentRootPath)
+    {
+        var register = new Dictionary<string, string>();
+        var filsti = Path.Combine(contentRootPath, "Data", "postnummerregister.txt");
+        if (!File.Exists(filsti))
+        {
+            return register;
+        }
+        foreach (var linje in File.ReadLines(filsti))
+        {
+            var deler = linje.Split('	');
+            if (deler.Length >= 2 && (deler.Length < 5 || deler[4] != "P"))
+            {
+                var sted = deler[1].Trim().ToUpperInvariant();
+                if (!register.TryGetValue(sted, out var nr) || string.CompareOrdinal(deler[0], nr) < 0)
+                {
+                    register[sted] = deler[0];
+                }
+            }
+        }
+        return register;
     }
 
     private static Dictionary<string, string> LastRegister(string contentRootPath)
