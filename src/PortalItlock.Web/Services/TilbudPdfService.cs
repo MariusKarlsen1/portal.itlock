@@ -505,7 +505,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
             // Montering som egen linje nederst i sammendraget, eller én linje
             // per kode (arbeid, kjøring, småmateriell osv.) når det er valgt.
-            if (montasjekost > 0)
+            // Uten enhetspriser vises ingen beløp per linje – heller ikke montering.
+            if (montasjekost > 0 && tilbud.VisEnhetspris)
             {
                 IContainer Mont(uint span = 1) => table.Cell().ColumnSpan(span)
                     .BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(5).PaddingHorizontal(6);
@@ -624,11 +625,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                 });
             }
 
-            if (montasjekost > 0)
-            {
-                Rad("Varer", utprisVarer);
-                Rad("Montering", montasjekost);
-            }
+            // Bare totalene – varer og montering vises aldri hver for seg her.
             Rad("Totalt uten MVA", totaltUtenMva);
             Rad("MVA (25 %)", mva);
 
