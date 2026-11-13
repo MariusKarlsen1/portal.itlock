@@ -220,7 +220,7 @@ else
                         </label>
                         <label>
                             Kunde
-                            <select @bind="_form.KundeId" disabled="@_erMobilvisning">
+                            <select @bind="_form.KundeId" @bind:after="KundeEndret" disabled="@_erMobilvisning">
                                 <option value="">Ikke satt</option>
                                 @foreach (var k in _kunder)
                                 {
@@ -265,7 +265,31 @@ else
                         <label>Adresse<input @bind="_form.Adresse" disabled="@_erMobilvisning" /></label>
                         <label>Post nr<input @bind="_form.Postnr" @bind:after="OppdaterStedFraPostnr" disabled="@_erMobilvisning" /></label>
                         <label>Sted<input @bind="_form.Sted" disabled="@_erMobilvisning" /></label>
-                        <label>Kontaktperson<input @bind="_form.Kontaktperson" disabled="@_erMobilvisning" /></label>
+                        @if (_kontakter.Count > 0 && !_annenKontakt)
+                        {
+                            <label>
+                                Kontaktperson
+                                <select value="@(_form.Kontaktperson ?? "")" @onchange="VelgKontakt" disabled="@_erMobilvisning">
+                                    <option value="">Velg kontaktperson</option>
+                                    @foreach (var k in _kontakter)
+                                    {
+                                        <option value="@k.Navn">@k.Navn@(string.IsNullOrWhiteSpace(k.Rolle) ? "" : $" ({k.Rolle})")</option>
+                                    }
+                                    <option value="__annen">Annen person …</option>
+                                </select>
+                            </label>
+                        }
+                        else
+                        {
+                            <label>
+                                Kontaktperson
+                                <input @bind="_form.Kontaktperson" disabled="@_erMobilvisning" />
+                                @if (_kontakter.Count > 0 && !_erMobilvisning)
+                                {
+                                    <button type="button" style="align-self:flex-start;margin-top:4px;padding:0;border:0;background:none;color:var(--accent, #2563eb);font-size:.8rem;cursor:pointer" @onclick="() => _annenKontakt = false">Velg fra kunden</button>
+                                }
+                            </label>
+                        }
                         <label>Telefon<input @bind="_form.Telefon" disabled="@_erMobilvisning" /></label>
                         <label>E-post<input @bind="_form.Epost" disabled="@_erMobilvisning" /></label>
                     </div>
@@ -3606,6 +3630,60 @@ else
                 Adresse = Adresse,
                 Kontaktperson = Kontaktperson,
             };
+        }
+        await LastKontakter();
+    }
+
+    private sealed record KontaktValg(string Navn, string? Rolle, string? Telefon, string? Epost);
+    private List<KontaktValg> _kontakter = [];
+    private bool _annenKontakt;
+
+    // Kundens hovedkontakt + kontaktpersoner, til nedtrekkslisten på prosjektet.
+    private async Task LastKontakter()
+    {
+        _kontakter = [];
+        if (_form.KundeId is int kid && _kunder.FirstOrDefault(k => k.Id == kid) is { } kunde)
+        {
+            if (!string.IsNullOrWhiteSpace(kunde.Kontaktperson))
+            {
+                _kontakter.Add(new(kunde.Kontaktperson.Trim(), "Hovedkontakt", kunde.Telefon, kunde.Epost));
+            }
+            var personer = await Db.KundeKontaktpersoner.AsNoTracking().Where(k => k.KundeId == kid).OrderBy(k => k.Navn).ToListAsync();
+            foreach (var pr in personer)
+            {
+                if (!string.IsNullOrWhiteSpace(pr.Navn) && !_kontakter.Any(k => string.Equals(k.Navn, pr.Navn.Trim(), StringComparison.OrdinalIgnoreCase)))
+                {
+                    _kontakter.Add(new(pr.Navn.Trim(), pr.Rolle, pr.Telefon, pr.Epost));
+                }
+            }
+        }
+        // Står det en person som ikke finnes på kunden, vises fritekstfeltet så den ikke forsvinner.
+        _annenKontakt = !string.IsNullOrWhiteSpace(_form.Kontaktperson)
+            && !_kontakter.Any(k => string.Equals(k.Navn, _form.Kontaktperson.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task KundeEndret() => await LastKontakter();
+
+    private void VelgKontakt(ChangeEventArgs e)
+    {
+        var verdi = e.Value?.ToString() ?? "";
+        if (verdi == "__annen")
+        {
+            _annenKontakt = true;
+            _form.Kontaktperson = null;
+            return;
+        }
+        if (string.IsNullOrEmpty(verdi))
+        {
+            _form.Kontaktperson = null;
+            return;
+        }
+        var k = _kontakter.FirstOrDefault(x => x.Navn == verdi);
+        _form.Kontaktperson = verdi;
+        if (k is not null)
+        {
+            _form.Telefon = k.Telefon;
+            _form.Epost = k.Epost;
         }
     }
 
