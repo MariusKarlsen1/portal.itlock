@@ -229,6 +229,18 @@ window.richtext = (function () {
         el.innerHTML = initialHtml || '';
         editors[id] = dotnetRef;
 
+        // Ligger editoren inne i en <label>, sender nettleseren et klikk i teksten
+        // videre til første knapp (Angre) – og det man skrev forsvinner. Stopp det.
+        const rot = el.closest('.rte');
+        if (rot && !rot.dataset.labelVakt) {
+            rot.dataset.labelVakt = '1';
+            rot.addEventListener('click', (ev) => {
+                if (!ev.target.closest('button, select, a, input')) {
+                    ev.preventDefault();
+                }
+            });
+        }
+
         document.execCommand('defaultParagraphSeparator', false, 'p');
 
         el.addEventListener('input', () => {
