@@ -116,7 +116,7 @@ public static class MontorApp
     public static string StatusKlasse(ArbeidsordreStatus s) => s switch
     {
         ArbeidsordreStatus.Ny => "ny",
-        ArbeidsordreStatus.Klar => "klar",
+        ArbeidsordreStatus.Klar or ArbeidsordreStatus.Planlagt => "klar",
         ArbeidsordreStatus.Pagaende => "pagaende",
         _ => "ferdig"
     };

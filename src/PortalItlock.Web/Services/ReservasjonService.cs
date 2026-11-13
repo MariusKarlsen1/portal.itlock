@@ -21,7 +21,7 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
         [ProsjektStatus.Aktiv, ProsjektStatus.Registrert, ProsjektStatus.UnderArbeid];
 
     private static readonly ArbeidsordreStatus[] AapneArbeidsordre =
-        [ArbeidsordreStatus.Ny, ArbeidsordreStatus.Klar, ArbeidsordreStatus.Pagaende];
+        [ArbeidsordreStatus.Ny, ArbeidsordreStatus.Planlagt, ArbeidsordreStatus.Klar, ArbeidsordreStatus.Pagaende];
 
     public sealed record Kilde(int? ProsjektId, int? ArbeidsordreId)
     {

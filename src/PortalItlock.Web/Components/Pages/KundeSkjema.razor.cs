@@ -398,7 +398,7 @@ public partial class KundeSkjema
 
     private IEnumerable<Arbeidsordre> FiltrerteOrdrer => _ordreFilter switch
     {
-        "Planlagt" => _arbeidsordrer.Where(a => a.Status is ArbeidsordreStatus.Ny or ArbeidsordreStatus.Klar),
+        "Planlagt" => _arbeidsordrer.Where(a => a.Status is ArbeidsordreStatus.Ny or ArbeidsordreStatus.Planlagt or ArbeidsordreStatus.Klar),
         "IArbeid" => _arbeidsordrer.Where(a => a.Status == ArbeidsordreStatus.Pagaende),
         "Ferdig" => _arbeidsordrer.Where(a => a.Status == ArbeidsordreStatus.Ferdig),
         "Fakturert" => _arbeidsordrer.Where(a => a.Status == ArbeidsordreStatus.Fakturert),
@@ -408,7 +408,8 @@ public partial class KundeSkjema
     private static string OrdreStatusTekst(ArbeidsordreStatus s) => s switch
     {
         ArbeidsordreStatus.Ny => "Ny",
-        ArbeidsordreStatus.Klar => "Planlagt",
+        ArbeidsordreStatus.Planlagt => "Planlagt",
+        ArbeidsordreStatus.Klar => "Klar",
         ArbeidsordreStatus.Pagaende => "Pågår",
         ArbeidsordreStatus.Ferdig => "Klar til faktura",
         ArbeidsordreStatus.Fakturert => "Fakturert",

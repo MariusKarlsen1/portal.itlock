@@ -226,8 +226,37 @@
             </a>
             <a href="/rapporter/tilbudsreserve"><span>Tilbud sendt i @_valgtAr</span><b>@KrKort(tilbudSendt)</b><small>@_arTilbud.Count tilbud · @(avgjorte == 0 ? "–" : $"{Prosent(_vunnet.Count, avgjorte)} %") vunnet</small></a>
             <a href="/rapporter/tilbudsreserve"><span>Tilbudsreserve</span><b>@KrKort(reserve)</b><small>@_venterAlle.Count tilbud venter svar</small></a>
-            <a href="/rapporter/fakturaer"><span>Ordrereserve</span><b>@KrKort(Ordrereserve)</b><small>vunnet, ikke overlevert</small></a>
+            <button type="button" class="@(_visOrdrereserve ? "pa" : "")" @onclick="() => _visOrdrereserve = !_visOrdrereserve"><span>Ordrereserve</span><b>@KrKort(Ordrereserve)</b><small>@OrdrereserveRader.Count godkjente tilbud, ikke fakturert</small></button>
         </div>
+
+        @if (_visOrdrereserve)
+        {
+            <section class="db-bx">
+                <div class="db-bx-hd">Ordrereserve <em class="db-ant">@OrdrereserveRader.Count</em></div>
+                @if (OrdrereserveRader.Count == 0)
+                {
+                    <p class="db-tom">Ingen godkjente tilbud som venter på å bli fakturert.</p>
+                }
+                else
+                {
+                    <table class="db-tab">
+                        <thead><tr><th>Tilbud</th><th>Prosjekt</th><th>Arbeidsordre</th><th class="n">Beløp eks. mva</th></tr></thead>
+                        <tbody>
+                            @foreach (var t in OrdrereserveRader)
+                            {
+                                var ordre = _tilbudOrdre.GetValueOrDefault(t.Id) ?? [];
+                                <tr>
+                                    <td><a href="/tilbud/@t.Id">@t.Tittel</a></td>
+                                    <td>@if (t.Prosjekt is { } p) { <a href="/prosjekter/@p.Id">@p.Navn</a> } else { <text>–</text> }</td>
+                                    <td>@if (ordre.Count == 0) { <span class="db-tom-inl">Ingen ordre ennå</span> } else { @string.Join(", ", ordre.Select(o => o.Status.Visningsnavn())) }</td>
+                                    <td class="n">@Kr(t.SendtSum ?? 0)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+        }
 
         <div class="db-tre">
             <section class="db-bx">
@@ -385,11 +414,23 @@
     private int AntallOppgaver =>
         (_slaForfalt.Count > 0 ? 1 : 0) + (VenterLenge.Count > 0 ? 1 : 0) + (_klarTilFakturering.Count > 0 ? 1 : 0) + (PasserteFrister.Count > 0 ? 1 : 0);
 
-    // Godkjente tilbud på prosjekter som ikke er overlevert/avsluttet ennå.
-    private decimal Ordrereserve => _alle
-        .Where(t => t.Status == EndringsmeldingStatus.Godkjent
-            && t.Prosjekt?.Status is not (ProsjektStatus.Overlevert or ProsjektStatus.Avsluttet))
-        .Sum(t => t.SendtSum ?? 0);
+    // Ordrereserve: godkjente tilbud som ikke er fakturert ennå. Ligger tilbudet på
+    // arbeidsordre, teller det til alle ordrene er fakturert. Uten arbeidsordre
+    // teller det til prosjektet er overlevert eller avsluttet.
+    private List<Tilbud> OrdrereserveRader => _alle
+        .Where(t => t.Status == EndringsmeldingStatus.Godkjent && IkkeFakturert(t))
+        .OrderByDescending(t => t.GodkjentDato ?? t.SendtDato)
+        .ToList();
+
+    private decimal Ordrereserve => OrdrereserveRader.Sum(t => t.SendtSum ?? 0);
+
+    private bool IkkeFakturert(Tilbud t) => _tilbudOrdre.TryGetValue(t.Id, out var ordre) && ordre.Count > 0
+        ? ordre.Any(o => o.Status != ArbeidsordreStatus.Fakturert)
+        : t.Prosjekt?.Status is not (ProsjektStatus.Overlevert or ProsjektStatus.Avsluttet);
+
+    private sealed record OrdreLenke(int Id, ArbeidsordreStatus Status);
+    private Dictionary<int, List<OrdreLenke>> _tilbudOrdre = [];
+    private bool _visOrdrereserve;
 
     private List<(string Navn, int Prosent, int Antall)> VinnPerType => _vunnet.Concat(_avslatt)
         .GroupBy(t => t.Prosjekt?.Kunde?.Type)
@@ -456,6 +497,15 @@
             }
             _alle = _alle.OrderByDescending(t => t.SendtDato).ToList();
             _venterAlle = _alle.Where(t => t.Status == EndringsmeldingStatus.SendtTilKunde).ToList();
+
+            // Hvilke arbeidsordre de godkjente tilbudene ligger på (hovedtilbud + ekstra tilbud).
+            var hoved = await Db.Arbeidsordre.AsNoTracking().Where(a => a.TilbudId != null)
+                .Select(a => new { TilbudId = a.TilbudId!.Value, a.Id, a.Status }).ToListAsync();
+            var ekstra = await Db.Set<ArbeidsordreTilbud>().AsNoTracking()
+                .Select(x => new { x.TilbudId, Id = x.ArbeidsordreId, x.Arbeidsordre!.Status }).ToListAsync();
+            _tilbudOrdre = hoved.Concat(ekstra)
+                .GroupBy(x => x.TilbudId)
+                .ToDictionary(g => g.Key, g => g.DistinctBy(x => x.Id).Select(x => new OrdreLenke(x.Id, x.Status)).ToList());
 
             _aktiveProsjekter = (await Db.Prosjekter.AsNoTracking()
                 .Include(p => p.Kunde)
