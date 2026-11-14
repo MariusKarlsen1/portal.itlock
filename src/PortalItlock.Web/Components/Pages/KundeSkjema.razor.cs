@@ -470,9 +470,7 @@ public partial class KundeSkjema
         return siffer.Length == 9 ? $"{siffer[..3]} {siffer[3..6]} {siffer[6..]}" : orgNr;
     }
 
-    private static string Kr(decimal belop) => belop >= 1_000_000
-        ? $"{(belop / 1_000_000).ToString("0.#", Kultur)} mill"
-        : $"{belop.ToString("N0", Kultur)} kr";
+    private static string Kr(decimal belop) => $"{belop.ToString("N0", Kultur)} kr";
 
     private static string KortDato(DateTime d) => d.Year == DateTime.Today.Year ? d.ToString("dd.MM") : d.ToString("dd.MM.yy");
 
