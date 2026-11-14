@@ -205,6 +205,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ArbeidsordreMedia> ArbeidsordreMedia => Set<ArbeidsordreMedia>();
     public DbSet<ArbeidsordreVare> ArbeidsordreVarer => Set<ArbeidsordreVare>();
     public DbSet<ArbeidsordreTilbud> ArbeidsordreTilbud => Set<ArbeidsordreTilbud>();
+    public DbSet<ArbeidsordreMontor> ArbeidsordreMontorer => Set<ArbeidsordreMontor>();
     public DbSet<SjekklistePdf> SjekklistePdfer => Set<SjekklistePdf>();
     public DbSet<KundeOppfolgingNotat> KundeOppfolgingNotater => Set<KundeOppfolgingNotat>();
     public DbSet<KundeOppfolging> KundeOppfolginger => Set<KundeOppfolging>();
@@ -740,6 +741,14 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany()
             .HasForeignKey(a => a.TilbudId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<ArbeidsordreMontor>(e =>
+        {
+            e.HasIndex(x => new { x.ArbeidsordreId, x.BrukerId }).IsUnique();
+            e.HasIndex(x => x.BrukerId);
+            e.HasOne(x => x.Arbeidsordre).WithMany(a => a.Montorer).HasForeignKey(x => x.ArbeidsordreId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Bruker).WithMany().HasForeignKey(x => x.BrukerId).OnDelete(DeleteBehavior.Cascade);
+        });
 
         modelBuilder.Entity<ArbeidsordreTilbud>(e =>
         {

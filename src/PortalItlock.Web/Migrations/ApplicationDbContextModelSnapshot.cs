@@ -334,6 +334,28 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ArbeidsordreMedia");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreMontor", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ArbeidsordreId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BrukerId");
+
+                    b.HasIndex("ArbeidsordreId", "BrukerId")
+                        .IsUnique();
+
+                    b.ToTable("ArbeidsordreMontorer");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreSjekkpunkt", b =>
                 {
                     b.Property<int>("Id")
@@ -8619,6 +8641,25 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Arbeidsordre");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreMontor", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
+                        .WithMany("Montorer")
+                        .HasForeignKey("ArbeidsordreId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PortalItlock.Web.Models.Bruker", "Bruker")
+                        .WithMany()
+                        .HasForeignKey("BrukerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Arbeidsordre");
+
+                    b.Navigation("Bruker");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ArbeidsordreSjekkpunkt", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Arbeidsordre", "Arbeidsordre")
@@ -10644,6 +10685,8 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("KodeLinjer");
 
                     b.Navigation("Media");
+
+                    b.Navigation("Montorer");
 
                     b.Navigation("Sjekkpunkter");
 

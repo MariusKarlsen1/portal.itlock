@@ -129,7 +129,7 @@ else if (_ordre is not null)
                 <div class="ao-fakta-rad">
                     <span class="ao-av">@Initialer(MontorNavn)</span>
                     <span>
-                        <b>@(MontorNavn ?? "Ikke tildelt montør")</b>
+                        <b>@(MontorNavn ?? "Ikke tildelt montør")@(EkstraMontorNavn.Count > 0 ? $" + {string.Join(", ", EkstraMontorNavn)}" : "")</b>
                         <small>Montør@(_ordre.Prosjekt?.Prosjektleder is { } pl ? $" · prosjektleder {pl.Navn}" : "")</small>
                     </span>
                     <span></span>
@@ -534,6 +534,10 @@ else if (_ordre is not null)
         @if (lesevisning)
         {
             <div class="dt-rad"><span>Montør</span><span>@(MontorNavn ?? "Ikke tildelt")</span></div>
+            @if (EkstraMontorNavn.Count > 0)
+            {
+                <div class="dt-rad"><span>Flere montører</span><span>@string.Join(", ", EkstraMontorNavn)</span></div>
+            }
             <div class="dt-rad"><span>Kunde</span><span>@(_ordre.Kunde?.Navn ?? _ordre.Prosjekt?.Kunde?.Navn ?? "Ikke satt")</span></div>
             <div class="dt-rad"><span>Prosjekt</span><span>@(_ordre.Prosjekt?.Navn ?? "Ikke satt")@(_ordre.Prosjekt?.Prosjektleder is { } dtPl ? $" · PL {dtPl.Navn}" : "")</span></div>
         }
@@ -549,6 +553,25 @@ else if (_ordre is not null)
                         }
                     </select>
                 </label>
+                <div class="dt-felt">Flere montører
+                    <div class="ao-montorer">
+                        @foreach (var em in _ordre.Montorer.ToList())
+                        {
+                            var emId = em.BrukerId;
+                            <span class="ao-montor-chip">@(_montorer.FirstOrDefault(m => m.Id == emId)?.Navn ?? "Ukjent")<button type="button" title="Fjern" aria-label="Fjern montør" @onclick="() => FjernMontor(emId)">×</button></span>
+                        }
+                        @if (LedigeMontorer.Count > 0)
+                        {
+                            <select @key="_ordre.Montorer.Count" value="" @onchange="LeggTilMontor" aria-label="Legg til montør">
+                                <option value="">+ Legg til montør</option>
+                                @foreach (var m in LedigeMontorer)
+                                {
+                                    <option value="@m.Id">@m.Navn</option>
+                                }
+                            </select>
+                        }
+                    </div>
+                </div>
                 <label class="dt-felt">Kunde
                     @if (_ordre.TilbudId.HasValue)
                     {
@@ -1771,6 +1794,42 @@ else if (_ordre is not null)
 
     private bool ErAdminEllerPl => _naverendeBruker?.Rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder;
     private string? MontorNavn => _montorer.FirstOrDefault(m => m.Id == _ordre?.AnsvarligMontorId)?.Navn;
+
+    // Ekstra montører på ordren (i tillegg til ansvarlig).
+    private List<string> EkstraMontorNavn => _ordre is null ? [] : _ordre.Montorer
+        .Where(m => m.BrukerId != _ordre.AnsvarligMontorId)
+        .Select(m => _montorer.FirstOrDefault(x => x.Id == m.BrukerId)?.Navn)
+        .OfType<string>().ToList();
+
+    private List<MontorOption> LedigeMontorer => _ordre is null ? [] : _montorer
+        .Where(m => m.Id != _ordre.AnsvarligMontorId && !_ordre.Montorer.Any(x => x.BrukerId == m.Id)).ToList();
+
+    private async Task LeggTilMontor(ChangeEventArgs e)
+    {
+        if (!KanEndreOrdre || _ordre is null || !int.TryParse(e.Value?.ToString(), out var brukerId)
+            || _ordre.Montorer.Any(m => m.BrukerId == brukerId))
+        {
+            return;
+        }
+        _ordre.Montorer.Add(new ArbeidsordreMontor { ArbeidsordreId = _ordre.Id, BrukerId = brukerId });
+        await Db.SaveChangesAsync();
+        await VarsleMontor(brukerId);
+    }
+
+    private async Task FjernMontor(int brukerId)
+    {
+        if (!KanEndreOrdre || _ordre is null)
+        {
+            return;
+        }
+        var rader = _ordre.Montorer.Where(m => m.BrukerId == brukerId).ToList();
+        foreach (var r in rader)
+        {
+            _ordre.Montorer.Remove(r);
+            Db.ArbeidsordreMontorer.Remove(r);
+        }
+        await Db.SaveChangesAsync();
+    }
     private List<SjekklisteMal> _maler = [];
     private List<ArbeidsordreSjekkpunkt> _sjekkpunkter = [];
     private int? _valgtMalId;
@@ -1863,6 +1922,7 @@ else if (_ordre is not null)
             .Include(a => a.Varer).ThenInclude(v => v.LagtTilAvBruker)
             .Include(a => a.Varer).ThenInclude(v => v.Component)
             .Include(a => a.FullfortAvBruker)
+            .Include(a => a.Montorer)
             .FirstOrDefaultAsync(a => a.Id == Id);
         _notFound = _ordre is null;
 
@@ -3458,6 +3518,15 @@ else if (_ordre is not null)
         {
             var rolle = personer.FirstOrDefault(k => string.Equals(k.Navn, p.Kontaktperson, StringComparison.OrdinalIgnoreCase))?.Rolle;
             Legg(p.Kontaktperson, rolle, p.Telefon, p.Epost, true);
+        }
+
+        // Kontaktpersonen fra tilbudet ordren ble laget fra (med telefon og e-post).
+        if (_ordre?.TilbudId is { } tilbudId
+            && await Db.Tilbud.AsNoTracking().Where(t => t.Id == tilbudId)
+                .Select(t => new { t.KontaktpersonNavn, t.KontaktpersonTelefon, t.KontaktpersonEpost }).FirstOrDefaultAsync() is { } tk)
+        {
+            var rolle = personer.FirstOrDefault(k => string.Equals(k.Navn, tk.KontaktpersonNavn?.Trim(), StringComparison.OrdinalIgnoreCase))?.Rolle;
+            Legg(tk.KontaktpersonNavn, rolle, tk.KontaktpersonTelefon, tk.KontaktpersonEpost, false);
         }
 
         Legg(kunde.Kontaktperson, "Hovedkontakt", kunde.Telefon, kunde.Epost, false);

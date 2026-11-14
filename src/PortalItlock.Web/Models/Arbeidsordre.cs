@@ -20,6 +20,13 @@ public class Arbeidsordre
     public int? AnsvarligMontorId { get; set; }
     public Bruker? AnsvarligMontor { get; set; }
 
+    // Flere montører på ordren (i tillegg til ansvarlig montør over).
+    public List<ArbeidsordreMontor> Montorer { get; set; } = [];
+
+    /// Ansvarlig eller en av de ekstra montørene. Krever at Montorer er lastet.
+    public bool HarMontor(int? brukerId) =>
+        brukerId is not null && (AnsvarligMontorId == brukerId || Montorer.Any(m => m.BrukerId == brukerId));
+
     public int? TilbudId { get; set; }
     public Tilbud? Tilbud { get; set; }
 
