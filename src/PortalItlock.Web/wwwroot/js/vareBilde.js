@@ -89,3 +89,36 @@ window.vareBilde = (function () {
 
     return { kobleLim, kobleDrop, kobleDragKlikkFiks };
 })();
+
+// Sikring for forhåndsvisning av varebilder ved hover (tilbud): mouseleave kan
+// utebli ved raske musebevegelser, scrolling eller når raden tegnes på nytt, og
+// da ble bildet hengende. Er et forhåndsbilde synlig og musen ikke lenger over
+// kilden (bildeikonet eller søkeresultatet), bes siden om å skjule det.
+window.hoverBildeVakt = (function () {
+    let ref = null;
+    let venter = false;
+    const BILDE = '.vare-bilde-forhandsvisning, .search-result-bilde-forhandsvisning';
+    const KILDE = '.vare-ikon-bilde, .search-result-item';
+
+    function skjul() {
+        if (!ref || venter || !document.querySelector(BILDE)) {
+            return;
+        }
+        venter = true;
+        ref.invokeMethodAsync('SkjulHoverBilder').catch(() => { }).finally(() => { venter = false; });
+    }
+
+    document.addEventListener('mouseover', e => {
+        if (!(e.target instanceof Element) || !e.target.closest(KILDE)) {
+            skjul();
+        }
+    }, true);
+    document.addEventListener('scroll', skjul, true);
+    document.addEventListener('mouseleave', skjul);
+    window.addEventListener('blur', skjul);
+
+    return {
+        koble(dotNetRef) { ref = dotNetRef; },
+        frakoble(dotNetRef) { if (ref === dotNetRef) { ref = null; } }
+    };
+})();
