@@ -68,6 +68,12 @@ public class VisningPreferanseService(AuthenticationStateProvider AuthProvider, 
             : standard;
     }
 
+    /// Antall rader per side i en liste. Huskes til brukeren velger noe annet.
+    public async Task<int> HentPerSideAsync(string modul, int standard) =>
+        int.TryParse(await HentAsync(modul, standard.ToString()), out var n) && n > 0 ? n : standard;
+
+    public Task SettPerSideAsync(string modul, int antall) => SettAsync(modul, antall.ToString());
+
     public async Task SettAsync(string modul, string verdi)
     {
         await SikreLastetAsync();
