@@ -17,6 +17,8 @@
 @inject IJSRuntime JS
 @inject VisningPreferanseService VisningPref
 @inject PrisKodeService PrisKodeSvc
+@inject TilleggsmodulService Tilleggsmoduler
+@inject LagerService LagerSvc
 
 <PageTitle>@(_tilbud?.Tittel ?? "Tilbud")</PageTitle>
 
@@ -85,6 +87,10 @@ else if (_tilbud is not null)
                 else
                 {
                     <button type="button" class="tk-kn" @onclick="ApneAoValg"><Icon Name="tool" />Arbeidsordre …</button>
+                    @if (_tilbud.Status == EndringsmeldingStatus.Godkjent)
+                    {
+                        <button type="button" class="tk-kn tk-kn-m" title="Varesalg uten montør og timer: legges rett i Ferdigmeldte" @onclick="ApneDirekte"><Icon Name="file-text" />Fakturer direkte</button>
+                    }
                 }
                 <button type="button" class="tk-kn tk-kn-p" @onclick="Lagre"><Icon Name="check" />Lagre</button>
             </div>
@@ -119,6 +125,66 @@ else if (_tilbud is not null)
                     <button type="button" class="tk-kn tk-kn-p" @onclick="BekreftAoValg"><Icon Name="check" />@(_aoValgt == 0 ? "Opprett ny ordre" : "Legg til ordren")</button>
                 </div>
             </div>
+        }
+
+        @if (_direkteDlg)
+        {
+            <div class="tk-ao-bak" @onclick="@(() => _direkteDlg = false)"></div>
+            <div class="tk-ao-dlg tk-dir-dlg" role="dialog" aria-modal="true" aria-label="Fakturer direkte">
+                <h3>Fakturer direkte – kun varer</h3>
+                <p class="tk-ao-hjelp">Det lages en ordre i bakgrunnen med varene fra tilbudet. Den får ingen montør eller timer og legges rett i Ferdigmeldte, der du sender den til Tripletex og markerer den fakturert som vanlig.</p>
+                <div class="tk-dir-tab">
+                    <table>
+                        <thead><tr><th>Vare</th><th class="n">Antall</th>@if (_direkteHarLager) {<th class="n">På lager</th>}</tr></thead>
+                        <tbody>
+                            @foreach (var v in _direkteVarer)
+                            {
+                                var paLager = _direktePaLager.GetValueOrDefault(v.ComponentId);
+                                <tr>
+                                    <td>@v.Navn</td>
+                                    <td class="n">@v.Antall</td>
+                                    @if (_direkteHarLager)
+                                    {
+                                        <td class="n">@paLager @if (paLager < v.Antall) {<span class="tk-dir-mangler">mangler @(v.Antall - paLager)</span>}</td>
+                                    }
+                                </tr>
+                            }
+                            @if (_direkteVarer.Count == 0)
+                            {
+                                <tr><td colspan="3" class="tk-dir-tom">Ingen lagervarer på tilbudet – bare summen faktureres.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                    <div class="tk-dir-total"><span>Totalt eks. mva</span><span>@FormatKrHel(TotaltUtenMva)</span></div>
+                </div>
+                @if (_direkteHarLager && _direkteVarer.Count > 0)
+                {
+                    <label class="tk-dir-felt">Trekk varene fra
+                        <select value="@_direkteLagerId" @onchange="DirekteLagerEndret">
+                            @foreach (var l in _direkteLagre)
+                            {
+                                <option value="@l.Id">@l.Navn</option>
+                            }
+                        </select>
+                    </label>
+                }
+                <label class="tk-dir-felt">Levert / hentet
+                    <input type="date" @bind="_direkteDato" />
+                </label>
+                @if (!string.IsNullOrEmpty(_direkteFeil))
+                {
+                    <p class="form-error">@_direkteFeil</p>
+                }
+                <div class="tk-ao-knapper">
+                    <button type="button" class="tk-kn" @onclick="@(() => _direkteDlg = false)">Avbryt</button>
+                    <button type="button" class="tk-kn tk-kn-p" disabled="@_direkteSender" @onclick="FakturerDirekte"><Icon Name="check" />Send til fakturering</button>
+                </div>
+            </div>
+        }
+
+        @if (_direkteMelding is not null)
+        {
+            <div class="tk-dir-ok"><Icon Name="check-circle" /><span>@_direkteMelding</span><a href="/arbeidsordre/ferdigmeldte">Åpne Ferdigmeldte</a></div>
         }
 
         <div class="tk-info">
@@ -1400,6 +1466,130 @@ else if (_tilbud is not null)
         }
         await Db.SaveChangesAsync();
         _lenketArbeidsordreId = null;
+    }
+
+    // ---------- Fakturer direkte (varesalg uten montør og timer) ----------
+    private sealed record DirekteVare(int ComponentId, string Navn, int Antall);
+    private bool _direkteDlg;
+    private bool _direkteSender;
+    private bool _direkteHarLager;
+    private List<DirekteVare> _direkteVarer = [];
+    private List<Lager> _direkteLagre = [];
+    private int _direkteLagerId;
+    private Dictionary<int, int> _direktePaLager = [];
+    private DateTime _direkteDato = DateTime.Today;
+    private string? _direkteFeil;
+    private string? _direkteMelding;
+
+    private async Task ApneDirekte()
+    {
+        if (_tilbud is null)
+        {
+            return;
+        }
+        _direkteFeil = null;
+        _direkteDato = DateTime.Today;
+        // Bare varer vi leverer selv (ikke Ld/Le), med vare i registeret.
+        _direkteVarer = _tilbud.Linjer
+            .Where(l => !l.ErGruppering && l.ComponentId is not null && l.Antall > 0 && l.LevertAv == LevertAv.F && l.Component?.ErPlassholder != true)
+            .GroupBy(l => l.ComponentId!.Value)
+            .Select(g => new DirekteVare(g.Key, g.First().Navn, g.Sum(l => l.Antall)))
+            .ToList();
+        _direkteHarLager = await Tilleggsmoduler.HarAsync(TilleggsModuler.Lager);
+        if (_direkteHarLager)
+        {
+            var hoved = await LagerSvc.HovedlagerAsync();
+            _direkteLagre = await Db.Lagre.AsNoTracking().Where(l => l.Aktiv).OrderBy(l => l.Type).ThenBy(l => l.Navn).ToListAsync();
+            _direkteLagerId = hoved.Id;
+            await LastDirektePaLager();
+        }
+        _direkteDlg = true;
+    }
+
+    private async Task DirekteLagerEndret(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id))
+        {
+            _direkteLagerId = id;
+            await LastDirektePaLager();
+        }
+    }
+
+    private async Task LastDirektePaLager()
+    {
+        var ider = _direkteVarer.Select(v => v.ComponentId).ToList();
+        _direktePaLager = (await Db.LagerBevegelser.AsNoTracking()
+                .Where(b => b.LagerId == _direkteLagerId && ider.Contains(b.ComponentId))
+                .GroupBy(b => b.ComponentId).Select(g => new { g.Key, Antall = g.Sum(b => b.Antall) }).ToListAsync())
+            .ToDictionary(x => x.Key, x => x.Antall);
+    }
+
+    private async Task FakturerDirekte()
+    {
+        if (_tilbud is null || _direkteSender)
+        {
+            return;
+        }
+        if (_tilbud.Status != EndringsmeldingStatus.Godkjent)
+        {
+            _direkteFeil = "Tilbudet må være godkjent.";
+            return;
+        }
+        if (await Db.Arbeidsordre.AnyAsync(a => a.TilbudId == _tilbud.Id || a.EkstraTilbud.Any(x => x.TilbudId == _tilbud.Id)))
+        {
+            _direkteFeil = "Tilbudet ligger allerede på en arbeidsordre.";
+            return;
+        }
+        _direkteSender = true;
+        try
+        {
+            var prosjekt = await Db.Prosjekter.AsNoTracking().FirstOrDefaultAsync(p => p.Id == _tilbud.ProsjektId);
+            static string? Tom(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+            var levert = _direkteDato.Date == DateTime.Today ? DateTime.Now : _direkteDato.Date.AddHours(12);
+            var ordre = new Arbeidsordre
+            {
+                Tittel = _tilbud.Tittel,
+                ProsjektId = _tilbud.ProsjektId,
+                TilbudId = _tilbud.Id,
+                KundeId = prosjekt?.KundeId,
+                Adresse = Tom(prosjekt?.Adresse),
+                Postnr = Tom(prosjekt?.Postnr),
+                Sted = Tom(prosjekt?.Sted),
+                Kontaktperson = Tom(_tilbud.KontaktpersonNavn) ?? Tom(prosjekt?.Kontaktperson),
+                Status = ArbeidsordreStatus.Ferdig,
+                ErDirektesalg = true,
+                FullfortDato = levert,
+                FullfortAvBrukerId = _naverendeBrukerId,
+                Beskrivelse = $"Direktesalg fra tilbud #{_tilbud.Id} – kun varer."
+            };
+            Db.Arbeidsordre.Add(ordre);
+            Db.TilbudHendelser.Add(new TilbudHendelse
+            {
+                TilbudId = _tilbud.Id,
+                Beskrivelse = "Fakturert direkte (kun varer) – lagt i Ferdigmeldte.",
+                UtfortAvBrukerId = _naverendeBrukerId
+            });
+            await Db.SaveChangesAsync();
+
+            if (_direkteHarLager && _direkteLagerId > 0)
+            {
+                var navn = _naverendeBrukerId is int bid ? await Db.Brukere.Where(b => b.Id == bid).Select(b => b.Navn).FirstOrDefaultAsync() : null;
+                foreach (var v in _direkteVarer)
+                {
+                    await LagerSvc.RegistrerAsync(v.ComponentId, _direkteLagerId, -v.Antall, LagerBevegelseType.Forbruk,
+                        $"Direktesalg: {_tilbud.Tittel}", _naverendeBrukerId, navn, prosjektId: _tilbud.ProsjektId, arbeidsordreId: ordre.Id);
+                }
+            }
+
+            _lenketArbeidsordreId = ordre.Id;
+            _direkteDlg = false;
+            _direkteMelding = $"Sendt til fakturering som AO-{ordre.Id} (direktesalg)."
+                + (_direkteHarLager && _direkteVarer.Count > 0 ? $" Varene er trukket fra {_direkteLagre.FirstOrDefault(l => l.Id == _direkteLagerId)?.Navn ?? "lageret"}." : "");
+        }
+        finally
+        {
+            _direkteSender = false;
+        }
     }
 
     private async Task OpprettArbeidsordre()

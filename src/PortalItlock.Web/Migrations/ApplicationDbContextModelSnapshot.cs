@@ -152,6 +152,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("DokumentasjonEpostSendtDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("ErDirektesalg")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal?>("EstimerteTimer")
                         .HasColumnType("TEXT");
 

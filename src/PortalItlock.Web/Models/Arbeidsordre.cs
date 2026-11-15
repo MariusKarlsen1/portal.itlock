@@ -58,6 +58,10 @@ public class Arbeidsordre
     public string? KundeInfoForJobb { get; set; }
     public DateTime? DokumentasjonEpostSendtDato { get; set; }
 
+    // Varesalg rett fra et godkjent tilbud («Fakturer direkte»): ingen montør
+    // eller timer, varene er trukket fra lager og ordren er ferdigmeldt med en gang.
+    public bool ErDirektesalg { get; set; }
+
     public int? FullfortAvBrukerId { get; set; }
     public Bruker? FullfortAvBruker { get; set; }
     public DateTime? FullfortDato { get; set; }
