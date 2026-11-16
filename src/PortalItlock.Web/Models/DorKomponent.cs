@@ -18,6 +18,13 @@ public class DorKomponent
     // Bare beslag vi leverer (F) monteres og hakes av av oss. Ld/Le leveres
     // komplett av dørprodusent/elektro. Ikke lagret - regnes fra LevertAv.
     public bool MonteresAvOss => LevertAv == LevertAv.F;
+
+    // Antall i beslagstellingen (montert x av y). Varer som telles i meter
+    // (f.eks. kabel) er ett beslag uansett hvor mange meter. Ikke lagret.
+    public int BeslagAntall => ErMetervare(Enhet ?? Component?.Enhet) ? 1 : Antall;
+
+    public static bool ErMetervare(string? enhet) =>
+        (enhet ?? "").Trim().TrimEnd('.').ToLowerInvariant() is "m" or "meter" or "lm" or "lnm" or "m1" or "mtr";
     public DateTime? MontertDato { get; set; }
 
     public int? MontertAvBrukerId { get; set; }
