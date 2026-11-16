@@ -38,6 +38,23 @@ else if (_plantegning is not null)
                 }
             </div>
             <div class="plan-header-actions">
+                @if (_revisjoner.Count > 0)
+                {
+                    <div class="plan-rev-bytt" role="group" aria-label="Revisjon av tegningen">
+                        <button type="button" class="@(_visRevisjonId is null ? "pa" : "")" @onclick="@(() => _visRevisjonId = null)"
+                                title="Gjeldende tegning, lastet opp @((_plantegning.RevidertDato ?? _plantegning.OpprettetDato).ToLocalTime().ToString("dd.MM.yyyy"))">
+                            Rev. @_plantegning.Revisjon <small>gjeldende</small>
+                        </button>
+                        @foreach (var r in _revisjoner)
+                        {
+                            var rid = r.Id;
+                            <button type="button" class="@(_visRevisjonId == rid ? "pa" : "")" @onclick="@(() => _visRevisjonId = rid)"
+                                    title="Lastet opp @r.OpplastetDato.ToLocalTime().ToString("dd.MM.yyyy"), erstattet @r.ErstattetDato.ToLocalTime().ToString("dd.MM.yyyy")">
+                                Rev. @r.Revisjon
+                            </button>
+                        }
+                    </div>
+                }
                 <button type="button" class="add-button" @onclick="VisPdfForhandsvisning">Generer PDF</button>
                 <button type="button" class="save-button" @onclick="LagreAlt">Lagre</button>
             </div>
@@ -46,6 +63,11 @@ else if (_plantegning is not null)
         @if (!string.IsNullOrEmpty(_savedMessage))
         {
             <p class="saved-hint">@_savedMessage</p>
+        }
+
+        @if (VistRevisjon is { } vist)
+        {
+            <p class="plan-rev-hint"><Icon Name="map" />Du ser rev. @vist.Revisjon fra @vist.OpplastetDato.ToLocalTime().ToString("dd.MM.yyyy"). Dørene står der de er plassert på gjeldende tegning, så du kan sammenligne. <button type="button" @onclick="@(() => _visRevisjonId = null)">Tilbake til gjeldende</button></p>
         }
 
         @if (_placingMode != PlacingMode.Ingen)
@@ -146,7 +168,7 @@ else if (_plantegning is not null)
             <div class="plan-canvas @(_redigerPosisjon ? "plan-canvas-rediger" : "")"
                  @ref="_canvasRef"
                  @onclick="OnCanvasClick">
-                <img src="@($"/plantegningbilde/{_plantegning.Id}")" alt="@_plantegning.Navn" class="plan-image" />
+                <img src="@BildeUrl" alt="@_plantegning.Navn" class="plan-image" />
                 @foreach (var d in SynligeDorer)
                 {
                     <div @key="d.Id" class="dor-marker @(_selectedDoor?.Id == d.Id ? "dor-marker-selected" : "")"
@@ -256,6 +278,15 @@ else if (_plantegning is not null)
     private int? _valgtEksisterendeDorId;
     private string? _savedMessage;
     private bool _redigerPosisjon;
+
+    // Tidligere revisjoner av tegningen (uten filene). Null = vis gjeldende tegning.
+    private sealed record RevisjonValg(int Id, int Revisjon, DateTime OpplastetDato, DateTime ErstattetDato);
+    private List<RevisjonValg> _revisjoner = [];
+    private int? _visRevisjonId;
+    private RevisjonValg? VistRevisjon => _revisjoner.FirstOrDefault(r => r.Id == _visRevisjonId);
+    private string BildeUrl => VistRevisjon is { } r
+        ? $"/plantegningrevisjon/{r.Id}"
+        : $"/plantegningbilde/{_plantegning!.Id}?r={_plantegning.Revisjon}";
     private bool _visDorsideIPopup;
 
     // En nettopp opprettet dør åpnes på fanen Detaljer, ellers Oversikt.
@@ -376,6 +407,12 @@ else if (_plantegning is not null)
         }
 
         _erServiceavtale = await Db.Prosjekter.AsNoTracking().AnyAsync(x => x.Id == _plantegning.ProsjektId && x.Status == ProsjektStatus.Serviceavtale);
+        _visRevisjonId = null;
+        _revisjoner = await Db.PlantegningRevisjoner.AsNoTracking()
+            .Where(r => r.PlantegningId == _plantegning.Id)
+            .OrderByDescending(r => r.Revisjon)
+            .Select(r => new RevisjonValg(r.Id, r.Revisjon, r.OpplastetDato, r.ErstattetDato))
+            .ToListAsync();
         _lagredePdfer = await LagretPdfService.HentAsync("Plantegning", Id);
 
         _dorer = _plantegning.Dorer.Where(d => d.PosX.HasValue && d.PosY.HasValue).ToList();

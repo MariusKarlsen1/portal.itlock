@@ -5528,6 +5528,12 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("ProsjektId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("RevidertDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Revisjon")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ProsjektId");
@@ -5547,6 +5553,43 @@ namespace PortalItlock.Web.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Plantegninger", (string)null);
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PlantegningRevisjon", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<DateTime>("ErstattetDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Filnavn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("OpplastetDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PlantegningId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Revisjon")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlantegningId");
+
+                    b.ToTable("PlantegningRevisjoner");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PlukklisteLinje", b =>
@@ -9949,6 +9992,17 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.PlantegningRevisjon", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Plantegning", "Plantegning")
+                        .WithMany("Revisjoner")
+                        .HasForeignKey("PlantegningId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Plantegning");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.PlukklisteLinje", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Component", "Component")
@@ -10887,6 +10941,8 @@ namespace PortalItlock.Web.Migrations
 
                     b.Navigation("Fil")
                         .IsRequired();
+
+                    b.Navigation("Revisjoner");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Prisoverslag", b =>

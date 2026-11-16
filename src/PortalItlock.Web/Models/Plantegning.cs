@@ -38,5 +38,11 @@ public class Plantegning
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
+    // Revisjon av tegningen. Øker hver gang en ny fil lastes opp med samme navn;
+    // de gamle filene ligger i Revisjoner (PlantegningRevisjon).
+    public int Revisjon { get; set; }
+    public DateTime? RevidertDato { get; set; }
+    public List<PlantegningRevisjon> Revisjoner { get; set; } = [];
+
     public List<Dor> Dorer { get; set; } = [];
 }

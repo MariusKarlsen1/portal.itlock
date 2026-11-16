@@ -1177,12 +1177,32 @@ app.MapGet("/nokkelsystem/{id:int}/bilde", async (int id, ApplicationDbContext d
         : Results.File(system.BildeData, FilSikkerhet.TryggContentType(system.BildeContentType ?? "image/jpeg"));
 }).RequireAuthorization();
 
-app.MapGet("/plantegningbilde/{id:int}", async (int id, ApplicationDbContext db) =>
+app.MapGet("/plantegningbilde/{id:int}", async (int id, ApplicationDbContext db, HttpContext context) =>
 {
-    var plantegning = await db.Plantegninger.Include(p => p.Fil).FirstOrDefaultAsync(p => p.Id == id);
-    return plantegning is null
+    // ETag med revisjonen: samme tegning hentes fra hurtigbuffer, men etter at en
+    // ny revisjon er lastet opp får nettleseren den nye filen med en gang.
+    var rev = await db.Plantegninger.Where(p => p.Id == id).Select(p => (int?)p.Revisjon).FirstOrDefaultAsync();
+    if (rev is null)
+    {
+        return Results.NotFound();
+    }
+    var etag = $"\"pt{id}-r{rev}\"";
+    context.Response.Headers.CacheControl = "private, no-cache";
+    context.Response.Headers.ETag = etag;
+    if (context.Request.Headers.IfNoneMatch.ToString() == etag)
+    {
+        return Results.StatusCode(StatusCodes.Status304NotModified);
+    }
+    var plantegning = await db.Plantegninger.Include(p => p.Fil).FirstAsync(p => p.Id == id);
+    return Results.File(plantegning.Data, FilSikkerhet.TryggContentType(plantegning.ContentType));
+}).RequireAuthorization();
+
+app.MapGet("/plantegningrevisjon/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var rev = await db.PlantegningRevisjoner.FindAsync(id);
+    return rev is null
         ? Results.NotFound()
-        : Results.File(plantegning.Data, FilSikkerhet.TryggContentType(plantegning.ContentType));
+        : Results.File(rev.Data, FilSikkerhet.TryggContentType(rev.ContentType));
 }).RequireAuthorization();
 
 app.MapGet("/prosjektvedlegg/{id:int}", async (int id, ApplicationDbContext db) =>
