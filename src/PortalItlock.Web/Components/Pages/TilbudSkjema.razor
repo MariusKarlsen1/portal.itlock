@@ -63,6 +63,13 @@ else if (_tilbud is not null)
                     <span> / Tilbud #@_tilbud.Id</span>
                 </div>
                 <h1>@_tilbud.Tittel <span class="status-badge @StatusBadgeKlasse(_tilbud.Status)">@_tilbud.Status.Visningsnavn()</span></h1>
+                @if (_tilbud.Type == TilbudType.Opsjon)
+                {
+                    <div class="tilbud-editor-meta">
+                        <span class="tillegg-badge tk-opsjon-badge">Opsjoner</span>
+                        <span>Bare varene under «Opsjon beslag» på dørene</span>
+                    </div>
+                }
                 @if (_tilbud.Type == TilbudType.Endringsmelding)
                 {
                     <div class="tilbud-editor-meta">
@@ -575,6 +582,47 @@ else if (_tilbud is not null)
                             <p class="tk-laast"><Icon Name="lock" />Tilbudet er godkjent og låst. Sett status tilbake under Info for å endre varelinjene.</p>
                         }
                         <fieldset class="tk-laas-fs" disabled="@Laast">
+        @if (ErOpsjon)
+        {
+            var valgte = ValgteOpsjonDorer;
+            <div class="tk-opsjon">
+                <div class="tk-opsjon-hode">
+                    <b>Opsjoner fra dørene</b>
+                    <span>Bare varene som ligger under «Opsjon beslag» på dørene kommer med, og montasjetiden regnes bare fra dem.</span>
+                </div>
+                <div class="tk-opsjon-visning" role="group" aria-label="Visning">
+                    <button type="button" class="@(_tilbud.OpsjonPerDor ? "pa" : "")" aria-pressed="@(_tilbud.OpsjonPerDor ? "true" : "false")" @onclick="@(() => SettOpsjonPerDor(true))">
+                        <b>Per dør</b><small>Dørnavn med varene under, og pris per dør inkl. varer og montering</small>
+                    </button>
+                    <button type="button" class="@(!_tilbud.OpsjonPerDor ? "pa" : "")" aria-pressed="@(!_tilbud.OpsjonPerDor ? "true" : "false")" @onclick="@(() => SettOpsjonPerDor(false))">
+                        <b>Samlet</b><small>Alle opsjonsbeslag og montering samlet, som et vanlig tilbud</small>
+                    </button>
+                </div>
+                @if (_opsjonDorer.Count == 0)
+                {
+                    <p class="tk-opsjon-tom">Ingen dører har opsjoner ennå. Huk av «Opsjon» under Beslag på døren og legg varene under «Opsjon beslag».</p>
+                }
+                else
+                {
+                    <div class="tk-opsjon-dorer-hode">
+                        <span>Dører med opsjoner <em>@(valgte?.Count ?? _opsjonDorer.Count) av @_opsjonDorer.Count valgt</em></span>
+                        <button type="button" @onclick="@(() => VelgAlleOpsjonDorer(true))">Velg alle</button>
+                        <button type="button" @onclick="@(() => VelgAlleOpsjonDorer(false))">Ingen</button>
+                    </div>
+                    <div class="tk-opsjon-dorer">
+                        @foreach (var d in _opsjonDorer)
+                        {
+                            var dor = d;
+                            var paa = valgte is null || valgte.Contains(d.Id);
+                            <label @key="d.Id" class="@(paa ? "paa" : "")">
+                                <input type="checkbox" checked="@paa" @onchange="@(() => VeksleOpsjonDor(dor.Id))" />
+                                <b>@d.Navn</b><small>@d.Antall @(d.Antall == 1 ? "vare" : "varer")</small>
+                            </label>
+                        }
+                    </div>
+                }
+            </div>
+        }
         <div class="varer-toolbar">
             @if (ErServiceTilbud)
             {
@@ -582,7 +630,7 @@ else if (_tilbud is not null)
             }
             else
             {
-                <button type="button" class="add-button" @onclick="SynkVarer"><Icon Name="check" />Synk varer</button>
+                <button type="button" class="add-button" @onclick="SynkVarer"><Icon Name="check" />@(ErOpsjon ? "Synk opsjoner fra dørene" : "Synk varer")</button>
             }
             <button type="button" class="cancel-button" @onclick="OppdaterPriser"><Icon Name="trend-up" />Oppdater priser</button>
         </div>
@@ -672,6 +720,7 @@ else if (_tilbud is not null)
                     </tr>
                 </thead>
                 <tbody>
+                    @{ var dorPriser = ErOpsjon && _tilbud.OpsjonPerDor ? TilbudBeregningHelper.PrisPerDor(_tilbud, LinjeMinutter) : null; }
                     @foreach (var rad in TabellRader())
                     {
                         if (rad.Kode is { } kodelinje)
@@ -690,6 +739,12 @@ else if (_tilbud is not null)
                                         <input class="gruppering-tittel-input" @bind="l.Navn" @bind:event="oninput" @bind:after="@(() => LagreLinje(l))" placeholder="Tittel..." />
                                         <textarea class="gruppering-beskrivelse-input" rows="2" @bind="l.Beskrivelse" @bind:event="oninput" @bind:after="@(() => LagreLinje(l))" placeholder="Beskrivelse (valgfritt)..."></textarea>
                                     </div>
+                                    @if (dorPriser is not null && l.DorId is int grpDor && dorPriser.TryGetValue(grpDor, out var dp))
+                                    {
+                                        <span class="tk-dor-pris" title="Varer @dp.Varer.ToString("N0", Kultur) kr + montering @dp.Montasje.ToString("N0", Kultur) kr">
+                                            <small>Pris dør inkl. montering</small><b>@dp.Total.ToString("N0", Kultur) kr</b>
+                                        </span>
+                                    }
                                     <button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => FjernLinje(l))"><Icon Name="x" /></button>
                                 </td>
                             </tr>
@@ -1034,6 +1089,8 @@ else if (_tilbud is not null)
     private int EstimertMinutter => _tilbud?.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering)
         .Sum(l => (FinnMonteringMinutter(l.ComponentId) ?? l.MontasjeMinutter ?? 0) * l.Antall) ?? 0;
 
+    private int LinjeMinutter(TilbudLinje l) => FinnMonteringMinutter(l.ComponentId) ?? l.MontasjeMinutter ?? 0;
+
     private int? FinnMonteringMinutter(int? componentId) =>
         componentId.HasValue ? _monteringLinjer.FirstOrDefault(m => m.ComponentId == componentId)?.Minutter : null;
     private decimal KalkulertArbeidstidTimer => EstimertMinutter / 60m;
@@ -1163,6 +1220,7 @@ else if (_tilbud is not null)
             _monteringLinjer = await Db.MonteringLinjer
                 .Where(m => m.ProsjektId == _tilbud.ProsjektId && m.ComponentId != null)
                 .ToListAsync();
+            await LastOpsjonDorer();
 
             var byggetrinnFraPlantegninger = await Db.Plantegninger
                 .Where(p => p.ProsjektId == _tilbud.ProsjektId && p.Byggetrinn != null && p.Byggetrinn != "")
@@ -1850,6 +1908,12 @@ else if (_tilbud is not null)
 
     private async Task SynkVarer()
     {
+        if (ErOpsjon)
+        {
+            await SynkOpsjoner();
+            return;
+        }
+
         var brukt = await Db.DorKomponenter
             .Where(dk => dk.Dor!.ProsjektId == _tilbud!.ProsjektId)
             .Include(dk => dk.Component).ThenInclude(c => c!.Produktgrupper)
@@ -1858,14 +1922,14 @@ else if (_tilbud is not null)
         // Bare beslag vi leverer (F) kommer på tilbudet. Ld/Le leveres av
         // dørprodusent/elektro og står bare på døren og beslagslisten.
         var gruppert = brukt
-            .Where(dk => dk.Component is not null && dk.LevertAv == LevertAv.F)
+            .Where(dk => dk.Component is not null && dk.LevertAv == LevertAv.F && !dk.ErOpsjon)
             .GroupBy(dk => dk.ComponentId)
             .Select(g => new { ComponentId = g.Key, Component = g.First().Component!, Antall = g.Sum(x => x.Antall), LevertAv = LevertAv.F })
             .ToList();
 
         // Varer som bare står som Ld/Le på dørene tas av tilbudet.
         var fIder = gruppert.Select(g => g.ComponentId).ToHashSet();
-        var bareAndre = brukt.Where(dk => dk.LevertAv != LevertAv.F && !fIder.Contains(dk.ComponentId)).Select(dk => dk.ComponentId).ToHashSet();
+        var bareAndre = brukt.Where(dk => (dk.LevertAv != LevertAv.F || dk.ErOpsjon) && !fIder.Contains(dk.ComponentId)).Select(dk => dk.ComponentId).ToHashSet();
         foreach (var gammel in _tilbud!.Linjer.Where(l => l.ComponentId is int cid && bareAndre.Contains(cid)).ToList())
         {
             _tilbud.Linjer.Remove(gammel);
@@ -1917,6 +1981,208 @@ else if (_tilbud is not null)
         await Db.SaveChangesAsync();
         await OppdaterHendelser();
         _syncMessage = $"{gruppert.Count} varetyper synkronisert fra prosjektets dører.";
+    }
+
+    // ---- Opsjonstilbud ----
+    private bool ErOpsjon => _tilbud?.Type == TilbudType.Opsjon;
+
+    private sealed record OpsjonDor(int Id, string Navn, int Antall);
+    private List<OpsjonDor> _opsjonDorer = [];
+
+    private static string DorNavn(Dor d) =>
+        string.IsNullOrWhiteSpace(d.DorTil) ? d.Dornummer : $"{d.Dornummer} {d.DorTil}";
+
+    private async Task LastOpsjonDorer()
+    {
+        _opsjonDorer = [];
+        if (!ErOpsjon)
+        {
+            return;
+        }
+
+        var dorer = await Db.Dorer.AsNoTracking()
+            .Where(d => d.ProsjektId == _tilbud!.ProsjektId && d.Komponenter.Any(k => k.ErOpsjon))
+            .Select(d => new { Dor = d, Antall = d.Komponenter.Count(k => k.ErOpsjon) })
+            .ToListAsync();
+        _opsjonDorer = dorer
+            .OrderBy(x => x.Dor.Dornummer, StringComparer.OrdinalIgnoreCase)
+            .Select(x => new OpsjonDor(x.Dor.Id, DorNavn(x.Dor), x.Antall))
+            .ToList();
+    }
+
+    // null = alle dører med opsjoner.
+    private HashSet<int>? ValgteOpsjonDorer => string.IsNullOrWhiteSpace(_tilbud?.OpsjonDorer)
+        ? null
+        : _tilbud.OpsjonDorer.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => int.TryParse(x, out var id) ? id : 0).Where(id => id > 0).ToHashSet();
+
+    private async Task LagreOpsjonDorer(HashSet<int> valgte)
+    {
+        var alle = _opsjonDorer.Select(d => d.Id).ToHashSet();
+        _tilbud!.OpsjonDorer = alle.SetEquals(valgte) ? null : valgte.Count == 0 ? "0" : string.Join(",", valgte.Order());
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task VeksleOpsjonDor(int dorId)
+    {
+        var valgte = ValgteOpsjonDorer ?? _opsjonDorer.Select(d => d.Id).ToHashSet();
+        if (!valgte.Remove(dorId))
+        {
+            valgte.Add(dorId);
+        }
+        await LagreOpsjonDorer(valgte);
+    }
+
+    private async Task VelgAlleOpsjonDorer(bool alle) =>
+        await LagreOpsjonDorer(alle ? _opsjonDorer.Select(d => d.Id).ToHashSet() : []);
+
+    private async Task SettOpsjonPerDor(bool perDor)
+    {
+        if (_tilbud!.OpsjonPerDor == perDor)
+        {
+            return;
+        }
+        _tilbud.OpsjonPerDor = perDor;
+        await Db.SaveChangesAsync();
+        _syncMessage = "Visningen er endret. Trykk «Synk opsjoner fra dørene» for å bygge varelinjene på nytt.";
+    }
+
+    private void FjernTilbudLinje(TilbudLinje l)
+    {
+        _tilbud!.Linjer.Remove(l);
+        Db.TilbudLinjer.Remove(l);
+    }
+
+    private async Task<TilbudLinje> OpsjonLinje(TilbudLinje? linje, Component c, int antall, int? dorId)
+    {
+        var innpris = c.PrisNetto ?? 0;
+        if (linje is null)
+        {
+            linje = new TilbudLinje
+            {
+                TilbudId = _tilbud!.Id,
+                ComponentId = c.Id,
+                DorId = dorId,
+                Navn = c.Navn,
+                Innpris = innpris,
+                PrisVeiledende = c.PrisVeiledende,
+                Antall = antall,
+                Enhet = c.Enhet,
+                MontasjeMinutter = EffektivMontasjeMinutter(c),
+                LevertAv = LevertAv.F,
+                RabattProsent = await HentKundeRabattProsent(c),
+                Rekkefolge = NesteVareRekkefolge()
+            };
+            OppdaterLinjePris(linje);
+            _tilbud.Linjer.Add(linje);
+            Db.TilbudLinjer.Add(linje);
+            return linje;
+        }
+
+        linje.Antall = antall;
+        linje.Innpris = innpris;
+        linje.PrisVeiledende = c.PrisVeiledende;
+        linje.Enhet = c.Enhet;
+        linje.MontasjeMinutter = EffektivMontasjeMinutter(c);
+        linje.Utpris = BeregnUtpris(innpris, c.PrisVeiledende);
+        linje.LevertAv = LevertAv.F;
+        return linje;
+    }
+
+    // Henter bare varene under «Opsjon beslag» på de valgte dørene. Per dør:
+    // én overskrift per dør med varene under. Samlet: som Synk varer.
+    private async Task SynkOpsjoner()
+    {
+        var t = _tilbud!;
+        await LastOpsjonDorer();
+        var valgte = ValgteOpsjonDorer;
+        var alle = await Db.DorKomponenter
+            .Where(dk => dk.Dor!.ProsjektId == t.ProsjektId)
+            .Include(dk => dk.Dor)
+            .Include(dk => dk.Component).ThenInclude(c => c!.Produktgrupper)
+            .ToListAsync();
+        var fraDorene = alle.Select(dk => dk.ComponentId).ToHashSet();
+        var opsjoner = alle
+            .Where(dk => dk.ErOpsjon && dk.LevertAv == LevertAv.F && dk.Component is not null && (valgte is null || valgte.Contains(dk.DorId)))
+            .ToList();
+
+        if (t.OpsjonPerDor)
+        {
+            var nokler = opsjoner.Select(dk => (dk.DorId, dk.ComponentId)).ToHashSet();
+            var dorIder = opsjoner.Select(dk => dk.DorId).ToHashSet();
+            foreach (var l in t.Linjer.ToList())
+            {
+                var fjern = l.DorId is int d
+                    ? (l.ErGruppering ? !dorIder.Contains(d) : l.ComponentId is not int c || !nokler.Contains((d, c)))
+                    : !l.ErGruppering && l.ComponentId is int c2 && fraDorene.Contains(c2);
+                if (fjern)
+                {
+                    FjernTilbudLinje(l);
+                }
+            }
+
+            // Linjer som ikke kommer fra dørene (og kodelinjer) står etter dørene.
+            var andre = TabellRader().Where(r => r.Vare is null || r.Vare.DorId is null).ToList();
+            var nr = 0;
+            foreach (var g in opsjoner.GroupBy(dk => dk.DorId).OrderBy(g => g.First().Dor!.Dornummer, StringComparer.OrdinalIgnoreCase))
+            {
+                var dor = g.First().Dor!;
+                var grp = t.Linjer.FirstOrDefault(l => l.ErGruppering && l.DorId == dor.Id);
+                if (grp is null)
+                {
+                    grp = new TilbudLinje { TilbudId = t.Id, ErGruppering = true, DorId = dor.Id, Navn = DorNavn(dor), LevertAv = LevertAv.F };
+                    t.Linjer.Add(grp);
+                    Db.TilbudLinjer.Add(grp);
+                }
+                grp.Rekkefolge = nr++;
+
+                foreach (var dk in g.OrderBy(dk => dk.Component!.Navn, StringComparer.OrdinalIgnoreCase))
+                {
+                    var linje = await OpsjonLinje(t.Linjer.FirstOrDefault(l => !l.ErGruppering && l.DorId == dor.Id && l.ComponentId == dk.ComponentId),
+                        dk.Component!, dk.Antall, dor.Id);
+                    linje.Rekkefolge = nr++;
+                }
+            }
+
+            foreach (var r in andre)
+            {
+                if (r.Vare is { } v)
+                {
+                    v.Rekkefolge = nr++;
+                }
+                else if (t.FellesRekkefolge && r.Kode is { } k)
+                {
+                    k.Rekkefolge = nr++;
+                }
+            }
+        }
+        else
+        {
+            var gruppert = opsjoner.GroupBy(dk => dk.ComponentId)
+                .Select(g => new { ComponentId = g.Key, Component = g.First().Component!, Antall = g.Sum(x => x.Antall) })
+                .ToList();
+            var ider = gruppert.Select(g => g.ComponentId).ToHashSet();
+            foreach (var l in t.Linjer.Where(l => l.DorId is not null
+                || (!l.ErGruppering && l.ComponentId is int c && fraDorene.Contains(c) && !ider.Contains(c))).ToList())
+            {
+                FjernTilbudLinje(l);
+            }
+
+            foreach (var g in gruppert.OrderBy(g => g.Component.Navn, StringComparer.OrdinalIgnoreCase))
+            {
+                await OpsjonLinje(t.Linjer.FirstOrDefault(l => !l.ErGruppering && l.DorId is null && l.ComponentId == g.ComponentId), g.Component, g.Antall, null);
+            }
+        }
+
+        OppdaterMontasjekostAutomatisk();
+        var antallDorer = opsjoner.Select(dk => dk.DorId).Distinct().Count();
+        var melding = opsjoner.Count == 0
+            ? "Ingen opsjoner på de valgte dørene."
+            : $"{opsjoner.Count} opsjonsvarer fra {antallDorer} {(antallDorer == 1 ? "dør" : "dører")} synkronisert{(t.OpsjonPerDor ? ", gruppert per dør" : "")}.";
+        Db.TilbudHendelser.Add(NyHendelse(melding));
+        await Db.SaveChangesAsync();
+        await OppdaterHendelser();
+        _syncMessage = melding;
     }
 
     private async Task LagreLasplanFlagg(TilbudLinje linje)

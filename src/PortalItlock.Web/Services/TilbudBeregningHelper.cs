@@ -21,6 +21,30 @@ public static class TilbudBeregningHelper
         return utprisVarer + montasjekost;
     }
 
+    public sealed record DorPris(decimal Varer, decimal Montasje)
+    {
+        public decimal Total => Varer + Montasje;
+    }
+
+    // Opsjonstilbud per dør: varene på døren pluss dørens andel av montasjen.
+    // Montasjen fordeles etter minuttene (minutter × antall) på varene, så
+    // summen over dørene er den samme som montasjen i tilbudet.
+    public static Dictionary<int, DorPris> PrisPerDor(Tilbud tilbud, Func<TilbudLinje, int> minutter)
+    {
+        var vareLinjer = tilbud.Linjer.Where(l => l.LevertAv == LevertAv.F && !l.ErGruppering).ToList();
+        var montasje = BeregnTotaltUtenMva(tilbud) - vareLinjer.Sum(l => l.Utpris * l.Antall);
+        var alleMinutter = (decimal)vareLinjer.Sum(l => minutter(l) * l.Antall);
+
+        return vareLinjer.Where(l => l.DorId is not null)
+            .GroupBy(l => l.DorId!.Value)
+            .ToDictionary(g => g.Key, g =>
+            {
+                var dorMinutter = g.Sum(l => minutter(l) * l.Antall);
+                var andel = alleMinutter > 0 ? Math.Round(montasje * dorMinutter / alleMinutter, 2) : 0;
+                return new DorPris(g.Sum(l => l.Utpris * l.Antall), andel);
+            });
+    }
+
     public static decimal BeregnTotalKost(Tilbud tilbud)
     {
         var varekost = tilbud.Linjer

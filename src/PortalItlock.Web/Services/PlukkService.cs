@@ -122,7 +122,7 @@ public class PlukkService(ApplicationDbContext db, LagerService lager)
             {
                 var fra = r.Opprettet;
                 montert = await db.DorKomponenter.AsNoTracking()
-                    .Where(k => k.Dor!.ProsjektId == p && k.ComponentId == r.ComponentId && k.LevertAv == LevertAv.F)
+                    .Where(k => k.Dor!.ProsjektId == p && k.ComponentId == r.ComponentId && k.LevertAv == LevertAv.F && !k.ErOpsjon)
                     .Where(k => (k.Montert && k.MontertDato >= fra) || (k.Dor!.Status == MontasjeStatus.FerdigMontert && k.Dor!.MontertDato >= fra))
                     .SumAsync(k => (int?)k.Antall) ?? 0;
                 tekst = "Montert (dør ferdigmeldt)";

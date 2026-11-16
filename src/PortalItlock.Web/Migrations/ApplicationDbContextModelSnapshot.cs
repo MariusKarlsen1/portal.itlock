@@ -2641,6 +2641,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Enhet")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("ErOpsjon")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("LevertAv")
                         .HasColumnType("INTEGER");
 
@@ -7948,6 +7951,12 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("OpprinneligTilbudId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("OpsjonDorer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("OpsjonPerDor")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("PrisType")
                         .HasColumnType("INTEGER");
 
@@ -8180,6 +8189,9 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("ComponentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("DorId")
                         .HasColumnType("INTEGER");
 
                     b.Property<decimal>("EkstraRabattInnProsent")

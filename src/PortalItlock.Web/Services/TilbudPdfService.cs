@@ -46,8 +46,12 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
         if (valgteByggetrinn is not null)
         {
+            var erOpsjon = tilbud.Type == Models.TilbudType.Opsjon;
+            var dorIderIByggetrinn = await db.Dorer
+                .Where(d => d.ProsjektId == tilbud.ProsjektId && d.Plantegning != null && valgteByggetrinn.Contains(d.Plantegning.Byggetrinn))
+                .Select(d => d.Id).ToListAsync();
             var antallPerComponent = await db.DorKomponenter
-                .Where(dk => dk.Dor!.ProsjektId == tilbud.ProsjektId && dk.LevertAv == LevertAv.F
+                .Where(dk => dk.Dor!.ProsjektId == tilbud.ProsjektId && dk.LevertAv == LevertAv.F && dk.ErOpsjon == erOpsjon
                     && dk.Dor.Plantegning != null && valgteByggetrinn.Contains(dk.Dor.Plantegning.Byggetrinn))
                 .GroupBy(dk => dk.ComponentId)
                 .Select(g => new { ComponentId = g.Key, Antall = g.Sum(x => x.Antall) })
@@ -78,6 +82,15 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                 })
                 .Where(l => l.ComponentId is null || l.Antall > 0)
                 .ToList();
+
+            // Opsjoner per dør: dørene utenfor byggetrinnene tas ut, resten står som de er.
+            if (erOpsjon)
+            {
+                linjer = tilbud.Linjer.Where(l => l.ErGruppering || l.LevertAv == LevertAv.F).OrderBy(l => l.Rekkefolge)
+                    .Where(l => l.DorId is int d ? dorIderIByggetrinn.Contains(d) : linjer.Any(x => x.Id == l.Id))
+                    .Select(l => l.DorId is null && !l.ErGruppering ? linjer.First(x => x.Id == l.Id) : l)
+                    .ToList();
+            }
         }
 
         return linjer;
@@ -137,6 +150,11 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         var montasjekost = tilbud.Montasjekost ?? kalkulertMontasjekost;
         var totaltUtenMva = utprisVarer + montasjekost;
 
+        // Opsjoner per dør: pris per dør (varer + dørens andel av montasjen) i dør-overskriften.
+        var dorPriser = tilbud.Type == Models.TilbudType.Opsjon && tilbud.OpsjonPerDor
+            ? TilbudBeregningHelper.PrisPerDor(tilbud, l => (l.ComponentId.HasValue && monteringMinutterPerComponent.TryGetValue(l.ComponentId.Value, out var mm) ? mm : null) ?? l.MontasjeMinutter ?? 0)
+            : null;
+
         // Samme vare kan stå på flere linjer i tilbudet (f.eks. med ulik pris) - på dørene
         // brukes prisen fra den første linjen vi leverer selv.
         var utprisPerComponent = linjer.Where(l => l.ComponentId.HasValue)
@@ -146,13 +164,23 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         var dorer = new List<Dor>();
         if (tilbud.VisAlleDorerFraBeslagsliste)
         {
-            dorer = await db.Dorer
+            dorer = await db.Dorer.AsNoTracking()
                 .Where(d => d.ProsjektId == tilbud.ProsjektId
                     && (valgteByggetrinn == null || (d.Plantegning != null && valgteByggetrinn.Contains(d.Plantegning.Byggetrinn))))
                 .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
                 .Include(d => d.Funksjoner)
                 .OrderBy(d => d.Dornummer)
                 .ToListAsync();
+
+            // Vanlige tilbud viser ikke opsjonene på dørene; opsjonstilbud viser bare dem.
+            var erOpsjonstilbud = tilbud.Type == Models.TilbudType.Opsjon;
+            var opsjonDorer = erOpsjonstilbud && !string.IsNullOrWhiteSpace(tilbud.OpsjonDorer)
+                ? tilbud.OpsjonDorer.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => int.TryParse(x, out var i) ? i : 0).ToHashSet()
+                : null;
+            foreach (var d in dorer)
+            {
+                d.Komponenter = d.Komponenter.Where(k => k.ErOpsjon == erOpsjonstilbud && (opsjonDorer is null || opsjonDorer.Contains(d.Id))).ToList();
+            }
         }
 
         // Pris per dør: montasjen fordeles på dørene etter minuttene på varene de har
@@ -189,7 +217,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         // deretter forbehold, produktsammendrag med montering som egen linje og
         // totalsum. Avsenderen er organisasjonen som er logget inn.
         var org = RapportProfil.Fra(tenantContext.Current);
-        var dokumentTittel = tilbud.Type == Models.TilbudType.Endringsmelding ? "Endringsmelding" : "Tilbud";
+        var dokumentTittel = tilbud.Type switch { Models.TilbudType.Endringsmelding => "Endringsmelding", Models.TilbudType.Opsjon => "Opsjoner", _ => "Tilbud" };
         var tilbudsnummer = $"T-{tilbud.OpprettetDato.Year}-{tilbud.Id:000}";
         var prosjektleder = tilbud.Prosjekt?.Prosjektleder;
         var kontaktNavn = prosjektleder?.Navn ?? (org.ErStandard ? FirmaInfo.Kontaktperson : null);
@@ -345,7 +373,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                     if (visSammendrag)
                     {
                         // Fordeles montasjen på dørene, står den ikke i sammendraget.
-                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, RabattFor, arbeidstidTimer, montasjePaDorer ? 0 : montasjekost, org.Aksent, org.AksentLys, montasjePaDorer ? [] : KodeRader(tilbud));
+                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, RabattFor, arbeidstidTimer, montasjePaDorer ? 0 : montasjekost, org.Aksent, org.AksentLys, montasjePaDorer ? [] : KodeRader(tilbud), dorPriser);
                     }
 
                     if (visDorer)
@@ -381,7 +409,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
     }
 
     private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, Func<TilbudLinje, decimal> rabattFor, decimal monteringTimer, decimal montasjekost, Color aksent, Color aksentLys,
-        List<(string Kode, string Navn, decimal Belop)> kodeRader)
+        List<(string Kode, string Navn, decimal Belop)> kodeRader, Dictionary<int, TilbudBeregningHelper.DorPris>? dorPriser = null)
     {
         var visVarenummer = !tilbud.SkjulVarenummerISammendrag;
         var visLevering = linjer.Any(l => l.LevertAv != LevertAv.F);
@@ -460,7 +488,19 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                         .Background(Sand).BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(5).PaddingHorizontal(6)
                         .Column(inner =>
                         {
-                            if (!string.IsNullOrWhiteSpace(l.Navn))
+                            if (dorPriser is not null && l.DorId is int grpDor && dorPriser.TryGetValue(grpDor, out var dp))
+                            {
+                                inner.Item().Row(rad =>
+                                {
+                                    rad.RelativeItem().Text(l.Navn).Bold().FontColor(aksent);
+                                    rad.AutoItem().AlignRight().Text(t =>
+                                    {
+                                        t.Span("Pris dør inkl. montering  ").FontSize(8).FontColor(Ink);
+                                        t.Span(FormatKrHel(dp.Total)).Bold().FontColor(Ink);
+                                    });
+                                });
+                            }
+                            else if (!string.IsNullOrWhiteSpace(l.Navn))
                             {
                                 inner.Item().Text(l.Navn).Bold().FontColor(aksent);
                             }

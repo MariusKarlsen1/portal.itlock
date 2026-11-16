@@ -14,7 +14,7 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITen
         var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
 
         var behov = await db.DorKomponenter
-            .Where(k => k.Dor!.ProsjektId == prosjektId && k.LevertAv == LevertAv.F && k.ComponentId != 0
+            .Where(k => k.Dor!.ProsjektId == prosjektId && k.LevertAv == LevertAv.F && !k.ErOpsjon && k.ComponentId != 0
                 && (valgteByggetrinn == null || (k.Dor!.Plantegning != null && valgteByggetrinn.Contains(k.Dor!.Plantegning!.Byggetrinn))))
             .Include(k => k.Component)
             .ToListAsync();
@@ -38,7 +38,7 @@ public class PlukklistePdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITen
         var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
 
         var behov = await db.DorKomponenter
-            .Where(k => k.Dor!.ProsjektId == prosjektId && k.LevertAv == LevertAv.F && k.ComponentId != 0
+            .Where(k => k.Dor!.ProsjektId == prosjektId && k.LevertAv == LevertAv.F && !k.ErOpsjon && k.ComponentId != 0
                 && (valgteByggetrinn == null || (k.Dor!.Plantegning != null && valgteByggetrinn.Contains(k.Dor!.Plantegning!.Byggetrinn))))
             .Include(k => k.Component).ThenInclude(c => c!.Type)
             .ToListAsync();

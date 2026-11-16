@@ -16,7 +16,7 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo,
         var dorer = await db.Dorer
             .Where(d => d.ProsjektId == prosjektId
                 && (valgteByggetrinn == null || (d.Plantegning != null && valgteByggetrinn.Contains(d.Plantegning.Byggetrinn))))
-            .Include(d => d.Komponenter).ThenInclude(k => k.Component)
+            .Include(d => d.Komponenter.Where(k => !k.ErOpsjon)).ThenInclude(k => k.Component)
             .ToListAsync();
 
         return dorer
@@ -41,7 +41,7 @@ public class DorBeslagslistePdfService(ApplicationDbContext db, PdfLogo pdfLogo,
         var dorer = await db.Dorer
             .Where(d => d.ProsjektId == prosjektId
                 && (valgteByggetrinn == null || (d.Plantegning != null && valgteByggetrinn.Contains(d.Plantegning.Byggetrinn))))
-            .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
+            .Include(d => d.Komponenter.Where(k => !k.ErOpsjon)).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
             .Include(d => d.Funksjoner)
             .OrderBy(d => d.Dornummer)
             .ToListAsync();

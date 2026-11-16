@@ -45,7 +45,7 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
         var montasje = await MontasjedatoerAsync();
 
         var dorBehov = await db.DorKomponenter.AsNoTracking()
-            .Where(k => k.LevertAv == LevertAv.F && !k.Montert && k.Dor!.Status != MontasjeStatus.FerdigMontert && k.ComponentId != 0 && k.Antall > 0)
+            .Where(k => k.LevertAv == LevertAv.F && !k.ErOpsjon && !k.Montert && k.Dor!.Status != MontasjeStatus.FerdigMontert && k.ComponentId != 0 && k.Antall > 0)
             .Where(k => k.Dor!.Prosjekt!.Status == null || AktiveProsjekt.Contains(k.Dor!.Prosjekt!.Status!.Value))
             .GroupBy(k => new { k.Dor!.ProsjektId, k.ComponentId })
             .Select(g => new { g.Key.ProsjektId, g.Key.ComponentId, Antall = g.Sum(k => k.Antall) })
@@ -126,7 +126,7 @@ public class ReservasjonService(ApplicationDbContext db, LagerService lager)
         var ordre = await db.Arbeidsordre.AsNoTracking()
             .Where(a => (a.TilbudId != null || a.EkstraTilbud.Any()) && AapneArbeidsordre.Contains(a.Status))
             .Where(a => arbeidsordreId == null || a.Id == arbeidsordreId)
-            .Where(a => a.ProsjektId == null || !db.DorKomponenter.Any(k => k.Dor!.ProsjektId == a.ProsjektId && k.LevertAv == LevertAv.F && k.ComponentId != 0))
+            .Where(a => a.ProsjektId == null || !db.DorKomponenter.Any(k => k.Dor!.ProsjektId == a.ProsjektId && k.LevertAv == LevertAv.F && !k.ErOpsjon && k.ComponentId != 0))
             .Select(a => new { a.Id, a.TilbudId })
             .ToListAsync();
         if (ordre.Count == 0)

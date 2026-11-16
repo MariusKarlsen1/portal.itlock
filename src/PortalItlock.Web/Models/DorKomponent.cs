@@ -15,9 +15,14 @@ public class DorKomponent
 
     public bool Montert { get; set; }
 
+    // Opsjon: varen står under «Opsjon beslag» på døren. Den er ikke med i
+    // vanlige tilbud, plukk, lager eller montering - bare i opsjonstilbud
+    // (TilbudType.Opsjon). Godtar kunden opsjonen, flyttes den til beslag.
+    public bool ErOpsjon { get; set; }
+
     // Bare beslag vi leverer (F) monteres og hakes av av oss. Ld/Le leveres
     // komplett av dørprodusent/elektro. Ikke lagret - regnes fra LevertAv.
-    public bool MonteresAvOss => LevertAv == LevertAv.F;
+    public bool MonteresAvOss => LevertAv == LevertAv.F && !ErOpsjon;
 
     // Antall i beslagstellingen (montert x av y). Varer som telles i meter
     // (f.eks. kabel) er ett beslag uansett hvor mange meter. Ikke lagret.

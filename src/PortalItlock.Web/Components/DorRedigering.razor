@@ -82,14 +82,14 @@
                 }
 
                 <p class="mobil-dor-gruppetittel">Beslagsliste:</p>
-                @if (Dor.Komponenter.Count == 0)
+                @if (!Dor.Komponenter.Any(k => !k.ErOpsjon))
                 {
                     <p class="list-empty">Ingen beslag lagt til ennå.</p>
                 }
                 else
                 {
                     <div class="mobil-beslag-liste">
-                        @foreach (var dk in Dor.Komponenter)
+                        @foreach (var dk in Dor.Komponenter.Where(k => !k.ErOpsjon))
                         {
                             <div @key="dk.ComponentId" class="mobil-beslag-kort">
                                 @if (!dk.MonteresAvOss)
@@ -581,41 +581,70 @@ else
 
     @if (Seksjon is null or "beslag")
     {
-    <div class="dor-seksjon-panel beslag-panel">
+    @foreach (var opsjon in BeslagPaneler)
+    {
+        var liste = Dor.Komponenter.Where(k => k.ErOpsjon == opsjon).ToList();
+        var valgtHer = liste.Count(k => _valgteBeslagComponentIds.Contains(k.ComponentId));
+    <div class="dor-seksjon-panel beslag-panel @(opsjon ? "beslag-panel-opsjon" : "") @(!opsjon && _draOpsjon is not null ? "bs-slipp-mal" : "") @(!opsjon && _overSlipp ? "bs-slipp-over" : "")"
+         @ondragover="@(() => { if (!opsjon && _draOpsjon is not null) _overSlipp = true; })" @ondragover:preventDefault="@(!opsjon)"
+         @ondragleave="@(() => _overSlipp = false)"
+         @ondrop="@(() => SlippPaBeslag(opsjon))" @ondrop:preventDefault="true">
+        @if (!opsjon && _draOpsjon is not null)
+        {
+            <div class="bs-slipp-hint"><Icon Name="arrow-up" />Slipp her for å flytte «@_draOpsjon.Component?.Navn» til beslag</div>
+        }
         @* B1: samme stil som Arbeidsordre - grått hode med fremdrift, verktøylinje på én linje,
            tabell med varebilde og annenhver grå/hvit rad. *@
         <div class="dor-seksjon-panel-header bs-hode">
             <span class="dor-seksjon-panel-ikon"><Icon Name="tool" /></span>
-            <h2>Beslag</h2>
-            @if (Dor.Komponenter.Count > 0)
+            <h2>@(opsjon ? "Opsjon beslag" : "Beslag")</h2>
+            @if (opsjon)
             {
-                var antMontert = Dor.Komponenter.Count(k => k.MonteresAvOss && k.Montert);
-                var antBeslag = Dor.Komponenter.Count(k => k.MonteresAvOss);
+                <span class="bs-opsjon-merke" title="Varene og montasjetiden her kommer ikke med i vanlige tilbud - bare når du lager «Opsjoner» under Tilbud på prosjektet.">Ikke med i tilbudet</span>
+            }
+            else if (liste.Count > 0)
+            {
+                var antMontert = liste.Count(k => k.MonteresAvOss && k.Montert);
+                var antBeslag = liste.Count(k => k.MonteresAvOss);
                 <span class="bs-teller">@antMontert av @antBeslag montert</span>
                 <span class="bs-bar"><i style="width:@(antBeslag == 0 ? 0 : antMontert * 100 / antBeslag)%"></i></span>
-                <span class="bs-hode-knapper">
-                    <button type="button" class="bs-kn" disabled="@(_valgteBeslagComponentIds.Count == 0)"
-                            title="@(_valgteBeslagComponentIds.Count == 0 ? "Huk av beslag i listen først" : "Kopier de valgte beslagene til andre dører")"
-                            @onclick="@(() => _visKopierPanel = !_visKopierPanel)"><Icon Name="clipboard" />Kopier til andre dører</button>
-                    @if (antMontert < antBeslag)
-                    {
-                        <button type="button" class="bs-kn" @onclick="MerkAlleMontert"><Icon Name="check" />Merk alle montert</button>
-                    }
-                </span>
             }
+            <span class="bs-hode-knapper">
+                @if (liste.Count > 0)
+                {
+                    <button type="button" class="bs-kn" disabled="@(valgtHer == 0)"
+                            title="@(valgtHer == 0 ? "Huk av beslag i listen først" : "Kopier de valgte beslagene til andre dører")"
+                            @onclick="@(() => _visKopierPanel = !_visKopierPanel)"><Icon Name="clipboard" />Kopier til andre dører</button>
+                }
+                @if (opsjon && liste.Count > 0)
+                {
+                    <button type="button" class="bs-kn" title="Kunden har tatt hele opsjonen - flytt alle varene til beslag" @onclick="FlyttAlleTilBeslag"><Icon Name="arrow-up" />Flytt alle til beslag</button>
+                }
+                @if (!opsjon && liste.Any(k => k.MonteresAvOss && !k.Montert))
+                {
+                    <button type="button" class="bs-kn" @onclick="MerkAlleMontert"><Icon Name="check" />Merk alle montert</button>
+                }
+                @if (!opsjon)
+                {
+                    <label class="bs-kn bs-opsjon-bryter @(VisOpsjon ? "bs-kn-aktiv" : "")"
+                           title="@(HarOpsjon ? "Døren har opsjoner - fjern eller flytt dem til beslag for å skjule opsjonsdelen" : "Vis «Opsjon beslag» - varer som prises som opsjon og ikke er med i tilbudet")">
+                        <input type="checkbox" checked="@VisOpsjon" disabled="@HarOpsjon" @onchange="@(e => _visOpsjon = e.Value is true)" />Opsjon
+                    </label>
+                }
+            </span>
         </div>
 
     <div class="component-search">
         <div class="bs-verktoy">
             <label class="beslag-sok-felt">
                 <Icon Name="search" />
-                <input @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged" placeholder="Søk i komponentregisteret – navn, leverandør eller produktkode" />
+                <input value="@(_opsjonModus == opsjon ? _componentSearch : "")" @oninput="@(e => SokEndret(e, opsjon))" placeholder="@(opsjon ? "Søk opp varer til opsjonen – navn, leverandør eller produktkode" : "Søk i komponentregisteret – navn, leverandør eller produktkode")" />
             </label>
-            <button type="button" class="bs-kn @(_visPakkeVelger ? "bs-kn-aktiv" : "")" @onclick="VekslePakkeVelger" aria-expanded="@(_visPakkeVelger ? "true" : "false")"><Icon Name="box" />Legg til pakke<Icon Name="chevron-down" /></button>
-            <button type="button" class="bs-kn @(_visEgendefinert ? "bs-kn-aktiv" : "")" @onclick="@(() => _visEgendefinert = !_visEgendefinert)"><Icon Name="plus" />Egendefinert vare</button>
+            <button type="button" class="bs-kn @(_visPakkeVelger && _opsjonModus == opsjon ? "bs-kn-aktiv" : "")" @onclick="@(() => VekslePakkeVelger(opsjon))" aria-expanded="@(_visPakkeVelger && _opsjonModus == opsjon ? "true" : "false")"><Icon Name="box" />Legg til pakke<Icon Name="chevron-down" /></button>
+            <button type="button" class="bs-kn @(_visEgendefinert && _opsjonModus == opsjon ? "bs-kn-aktiv" : "")" @onclick="@(() => VeksleEgendefinert(opsjon))"><Icon Name="plus" />Egendefinert vare</button>
         </div>
 
-        @if (_searchResults.Count > 0)
+        @if (_opsjonModus == opsjon && _searchResults.Count > 0)
         {
             <ul class="search-results">
                 @foreach (var r in _searchResults)
@@ -629,12 +658,12 @@ else
                 }
             </ul>
         }
-        else if (_componentSearch.Trim().Length >= 2)
+        else if (_opsjonModus == opsjon && _componentSearch.Trim().Length >= 2)
         {
             <p class="search-empty">Ingen treff.</p>
         }
 
-        @if (_visEgendefinert)
+        @if (_visEgendefinert && _opsjonModus == opsjon)
         {
             <div class="egendefinert-rad">
                 <input @bind="_egendefinertNavn" @bind:event="oninput" placeholder="Navn på vare, f.eks. gammel låskasse" />
@@ -648,7 +677,7 @@ else
     @* Pakkevelger: en liste med pakkenavn. Holder man musen over (eller trykker
        på) en pakke, kommer innholdet opp til høyre for akkurat den pakken, og
        «Legg til» legger hele pakken på døren. *@
-    @if (_visPakkeVelger)
+    @if (_visPakkeVelger && _opsjonModus == opsjon)
     {
         <div class="pakke-velger" @onmouseleave="@(() => _visPakkeId = null)">
             <input class="pakke-velger-sok" @bind="_pakkeSok" @bind:event="oninput" placeholder="Søk pakke …" aria-label="Søk pakke" />
@@ -694,7 +723,7 @@ else
         </div>
     }
 
-    @if (Dor.Komponenter.Count > 0)
+    @if (liste.Count > 0)
     {
         <div class="beslag-tabell-kort">
         <table class="linje-table bs-tab">
@@ -711,9 +740,12 @@ else
                 </tr>
             </thead>
             <tbody>
-                @foreach (var dk in Dor.Komponenter)
+                @foreach (var dk in liste)
                 {
-                    <tr @key="dk.ComponentId">
+                    <tr @key="dk.ComponentId" class="@(opsjon ? "bs-dra-rad" : "") @(_draOpsjon == dk ? "bs-dras" : "")"
+                        draggable="@(opsjon ? "true" : "false")"
+                        @ondragstart="@(() => { if (opsjon) _draOpsjon = dk; })" @ondragend="@(() => { _draOpsjon = null; _overSlipp = false; })"
+                        title="@(opsjon ? "Dra varen opp til Beslag når kunden har tatt opsjonen" : null)">
                         <td><input type="checkbox" checked="@_valgteBeslagComponentIds.Contains(dk.ComponentId)" @onchange="@(() => ToggleBeslagValg(dk.ComponentId))" /></td>
                         <td>
                             <div class="vare-navn-celle">
@@ -745,7 +777,11 @@ else
                             </select>
                         </td>
                         <td>
-                            @if (!dk.MonteresAvOss)
+                            @if (dk.ErOpsjon)
+                            {
+                                <button type="button" class="beslag-status bs-opsjon-flytt" title="Kunden har tatt opsjonen - flytt varen til beslag så den monteres og kommer med som vanlig" @onclick="@(() => FlyttTilBeslag(dk))"><Icon Name="arrow-up" />Flytt til beslag</button>
+                            }
+                            else if (!dk.MonteresAvOss)
                             {
                                 <span class="beslag-status beslag-ikke-oss" title="@dk.LevertAv.Forklaring()">@(dk.LevertAv == LevertAv.Ld ? "Dørprodusent" : "Elektro")</span>
                             }
@@ -771,19 +807,19 @@ else
             </tbody>
         </table>
         <div class="bs-fot">
-            @if (_valgteBeslagComponentIds.Count == 0)
+            @if (valgtHer == 0)
             {
-                <span>Huk av beslag for å kopiere dem til andre dører</span>
+                <span>@(opsjon ? "Huk av opsjoner for å kopiere dem til andre dører" : "Huk av beslag for å kopiere dem til andre dører")</span>
             }
             else
             {
-                <span><b>@_valgteBeslagComponentIds.Count valgt</b> · </span>
+                <span><b>@valgtHer valgt</b> · </span>
                 <button type="button" @onclick="@(() => _visKopierPanel = !_visKopierPanel)">Kopier til andre dører →</button>
             }
         </div>
         </div>
 
-        @if (_visKopierPanel)
+        @if (_visKopierPanel && valgtHer > 0)
         {
             <div class="kopier-panel">
                 <p class="section-hint">Velg hvilke dører beslaget skal kopieres til.</p>
@@ -814,9 +850,10 @@ else
     }
     else
     {
-        <p class="list-empty">Ingen beslag lagt til ennå.</p>
+        <p class="list-empty">@(opsjon ? "Ingen opsjoner ennå. Søk opp varer over - de prises bare i «Opsjoner» under Tilbud på prosjektet." : "Ingen beslag lagt til ennå.")</p>
     }
     </div>
+    }
     }
 
     @if (Seksjon is null)
@@ -973,11 +1010,81 @@ else
         ? _pakker
         : _pakker.Where(p => p.Navn.Contains(_pakkeSok.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
 
-    private void VekslePakkeVelger()
+    // Opsjon beslag: samme verktøy som Beslag. _opsjonModus sier hvilken del
+    // søk, pakke og egendefinert vare hører til akkurat nå.
+    private bool _visOpsjon;
+    private bool _opsjonModus;
+    private bool HarOpsjon => Dor.Komponenter.Any(k => k.ErOpsjon);
+    private bool VisOpsjon => _visOpsjon || HarOpsjon;
+    private bool[] BeslagPaneler => VisOpsjon ? [false, true] : [false];
+
+    private async Task SokEndret(ChangeEventArgs e, bool opsjon)
     {
-        _visPakkeVelger = !_visPakkeVelger;
+        _opsjonModus = opsjon;
+        _componentSearch = e.Value?.ToString() ?? "";
+        await OnComponentSearchChanged();
+    }
+
+    private void VekslePakkeVelger(bool opsjon)
+    {
+        _visPakkeVelger = _opsjonModus != opsjon || !_visPakkeVelger;
+        _opsjonModus = opsjon;
         _pakkeSok = "";
         _visPakkeId = null;
+    }
+
+    private void VeksleEgendefinert(bool opsjon)
+    {
+        _visEgendefinert = _opsjonModus != opsjon || !_visEgendefinert;
+        _opsjonModus = opsjon;
+    }
+
+    private static string ListeNavn(bool opsjon) => opsjon ? "Opsjon beslag" : "Beslag";
+
+    // Dra og slipp: en opsjonsrad dras opp på Beslag-delen.
+    private DorKomponent? _draOpsjon;
+    private bool _overSlipp;
+
+    private async Task SlippPaBeslag(bool opsjon)
+    {
+        var dk = _draOpsjon;
+        _draOpsjon = null;
+        _overSlipp = false;
+        if (!opsjon && dk is { ErOpsjon: true })
+        {
+            await FlyttTilBeslag(dk);
+        }
+    }
+
+    private async Task FlyttAlleTilBeslag()
+    {
+        var alle = Dor.Komponenter.Where(k => k.ErOpsjon).ToList();
+        foreach (var dk in alle)
+        {
+            dk.ErOpsjon = false;
+        }
+        LoggHendelse($"Flyttet {alle.Count} opsjonsvarer til beslag");
+        OppdaterStatusFraBeslag();
+        await Db.SaveChangesAsync();
+        foreach (var dk in alle)
+        {
+            await TilbudSync.SyncSylinderAsync(Dor.ProsjektId, dk.ComponentId);
+        }
+        _visOpsjon = false;
+        _savedMessage = $"{alle.Count} {(alle.Count == 1 ? "vare" : "varer")} flyttet fra opsjon til beslag.";
+        await OnSaved.InvokeAsync();
+    }
+
+    // Kunden har tatt opsjonen: varen blir et vanlig beslag på døren.
+    private async Task FlyttTilBeslag(DorKomponent dk)
+    {
+        dk.ErOpsjon = false;
+        LoggHendelse($"Flyttet {dk.Component?.Navn} fra opsjon til beslag");
+        OppdaterStatusFraBeslag();
+        await Db.SaveChangesAsync();
+        await TilbudSync.SyncSylinderAsync(Dor.ProsjektId, dk.ComponentId);
+        _savedMessage = $"«{dk.Component?.Navn}» er flyttet til beslag.";
+        await OnSaved.InvokeAsync();
     }
 
     private async Task LeggTilPakkeFraVelger(int pakkeId)
@@ -1323,7 +1430,7 @@ else
         Db.Components.Add(component);
         await Db.SaveChangesAsync();
 
-        var dk = new DorKomponent { DorId = Dor.Id, ComponentId = component.Id, Component = component, Antall = 1, Enhet = component.Enhet };
+        var dk = new DorKomponent { DorId = Dor.Id, ComponentId = component.Id, Component = component, Antall = 1, Enhet = component.Enhet, ErOpsjon = _opsjonModus };
         Dor.Komponenter.Add(dk);
         Db.DorKomponenter.Add(dk);
         LoggHendelse($"La til egendefinert vare {component.Navn}");
@@ -1350,6 +1457,14 @@ else
     private async Task AddFromSearch(SearchResult r)
     {
         var existing = Dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == r.Id);
+        if (existing is not null && existing.ErOpsjon != _opsjonModus)
+        {
+            // Samme vare kan bare stå én gang på døren.
+            _savedMessage = $"«{existing.Component?.Navn ?? r.Navn}» står allerede under {ListeNavn(existing.ErOpsjon)} på denne døren.";
+            _componentSearch = "";
+            _searchResults = [];
+            return;
+        }
         if (existing is not null)
         {
             existing.Antall += 1;
@@ -1358,10 +1473,10 @@ else
         else
         {
             var component = await Db.Components.FindAsync(r.Id);
-            var dk = new DorKomponent { DorId = Dor.Id, ComponentId = r.Id, Component = component, Antall = 1, Enhet = component?.Enhet };
+            var dk = new DorKomponent { DorId = Dor.Id, ComponentId = r.Id, Component = component, Antall = 1, Enhet = component?.Enhet, ErOpsjon = _opsjonModus };
             Dor.Komponenter.Add(dk);
             Db.DorKomponenter.Add(dk);
-            LoggHendelse($"La til {component?.Navn ?? r.Navn}");
+            LoggHendelse($"La til {component?.Navn ?? r.Navn}{(_opsjonModus ? " som opsjon" : "")}");
         }
 
         OppdaterStatusFraBeslag();
@@ -1389,16 +1504,21 @@ else
             return;
         }
 
+        var iAnnenListe = 0;
         foreach (var pk in pakke.Komponenter)
         {
             var existing = Dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == pk.ComponentId);
-            if (existing is not null)
+            if (existing is not null && existing.ErOpsjon != _opsjonModus)
+            {
+                iAnnenListe++;
+            }
+            else if (existing is not null)
             {
                 existing.Antall += pk.Antall;
             }
             else
             {
-                var dk = new DorKomponent { DorId = Dor.Id, ComponentId = pk.ComponentId, Component = pk.Component, Antall = pk.Antall, Enhet = pk.Component?.Enhet, LevertAv = pk.LevertAv ?? LevertAv.F };
+                var dk = new DorKomponent { DorId = Dor.Id, ComponentId = pk.ComponentId, Component = pk.Component, Antall = pk.Antall, Enhet = pk.Component?.Enhet, LevertAv = pk.LevertAv ?? LevertAv.F, ErOpsjon = _opsjonModus };
                 Dor.Komponenter.Add(dk);
                 Db.DorKomponenter.Add(dk);
             }
@@ -1413,7 +1533,11 @@ else
         }
 
         OppdaterStatusFraBeslag();
-        LoggHendelse($"La til pakke {pakke.Navn}");
+        LoggHendelse($"La til pakke {pakke.Navn}{(_opsjonModus ? " som opsjon" : "")}");
+        if (iAnnenListe > 0)
+        {
+            _savedMessage = $"{iAnnenListe} av varene i pakken står allerede under {ListeNavn(!_opsjonModus)} på døren og ble ikke lagt til på nytt.";
+        }
         await Db.SaveChangesAsync();
         foreach (var pk in pakke.Komponenter)
         {
@@ -1610,7 +1734,8 @@ else
                     Component = dk.Component,
                     Antall = dk.Antall,
                     Enhet = dk.Enhet,
-                    LevertAv = dk.LevertAv
+                    LevertAv = dk.LevertAv,
+                    ErOpsjon = dk.ErOpsjon
                 };
                 kopi.Komponenter.Add(kopiDk);
                 Db.DorKomponenter.Add(kopiDk);
@@ -1675,7 +1800,8 @@ else
                         Component = kilde.Component,
                         Antall = kilde.Antall,
                         Enhet = kilde.Enhet,
-                        LevertAv = kilde.LevertAv
+                        LevertAv = kilde.LevertAv,
+                        ErOpsjon = kilde.ErOpsjon
                     };
                     malDor.Komponenter.Add(ny);
                     Db.DorKomponenter.Add(ny);

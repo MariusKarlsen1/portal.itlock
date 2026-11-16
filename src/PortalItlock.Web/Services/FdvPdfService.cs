@@ -15,7 +15,7 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantCont
         var valgteByggetrinn = ByggetrinnHelper.ParseFilter(byggetrinn);
 
         var komponentIder = await db.DorKomponenter
-            .Where(dk => dk.Dor!.ProsjektId == prosjektId
+            .Where(dk => dk.Dor!.ProsjektId == prosjektId && !dk.ErOpsjon
                 && (valgteByggetrinn == null || (dk.Dor!.Plantegning != null && valgteByggetrinn.Contains(dk.Dor!.Plantegning!.Byggetrinn))))
             .Select(dk => dk.ComponentId)
             .Distinct()
@@ -51,7 +51,7 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantCont
         // PDF-er lagt ved en vare som mangler FDV i vareregisteret. De tas med
         // bare når varen står på en dør i utvalget (byggetrinn-filteret).
         var vareIder = await db.DorKomponenter
-            .Where(dk => dk.Dor!.ProsjektId == prosjektId
+            .Where(dk => dk.Dor!.ProsjektId == prosjektId && !dk.ErOpsjon
                 && (valgteByggetrinn == null || (dk.Dor!.Plantegning != null && valgteByggetrinn.Contains(dk.Dor!.Plantegning!.Byggetrinn))))
             .Select(dk => dk.ComponentId)
             .Distinct()

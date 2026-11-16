@@ -24,6 +24,9 @@ public class TilbudLinje
     public decimal RabattProsent { get; set; }
     public int Rekkefolge { get; set; }
     public bool ErGruppering { get; set; }
+
+    // Opsjonstilbud per dør: døren linjen (eller dør-overskriften) hører til.
+    public int? DorId { get; set; }
     public string? Beskrivelse { get; set; }
 
     public bool Plukket { get; set; }

@@ -34,6 +34,12 @@ public class Tilbud
     public bool VisPrisPerDor { get; set; }
     public string? ByggetrinnFilter { get; set; }
 
+    // Opsjonstilbud (TilbudType.Opsjon): hvilke dører som er med (kommaliste
+    // med dør-id-er, null = alle dører med opsjoner), og om varelinjene
+    // grupperes per dør med pris per dør inkl. montering, eller står samlet.
+    public string? OpsjonDorer { get; set; }
+    public bool OpsjonPerDor { get; set; } = true;
+
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     // Hvem som opprettet den. Settes automatisk ved lagring (ApplicationDbContext)

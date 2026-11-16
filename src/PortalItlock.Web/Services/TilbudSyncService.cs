@@ -19,7 +19,7 @@ public class TilbudSyncService(ApplicationDbContext db)
             return;
         }
 
-        var tilbudListe = await db.Tilbud.Include(t => t.Linjer).Where(t => t.ProsjektId == prosjektId).ToListAsync();
+        var tilbudListe = await db.Tilbud.Include(t => t.Linjer).Where(t => t.ProsjektId == prosjektId && t.Type != TilbudType.Opsjon).ToListAsync();
         if (tilbudListe.Count == 0)
         {
             return;
@@ -35,7 +35,7 @@ public class TilbudSyncService(ApplicationDbContext db)
         }
 
         // Bare det vi leverer (F) kommer på tilbudet; Ld/Le står bare på døren.
-        var antall = dorKomponenter.Where(dk => dk.LevertAv == LevertAv.F).Sum(dk => dk.Antall);
+        var antall = dorKomponenter.Where(dk => dk.LevertAv == LevertAv.F && !dk.ErOpsjon).Sum(dk => dk.Antall);
         var levertAv = LevertAv.F;
         if (antall == 0)
         {
