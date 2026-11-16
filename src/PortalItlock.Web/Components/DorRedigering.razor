@@ -595,6 +595,15 @@ else
         }
         @* B1: samme stil som Arbeidsordre - grått hode med fremdrift, verktøylinje på én linje,
            tabell med varebilde og annenhver grå/hvit rad. *@
+        @if (!opsjon && _bekreftOppdaterAlle && DorensPakke is { } allePakke)
+        {
+            var antallAlle = AndreDorerMedPakke(allePakke.Id) + 1;
+            <div class="bs-bekreft-alle">
+                <span>Oppdatere «<b>@allePakke.Navn</b>» på alle @antallAlle dører i prosjektet som har pakken? Varene og dørfunksjonene settes som i pakken nå. Det du har lagt til selv på dørene blir stående.</span>
+                <button type="button" class="add-button" @onclick="OppdaterPakkePaAlleDorer"><Icon Name="refresh" />Oppdater @antallAlle dører</button>
+                <button type="button" class="cancel-button" @onclick="@(() => _bekreftOppdaterAlle = false)">Avbryt</button>
+            </div>
+        }
         <div class="dor-seksjon-panel-header bs-hode">
             <span class="dor-seksjon-panel-ikon"><Icon Name="tool" /></span>
             <h2>@(opsjon ? "Opsjon beslag" : "Beslag")</h2>
@@ -627,6 +636,11 @@ else
                 @if (!opsjon && DorensPakke is { } oppdPakke)
                 {
                     <button type="button" class="bs-kn" title="Hent pakken «@oppdPakke.Navn» slik den er nå - varer og dørfunksjoner. Ingenting blir dobbelt." @onclick="OppdaterPakke"><Icon Name="refresh" />Oppdater pakke</button>
+                    var andreMedPakke = AndreDorerMedPakke(oppdPakke.Id);
+                    @if (andreMedPakke > 0)
+                    {
+                        <button type="button" class="bs-kn @(_bekreftOppdaterAlle ? "bs-kn-aktiv" : "")" title="Oppdater pakken på alle dørene i prosjektet som har «@oppdPakke.Navn»" @onclick="@(() => _bekreftOppdaterAlle = !_bekreftOppdaterAlle)"><Icon Name="refresh" />Oppdater alle dører (@(andreMedPakke + 1))</button>
+                    }
                 }
                 @if (!opsjon && liste.Any(k => k.MonteresAvOss && !k.Montert))
                 {
@@ -1031,20 +1045,70 @@ else
 
     // Pakken på døren. Dører som fikk pakke før dette ble lagret, kjennes igjen
     // på at alle varene i pakken står som beslag på døren (største pakke vinner).
-    private PakkeOption? DorensPakke
+    private PakkeOption? DorensPakke => PakkeFor(Dor);
+
+    private PakkeOption? PakkeFor(Dor dor)
     {
-        get
+        if (dor.PakkeId is int id)
         {
-            if (Dor.PakkeId is int id)
-            {
-                return _pakker.FirstOrDefault(p => p.Id == id);
-            }
-            var paDoren = Dor.Komponenter.Where(k => !k.ErOpsjon).Select(k => k.ComponentId).ToHashSet();
-            return _pakker
-                .Where(p => p.KomponentIder.Count > 0 && p.KomponentIder.IsSubsetOf(paDoren))
-                .OrderByDescending(p => p.KomponentIder.Count)
-                .FirstOrDefault();
+            return _pakker.FirstOrDefault(p => p.Id == id);
         }
+        var paDoren = dor.Komponenter.Where(k => !k.ErOpsjon).Select(k => k.ComponentId).ToHashSet();
+        return _pakker
+            .Where(p => p.KomponentIder.Count > 0 && p.KomponentIder.IsSubsetOf(paDoren))
+            .OrderByDescending(p => p.KomponentIder.Count)
+            .FirstOrDefault();
+    }
+
+    // Andre dører i prosjektet med samme pakke (ut fra listen siden har lastet).
+    private int AndreDorerMedPakke(int pakkeId) =>
+        AlleDorer.Count(d => d.Id != Dor.Id && PakkeFor(d)?.Id == pakkeId);
+
+    private bool _bekreftOppdaterAlle;
+
+    // Oppdaterer pakken på alle dørene i prosjektet som har den (også denne).
+    private async Task OppdaterPakkePaAlleDorer()
+    {
+        _bekreftOppdaterAlle = false;
+        if (DorensPakke is not { } valgt)
+        {
+            return;
+        }
+
+        var pakke = await Db.Packages
+            .Include(p => p.Komponenter).ThenInclude(pc => pc.Component)
+            .Include(p => p.DorFunksjoner)
+            .FirstOrDefaultAsync(p => p.Id == valgt.Id);
+        if (pakke is null)
+        {
+            return;
+        }
+
+        var dorer = await Db.Dorer
+            .Where(d => d.ProsjektId == Dor.ProsjektId)
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component)
+            .Include(d => d.Funksjoner)
+            .ToListAsync();
+        var aktuelle = dorer.Where(d => d.Id == Dor.Id || PakkeFor(d)?.Id == pakke.Id).ToList();
+
+        var fjernet = 0;
+        var berort = new HashSet<int>();
+        foreach (var d in aktuelle)
+        {
+            var r = BrukPakkePaDor(d.Id == Dor.Id ? Dor : d, pakke);
+            fjernet += r.Fjernet;
+            berort.UnionWith(r.Berort);
+            LoggHendelse($"Oppdaterte pakke {pakke.Navn} (alle dører med pakken)", d);
+        }
+
+        await Db.SaveChangesAsync();
+        foreach (var componentId in berort)
+        {
+            await TilbudSync.SyncSylinderAsync(Dor.ProsjektId, componentId);
+        }
+        _savedMessage = $"Pakken «{pakke.Navn}» er oppdatert på {aktuelle.Count} {(aktuelle.Count == 1 ? "dør" : "dører")}."
+            + (fjernet > 0 ? $" {fjernet} {(fjernet == 1 ? "vare" : "varer")} som ikke lenger er i pakken er fjernet." : "");
+        await OnSaved.InvokeAsync();
     }
 
     private async Task OppdaterPakke()
@@ -1504,11 +1568,11 @@ else
         await OnSaved.InvokeAsync();
     }
 
-    private void LoggHendelse(string beskrivelse)
+    private void LoggHendelse(string beskrivelse, Dor? dor = null)
     {
         Db.DorHendelser.Add(new DorHendelse
         {
-            DorId = Dor.Id,
+            DorId = (dor ?? Dor).Id,
             Beskrivelse = beskrivelse,
             UtfortAvBrukerId = _naverendeBrukerId
         });
@@ -1616,19 +1680,23 @@ else
         await OnSaved.InvokeAsync();
     }
 
-    private async Task BrukPakke(Package pakke)
+    private sealed record PakkeResultat(int Fjernet, int IOpsjon, PakkeOption? Gammel, HashSet<int> Berort);
+
+    // Legger pakken på døren: det som kom fra forrige pakke og ikke er i denne
+    // fjernes, antall settes lik pakken, montert beholdes. Lagrer ikke.
+    private PakkeResultat BrukPakkePaDor(Dor dor, Package pakke)
     {
-        var gammel = DorensPakke;
-        var gamleKomp = Dor.PakkeId is not null ? IdListe(Dor.PakkeKomponentIder) : gammel?.KomponentIder ?? [];
-        var gamleFunk = Dor.PakkeId is not null ? IdListe(Dor.PakkeFunksjonIder) : gammel?.FunksjonIder ?? [];
+        var gammel = PakkeFor(dor);
+        var gamleKomp = dor.PakkeId is not null ? IdListe(dor.PakkeKomponentIder) : gammel?.KomponentIder ?? [];
+        var gamleFunk = dor.PakkeId is not null ? IdListe(dor.PakkeFunksjonIder) : gammel?.FunksjonIder ?? [];
         var nyeKomp = pakke.Komponenter.Select(pk => pk.ComponentId).ToHashSet();
         var nyeFunk = pakke.DorFunksjoner.Select(f => f.Id).ToHashSet();
-        var berort = gamleKomp.Union(nyeKomp).ToList();
+        var berort = gamleKomp.Union(nyeKomp).ToHashSet();
 
         var fjernet = 0;
-        foreach (var dk in Dor.Komponenter.Where(k => !k.ErOpsjon && gamleKomp.Contains(k.ComponentId) && !nyeKomp.Contains(k.ComponentId)).ToList())
+        foreach (var dk in dor.Komponenter.Where(k => !k.ErOpsjon && gamleKomp.Contains(k.ComponentId) && !nyeKomp.Contains(k.ComponentId)).ToList())
         {
-            Dor.Komponenter.Remove(dk);
+            dor.Komponenter.Remove(dk);
             Db.DorKomponenter.Remove(dk);
             fjernet++;
         }
@@ -1636,7 +1704,7 @@ else
         var iOpsjon = 0;
         foreach (var pk in pakke.Komponenter)
         {
-            var existing = Dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == pk.ComponentId);
+            var existing = dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == pk.ComponentId);
             if (existing is { ErOpsjon: true })
             {
                 iOpsjon++;
@@ -1658,38 +1726,44 @@ else
             }
             else
             {
-                var dk = new DorKomponent { DorId = Dor.Id, ComponentId = pk.ComponentId, Component = pk.Component, Antall = pk.Antall, Enhet = pk.Component?.Enhet, LevertAv = pk.LevertAv ?? LevertAv.F };
-                Dor.Komponenter.Add(dk);
+                var dk = new DorKomponent { DorId = dor.Id, ComponentId = pk.ComponentId, Component = pk.Component, Antall = pk.Antall, Enhet = pk.Component?.Enhet, LevertAv = pk.LevertAv ?? LevertAv.F };
+                dor.Komponenter.Add(dk);
                 Db.DorKomponenter.Add(dk);
             }
         }
 
-        foreach (var f in Dor.Funksjoner.Where(f => gamleFunk.Contains(f.Id) && !nyeFunk.Contains(f.Id)).ToList())
+        foreach (var f in dor.Funksjoner.Where(f => gamleFunk.Contains(f.Id) && !nyeFunk.Contains(f.Id)).ToList())
         {
-            Dor.Funksjoner.Remove(f);
+            dor.Funksjoner.Remove(f);
         }
         foreach (var funksjon in pakke.DorFunksjoner)
         {
-            if (Dor.Funksjoner.All(f => f.Id != funksjon.Id))
+            if (dor.Funksjoner.All(f => f.Id != funksjon.Id))
             {
-                Dor.Funksjoner.Add(funksjon);
+                dor.Funksjoner.Add(funksjon);
             }
         }
 
-        Dor.PakkeId = pakke.Id;
-        Dor.PakkeKomponentIder = string.Join(",", nyeKomp.Order());
-        Dor.PakkeFunksjonIder = string.Join(",", nyeFunk.Order());
+        dor.PakkeId = pakke.Id;
+        dor.PakkeKomponentIder = string.Join(",", nyeKomp.Order());
+        dor.PakkeFunksjonIder = string.Join(",", nyeFunk.Order());
+        OppdaterStatusFraBeslag(dor);
+        return new PakkeResultat(fjernet, iOpsjon, gammel, berort);
+    }
 
+    private async Task BrukPakke(Package pakke)
+    {
+        var r = BrukPakkePaDor(Dor, pakke);
+        var gammel = r.Gammel;
         var bytte = gammel is not null && gammel.Id != pakke.Id;
         var samme = gammel?.Id == pakke.Id;
         LoggHendelse(bytte ? $"Byttet pakke fra {gammel!.Navn} til {pakke.Navn}" : samme ? $"Oppdaterte pakke {pakke.Navn}" : $"La til pakke {pakke.Navn}");
         _savedMessage = (bytte ? $"Pakken er byttet fra «{gammel!.Navn}» til «{pakke.Navn}»." : samme ? $"Pakken «{pakke.Navn}» er oppdatert." : $"Pakken «{pakke.Navn}» er lagt til.")
-            + (fjernet > 0 ? $" {fjernet} {(fjernet == 1 ? "vare" : "varer")} fra den gamle pakken er fjernet." : "")
-            + (iOpsjon > 0 ? $" {iOpsjon} av varene står under Opsjon beslag og ble ikke lagt til på nytt." : "");
+            + (r.Fjernet > 0 ? $" {r.Fjernet} {(r.Fjernet == 1 ? "vare" : "varer")} fra den gamle pakken er fjernet." : "")
+            + (r.IOpsjon > 0 ? $" {r.IOpsjon} av varene står under Opsjon beslag og ble ikke lagt til på nytt." : "");
 
-        OppdaterStatusFraBeslag();
         await Db.SaveChangesAsync();
-        foreach (var componentId in berort)
+        foreach (var componentId in r.Berort)
         {
             await TilbudSync.SyncSylinderAsync(Dor.ProsjektId, componentId);
         }
@@ -1769,25 +1843,32 @@ else
         await Task.CompletedTask;
     }
 
-    private void OppdaterStatusFraBeslag()
+    private void OppdaterStatusFraBeslag(Dor? d = null)
     {
-        var antallTotalt = Dor.Komponenter.Where(k => k.MonteresAvOss).Sum(k => k.BeslagAntall);
+        var dor = d ?? Dor;
+        var antallTotalt = dor.Komponenter.Where(k => k.MonteresAvOss).Sum(k => k.BeslagAntall);
         if (antallTotalt == 0)
         {
             return;
         }
 
-        var antallMontert = Dor.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.BeslagAntall);
+        var antallMontert = dor.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.BeslagAntall);
         var status = antallMontert == 0
             ? MontasjeStatus.IkkeStartet
             : antallMontert < antallTotalt
                 ? MontasjeStatus.Montert
                 : MontasjeStatus.FerdigMontert;
 
-        Dor.Status = status;
-        Dor.MontertDato = status == MontasjeStatus.FerdigMontert ? DateTime.Now : null;
-        Dor.MontertAvBrukerId = status == MontasjeStatus.FerdigMontert ? _naverendeBrukerId : null;
-        Dor.MontertAvBruker = status == MontasjeStatus.FerdigMontert ? _naverendeBruker : null;
+        // Uendret status: behold montert-dato og -person.
+        if (dor.Status == status)
+        {
+            return;
+        }
+
+        dor.Status = status;
+        dor.MontertDato = status == MontasjeStatus.FerdigMontert ? DateTime.Now : null;
+        dor.MontertAvBrukerId = status == MontasjeStatus.FerdigMontert ? _naverendeBrukerId : null;
+        dor.MontertAvBruker = status == MontasjeStatus.FerdigMontert ? _naverendeBruker : null;
     }
 
     private async Task RemoveKomponent(DorKomponent dk)
