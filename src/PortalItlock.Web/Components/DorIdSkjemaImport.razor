@@ -1,0 +1,285 @@
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+@* Importer dørtypeskjema (PDF fra arkitekt, f.eks. «A61-001 Skjema innerdører») og
+   opprett Dør ID for hver dørtype. Leses direkte fra PDF-teksten - ingen AI. *@
+<div class="dsi-skygge" @onclick="Lukk"></div>
+<div class="dsi" role="dialog" aria-modal="true" aria-labelledby="dsi-tittel">
+    <div class="dsi-hode">
+        <div>
+            <h2 id="dsi-tittel">Importer dørskjema</h2>
+            <small>Dørtypeskjema fra arkitekt (PDF). Hver dørtype blir en Dør ID med mål, brannkrav, funksjon og anmerkning.</small>
+        </div>
+        <button type="button" class="dsi-lukk" @onclick="Lukk" aria-label="Lukk"><Icon Name="x" /></button>
+    </div>
+
+    @if (_typer is null)
+    {
+        <div class="dsi-kropp">
+            <label class="dsi-slipp @(_leser ? "leser" : "")">
+                <InputFile OnChange="LesFiler" accept=".pdf,application/pdf" multiple disabled="@_leser" />
+                <Icon Name="upload" />
+                @if (_leser)
+                {
+                    <b>Leser @_filnavn …</b>
+                }
+                else
+                {
+                    <b>Velg dørskjema (PDF)</b>
+                    <span>Du kan velge flere, f.eks. både innerdører og ytterdører.</span>
+                }
+            </label>
+            @if (_feil is not null)
+            {
+                <p class="dsi-feil"><Icon Name="alert-triangle" />@_feil</p>
+            }
+            <p class="dsi-hint">Skjemaet må ha tabellen med radene ID, Slagretning, Antall, Størrelse (B= / H=), Brannkrav, Funksjon og Anmerkning – slik ArchiCAD lager dørskjema.</p>
+        </div>
+    }
+    else
+    {
+        var valgte = _typer.Where(t => _valgt.Contains(t.Kode)).ToList();
+        var nye = valgte.Count(t => !Finnes(t.Kode));
+        var oppdateres = _oppdaterEksisterende ? valgte.Count(t => Finnes(t.Kode)) : 0;
+        <div class="dsi-oppsum">
+            <span><b>@_typer.Count dørtyper</b> · @_typer.Sum(t => t.Antall) dører i skjemaet</span>
+            <span class="dsi-svak">H @_typer.Sum(t => t.AntallH) · V @_typer.Sum(t => t.AntallV)@(_typer.Sum(t => t.AntallUten) > 0 ? $" · skyve/uten slag {_typer.Sum(t => t.AntallUten)}" : "")</span>
+            <span class="dsi-svak">Fra: @string.Join(", ", _filer)</span>
+        </div>
+        <div class="dsi-kropp dsi-tabkropp">
+            <table class="dsi-tab">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" checked="@(_valgt.Count == _typer.Count)" @onchange="@(e => VelgAlle(e.Value is true))" /></th>
+                        <th>Dør ID</th><th>Type</th><th>B × H</th><th>Antall</th><th>Brann</th><th>Funksjon</th><th>Anmerkning</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in _typer)
+                    {
+                        var type = t;
+                        var finnes = Finnes(t.Kode);
+                        <tr class="@(_valgt.Contains(t.Kode) ? "" : "av")">
+                            <td><input type="checkbox" checked="@_valgt.Contains(t.Kode)" @onchange="@(() => { if (!_valgt.Remove(type.Kode)) _valgt.Add(type.Kode); })" /></td>
+                            <td class="dsi-kode">@t.Kode</td>
+                            <td>@(DorTypeSkjemaLeser.Konstruksjon(t.Kode) ?? "–")@if (t.ToFloyet) {<small> · 2-fløyet</small>}@if (!string.IsNullOrWhiteSpace(t.Apningstype) && t.Apningstype != "Sidehengslet") {<small> · @t.Apningstype</small>}</td>
+                            <td class="dsi-tall">@(t.Bredde?.ToString() ?? "–") × @(t.Hoyde?.ToString() ?? "–")</td>
+                            <td class="dsi-tall"><b>@t.Antall</b><small>@SlagTekst(t)</small></td>
+                            <td>@if (string.IsNullOrWhiteSpace(t.Brann)) {<span class="dsi-svak">–</span>} else {<span class="dsi-brann">@t.Brann</span>}</td>
+                            <td class="dsi-fun">@(t.Funksjon ?? "–")</td>
+                            <td class="dsi-anm" title="@string.Join("\n", t.Anmerkninger)">@(t.Anmerkninger.FirstOrDefault() ?? "–")@if (t.Anmerkninger.Count > 1) {<small> +@(t.Anmerkninger.Count - 1)</small>}</td>
+                            <td>@if (finnes) {<span class="dsi-pill finnes">@(_oppdaterEksisterende ? "Oppdateres" : "Finnes")</span>} else {<span class="dsi-pill ny">Ny</span>}</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="dsi-bunn">
+            @if (_typer.Any(t => Finnes(t.Kode)))
+            {
+                <label class="dsi-sjekk"><input type="checkbox" @bind="_oppdaterEksisterende" /> Oppdater Dør ID som finnes fra før med verdiene fra skjemaet</label>
+            }
+            <span class="dsi-mellom"></span>
+            <button type="button" class="dsi-kn" @onclick="@(() => { _typer = null; _feil = null; })">Velg andre filer</button>
+            <button type="button" class="dsi-kn p" disabled="@(nye + oppdateres == 0 || _lagrer)" @onclick="Importer">
+                <Icon Name="check" />@KnappTekst(nye, oppdateres)
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+    [Parameter] public EventCallback OnLukk { get; set; }
+    [Parameter] public EventCallback<string> OnFerdig { get; set; }
+
+    private List<DorTypeSkjemaLeser.DorType>? _typer;
+    private readonly HashSet<string> _valgt = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> _filer = [];
+    private readonly Dictionary<string, SortedSet<string>> _kilder = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _eksisterende = new(StringComparer.OrdinalIgnoreCase);
+    private bool _leser, _lagrer, _oppdaterEksisterende = true;
+    private string? _feil, _filnavn;
+
+    private const long MaksStorrelse = 30 * 1024 * 1024;
+    private const string Markor = "— Fra dørskjema —";
+
+    private bool Finnes(string kode) => _eksisterende.Contains(kode);
+
+    private static string SlagTekst(DorTypeSkjemaLeser.DorType t)
+    {
+        var deler = new List<string>();
+        if (t.AntallH > 0) deler.Add($"H {t.AntallH}");
+        if (t.AntallV > 0) deler.Add($"V {t.AntallV}");
+        if (t.AntallUten > 0) deler.Add($"uten slag {t.AntallUten}");
+        return deler.Count == 0 ? "" : " (" + string.Join(", ", deler) + ")";
+    }
+
+    private static string KnappTekst(int nye, int oppdateres)
+    {
+        if (nye > 0 && oppdateres > 0) return $"Opprett {nye} og oppdater {oppdateres} Dør ID";
+        if (oppdateres > 0) return $"Oppdater {oppdateres} Dør ID";
+        return $"Opprett {nye} Dør ID";
+    }
+
+    private void VelgAlle(bool alle)
+    {
+        _valgt.Clear();
+        if (alle && _typer is not null)
+        {
+            foreach (var t in _typer) _valgt.Add(t.Kode);
+        }
+    }
+
+    private Task Lukk() => OnLukk.InvokeAsync();
+
+    private async Task LesFiler(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        _leser = true;
+        var kolonner = new List<DorTypeSkjemaLeser.Kolonne>();
+        _kilder.Clear();
+        var filer = new List<string>();
+        try
+        {
+            foreach (var fil in e.GetMultipleFiles(10))
+            {
+                _filnavn = fil.Name;
+                StateHasChanged();
+                if (fil.Size > MaksStorrelse)
+                {
+                    _feil = $"{fil.Name} er for stor (maks 30 MB).";
+                    continue;
+                }
+                using var ms = new MemoryStream();
+                await fil.OpenReadStream(MaksStorrelse).CopyToAsync(ms);
+                var data = ms.ToArray();
+                var funnet = await Task.Run(() => DorTypeSkjemaLeser.LesKolonner(PdfTekst.LesOrd(data)));
+                if (funnet.Count == 0)
+                {
+                    _feil = $"Fant ingen dørtypetabell i {fil.Name}. Er det et dørskjema med radene ID, Slagretning og Antall?";
+                    continue;
+                }
+                kolonner.AddRange(funnet);
+                var navn = Path.GetFileNameWithoutExtension(fil.Name);
+                filer.Add(navn);
+                foreach (var k in funnet)
+                {
+                    if (!_kilder.TryGetValue(k.Kode, out var sett))
+                    {
+                        _kilder[k.Kode] = sett = [];
+                    }
+                    sett.Add(navn);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _feil = $"Klarte ikke å lese PDF-en: {ex.Message}";
+        }
+        finally
+        {
+            _leser = false;
+        }
+
+        if (kolonner.Count == 0)
+        {
+            return;
+        }
+        _typer = DorTypeSkjemaLeser.SlaSammen(kolonner);
+        _filer = filer;
+        _eksisterende = (await Db.DorIdMaler.AsNoTracking().Where(m => m.ProsjektId == ProsjektId).Select(m => m.Kode).ToListAsync())
+            .Select(k => k.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _valgt.Clear();
+        foreach (var t in _typer) _valgt.Add(t.Kode);
+    }
+
+    private string Merknadsblokk(DorTypeSkjemaLeser.DorType t)
+    {
+        var l = new List<string> { Markor };
+        if (!string.IsNullOrWhiteSpace(t.Funksjon)) l.Add($"Funksjon: {t.Funksjon}");
+        var slag = SlagTekst(t).Trim(' ', '(', ')');
+        l.Add($"Antall i skjema: {t.Antall}" + (slag.Length > 0 ? $" ({slag})" : ""));
+        if (!string.IsNullOrWhiteSpace(t.Apningstype) && t.Apningstype != "Sidehengslet") l.Add($"Åpningstype: {t.Apningstype}");
+        if (!string.IsNullOrWhiteSpace(t.Glass) || t.Glassareal is > 0) l.Add($"Glass: {t.Glass ?? "ja"}{(t.Glassareal is > 0 ? $" ({t.Glassareal:0.000} m²)" : "")}");
+        if (!string.IsNullOrWhiteSpace(t.UVerdi)) l.Add($"U-verdi: {t.UVerdi}");
+        if (!string.IsNullOrWhiteSpace(t.Dorblad)) l.Add($"Dørblad: {t.Dorblad}");
+        foreach (var a in t.Anmerkninger) l.Add($"• {a}");
+        l.Add($"Kilde: {string.Join(", ", _kilder.GetValueOrDefault(t.Kode) ?? [.. _filer])}");
+        return string.Join("\n", l);
+    }
+
+    private static string? SettInnBlokk(string? merknad, string blokk)
+    {
+        if (string.IsNullOrWhiteSpace(merknad))
+        {
+            return blokk;
+        }
+        var i = merknad.IndexOf(Markor, StringComparison.Ordinal);
+        var egen = i >= 0 ? merknad[..i].TrimEnd() : merknad.TrimEnd();
+        return egen.Length == 0 ? blokk : egen + "\n\n" + blokk;
+    }
+
+    private async Task Importer()
+    {
+        if (_typer is null || _lagrer)
+        {
+            return;
+        }
+        _lagrer = true;
+        try
+        {
+            var maler = await Db.DorIdMaler.Where(m => m.ProsjektId == ProsjektId).ToListAsync();
+            int opprettet = 0, oppdatert = 0;
+            foreach (var t in _typer.Where(t => _valgt.Contains(t.Kode)))
+            {
+                var mal = maler.FirstOrDefault(m => string.Equals(m.Kode.Trim(), t.Kode, StringComparison.OrdinalIgnoreCase));
+                if (mal is null)
+                {
+                    mal = new DorIdMal { ProsjektId = ProsjektId, Kode = t.Kode };
+                    Db.DorIdMaler.Add(mal);
+                    maler.Add(mal);
+                    opprettet++;
+                }
+                else if (_oppdaterEksisterende)
+                {
+                    oppdatert++;
+                }
+                else
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(t.Brann)) mal.Brann = t.Brann;
+                if (!string.IsNullOrWhiteSpace(t.Lyd)) mal.Lyd = t.Lyd;
+                if (t.Bredde is not null) mal.Bredde = t.Bredde;
+                if (t.Hoyde is not null) mal.Hoyde = t.Hoyde;
+                mal.ToFloyet = t.ToFloyet;
+                if (!string.IsNullOrWhiteSpace(t.Terskel)) mal.Terskel = t.Terskel;
+                if (!string.IsNullOrWhiteSpace(t.Glass) || t.Glassareal is > 0) mal.GlassIDor = true;
+                if (t.FriBredde860) mal.FriBredde086 = true;
+                if (string.IsNullOrWhiteSpace(mal.Dorkonstruksjon)) mal.Dorkonstruksjon = DorTypeSkjemaLeser.Konstruksjon(t.Kode);
+                mal.Merknad = SettInnBlokk(mal.Merknad, Merknadsblokk(t));
+            }
+            await Db.SaveChangesAsync();
+            var melding = $"Oppdaterte {oppdatert} Dør ID fra dørskjemaet.";
+            if (opprettet != 0 && oppdatert != 0)
+            {
+                melding = $"Opprettet {opprettet} og oppdaterte {oppdatert} Dør ID fra dørskjemaet.";
+            }
+            else if (opprettet != 0)
+            {
+                melding = $"Opprettet {opprettet} Dør ID fra dørskjemaet.";
+            }
+            await OnFerdig.InvokeAsync(melding);
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+}
