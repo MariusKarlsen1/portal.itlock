@@ -258,11 +258,14 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     }
 
     // Nye prosjekter og tilbud får navnet til den innloggede brukeren som
-    // «Opprettet av». Skjulte eier-/supportbrukere skrives ikke inn.
+    // «Opprettet av», og arbeidsordre som markeres fakturert får «Fakturert av».
+    // Skjulte eier-/supportbrukere skrives ikke inn.
     private void SettOpprettetAv()
     {
         var nye = ChangeTracker.Entries()
-            .Where(e => e.State == EntityState.Added && e.Entity is Prosjekt or PortalItlock.Web.Models.Tilbud)
+            .Where(e => (e.State == EntityState.Added && e.Entity is Prosjekt or PortalItlock.Web.Models.Tilbud)
+                || (e.Entity is PortalItlock.Web.Models.Arbeidsordre { Status: ArbeidsordreStatus.Fakturert, FakturertAvBrukerId: null }
+                    && (e.State == EntityState.Added || (e.State == EntityState.Modified && e.Property("Status").IsModified))))
             .ToList();
         if (nye.Count == 0 || InnloggetBrukerId is not { } brukerId)
         {
@@ -287,6 +290,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 case PortalItlock.Web.Models.Tilbud t when t.OpprettetAvBrukerId is null:
                     t.OpprettetAvBrukerId = bruker.Id;
                     t.OpprettetAvNavn = bruker.Navn;
+                    break;
+                case PortalItlock.Web.Models.Arbeidsordre a when a.FakturertAvBrukerId is null:
+                    a.FakturertAvBrukerId = bruker.Id;
+                    a.FakturertAvNavn = bruker.Navn;
                     break;
             }
         }

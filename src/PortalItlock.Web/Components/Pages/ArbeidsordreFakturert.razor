@@ -66,6 +66,24 @@
             </div>
         }
 
+        @if (PerPerson.Count > 0)
+        {
+            <div class="fm-person" role="group" aria-label="Fakturert per person">
+                <span class="fm-person-tittel">Fakturert av</span>
+                @foreach (var p in PerPerson)
+                {
+                    var navn = p.Navn;
+                    var valgt = _fakturertAvFilter == navn;
+                    <button type="button" class="fm-person-kort @(valgt ? "paa" : "")" aria-pressed="@(valgt ? "true" : "false")"
+                            @onclick="@(() => { _fakturertAvFilter = valgt ? "" : navn; _side = 1; })">
+                        <span class="fm-avatar">@MontorInitialer(navn)</span>
+                        <span class="fm-person-tekst"><b>@navn</b><small>@p.Antall @(p.Antall == 1 ? "ordre" : "ordrer")</small></span>
+                        <b class="fm-person-sum">@FormatKr(p.Sum)</b>
+                    </button>
+                }
+            </div>
+        }
+
         <div class="fm-verktoy">
             <label class="fm-sok">
                 <Icon Name="search" />
@@ -105,6 +123,13 @@
                         <option value="@m">@m</option>
                     }
                 </select>
+                <select class="fm-velg" value="@_fakturertAvFilter" @onchange="@(e => { _fakturertAvFilter = (string)e.Value!; _side = 1; })" aria-label="Fakturert av">
+                    <option value="">Fakturert av</option>
+                    @foreach (var n in _rader.Select(r => r.FakturertAvNavn ?? UkjentNavn).Distinct().Order())
+                    {
+                        <option value="@n">@n</option>
+                    }
+                </select>
                 <select class="fm-velg" value="@_kundeFilter" @onchange="@(e => { _kundeFilter = (string)e.Value!; _side = 1; })" aria-label="Kunde">
                     <option value="">Kunde</option>
                     @foreach (var k in _rader.Select(r => r.KundeNavn).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().Order())
@@ -130,6 +155,7 @@
                             <th @onclick='@(() => SorterPa("Kunde"))'>Kunde@(SortPil("Kunde"))</th>
                             <th @onclick='@(() => SorterPa("Montor"))'>Montør@(SortPil("Montor"))</th>
                             <th @onclick='@(() => SorterPa("Dato"))'>Fakturert@(SortPil("Dato"))</th>
+                            <th @onclick='@(() => SorterPa("FakturertAv"))'>Fakturert av@(SortPil("FakturertAv"))</th>
                             <HvisModul Modul="@PortalItlock.Web.Models.TilleggsModuler.Timer"><th @onclick='@(() => SorterPa("Timer"))' class="fm-h">Timer@(SortPil("Timer"))</th></HvisModul>
                             <th @onclick='@(() => SorterPa("Belop"))' class="fm-h">Beløp · DG@(SortPil("Belop"))</th>
                             <th></th>
@@ -156,6 +182,7 @@
                                     }
                                 </td>
                                 <td class="fm-nowrap">@(r.FakturertDato?.ToString("dd.MM.yyyy") ?? "–")</td>
+                                <td>@if (string.IsNullOrWhiteSpace(r.FakturertAvNavn)) { <span class="fm-tom">–</span> } else { <span class="fm-montor"><span class="fm-avatar">@MontorInitialer(r.FakturertAvNavn)</span>@r.FakturertAvNavn</span> }</td>
                                 <HvisModul Modul="@PortalItlock.Web.Models.TilleggsModuler.Timer"><td class="fm-h">@r.SumTimer.ToString("N1", Kultur) t</td></HvisModul>
                                 <td class="fm-h fm-nowrap"><b>@FormatKr(r.Belop)</b><span class="fm-dg">@r.DgProsent.ToString("N0", Kultur) %</span></td>
                                 <td class="fm-h"><a class="fm-kn fm-kn-s" href="@($"/arbeidsordre/{r.Id}")">Åpne</a></td>
@@ -164,7 +191,7 @@
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td colspan="5">Sum &ndash; @_filtrerte.Count @(_filtrerte.Count == 1 ? "ordre" : "ordrer")</td>
+                            <td colspan="6">Sum &ndash; @_filtrerte.Count @(_filtrerte.Count == 1 ? "ordre" : "ordrer")</td>
                             <HvisModul Modul="@PortalItlock.Web.Models.TilleggsModuler.Timer"><td class="fm-h">@_filtrerte.Sum(r => r.SumTimer).ToString("N1", Kultur) t</td></HvisModul>
                             <td class="fm-h">@FormatKr(_filtrerte.Sum(r => r.Belop))</td>
                             <td></td>
@@ -193,6 +220,7 @@
         public string? KundeNavn { get; set; }
         public string? AnsvarligMontorNavn { get; set; }
         public DateTime? FakturertDato { get; set; }
+        public string? FakturertAvNavn { get; set; }
         public decimal SumTimer { get; set; }
         public decimal Belop { get; set; }
         public decimal Kost { get; set; }
@@ -209,6 +237,16 @@
     private string _periode = "ar";
     private string _montorFilter = "";
     private string _kundeFilter = "";
+    private string _fakturertAvFilter = "";
+    private const string UkjentNavn = "Ikke registrert";
+
+    // Hvem som har fakturert hva i valgt periode (uten person-filteret), størst sum først.
+    private sealed record PersonSum(string Navn, int Antall, decimal Sum);
+    private List<PersonSum> PerPerson => FiltrerteUtenPerson()
+        .GroupBy(r => r.FakturertAvNavn ?? UkjentNavn)
+        .Select(g => new PersonSum(g.Key, g.Count(), g.Sum(r => r.Belop)))
+        .OrderByDescending(p => p.Sum)
+        .ToList();
     private string? _maned;
     private string _sortFelt = "Dato";
     private bool _sortSynkende = true;
@@ -298,6 +336,33 @@
     {
         get
         {
+            IEnumerable<OrdreRad> rader = FiltrerteUtenPerson();
+            if (_fakturertAvFilter.Length > 0)
+            {
+                rader = rader.Where(r => (r.FakturertAvNavn ?? UkjentNavn) == _fakturertAvFilter);
+            }
+
+            IEnumerable<OrdreRad> sortert = _sortFelt switch
+            {
+                "Nr" => rader.OrderBy(r => r.Id),
+                "Tittel" => rader.OrderBy(r => r.Tittel, StringComparer.OrdinalIgnoreCase),
+                "Prosjekt" => rader.OrderBy(r => r.ProsjektNavn, StringComparer.OrdinalIgnoreCase),
+                "Kunde" => rader.OrderBy(r => r.KundeNavn, StringComparer.OrdinalIgnoreCase),
+                "Montor" => rader.OrderBy(r => r.AnsvarligMontorNavn, StringComparer.OrdinalIgnoreCase),
+                "FakturertAv" => rader.OrderBy(r => r.FakturertAvNavn, StringComparer.OrdinalIgnoreCase),
+                "Timer" => rader.OrderBy(r => r.SumTimer),
+                "Belop" => rader.OrderBy(r => r.Belop),
+                _ => rader.OrderBy(r => r.FakturertDato)
+            };
+
+            return (_sortSynkende ? sortert.Reverse() : sortert).ToList();
+        }
+    }
+
+    // Alle filtre unntatt «Fakturert av» - brukes også til oppsummeringen per person.
+    private IEnumerable<OrdreRad> FiltrerteUtenPerson()
+    {
+        {
             IEnumerable<OrdreRad> rader = _rader;
             if (_maned is not null)
             {
@@ -324,22 +389,11 @@
                     (r.ProsjektNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false) ||
                     (r.KundeNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false) ||
                     (r.AnsvarligMontorNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (r.FakturertAvNavn?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false) ||
                     r.Id.ToString() == _sok.Trim().TrimStart('#'));
             }
 
-            IEnumerable<OrdreRad> sortert = _sortFelt switch
-            {
-                "Nr" => rader.OrderBy(r => r.Id),
-                "Tittel" => rader.OrderBy(r => r.Tittel, StringComparer.OrdinalIgnoreCase),
-                "Prosjekt" => rader.OrderBy(r => r.ProsjektNavn, StringComparer.OrdinalIgnoreCase),
-                "Kunde" => rader.OrderBy(r => r.KundeNavn, StringComparer.OrdinalIgnoreCase),
-                "Montor" => rader.OrderBy(r => r.AnsvarligMontorNavn, StringComparer.OrdinalIgnoreCase),
-                "Timer" => rader.OrderBy(r => r.SumTimer),
-                "Belop" => rader.OrderBy(r => r.Belop),
-                _ => rader.OrderBy(r => r.FakturertDato)
-            };
-
-            return (_sortSynkende ? sortert.Reverse() : sortert).ToList();
+            return rader;
         }
     }
 
@@ -416,6 +470,7 @@
             KundeNavn = (a.Kunde ?? a.Prosjekt?.Kunde)?.Navn,
             AnsvarligMontorNavn = a.AnsvarligMontor?.Navn,
             FakturertDato = a.FakturertDato,
+            FakturertAvNavn = a.FakturertAvNavn,
             SumTimer = a.Timeregistreringer.Sum(t => t.TotalTimer),
             Belop = ArbeidsordreBeregningHelper.BeregnVareSum(a),
             Kost = ArbeidsordreBeregningHelper.BeregnVareKost(a)

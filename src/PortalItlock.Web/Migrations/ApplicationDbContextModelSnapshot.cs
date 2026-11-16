@@ -158,6 +158,12 @@ namespace PortalItlock.Web.Migrations
                     b.Property<decimal?>("EstimerteTimer")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("FakturertAvBrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("FakturertAvNavn")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("FakturertDato")
                         .HasColumnType("TEXT");
 

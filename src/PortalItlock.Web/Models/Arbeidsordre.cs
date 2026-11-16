@@ -55,6 +55,10 @@ public class Arbeidsordre
     public string? UtfortArbeid { get; set; }
     public string? Anbefalinger { get; set; }
     public DateTime? FakturertDato { get; set; }
+    // Hvem som markerte ordren som fakturert. Settes automatisk ved lagring
+    // (ApplicationDbContext) fra den innloggede brukeren.
+    public int? FakturertAvBrukerId { get; set; }
+    public string? FakturertAvNavn { get; set; }
     public string? KundeInfoForJobb { get; set; }
     public DateTime? DokumentasjonEpostSendtDato { get; set; }
 
