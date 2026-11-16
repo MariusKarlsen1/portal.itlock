@@ -1,0 +1,1937 @@
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@using System.Text.RegularExpressions
+@inject ApplicationDbContext Db
+@inject VisningPreferanseService VisningPref
+@inject TilbudSyncService TilbudSync
+
+@* Dørlisten i prosjektet (PC): visninger, filter på hver kolonne, kolonnevalg,
+   gruppering, og Masseoppdater / Bytt komponent i et lite vindu. *@
+<div class="dl">
+    @if (_visninger.Count > 0)
+    {
+        <div class="dl-visninger">
+            <span class="dl-tittel">Visninger</span>
+            @foreach (var v in _visninger)
+            {
+                var vis = v;
+                var aktiv = ErLik(vis.Filter);
+                <span class="dl-vis @(aktiv ? "pa" : "")" role="button" tabindex="0" @onclick="@(() => BrukVisning(vis))">
+                    @vis.Navn<em>@Dorer.Count(d => PasserFilter(d, vis.Filter, medKol: true, medSok: false))</em>
+                    @if (vis.Egen)
+                    {
+                        <button type="button" class="dl-vis-slett" title="Slett visningen" @onclick:stopPropagation="true" @onclick="@(() => SlettVisning(vis))">&times;</button>
+                    }
+                </span>
+            }
+        </div>
+    }
+
+    <div class="dl-topp">
+        <label class="dl-sok"><Icon Name="search" /><input @bind="_sok" @bind:event="oninput" @bind:after="@(() => _side = 1)" placeholder="Søk dørnummer, rom, pakke eller vare …" /></label>
+        <span class="dl-seg">
+            @foreach (var (verdi, navn) in StatusValg)
+            {
+                var v = verdi;
+                <button type="button" class="dl-chip @(_status == v ? "pa" : "")" @onclick="@(() => { _status = v; _side = 1; })">@navn <em>@AntallMedStatus(v)</em></button>
+            }
+        </span>
+        <button type="button" class="dl-kn @(_visFilter ? "aktiv" : "") @(AntallAktiveFilter > 0 ? "aktiv" : "")" @onclick="@(() => _visFilter = !_visFilter)">
+            <Icon Name="filter" />Filter @if (AntallAktiveFilter > 0) {<span class="dl-tall">@AntallAktiveFilter</span>}
+        </button>
+        <span class="dl-hoyre">
+            <label class="dl-kn dl-grupper"><Icon Name="list" />
+                <select value="@_grupper" @onchange="EndreGruppering" aria-label="Grupper">
+                    @foreach (var (k, n) in Grupperinger)
+                    {
+                        <option value="@k">@(k == "" ? "Grupper: Ingen" : "Grupper: " + n)</option>
+                    }
+                </select>
+            </label>
+            <button type="button" class="dl-kn" @onclick="@(() => _visKolonner = true)"><Icon Name="grid" />Kolonner <span class="dl-tall">@SynligeKolonner.Count</span></button>
+            @if (KanRedigere)
+            {
+                <button type="button" class="dl-kn p" @onclick="@(() => OnLeggTilDor.InvokeAsync())"><Icon Name="plus" />Legg til dør</button>
+                <button type="button" class="dl-kn" title="Importer dørskjema" @onclick="@(() => OnImporter.InvokeAsync())">Importer</button>
+            }
+        </span>
+    </div>
+
+    @if (_visFilter)
+    {
+        <div class="dl-filterpanel">
+            <div class="dl-fp-hode"><b>Filter</b><small>Alle valg kombineres og huskes. Filtrer også rett på kolonnene i tabellen.</small><span class="dl-fp-treff">@Filtrerte.Count av @Dorer.Count dører</span></div>
+            <div class="dl-fp-grid">
+                <div class="dl-fp-felt dl-fp-hel">
+                    <label>Dørfunksjon</label>
+                    <div class="dl-funvalg">
+                        @foreach (var f in _funksjoner)
+                        {
+                            var fun = f;
+                            var tilstand = _filter.Fun.GetValueOrDefault(f.Id);
+                            <button type="button" class="@tilstand" @onclick="@(() => VeksleFun(fun.Id))" title="@f.Navn">
+                                <b>@FunKort(f)</b> @f.Navn <em>@Dorer.Count(d => d.Funksjoner.Any(x => x.Id == fun.Id))</em>
+                            </button>
+                        }
+                        @if (_funksjoner.Count == 0)
+                        {
+                            <span class="dl-svak">Ingen dørfunksjoner registrert.</span>
+                        }
+                    </div>
+                    <div class="dl-hint">Ett klikk = <b>har</b>, to klikk = <b>mangler</b>, tre klikk = av.</div>
+                </div>
+                <div class="dl-fp-felt"><label>Har vare / beslagstype</label><input @bind="_filter.Vare" @bind:event="oninput" @bind:after="FilterEndret" placeholder="F.eks. sylinder, ED250 …" /></div>
+                <div class="dl-fp-felt"><label>Levert av</label>
+                    <select @bind="_filter.Lev" @bind:after="FilterEndret"><option value="">Alle</option><option value="F">F</option><option value="Ld">Ld</option><option value="Le">Le</option></select></div>
+                <div class="dl-fp-felt"><label>Annet</label>
+                    <select @bind="_filter.Annet" @bind:after="FilterEndret">
+                        <option value="">Alle</option>
+                        <option value="brann">Branndører</option>
+                        <option value="opsjon">Har opsjoner</option>
+                        <option value="avvik">Har åpne avvik</option>
+                        <option value="ikkeplassert">Ikke plassert på tegning</option>
+                        <option value="utenpakke">Uten pakke</option>
+                    </select></div>
+            </div>
+            <div class="dl-fp-bunn">
+                <button type="button" class="dl-kn" @onclick="StartLagreVisning"><Icon Name="star" />Lagre som visning</button>
+                <button type="button" class="dl-kn" @onclick="NullstillFilter">Nullstill</button>
+                <button type="button" class="dl-kn p" @onclick="@(() => _visFilter = false)">Ferdig</button>
+            </div>
+        </div>
+    }
+
+    @if (_lagreVisningNavn is not null)
+    {
+        <div class="dl-lagrevis">
+            <input @bind="_lagreVisningNavn" @bind:event="oninput" placeholder="Navn på visningen" />
+            <button type="button" class="dl-kn p" disabled="@string.IsNullOrWhiteSpace(_lagreVisningNavn)" @onclick="LagreVisning">Lagre</button>
+            <button type="button" class="dl-kn" @onclick="@(() => _lagreVisningNavn = null)">Avbryt</button>
+        </div>
+    }
+
+    @{ var aktive = AktiveBrikker(); }
+    @if (aktive.Count > 0)
+    {
+        <div class="dl-aktive">
+            @foreach (var b in aktive)
+            {
+                var brikke = b;
+                <span class="dl-brikke @(b.Negativ ? "neg" : "")">@b.Tekst<button type="button" aria-label="Fjern" @onclick="@(() => { brikke.Fjern(); FilterEndret(); })">&times;</button></span>
+            }
+            <span class="dl-svak">@Filtrerte.Count av @Dorer.Count dører</span>
+            <button type="button" class="dl-lenke" @onclick="NullstillFilter">Nullstill</button>
+            <button type="button" class="dl-lenke" @onclick="StartLagreVisning">Lagre som visning</button>
+        </div>
+    }
+
+    <div class="dl-handlinger">
+        <span class="dl-tittel">Handlinger</span>
+        @if (KanRedigere)
+        {
+            <button type="button" class="dl-kn p" @onclick='@(() => ApneDialog("masse"))'><Icon Name="edit" />Masseoppdater</button>
+            <button type="button" class="dl-kn" @onclick='@(() => ApneDialog("bytt"))'><Icon Name="refresh" />Bytt komponent</button>
+        }
+        @if (KanSetteStatus)
+        {
+            <button type="button" class="dl-kn" @onclick='@(() => ApneDialog("status"))'><Icon Name="check-circle" />Sett status</button>
+        }
+        <button type="button" class="dl-kn" @onclick="@(() => OnSkrivUt.InvokeAsync())"><Icon Name="printer" />Skriv ut dør-ID</button>
+        <button type="button" class="dl-kn dl-brann" @onclick="@(() => OnBrannkontroll.InvokeAsync())"><Icon Name="alert-triangle" />Brannkontroll @if (AntallBrannavvik > 0) {<span class="dl-tall rod">@AntallBrannavvik</span>}</button>
+        <span class="dl-valgtinfo">
+            @if (Valgte.Count > 0)
+            {
+                <b>@Valgte.Count @(Valgte.Count == 1 ? "dør" : "dører") huket av</b><span> – handlingene gjelder dem</span>
+                <button type="button" class="dl-lenke" @onclick="@(() => Valgte.Clear())">Fjern valg</button>
+            }
+            else
+            {
+                <span>Gjelder <b>@Filtrerte.Count @(Filtrerte.Count == 1 ? "dør" : "dører")</b> som vises</span>
+            }
+        </span>
+    </div>
+
+    @if (Filtrerte.Count == 0)
+    {
+        <p class="dl-tom">Ingen dører passer filteret. <button type="button" class="dl-lenke" @onclick="NullstillAlt">Nullstill filter</button></p>
+    }
+    else
+    {
+        var kol = SynligeKolonner;
+        var side = _grupper == "" ? SideDorer : Filtrerte;
+        <div class="dl-tabwrap">
+            <table class="dl-tab">
+                <thead>
+                    <tr>
+                        <th class="dl-cb"><input type="checkbox" title="Velg alle som vises" checked="@(side.Count > 0 && side.All(x => Valgte.Contains(x.Id)))" @onchange="@(e => VelgAlle(side, e))" /></th>
+                        @foreach (var k in kol)
+                        {
+                            var kk = k;
+                            <th class="dl-sort @(k.Gruppe == "beslag" ? "bs" : "")" @onclick="@(() => Sorter(kk.Key))">@k.Navn<span class="dl-pil @(_sort == k.Key ? "" : "av")">@(_sort == k.Key ? (_synkende ? "▼" : "▲") : "↕")</span></th>
+                        }
+                    </tr>
+                    <tr class="dl-filterrad">
+                        <th></th>
+                        @foreach (var k in kol)
+                        {
+                            var kk = k;
+                            var kf = _filter.Kol.GetValueOrDefault(k.Key);
+                            <th class="@(k.Gruppe == "beslag" ? "bs" : "")">
+                                <button type="button" class="dl-trakt @(kf is not null ? "paa" : "")" title="Filtrer @k.Navn" @onclick="@(e => ApneKolFilter(kk.Key, e))">▾ <span>@KolFilterTekst(kf)</span></button>
+                            </th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (_grupper == "")
+                    {
+                        @foreach (var d in side)
+                        {
+                            @Rad(d, kol)
+                        }
+                    }
+                    else
+                    {
+                        @foreach (var g in side.GroupBy(d => GruppeVerdi(d)).OrderBy(g => g.Key, NaturligSammenligner.Instans))
+                        {
+                            var gruppe = g.Key;
+                            var dorerIGruppe = g.ToList();
+                            var lukket = _lukkedeGrupper.Contains(gruppe);
+                            var mont = dorerIGruppe.Sum(d => d.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.BeslagAntall));
+                            var tot = dorerIGruppe.Sum(d => d.Komponenter.Where(k => k.MonteresAvOss).Sum(k => k.BeslagAntall));
+                            <tr class="dl-gruppe" @onclick="@(() => { if (!_lukkedeGrupper.Remove(gruppe)) _lukkedeGrupper.Add(gruppe); })">
+                                <td class="dl-cb" @onclick:stopPropagation="true"><input type="checkbox" title="Velg hele gruppen" checked="@dorerIGruppe.All(d => Valgte.Contains(d.Id))" @onchange="@(e => VelgAlle(dorerIGruppe, e))" /></td>
+                                <td colspan="@kol.Count"><span class="dl-gpil">@(lukket ? "▸" : "▾")</span>@GruppeNavn(gruppe)<span class="dl-gi">@dorerIGruppe.Count @(dorerIGruppe.Count == 1 ? "dør" : "dører") · @mont/@tot beslag montert</span></td>
+                            </tr>
+                            @if (!lukket)
+                            {
+                                @foreach (var d in dorerIGruppe)
+                                {
+                                    @Rad(d, kol)
+                                }
+                            }
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (_grupper == "")
+        {
+            <div class="dl-bunn">
+                <span>Viser @(SideStart)–@(SideSlutt) av @Filtrerte.Count dører</span>
+                <span class="dl-sider">
+                    <button type="button" disabled="@(GjeldendeSide <= 1)" @onclick="@(() => _side = GjeldendeSide - 1)">&lsaquo;</button>
+                    @for (var s = 1; s <= TotaltSider; s++)
+                    {
+                        var denne = s;
+                        <button type="button" class="@(denne == GjeldendeSide ? "pa" : "")" @onclick="@(() => _side = denne)">@denne</button>
+                    }
+                    <button type="button" disabled="@(GjeldendeSide >= TotaltSider)" @onclick="@(() => _side = GjeldendeSide + 1)">&rsaquo;</button>
+                    <select @bind="_perSide" @bind:after="@(async () => { _side = 1; await VisningPref.SettPerSideAsync("perside-prosjekt-dorer", _perSide); })">
+                        <option value="20">20 per side</option>
+                        <option value="50">50 per side</option>
+                        <option value="100">100 per side</option>
+                        <option value="500">Alle</option>
+                    </select>
+                </span>
+            </div>
+        }
+    }
+
+    @* ---- Filter på én kolonne ---- *@
+    @if (_kfApen is not null)
+    {
+        var kolDef = AlleKolonner.FirstOrDefault(k => k.Key == _kfApen);
+        var tellere = KolVerdier(_kfApen);
+        var synlige = tellere.Where(t => string.IsNullOrWhiteSpace(_kfSok) || t.Key.Contains(_kfSok.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+        <div class="dl-pop-bak" @onclick="LukkKolFilter"></div>
+        <div class="dl-pop" style="left:min(@(_kfX)px, calc(100vw - 290px));top:@(_kfY)px">
+            <div class="dl-pop-hode"><b>@kolDef?.Navn</b><input @bind="_kfTekst" @bind:event="oninput" placeholder="Inneholder tekst …" @onkeydown="KfTast" /></div>
+            <div class="dl-pop-sort">
+                <button type="button" class="@(_sort == _kfApen && !_synkende ? "pa" : "")" @onclick="@(() => { _sort = _kfApen!; _synkende = false; })">▲ A–Å</button>
+                <button type="button" class="@(_sort == _kfApen && _synkende ? "pa" : "")" @onclick="@(() => { _sort = _kfApen!; _synkende = true; })">▼ Å–A</button>
+            </div>
+            @if (tellere.Count > 8)
+            {
+                <div class="dl-pop-hode dl-pop-sok"><input @bind="_kfSok" @bind:event="oninput" placeholder="Søk i verdiene …" /></div>
+            }
+            <div class="dl-pop-liste">
+                <label class="alle"><input type="checkbox" checked="@(_kfValgt is null || synlige.All(t => _kfValgt.Contains(t.Key)))" @onchange="@(e => KfVelgAlle(e, synlige.Select(t => t.Key)))" /> Velg alle<small>@tellere.Sum(t => t.Value)</small></label>
+                @foreach (var t in synlige)
+                {
+                    var verdi = t.Key;
+                    <label><input type="checkbox" checked="@(_kfValgt is null || _kfValgt.Contains(verdi))" @onchange="@(e => KfVeksle(verdi, e, tellere.Keys))" /> @if (verdi == Tom) {<i class="dl-svak">(tomme)</i>} else {@verdi}<small>@t.Value</small></label>
+                }
+                @if (synlige.Count == 0)
+                {
+                    <div class="dl-svak" style="padding:8px 12px">Ingen verdier</div>
+                }
+            </div>
+            <div class="dl-pop-bunn"><button type="button" class="dl-kn" @onclick="FjernKolFilter">Fjern filter</button><button type="button" class="dl-kn p" @onclick="@(() => BrukKolFilter(tellere.Keys))">Bruk</button></div>
+        </div>
+    }
+
+    @* ---- Kolonnevalg ---- *@
+    @if (_visKolonner)
+    {
+        <div class="dl-skygge" @onclick="LukkKolonner"></div>
+        <aside class="dl-kolpanel">
+            <div class="dl-kp-hode"><div><h2>Kolonner</h2><small>Huk av det du vil se i listen. Valget huskes.</small></div><button type="button" class="dl-lukk" @onclick="LukkKolonner"><Icon Name="x" /></button></div>
+            <div class="dl-kp-verktoy">
+                <label class="dl-sok"><Icon Name="search" /><input @bind="_kolSok" @bind:event="oninput" placeholder="Søk kolonne, f.eks. sylinder …" /></label>
+                <div class="dl-oppsett"><span>Oppsett:</span>
+                    @foreach (var (k, n, _) in Oppsett)
+                    {
+                        var key = k;
+                        <button type="button" @onclick="@(() => BrukOppsett(key))">@n</button>
+                    }
+                </div>
+            </div>
+            <div class="dl-kp-kropp">
+                @foreach (var (g, gn) in KolGrupper)
+                {
+                    var gruppe = g;
+                    var liste = AlleKolonner.Where(k => k.Gruppe == g && k.Key != "dor" && (string.IsNullOrWhiteSpace(_kolSok) || k.Navn.Contains(_kolSok.Trim(), StringComparison.OrdinalIgnoreCase))).ToList();
+                    if (liste.Count == 0)
+                    {
+                        continue;
+                    }
+                    <div class="dl-kp-gruppe">
+                        <div class="dl-kp-ghode">@gn<em>@liste.Count(k => _kolonner.Contains(k.Key))/@liste.Count</em>
+                            <button type="button" @onclick="@(() => { foreach (var k in AlleKolonner.Where(k => k.Gruppe == gruppe)) _kolonner.Add(k.Key); })">Velg alle</button>
+                            <button type="button" @onclick="@(() => _kolonner.RemoveWhere(k => AlleKolonner.Any(x => x.Key == k && x.Gruppe == gruppe)))">Ingen</button>
+                        </div>
+                        <div class="dl-kp-liste">
+                            @foreach (var k in liste)
+                            {
+                                var key = k.Key;
+                                <label><input type="checkbox" checked="@_kolonner.Contains(key)" @onchange="@(e => { if (e.Value is true) _kolonner.Add(key); else _kolonner.Remove(key); })" /> @k.Navn
+                                    @if (k.Gruppe == "beslag") {<small>@Dorer.Count(d => Verdier(key, d).Any(v => v != Tom)) dører</small>}</label>
+                            }
+                        </div>
+                    </div>
+                }
+                @if (BeslagKolonner.Count == 0)
+                {
+                    <p class="dl-hint">Beslagstyper kommer når dørene har beslag med type fra komponentregisteret.</p>
+                }
+            </div>
+            <div class="dl-kp-bunn"><span class="dl-svak">@SynligeKolonner.Count kolonner vises</span><button type="button" class="dl-kn" @onclick="@(() => _kolonner.Clear())">Skjul alle</button><button type="button" class="dl-kn p" @onclick="LukkKolonner">Ferdig</button></div>
+        </aside>
+    }
+
+    @* ---- Masseoppdater / Bytt komponent / Sett status ---- *@
+    @if (_dlg is not null)
+    {
+        var mal = MalDorer;
+        var klar = Klar;
+        var antall = klar ? AntallEndres : 0;
+        var omf = OmfangDorer;
+        <div class="dl-skygge" @onclick="LukkDialog"></div>
+        <div class="dl-dlg" role="dialog" aria-modal="true">
+            <div class="dl-dlg-hode"><h2>@(_dlg == "bytt" ? "Bytt komponent" : _dlg == "status" ? "Sett status" : "Masseoppdater")</h2><button type="button" class="dl-lukk" @onclick="LukkDialog"><Icon Name="x" /></button></div>
+            <div class="dl-gjelder">
+                Gjelder <b>@(ErVarevalg && VareFraId is not null ? $"{mal.Count} av {omf.Count}" : omf.Count.ToString()) dører</b> @OmfangTekst.
+                <button type="button" @onclick="@(() => _visOmfang = !_visOmfang)">@(_visOmfang ? "Lukk" : "Endre")</button>
+                @if (ErVarevalg && VareFraId is not null)
+                {
+                    <span> · </span><button type="button" @onclick="@(() => _visDorvalg = !_visDorvalg)">@(_visDorvalg ? "Skjul dører" : "Velg dører")</button>
+                }
+                @if (_visOmfang)
+                {
+                    <div class="dl-velg">
+                        <button type="button" class="@(_omfang == "vist" ? "pa" : "")" @onclick='@(() => SettOmfang("vist"))'>Som vises (@Filtrerte.Count)</button>
+                        <button type="button" class="@(_omfang == "valgt" ? "pa" : "")" disabled="@(Valgte.Count == 0)" @onclick='@(() => SettOmfang("valgt"))'>Huket av (@Valgte.Count)</button>
+                        <button type="button" class="@(_omfang == "alle" ? "pa" : "")" @onclick='@(() => SettOmfang("alle"))'>Hele prosjektet (@Dorer.Count)</button>
+                    </div>
+                }
+                @if (_visDorvalg && ErVarevalg && VareFraId is int fraId)
+                {
+                    <div class="dl-dorliste">
+                        @foreach (var d in omf.Where(d => d.Komponenter.Any(k => k.ComponentId == fraId)))
+                        {
+                            var dor = d;
+                            var montert = d.Komponenter.Any(k => k.ComponentId == fraId && k.Montert);
+                            <label><input type="checkbox" checked="@(!_utenfor.Contains(d.Id))" @onchange="@(e => { if (e.Value is true) _utenfor.Remove(dor.Id); else _utenfor.Add(dor.Id); })" /> @d.Dornummer @RomTekst(d)<small>@(montert ? "montert" : "")</small></label>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="dl-dlg-kropp">
+                @if (_dlg == "masse")
+                {
+                    <span class="dl-lbl">Hva vil du gjøre?</span>
+                    <div class="dl-valg">
+                        @foreach (var (k, n) in MasseValg)
+                        {
+                            var key = k;
+                            <button type="button" class="@(_oppgave == k ? "pa" : "")" @onclick="@(() => VelgOppgave(key))">@n</button>
+                        }
+                    </div>
+                    @if (_oppgave is not null)
+                    {
+                        <div class="dl-skille"></div>
+                    }
+                }
+                @switch (_oppgave)
+                {
+                    case "bytt":
+                        <div class="dl-linje"><span class="dl-ord">Bytt</span>
+                            <select class="dl-inp" value="@(_fraId?.ToString() ?? "")" @onchange="FraEndret">
+                                <option value="">Velg vare som står på dørene …</option>
+                                @foreach (var v in VarerPaDorene())
+                                {
+                                    <option value="@v.Id">@v.Navn (@v.Antall @(v.Antall == 1 ? "dør" : "dører"))</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="dl-linje"><span class="dl-ord">med</span>@VareSok("til")</div>
+                        @if (_sammeType.Count > 0)
+                        {
+                            <div class="dl-raske">
+                                @foreach (var c in _sammeType)
+                                {
+                                    var comp = c;
+                                    <button type="button" class="@(_tilId == c.Id ? "pa" : "")" @onclick="@(() => VelgVare("til", comp))">@c.Navn</button>
+                                }
+                            </div>
+                        }
+                        <label class="dl-sjekk"><input type="checkbox" @bind="_behold" /> Byttet er allerede gjort på stedet (behold «montert»)</label>
+                        break;
+                    case "info":
+                        <span class="dl-lbl">Hva vil du endre?</span>
+                        <div class="dl-valg">
+                            @foreach (var (k, n) in InfoFelt)
+                            {
+                                var key = k;
+                                <button type="button" class="@(_infoFelt == k ? "pa" : "")" @onclick="@(() => { _infoFelt = key; _infoVerdi = null; })">@n</button>
+                            }
+                        </div>
+                        @if (_infoFelt is not null)
+                        {
+                            var navn = InfoFelt.First(x => x.Key == _infoFelt).Navn;
+                            <span class="dl-lbl">Ny verdi for @navn.ToLowerInvariant()</span>
+                            @if (_infoFelt == "dorid")
+                            {
+                                <div class="dl-valg">
+                                    @foreach (var m in _dorIdMaler)
+                                    {
+                                        var mid = m.Id.ToString();
+                                        <button type="button" class="@(_infoVerdi == mid ? "pa" : "")" @onclick="@(() => _infoVerdi = mid)">@m.Kode</button>
+                                    }
+                                    <button type="button" class="@(_infoVerdi == "0" ? "pa" : "")" @onclick='@(() => _infoVerdi = "0")'>Ingen</button>
+                                </div>
+                            }
+                            else
+                            {
+                                var forslag = InfoForslag(_infoFelt);
+                                @if (forslag.Count > 0)
+                                {
+                                    <div class="dl-valg">
+                                        @foreach (var f in forslag)
+                                        {
+                                            var fv = f;
+                                            <button type="button" class="@(_infoVerdi == f ? "pa" : "")" @onclick="@(() => _infoVerdi = fv)">@f</button>
+                                        }
+                                    </div>
+                                }
+                                <input class="dl-inp" style="margin-top:8px" @bind="_infoVerdi" @bind:event="oninput" placeholder="@(_infoFelt == "notat" ? "Tekst som legges til merknaden …" : "Eller skriv ny verdi …")" />
+                            }
+                        }
+                        break;
+                    case "fun":
+                        <span class="dl-lbl">Legg til eller fjern?</span>
+                        <div class="dl-valg">
+                            <button type="button" class="@(!_funFjern ? "pa" : "")" @onclick="@(() => _funFjern = false)">Legg til</button>
+                            <button type="button" class="@(_funFjern ? "pa" : "")" @onclick="@(() => _funFjern = true)">Fjern</button>
+                        </div>
+                        <span class="dl-lbl">Dørfunksjon</span>
+                        <div class="dl-valg">
+                            @foreach (var f in _funksjoner)
+                            {
+                                var fid = f.Id;
+                                <button type="button" class="@(_funValgt.Contains(f.Id) ? "pa" : "")" @onclick="@(() => { if (!_funValgt.Remove(fid)) _funValgt.Add(fid); })">@FunKort(f) · @f.Navn</button>
+                            }
+                        </div>
+                        break;
+                    case "leggvare":
+                        <span class="dl-lbl">Vare</span>
+                        @VareSok("vare")
+                        <span class="dl-lbl">Antall per dør</span>
+                        <input class="dl-inp" style="width:120px" type="number" min="1" @bind="_antall" />
+                        <label class="dl-sjekk"><input type="checkbox" @bind="_somOpsjon" /> Legg til som opsjon (ikke med i tilbudet)</label>
+                        break;
+                    case "fjern":
+                        <span class="dl-lbl">Vare som skal fjernes</span>
+                        <select class="dl-inp" value="@(_fraId?.ToString() ?? "")" @onchange="FraEndret">
+                            <option value="">Velg vare …</option>
+                            @foreach (var v in VarerPaDorene())
+                            {
+                                <option value="@v.Id">@v.Navn (@v.Antall @(v.Antall == 1 ? "dør" : "dører"))</option>
+                            }
+                        </select>
+                        break;
+                    case "pakke":
+                        <span class="dl-lbl">Pakke</span>
+                        <select class="dl-inp" value="@(_pakkeId?.ToString() ?? "")" @onchange="@(e => _pakkeId = int.TryParse(e.Value?.ToString(), out var p) ? p : null)">
+                            <option value="">Velg pakke …</option>
+                            @foreach (var p in _pakker)
+                            {
+                                <option value="@p.Id">@p.Navn</option>
+                            }
+                        </select>
+                        <p class="dl-hint">Den gamle pakken på døren fjernes, og den nye legges på. Det dere har lagt til selv blir stående.</p>
+                        break;
+                    case "status":
+                        <span class="dl-lbl">Ny status</span>
+                        <div class="dl-valg">
+                            @foreach (var (s, n) in new[] { (MontasjeStatus.IkkeStartet, "Ikke startet"), (MontasjeStatus.Montert, "Pågår"), (MontasjeStatus.FerdigMontert, "Ferdig montert") })
+                            {
+                                var st = s;
+                                <button type="button" class="@(_nyStatus == s ? "pa" : "")" @onclick="@(() => _nyStatus = st)">@n</button>
+                            }
+                        </div>
+                        <p class="dl-hint">«Ferdig montert» huker av alle beslag vi leverer (F) som montert. «Ikke startet» fjerner montert-hakene.</p>
+                        break;
+                }
+            </div>
+            <div class="dl-dlg-bunn">
+                <div class="dl-oppsum">
+                    @if (!klar)
+                    {
+                        <span class="dl-svak">@(_dlg == "bytt" ? "Velg vare og hva den skal byttes med." : _oppgave is null ? "Velg hva du vil gjøre." : "Fyll ut over.")</span>
+                    }
+                    else if (antall == 0)
+                    {
+                        <span class="dl-svak">Dørene har dette allerede – ingenting å endre.</span>
+                    }
+                    else
+                    {
+                        @((MarkupString)Setning(antall))
+                        var adv = Advarsel();
+                        @if (adv is not null)
+                        {
+                            <span class="dl-adv"><Icon Name="alert-triangle" />@adv</span>
+                        }
+                    }
+                </div>
+                <div class="dl-bunnrad">
+                    @if (klar && antall > 0)
+                    {
+                        <button type="button" class="dl-lenke" @onclick="@(() => _visDetaljer = !_visDetaljer)">@(_visDetaljer ? "Skjul detaljer" : "Vis per dør")</button>
+                    }
+                    <span style="margin-right:auto"></span>
+                    <button type="button" class="dl-kn" @onclick="LukkDialog">Avbryt</button>
+                    <button type="button" class="dl-kn p dl-stor" disabled="@(!klar || antall == 0 || _lagrer)" @onclick="Utfor">@(_dlg == "bytt" ? "Bytt" : "Oppdater") @(klar && antall > 0 ? $"{antall} {(antall == 1 ? "dør" : "dører")}" : "")</button>
+                </div>
+                @if (_visDetaljer && klar && antall > 0)
+                {
+                    <div class="dl-detaljer">
+                        <table>
+                            <thead><tr><th>Dør</th><th>Endring</th></tr></thead>
+                            <tbody>
+                                @foreach (var d in mal)
+                                {
+                                    var en = Endringer(d);
+                                    <tr>
+                                        <td><b>@d.Dornummer</b></td>
+                                        <td>
+                                            @if (en.Count == 0)
+                                            {
+                                                <span class="dl-svak">Har det allerede</span>
+                                            }
+                                            @foreach (var x in en)
+                                            {
+                                                <div>@x.Felt: <span class="dl-for">@(string.IsNullOrEmpty(x.Fra) ? "–" : x.Fra)</span> → <span class="dl-etter">@(string.IsNullOrEmpty(x.Til) ? "–" : x.Til)</span></div>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (_melding is not null)
+    {
+        <div class="dl-melding">
+            <span>@_melding</span>
+            @if (_angre is not null)
+            {
+                <button type="button" @onclick="Angre" disabled="@_lagrer">Angre</button>
+            }
+            <button type="button" class="dl-melding-lukk" aria-label="Lukk" @onclick="@(() => { _melding = null; _angre = null; })">&times;</button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+    [Parameter, EditorRequired] public List<Dor> Dorer { get; set; } = [];
+    [Parameter, EditorRequired] public HashSet<int> Valgte { get; set; } = [];
+    [Parameter] public HashSet<int> Brannavvik { get; set; } = [];
+    [Parameter] public int AntallBrannavvik { get; set; }
+    [Parameter] public int? ValgtDorId { get; set; }
+    [Parameter] public bool KanRedigere { get; set; }
+    [Parameter] public bool KanSetteStatus { get; set; }
+    [Parameter] public int? BrukerId { get; set; }
+    [Parameter] public Bruker? Bruker { get; set; }
+    [Parameter] public EventCallback<Dor> OnVelgDor { get; set; }
+    [Parameter] public EventCallback OnLeggTilDor { get; set; }
+    [Parameter] public EventCallback OnImporter { get; set; }
+    [Parameter] public EventCallback OnBrannkontroll { get; set; }
+    [Parameter] public EventCallback OnSkrivUt { get; set; }
+    [Parameter] public EventCallback OnEndret { get; set; }
+
+    private const string Tom = "(tom)";
+
+    // ---------- Filtertilstand (lagres per bruker og prosjekt) ----------
+    public sealed class KolFilter
+    {
+        public string? Tekst { get; set; }
+        public List<string>? Valgt { get; set; }
+    }
+
+    public sealed class FilterTilstand
+    {
+        public Dictionary<int, string> Fun { get; set; } = [];
+        public string? Vare { get; set; }
+        public string? Lev { get; set; }
+        public string? Annet { get; set; }
+        public Dictionary<string, KolFilter> Kol { get; set; } = [];
+    }
+
+    public sealed class Visning
+    {
+        public string Navn { get; set; } = "";
+        public FilterTilstand Filter { get; set; } = new();
+        public bool Egen { get; set; }
+    }
+
+    private FilterTilstand _filter = new();
+    private List<Visning> _visninger = [];
+    private string _sok = "";
+    private MontasjeStatus? _status;
+    private bool _visFilter;
+    private string? _lagreVisningNavn;
+    private string _sort = "dor";
+    private bool _synkende;
+    private int _side = 1;
+    private int _perSide = 50;
+    private string _grupper = "";
+    private readonly HashSet<string> _lukkedeGrupper = [];
+    private int? _sisteKlikk;
+
+    // ---------- Data ----------
+    private List<DorPakkeService.PakkeInfo> _pakker = [];
+    private List<DorFunksjon> _funksjoner = [];
+    private List<DorIdMal> _dorIdMaler = [];
+    private Dictionary<int, int> _apneAvvik = [];
+    private Dictionary<int, CeGodkjenningStatus> _ce = [];
+    private bool _lastet;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var pakker = await Db.Packages.AsNoTracking().Include(p => p.Komponenter).Include(p => p.DorFunksjoner).ToListAsync();
+        _pakker = pakker.Select(DorPakkeService.Info).OrderBy(p => p.Navn).ToList();
+        _funksjoner = await Db.DorFunksjoner.OrderBy(f => f.Navn).ToListAsync();
+        _dorIdMaler = await Db.DorIdMaler.AsNoTracking().Where(m => m.ProsjektId == ProsjektId).OrderBy(m => m.Kode).ToListAsync();
+        var dorIder = Dorer.Select(d => d.Id).ToList();
+        _apneAvvik = await Db.Avvik.AsNoTracking().Where(a => dorIder.Contains(a.DorId) && a.Status == AvvikStatus.Apent)
+            .GroupBy(a => a.DorId).Select(g => new { g.Key, N = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.N);
+        _ce = (await Db.CeGodkjenninger.AsNoTracking().Where(c => dorIder.Contains(c.DorId))
+            .Select(c => new { c.DorId, c.Status, c.OpprettetDato }).ToListAsync())
+            .GroupBy(c => c.DorId).ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.OpprettetDato).First().Status);
+
+        _perSide = await VisningPref.HentPerSideAsync("perside-prosjekt-dorer", _perSide);
+        var kol = await VisningPref.HentAsync("prosjekt-dorer-kolonner", "");
+        _kolonner = kol == "" ? [.. Oppsett.First().Kolonner] : kol.Split(',', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+        _grupper = await VisningPref.HentAsync("prosjekt-dorer-grupper", "");
+        if (_grupper == "-")
+        {
+            _grupper = "";
+        }
+        _filter = Les<FilterTilstand>(await VisningPref.HentAsync($"prosjekt-dorer-filter-{ProsjektId}", "")) ?? new();
+        _visninger = [.. FasteVisninger(), .. Les<List<Visning>>(await VisningPref.HentAsync("prosjekt-dorer-visninger", "")) ?? []];
+        _lastet = true;
+    }
+
+    private static T? Les<T>(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return default;
+        }
+        try
+        {
+            return JsonSerializer.Deserialize<T>(json);
+        }
+        catch (JsonException)
+        {
+            return default;
+        }
+    }
+
+    private static List<Visning> FasteVisninger() =>
+    [
+        new() { Navn = "Alle dører" },
+        new() { Navn = "Branndører", Filter = new() { Annet = "brann" } },
+        new() { Navn = "Uten pakke", Filter = new() { Annet = "utenpakke" } },
+        new() { Navn = "Har opsjoner", Filter = new() { Annet = "opsjon" } },
+        new() { Navn = "Ikke plassert", Filter = new() { Annet = "ikkeplassert" } },
+        new() { Navn = "Åpne avvik", Filter = new() { Annet = "avvik" } }
+    ];
+
+    private bool ErLik(FilterTilstand f) => JsonSerializer.Serialize(f) == JsonSerializer.Serialize(_filter);
+
+    private async Task BrukVisning(Visning v)
+    {
+        _filter = Les<FilterTilstand>(JsonSerializer.Serialize(v.Filter)) ?? new();
+        await FilterEndret();
+    }
+
+    private void StartLagreVisning() => _lagreVisningNavn = "";
+
+    private async Task LagreVisning()
+    {
+        if (string.IsNullOrWhiteSpace(_lagreVisningNavn))
+        {
+            return;
+        }
+        _visninger.Add(new Visning { Navn = _lagreVisningNavn.Trim(), Filter = Les<FilterTilstand>(JsonSerializer.Serialize(_filter)) ?? new(), Egen = true });
+        _lagreVisningNavn = null;
+        await LagreVisninger();
+    }
+
+    private async Task SlettVisning(Visning v)
+    {
+        _visninger.Remove(v);
+        await LagreVisninger();
+    }
+
+    private Task LagreVisninger() =>
+        VisningPref.SettAsync("prosjekt-dorer-visninger", JsonSerializer.Serialize(_visninger.Where(v => v.Egen).ToList()));
+
+    private async Task FilterEndret()
+    {
+        _side = 1;
+        await VisningPref.SettAsync($"prosjekt-dorer-filter-{ProsjektId}", JsonSerializer.Serialize(_filter));
+    }
+
+    private async Task NullstillFilter()
+    {
+        _filter = new();
+        await FilterEndret();
+    }
+
+    private async Task NullstillAlt()
+    {
+        _sok = "";
+        _status = null;
+        await NullstillFilter();
+    }
+
+    private async Task VeksleFun(int id)
+    {
+        var naa = _filter.Fun.GetValueOrDefault(id);
+        if (naa is null)
+        {
+            _filter.Fun[id] = "har";
+        }
+        else if (naa == "har")
+        {
+            _filter.Fun[id] = "mangler";
+        }
+        else
+        {
+            _filter.Fun.Remove(id);
+        }
+        await FilterEndret();
+    }
+
+    private async Task EndreGruppering(ChangeEventArgs e)
+    {
+        _grupper = e.Value?.ToString() ?? "";
+        _lukkedeGrupper.Clear();
+        await VisningPref.SettAsync("prosjekt-dorer-grupper", _grupper == "" ? "-" : _grupper);
+    }
+
+    // ---------- Kolonner ----------
+    public sealed record Kol(string Key, string Navn, string Gruppe);
+
+    private static readonly (string Key, string Navn)[] KolGrupper =
+        [("dor", "Dørinfo"), ("brann", "Brann, lyd og energi"), ("mont", "Montasje og status"), ("beslag", "Beslag per beslagstype")];
+
+    private static readonly Kol[] FasteKolonner =
+    [
+        new("dor", "Dør", "dor"), new("rom", "Rom", "dor"), new("dortil", "Dør til", "dor"), new("etasje", "Etasje", "dor"),
+        new("sone", "Sone", "dor"), new("byggetrinn", "Byggetrinn", "dor"), new("dortype", "Dørtype", "dor"),
+        new("slag", "Slagretning (L/R)", "dor"), new("mal", "BxH", "dor"), new("tofloyet", "Tofløyet", "dor"),
+        new("dorid", "Dør ID", "dor"), new("fun", "Dørfunksjon", "dor"), new("pakke", "Pakke", "dor"), new("notat", "Merknad", "dor"),
+        new("brann", "Brann", "brann"), new("lyd", "Lyd", "brann"), new("energi", "Energi", "brann"),
+        new("beslag", "Beslag montert", "mont"), new("status", "Status", "mont"), new("montertdato", "Montert dato", "mont"),
+        new("lev", "Levert av", "mont"), new("antvarer", "Antall varer", "mont"), new("avvik", "Åpne avvik", "mont"),
+        new("ce", "CE-status", "mont"), new("plassert", "Plassert på tegning", "mont"), new("opsjon", "Opsjoner", "mont")
+    ];
+
+    // Én kolonne per beslagstype (samme navn = samme kolonne).
+    private const string UtenType = "Uten beslagstype";
+    private static string TypeNavn(DorKomponent k) => string.IsNullOrWhiteSpace(k.Component?.Type?.Navn) ? UtenType : k.Component!.Type!.Navn.Trim();
+
+    private List<Kol> BeslagKolonner => Dorer.SelectMany(d => d.Komponenter)
+        .Where(k => k.Component is not null)
+        .GroupBy(TypeNavn, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(g => g.Key == UtenType ? 1 : 0).ThenBy(g => g.Min(k => k.Component!.Type?.Sortering ?? int.MaxValue)).ThenBy(g => g.Key)
+        .Select(g => new Kol("bs:" + g.Key, g.Key, "beslag"))
+        .ToList();
+
+    private List<Kol> AlleKolonner => [.. FasteKolonner, .. BeslagKolonner];
+
+    private HashSet<string> _kolonner = [];
+    private bool _visKolonner;
+    private string _kolSok = "";
+
+    private List<Kol> SynligeKolonner => AlleKolonner.Where(k => k.Key == "dor" || _kolonner.Contains(k.Key)).ToList();
+
+    private (string Key, string Navn, string[] Kolonner)[] Oppsett =>
+    [
+        ("standard", "Standard", ["rom", "etasje", "brann", "fun", "pakke", "beslag", "status"]),
+        ("montasje", "Montasje", ["rom", "etasje", "beslag", "status", "montertdato", "avvik", "plassert", "lev"]),
+        ("brann", "Brann og dørinfo", ["rom", "dortil", "etasje", "dortype", "brann", "lyd", "energi", "mal", "slag", "tofloyet", "dorid"]),
+        ("beslag", "Alle beslag", ["rom", "fun", .. BeslagKolonner.Select(k => k.Key)]),
+        ("alt", "Vis alt", [.. AlleKolonner.Select(k => k.Key)])
+    ];
+
+    private void BrukOppsett(string key) => _kolonner = [.. Oppsett.First(o => o.Key == key).Kolonner];
+
+    private async Task LukkKolonner()
+    {
+        _visKolonner = false;
+        await VisningPref.SettAsync("prosjekt-dorer-kolonner", _kolonner.Count == 0 ? "dor" : string.Join(",", _kolonner));
+    }
+
+    // ---------- Verdier per kolonne ----------
+    private string RomTekst(Dor d) => string.IsNullOrWhiteSpace(d.Romnr) ? (d.Plantegning?.Navn ?? "") : d.Romnr!;
+    private static string FunKort(DorFunksjon f) => string.IsNullOrWhiteSpace(f.Forkortelse) ? f.Navn : f.Forkortelse!;
+    private DorPakkeService.PakkeInfo? PakkeFor(Dor d) => DorPakkeService.PakkeFor(d, _pakker);
+    private static string StatusTekst(MontasjeStatus s) => s switch { MontasjeStatus.FerdigMontert => "Ferdig", MontasjeStatus.Montert => "Pågår", _ => "Ikke startet" };
+
+    private static string BeslagTekst(Dor d)
+    {
+        var tot = d.Komponenter.Where(k => k.MonteresAvOss).Sum(k => k.BeslagAntall);
+        var mont = d.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.BeslagAntall);
+        if (tot == 0)
+        {
+            return "Ingen beslag";
+        }
+        return mont == tot ? "Alt montert" : mont == 0 ? "Ingenting montert" : "Delvis montert";
+    }
+
+    private static IEnumerable<string> Ikke(IEnumerable<string?> v)
+    {
+        var liste = v.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Trim()).Distinct().ToList();
+        return liste.Count == 0 ? [Tom] : liste;
+    }
+
+    private IEnumerable<string> Verdier(string key, Dor d)
+    {
+        if (key.StartsWith("bs:"))
+        {
+            var type = key[3..];
+            return Ikke(d.Komponenter.Where(k => k.Component is not null && string.Equals(TypeNavn(k), type, StringComparison.OrdinalIgnoreCase))
+                .Select(k => k.Component!.Navn + (k.ErOpsjon ? " (opsjon)" : "")));
+        }
+        return key switch
+        {
+            "dor" => [d.Dornummer],
+            "rom" => Ikke([RomTekst(d)]),
+            "dortil" => Ikke([d.DorTil]),
+            "etasje" => Ikke([d.Etasje]),
+            "sone" => Ikke([d.Sone]),
+            "byggetrinn" => Ikke([d.Plantegning?.Byggetrinn]),
+            "dortype" => Ikke([d.Dortype]),
+            "slag" => Ikke([d.Slagretning]),
+            "mal" => Ikke([d.MalTekst]),
+            "tofloyet" => [d.ToFloyet ? "Ja" : "Nei"],
+            "dorid" => Ikke([_dorIdMaler.FirstOrDefault(m => m.Id == d.DorIdMalId)?.Kode]),
+            "fun" => Ikke(d.Funksjoner.Select(FunKort)),
+            "pakke" => Ikke([PakkeFor(d)?.Navn]),
+            "notat" => Ikke([d.Notater]),
+            "brann" => Ikke([d.Brann]),
+            "lyd" => Ikke([d.Lyd]),
+            "energi" => Ikke([d.Energi]),
+            "beslag" => [BeslagTekst(d)],
+            "status" => [StatusTekst(d.Status)],
+            "montertdato" => Ikke([d.MontertDato?.ToString("dd.MM.yyyy")]),
+            "lev" => Ikke(d.Komponenter.Select(k => k.LevertAv.ToString())),
+            "antvarer" => [d.Komponenter.Count.ToString()],
+            "avvik" => [_apneAvvik.GetValueOrDefault(d.Id) > 0 ? "Har åpne avvik" : "Ingen"],
+            "ce" => [_ce.TryGetValue(d.Id, out var ce) ? CeTekst(ce) : Tom],
+            "plassert" => [ErPlassert(d) ? "Plassert" : "Ikke plassert"],
+            "opsjon" => [d.Komponenter.Any(k => k.ErOpsjon) ? "Har opsjoner" : "Ingen"],
+            _ => [Tom]
+        };
+    }
+
+    private static bool ErPlassert(Dor d) => d.PlantegningId is not null && d.PosX is not null;
+
+    private static string CeTekst(CeGodkjenningStatus s) => s switch
+    {
+        CeGodkjenningStatus.Godkjent => "Godkjent",
+        CeGodkjenningStatus.TilGjennomgang => "Til gjennomgang",
+        CeGodkjenningStatus.Avvist => "Avvist",
+        _ => "Under arbeid"
+    };
+
+    // ---------- Filtrering, sortering og sider ----------
+    private static readonly (MontasjeStatus? Verdi, string Navn)[] StatusValg =
+        [(null, "Alle"), (MontasjeStatus.FerdigMontert, "Ferdig"), (MontasjeStatus.Montert, "Pågår"), (MontasjeStatus.IkkeStartet, "Ikke startet")];
+
+    private int AntallMedStatus(MontasjeStatus? s) => Dorer.Count(d => PasserFilter(d, _filter, medKol: true, medSok: true) && (s is null || d.Status == s));
+
+    private bool PasserFilter(Dor d, FilterTilstand f, bool medKol, bool medSok, string? unntaKol = null)
+    {
+        if (medSok && !string.IsNullOrWhiteSpace(_sok))
+        {
+            var s = _sok.Trim();
+            var tekst = string.Join(' ', [d.Dornummer, RomTekst(d), d.DorTil, d.Etasje, d.Sone, PakkeFor(d)?.Navn, .. d.Komponenter.Select(k => k.Component?.Navn)]);
+            if (!tekst.Contains(s, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+        foreach (var (id, v) in f.Fun)
+        {
+            var har = d.Funksjoner.Any(x => x.Id == id);
+            if ((v == "har" && !har) || (v == "mangler" && har))
+            {
+                return false;
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(f.Vare) && !d.Komponenter.Any(k =>
+                (k.Component?.Navn ?? "").Contains(f.Vare.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                (k.Component?.Type?.Navn ?? "").Contains(f.Vare.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+        if (!string.IsNullOrWhiteSpace(f.Lev) && !d.Komponenter.Any(k => k.LevertAv.ToString() == f.Lev))
+        {
+            return false;
+        }
+        var ok = f.Annet switch
+        {
+            "brann" => !string.IsNullOrWhiteSpace(d.Brann),
+            "opsjon" => d.Komponenter.Any(k => k.ErOpsjon),
+            "avvik" => _apneAvvik.GetValueOrDefault(d.Id) > 0,
+            "ikkeplassert" => !ErPlassert(d),
+            "utenpakke" => PakkeFor(d) is null,
+            _ => true
+        };
+        if (!ok)
+        {
+            return false;
+        }
+        if (medKol)
+        {
+            foreach (var (key, kf) in f.Kol)
+            {
+                if (key == unntaKol)
+                {
+                    continue;
+                }
+                var vs = Verdier(key, d).ToList();
+                if (!string.IsNullOrWhiteSpace(kf.Tekst) && !vs.Any(v => v != Tom && v.Contains(kf.Tekst.Trim(), StringComparison.OrdinalIgnoreCase)))
+                {
+                    return false;
+                }
+                if (kf.Valgt is not null && !vs.Any(kf.Valgt.Contains))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private List<Dor> Filtrerte
+    {
+        get
+        {
+            var rader = Dorer.Where(d => PasserFilter(d, _filter, medKol: true, medSok: true) && (_status is null || d.Status == _status));
+            IOrderedEnumerable<Dor> sortert = _sort switch
+            {
+                "beslag" => rader.OrderBy(d => { var t = d.Komponenter.Where(k => k.MonteresAvOss).Sum(k => k.BeslagAntall); return t == 0 ? -1 : (double)d.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.BeslagAntall) / t; }),
+                "status" => rader.OrderBy(d => d.Status),
+                "montertdato" => rader.OrderBy(d => d.MontertDato ?? DateTime.MaxValue),
+                "antvarer" => rader.OrderBy(d => d.Komponenter.Count),
+                _ => rader.OrderBy(d => SortTekst(d), NaturligSammenligner.Instans)
+            };
+            var liste = sortert.ThenBy(d => d.Dornummer, NaturligSammenligner.Instans).ToList();
+            if (_synkende)
+            {
+                liste.Reverse();
+            }
+            return liste;
+        }
+    }
+
+    private string SortTekst(Dor d)
+    {
+        var v = Verdier(_sort, d).FirstOrDefault() ?? Tom;
+        return v == Tom ? "￿" : v;
+    }
+
+    private void Sorter(string key)
+    {
+        if (_sort == key)
+        {
+            _synkende = !_synkende;
+        }
+        else
+        {
+            _sort = key;
+            _synkende = false;
+        }
+    }
+
+    private int GjeldendeSide => Math.Clamp(_side, 1, TotaltSider);
+    private int TotaltSider => Math.Max(1, (int)Math.Ceiling(Filtrerte.Count / (double)_perSide));
+    private List<Dor> SideDorer => Filtrerte.Skip((GjeldendeSide - 1) * _perSide).Take(_perSide).ToList();
+    private int SideStart => Filtrerte.Count == 0 ? 0 : (GjeldendeSide - 1) * _perSide + 1;
+    private int SideSlutt => Math.Min(GjeldendeSide * _perSide, Filtrerte.Count);
+
+    private static readonly (string Key, string Navn)[] Grupperinger =
+        [("", "Ingen"), ("etasje", "Etasje"), ("pakke", "Pakke"), ("status", "Status"), ("brann", "Brannklasse"), ("sone", "Sone"), ("byggetrinn", "Byggetrinn")];
+
+    private string GruppeVerdi(Dor d) => Verdier(_grupper, d).FirstOrDefault() ?? Tom;
+
+    private string GruppeNavn(string v) => v != Tom ? (_grupper == "etasje" ? $"Etasje {v}" : v) : _grupper switch
+    {
+        "pakke" => "Uten pakke",
+        "brann" => "Ikke brannklassifisert",
+        _ => "Ikke satt"
+    };
+
+    private int AntallAktiveFilter => _filter.Fun.Count + _filter.Kol.Count
+        + (string.IsNullOrWhiteSpace(_filter.Vare) ? 0 : 1) + (string.IsNullOrWhiteSpace(_filter.Lev) ? 0 : 1) + (string.IsNullOrWhiteSpace(_filter.Annet) ? 0 : 1);
+
+    private sealed record Brikke(string Tekst, Action Fjern, bool Negativ = false);
+
+    private List<Brikke> AktiveBrikker()
+    {
+        var b = new List<Brikke>();
+        foreach (var (id, v) in _filter.Fun)
+        {
+            var f = _funksjoner.FirstOrDefault(x => x.Id == id);
+            if (f is not null)
+            {
+                var fid = id;
+                b.Add(new($"{(v == "har" ? "Har" : "Mangler")} {FunKort(f)}", () => _filter.Fun.Remove(fid), v == "mangler"));
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(_filter.Vare))
+        {
+            b.Add(new($"Vare: {_filter.Vare}", () => _filter.Vare = null));
+        }
+        if (!string.IsNullOrWhiteSpace(_filter.Lev))
+        {
+            b.Add(new($"Levert av {_filter.Lev}", () => _filter.Lev = null));
+        }
+        if (!string.IsNullOrWhiteSpace(_filter.Annet))
+        {
+            var tekst = _filter.Annet switch { "brann" => "Branndører", "opsjon" => "Har opsjoner", "avvik" => "Åpne avvik", "ikkeplassert" => "Ikke plassert", _ => "Uten pakke" };
+            b.Add(new(tekst, () => _filter.Annet = null));
+        }
+        foreach (var (key, kf) in _filter.Kol)
+        {
+            var navn = AlleKolonner.FirstOrDefault(k => k.Key == key)?.Navn ?? key;
+            var k2 = key;
+            b.Add(new($"{navn}: {KolFilterTekst(kf)}", () => _filter.Kol.Remove(k2)));
+        }
+        return b;
+    }
+
+    private static string KolFilterTekst(KolFilter? kf)
+    {
+        if (kf is null)
+        {
+            return "Alle";
+        }
+        if (!string.IsNullOrWhiteSpace(kf.Tekst))
+        {
+            return $"«{kf.Tekst}»";
+        }
+        if (kf.Valgt is { Count: 1 })
+        {
+            return kf.Valgt[0] == Tom ? "(tomme)" : kf.Valgt[0];
+        }
+        return $"{kf.Valgt?.Count ?? 0} valgt";
+    }
+
+    // ---------- Kolonnefilter-vinduet ----------
+    private string? _kfApen;
+    private string _kfTekst = "";
+    private string _kfSok = "";
+    private HashSet<string>? _kfValgt;
+    private double _kfX, _kfY;
+
+    private void ApneKolFilter(string key, MouseEventArgs e)
+    {
+        _kfApen = key;
+        var kf = _filter.Kol.GetValueOrDefault(key);
+        _kfTekst = kf?.Tekst ?? "";
+        _kfValgt = kf?.Valgt is null ? null : [.. kf.Valgt];
+        _kfSok = "";
+        _kfX = Math.Max(8, e.ClientX - 30);
+        _kfY = e.ClientY + 14;
+    }
+
+    private void LukkKolFilter() => _kfApen = null;
+
+    private Dictionary<string, int> KolVerdier(string key)
+    {
+        var teller = new Dictionary<string, int>();
+        foreach (var d in Dorer.Where(d => PasserFilter(d, _filter, medKol: true, medSok: true, unntaKol: key)))
+        {
+            foreach (var v in Verdier(key, d).Distinct())
+            {
+                teller[v] = teller.GetValueOrDefault(v) + 1;
+            }
+        }
+        return teller.OrderBy(t => t.Key == Tom ? 1 : 0).ThenBy(t => t.Key, NaturligSammenligner.Instans).ToDictionary(t => t.Key, t => t.Value);
+    }
+
+    private void KfVelgAlle(ChangeEventArgs e, IEnumerable<string> synlige)
+    {
+        if (e.Value is true)
+        {
+            if (_kfValgt is not null)
+            {
+                foreach (var v in synlige)
+                {
+                    _kfValgt.Add(v);
+                }
+            }
+        }
+        else
+        {
+            _kfValgt ??= [];
+            foreach (var v in synlige.ToList())
+            {
+                _kfValgt.Remove(v);
+            }
+        }
+    }
+
+    private void KfVeksle(string verdi, ChangeEventArgs e, IEnumerable<string> alle)
+    {
+        _kfValgt ??= [.. alle];
+        if (e.Value is true)
+        {
+            _kfValgt.Add(verdi);
+        }
+        else
+        {
+            _kfValgt.Remove(verdi);
+        }
+    }
+
+    private async Task KfTast(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await BrukKolFilter(KolVerdier(_kfApen!).Keys);
+        }
+        else if (e.Key == "Escape")
+        {
+            LukkKolFilter();
+        }
+    }
+
+    private async Task BrukKolFilter(IEnumerable<string> alle)
+    {
+        var key = _kfApen!;
+        var alleListe = alle.ToList();
+        var valgt = _kfValgt is not null && alleListe.Any(v => !_kfValgt.Contains(v)) ? _kfValgt.ToList() : null;
+        if (string.IsNullOrWhiteSpace(_kfTekst) && valgt is null)
+        {
+            _filter.Kol.Remove(key);
+        }
+        else
+        {
+            _filter.Kol[key] = new KolFilter { Tekst = string.IsNullOrWhiteSpace(_kfTekst) ? null : _kfTekst.Trim(), Valgt = valgt };
+        }
+        _kfApen = null;
+        await FilterEndret();
+    }
+
+    private async Task FjernKolFilter()
+    {
+        _filter.Kol.Remove(_kfApen!);
+        _kfApen = null;
+        await FilterEndret();
+    }
+
+    // ---------- Rader ----------
+    private void VelgAlle(List<Dor> dorer, ChangeEventArgs e)
+    {
+        foreach (var d in dorer)
+        {
+            if (e.Value is true)
+            {
+                Valgte.Add(d.Id);
+            }
+            else
+            {
+                Valgte.Remove(d.Id);
+            }
+        }
+    }
+
+    private void VeksleValg(Dor d, MouseEventArgs e)
+    {
+        if (e.ShiftKey && _sisteKlikk is int siste)
+        {
+            var ider = Filtrerte.Select(x => x.Id).ToList();
+            int a = ider.IndexOf(siste), b = ider.IndexOf(d.Id);
+            if (a >= 0 && b >= 0)
+            {
+                foreach (var id in ider.Skip(Math.Min(a, b)).Take(Math.Abs(a - b) + 1))
+                {
+                    Valgte.Add(id);
+                }
+                _sisteKlikk = d.Id;
+                return;
+            }
+        }
+        if (!Valgte.Remove(d.Id))
+        {
+            Valgte.Add(d.Id);
+        }
+        _sisteKlikk = d.Id;
+    }
+
+    private async Task EndreStatus(Dor d, ChangeEventArgs e)
+    {
+        if (!KanSetteStatus || e.Value is not string s || !Enum.TryParse<MontasjeStatus>(s, out var status))
+        {
+            return;
+        }
+        SettDorStatus(d, status);
+        await Db.SaveChangesAsync();
+    }
+
+    private void SettDorStatus(Dor d, MontasjeStatus status)
+    {
+        d.Status = status;
+        d.MontertDato = status == MontasjeStatus.FerdigMontert ? DateTime.Now : null;
+        d.MontertAvBrukerId = status == MontasjeStatus.FerdigMontert ? BrukerId : null;
+        d.MontertAvBruker = status == MontasjeStatus.FerdigMontert ? Bruker : null;
+    }
+
+    private async Task FiltrerPa(string key, string verdi)
+    {
+        _filter.Kol[key] = new KolFilter { Valgt = [verdi] };
+        await FilterEndret();
+    }
+
+    private RenderFragment Rad(Dor d, List<Kol> kol) => __builder =>
+    {
+        var dor = d;
+        <tr @key="d.Id" class="@(ValgtDorId == d.Id ? "dl-aktiv" : "") @(Valgte.Contains(d.Id) ? "dl-valgt" : "") @(_sistEndret.Contains(d.Id) ? "dl-endret" : "")" @onclick="@(() => OnVelgDor.InvokeAsync(dor))">
+            <td class="dl-cb" @onclick:stopPropagation="true"><input type="checkbox" checked="@Valgte.Contains(d.Id)" @onclick="@(e => VeksleValg(dor, e))" /></td>
+            @foreach (var k in kol)
+            {
+                <td class="@(k.Key == "dor" ? "dl-nr" : "")">@Celle(k.Key, d)</td>
+            }
+        </tr>
+    };
+
+    private RenderFragment Celle(string key, Dor d) => __builder =>
+    {
+        var dor = d;
+        if (key == "dor")
+        {
+            <b>@d.Dornummer</b>
+            if (Brannavvik.Contains(d.Id))
+            {
+                <span class="dl-varsel" title="Brannavvik - se Brannkontroll"><Icon Name="alert-triangle" /></span>
+            }
+            if (d.Komponenter.Any(k => k.ErOpsjon))
+            {
+                <span class="dl-ops">Opsjon</span>
+            }
+        }
+        else if (key == "brann")
+        {
+            if (string.IsNullOrWhiteSpace(d.Brann))
+            {
+                <span class="dl-svak">–</span>
+            }
+            else
+            {
+                <span class="dl-brannpill dl-klikk" title="Filtrer på @d.Brann" @onclick:stopPropagation="true" @onclick='@(() => FiltrerPa("brann", dor.Brann!.Trim()))'>@d.Brann</span>
+            }
+        }
+        else if (key == "fun")
+        {
+            foreach (var f in d.Funksjoner)
+            {
+                var kort = FunKort(f);
+                <span class="dl-fun dl-klikk" title="@f.Navn – klikk for å filtrere" @onclick:stopPropagation="true" @onclick='@(() => FiltrerPa("fun", kort))'>@kort</span>
+            }
+        }
+        else if (key == "beslag")
+        {
+            var tot = d.Komponenter.Where(k => k.MonteresAvOss).Sum(k => k.BeslagAntall);
+            var mont = d.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.BeslagAntall);
+            var farge = d.Status switch { MontasjeStatus.FerdigMontert => "#2e7d4f", MontasjeStatus.Montert => "#d4892b", _ => "#c9bda9" };
+            <span class="dl-rad"><span class="dl-bar"><i style="width:@(tot == 0 ? 0 : mont * 100 / tot)%;background:@farge"></i></span><span class="dl-svak">@mont/@tot</span></span>
+        }
+        else if (key == "status")
+        {
+            <select class="dl-status @(d.Status switch { MontasjeStatus.FerdigMontert => "f", MontasjeStatus.Montert => "p", _ => "i" })" value="@d.Status" disabled="@(!KanSetteStatus)" @onclick:stopPropagation="true" @onchange="@(e => EndreStatus(dor, e))">
+                <option value="@MontasjeStatus.IkkeStartet">Ikke startet</option>
+                <option value="@MontasjeStatus.Montert">Pågår</option>
+                <option value="@MontasjeStatus.FerdigMontert">Ferdig</option>
+            </select>
+        }
+        else if (key.StartsWith("bs:"))
+        {
+            var type = key[3..];
+            var liste = d.Komponenter.Where(k => k.Component is not null && string.Equals(TypeNavn(k), type, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (liste.Count == 0)
+            {
+                <span class="dl-svak">–</span>
+            }
+            foreach (var k in liste)
+            {
+                <div class="dl-bs">
+                    <b title="@k.Component!.Navn">@k.Component.Navn</b>
+                    <small>@k.Antall@(string.IsNullOrWhiteSpace(k.Enhet) ? "" : " " + k.Enhet) · @k.LevertAv · @(k.ErOpsjon ? "opsjon" : !k.MonteresAvOss ? "levert av andre" : k.Montert ? "✓ montert" : "ikke montert")</small>
+                </div>
+            }
+        }
+        else
+        {
+            var v = Verdier(key, d).ToList();
+            var tekst = string.Join(", ", v.Where(x => x != Tom));
+            if (tekst == "")
+            {
+                <span class="dl-svak">–</span>
+            }
+            else if (key is "etasje" or "sone" or "pakke" or "dortype" or "byggetrinn" or "dorid")
+            {
+                <span class="dl-klikk" title="Filtrer på @tekst" @onclick:stopPropagation="true" @onclick="@(() => FiltrerPa(key, v[0]))">@tekst</span>
+            }
+            else
+            {
+                @tekst
+            }
+        }
+    };
+
+    // ---------- Masseoppdater / Bytt komponent ----------
+    private string? _dlg;          // "masse", "bytt", "status"
+    private string? _oppgave;      // bytt, info, fun, leggvare, fjern, pakke, status
+    private string _omfang = "vist";
+    private bool _visOmfang, _visDorvalg, _visDetaljer, _lagrer;
+    private readonly HashSet<int> _utenfor = [];
+    private int? _fraId, _tilId, _vareId, _pakkeId;
+    private string _tilSok = "", _vareSok = "";
+    private List<Component> _tilTreff = [], _vareTreff = [], _sammeType = [];
+    private Component? _tilComp, _vareComp;
+    private bool _behold, _somOpsjon, _funFjern;
+    private int _antall = 1;
+    private string? _infoFelt, _infoVerdi;
+    private readonly HashSet<int> _funValgt = [];
+    private MontasjeStatus? _nyStatus;
+    private string? _melding;
+    private List<DorSnap>? _angre;
+    private HashSet<int> _sistEndret = [];
+
+    private static readonly (string Key, string Navn)[] MasseValgAlle =
+        [("info", "Dørinfo"), ("fun", "Dørfunksjon"), ("leggvare", "Legg til vare"), ("fjern", "Fjern vare"), ("pakke", "Pakke"), ("status", "Status")];
+
+    private IEnumerable<(string Key, string Navn)> MasseValg => MasseValgAlle.Where(x => x.Key != "status" || KanSetteStatus);
+
+    private static readonly (string Key, string Navn)[] InfoFelt =
+        [("brann", "Brannklasse"), ("lyd", "Lyd"), ("etasje", "Etasje"), ("rom", "Rom"), ("dortil", "Dør til"), ("sone", "Sone"), ("dortype", "Dørtype"), ("slag", "Slagretning"), ("dorid", "Dør ID"), ("notat", "Merknad")];
+
+    private void ApneDialog(string type)
+    {
+        _dlg = type;
+        _oppgave = type == "bytt" ? "bytt" : type == "status" ? "status" : null;
+        _omfang = Valgte.Count > 0 ? "valgt" : "vist";
+        NullstillSkjema();
+        _visOmfang = _visDorvalg = _visDetaljer = false;
+    }
+
+    private void NullstillSkjema()
+    {
+        _utenfor.Clear();
+        _fraId = _tilId = _vareId = _pakkeId = null;
+        _tilSok = _vareSok = "";
+        _tilTreff = []; _vareTreff = []; _sammeType = [];
+        _tilComp = _vareComp = null;
+        _behold = _somOpsjon = _funFjern = false;
+        _antall = 1;
+        _infoFelt = _infoVerdi = null;
+        _funValgt.Clear();
+        _nyStatus = null;
+    }
+
+    private void VelgOppgave(string key)
+    {
+        if (_oppgave != key)
+        {
+            _oppgave = key;
+            NullstillSkjema();
+        }
+    }
+
+    private void LukkDialog() => _dlg = null;
+
+    private void SettOmfang(string o)
+    {
+        _omfang = o;
+        _utenfor.Clear();
+    }
+
+    private string OmfangTekst => _omfang switch { "valgt" => "som er huket av", "alle" => "i hele prosjektet", _ => "som vises" };
+
+    private List<Dor> OmfangDorer => _omfang switch
+    {
+        "valgt" => Dorer.Where(d => Valgte.Contains(d.Id)).ToList(),
+        "alle" => Dorer,
+        _ => Filtrerte
+    };
+
+    private bool ErVarevalg => _oppgave is "bytt" or "fjern";
+    private int? VareFraId => _fraId;
+
+    private List<Dor> MalDorer
+    {
+        get
+        {
+            var v = OmfangDorer;
+            if (ErVarevalg)
+            {
+                v = _fraId is int f ? v.Where(d => d.Komponenter.Any(k => k.ComponentId == f)).ToList() : [];
+            }
+            return v.Where(d => !_utenfor.Contains(d.Id)).ToList();
+        }
+    }
+
+    private sealed record VareIBruk(int Id, string Navn, int Antall);
+
+    private List<VareIBruk> VarerPaDorene() => OmfangDorer
+        .SelectMany(d => d.Komponenter.Where(k => k.Component is not null).Select(k => (d.Id, k.ComponentId, k.Component!.Navn)))
+        .GroupBy(x => x.ComponentId)
+        .Select(g => new VareIBruk(g.Key, g.First().Navn, g.Select(x => x.Id).Distinct().Count()))
+        .OrderByDescending(v => v.Antall).ThenBy(v => v.Navn)
+        .ToList();
+
+    private async Task FraEndret(ChangeEventArgs e)
+    {
+        _fraId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        _utenfor.Clear();
+        _sammeType = [];
+        if (_oppgave == "bytt" && _fraId is int fid)
+        {
+            var typeId = Dorer.SelectMany(d => d.Komponenter).FirstOrDefault(k => k.ComponentId == fid)?.Component?.ComponentTypeId;
+            if (typeId is not null)
+            {
+                _sammeType = await Db.Components.AsNoTracking()
+                    .Where(c => c.Aktiv && c.ComponentTypeId == typeId && c.Id != fid)
+                    .OrderBy(c => c.Navn).Take(5).ToListAsync();
+            }
+        }
+    }
+
+    private RenderFragment VareSok(string felt) => __builder =>
+    {
+        var sok = felt == "til" ? _tilSok : _vareSok;
+        var treff = felt == "til" ? _tilTreff : _vareTreff;
+        var valgt = felt == "til" ? _tilComp : _vareComp;
+        <div class="dl-sokwrap">
+            <input class="dl-inp @(valgt is not null ? "valgt" : "")" value="@sok" placeholder="@(felt == "til" ? "Søk ny vare …" : "Søk i komponentregisteret …")" autocomplete="off" @oninput="@(e => SokVare(felt, e.Value?.ToString() ?? ""))" />
+            @if (treff.Count > 0)
+            {
+                <div class="dl-forslag">
+                    @foreach (var c in treff)
+                    {
+                        var comp = c;
+                        <button type="button" @onclick="@(() => VelgVare(felt, comp))"><span>@c.Navn</span><small>@(c.Type?.Navn ?? c.Leverandor)</small></button>
+                    }
+                </div>
+            }
+        </div>
+    };
+
+    private async Task SokVare(string felt, string q)
+    {
+        if (felt == "til") { _tilSok = q; _tilComp = null; _tilId = null; } else { _vareSok = q; _vareComp = null; _vareId = null; }
+        var term = q.Trim();
+        List<Component> treff = [];
+        if (term.Length >= 2)
+        {
+            treff = await Db.Components.AsNoTracking().Include(c => c.Type)
+                .Where(c => c.Aktiv && (EF.Functions.Like(c.Navn, $"%{term}%") || (c.Produktkode != null && EF.Functions.Like(c.Produktkode, $"%{term}%")) || (c.Leverandor != null && EF.Functions.Like(c.Leverandor, $"%{term}%"))))
+                .OrderBy(c => c.Navn).Take(8).ToListAsync();
+        }
+        if (felt == "til") { _tilTreff = treff; } else { _vareTreff = treff; }
+    }
+
+    private void VelgVare(string felt, Component c)
+    {
+        if (felt == "til") { _tilComp = c; _tilId = c.Id; _tilSok = c.Navn; _tilTreff = []; }
+        else { _vareComp = c; _vareId = c.Id; _vareSok = c.Navn; _vareTreff = []; }
+    }
+
+    private List<string> InfoForslag(string felt)
+    {
+        IEnumerable<string?> v = felt switch
+        {
+            "brann" => [.. Dorer.Select(d => d.Brann), "Ingen"],
+            "lyd" => Dorer.Select(d => d.Lyd),
+            "etasje" => Dorer.Select(d => d.Etasje),
+            "sone" => Dorer.Select(d => d.Sone),
+            "dortype" => Dorer.Select(d => d.Dortype),
+            "slag" => ["H", "V", .. Dorer.Select(d => d.Slagretning)],
+            "dortil" => Dorer.Select(d => d.DorTil),
+            _ => []
+        };
+        return v.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Trim()).Distinct().OrderBy(x => x, NaturligSammenligner.Instans).Take(10).ToList();
+    }
+
+    private bool Klar => _oppgave switch
+    {
+        "bytt" => _fraId is not null && _tilId is not null && _fraId != _tilId,
+        "info" => _infoFelt is not null && !string.IsNullOrWhiteSpace(_infoVerdi),
+        "fun" => _funValgt.Count > 0,
+        "leggvare" => _vareId is not null && _antall > 0,
+        "fjern" => _fraId is not null,
+        "pakke" => _pakkeId is not null,
+        "status" => _nyStatus is not null,
+        _ => false
+    };
+
+    private int AntallEndres => MalDorer.Count(d => Endringer(d).Count > 0);
+
+    private sealed record Endring(string Felt, string? Fra, string? Til);
+
+    private string? InfoNaa(Dor d, string felt) => felt switch
+    {
+        "brann" => d.Brann, "lyd" => d.Lyd, "etasje" => d.Etasje, "rom" => d.Romnr, "dortil" => d.DorTil,
+        "sone" => d.Sone, "dortype" => d.Dortype, "slag" => d.Slagretning, "notat" => d.Notater,
+        "dorid" => _dorIdMaler.FirstOrDefault(m => m.Id == d.DorIdMalId)?.Kode,
+        _ => null
+    };
+
+    private string? InfoNy(Dor d)
+    {
+        var v = _infoVerdi?.Trim();
+        return _infoFelt switch
+        {
+            "brann" when v == "Ingen" => null,
+            "notat" => string.IsNullOrWhiteSpace(d.Notater) ? v : $"{d.Notater}\n{v}",
+            "dorid" => v == "0" ? null : _dorIdMaler.FirstOrDefault(m => m.Id.ToString() == v)?.Kode,
+            _ => v
+        };
+    }
+
+    private List<Endring> Endringer(Dor d)
+    {
+        var ut = new List<Endring>();
+        switch (_oppgave)
+        {
+            case "info":
+                {
+                    var naa = InfoNaa(d, _infoFelt!);
+                    var ny = InfoNy(d);
+                    if ((naa ?? "") != (ny ?? ""))
+                    {
+                        ut.Add(new(InfoFelt.First(x => x.Key == _infoFelt).Navn, naa, _infoFelt == "notat" ? $"+ {_infoVerdi}" : ny));
+                    }
+                    break;
+                }
+            case "fun":
+                foreach (var id in _funValgt)
+                {
+                    var f = _funksjoner.First(x => x.Id == id);
+                    var har = d.Funksjoner.Any(x => x.Id == id);
+                    if (!_funFjern && !har) ut.Add(new("Dørfunksjon", null, "+ " + FunKort(f)));
+                    if (_funFjern && har) ut.Add(new("Dørfunksjon", "− " + FunKort(f), null));
+                }
+                break;
+            case "leggvare":
+                {
+                    var finnes = d.Komponenter.FirstOrDefault(k => k.ComponentId == _vareId);
+                    if (finnes is null) ut.Add(new("Vare", null, $"+ {_antall} × {_vareComp?.Navn}{(_somOpsjon ? " (opsjon)" : "")}"));
+                    else if (finnes.ErOpsjon == _somOpsjon && finnes.Antall != _antall) ut.Add(new($"Antall {finnes.Component?.Navn}", finnes.Antall.ToString(), _antall.ToString()));
+                    break;
+                }
+            case "fjern":
+                foreach (var k in d.Komponenter.Where(k => k.ComponentId == _fraId))
+                {
+                    ut.Add(new("Vare", "− " + k.Component?.Navn + (k.ErOpsjon ? " (opsjon)" : ""), null));
+                }
+                break;
+            case "bytt":
+                if (d.Komponenter.Any(k => k.ComponentId == _fraId))
+                {
+                    ut.Add(new("Vare", d.Komponenter.First(k => k.ComponentId == _fraId).Component?.Navn, _tilComp?.Navn));
+                }
+                break;
+            case "pakke":
+                {
+                    var naa = PakkeFor(d);
+                    var ny = _pakker.First(p => p.Id == _pakkeId);
+                    ut.Add(new("Pakke", naa?.Navn, naa?.Id == ny.Id ? $"{ny.Navn} (oppdateres)" : ny.Navn));
+                    break;
+                }
+            case "status":
+                if (d.Status != _nyStatus) ut.Add(new("Status", StatusTekst(d.Status), StatusTekst(_nyStatus!.Value)));
+                break;
+        }
+        return ut;
+    }
+
+    private string Setning(int n)
+    {
+        var dd = $"<b>{n} {(n == 1 ? "dør" : "dører")}</b>";
+        string E(string? s) => System.Net.WebUtility.HtmlEncode(s ?? "");
+        return _oppgave switch
+        {
+            "bytt" => $"Bytter {E(VarerPaDorene().FirstOrDefault(v => v.Id == _fraId)?.Navn)} med <b>{E(_tilComp?.Navn)}</b> på {dd}.",
+            "info" => _infoFelt == "notat" ? $"Legger til merknaden <b>«{E(_infoVerdi)}»</b> på {dd}."
+                : $"Setter {E(InfoFelt.First(x => x.Key == _infoFelt).Navn.ToLowerInvariant())} til <b>{E(_infoFelt == "dorid" ? (_infoVerdi == "0" ? "ingen" : _dorIdMaler.FirstOrDefault(m => m.Id.ToString() == _infoVerdi)?.Kode) : _infoFelt == "brann" && _infoVerdi == "Ingen" ? "ingen" : _infoVerdi)}</b> på {dd}.",
+            "fun" => $"{(_funFjern ? "Fjerner" : "Legger til")} <b>{E(string.Join(", ", _funksjoner.Where(f => _funValgt.Contains(f.Id)).Select(FunKort)))}</b> på {dd}.",
+            "leggvare" => $"Legger til <b>{_antall} × {E(_vareComp?.Navn)}</b>{(_somOpsjon ? " som opsjon" : "")} på {dd}.",
+            "fjern" => $"Fjerner <b>{E(VarerPaDorene().FirstOrDefault(v => v.Id == _fraId)?.Navn)}</b> fra {dd}.",
+            "pakke" => $"Setter pakken <b>{E(_pakker.FirstOrDefault(p => p.Id == _pakkeId)?.Navn)}</b> på {dd}.",
+            "status" => $"Setter status <b>{StatusTekst(_nyStatus!.Value)}</b> på {dd}.",
+            _ => ""
+        };
+    }
+
+    private string? Advarsel()
+    {
+        var v = MalDorer;
+        if (_oppgave == "bytt" && !_behold)
+        {
+            var m = v.Count(d => d.Komponenter.Any(k => k.ComponentId == _fraId && k.Montert));
+            if (m > 0) return $"{m} av dørene har den gamle varen montert – den nye må monteres.";
+        }
+        if (_oppgave == "fjern")
+        {
+            var m = v.Count(d => d.Komponenter.Any(k => k.ComponentId == _fraId && k.Montert));
+            if (m > 0) return $"{m} av dørene har varen montert. Det logges i komponenthistorikken.";
+        }
+        if (_oppgave == "pakke")
+        {
+            var m = v.Count(d => PakkeFor(d) is { } p && p.Id != _pakkeId);
+            if (m > 0) return $"{m} {(m == 1 ? "dør bytter" : "dører bytter")} pakke – varene fra den gamle pakken fjernes.";
+        }
+        if (_oppgave == "info" && _infoFelt == "brann" && _infoVerdi == "Ingen")
+        {
+            var m = v.Count(d => !string.IsNullOrWhiteSpace(d.Brann));
+            if (m > 0) return $"Brannklasse fjernes på {m} branndører.";
+        }
+        if (_oppgave == "status" && _nyStatus == MontasjeStatus.IkkeStartet)
+        {
+            var m = v.Count(d => d.Komponenter.Any(k => k.Montert));
+            if (m > 0) return $"Montert-hakene fjernes på {m} dører.";
+        }
+        return null;
+    }
+
+    // ---------- Utføre, logg og angre ----------
+    public sealed record KompSnap(int ComponentId, int Antall, string? Enhet, DorKomponentPlassering? Plassering, LevertAv LevertAv, bool Montert, DateTime? MontertDato, int? MontertAvBrukerId, bool ErOpsjon);
+    public sealed record DorSnap(int DorId, string? Brann, string? Lyd, string? Etasje, string? Romnr, string? DorTil, string? Sone, string? Dortype, string? Slagretning,
+        int? DorIdMalId, string? Notater, MontasjeStatus Status, DateTime? MontertDato, int? MontertAvBrukerId, int? PakkeId, string? PakkeKomponentIder, string? PakkeFunksjonIder,
+        List<int> FunksjonIder, List<KompSnap> Komp);
+
+    private static DorSnap Ta(Dor d) => new(d.Id, d.Brann, d.Lyd, d.Etasje, d.Romnr, d.DorTil, d.Sone, d.Dortype, d.Slagretning, d.DorIdMalId, d.Notater,
+        d.Status, d.MontertDato, d.MontertAvBrukerId, d.PakkeId, d.PakkeKomponentIder, d.PakkeFunksjonIder,
+        d.Funksjoner.Select(f => f.Id).ToList(),
+        d.Komponenter.Select(k => new KompSnap(k.ComponentId, k.Antall, k.Enhet, k.Plassering, k.LevertAv, k.Montert, k.MontertDato, k.MontertAvBrukerId, k.ErOpsjon)).ToList());
+
+    private void Logg(Dor d, string tekst) =>
+        Db.DorHendelser.Add(new DorHendelse { DorId = d.Id, Beskrivelse = tekst, UtfortAvBrukerId = BrukerId });
+
+    private static (int Mont, int Tot) Tall(Dor d) =>
+        (d.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.BeslagAntall), d.Komponenter.Where(k => k.MonteresAvOss).Sum(k => k.BeslagAntall));
+
+    // Statusen følger beslagene bare når endringen faktisk flytter montert-tallene:
+    // en montert vare er tatt bort/byttet, eller en ferdig dør har fått nye beslag.
+    // En dør som er satt ferdig for hånd uten avhukede beslag, beholder statusen.
+    private void JusterStatus(Dor d, (int Mont, int Tot) foer)
+    {
+        var etter = Tall(d);
+        if (etter.Mont != foer.Mont || (d.Status == MontasjeStatus.FerdigMontert && etter.Tot > foer.Tot && etter.Mont < etter.Tot))
+        {
+            OppdaterStatusFraBeslag(d);
+        }
+    }
+
+    private void OppdaterStatusFraBeslag(Dor d)
+    {
+        var tot = d.Komponenter.Where(k => k.MonteresAvOss).Sum(k => k.BeslagAntall);
+        if (tot == 0)
+        {
+            return;
+        }
+        var mont = d.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.BeslagAntall);
+        var status = mont == 0 ? MontasjeStatus.IkkeStartet : mont < tot ? MontasjeStatus.Montert : MontasjeStatus.FerdigMontert;
+        if (d.Status != status)
+        {
+            SettDorStatus(d, status);
+        }
+    }
+
+    private void SettMontert(DorKomponent k, bool montert)
+    {
+        k.Montert = montert;
+        k.MontertDato = montert ? DateTime.Now : null;
+        k.MontertAvBrukerId = montert ? BrukerId : null;
+        k.MontertAvBruker = montert ? Bruker : null;
+    }
+
+    private async Task Utfor()
+    {
+        if (!Klar || _lagrer)
+        {
+            return;
+        }
+        if (_oppgave == "status" ? !KanSetteStatus : !KanRedigere)
+        {
+            return;
+        }
+        _lagrer = true;
+        try
+        {
+            var mal = MalDorer.Where(d => Endringer(d).Count > 0).ToList();
+            var tekst = System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Replace(Setning(mal.Count), "<[^>]+>", ""));
+            var snapshot = mal.Select(Ta).ToList();
+            var berort = new HashSet<int>();
+            Package? pakke = null;
+            Component? til = null, vare = null;
+            if (_oppgave == "pakke")
+            {
+                pakke = await Db.Packages.Include(p => p.Komponenter).ThenInclude(pc => pc.Component).ThenInclude(c => c!.Type)
+                    .Include(p => p.DorFunksjoner).FirstAsync(p => p.Id == _pakkeId);
+            }
+            if (_oppgave == "bytt")
+            {
+                til = await Db.Components.Include(c => c.Type).FirstAsync(c => c.Id == _tilId);
+            }
+            if (_oppgave == "leggvare")
+            {
+                vare = await Db.Components.Include(c => c.Type).FirstAsync(c => c.Id == _vareId);
+            }
+
+            foreach (var d in mal)
+            {
+                var foer = Tall(d);
+                switch (_oppgave)
+                {
+                    case "info":
+                        var ny = InfoNy(d);
+                        switch (_infoFelt)
+                        {
+                            case "brann": d.Brann = ny; break;
+                            case "lyd": d.Lyd = ny; break;
+                            case "etasje": d.Etasje = ny; break;
+                            case "rom": d.Romnr = ny; break;
+                            case "dortil": d.DorTil = ny; break;
+                            case "sone": d.Sone = ny; break;
+                            case "dortype": d.Dortype = ny; break;
+                            case "slag": d.Slagretning = ny; break;
+                            case "notat": d.Notater = ny; break;
+                            case "dorid": d.DorIdMalId = _infoVerdi == "0" ? null : int.Parse(_infoVerdi!); break;
+                        }
+                        break;
+                    case "fun":
+                        foreach (var f in _funksjoner.Where(f => _funValgt.Contains(f.Id)))
+                        {
+                            var har = d.Funksjoner.FirstOrDefault(x => x.Id == f.Id);
+                            if (_funFjern && har is not null) d.Funksjoner.Remove(har);
+                            if (!_funFjern && har is null) d.Funksjoner.Add(f);
+                        }
+                        break;
+                    case "leggvare":
+                        {
+                            var finnes = d.Komponenter.FirstOrDefault(k => k.ComponentId == vare!.Id);
+                            if (finnes is null)
+                            {
+                                var dk = new DorKomponent { DorId = d.Id, ComponentId = vare!.Id, Component = vare, Antall = _antall, Enhet = vare.Enhet, ErOpsjon = _somOpsjon };
+                                d.Komponenter.Add(dk);
+                                Db.DorKomponenter.Add(dk);
+                            }
+                            else if (finnes.ErOpsjon == _somOpsjon)
+                            {
+                                finnes.Antall = _antall;
+                            }
+                            berort.Add(vare!.Id);
+                            JusterStatus(d, foer);
+                            break;
+                        }
+                    case "fjern":
+                        foreach (var k in d.Komponenter.Where(k => k.ComponentId == _fraId).ToList())
+                        {
+                            d.Komponenter.Remove(k);
+                            Db.DorKomponenter.Remove(k);
+                        }
+                        berort.Add(_fraId!.Value);
+                        JusterStatus(d, foer);
+                        break;
+                    case "bytt":
+                        {
+                            var gammel = d.Komponenter.First(k => k.ComponentId == _fraId);
+                            var finnesNy = d.Komponenter.FirstOrDefault(k => k.ComponentId == til!.Id);
+                            if (finnesNy is not null)
+                            {
+                                finnesNy.Antall += gammel.Antall;
+                            }
+                            else
+                            {
+                                var dk = new DorKomponent
+                                {
+                                    DorId = d.Id, ComponentId = til!.Id, Component = til, Antall = gammel.Antall, Enhet = gammel.Enhet ?? til.Enhet,
+                                    LevertAv = gammel.LevertAv, Plassering = gammel.Plassering, ErOpsjon = gammel.ErOpsjon
+                                };
+                                if (_behold && gammel.Montert)
+                                {
+                                    dk.Montert = true;
+                                    dk.MontertDato = gammel.MontertDato;
+                                    dk.MontertAvBrukerId = gammel.MontertAvBrukerId;
+                                }
+                                d.Komponenter.Add(dk);
+                                Db.DorKomponenter.Add(dk);
+                            }
+                            d.Komponenter.Remove(gammel);
+                            Db.DorKomponenter.Remove(gammel);
+                            berort.Add(_fraId!.Value);
+                            berort.Add(til!.Id);
+                            JusterStatus(d, foer);
+                            break;
+                        }
+                    case "pakke":
+                        var r = DorPakkeService.Bruk(Db, d, pakke!, _pakker);
+                        berort.UnionWith(r.Berort);
+                        JusterStatus(d, foer);
+                        break;
+                    case "status":
+                        foreach (var k in d.Komponenter.Where(k => k.MonteresAvOss))
+                        {
+                            if (_nyStatus == MontasjeStatus.FerdigMontert && !k.Montert) SettMontert(k, true);
+                            if (_nyStatus == MontasjeStatus.IkkeStartet && k.Montert) SettMontert(k, false);
+                        }
+                        SettDorStatus(d, _nyStatus!.Value);
+                        break;
+                }
+                Logg(d, "Masseoppdatert: " + tekst);
+            }
+
+            await Db.SaveChangesAsync();
+            foreach (var id in berort)
+            {
+                await TilbudSync.SyncSylinderAsync(ProsjektId, id);
+            }
+            _angre = snapshot;
+            _sistEndret = mal.Select(d => d.Id).ToHashSet();
+            _melding = tekst.Replace("Bytter", "Byttet").Replace("Setter", "Satte").Replace("Legger til", "La til").Replace("Fjerner", "Fjernet");
+            _dlg = null;
+            await OnEndret.InvokeAsync();
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    private async Task Angre()
+    {
+        if (_angre is null || _lagrer)
+        {
+            return;
+        }
+        _lagrer = true;
+        try
+        {
+            foreach (var s in _angre)
+            {
+                var d = Dorer.FirstOrDefault(x => x.Id == s.DorId);
+                if (d is null)
+                {
+                    continue;
+                }
+                d.Brann = s.Brann; d.Lyd = s.Lyd; d.Etasje = s.Etasje; d.Romnr = s.Romnr; d.DorTil = s.DorTil; d.Sone = s.Sone;
+                d.Dortype = s.Dortype; d.Slagretning = s.Slagretning; d.DorIdMalId = s.DorIdMalId; d.Notater = s.Notater;
+                d.PakkeId = s.PakkeId; d.PakkeKomponentIder = s.PakkeKomponentIder; d.PakkeFunksjonIder = s.PakkeFunksjonIder;
+                if (d.Status != s.Status || d.MontertAvBrukerId != s.MontertAvBrukerId)
+                {
+                    d.MontertAvBruker = s.MontertAvBrukerId is int bid ? await Db.Brukere.FindAsync(bid) : null;
+                    d.MontertAvBrukerId = s.MontertAvBrukerId;
+                }
+                d.Status = s.Status;
+                d.MontertDato = s.MontertDato;
+
+                foreach (var f in d.Funksjoner.Where(f => !s.FunksjonIder.Contains(f.Id)).ToList())
+                {
+                    d.Funksjoner.Remove(f);
+                }
+                foreach (var f in _funksjoner.Where(f => s.FunksjonIder.Contains(f.Id) && d.Funksjoner.All(x => x.Id != f.Id)))
+                {
+                    d.Funksjoner.Add(f);
+                }
+
+                foreach (var k in d.Komponenter.Where(k => s.Komp.All(x => x.ComponentId != k.ComponentId)).ToList())
+                {
+                    d.Komponenter.Remove(k);
+                    Db.DorKomponenter.Remove(k);
+                }
+                foreach (var ks in s.Komp)
+                {
+                    var k = d.Komponenter.FirstOrDefault(x => x.ComponentId == ks.ComponentId);
+                    if (k is null)
+                    {
+                        k = new DorKomponent { DorId = d.Id, ComponentId = ks.ComponentId, Component = await Db.Components.Include(c => c.Type).FirstOrDefaultAsync(c => c.Id == ks.ComponentId) };
+                        d.Komponenter.Add(k);
+                        Db.DorKomponenter.Add(k);
+                    }
+                    k.Antall = ks.Antall; k.Enhet = ks.Enhet; k.Plassering = ks.Plassering; k.LevertAv = ks.LevertAv; k.ErOpsjon = ks.ErOpsjon;
+                    if (k.Montert != ks.Montert || k.MontertAvBrukerId != ks.MontertAvBrukerId)
+                    {
+                        k.MontertAvBruker = ks.MontertAvBrukerId is int mb ? await Db.Brukere.FindAsync(mb) : null;
+                        k.MontertAvBrukerId = ks.MontertAvBrukerId;
+                    }
+                    k.Montert = ks.Montert;
+                    k.MontertDato = ks.MontertDato;
+                }
+                Logg(d, "Angret masseoppdatering");
+            }
+            await Db.SaveChangesAsync();
+            foreach (var id in _angre.SelectMany(s => s.Komp.Select(k => k.ComponentId)).Distinct())
+            {
+                await TilbudSync.SyncSylinderAsync(ProsjektId, id);
+            }
+            _sistEndret = _angre.Select(s => s.DorId).ToHashSet();
+            _angre = null;
+            _melding = "Endringen er angret.";
+            await OnEndret.InvokeAsync();
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+}
