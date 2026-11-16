@@ -78,8 +78,8 @@ public static class MontorApp
     public static string ProsjektStatusKort(ProsjektStatus? s) => s switch
     {
         ProsjektStatus.UnderArbeid => "Under arbeid",
-        ProsjektStatus.Aktiv => "Prosjektering",
-        ProsjektStatus.Registrert => "Registrert",
+        ProsjektStatus.Aktiv => "Tilbud under arbeid",
+        ProsjektStatus.Registrert => "Kontrahert",
         { } x => x.Visningsnavn(),
         _ => "Uten status"
     };

@@ -19,10 +19,10 @@ public static class ProsjektStatusExtensions
 {
     public static string Visningsnavn(this ProsjektStatus status) => status switch
     {
-        ProsjektStatus.Aktiv => "Aktiv (prosjektering pågår)",
+        ProsjektStatus.Aktiv => "Tilbud under arbeid",
         ProsjektStatus.Tilbud => "Tilbud sendt",
         ProsjektStatus.TilbudAvslatt => "Tilbud avslått",
-        ProsjektStatus.Registrert => "Registrert",
+        ProsjektStatus.Registrert => "Kontrahert",
         ProsjektStatus.Avsluttet => "Avsluttet",
         ProsjektStatus.Serviceavtale => "Serviceavtale",
         ProsjektStatus.Overlevert => "Overlevert",

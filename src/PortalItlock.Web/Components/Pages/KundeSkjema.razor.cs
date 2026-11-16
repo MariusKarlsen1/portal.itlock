@@ -256,8 +256,9 @@ public partial class KundeSkjema
 
     private static string ProsjektKortStatus(ProsjektStatus? s) => s switch
     {
-        ProsjektStatus.Aktiv or ProsjektStatus.UnderArbeid => "Pågår",
-        ProsjektStatus.Registrert => "Registrert",
+        ProsjektStatus.Aktiv => "Tilbud under arbeid",
+        ProsjektStatus.UnderArbeid => "Pågår",
+        ProsjektStatus.Registrert => "Kontrahert",
         ProsjektStatus.Tilbud => "Tilbud sendt",
         ProsjektStatus.TilbudAvslatt => "Tilbud avslått",
         ProsjektStatus.Overlevert => "Ferdig",
