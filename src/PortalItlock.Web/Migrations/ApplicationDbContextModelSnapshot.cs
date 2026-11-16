@@ -2459,6 +2459,15 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime>("OpprettetDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PakkeFunksjonIder")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PakkeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PakkeKomponentIder")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("PlantegningId")
                         .HasColumnType("INTEGER");
 

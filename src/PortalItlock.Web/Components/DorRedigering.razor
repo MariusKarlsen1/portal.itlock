@@ -604,6 +604,10 @@ else
             }
             else if (liste.Count > 0)
             {
+                @if (DorensPakke is { } dorPakke)
+                {
+                    <span class="bs-pakke-merke" title="Døren har fått pakken «@dorPakke.Navn»"><Icon Name="box" />@dorPakke.Navn</span>
+                }
                 var antMontert = liste.Count(k => k.MonteresAvOss && k.Montert);
                 var antBeslag = liste.Count(k => k.MonteresAvOss);
                 <span class="bs-teller">@antMontert av @antBeslag montert</span>
@@ -619,6 +623,10 @@ else
                 @if (opsjon && liste.Count > 0)
                 {
                     <button type="button" class="bs-kn" title="Kunden har tatt hele opsjonen - flytt alle varene til beslag" @onclick="FlyttAlleTilBeslag"><Icon Name="arrow-up" />Flytt alle til beslag</button>
+                }
+                @if (!opsjon && DorensPakke is { } oppdPakke)
+                {
+                    <button type="button" class="bs-kn" title="Hent pakken «@oppdPakke.Navn» slik den er nå - varer og dørfunksjoner. Ingenting blir dobbelt." @onclick="OppdaterPakke"><Icon Name="refresh" />Oppdater pakke</button>
                 }
                 @if (!opsjon && liste.Any(k => k.MonteresAvOss && !k.Montert))
                 {
@@ -697,8 +705,23 @@ else
                             <div class="pakke-velger-innhold">
                                 <div class="pakke-velger-topp">
                                     <b>@pakke.Navn</b>
-                                    <button type="button" class="add-button" @onclick="@(() => LeggTilPakkeFraVelger(pakke.Id))"><Icon Name="plus" />Legg til</button>
+                                    @if (!_opsjonModus && DorensPakke is { } naa && naa.Id != pakke.Id)
+                                    {
+                                        <button type="button" class="add-button" title="Fjerner varene og dørfunksjonene fra «@naa.Navn» og legger på denne pakken" @onclick="@(() => LeggTilPakkeFraVelger(pakke.Id))"><Icon Name="refresh" />Bytt til denne</button>
+                                    }
+                                    else if (!_opsjonModus && DorensPakke?.Id == pakke.Id)
+                                    {
+                                        <button type="button" class="add-button" @onclick="@(() => LeggTilPakkeFraVelger(pakke.Id))"><Icon Name="refresh" />Oppdater</button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="add-button" @onclick="@(() => LeggTilPakkeFraVelger(pakke.Id))"><Icon Name="plus" />Legg til</button>
+                                    }
                                 </div>
+                                @if (!_opsjonModus && DorensPakke is { } erstattes && erstattes.Id != pakke.Id)
+                                {
+                                    <p class="pakke-velger-bytt">Erstatter «@erstattes.Navn» på døren - varene og dørfunksjonene fra den fjernes.</p>
+                                }
                                 <div class="pakke-velger-tabell">
                                     <table>
                                         <thead><tr><th>#</th><th>Beslagstype</th><th>Beskrivelse</th><th>Overflate</th><th class="t">Antall</th><th>Enhet</th></tr></thead>
@@ -998,6 +1021,40 @@ else
         public int Id { get; set; }
         public string Navn { get; set; } = "";
         public List<PakkeLinje> Linjer { get; set; } = [];
+        public HashSet<int> KomponentIder { get; set; } = [];
+        public HashSet<int> FunksjonIder { get; set; } = [];
+    }
+
+    private static HashSet<int> IdListe(string? s) =>
+        (s ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => int.TryParse(x, out var i) ? i : 0).Where(i => i > 0).ToHashSet();
+
+    // Pakken på døren. Dører som fikk pakke før dette ble lagret, kjennes igjen
+    // på at alle varene i pakken står som beslag på døren (største pakke vinner).
+    private PakkeOption? DorensPakke
+    {
+        get
+        {
+            if (Dor.PakkeId is int id)
+            {
+                return _pakker.FirstOrDefault(p => p.Id == id);
+            }
+            var paDoren = Dor.Komponenter.Where(k => !k.ErOpsjon).Select(k => k.ComponentId).ToHashSet();
+            return _pakker
+                .Where(p => p.KomponentIder.Count > 0 && p.KomponentIder.IsSubsetOf(paDoren))
+                .OrderByDescending(p => p.KomponentIder.Count)
+                .FirstOrDefault();
+        }
+    }
+
+    private async Task OppdaterPakke()
+    {
+        if (DorensPakke is { } p)
+        {
+            _opsjonModus = false;
+            _valgtPakkeId = p.Id;
+            await LeggTilPakke();
+        }
     }
 
     private sealed record PakkeLinje(string Type, string Beskrivelse, string Overflate, int Antall, string Enhet);
@@ -1119,12 +1176,15 @@ else
         var pakker = await Db.Packages
             .AsNoTracking()
             .Include(p => p.Komponenter).ThenInclude(pc => pc.Component).ThenInclude(c => c!.Produktgrupper)
+            .Include(p => p.DorFunksjoner)
             .OrderBy(p => p.Navn)
             .ToListAsync();
         _pakker = pakker.Select(p => new PakkeOption
         {
             Id = p.Id,
             Navn = p.Navn,
+            KomponentIder = p.Komponenter.Select(pc => pc.ComponentId).ToHashSet(),
+            FunksjonIder = p.DorFunksjoner.Select(f => f.Id).ToHashSet(),
             Linjer = p.Komponenter
                 .Where(pc => pc.Component is not null)
                 .OrderBy(pc => pc.Component!.Navn)
@@ -1504,6 +1564,15 @@ else
             return;
         }
 
+        // Beslag: døren har én pakke. Oppdater = samme pakke på nytt, bytt = ny
+        // pakke. Det som kom fra den gamle pakken fjernes, antallet settes lik
+        // pakken (aldri dobbelt), og montert-status beholdes på varer som blir.
+        if (!_opsjonModus)
+        {
+            await BrukPakke(pakke);
+            return;
+        }
+
         var iAnnenListe = 0;
         foreach (var pk in pakke.Komponenter)
         {
@@ -1542,6 +1611,87 @@ else
         foreach (var pk in pakke.Komponenter)
         {
             await TilbudSync.SyncSylinderAsync(Dor.ProsjektId, pk.ComponentId);
+        }
+        _valgtPakkeId = null;
+        await OnSaved.InvokeAsync();
+    }
+
+    private async Task BrukPakke(Package pakke)
+    {
+        var gammel = DorensPakke;
+        var gamleKomp = Dor.PakkeId is not null ? IdListe(Dor.PakkeKomponentIder) : gammel?.KomponentIder ?? [];
+        var gamleFunk = Dor.PakkeId is not null ? IdListe(Dor.PakkeFunksjonIder) : gammel?.FunksjonIder ?? [];
+        var nyeKomp = pakke.Komponenter.Select(pk => pk.ComponentId).ToHashSet();
+        var nyeFunk = pakke.DorFunksjoner.Select(f => f.Id).ToHashSet();
+        var berort = gamleKomp.Union(nyeKomp).ToList();
+
+        var fjernet = 0;
+        foreach (var dk in Dor.Komponenter.Where(k => !k.ErOpsjon && gamleKomp.Contains(k.ComponentId) && !nyeKomp.Contains(k.ComponentId)).ToList())
+        {
+            Dor.Komponenter.Remove(dk);
+            Db.DorKomponenter.Remove(dk);
+            fjernet++;
+        }
+
+        var iOpsjon = 0;
+        foreach (var pk in pakke.Komponenter)
+        {
+            var existing = Dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == pk.ComponentId);
+            if (existing is { ErOpsjon: true })
+            {
+                iOpsjon++;
+            }
+            else if (existing is not null)
+            {
+                existing.Antall = pk.Antall;
+                if (pk.LevertAv is { } lev && existing.LevertAv != lev)
+                {
+                    existing.LevertAv = lev;
+                    if (!existing.MonteresAvOss && existing.Montert)
+                    {
+                        existing.Montert = false;
+                        existing.MontertDato = null;
+                        existing.MontertAvBrukerId = null;
+                        existing.MontertAvBruker = null;
+                    }
+                }
+            }
+            else
+            {
+                var dk = new DorKomponent { DorId = Dor.Id, ComponentId = pk.ComponentId, Component = pk.Component, Antall = pk.Antall, Enhet = pk.Component?.Enhet, LevertAv = pk.LevertAv ?? LevertAv.F };
+                Dor.Komponenter.Add(dk);
+                Db.DorKomponenter.Add(dk);
+            }
+        }
+
+        foreach (var f in Dor.Funksjoner.Where(f => gamleFunk.Contains(f.Id) && !nyeFunk.Contains(f.Id)).ToList())
+        {
+            Dor.Funksjoner.Remove(f);
+        }
+        foreach (var funksjon in pakke.DorFunksjoner)
+        {
+            if (Dor.Funksjoner.All(f => f.Id != funksjon.Id))
+            {
+                Dor.Funksjoner.Add(funksjon);
+            }
+        }
+
+        Dor.PakkeId = pakke.Id;
+        Dor.PakkeKomponentIder = string.Join(",", nyeKomp.Order());
+        Dor.PakkeFunksjonIder = string.Join(",", nyeFunk.Order());
+
+        var bytte = gammel is not null && gammel.Id != pakke.Id;
+        var samme = gammel?.Id == pakke.Id;
+        LoggHendelse(bytte ? $"Byttet pakke fra {gammel!.Navn} til {pakke.Navn}" : samme ? $"Oppdaterte pakke {pakke.Navn}" : $"La til pakke {pakke.Navn}");
+        _savedMessage = (bytte ? $"Pakken er byttet fra «{gammel!.Navn}» til «{pakke.Navn}»." : samme ? $"Pakken «{pakke.Navn}» er oppdatert." : $"Pakken «{pakke.Navn}» er lagt til.")
+            + (fjernet > 0 ? $" {fjernet} {(fjernet == 1 ? "vare" : "varer")} fra den gamle pakken er fjernet." : "")
+            + (iOpsjon > 0 ? $" {iOpsjon} av varene står under Opsjon beslag og ble ikke lagt til på nytt." : "");
+
+        OppdaterStatusFraBeslag();
+        await Db.SaveChangesAsync();
+        foreach (var componentId in berort)
+        {
+            await TilbudSync.SyncSylinderAsync(Dor.ProsjektId, componentId);
         }
         _valgtPakkeId = null;
         await OnSaved.InvokeAsync();
@@ -1710,7 +1860,10 @@ else
                 Bredde = Dor.Bredde,
                 Hoyde = Dor.Hoyde,
                 DorIdMalId = Dor.DorIdMalId,
-                Notater = Dor.Notater
+                Notater = Dor.Notater,
+                PakkeId = Dor.PakkeId,
+                PakkeKomponentIder = Dor.PakkeKomponentIder,
+                PakkeFunksjonIder = Dor.PakkeFunksjonIder
             };
             Db.Dorer.Add(kopi);
             nyeDorer.Add(kopi);

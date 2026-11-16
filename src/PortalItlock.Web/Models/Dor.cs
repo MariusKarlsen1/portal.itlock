@@ -70,4 +70,11 @@ public class Dor
 
     public List<DorKomponent> Komponenter { get; set; } = [];
     public List<DorFunksjon> Funksjoner { get; set; } = [];
+
+    // Pakken døren har fått, og hvilke varer (komponent-id-er) og dørfunksjoner
+    // som kom fra den (kommalister). Brukes når pakken oppdateres eller byttes,
+    // så det gamle fjernes og ingenting blir dobbelt.
+    public int? PakkeId { get; set; }
+    public string? PakkeKomponentIder { get; set; }
+    public string? PakkeFunksjonIder { get; set; }
 }
