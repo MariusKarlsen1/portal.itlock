@@ -1,0 +1,247 @@
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+@* Les dører fra plantegningen (samme PDF som tegningen er laget fra): dørmerke
+   (Dør ID + mål), slagretning H/V sett fra slagsiden, og rommet døren slår inn i. *@
+<div class="pdf-skygge" @onclick="@(() => OnLukk.InvokeAsync())"></div>
+<div class="pdf" role="dialog" aria-modal="true" aria-labelledby="pdf-tittel">
+    <div class="pdf-hode">
+        <div>
+            <h2 id="pdf-tittel">Finn dører på tegningen</h2>
+            <small>Velg PDF-en tegningen er laget fra. Portalen leser dørmerke (Dør ID og mål), høyre/venstre og rommet døren går til.</small>
+        </div>
+        <button type="button" class="pdf-lukk" aria-label="Lukk" @onclick="@(() => OnLukk.InvokeAsync())"><Icon Name="x" /></button>
+    </div>
+
+    @if (_rader is null)
+    {
+        <div class="pdf-kropp">
+            <label class="pdf-slipp @(_leser ? "leser" : "")">
+                <InputFile OnChange="LesFil" accept=".pdf,application/pdf" disabled="@_leser" />
+                <Icon Name="upload" />
+                @if (_leser)
+                {
+                    <b>Leser tegningen …</b>
+                }
+                else
+                {
+                    <b>Velg plantegning (PDF)</b>
+                    <span>Må være PDF rett fra tegneprogrammet (ikke skannet), side 1 brukes.</span>
+                }
+            </label>
+            @if (_feil is not null)
+            {
+                <p class="pdf-feil"><Icon Name="alert-triangle" />@_feil</p>
+            }
+        </div>
+    }
+    else
+    {
+        var valgte = _rader.Count(r => r.Valgt);
+        <div class="pdf-oppsum">
+            <span><b>@_rader.Count(r => r.Dor.HarMerke) dører med dørmerke</b>@if (_rader.Any(r => !r.Dor.HarMerke)) {<span class="pdf-svak"> · @_rader.Count(r => !r.Dor.HarMerke) dørbuer uten merke (ikke huket av)</span>}</span>
+            @if (_rader.Any(r => r.Finnes))
+            {
+                <span class="pdf-svak">@_rader.Count(r => r.Finnes) står allerede på tegningen og er ikke huket av</span>
+            }
+        </div>
+        <div class="pdf-kropp pdf-tabkropp">
+            <table class="pdf-tab">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" checked="@(_rader.All(r => r.Valgt))" @onchange="@(e => { foreach (var r in _rader) r.Valgt = e.Value is true; })" /></th>
+                        <th>Dørnr.</th><th>Dør ID</th><th>B × H</th><th>Slag</th><th>Dør til</th><th>Romnr.</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rader)
+                    {
+                        var rad = r;
+                        <tr class="@(r.Valgt ? "" : "av")">
+                            <td><input type="checkbox" @bind="rad.Valgt" /></td>
+                            <td><input class="pdf-inp" @bind="rad.Dornummer" /></td>
+                            <td>
+                                @if (r.Dor.DorIdKode is null)
+                                {
+                                    <span class="pdf-svak">–</span>
+                                }
+                                else
+                                {
+                                    <b>@r.Dor.DorIdKode</b>
+                                    @if (_maler.ContainsKey(r.Dor.DorIdKode)) {<small class="pdf-ok">✓ finnes</small>} else {<small class="pdf-ny">ny</small>}
+                                }
+                            </td>
+                            <td class="pdf-tall">@(r.Dor.Bredde is null ? "–" : $"{r.Dor.Bredde} × {r.Dor.Hoyde}")@if (r.Dor.ToFloyet) {<small> · 2-fløyet</small>}</td>
+                            <td>
+                                <select class="pdf-inp pdf-slag" @bind="rad.Slag">
+                                    <option value="">–</option>
+                                    <option value="H">H</option>
+                                    <option value="V">V</option>
+                                </select>
+                            </td>
+                            <td><input class="pdf-inp" @bind="rad.DorTil" /></td>
+                            <td><input class="pdf-inp" @bind="rad.Romnr" /></td>
+                            <td>
+                                @if (r.Finnes)
+                                {
+                                    <span class="pdf-pill finnes">Finnes</span>
+                                }
+                                @foreach (var u in r.Dor.Usikkert)
+                                {
+                                    <span class="pdf-pill usikker">@u</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="pdf-bunn">
+            @if (_rader.Any(r => r.Valgt && r.Dor.DorIdKode is { } k && !_maler.ContainsKey(k)))
+            {
+                <label class="pdf-sjekk"><input type="checkbox" @bind="_opprettMaler" /> Opprett Dør ID som mangler (med mål fra tegningen)</label>
+            }
+            <span class="pdf-mellom"></span>
+            <button type="button" class="pdf-kn" @onclick="@(() => { _rader = null; _feil = null; })">Velg annen fil</button>
+            <button type="button" class="pdf-kn p" disabled="@(valgte == 0 || _lagrer)" @onclick="Opprett"><Icon Name="check" />Opprett @valgte @(valgte == 1 ? "dør" : "dører")</button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Plantegning Plantegning { get; set; } = null!;
+    [Parameter] public List<Dor> DorerPaTegningen { get; set; } = [];
+    [Parameter] public EventCallback OnLukk { get; set; }
+    [Parameter] public EventCallback<List<Dor>> OnOpprettet { get; set; }
+
+    private sealed class Rad(PlanDorLeser.FunnetDor dor)
+    {
+        public PlanDorLeser.FunnetDor Dor { get; } = dor;
+        public bool Valgt { get; set; }
+        public bool Finnes { get; set; }
+        public string Dornummer { get; set; } = "";
+        public string? Slag { get; set; } = dor.Slag;
+        public string? DorTil { get; set; } = dor.RomNavn;
+        public string? Romnr { get; set; } = dor.RomNr;
+    }
+
+    private List<Rad>? _rader;
+    private Dictionary<string, DorIdMal> _maler = new(StringComparer.OrdinalIgnoreCase);
+    private bool _leser, _lagrer, _opprettMaler = true;
+    private string? _feil;
+    private const long Maks = 60 * 1024 * 1024;
+
+    private async Task LesFil(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        _leser = true;
+        try
+        {
+            if (e.File.Size > Maks)
+            {
+                _feil = "Filen er for stor (maks 60 MB).";
+                return;
+            }
+            using var ms = new MemoryStream();
+            await e.File.OpenReadStream(Maks).CopyToAsync(ms);
+            var data = ms.ToArray();
+            _maler = (await Db.DorIdMaler.Where(m => m.ProsjektId == Plantegning.ProsjektId).ToListAsync())
+                .GroupBy(m => m.Kode.Trim(), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            var funnet = await Task.Run(() => PlanDorLeser.Les(PdfPlan.LesSide(data), _maler.Keys));
+            if (funnet.Count == 0)
+            {
+                _feil = "Fant ingen dører på tegningen. Er det en PDF rett fra tegneprogrammet (ikke skannet), med dørmerker som «ID21» og dørbuer?";
+                return;
+            }
+
+            var brukteNr = (await Db.Dorer.Where(d => d.ProsjektId == Plantegning.ProsjektId).Select(d => d.Dornummer).ToListAsync())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var lopenr = 1;
+            string NyttNr(string? romnr)
+            {
+                if (!string.IsNullOrWhiteSpace(romnr))
+                {
+                    var kandidat = romnr.Trim();
+                    for (var i = 2; brukteNr.Contains(kandidat); i++) kandidat = $"{romnr.Trim()}-{i}";
+                    brukteNr.Add(kandidat);
+                    return kandidat;
+                }
+                string nr;
+                do { nr = $"D-{lopenr++:000}"; } while (brukteNr.Contains(nr));
+                brukteNr.Add(nr);
+                return nr;
+            }
+
+            _rader = funnet.Select(f =>
+            {
+                var finnes = DorerPaTegningen.Any(d => d.PosX is double x && d.PosY is double y && Math.Abs(x - f.PosX) < 1.5 && Math.Abs(y - f.PosY) < 1.5);
+                return new Rad(f) { Finnes = finnes, Valgt = f.HarMerke && !finnes, Dornummer = NyttNr(f.RomNr) };
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            _feil = $"Klarte ikke å lese PDF-en: {ex.Message}";
+        }
+        finally
+        {
+            _leser = false;
+        }
+    }
+
+    private async Task Opprett()
+    {
+        if (_rader is null || _lagrer)
+        {
+            return;
+        }
+        _lagrer = true;
+        try
+        {
+            var nye = new List<Dor>();
+            foreach (var r in _rader.Where(r => r.Valgt))
+            {
+                var f = r.Dor;
+                DorIdMal? mal = null;
+                if (f.DorIdKode is { } kode && !_maler.TryGetValue(kode, out mal) && _opprettMaler)
+                {
+                    mal = new DorIdMal { ProsjektId = Plantegning.ProsjektId, Kode = kode, Bredde = f.Bredde, Hoyde = f.Hoyde, ToFloyet = f.ToFloyet, Dorkonstruksjon = DorTypeSkjemaLeser.Konstruksjon(kode) };
+                    Db.DorIdMaler.Add(mal);
+                    _maler[kode] = mal;
+                }
+
+                var dor = new Dor
+                {
+                    ProsjektId = Plantegning.ProsjektId,
+                    PlantegningId = Plantegning.Id,
+                    Dornummer = string.IsNullOrWhiteSpace(r.Dornummer) ? "Ny dør" : r.Dornummer.Trim(),
+                    PosX = f.PosX,
+                    PosY = f.PosY
+                };
+                if (mal is not null)
+                {
+                    dor.DorIdMal = mal;
+                    DorIdSynk.Kopier(mal, dor);
+                }
+                dor.Bredde ??= f.Bredde;
+                dor.Hoyde ??= f.Hoyde;
+                dor.SynkBxH();
+                if (f.ToFloyet) dor.ToFloyet = true;
+                dor.Slagretning = string.IsNullOrWhiteSpace(r.Slag) ? dor.Slagretning : r.Slag;
+                dor.DorTil = string.IsNullOrWhiteSpace(r.DorTil) ? dor.DorTil : r.DorTil.Trim();
+                dor.Romnr = string.IsNullOrWhiteSpace(r.Romnr) ? dor.Romnr : r.Romnr.Trim();
+                Db.Dorer.Add(dor);
+                nye.Add(dor);
+            }
+            await Db.SaveChangesAsync();
+            await OnOpprettet.InvokeAsync(nye);
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+}

@@ -15,7 +15,7 @@ public static class PdfTekst
 
     public sealed record Side(int Nr, double Bredde, double Hoyde, List<Ord> Ord);
 
-    private static readonly object Laas = new();
+    internal static readonly object Laas = new();
 
     private const string Lib = "pdfium";
 
