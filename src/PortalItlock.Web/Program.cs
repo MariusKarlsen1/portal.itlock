@@ -1197,6 +1197,15 @@ app.MapGet("/plantegningbilde/{id:int}", async (int id, ApplicationDbContext db,
     return Results.File(plantegning.Data, FilSikkerhet.TryggContentType(plantegning.ContentType));
 }).RequireAuthorization();
 
+// Branntegningen til en plantegning (id = plantegningens id).
+app.MapGet("/plantegningbrann/{id:int}", async (int id, ApplicationDbContext db) =>
+{
+    var brann = await db.PlantegningBranntegninger.FirstOrDefaultAsync(b => b.PlantegningId == id);
+    return brann is null
+        ? Results.NotFound()
+        : Results.File(brann.Data, FilSikkerhet.TryggContentType(brann.ContentType));
+}).RequireAuthorization();
+
 app.MapGet("/plantegningrevisjon/{id:int}", async (int id, ApplicationDbContext db) =>
 {
     var rev = await db.PlantegningRevisjoner.FindAsync(id);

@@ -1,0 +1,110 @@
+@using Microsoft.AspNetCore.Components.Forms
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+@* Last opp branntegning og knytt den til en plantegning. Dørene og utstyret på
+   plantegningen vises på samme sted på branntegningen. *@
+<div class="bd-bak" @onclick="Lukk"></div>
+<div class="bd-dlg" role="dialog" aria-modal="true" aria-label="Last opp branntegning">
+    <h3>Last opp branntegning</h3>
+    <p class="bd-hjelp">Velg hvilken plantegning branntegningen hører til. Dørene og utstyret legges på samme sted som på plantegningen, og inne på tegningen kan du bytte mellom vanlig tegning og branntegning.</p>
+
+    <label class="bd-felt">
+        Plantegning
+        <select @bind="_valgtId" disabled="@_laster">
+            <option value="0">Velg plantegning ...</option>
+            @foreach (var g in Plantegninger.GroupBy(p => string.IsNullOrWhiteSpace(p.Byggetrinn) ? "" : p.Byggetrinn!.Trim()).OrderBy(g => g.Key))
+            {
+                if (g.Key == "")
+                {
+                    @foreach (var p in g.OrderBy(p => p.Navn))
+                    {
+                        <option value="@p.Id">@p.Navn@(MedBrann.Contains(p.Id) ? " (har branntegning)" : "")</option>
+                    }
+                }
+                else
+                {
+                    <optgroup label="@g.Key">
+                        @foreach (var p in g.OrderBy(p => p.Navn))
+                        {
+                            <option value="@p.Id">@p.Navn@(MedBrann.Contains(p.Id) ? " (har branntegning)" : "")</option>
+                        }
+                    </optgroup>
+                }
+            }
+        </select>
+    </label>
+
+    @if (_valgtId != 0 && MedBrann.Contains(_valgtId))
+    {
+        <p class="bd-varsel">Denne plantegningen har allerede en branntegning. Den blir erstattet av den nye.</p>
+    }
+
+    @if (!string.IsNullOrEmpty(_feil))
+    {
+        <p class="form-error">@_feil</p>
+    }
+
+    <div class="bd-knapper">
+        <button type="button" class="bd-kn" @onclick="Lukk" disabled="@_laster">Avbryt</button>
+        <label class="bd-kn bd-kn-p @(_valgtId == 0 || _laster ? "av" : "")">
+            <Icon Name="upload" />@(_laster ? "Laster opp..." : "Velg fil og last opp")
+            @if (_valgtId != 0 && !_laster)
+            {
+                <InputFile OnChange="LastOpp" accept="image/*,.pdf,application/pdf" />
+            }
+        </label>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<Plantegning> Plantegninger { get; set; } = [];
+    [Parameter] public HashSet<int> MedBrann { get; set; } = [];
+    [Parameter] public int? Valgt { get; set; }
+    [Parameter] public EventCallback<int> OnLastetOpp { get; set; }
+    [Parameter] public EventCallback OnLukk { get; set; }
+
+    private int _valgtId;
+    private bool _laster;
+    private string? _feil;
+
+    protected override void OnInitialized()
+    {
+        _valgtId = Valgt ?? (Plantegninger.Count == 1 ? Plantegninger[0].Id : 0);
+    }
+
+    private async Task Lukk()
+    {
+        if (!_laster)
+        {
+            await OnLukk.InvokeAsync();
+        }
+    }
+
+    private async Task LastOpp(InputFileChangeEventArgs e)
+    {
+        if (_valgtId == 0)
+        {
+            return;
+        }
+        _feil = null;
+        _laster = true;
+        try
+        {
+            var lest = await PlantegningOpplasting.LesAsync(e.File);
+            if (lest.Data is null)
+            {
+                _feil = lest.Feil;
+                return;
+            }
+            await PlantegningOpplasting.LagreBranntegningAsync(Db, _valgtId, e.File.Name, lest.ContentType, lest.Data);
+            await OnLastetOpp.InvokeAsync(_valgtId);
+        }
+        finally
+        {
+            _laster = false;
+        }
+    }
+}

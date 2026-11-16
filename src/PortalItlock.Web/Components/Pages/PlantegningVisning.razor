@@ -38,7 +38,17 @@ else if (_plantegning is not null)
                 }
             </div>
             <div class="plan-header-actions">
-                @if (_revisjoner.Count > 0)
+                @if (_harBrann)
+                {
+                    <div class="plan-rev-bytt plan-type-bytt" role="group" aria-label="Velg tegning">
+                        <button type="button" class="@(!_visBrann ? "pa" : "")" @onclick="@(() => _visBrann = false)">Tegning</button>
+                        <button type="button" class="@(_visBrann ? "pa pa-brann" : "")" @onclick="@(() => { _visBrann = true; _visRevisjonId = null; })">Branntegning</button>
+                    </div>
+                }
+                <button type="button" class="plan-brann-last" @onclick="@(() => _visBranntegningDlg = true)" title="Last opp branntegning for denne plantegningen">
+                    <Icon Name="upload" />@(_harBrann ? "Ny branntegning" : "Last opp branntegning")
+                </button>
+                @if (_revisjoner.Count > 0 && !_visBrann)
                 {
                     <div class="plan-rev-bytt" role="group" aria-label="Revisjon av tegningen">
                         <button type="button" class="@(_visRevisjonId is null ? "pa" : "")" @onclick="@(() => _visRevisjonId = null)"
@@ -63,6 +73,18 @@ else if (_plantegning is not null)
         @if (!string.IsNullOrEmpty(_savedMessage))
         {
             <p class="saved-hint">@_savedMessage</p>
+        }
+
+        @if (_visBranntegningDlg)
+        {
+            <BranntegningDialog Plantegninger="@([_plantegning])" Valgt="_plantegning.Id"
+                                MedBrann="@(_harBrann ? [_plantegning.Id] : [])"
+                                OnLukk="@(() => _visBranntegningDlg = false)" OnLastetOpp="BranntegningLastetOpp" />
+        }
+
+        @if (_visBrann)
+        {
+            <p class="plan-rev-hint plan-brann-hint"><Icon Name="map" />Du ser branntegningen. Dørene står der de er plassert på plantegningen. <button type="button" @onclick="@(() => _visBrann = false)">Tilbake til tegningen</button></p>
         }
 
         @if (VistRevisjon is { } vist)
@@ -284,9 +306,35 @@ else if (_plantegning is not null)
     private List<RevisjonValg> _revisjoner = [];
     private int? _visRevisjonId;
     private RevisjonValg? VistRevisjon => _revisjoner.FirstOrDefault(r => r.Id == _visRevisjonId);
-    private string BildeUrl => VistRevisjon is { } r
-        ? $"/plantegningrevisjon/{r.Id}"
-        : $"/plantegningbilde/{_plantegning!.Id}?r={_plantegning.Revisjon}";
+    private string BildeUrl => _visBrann && _harBrann
+        ? $"/plantegningbrann/{_plantegning!.Id}?v={_brannVersjon}"
+        : VistRevisjon is { } r
+            ? $"/plantegningrevisjon/{r.Id}"
+            : $"/plantegningbilde/{_plantegning!.Id}?r={_plantegning.Revisjon}";
+
+    // Branntegning knyttet til plantegningen, vist med de samme dørene.
+    private bool _harBrann;
+    private bool _visBrann;
+    private bool _visBranntegningDlg;
+    private long _brannVersjon;
+
+    private async Task BranntegningLastetOpp(int _)
+    {
+        _visBranntegningDlg = false;
+        await LastBrannInfo();
+        _visBrann = true;
+        _visRevisjonId = null;
+    }
+
+    private async Task LastBrannInfo()
+    {
+        var dato = await Db.PlantegningBranntegninger.AsNoTracking()
+            .Where(b => b.PlantegningId == Id)
+            .Select(b => (DateTime?)b.OpplastetDato)
+            .FirstOrDefaultAsync();
+        _harBrann = dato is not null;
+        _brannVersjon = dato?.Ticks ?? 0;
+    }
     private bool _visDorsideIPopup;
 
     // En nettopp opprettet dør åpnes på fanen Detaljer, ellers Oversikt.
@@ -408,6 +456,8 @@ else if (_plantegning is not null)
 
         _erServiceavtale = await Db.Prosjekter.AsNoTracking().AnyAsync(x => x.Id == _plantegning.ProsjektId && x.Status == ProsjektStatus.Serviceavtale);
         _visRevisjonId = null;
+        _visBrann = false;
+        await LastBrannInfo();
         _revisjoner = await Db.PlantegningRevisjoner.AsNoTracking()
             .Where(r => r.PlantegningId == _plantegning.Id)
             .OrderByDescending(r => r.Revisjon)

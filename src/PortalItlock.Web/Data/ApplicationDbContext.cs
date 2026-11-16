@@ -84,6 +84,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ProsjektLenke> ProsjektLenker => Set<ProsjektLenke>();
     public DbSet<Plantegning> Plantegninger => Set<Plantegning>();
     public DbSet<PlantegningRevisjon> PlantegningRevisjoner => Set<PlantegningRevisjon>();
+    public DbSet<PlantegningBrann> PlantegningBranntegninger => Set<PlantegningBrann>();
     public DbSet<ProsjektByggetrinn> ProsjektByggetrinn => Set<ProsjektByggetrinn>();
     public DbSet<Dor> Dorer => Set<Dor>();
     public DbSet<DorKomponent> DorKomponenter => Set<DorKomponent>();
@@ -718,6 +719,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(p => p.Revisjoner)
             .HasForeignKey(r => r.PlantegningId)
             .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<PlantegningBrann>()
+            .HasOne(b => b.Plantegning)
+            .WithOne()
+            .HasForeignKey<PlantegningBrann>(b => b.PlantegningId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<PlantegningBrann>().HasIndex(b => b.PlantegningId).IsUnique();
 
         modelBuilder.Entity<RequirementValue>()
             .HasOne(rv => rv.Dimensjon)

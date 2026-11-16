@@ -5541,6 +5541,38 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("Plantegninger", (string)null);
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.PlantegningBrann", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("Filnavn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("OpplastetDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PlantegningId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlantegningId")
+                        .IsUnique();
+
+                    b.ToTable("PlantegningBranntegninger");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.PlantegningFil", b =>
                 {
                     b.Property<int>("Id")
@@ -9981,6 +10013,17 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Prosjekt");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.PlantegningBrann", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Plantegning", "Plantegning")
+                        .WithOne()
+                        .HasForeignKey("PortalItlock.Web.Models.PlantegningBrann", "PlantegningId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Plantegning");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.PlantegningFil", b =>
