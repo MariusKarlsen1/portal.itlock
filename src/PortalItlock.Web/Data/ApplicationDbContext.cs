@@ -257,9 +257,45 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         }
     }
 
+    // Nye prosjekter og tilbud får navnet til den innloggede brukeren som
+    // «Opprettet av». Skjulte eier-/supportbrukere skrives ikke inn.
+    private void SettOpprettetAv()
+    {
+        var nye = ChangeTracker.Entries()
+            .Where(e => e.State == EntityState.Added && e.Entity is Prosjekt or PortalItlock.Web.Models.Tilbud)
+            .ToList();
+        if (nye.Count == 0 || InnloggetBrukerId is not { } brukerId)
+        {
+            return;
+        }
+
+        var bruker = Brukere.Local.FirstOrDefault(b => b.Id == brukerId)
+            ?? Brukere.AsNoTracking().FirstOrDefault(b => b.Id == brukerId);
+        if (bruker is null || bruker.ErSkjult)
+        {
+            return;
+        }
+
+        foreach (var e in nye)
+        {
+            switch (e.Entity)
+            {
+                case Prosjekt p when p.OpprettetAvBrukerId is null:
+                    p.OpprettetAvBrukerId = bruker.Id;
+                    p.OpprettetAvNavn = bruker.Navn;
+                    break;
+                case PortalItlock.Web.Models.Tilbud t when t.OpprettetAvBrukerId is null:
+                    t.OpprettetAvBrukerId = bruker.Id;
+                    t.OpprettetAvNavn = bruker.Navn;
+                    break;
+            }
+        }
+    }
+
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         LastFilerForSlettedePlantegninger();
+        SettOpprettetAv();
         NummererAvvik();
         SynkKodelinjer();
         var varsler = FinnVarsler();
@@ -283,6 +319,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         LastFilerForSlettedePlantegninger();
+        SettOpprettetAv();
         NummererAvvik();
         SynkKodelinjer();
         var varsler = FinnVarsler();

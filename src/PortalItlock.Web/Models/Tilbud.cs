@@ -35,6 +35,11 @@ public class Tilbud
     public string? ByggetrinnFilter { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
+
+    // Hvem som opprettet den. Settes automatisk ved lagring (ApplicationDbContext)
+    // fra den innloggede brukeren, og kan ikke endres i portalen.
+    public int? OpprettetAvBrukerId { get; set; }
+    public string? OpprettetAvNavn { get; set; }
     public DateTime? OppdatertDato { get; set; }
 
     // Settes automatisk når Status endres til SendtTilKunde (se

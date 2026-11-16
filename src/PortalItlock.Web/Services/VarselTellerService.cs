@@ -19,11 +19,12 @@ public record VarselTeller(
     int LisensVarsel,
     int ForesporslerVarsel,
     int OkonomiVarsel = 0,
-    int EtterkalkyleVarsel = 0)
+    int EtterkalkyleVarsel = 0,
+    int TilbudsfristVarsel = 0)
 {
     public int Totalt => AvvikSomVenter + ServiceavtalerVarsel + KunderTrengerOppfolging + VarerLavBeholdning
         + FravarSoknaderVenter + TilvalgVarsel + DriftsmeldingerVarsel + TicketerVarsel + CeGodkjenningerVarsel
-        + KlarTilFaktureringVarsel + LisensVarsel + ForesporslerVarsel + OkonomiVarsel + EtterkalkyleVarsel;
+        + KlarTilFaktureringVarsel + LisensVarsel + ForesporslerVarsel + OkonomiVarsel + EtterkalkyleVarsel + TilbudsfristVarsel;
 }
 
 // Delt mellom NavMenu (venstremeny-badge) og TopBar (brukermeny-badge), slik at
@@ -67,6 +68,7 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
         var foresporslerVarsel = 0;
         var okonomiVarsel = 0;
         var etterkalkyleVarsel = 0;
+        var tilbudsfristVarsel = 0;
 
         if (visUtvidet)
         {
@@ -119,6 +121,8 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
 
             foresporslerVarsel = await db.Foresporsler.CountAsync(f => !f.Lest);
 
+            tilbudsfristVarsel = await TilbudsfristVarsel.Sporring(db).CountAsync();
+
             // Prosjektøkonomi: aktive prosjekter med gult/rødt, og overleverte
             // prosjekter som venter på etterkalkyle.
             if (await tilleggsmoduler.HarAsync(TilleggsModuler.Okonomi))
@@ -135,6 +139,6 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
         return new VarselTeller(
             avvikSomVenter, serviceavtalerVarsel, kunderTrengerOppfolging, varerLavBeholdning,
             fravarSoknaderVenter, tilvalgVarsel, driftsmeldingerVarsel, ticketerVarsel, ceGodkjenningerVarsel,
-            klarTilFaktureringVarsel, lisensVarsel, foresporslerVarsel, okonomiVarsel, etterkalkyleVarsel);
+            klarTilFaktureringVarsel, lisensVarsel, foresporslerVarsel, okonomiVarsel, etterkalkyleVarsel, tilbudsfristVarsel);
     }
 }

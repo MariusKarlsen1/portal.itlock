@@ -57,6 +57,15 @@ public class Prosjekt
 
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
+    // Hvem som opprettet den. Settes automatisk ved lagring (ApplicationDbContext)
+    // fra den innloggede brukeren, og kan ikke endres i portalen.
+    public int? OpprettetAvBrukerId { get; set; }
+    public string? OpprettetAvNavn { get; set; }
+
+    // Frist for å sende tilbud. Dagen før (og etter) kommer det varsel hvis
+    // prosjektet fortsatt står som «Tilbud under arbeid».
+    public DateTime? Tilbudsfrist { get; set; }
+
     public int? ProsjektlederId { get; set; }
     public Bruker? Prosjektleder { get; set; }
     public int? AnsvarligMontorId { get; set; }
