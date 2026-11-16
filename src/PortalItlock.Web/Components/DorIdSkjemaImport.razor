@@ -108,7 +108,7 @@
     private const long MaksStorrelse = 30 * 1024 * 1024;
     private const string Markor = "— Fra dørskjema —";
 
-    private bool Finnes(string kode) => _eksisterende.Contains(kode);
+    private bool Finnes(string kode) => _eksisterende.Contains(DorTypeSkjemaLeser.Norm(kode));
 
     private static string SlagTekst(DorTypeSkjemaLeser.DorType t)
     {
@@ -193,7 +193,7 @@
         _typer = DorTypeSkjemaLeser.SlaSammen(kolonner);
         _filer = filer;
         _eksisterende = (await Db.DorIdMaler.AsNoTracking().Where(m => m.ProsjektId == ProsjektId).Select(m => m.Kode).ToListAsync())
-            .Select(k => k.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .Select(DorTypeSkjemaLeser.Norm).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _valgt.Clear();
         foreach (var t in _typer) _valgt.Add(t.Kode);
     }
@@ -234,10 +234,11 @@
         try
         {
             var maler = await Db.DorIdMaler.Where(m => m.ProsjektId == ProsjektId).ToListAsync();
-            int opprettet = 0, oppdatert = 0;
+            var dorer = await Db.Dorer.Where(d => d.ProsjektId == ProsjektId && d.DorIdMalId != null).ToListAsync();
+            int opprettet = 0, oppdatert = 0, dorerOppdatert = 0;
             foreach (var t in _typer.Where(t => _valgt.Contains(t.Kode)))
             {
-                var mal = maler.FirstOrDefault(m => string.Equals(m.Kode.Trim(), t.Kode, StringComparison.OrdinalIgnoreCase));
+                var mal = maler.FirstOrDefault(m => DorTypeSkjemaLeser.Norm(m.Kode) == DorTypeSkjemaLeser.Norm(t.Kode));
                 if (mal is null)
                 {
                     mal = new DorIdMal { ProsjektId = ProsjektId, Kode = t.Kode };
@@ -254,6 +255,7 @@
                     continue;
                 }
 
+                var forrige = DorIdSynk.Verdier(mal);
                 if (!string.IsNullOrWhiteSpace(t.Brann)) mal.Brann = t.Brann;
                 if (!string.IsNullOrWhiteSpace(t.Lyd)) mal.Lyd = t.Lyd;
                 if (t.Bredde is not null) mal.Bredde = t.Bredde;
@@ -264,6 +266,12 @@
                 if (t.FriBredde860) mal.FriBredde086 = true;
                 if (string.IsNullOrWhiteSpace(mal.Dorkonstruksjon)) mal.Dorkonstruksjon = DorTypeSkjemaLeser.Konstruksjon(t.Kode);
                 mal.Merknad = SettInnBlokk(mal.Merknad, Merknadsblokk(t));
+                // Dørene som allerede har denne Dør ID-en (f.eks. lest fra plantegningen) får den nye infoen.
+                // Felt som er endret på selve døren blir stående (DorIdSynk).
+                if (mal.Id != 0)
+                {
+                    dorerOppdatert += DorIdSynk.Oppdater(mal, forrige, dorer);
+                }
             }
             await Db.SaveChangesAsync();
             var melding = $"Oppdaterte {oppdatert} Dør ID fra dørskjemaet.";
@@ -274,6 +282,10 @@
             else if (opprettet != 0)
             {
                 melding = $"Opprettet {opprettet} Dør ID fra dørskjemaet.";
+            }
+            if (dorerOppdatert > 0)
+            {
+                melding += $" {dorerOppdatert} {(dorerOppdatert == 1 ? "dør" : "dører")} fikk ny info fra Dør ID-en.";
             }
             await OnFerdig.InvokeAsync(melding);
         }

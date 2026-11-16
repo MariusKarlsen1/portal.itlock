@@ -26,7 +26,7 @@ public static partial class DorTypeSkjemaLeser
 
     private const string Sett = "Sett fra hengslesiden";
 
-    [GeneratedRegex(@"^[A-ZÆØÅ]{1,4}\d*-[\wÆØÅæøå-]+$")]
+    [GeneratedRegex(@"^[A-ZÆØÅ]{1,4}[-_]?\d[\wÆØÅæøå-]*$")]
     private static partial Regex KodeRegex();
 
     [GeneratedRegex(@"\d{1,3}(?:[    ]\d{3})*")]
@@ -192,6 +192,9 @@ public static partial class DorTypeSkjemaLeser
         })
         .OrderBy(t => t.Kode, NaturligSammenligner.Instans)
         .ToList();
+
+    // Samme Dør ID selv om den er skrevet litt ulikt («ID21», «ID-21», «id 21»).
+    public static string Norm(string? kode) => Regex.Replace((kode ?? "").ToUpperInvariant(), "[^A-Z0-9ÆØÅ]", "");
 
     // Dørtype ut fra prefikset i ID-en (forklaringen står i skjemaet: ID-, BD-, IDS-, VSD-, YD-, YDP-).
     public static string? Konstruksjon(string kode)

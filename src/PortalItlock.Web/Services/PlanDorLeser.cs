@@ -165,8 +165,8 @@ public static partial class PlanDorLeser
 
     public static List<FunnetDor> Les(Side side, IEnumerable<string> kjenteKoder)
     {
-        var kjente = kjenteKoder.Select(k => k.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var merker = side.Ord.Where(o => kjente.Contains(o.Tekst.Trim()) || KodeRegex().IsMatch(o.Tekst.Trim())).ToList();
+        var kjente = kjenteKoder.Select(DorTypeSkjemaLeser.Norm).Where(k => k.Length > 1).ToHashSet();
+        var merker = side.Ord.Where(o => kjente.Contains(DorTypeSkjemaLeser.Norm(o.Tekst)) || KodeRegex().IsMatch(o.Tekst.Trim())).ToList();
         var maalOrd = side.Ord.Where(o => Maal(o.Tekst.Trim()) is not null).ToList();
         var buer = FinnBuer(side);
         var rom = FinnRom(side, [.. merker, .. maalOrd]);
