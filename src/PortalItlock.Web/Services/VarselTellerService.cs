@@ -103,8 +103,11 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
                     c.Aktiv && c.ILagerstyring && c.Minimumsbeholdning != null && c.Lagerantall <= c.Minimumsbeholdning.Value);
             }
 
-            ticketerVarsel = await db.Tickets.CountAsync(t =>
-                t.Status != TicketStatus.Lukket && t.AnsvarligBrukerId == null);
+            if (Funksjonsbrytere.Tickets)
+            {
+                ticketerVarsel = await db.Tickets.CountAsync(t =>
+                    t.Status != TicketStatus.Lukket && t.AnsvarligBrukerId == null);
+            }
 
             tilvalgVarsel = await db.Tilvalg.CountAsync(t => t.Status == TilvalgStatus.Besvart && !t.LestAvAnsatt);
             // Driftsmeldinger havner i Forespørsler (telles der som uleste forespørsler).

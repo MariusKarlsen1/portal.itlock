@@ -352,6 +352,7 @@ public static class PortalModulRegister
                     {
                         Lenker = g.Lenker
                             .Where(l => l.Tilgang.HasFlag(tilgang))
+                            .Where(l => PortalItlock.Web.Services.Funksjonsbrytere.Tickets || !PortalItlock.Web.Services.Funksjonsbrytere.TicketLenker.Contains(l.Href))
                             .Where(l => l.KreverModul is null || (aktiveModuler?.Contains(l.KreverModul) ?? false))
                             .Select(l => l.Undermoduler is null ? l : l with { Undermoduler = l.Undermoduler.Where(u => u.KreverModul is null || (aktiveModuler?.Contains(u.KreverModul) ?? false)).ToList() })
                             .ToList()

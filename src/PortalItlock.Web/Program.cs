@@ -185,7 +185,10 @@ builder.Services.AddScoped<LagerRapportService>();
 builder.Services.AddScoped<InnkjopService>();
 builder.Services.AddScoped<InnkjopsordrePdfService>();
 builder.Services.AddScoped<VarselTellerService>();
-builder.Services.AddHostedService<TicketEskaleringBackgroundService>();
+if (Funksjonsbrytere.Tickets)
+{
+    builder.Services.AddHostedService<TicketEskaleringBackgroundService>();
+}
 builder.Services.AddHttpClient<DatabaseBackupService>(client =>
 {
     client.BaseAddress = new Uri("https://api.github.com/");
