@@ -1830,7 +1830,7 @@ else
             <div class="mo-topp">
                 <span class="mo-hint"><Icon Name="help-circle" />Antall hentes fra dørene. Minutter per stk hentes fra varene, men kan endres her.</span>
                 <span class="mo-hoyre">
-                    @if (SynligeMonteringLinjer.Any(l => l.ComponentId.HasValue))
+                    @if (SynligeMonteringLinjer.Concat(OpsjonMonteringLinjer).Any(l => l.ComponentId.HasValue))
                     {
                         <button type="button" class="mo-kn" @onclick="HentMinutterForAlle"><Icon Name="clock" />Hent minutter for alle</button>
                     }
@@ -1877,6 +1877,45 @@ else
                         <span><b>@SynligeMonteringLinjer.Count</b> varer</span>
                         <span><b>@SynligeMonteringLinjer.Sum(l => l.Antall)</b> stk</span>
                         <span class="mo-hoyre">Totalt <b>@KortTid(TotaltMonteringMinutter)</b></span>
+                    </div>
+                </div>
+            }
+
+            @if (OpsjonMonteringLinjer.Count > 0)
+            {
+                @* Opsjon beslag fra dørene - samme oppsett, men egen sum som ikke er med i prosjektets tid. *@
+                <div class="mo-opsjon-topp">
+                    <h3>Opsjoner</h3>
+                    <span>@AntallDorerMedOpsjon @(AntallDorerMedOpsjon == 1 ? "dør" : "dører") med opsjon beslag · ikke med i kalkulert tid</span>
+                </div>
+                <div class="mo-k mo-k-opsjon">
+                    <table class="mo-tab">
+                        <thead>
+                            <tr><th>Opsjon beslag</th><th class="c">Antall</th><th class="h">Min/stk</th><th class="h">Totalt</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var l in OpsjonMonteringLinjer)
+                            {
+                                <tr @key="l.Id">
+                                    <td><b>@l.Navn</b></td>
+                                    <td class="c mo-nr">@l.Antall @(string.IsNullOrWhiteSpace(l.Enhet) ? "stk" : l.Enhet)</td>
+                                    <td class="h"><span class="mo-min"><input inputmode="numeric" @bind="l.Minutter" @bind:after="LagreMontering" placeholder="0" aria-label="Minutter per stk for opsjon @l.Navn" /><em>min</em></span></td>
+                                    <td class="h mo-nr"><b>@KortTid((l.Minutter ?? 0) * l.Antall)</b></td>
+                                    <td class="h mo-nowrap">
+                                        @if (l.ComponentId.HasValue)
+                                        {
+                                            <button type="button" class="mo-ik" title="Hent minutt fra vare" @onclick="@(() => HentMinuttFraVare(l))"><Icon Name="clock" /></button>
+                                        }
+                                        <button type="button" class="mo-ik" title="Fjern" @onclick="@(() => FjernMonteringLinje(l))"><Icon Name="x" /></button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <div class="mo-fot">
+                        <span><b>@OpsjonMonteringLinjer.Count</b> varer</span>
+                        <span><b>@OpsjonMonteringLinjer.Sum(l => l.Antall)</b> stk</span>
+                        <span class="mo-hoyre">Totalt opsjoner <b>@KortTid(OpsjonMonteringMinutter)</b></span>
                     </div>
                 </div>
             }
@@ -4349,7 +4388,7 @@ else
     // eller elektro) monteres ikke av oss og vises ikke under Montering.
     private HashSet<int> KunLevertAvAndre => _dorer.SelectMany(d => d.Komponenter)
         .GroupBy(dk => dk.ComponentId)
-        .Where(g => g.All(dk => !dk.MonteresAvOss))
+        .Where(g => g.All(dk => !dk.MonteresAvOss && !dk.ErOpsjon))
         .Select(g => g.Key)
         .ToHashSet();
 
@@ -4358,15 +4397,21 @@ else
         get
         {
             var andre = KunLevertAvAndre;
-            return _monteringLinjer.Where(l => l.ComponentId is not { } cid || !andre.Contains(cid)).ToList();
+            return _monteringLinjer.Where(l => !l.ErOpsjon && (l.ComponentId is not { } cid || !andre.Contains(cid))).ToList();
         }
     }
+
+    private List<MonteringLinje> OpsjonMonteringLinjer => _monteringLinjer.Where(l => l.ErOpsjon).ToList();
+
+    private int OpsjonMonteringMinutter => OpsjonMonteringLinjer.Sum(l => (l.Minutter ?? 0) * l.Antall);
+
+    private int AntallDorerMedOpsjon => _dorer.Count(d => d.Komponenter.Any(k => k.ErOpsjon && k.LevertAv == LevertAv.F));
 
     private async Task SynkMontering()
     {
         // Linjer for varer som nå bare leveres av dørprodusent/elektro fjernes.
         var andre = KunLevertAvAndre;
-        foreach (var gammel in _monteringLinjer.Where(l => l.ComponentId is { } cid && andre.Contains(cid)).ToList())
+        foreach (var gammel in _monteringLinjer.Where(l => !l.ErOpsjon && l.ComponentId is { } cid && andre.Contains(cid)).ToList())
         {
             _monteringLinjer.Remove(gammel);
             Db.MonteringLinjer.Remove(gammel);
@@ -4380,7 +4425,7 @@ else
 
         foreach (var g in gruppert)
         {
-            var linje = _monteringLinjer.FirstOrDefault(l => l.ComponentId == g.ComponentId);
+            var linje = _monteringLinjer.FirstOrDefault(l => !l.ErOpsjon && l.ComponentId == g.ComponentId);
             if (linje is null)
             {
                 linje = new MonteringLinje
@@ -4404,8 +4449,50 @@ else
             }
         }
 
+        // Opsjon beslag på dørene får egne linjer. Varer som ikke lenger er opsjon
+        // (f.eks. dratt opp til Beslag) fjernes fra opsjonsseksjonen.
+        var opsjoner = _dorer.SelectMany(d => d.Komponenter)
+            .Where(dk => dk.Component is not null && dk.ErOpsjon && dk.LevertAv == LevertAv.F)
+            .GroupBy(dk => dk.ComponentId)
+            .Select(g => new { ComponentId = g.Key, Component = g.First().Component!, Antall = g.Sum(x => x.Antall) })
+            .ToList();
+        foreach (var gammel in _monteringLinjer.Where(l => l.ErOpsjon && opsjoner.All(o => o.ComponentId != l.ComponentId)).ToList())
+        {
+            _monteringLinjer.Remove(gammel);
+            Db.MonteringLinjer.Remove(gammel);
+        }
+        foreach (var g in opsjoner)
+        {
+            var linje = _monteringLinjer.FirstOrDefault(l => l.ErOpsjon && l.ComponentId == g.ComponentId);
+            if (linje is null)
+            {
+                // Har varen allerede fått egne minutter i hovedlisten, brukes de som start.
+                var vanlig = _monteringLinjer.FirstOrDefault(l => !l.ErOpsjon && l.ComponentId == g.ComponentId);
+                linje = new MonteringLinje
+                {
+                    ProsjektId = _form.Id,
+                    ComponentId = g.ComponentId,
+                    Component = g.Component,
+                    Navn = g.Component.Navn,
+                    Antall = g.Antall,
+                    Enhet = g.Component.Enhet,
+                    Minutter = vanlig?.Minutter ?? g.Component.MontasjeMinutterProsjekt,
+                    Rekkefolge = _monteringLinjer.Count,
+                    ErOpsjon = true
+                };
+                _monteringLinjer.Add(linje);
+                Db.MonteringLinjer.Add(linje);
+            }
+            else
+            {
+                linje.Antall = g.Antall;
+                linje.Enhet = g.Component.Enhet;
+            }
+        }
+
         await Db.SaveChangesAsync();
-        _monteringSyncMessage = $"{gruppert.Count} varetyper synkronisert fra prosjektets dører.";
+        _monteringSyncMessage = $"{gruppert.Count} varetyper synkronisert fra prosjektets dører"
+            + (opsjoner.Count > 0 ? $", og {opsjoner.Count} {(opsjoner.Count == 1 ? "opsjonsvare" : "opsjonsvarer")}." : ".");
     }
 
     private async Task HentMinuttFraVare(MonteringLinje linje)

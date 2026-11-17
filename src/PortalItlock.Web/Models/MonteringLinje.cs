@@ -14,4 +14,8 @@ public class MonteringLinje
     public string? Enhet { get; set; }
     public int? Minutter { get; set; }
     public int Rekkefolge { get; set; }
+
+    // Varer som bare er opsjon på dørene. Vises i egen seksjon under Montering og
+    // regnes ikke med i prosjektets kalkulerte tid.
+    public bool ErOpsjon { get; set; }
 }

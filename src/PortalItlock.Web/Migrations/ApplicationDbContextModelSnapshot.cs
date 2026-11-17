@@ -4892,6 +4892,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Enhet")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("ErOpsjon")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("Minutter")
                         .HasColumnType("INTEGER");
 

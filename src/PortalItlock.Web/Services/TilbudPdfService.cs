@@ -120,6 +120,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         var monteringMinutterPerComponent = (await db.MonteringLinjer
             .Where(m => m.ProsjektId == tilbud.ProsjektId && m.ComponentId != null)
             .ToListAsync())
+            // Opsjonstilbud bruker minuttene fra opsjonsseksjonen først, andre tilbud de vanlige.
+            .OrderBy(m => m.ErOpsjon != (tilbud.Type == TilbudType.Opsjon))
             .GroupBy(m => m.ComponentId!.Value)
             .ToDictionary(g => g.Key, g => g.First().Minutter);
 
