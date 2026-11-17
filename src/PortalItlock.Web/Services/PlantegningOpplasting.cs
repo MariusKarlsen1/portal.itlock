@@ -76,7 +76,7 @@ public static class PlantegningOpplasting
     public static async Task<Resultat> LagreAsync(ApplicationDbContext db, int prosjektId, string navn,
         string? byggetrinn, string filnavn, string contentType, byte[] data)
     {
-        var rent = navn.Trim();
+        var rent = TekstReparasjon.Fiks(navn).Trim();
         var eksisterende = (await db.Plantegninger.Where(p => p.ProsjektId == prosjektId).ToListAsync())
             .Where(p => string.Equals(p.Navn.Trim(), rent, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(p => p.Id)
