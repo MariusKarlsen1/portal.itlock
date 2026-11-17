@@ -482,10 +482,30 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             });
 
             var radIndeks = 0;
+            // Delsum per overskrift: summen av varene under, skrives før neste overskrift.
+            var visDelsum = tilbud.VisDelsumPerOverskrift && tilbud.VisEnhetspris;
+            string? delsumNavn = null;
+            var delsum = 0m;
+            var delsumVarer = 0;
+            void SkrivDelsum()
+            {
+                if (!visDelsum || delsumNavn is null || delsumVarer == 0)
+                {
+                    return;
+                }
+                table.Cell().ColumnSpan((uint)(totaltAntallKolonner - 1)).BorderBottom(0.5f).BorderColor(SandBorder)
+                    .PaddingVertical(4).PaddingHorizontal(6).AlignRight().Text($"Sum {delsumNavn}").Bold().FontColor(Ink);
+                table.Cell().BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(4).PaddingHorizontal(6)
+                    .AlignRight().Text(FormatKr(delsum)).Bold().FontColor(Ink);
+            }
             foreach (var l in linjer)
             {
                 if (l.ErGruppering)
                 {
+                    SkrivDelsum();
+                    delsumNavn = string.IsNullOrWhiteSpace(l.Navn) ? "" : l.Navn;
+                    delsum = 0;
+                    delsumVarer = 0;
                     table.Cell().ColumnSpan((uint)totaltAntallKolonner)
                         .Background(Sand).BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(5).PaddingHorizontal(6)
                         .Column(inner =>
@@ -533,6 +553,11 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                 {
                     Rad().Text(l.LevertAv.Visningsnavn());
                 }
+                if (l.LevertAv == LevertAv.F)
+                {
+                    delsum += l.Utpris * l.Antall;
+                    delsumVarer++;
+                }
                 if (tilbud.VisEnhetspris)
                 {
                     var visPrisPaLinje = l.LevertAv == LevertAv.F;
@@ -544,6 +569,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                     Rad().AlignRight().Text(visPrisPaLinje ? FormatKr(l.Utpris * l.Antall) : "–");
                 }
             }
+            SkrivDelsum();
 
             // Montering som egen linje nederst i sammendraget, eller én linje
             // per kode (arbeid, kjøring, småmateriell osv.) når det er valgt.

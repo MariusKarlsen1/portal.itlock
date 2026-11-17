@@ -654,8 +654,16 @@ else if (_tilbud is not null)
             <span class="varer-sok-tittel">Legg til vare, timer, kjøring eller tillegg</span>
             <label class="varer-sok-felt">
                 <Icon Name="search" />
-                <input @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged" placeholder="Søk på vare, leverandør, produktkode eller priskode (f.eks. 200 Kjøring)" />
+                <input @ref="_vareSokInput" @bind="_componentSearch" @bind:event="oninput" @bind:after="OnComponentSearchChanged" placeholder="Søk på vare, leverandør, produktkode eller priskode (f.eks. 200 Kjøring)" />
             </label>
+            @if (LeggUnderGruppe is { } leggUnder)
+            {
+                <div class="legg-under-chip">
+                    <Icon Name="dokument-linjer" />
+                    <span>Nye varer legges under <b>@(string.IsNullOrWhiteSpace(leggUnder.Navn) ? "overskriften" : leggUnder.Navn)</b></span>
+                    <button type="button" class="ikon-btn" title="Legg nye varer nederst igjen" @onclick="@(() => _leggUnderGruppeId = null)"><Icon Name="x" /></button>
+                </div>
+            }
 
             @{ var kodeTreff = KodeTreff(); }
             @if (_searchResults.Count > 0 || kodeTreff.Count > 0)
@@ -704,6 +712,14 @@ else if (_tilbud is not null)
         @if (_tilbud.Linjer.Count > 0 || _tilbud.KodeLinjer.Count > 0)
         {
             <div class="varer-tabell-kort">
+            @if (_angreTekst is not null)
+            {
+                <div class="gruppering-angre">
+                    <span>@_angreTekst</span>
+                    <button type="button" class="cancel-button" @onclick="AngreFjernGruppe"><Icon Name="refresh" />Angre</button>
+                    <button type="button" class="ikon-btn" title="Lukk" @onclick="@(() => { _angreTekst = null; _angreLinjer = null; })"><Icon Name="x" /></button>
+                </div>
+            }
             <div class="varer-tabell-scroll">
             <table class="varer-table" id="tilbud-varer-tabell">
                 <thead>
@@ -730,9 +746,33 @@ else if (_tilbud is not null)
                     </tr>
                 </thead>
                 <tbody>
-                    @{ var dorPriser = ErOpsjon && _tilbud.OpsjonPerDor ? TilbudBeregningHelper.PrisPerDor(_tilbud, LinjeMinutter) : null; }
-                    @foreach (var rad in TabellRader())
+                    @{
+                        var dorPriser = ErOpsjon && _tilbud.OpsjonPerDor ? TilbudBeregningHelper.PrisPerDor(_tilbud, LinjeMinutter) : null;
+                        var alleRader = TabellRader();
+                        TilbudLinje? gjeldende = null;
+                    }
+                    @foreach (var rad in alleRader)
                     {
+                        // En overskrift gjelder frem til neste overskrift. Står kodelinjene
+                        // for seg nederst, avslutter de også seksjonen.
+                        var erGrense = rad.Vare is { ErGruppering: true } || (rad.Kode is not null && !_tilbud.FellesRekkefolge);
+                        if (erGrense && gjeldende is not null)
+                        {
+                            if (!_lukkedeGrupper.Contains(gjeldende.Id) && !Laast)
+                            {
+                                @LeggUnderRad(gjeldende)
+                            }
+                            gjeldende = null;
+                        }
+                        if (rad.Vare is { ErGruppering: true } nyGruppe)
+                        {
+                            gjeldende = nyGruppe;
+                        }
+                        else if (gjeldende is not null && _lukkedeGrupper.Contains(gjeldende.Id))
+                        {
+                            continue;
+                        }
+
                         if (rad.Kode is { } kodelinje)
                         {
                             @KodeRad(kodelinje)
@@ -742,20 +782,39 @@ else if (_tilbud is not null)
                         var l = rad.Vare!;
                         if (l.ErGruppering)
                         {
-                            <tr @key="l.Id" class="gruppering-row" data-linje-id="@l.Id">
+                            var seksjon = Seksjon(alleRader, l);
+                            var lukket = _lukkedeGrupper.Contains(l.Id);
+                            var antallVarer = seksjon.Count(r => r.Vare is not null);
+                            var grp = l;
+                            <tr @key="l.Id" class="gruppering-row @(lukket ? "gruppering-lukket" : "")" data-linje-id="@l.Id">
                                 <td class="drag-handle-cell"><Icon Name="grip" /></td>
                                 <td colspan="20" class="gruppering-cell">
+                                    <button type="button" class="gruppering-pil" title="@(lukket ? "Vis varene" : "Skjul varene")" @onclick="@(() => VekslLukket(grp))"><Icon Name="chevron-down" /></button>
                                     <div class="gruppering-innhold">
-                                        <input class="gruppering-tittel-input" @bind="l.Navn" @bind:event="oninput" @bind:after="@(() => LagreLinje(l))" placeholder="Tittel..." />
-                                        <textarea class="gruppering-beskrivelse-input" rows="2" @bind="l.Beskrivelse" @bind:event="oninput" @bind:after="@(() => LagreLinje(l))" placeholder="Beskrivelse (valgfritt)..."></textarea>
+                                        <input class="gruppering-tittel-input" @bind="l.Navn" @bind:event="oninput" @bind:after="@(() => LagreLinje(grp))" placeholder="Overskrift, f.eks. bygg, etasje eller dør" />
+                                        @if (!string.IsNullOrWhiteSpace(l.Beskrivelse) || _visBeskrivelse.Contains(l.Id))
+                                        {
+                                            <textarea class="gruppering-beskrivelse-input" rows="1" @bind="l.Beskrivelse" @bind:event="oninput" @bind:after="@(() => LagreLinje(grp))" placeholder="Beskrivelse som vises under overskriften på PDF"></textarea>
+                                        }
+                                        else if (!Laast)
+                                        {
+                                            <button type="button" class="gruppering-legg-besk" @onclick="@(() => VisBeskrivelse(grp))"><Icon Name="plus" />Legg til beskrivelse</button>
+                                        }
                                     </div>
-                                    @if (dorPriser is not null && l.DorId is int grpDor && dorPriser.TryGetValue(grpDor, out var dp))
-                                    {
-                                        <span class="tk-dor-pris" title="Varer @dp.Varer.ToString("N0", Kultur) kr + montering @dp.Montasje.ToString("N0", Kultur) kr">
-                                            <small>Pris dør inkl. montering</small><b>@dp.Total.ToString("N0", Kultur) kr</b>
-                                        </span>
-                                    }
-                                    <button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => FjernLinje(l))"><Icon Name="x" /></button>
+                                    <div class="gruppering-meta">
+                                        @if (dorPriser is not null && l.DorId is int grpDor && dorPriser.TryGetValue(grpDor, out var dp))
+                                        {
+                                            <span class="tk-dor-pris" title="Varer @dp.Varer.ToString("N0", Kultur) kr + montering @dp.Montasje.ToString("N0", Kultur) kr">
+                                                <small>Pris dør inkl. montering</small><b>@dp.Total.ToString("N0", Kultur) kr</b>
+                                            </span>
+                                        }
+                                        <span class="gruppering-antall">@antallVarer @(antallVarer == 1 ? "vare" : "varer")</span>
+                                        <span class="gruppering-sum"><small>Delsum</small>@FormatKrHel(SeksjonSum(seksjon))</span>
+                                        @if (!Laast)
+                                        {
+                                            <button type="button" class="ikon-btn gruppering-mer" title="Flere valg" @onclick="@((MouseEventArgs e) => ApneGruppeMeny(grp, e))"><Icon Name="more-horizontal" /></button>
+                                        }
+                                    </div>
                                 </td>
                             </tr>
                             continue;
@@ -859,11 +918,33 @@ else if (_tilbud is not null)
                             <td><button type="button" class="ikon-btn" title="Fjern" @onclick="@(() => FjernLinje(l))"><Icon Name="x" /></button></td>
                         </tr>
                     }
+                    @if (gjeldende is not null && !_lukkedeGrupper.Contains(gjeldende.Id) && !Laast)
+                    {
+                        @LeggUnderRad(gjeldende)
+                    }
                     @GammelMontasjeRad()
                 </tbody>
             </table>
             </div>
             </div>
+            @if (_gruppeMeny is int menyId && _tilbud.Linjer.FirstOrDefault(x => x.Id == menyId) is { } mg)
+            {
+                <div class="gruppe-meny-bakgrunn" @onclick="@(() => _gruppeMeny = null)"></div>
+                <div class="gruppe-meny" style="left:@(_gruppeMenyX.ToString(System.Globalization.CultureInfo.InvariantCulture))px;top:@(_gruppeMenyY.ToString(System.Globalization.CultureInfo.InvariantCulture))px">
+                    <button type="button" @onclick="@(() => LeggUnder(mg))"><Icon Name="plus" />Legg til vare her</button>
+                    @if (string.IsNullOrWhiteSpace(mg.Beskrivelse) && !_visBeskrivelse.Contains(mg.Id))
+                    {
+                        <button type="button" @onclick="@(() => VisBeskrivelse(mg))"><Icon Name="edit" />Legg til beskrivelse</button>
+                    }
+                    <button type="button" @onclick="@(() => DupliserGruppe(mg))"><Icon Name="dokument-linjer" />Dupliser med varer</button>
+                    <hr />
+                    <button type="button" disabled="@(!KanFlytteGruppe(mg, -1))" @onclick="@(() => FlyttGruppe(mg, -1))"><Icon Name="arrow-up" />Flytt opp med varer</button>
+                    <button type="button" disabled="@(!KanFlytteGruppe(mg, 1))" @onclick="@(() => FlyttGruppe(mg, 1))"><Icon Name="arrow-down" />Flytt ned med varer</button>
+                    <hr />
+                    <button type="button" @onclick="@(() => FjernGruppe(mg, medVarer: false))"><Icon Name="x" />Fjern overskrift, behold varer</button>
+                    <button type="button" class="gruppe-meny-rod" @onclick="@(() => FjernGruppe(mg, medVarer: true))"><Icon Name="trash" />Fjern overskrift og varer</button>
+                </div>
+            }
         }
         else
         {
@@ -888,7 +969,11 @@ else if (_tilbud is not null)
 
         <div class="ny-rad-rad">
             <button type="button" class="cancel-button" @onclick="LeggTilTomRad"><Icon Name="plus" />Ny rad</button>
-            <button type="button" class="cancel-button" @onclick="LeggTilGruppering"><Icon Name="plus" />Ny gruppering</button>
+            <button type="button" class="cancel-button" @onclick="LeggTilGruppering"><Icon Name="plus" />Ny overskrift</button>
+            @if (_tilbud.Linjer.Any(x => x.ErGruppering))
+            {
+                <label class="checkbox-row gruppering-pdfsum"><input type="checkbox" @bind="_tilbud.VisDelsumPerOverskrift" @bind:after="LagreTilbudValg" /> Vis delsum per overskrift på PDF</label>
+            }
         </div>
 
         @if (_prisKoder.Count == 0)
@@ -2373,7 +2458,10 @@ else if (_tilbud is not null)
 
     private async Task AddFromSearch(SearchResult r)
     {
-        var existing = _tilbud!.Linjer.FirstOrDefault(l => l.ComponentId == r.Id);
+        // Legges varen under en overskrift, økes bare antallet om den står der fra før.
+        var existing = LeggUnderGruppe is { } lg
+            ? Seksjon(TabellRader(), lg).Select(x => x.Vare).FirstOrDefault(v => v?.ComponentId == r.Id)
+            : _tilbud!.Linjer.FirstOrDefault(l => l.ComponentId == r.Id && !l.ErGruppering);
         if (existing is not null)
         {
             var fra = existing.Antall;
@@ -2405,6 +2493,7 @@ else if (_tilbud is not null)
             OppdaterLinjePris(linje);
             _tilbud.Linjer.Add(linje);
             Db.TilbudLinjer.Add(linje);
+            PlasserUnderGruppe(linje);
             Db.TilbudHendelser.Add(NyHendelse($"Vare lagt til: {linje.Navn}"));
         }
 
@@ -2433,6 +2522,7 @@ else if (_tilbud is not null)
         };
         _tilbud.Linjer.Add(linje);
         Db.TilbudLinjer.Add(linje);
+        PlasserUnderGruppe(linje);
         Db.TilbudHendelser.Add(NyHendelse($"Vare lagt til: {linje.Navn}"));
         await Db.SaveChangesAsync();
         await OppdaterHendelser();
@@ -2465,6 +2555,7 @@ else if (_tilbud is not null)
         };
         _tilbud.Linjer.Add(linje);
         Db.TilbudLinjer.Add(linje);
+        PlasserUnderGruppe(linje);
         await Db.SaveChangesAsync();
     }
 
@@ -2488,6 +2579,266 @@ else if (_tilbud is not null)
     private async Task LagreLinje(TilbudLinje l)
     {
         await Db.SaveChangesAsync();
+    }
+
+    private async Task LagreTilbudValg() => await Db.SaveChangesAsync();
+
+    // ---- Overskrifter i varetabellen ----
+    // En overskrift (ErGruppering) gjelder radene under den frem til neste
+    // overskrift. Seksjonen kan felles sammen, flyttes, dupliseres og fjernes
+    // samlet, og nye varer kan legges rett under den.
+    private readonly HashSet<int> _lukkedeGrupper = [];
+    private readonly HashSet<int> _visBeskrivelse = [];
+    private int? _gruppeMeny;
+    private double _gruppeMenyX;
+    private double _gruppeMenyY;
+    private int? _leggUnderGruppeId;
+    private ElementReference _vareSokInput;
+    private List<TilbudLinje>? _angreLinjer;
+    private string? _angreTekst;
+
+    private TilbudLinje? LeggUnderGruppe => _leggUnderGruppeId is int id
+        ? _tilbud?.Linjer.FirstOrDefault(l => l.Id == id && l.ErGruppering)
+        : null;
+
+    private List<TabellRad> Seksjon(List<TabellRad> rader, TilbudLinje gruppe)
+    {
+        var ut = new List<TabellRad>();
+        var i = rader.FindIndex(r => r.Vare == gruppe);
+        if (i < 0)
+        {
+            return ut;
+        }
+
+        for (var j = i + 1; j < rader.Count; j++)
+        {
+            var r = rader[j];
+            if (r.Vare is { ErGruppering: true } || (r.Kode is not null && !_tilbud!.FellesRekkefolge))
+            {
+                break;
+            }
+            ut.Add(r);
+        }
+        return ut;
+    }
+
+    private decimal SeksjonSum(List<TabellRad> seksjon) => seksjon.Sum(r => r.Vare is { } v
+        ? (v.LevertAv == LevertAv.F ? v.Utpris * v.Antall : 0)
+        : KodeLinjeBeregner.Sum(r.Kode!, _tilbud!.KodeLinjer, UtprisVarer).Salg);
+
+    private RenderFragment LeggUnderRad(TilbudLinje gruppe) => __builder =>
+    {
+        <tr class="gruppering-legg-row">
+            <td></td>
+            <td colspan="20">
+                <button type="button" class="gruppering-legg-vare" @onclick="@(() => LeggUnder(gruppe))">
+                    <Icon Name="plus" />Vare under @(string.IsNullOrWhiteSpace(gruppe.Navn) ? "overskriften" : gruppe.Navn)
+                </button>
+            </td>
+        </tr>
+    };
+
+    private void VekslLukket(TilbudLinje g)
+    {
+        if (!_lukkedeGrupper.Remove(g.Id))
+        {
+            _lukkedeGrupper.Add(g.Id);
+        }
+    }
+
+    private void VisBeskrivelse(TilbudLinje g)
+    {
+        _gruppeMeny = null;
+        _visBeskrivelse.Add(g.Id);
+    }
+
+    private void ApneGruppeMeny(TilbudLinje g, MouseEventArgs e)
+    {
+        _gruppeMeny = g.Id;
+        _gruppeMenyX = Math.Max(8, e.ClientX - 250);
+        _gruppeMenyY = e.ClientY + 14;
+    }
+
+    private async Task LeggUnder(TilbudLinje g)
+    {
+        _gruppeMeny = null;
+        _leggUnderGruppeId = g.Id;
+        _lukkedeGrupper.Remove(g.Id);
+        await _vareSokInput.FocusAsync();
+    }
+
+    // Flytter en ny linje til slutten av seksjonen den skal legges under.
+    private void PlasserUnderGruppe(TilbudLinje linje)
+    {
+        if (LeggUnderGruppe is not { } g)
+        {
+            return;
+        }
+
+        var rader = TabellRader();
+        var ny = rader.FirstOrDefault(r => r.Vare == linje);
+        if (ny is null)
+        {
+            return;
+        }
+
+        rader.Remove(ny);
+        rader.Insert(rader.FindIndex(r => r.Vare == g) + 1 + Seksjon(rader, g).Count, ny);
+        Nummerer(rader);
+    }
+
+    // Varer og koder får samme nummerering, i rekkefølgen de står i listen.
+    private void Nummerer(List<TabellRad> rader)
+    {
+        for (var i = 0; i < rader.Count; i++)
+        {
+            if (rader[i].Vare is { } v)
+            {
+                v.Rekkefolge = i;
+            }
+            else
+            {
+                rader[i].Kode!.Rekkefolge = i;
+            }
+        }
+
+        if (rader.Any(r => r.Kode is not null))
+        {
+            _tilbud!.FellesRekkefolge = true;
+        }
+    }
+
+    private TilbudLinje Klone(TilbudLinje l)
+    {
+        var k = (TilbudLinje)Db.Entry(l).CurrentValues.ToObject();
+        k.Id = 0;
+        k.Tilbud = null;
+        k.Component = l.Component;
+        k.PlukketAvBruker = null;
+        return k;
+    }
+
+    private async Task DupliserGruppe(TilbudLinje g)
+    {
+        _gruppeMeny = null;
+        var rader = TabellRader();
+        var seksjon = Seksjon(rader, g);
+        var kopier = new List<TabellRad>();
+        foreach (var l in seksjon.Where(r => r.Vare is not null).Select(r => r.Vare!).Prepend(g))
+        {
+            var k = Klone(l);
+            k.DorId = null;
+            k.Plukket = false;
+            k.AntallPlukket = 0;
+            k.PlukketDato = null;
+            k.PlukketAvBrukerId = null;
+            if (l == g)
+            {
+                k.Navn = string.IsNullOrWhiteSpace(g.Navn) ? "Kopi" : $"{g.Navn} (kopi)";
+            }
+            _tilbud!.Linjer.Add(k);
+            Db.TilbudLinjer.Add(k);
+            kopier.Add(new TabellRad(k, null));
+        }
+
+        rader.InsertRange(rader.FindIndex(r => r.Vare == g) + 1 + seksjon.Count, kopier);
+        Nummerer(rader);
+        Db.TilbudHendelser.Add(NyHendelse($"Overskrift duplisert: {g.Navn}"));
+        OppdaterMontasjekostAutomatisk();
+        await Db.SaveChangesAsync();
+        await OppdaterHendelser();
+    }
+
+    // Seksjonene som blokker: radene før første overskrift, og hver overskrift
+    // med radene under. Står kodelinjene for seg nederst, holdes de utenfor.
+    private (List<List<TabellRad>> Blokker, List<TabellRad> KoderEtter) GruppeBlokker()
+    {
+        var rader = TabellRader();
+        var koderEtter = _tilbud!.FellesRekkefolge ? [] : rader.Where(r => r.Kode is not null).ToList();
+        var blokker = new List<List<TabellRad>>();
+        foreach (var r in rader.Except(koderEtter))
+        {
+            if (blokker.Count == 0 || r.Vare is { ErGruppering: true })
+            {
+                blokker.Add([]);
+            }
+            blokker[^1].Add(r);
+        }
+        return (blokker, koderEtter);
+    }
+
+    private bool KanFlytteGruppe(TilbudLinje g, int retning)
+    {
+        var (blokker, _) = GruppeBlokker();
+        var i = blokker.FindIndex(b => b[0].Vare == g);
+        return i >= 0 && i + retning >= 0 && i + retning < blokker.Count;
+    }
+
+    private async Task FlyttGruppe(TilbudLinje g, int retning)
+    {
+        _gruppeMeny = null;
+        var (blokker, koderEtter) = GruppeBlokker();
+        var i = blokker.FindIndex(b => b[0].Vare == g);
+        if (i < 0 || i + retning < 0 || i + retning >= blokker.Count)
+        {
+            return;
+        }
+
+        (blokker[i], blokker[i + retning]) = (blokker[i + retning], blokker[i]);
+        Nummerer(blokker.SelectMany(b => b).Concat(koderEtter).ToList());
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task FjernGruppe(TilbudLinje g, bool medVarer)
+    {
+        _gruppeMeny = null;
+        var fjernes = new List<TilbudLinje> { g };
+        if (medVarer)
+        {
+            fjernes.AddRange(Seksjon(TabellRader(), g).Where(r => r.Vare is not null).Select(r => r.Vare!));
+        }
+
+        _angreLinjer = fjernes.Select(Klone).ToList();
+        foreach (var l in fjernes)
+        {
+            Db.TilbudLinjer.Remove(l);
+            _tilbud!.Linjer.Remove(l);
+        }
+        _lukkedeGrupper.Remove(g.Id);
+        if (_leggUnderGruppeId == g.Id)
+        {
+            _leggUnderGruppeId = null;
+        }
+
+        var navn = string.IsNullOrWhiteSpace(g.Navn) ? "Overskriften" : $"«{g.Navn}»";
+        var antall = fjernes.Count - 1;
+        _angreTekst = medVarer
+            ? $"{navn} og {antall} {(antall == 1 ? "vare" : "varer")} er fjernet."
+            : $"{navn} er fjernet. Varene står igjen.";
+        Db.TilbudHendelser.Add(NyHendelse(medVarer ? $"Overskrift og {antall} varer fjernet: {g.Navn}" : $"Overskrift fjernet: {g.Navn}"));
+        OppdaterMontasjekostAutomatisk();
+        await Db.SaveChangesAsync();
+        await OppdaterHendelser();
+    }
+
+    private async Task AngreFjernGruppe()
+    {
+        if (_angreLinjer is null)
+        {
+            return;
+        }
+
+        foreach (var l in _angreLinjer)
+        {
+            _tilbud!.Linjer.Add(l);
+            Db.TilbudLinjer.Add(l);
+        }
+        Db.TilbudHendelser.Add(NyHendelse("Angret fjerning av overskrift"));
+        _angreLinjer = null;
+        _angreTekst = null;
+        OppdaterMontasjekostAutomatisk();
+        await Db.SaveChangesAsync();
+        await OppdaterHendelser();
     }
 
     // En ny vare legges etter den siste varen. Med felles rekkefølge flyttes
@@ -2533,22 +2884,7 @@ else if (_tilbud is not null)
         rader.Insert(rader.IndexOf(maal), dragget);
 
         // Varer og koder får samme nummerering fra nå av.
-        for (var i = 0; i < rader.Count; i++)
-        {
-            if (rader[i].Vare is { } v)
-            {
-                v.Rekkefolge = i;
-            }
-            else
-            {
-                rader[i].Kode!.Rekkefolge = i;
-            }
-        }
-
-        if (rader.Any(r => r.Kode is not null))
-        {
-            _tilbud.FellesRekkefolge = true;
-        }
+        Nummerer(rader);
 
         await Db.SaveChangesAsync();
         StateHasChanged();

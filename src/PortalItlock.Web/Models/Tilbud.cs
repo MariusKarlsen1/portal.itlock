@@ -59,6 +59,8 @@ public class Tilbud
 
     // Rabatten (rabatt på veiledende / kunderabatt) vises i PDF-en bare når dette er huket av.
     public bool VisRabattIPdf { get; set; }
+    // Sum under hver overskrift i varelisten på PDF.
+    public bool VisDelsumPerOverskrift { get; set; }
     public decimal? SendtSum { get; set; }
 
     // Settes automatisk når Status endres til Avslatt (se

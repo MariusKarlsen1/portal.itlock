@@ -8021,6 +8021,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("VisAlleDorerFraBeslagsliste")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("VisDelsumPerOverskrift")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("VisEnhetspris")
                         .HasColumnType("INTEGER");
 
