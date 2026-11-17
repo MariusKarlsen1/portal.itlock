@@ -13,6 +13,7 @@
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 @inject TilbudPdfService TilbudPdfService
+@inject OrdrebekreftelsePdfService OrdrebekreftelsePdf
 @inject LagretPdfService LagretPdfService
 @inject IJSRuntime JS
 @inject VisningPreferanseService VisningPref
@@ -85,6 +86,10 @@ else if (_tilbud is not null)
                 @if (!string.IsNullOrEmpty(_savedMessage))
                 {
                     <span class="save-success">@_savedMessage</span>
+                }
+                @if (Laast)
+                {
+                    <button type="button" class="tk-kn tk-kn-rediger" title="Åpne tilbudet for endringer. Godkjenner du igjen, lages en ny ordrebekreftelse." @onclick="RedigerGodkjent"><Icon Name="edit" />Rediger</button>
                 }
                 @if (_lenketArbeidsordreId.HasValue)
                 {
@@ -276,7 +281,7 @@ else if (_tilbud is not null)
                         </div>
                         @if (Laast)
                         {
-                            <p class="tk-laast"><Icon Name="lock" />Tilbudet er godkjent og låst. Sett status tilbake for å endre noe.</p>
+                            <p class="tk-laast"><Icon Name="lock" />Tilbudet er godkjent og låst. Trykk <button type="button" class="tk-laast-kn" @onclick="RedigerGodkjent">Rediger</button> for å endre – godkjenner du igjen, lages en ny ordrebekreftelse.</p>
                         }
                         <fieldset class="tk-laas-fs" disabled="@Laast">
                         <div class="tk-info-grid">
@@ -572,6 +577,11 @@ else if (_tilbud is not null)
     }
 
     <LagredePdfListe Pdfer="_lagredePdfer" TillatSammenligning="true" Versjonsvisning="true" Tittel="@_tilbud.Tittel" />
+    @if (_ordrebekreftelser.Count > 0)
+    {
+        @* Lages automatisk hver gang tilbudet godkjennes. Nyeste øverst. *@
+        <LagredePdfListe Pdfer="_ordrebekreftelser" Tittel="Ordrebekreftelser" />
+    }
                         </div>
                         break;
 
@@ -579,7 +589,7 @@ else if (_tilbud is not null)
                         <div class="tk-varer">
                         @if (Laast)
                         {
-                            <p class="tk-laast"><Icon Name="lock" />Tilbudet er godkjent og låst. Sett status tilbake under Info for å endre varelinjene.</p>
+                            <p class="tk-laast"><Icon Name="lock" />Tilbudet er godkjent og låst. Trykk <button type="button" class="tk-laast-kn" @onclick="RedigerGodkjent">Rediger</button> for å endre varelinjene – godkjenner du igjen, lages en ny ordrebekreftelse.</p>
                         }
                         <fieldset class="tk-laas-fs" disabled="@Laast">
         @if (ErOpsjon)
@@ -1071,6 +1081,40 @@ else if (_tilbud is not null)
     private List<string> _byggetrinnListe = [];
     private int? _valgtForsideMalId;
     private List<LagretPdf> _lagredePdfer = [];
+    private List<LagretPdf> _ordrebekreftelser = [];
+
+    // Godkjent tilbud er låst. «Rediger» åpner det igjen (status tilbake til
+    // Sendt til kunde / Utkast); godkjennes det på nytt, lages ny ordrebekreftelse.
+    private async Task RedigerGodkjent()
+    {
+        if (_tilbud is null || _tilbud.Status != EndringsmeldingStatus.Godkjent)
+        {
+            return;
+        }
+        _tilbud.Status = _tilbud.SendtDato is not null ? EndringsmeldingStatus.SendtTilKunde : EndringsmeldingStatus.Utkast;
+        Db.TilbudHendelser.Add(NyHendelse("Åpnet for endring etter godkjenning"));
+        await StatusEndret();
+        _savedMessage = "Tilbudet er åpnet for endring. Sett status til Godkjent igjen når du er ferdig – da lages en ny ordrebekreftelse.";
+    }
+
+    // Lages automatisk når tilbudet settes til Godkjent. Lagres på tilbudet, sendes ikke.
+    private async Task LagOrdrebekreftelse()
+    {
+        var res = await OrdrebekreftelsePdf.LagAsync(Id, _naverendeBrukerId);
+        if (res is null || _tilbud is null)
+        {
+            return;
+        }
+        var pdf = await LagretPdfService.LagreAsync(OrdrebekreftelsePdfService.EntityType, Id,
+            $"Ordrebekreftelse {res.Ordrenummer} - {_tilbud.Tittel}.pdf", res.Pdf);
+        _ordrebekreftelser.Insert(0, pdf);
+        Db.TilbudHendelser.Add(NyHendelse(res.Versjon > 1
+            ? $"Ny ordrebekreftelse {res.Ordrenummer} laget (erstatter forrige)"
+            : $"Ordrebekreftelse {res.Ordrenummer} laget"));
+        await Db.SaveChangesAsync();
+        await OppdaterHendelser();
+        _savedMessage = $"Godkjent – ordrebekreftelse {res.Ordrenummer} er laget og ligger under PDF-er.";
+    }
     private string? _pdfSavedMessage;
     private DotNetObjectReference<TilbudSkjema>? _dotNetRef;
     private TilbudLinje? _produktVelgerLinje;
@@ -1242,6 +1286,7 @@ else if (_tilbud is not null)
             : (await Db.Arbeidsordre.FirstOrDefaultAsync(a => a.TilbudId == _tilbud.Id || a.EkstraTilbud.Any(x => x.TilbudId == _tilbud.Id)))?.Id;
 
         _lagredePdfer = await LagretPdfService.HentAsync("Tilbud", Id);
+        _ordrebekreftelser = await LagretPdfService.HentAsync(OrdrebekreftelsePdfService.EntityType, Id);
     }
 
     private async Task StatusEndret()
@@ -1313,6 +1358,11 @@ else if (_tilbud is not null)
         _sisteLoggetStatus = _tilbud.Status;
         await Db.SaveChangesAsync();
         await OppdaterHendelser();
+
+        if (_tilbud.Status == EndringsmeldingStatus.Godkjent)
+        {
+            await LagOrdrebekreftelse();
+        }
     }
 
     private async Task OppdaterHendelser()
