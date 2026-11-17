@@ -23,6 +23,10 @@ public class Component
     public string? Overflate { get; set; }
     public bool ErSylinder { get; set; }
 
+    // Forbruksvare (skruer, plugger, silikon o.l. som ligger i bilen): med på
+    // tilbud og faktura, men ikke på plukklisten.
+    public bool ErForbruksvare { get; set; }
+
     public string? Leverandor { get; set; }
     public string? Varegruppe { get; set; }
     public decimal? PrisNetto { get; set; }

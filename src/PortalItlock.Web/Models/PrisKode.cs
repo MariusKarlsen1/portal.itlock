@@ -79,6 +79,12 @@ public class PrisKode
     public TimeregistreringType Timetype { get; set; }
     public bool Aktiv { get; set; } = true;
     public int Rekkefolge { get; set; }
+
+    // Kommer opp når man søker etter varer og koder på tilbudet.
+    public bool VisPaTilbud { get; set; } = true;
+
+    // Montøren kan velge koden selv (timeføring, kjøring og tillegg på arbeidsordren).
+    public bool MontorKanFore { get; set; } = true;
 }
 
 // En linje med kode på et tilbud. Kode, navn og priser kopieres fra koden når

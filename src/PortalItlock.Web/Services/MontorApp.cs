@@ -33,10 +33,11 @@ public static class MontorApp
 
     // Timetypene: arbeidskodene (time) fra Prosjektøkonomi, ellers aktivitetene,
     // så internt arbeid og fraværstypene.
-    public static List<Timetype> Timetyper(IEnumerable<PrisKode> koder)
+    // kunMontor: bare koder montøren kan velge selv (brukes når nye timer føres).
+    public static List<Timetype> Timetyper(IEnumerable<PrisKode> koder, bool kunMontor = false)
     {
         var liste = koder
-            .Where(k => k.Aktiv && k.Type == PrisKodeType.Arbeid && k.Enhet == PrisKodeEnhet.Time)
+            .Where(k => k.Aktiv && k.Type == PrisKodeType.Arbeid && k.Enhet == PrisKodeEnhet.Time && (!kunMontor || k.MontorKanFore))
             .OrderBy(k => k.Rekkefolge).ThenBy(k => k.Kode)
             .Select(k => new Timetype($"k{k.Id}", k.Kode, k.Navn, TimetypeGruppe.Jobb, k.Id, k.Timetype, AktivitetFor(k.Navn)))
             .ToList();
