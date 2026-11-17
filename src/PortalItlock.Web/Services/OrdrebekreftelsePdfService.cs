@@ -77,7 +77,6 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
 
         var harRabatt = varer.Any(l => l.RabattProsent > 0 && l.PrisVeiledende is > 0);
         var leveringsmate = arbeid.Count > 0 ? "Levering og montering" : "Levering";
-        var strekkode = Strekkode.Svg(null, ordrenummer);
         var kundeLinjer = new List<string?> { kunde?.Navn, kunde?.Adresse, string.Join(" ", new[] { kunde?.Postnr, kunde?.Sted }.Where(s => !string.IsNullOrWhiteSpace(s))), "Norge" }
             .Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!).ToList();
         var leveringLinjer = new List<string?> { kunde?.Navn, tilbud.KontaktpersonNavn ?? kunde?.Kontaktperson,
@@ -130,11 +129,12 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
 
             page.Content().Column(col =>
             {
-                // Logo | ORDREBEKREFTELSE + ordrenr/dato | strekkode
+                // Logo til venstre, ORDREBEKREFTELSE med ordrenr/dato til høyre
                 col.Item().PaddingTop(6).Row(row =>
                 {
                     row.ConstantItem(150).PaddingTop(4).Element(e => org.TegnLogo(e, pdfLogo, 34));
-                    row.RelativeItem().PaddingLeft(30).Column(c =>
+                    row.RelativeItem();
+                    row.ConstantItem(230).Column(c =>
                     {
                         c.Item().Text("ORDREBEKREFTELSE").FontSize(17).Bold();
                         c.Item().PaddingTop(4).Table(t =>
@@ -149,10 +149,6 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
                             }
                         });
                     });
-                    if (strekkode is not null)
-                    {
-                        row.ConstantItem(150).Height(46).AlignRight().Svg(strekkode).FitArea();
-                    }
                 });
 
                 // Kunde og leveringsadresse til venstre, opplysninger til høyre
