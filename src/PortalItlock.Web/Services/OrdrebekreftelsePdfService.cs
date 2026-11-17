@@ -75,149 +75,189 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
         var varReferanse = prosjekt?.Prosjektleder?.Navn ?? bruker?.Navn ?? tilbud.OpprettetAvNavn;
         var kontaktEpost = prosjekt?.Prosjektleder?.Epost ?? org.Epost;
 
+        var harRabatt = varer.Any(l => l.RabattProsent > 0 && l.PrisVeiledende is > 0);
+        var leveringsmate = arbeid.Count > 0 ? "Levering og montering" : "Levering";
+        var strekkode = Strekkode.Svg(null, ordrenummer);
+        var kundeLinjer = new List<string?> { kunde?.Navn, kunde?.Adresse, string.Join(" ", new[] { kunde?.Postnr, kunde?.Sted }.Where(s => !string.IsNullOrWhiteSpace(s))), "Norge" }
+            .Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!).ToList();
+        var leveringLinjer = new List<string?> { kunde?.Navn, tilbud.KontaktpersonNavn ?? kunde?.Kontaktperson,
+                prosjekt?.Adresse ?? kunde?.Adresse,
+                string.Join(" ", new[] { prosjekt?.Postnr ?? kunde?.Postnr, (prosjekt?.Sted ?? kunde?.Sted)?.ToUpperInvariant() }.Where(s => !string.IsNullOrWhiteSpace(s))), "Norge" }
+            .Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!).ToList();
+
+        void Stiplet(IContainer c) => c.LineHorizontal(1).LineColor(Ink).LineDashPattern([5f, 4f]);
+
         var pdf = Document.Create(doc => doc.Page(page =>
         {
             page.Size(PageSizes.A4);
-            page.Margin(1.8f, Unit.Centimetre);
-            page.DefaultTextStyle(x => x.FontSize(9.5f).FontColor(Ink));
-            page.Footer().Element(f => RapportMal.Bunn(f, org));
+            page.MarginHorizontal(1.6f, Unit.Centimetre);
+            page.MarginVertical(1.2f, Unit.Centimetre);
+            page.DefaultTextStyle(x => x.FontSize(9).FontColor(Colors.Black));
+
+            // Bunn som i malen: stiplet linje, firma / kontakt / web, og leveringsvilkår
+            page.Footer().Column(f =>
+            {
+                f.Item().PaddingBottom(8).Element(Stiplet);
+                f.Item().Row(r =>
+                {
+                    r.RelativeItem().Column(c =>
+                    {
+                        c.Item().Text(org.Navn);
+                        foreach (var del in (org.Adresse ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        {
+                            c.Item().Text(del);
+                        }
+                    });
+                    r.RelativeItem().Table(t =>
+                    {
+                        t.ColumnsDefinition(cd => { cd.ConstantColumn(55); cd.RelativeColumn(); });
+                        void R(string a, string? b) { if (string.IsNullOrWhiteSpace(b)) return; t.Cell().Text(a); t.Cell().Text(b); }
+                        R("Tlf.", org.Telefon);
+                        R("Org.nr", org.OrgNr);
+                        R("E-post", org.Epost);
+                    });
+                });
+                f.Item().PaddingTop(8).Text("Ordren leveres i henhold til betingelsene i denne ordrebekreftelsen.").FontSize(8);
+            });
+
+            page.Header().AlignRight().Text(t =>
+            {
+                t.Span("Side ");
+                t.CurrentPageNumber();
+                t.Span("/");
+                t.TotalPages();
+            });
 
             page.Content().Column(col =>
             {
-                // Topp: logo til venstre, tittel og ordrenummer/dato
-                col.Item().Row(row =>
+                // Logo | ORDREBEKREFTELSE + ordrenr/dato | strekkode
+                col.Item().PaddingTop(6).Row(row =>
                 {
-                    row.ConstantItem(170).Element(e => org.TegnLogo(e, pdfLogo, 30));
-                    row.RelativeItem().PaddingLeft(20).Column(c =>
+                    row.ConstantItem(150).PaddingTop(4).Element(e => org.TegnLogo(e, pdfLogo, 34));
+                    row.RelativeItem().PaddingLeft(30).Column(c =>
                     {
-                        c.Item().Text("ORDREBEKREFTELSE").FontSize(20).Bold();
+                        c.Item().Text("ORDREBEKREFTELSE").FontSize(17).Bold();
                         c.Item().PaddingTop(4).Table(t =>
                         {
-                            t.ColumnsDefinition(cd => { cd.ConstantColumn(95); cd.RelativeColumn(); });
-                            void R(string a, string b) { t.Cell().Text(a).FontColor(Svak); t.Cell().Text(b).SemiBold(); }
+                            t.ColumnsDefinition(cd => { cd.ConstantColumn(110); cd.RelativeColumn(); });
+                            void R(string a, string b) { t.Cell().Text(a); t.Cell().Text(b); }
                             R("Ordrenummer", ordrenummer);
                             R("Dato", DateTime.Today.ToString("dd.MM.yyyy"));
                             if (versjon > 1)
                             {
-                                R("Erstatter", $"Ordrebekreftelse {tilbud.OpprettetDato.Year}-{tilbud.Id:000}{(versjon > 2 ? $"-{versjon - 1}" : "")}");
+                                R("Erstatter", $"{tilbud.OpprettetDato.Year}-{tilbud.Id:000}{(versjon > 2 ? $"-{versjon - 1}" : "")}");
                             }
                         });
                     });
+                    if (strekkode is not null)
+                    {
+                        row.ConstantItem(150).Height(46).AlignRight().Svg(strekkode).FitArea();
+                    }
                 });
 
-                // Kunde / levering til venstre, referanser til høyre
-                col.Item().PaddingTop(26).Row(row =>
+                // Kunde og leveringsadresse til venstre, opplysninger til høyre
+                col.Item().PaddingTop(30).Row(row =>
                 {
                     row.RelativeItem().Column(c =>
                     {
-                        c.Item().Text(kunde?.Navn ?? "-").SemiBold();
-                        if (kundeAdresse is not null) c.Item().Text(kundeAdresse);
-                        if (!string.IsNullOrWhiteSpace(tilbud.KontaktpersonNavn)) c.Item().Text($"Att: {tilbud.KontaktpersonNavn}");
-
-                        if (leveringsadresse is not null && leveringsadresse != kundeAdresse)
-                        {
-                            c.Item().PaddingTop(14).Text("Leverings- og oppmøteadresse").Bold();
-                            if (!string.IsNullOrWhiteSpace(prosjekt?.Navn)) c.Item().Text(prosjekt!.Navn);
-                            c.Item().Text(leveringsadresse);
-                        }
+                        foreach (var l in kundeLinjer) c.Item().Text(l);
+                        c.Item().PaddingTop(16).Text("Leveringsadresse").Bold();
+                        foreach (var l in leveringLinjer) c.Item().Text(l);
                     });
-                    row.RelativeItem().Table(t =>
+                    row.RelativeItem(1.25f).Table(t =>
                     {
-                        t.ColumnsDefinition(cd => { cd.ConstantColumn(130); cd.RelativeColumn(); });
-                        void R(string a, string? b)
-                        {
-                            if (string.IsNullOrWhiteSpace(b)) return;
-                            t.Cell().PaddingBottom(2).Text(a).FontColor(Svak);
-                            t.Cell().PaddingBottom(2).Text(b);
-                        }
+                        t.ColumnsDefinition(cd => { cd.ConstantColumn(150); cd.RelativeColumn(); });
+                        void R(string a, string? b) { t.Cell().PaddingBottom(1).Text(a); t.Cell().PaddingBottom(1).Text(b ?? ""); }
                         R("Kundenummer", kunde?.TripletexKundenummer ?? kunde?.Id.ToString());
                         R("Deres referanse", tilbud.KontaktpersonNavn ?? kunde?.Kontaktperson);
                         R("Vår referanse", varReferanse);
-                        R("Prosjekt", prosjekt?.Navn);
-                        R("Tilbud", $"T-{tilbud.OpprettetDato.Year}-{tilbud.Id:000} · {tilbud.Tittel}");
-                        R("Godkjent", (tilbud.GodkjentDato ?? DateTime.Today).ToString("dd.MM.yyyy"));
+                        R("Leveringsmåte", leveringsmate);
                         R("Leveringstid", string.IsNullOrWhiteSpace(tilbud.Leveringstid) ? "Avtales nærmere" : tilbud.Leveringstid);
                         R("Betalingsbetingelser", "Iht. faktura");
+                        R("Tilbud nr.", $"T-{tilbud.OpprettetDato.Year}-{tilbud.Id:000}");
+                        R("Godkjent dato", (tilbud.GodkjentDato ?? DateTime.Today).ToString("dd.MM.yyyy"));
+                        R("Prosjekt ID", prosjekt is null ? null : $"P-{prosjekt.Id}");
+                        R("Prosjektnavn", prosjekt?.Navn);
                     });
                 });
 
-                col.Item().PaddingTop(18).Text("Takk for din bestilling! Vi har mottatt ordren og startet behandlingen. Under finner du en oversikt over produkter, tjenester og levering.").FontColor(Ink);
-
-                // Varelinjer
-                col.Item().PaddingTop(16).Table(t =>
+                // Varelinjer mellom stiplede linjer
+                col.Item().PaddingTop(40).Element(Stiplet);
+                col.Item().PaddingTop(2).Table(t =>
                 {
                     t.ColumnsDefinition(cd =>
                     {
-                        cd.ConstantColumn(80);
-                        cd.RelativeColumn(4);
+                        cd.ConstantColumn(95);
+                        cd.RelativeColumn(3);
                         cd.ConstantColumn(55);
                         cd.ConstantColumn(80);
-                        cd.ConstantColumn(85);
+                        cd.ConstantColumn(50);
+                        cd.ConstantColumn(80);
                     });
                     t.Header(h =>
                     {
-                        IContainer H(IContainer c) => c.BorderBottom(1).BorderColor(Ink).PaddingBottom(4);
+                        IContainer H(IContainer c) => c.BorderBottom(0.75f).BorderColor(Ink).PaddingVertical(5);
                         h.Cell().Element(H).Text("Nummer").Bold();
                         h.Cell().Element(H).Text("Beskrivelse").Bold();
                         h.Cell().Element(H).AlignRight().Text("Antall").Bold();
-                        h.Cell().Element(H).AlignRight().Text("Pris eks. mva").Bold();
-                        h.Cell().Element(H).AlignRight().Text("Totalt eks. mva").Bold();
+                        h.Cell().Element(H).AlignRight().Text("Pris pr enhet").Bold();
+                        h.Cell().Element(H).AlignRight().Text("Rabatt %").Bold();
+                        h.Cell().Element(H).AlignRight().Text("Totalt").Bold();
                     });
-                    IContainer C(IContainer c) => c.BorderBottom(0.5f).BorderColor(Linje).PaddingVertical(4);
+                    IContainer C(IContainer c) => c.PaddingVertical(5);
                     foreach (var l in varer)
                     {
-                        t.Cell().Element(C).Text(l.Component?.Produktkode ?? "").FontSize(8.5f);
+                        var medRabatt = harRabatt && l.RabattProsent > 0 && l.PrisVeiledende is > 0;
+                        t.Cell().Element(C).Text(l.Component?.Produktkode ?? "");
                         t.Cell().Element(C).Column(c =>
                         {
                             c.Item().Text(l.Navn);
-                            if (!string.IsNullOrWhiteSpace(l.Component?.Overflate)) c.Item().Text(l.Component!.Overflate).FontSize(8).FontColor(Svak);
+                            var under = string.Join(" · ", new[] { l.Component?.Overflate, l.Component?.Leverandor }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                            if (under.Length > 0) c.Item().Text(under).FontSize(8);
                         });
-                        t.Cell().Element(C).AlignRight().Text($"{l.Antall} {(string.IsNullOrWhiteSpace(l.Enhet) ? "stk" : l.Enhet)}");
-                        t.Cell().Element(C).AlignRight().Text(Kr(l.Utpris));
+                        t.Cell().Element(C).AlignRight().Text($"{l.Antall}{(string.IsNullOrWhiteSpace(l.Enhet) || l.Enhet.Equals("stk", StringComparison.OrdinalIgnoreCase) ? "" : " " + l.Enhet)}");
+                        t.Cell().Element(C).AlignRight().Text(Kr(medRabatt ? l.PrisVeiledende!.Value : l.Utpris));
+                        t.Cell().Element(C).AlignRight().Text(medRabatt ? l.RabattProsent.ToString("0.#", Kultur) : "");
                         t.Cell().Element(C).AlignRight().Text(Kr(l.Utpris * l.Antall));
                     }
                     foreach (var (kode, navn, belop) in arbeid)
                     {
-                        t.Cell().Element(C).Text(kode).FontSize(8.5f);
+                        t.Cell().Element(C).Text(kode);
                         t.Cell().Element(C).Text(navn);
                         t.Cell().Element(C).AlignRight().Text("1");
                         t.Cell().Element(C).AlignRight().Text(Kr(belop));
+                        t.Cell().Element(C).AlignRight().Text("");
                         t.Cell().Element(C).AlignRight().Text(Kr(belop));
                     }
                 });
 
-                // Sum
-                col.Item().PaddingTop(8).AlignRight().Width(240).Table(t =>
+                // Sum som i malen: kort strek over beløpet, «Totalt NOK»
+                col.Item().PaddingTop(14).AlignRight().Width(250).Table(t =>
                 {
-                    t.ColumnsDefinition(cd => { cd.RelativeColumn(); cd.ConstantColumn(95); });
-                    t.Cell().PaddingVertical(2).Text("Sum eks. mva").FontColor(Svak);
-                    t.Cell().PaddingVertical(2).AlignRight().Text(Kr(totaltEks));
-                    t.Cell().PaddingVertical(2).Text("Merverdiavgift 25 %").FontColor(Svak);
-                    t.Cell().PaddingVertical(2).AlignRight().Text(Kr(mva));
-                    t.Cell().BorderTop(1).BorderColor(Ink).PaddingTop(4).Text("Totalt inkl. mva").Bold();
-                    t.Cell().BorderTop(1).BorderColor(Ink).PaddingTop(4).AlignRight().Text(Kr(totaltEks + mva)).Bold();
+                    t.ColumnsDefinition(cd => { cd.RelativeColumn(); cd.ConstantColumn(90); });
+                    t.Cell().PaddingVertical(1).AlignRight().PaddingRight(12).Text("Sum eks. mva");
+                    t.Cell().PaddingVertical(1).AlignRight().Text(Kr(totaltEks));
+                    t.Cell().PaddingVertical(1).AlignRight().PaddingRight(12).Text("Mva 25 %");
+                    t.Cell().PaddingVertical(1).AlignRight().Text(Kr(mva));
+                    t.Cell();
+                    t.Cell().PaddingTop(4).LineHorizontal(1).LineColor(Colors.Black);
+                    t.Cell().PaddingTop(4).AlignRight().PaddingRight(12).Text("Totalt NOK").Bold();
+                    t.Cell().PaddingTop(4).AlignRight().Text(Kr(totaltEks + mva)).Bold();
                 });
 
-                // Levering og oppmøte
-                Seksjon(col, "Levering og oppmøte");
-                Punkt(col, $"Adresse for oppmøte og levering: {(leveringsadresse ?? kundeAdresse ?? "avtales nærmere").Replace("\n", ", ")}");
-                Punkt(col, $"Tidspunkt for montering avtales nærmere. Montøren ringer før ankomst. Sørg for at det er ryddet og fri tilgang til døren/området.");
-                Punkt(col, $"Estimert leveringstid: {(string.IsNullOrWhiteSpace(tilbud.Leveringstid) ? "avtales nærmere" : tilbud.Leveringstid)}.");
+                col.Item().PaddingTop(24).Text("Takk for bestillingen! Tidspunkt for levering og montering avtales nærmere – montøren ringer før ankomst. Sørg for at det er ryddet og fri tilgang til døren/området.");
 
-                // Salgspant og avtalebetingelser
-                Seksjon(col, "Salgspant og avtalebetingelser");
+                // Betingelser
+                col.Item().PaddingTop(16).Text("Betingelser").Bold();
                 Punkt(col, $"Salgspant og eiendomsrett: {org.Navn} forbeholder seg salgspant i de leverte varene som sikkerhet for kjøpesummen, inkludert renter og omkostninger, i medhold av panteloven §§ 3-14 til 3-22. Eiendomsretten går over til kjøper først når hele kjøpesummen er betalt.");
                 Punkt(col, "Spesialtilpassede varer: Det gis ikke retur- eller avbestillingsrett på spesialtilpassede systemlåser, lisensierte nøkler eller prosjektbestilte låsvarer etter at ordren er satt i produksjon eller bekreftet bestilt hos produsent.");
                 Punkt(col, "Avbestilling av tjenester: Avbestilling eller endring av avtalt montering må skje senest 24 timer før oppmøte. Ved for sen avbestilling eller manglende tilgang påløper bomtur etter gjeldende satser.");
                 if (erPrivat)
                 {
-                    Punkt(col, "Angrerett (forbrukerkjøp): Det er 14 dagers angrerett på standard lagervarer i ubrukt stand og originalemballasje. Angreretten bortfaller for tjenester (som montering) når arbeidet er påbegynt eller fullført etter avtale.");
+                    Punkt(col, "Angrerett (forbrukerkjøp): 14 dagers angrerett på standard lagervarer i ubrukt stand og originalemballasje. Angreretten bortfaller for tjenester (som montering) når arbeidet er påbegynt eller fullført etter avtale.");
                 }
-
-                // Kundeservice
-                Seksjon(col, "Spørsmål om ordren");
                 var kontakt = string.Join(" · ", new[] { varReferanse, org.Telefon, kontaktEpost }.Where(s => !string.IsNullOrWhiteSpace(s)));
-                col.Item().PaddingTop(2).Text($"Har du spørsmål eller ser du feil i ordren? Ta kontakt med oss{(kontakt.Length > 0 ? ": " + kontakt : ".")}");
+                col.Item().PaddingTop(12).Text($"Spørsmål eller feil i ordren? Ta kontakt{(kontakt.Length > 0 ? ": " + kontakt : ".")}");
             });
         })).GeneratePdf();
 
