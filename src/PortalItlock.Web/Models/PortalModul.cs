@@ -403,11 +403,24 @@ public static class PortalModulRegister
             ? StandardSkjulte(rolle, aktiveModuler)
             : lagret.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
 
-    public static List<Lenke> ModulerFor(BrukerRolle? rolle, IReadOnlySet<string>? aktiveModuler = null) => TilgangsfiltrerteKategorier(rolle, aktiveModuler)
-        .SelectMany(k => k.Grupper)
-        .SelectMany(g => g.Lenker)
-        .DistinctBy(l => l.Href)
-        .ToList();
+    public static List<Lenke> ModulerFor(BrukerRolle? rolle, IReadOnlySet<string>? aktiveModuler = null, IReadOnlySet<string>? tildelte = null)
+    {
+        var lenker = TilgangsfiltrerteKategorier(rolle, aktiveModuler)
+            .SelectMany(k => k.Grupper)
+            .SelectMany(g => g.Lenker)
+            .DistinctBy(l => l.Href)
+            .ToList();
+        // Moduler gitt til brukeren i tillegg til rollen (Bruker.TildelteModuler).
+        if (tildelte is { Count: > 0 })
+        {
+            lenker.AddRange(TilgangsfiltrerteKategorier(BrukerRolle.Admin, aktiveModuler)
+                .SelectMany(k => k.Grupper)
+                .SelectMany(g => g.Lenker)
+                .Where(l => tildelte.Contains(l.Href) && lenker.All(x => x.Href != l.Href))
+                .DistinctBy(l => l.Href));
+        }
+        return lenker;
+    }
 
     // Som ModulerFor, men hub-modulene er foldet ut til undermodulene sine -
     // altså bare sider man faktisk kan lande på. Brukes av "Mine hurtigvalg"

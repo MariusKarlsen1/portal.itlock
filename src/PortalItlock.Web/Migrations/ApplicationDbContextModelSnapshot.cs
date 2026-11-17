@@ -1082,6 +1082,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Stilling")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("TildelteModuler")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("TopplinjeSnarveier")
                         .HasColumnType("TEXT");
 

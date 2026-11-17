@@ -328,7 +328,12 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("Plattform", policy => policy
         .AddAuthenticationSchemes("Plattform")
         .RequireAuthenticatedUser());
+    // Admin, eller bruker som har fått modulen (Bruker.TildelteModuler).
+    options.AddPolicy(ModulTildeling.KomponentPrisPolicy, policy => policy
+        .RequireAuthenticatedUser()
+        .AddRequirements(new ModulKrav(ModulTildeling.KomponentPris)));
 });
+builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ModulKravHandler>();
 builder.Services.AddCascadingAuthenticationState();
 
 builder.Services.AddRateLimiter(options =>
