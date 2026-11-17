@@ -233,6 +233,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<KasseDagsoppgjor> KasseDagsoppgjor => Set<KasseDagsoppgjor>();
     public DbSet<KasseOppsett> KasseOppsett => Set<KasseOppsett>();
     public DbSet<Ressursplan> Ressursplaner => Set<Ressursplan>();
+    public DbSet<UkeplanRad> UkeplanRader => Set<UkeplanRad>();
+    public DbSet<UkeplanTimer> UkeplanTimer => Set<UkeplanTimer>();
+    public DbSet<UkeplanKapasitet> UkeplanKapasitet => Set<UkeplanKapasitet>();
+    public DbSet<UkeplanEndring> UkeplanEndringer => Set<UkeplanEndring>();
     public DbSet<TripletexSyncTilstand> TripletexSyncTilstand => Set<TripletexSyncTilstand>();
     public DbSet<Inntektskonto> Inntektskontoer => Set<Inntektskonto>();
     public DbSet<Leverandor> Leverandorer => Set<Leverandor>();
@@ -866,6 +870,34 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .WithMany(m => m.Timeregistreringer)
             .HasForeignKey(t => t.MontorId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Ressursplan (timer per uke): raden går bort med prosjektet, timene og
+        // endringene med raden. Ansvarlig nulles hvis brukeren slettes.
+        modelBuilder.Entity<UkeplanRad>()
+            .HasOne(r => r.Prosjekt)
+            .WithMany()
+            .HasForeignKey(r => r.ProsjektId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<UkeplanRad>()
+            .HasOne(r => r.Ansvarlig)
+            .WithMany()
+            .HasForeignKey(r => r.AnsvarligId)
+            .OnDelete(DeleteBehavior.SetNull);
+        modelBuilder.Entity<UkeplanRad>().HasIndex(r => r.ProsjektId);
+        modelBuilder.Entity<UkeplanTimer>()
+            .HasOne(t => t.Rad)
+            .WithMany(r => r.Timer)
+            .HasForeignKey(t => t.RadId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<UkeplanTimer>().HasIndex(t => new { t.RadId, t.Ar, t.Uke }).IsUnique();
+        modelBuilder.Entity<UkeplanTimer>().Property(t => t.Timer).HasPrecision(10, 2);
+        modelBuilder.Entity<UkeplanKapasitet>().HasIndex(k => new { k.Ar, k.Uke }).IsUnique();
+        modelBuilder.Entity<UkeplanKapasitet>().Property(k => k.Timer).HasPrecision(10, 2);
+        modelBuilder.Entity<UkeplanEndring>()
+            .HasOne(e => e.Rad)
+            .WithMany()
+            .HasForeignKey(e => e.RadId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Ressursplan>()
             .HasOne(r => r.Montor)

@@ -178,6 +178,7 @@ builder.Services.AddScoped<PlukkService>();
 builder.Services.AddScoped<ProsjektOkonomiService>();
 builder.Services.AddScoped<ProsjektOppfolgingService>();
 builder.Services.AddScoped<PrisKodeService>();
+builder.Services.AddScoped<UkeplanService>();
 builder.Services.AddScoped<ProsjektokonomiVarselService>();
 builder.Services.AddHostedService<ProsjektokonomiVarselBackgroundService>();
 builder.Services.AddScoped<EtterkalkylePdfService>();
@@ -2155,6 +2156,17 @@ app.MapGet("/komponenter/etiketter/pdf", async (HttpContext context, EtikettPdfS
     disposisjon.SetHttpFileName($"Etiketter-{DateTime.Now:yyyy-MM-dd}.pdf");
     context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
     return Results.File(pdf, "application/pdf");
+}).RequireAuthorization(new AuthorizeAttribute { Roles = "Admin,Prosjektleder" });
+
+// Ressursplan som Excel, i samme oppsett som regnearket.
+app.MapGet("/ressursplan/excel", async (int? uker, HttpContext context, UkeplanService service) =>
+{
+    var antall = Math.Clamp(uker ?? 18, 4, 60);
+    var fil = await service.ExcelAsync(antall);
+    var disposisjon = new ContentDispositionHeaderValue("attachment");
+    disposisjon.SetHttpFileName($"Ressursplan-{DateTime.Now:yyyy-MM-dd}.xlsx");
+    context.Response.Headers["Content-Disposition"] = disposisjon.ToString();
+    return Results.File(fil, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }).RequireAuthorization(new AuthorizeAttribute { Roles = "Admin,Prosjektleder" });
 
 app.MapGet("/plantegning/{id:int}/pdf", async (int id, HttpContext context, PlantegningDorPdfService service) =>

@@ -8545,6 +8545,125 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("TripletexSyncTilstand");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.UkeplanEndring", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Dato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Kvittert")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("RadId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Tekst")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Under")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RadId");
+
+                    b.ToTable("UkeplanEndringer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.UkeplanKapasitet", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Ar")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Timer")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Uke")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Ar", "Uke")
+                        .IsUnique();
+
+                    b.ToTable("UkeplanKapasitet");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.UkeplanRad", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AnsvarligId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Kategori")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Navn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("OpprettetDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Sannsynlighet")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Skjult")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AnsvarligId");
+
+                    b.HasIndex("ProsjektId");
+
+                    b.ToTable("UkeplanRader");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.UkeplanTimer", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Ar")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RadId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Timer")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Uke")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RadId", "Ar", "Uke")
+                        .IsUnique();
+
+                    b.ToTable("UkeplanTimer");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.VareLagerplass", b =>
                 {
                     b.Property<int>("Id")
@@ -10786,6 +10905,44 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Bruker");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.UkeplanEndring", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.UkeplanRad", "Rad")
+                        .WithMany()
+                        .HasForeignKey("RadId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Rad");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.UkeplanRad", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Bruker", "Ansvarlig")
+                        .WithMany()
+                        .HasForeignKey("AnsvarligId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
+                        .WithMany()
+                        .HasForeignKey("ProsjektId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Ansvarlig");
+
+                    b.Navigation("Prosjekt");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.UkeplanTimer", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.UkeplanRad", "Rad")
+                        .WithMany("Timer")
+                        .HasForeignKey("RadId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Rad");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.VareLagerplass", b =>
                 {
                     b.HasOne("PortalItlock.Web.Models.Component", "Component")
@@ -11161,6 +11318,11 @@ namespace PortalItlock.Web.Migrations
             modelBuilder.Entity("PortalItlock.Web.Models.TilvalgMal", b =>
                 {
                     b.Navigation("Alternativer");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.UkeplanRad", b =>
+                {
+                    b.Navigation("Timer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.Varetelling", b =>

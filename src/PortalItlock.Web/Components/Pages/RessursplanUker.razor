@@ -1,0 +1,1301 @@
+@page "/ressursplan"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder")]
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject UkeplanService Svc
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Ressursplan - Full Kontroll</PageTitle>
+
+@* Ressursplan (forslag ressursplan-v2.html): timer per uke fremover for alle
+   prosjekter, mot manuell kapasitet. Prosjektene kommer inn av seg selv
+   (UkeplanService.SynkAsync); serviceavtaler og annet legges inn manuelt.
+   Klikk i en rute for å skrive timer, dra over flere uker for å fylle ut. *@
+<div class="rp" @onmouseup="AvsluttDra">
+    <div class="rp-topp">
+        <div>
+            <h1>Ressursplan</h1>
+            <div class="rp-sub">Uke @_denne.Nr · @DateTime.Today.ToString("d. MMMM yyyy", Nb) · bare prosjektledere og admin</div>
+        </div>
+        <div class="rp-h">
+            <div class="rp-innboks">
+                <button type="button" class="rp-kn" @onclick="@(() => _visEndringer = !_visEndringer)"><Icon Name="bell" />Endringer</button>
+                @if (_endringer.Count > 0)
+                {
+                    <span class="rp-tall">@_endringer.Count</span>
+                }
+                @if (_visEndringer)
+                {
+                    <span class="rp-meny-bak" @onclick="@(() => _visEndringer = false)"></span>
+                    <div class="rp-meny">
+                        <div class="rp-mh">Endringer fra prosjektene</div>
+                        @if (_endringer.Count == 0)
+                        {
+                            <div class="rp-mr"><small>Ingen nye endringer.</small></div>
+                        }
+                        @foreach (var e in _endringer)
+                        {
+                            var endring = e;
+                            <div class="rp-mr">
+                                <span class="rp-ic rp-ic-@e.Type.ToString().ToLowerInvariant()">@(e.Type == UkeplanEndringType.Ny ? "+" : e.Type == UkeplanEndringType.Avslatt ? "×" : "✓")</span>
+                                <div class="rp-mt"><b>@e.Tekst</b><small>@e.Under</small></div>
+                                @if (e.Type == UkeplanEndringType.Ny && e.RadId is not null)
+                                {
+                                    <button type="button" class="rp-kn rp-kn-s rp-kn-p" @onclick="@(() => Planlegg(endring))">Planlegg</button>
+                                }
+                                else if (e.Type == UkeplanEndringType.Avslatt && e.RadId is not null)
+                                {
+                                    <button type="button" class="rp-kn rp-kn-s" @onclick="@(() => AngreAvslag(endring))">Angre</button>
+                                    <button type="button" class="rp-kn rp-kn-s" @onclick="@(() => Kvitter(endring))">OK</button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="rp-kn rp-kn-s" @onclick="@(() => Kvitter(endring))">OK</button>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+            <a class="rp-kn" href="@($"/ressursplan/excel?uker={_antUker}")" download><Icon Name="download" />Excel</a>
+            <button type="button" class="rp-kn" @onclick="SkrivUt"><Icon Name="printer" />Skriv ut</button>
+            <button type="button" class="rp-kn rp-kn-p" @onclick="ApneNy"><Icon Name="plus" />Legg til</button>
+        </div>
+    </div>
+
+    @if (!_lastet)
+    {
+        <p class="rp-laster">Laster ressursplanen …</p>
+    }
+    else
+    {
+        var uker = _uker;
+        var vis = Synlige();
+        var plan = uker.Select(u => vis.Sum(r => r.Kategori == UkeplanKategori.Potensiell ? (_medPot ? T(r, u) * r.Sannsynlighet / 100m : 0) : T(r, u))).ToList();
+        var maks = Math.Max(1m, uker.Select((u, i) => Math.Max(plan[i], Kap(u))).DefaultIfEmpty(1m).Max()) * 1.08m;
+        <div class="rp-kort">
+            <div class="rp-verk">
+                <label class="rp-sok"><Icon Name="search" /><input type="search" @bind="_sok" @bind:event="oninput" placeholder="Søk prosjekt eller nummer" /></label>
+                <select class="rp-f" @bind="_plFilter" aria-label="Prosjektleder">
+                    <option value="0">Alle prosjektledere</option>
+                    @foreach (var l in _ledere)
+                    {
+                        <option value="@l.Id">@l.Navn</option>
+                    }
+                </select>
+                <div class="rp-seg">
+                    <button type="button" class="@(_gruppering == "kat" ? "pa" : "")" @onclick="@(() => _gruppering = "kat")">Kategori</button>
+                    <button type="button" class="@(_gruppering == "pl" ? "pa" : "")" @onclick="@(() => _gruppering = "pl")">Prosjektleder</button>
+                </div>
+                <span class="rp-sp"></span>
+                <label class="rp-sj"><input type="checkbox" @bind="_medPot" />Potensielle i sum</label>
+                <label class="rp-sj"><input type="checkbox" @bind="_skjulTomme" />Skjul uten timer</label>
+                <div class="rp-seg rp-ml">
+                    @foreach (var (n, t) in new[] { (18, "4 mnd"), (26, "6 mnd"), (52, "12 mnd") })
+                    {
+                        var antall = n;
+                        <button type="button" class="@(_antUker == n ? "pa" : "")" @onclick="@(() => SettPeriode(antall))">@t</button>
+                    }
+                </div>
+            </div>
+
+            <div class="rp-rull">
+                <table class="rp-tab">
+                    <thead>
+                        <tr class="rp-mnd">
+                            <th class="rp-v"></th>
+                            @{
+                                var i0 = 0;
+                                while (i0 < uker.Count)
+                                {
+                                    var j0 = i0;
+                                    var mnd = Midtuke(uker[i0]).Month;
+                                    while (j0 < uker.Count && Midtuke(uker[j0]).Month == mnd) j0++;
+                                    <th colspan="@(j0 - i0)">@Midtuke(uker[i0]).ToString("MMM", Nb).TrimEnd('.')@(i0 == 0 || mnd == 1 ? " " + Midtuke(uker[i0]).Year : "")</th>
+                                    i0 = j0;
+                                }
+                            }
+                        </tr>
+                        <tr class="rp-bel">
+                            <th class="rp-v"><div class="rp-vt">Belastning<small>planlagt mot kapasitet per uke</small></div></th>
+                            @for (var i = 0; i < uker.Count; i++)
+                            {
+                                var u = uker[i];
+                                var deler = new decimal[4];
+                                foreach (var r in vis)
+                                {
+                                    var t = T(r, u);
+                                    if (r.Kategori == UkeplanKategori.Potensiell)
+                                    {
+                                        if (_medPot) deler[3] += t * r.Sannsynlighet / 100m;
+                                    }
+                                    else
+                                    {
+                                        deler[(int)r.Kategori] += t;
+                                    }
+                                }
+                                var over = plan[i] > Kap(u);
+                                <th class="rp-u @UkeKlasse(u)" title="Uke @u.Nr: @Fmt(plan[i]) av @Fmt(Kap(u)) t">
+                                    <div class="rp-stolpe @(over ? "over" : "")">
+                                        <i style="height:@Px(deler[0], maks)px;background:var(--rp-store)"></i>
+                                        <i style="height:@Px(deler[1], maks)px;background:var(--rp-mindre)"></i>
+                                        <i style="height:@Px(deler[2], maks)px;background:var(--rp-service)"></i>
+                                        <i class="rp-hatch" style="height:@Px(deler[3], maks)px"></i>
+                                        <span class="rp-kap" style="bottom:@Px(Kap(u), maks)px"></span>
+                                    </div>
+                                </th>
+                            }
+                        </tr>
+                        <tr class="rp-ukerad">
+                            <th class="rp-v"><div class="rp-vt rp-vt-bunn">Prosjekt</div></th>
+                            @foreach (var u in uker)
+                            {
+                                var uke = u;
+                                <th class="rp-u @UkeKlasse(u)" title="Se hvem som jobber hvor i uke @u.Nr" @onclick="@(() => VisUke(uke))">@(u == _denne ? "Nå · " : "")@u.Nr</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in Grupper(vis))
+                        {
+                            var gruppe = g;
+                            var lukket = _lukket.Contains(g.Id);
+                            <tr class="rp-grp" @onclick="@(() => VekslGruppe(gruppe.Id))">
+                                <td class="rp-v">
+                                    <div class="rp-gt @(lukket ? "lukket" : "")">
+                                        <Icon Name="chevron-down" />
+                                        <span class="rp-sw" style="background:@g.Farge"></span>@g.Navn
+                                        <span class="rp-ant">@g.Rader.Count · @Fmt(g.Rader.Sum(r => uker.Sum(u => T(r, u)))) t</span>
+                                    </div>
+                                </td>
+                                @foreach (var u in uker)
+                                {
+                                    var s = g.Rader.Sum(r => T(r, u));
+                                    <td class="rp-u @UkeKlasse(u)">@(s > 0 ? Fmt(s) : "")</td>
+                                }
+                            </tr>
+                            @if (!lukket)
+                            {
+                                @foreach (var r in g.Rader)
+                                {
+                                    var rad = r;
+                                    var info = Info(r);
+                                    <tr @key="r.Id" class="rp-rad @(_aktivRadId == r.Id ? "aktiv" : "")">
+                                        <td class="rp-v">
+                                            <div class="rp-nv" @onclick="@(() => ApnePanel(rad))">
+                                                <i class="rp-dot rp-d-@Prikk(r)"></i>
+                                                <div class="rp-nt">
+                                                    <b>@UkeplanService.RadNavn(r)</b>
+                                                    @if (info.IkkeFordelt > 0 && r.Kategori != UkeplanKategori.Potensiell)
+                                                    {
+                                                        <small class="rp-gul">@Fmt(info.IkkeFordelt) t ikke fordelt</small>
+                                                    }
+                                                    else
+                                                    {
+                                                        <small>@UnderTekst(r, info)</small>
+                                                    }
+                                                </div>
+                                                @if (info.Kalk > 0 && r.Kategori != UkeplanKategori.Potensiell)
+                                                {
+                                                    <div class="rp-fm" title="Brukt @Fmt(info.Brukt) t · lagt i uker @Fmt(info.Fremover) t · kalkulert @Fmt(info.Kalk) t">
+                                                        <div class="rp-mtr"><i style="width:@Pst(info.Brukt, info.Kalk)%;background:#2E9E5B"></i><i style="width:@Pst(Math.Min(info.Fremover, Math.Max(0, info.Kalk - info.Brukt)), info.Kalk)%;background:#9DBCE6"></i></div>
+                                                        <small>@Fmt(info.Kalk) t</small>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="rp-fm"></div>
+                                                }
+                                                <span class="rp-av" title="@(r.Ansvarlig?.Navn ?? "Ingen ansvarlig")">@Initialer(r.Ansvarlig?.Navn)</span>
+                                            </div>
+                                        </td>
+                                        @for (var i = 0; i < uker.Count; i++)
+                                        {
+                                            var idx = i;
+                                            var u = uker[i];
+                                            var t = T(r, u);
+                                            var red = _redRad == r.Id && _redIdx == i;
+                                            var valgt = _dra is { } d && d.RadId == r.Id && idx >= Math.Min(d.A, d.B) && idx <= Math.Max(d.A, d.B);
+                                            <td class="rp-c rp-u @UkeKlasse(u) @(valgt ? "sel" : "")"
+                                                @onmousedown="@(e => StartDra(rad, idx, e))" @onmousedown:preventDefault="@(!red)"
+                                                @onmouseover="@(() => UtvidDra(rad, idx))"
+                                                @onmouseup="@(e => SluttDra(rad, idx, e))" @onmouseup:stopPropagation="true">
+                                                @if (red)
+                                                {
+                                                    <input @ref="_redRef" class="rp-cin" inputmode="decimal" @bind="_redVerdi" @bind:event="oninput"
+                                                           @onblur="@(() => LagreCelle(0))" @onkeydown="RedTast" aria-label="Timer uke @u.Nr" />
+                                                }
+                                                else if (t > 0 || valgt)
+                                                {
+                                                    <span class="rp-b @(r.Kategori == UkeplanKategori.Potensiell ? "rp-hatch rp-b-pot" : "")" style="@CelleStil(r, t)">@(t > 0 ? Fmt(t) : "")</span>
+                                                }
+                                            </td>
+                                        }
+                                    </tr>
+                                }
+                            }
+                        }
+                        @if (vis.Count == 0)
+                        {
+                            <tr><td class="rp-v rp-tomt" colspan="@(uker.Count + 1)">Ingen rader å vise. Prosjekter som er registrert eller under arbeid kommer inn av seg selv – bruk «Legg til» for serviceavtaler og annet.</td></tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td class="rp-v"><div class="rp-fl">Planlagt<small>@(_medPot ? "potensielle vektet" : "uten potensielle")</small></div></td>
+                            @for (var i = 0; i < uker.Count; i++)
+                            {
+                                <td class="rp-u @UkeKlasse(uker[i])">@Fmt(plan[i])</td>
+                            }
+                        </tr>
+                        <tr>
+                            <td class="rp-v"><div class="rp-fl rp-dempet">Kapasitet<small>manuell · <button type="button" class="rp-lenke" @onclick="ApneStd">standard @Fmt(_std) t</button></small></div></td>
+                            @foreach (var u in uker)
+                            {
+                                var uke = u;
+                                <td class="rp-u rp-kapc @(_kapEgen.ContainsKey(u.Nokkel) ? "egen" : "") @UkeKlasse(u)" title="Klikk for å endre kapasiteten i uke @u.Nr" @onclick="@(() => StartKap(uke))">
+                                    @if (_kapRed == u.Nokkel)
+                                    {
+                                        <input @ref="_kapRef" class="rp-kin" inputmode="decimal" @bind="_kapVerdi" @bind:event="oninput" @onblur="LagreKap" @onkeydown="KapTast" aria-label="Kapasitet uke @u.Nr" />
+                                    }
+                                    else
+                                    {
+                                        @Fmt(Kap(u))
+                                    }
+                                </td>
+                            }
+                        </tr>
+                        <tr>
+                            <td class="rp-v"><div class="rp-fl">Ledig</div></td>
+                            @for (var i = 0; i < uker.Count; i++)
+                            {
+                                var f = Kap(uker[i]) - plan[i];
+                                var kl = f < 0 ? "over" : f < Kap(uker[i]) * 0.12m ? "lav" : "ok";
+                                <td class="rp-u @UkeKlasse(uker[i])"><span class="rp-fri @kl">@(f > 0 ? "+" : "")@Fmt(f)</span></td>
+                            }
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div class="rp-forkl">
+                <span><i style="background:var(--rp-store)"></i>Store</span>
+                <span><i style="background:var(--rp-mindre)"></i>Mindre</span>
+                <span><i style="background:var(--rp-service)"></i>Service / ramme</span>
+                <span><i class="rp-hatch"></i>Potensielle (vektet)</span>
+                <span><b class="rp-strek"></b>Kapasitet</span>
+                <span class="rp-ml"><i class="rp-dot rp-d-pagar"></i>Under arbeid <i class="rp-dot rp-d-reg"></i>Registrert <i class="rp-dot rp-d-tilbud"></i>Tilbud sendt <i class="rp-dot rp-d-man"></i>Manuell</span>
+            </div>
+        </div>
+        <div class="rp-tips">
+            <span><b>Klikk</b> en rute for å skrive timer · <b>Enter</b> går til neste uke</span>
+            <span><b>Dra</b> over flere uker for å fylle ut alle på én gang</span>
+            <span><b>Klikk ukenummer</b> for å se hvem som jobber hvor</span>
+            <span><b>Klikk tallet i Kapasitet</b> for å endre en uke</span>
+        </div>
+    }
+</div>
+
+@* Fyll ut flere uker etter dra *@
+@if (_fly is { } fly)
+{
+    var flyRad = _rader.FirstOrDefault(r => r.Id == fly.RadId);
+    <span class="rp-fly-bak" @onclick="@(() => _fly = null)"></span>
+    <div class="rp-fly" style="left:@Inv(Math.Max(8, fly.X - 20))px;top:@Inv(fly.Y + 14)px">
+        <b>@(fly.B - fly.A + 1) uker</b>
+        <div class="rp-seg">
+            <button type="button" class="@(_flyTotalt ? "" : "pa")" @onclick="@(() => _flyTotalt = false)">per uke</button>
+            <button type="button" class="@(_flyTotalt ? "pa" : "")" @onclick="@(() => _flyTotalt = true)">totalt</button>
+        </div>
+        <input @ref="_flyRef" inputmode="decimal" @bind="_flyVerdi" @bind:event="oninput" @onkeydown="FlyTast" aria-label="Timer" />
+        <button type="button" class="rp-kn rp-kn-s rp-kn-p" @onclick="FyllUt">Fyll</button>
+        <button type="button" class="rp-kn rp-kn-s" @onclick="TomUtvalg">Tøm</button>
+        @if (flyRad is null)
+        {
+            <span></span>
+        }
+    </div>
+}
+
+@* Panel for rad eller uke *@
+@if (_aktivRadId is { } aktivId && _rader.FirstOrDefault(r => r.Id == aktivId) is { } ar)
+{
+    var info = Info(ar);
+    <span class="rp-panel-bak" @onclick="LukkPanel"></span>
+    <aside class="rp-panel">
+        <div class="rp-ph">
+            <div class="rp-r1">
+                <div>
+                    <h2>@UkeplanService.RadNavn(ar)</h2>
+                    <p>@(ar.ProsjektId is { } pid ? $"P-{pid} · " : "Lagt inn manuelt · ")@(ar.Ansvarlig?.Navn ?? "Ingen ansvarlig")</p>
+                </div>
+                <button type="button" class="rp-x" aria-label="Lukk" @onclick="LukkPanel">×</button>
+            </div>
+            <div class="rp-piller">
+                <span class="rp-pil @StatusPil(ar).Klasse">@StatusPil(ar).Tekst</span>
+                @if (info.IkkeFordelt > 0 && ar.Kategori != UkeplanKategori.Potensiell)
+                {
+                    <span class="rp-pil gul">@Fmt(info.IkkeFordelt) t ikke fordelt</span>
+                }
+            </div>
+        </div>
+        <div class="rp-pb">
+            <div class="rp-felt">
+                <small>Gruppe</small>
+                <div class="rp-katv">
+                    @foreach (var k in Enum.GetValues<UkeplanKategori>())
+                    {
+                        var kat = k;
+                        <button type="button" class="@(ar.Kategori == k ? "pa" : "")" @onclick="@(() => SettKategori(ar, kat))"><i style="background:@KatFarge(k)"></i>@KatKort(k)</button>
+                    }
+                </div>
+            </div>
+            @if (info.Kalk > 0)
+            {
+                <div class="rp-boks">
+                    <div class="rp-bh">Timer</div>
+                    <div class="rp-bb">
+                        <div class="rp-bar"><i style="width:@Pst(info.Brukt, info.Kalk)%;background:#2E9E5B"></i><i style="width:@Pst(Math.Min(info.Fremover, Math.Max(0, info.Kalk - info.Brukt)), info.Kalk)%;background:#9DBCE6"></i></div>
+                        <div class="rp-lr"><span>Kalkulert fra Montering</span><b>@Fmt(info.Kalk) t</b></div>
+                        <div class="rp-lr"><span><i style="background:#2E9E5B"></i>Brukt (timeføring)</span><b>@Fmt(info.Brukt) t</b></div>
+                        <div class="rp-lr"><span><i style="background:#9DBCE6"></i>Lagt i ukene fremover</span><b>@Fmt(info.Fremover) t</b></div>
+                        <div class="rp-lr"><span><i style="background:#ECEDEF;border:1px solid #ccc"></i>Ikke fordelt</span><b class="@(info.IkkeFordelt > 0 ? "rp-gul" : "rp-ok")">@Fmt(info.IkkeFordelt) t</b></div>
+                    </div>
+                </div>
+            }
+            <div class="rp-boks">
+                <div class="rp-bh">Ukene fremover</div>
+                <div class="rp-bb">
+                    @{ var mx = Math.Max(1m, _uker.Select(u => T(ar, u)).DefaultIfEmpty(0).Max()); }
+                    <div class="rp-mini">
+                        @foreach (var u in _uker)
+                        {
+                            <i class="@(u == _denne ? "na" : "")" style="height:@Inv(T(ar, u) / mx * 100)%" title="Uke @u.Nr: @Fmt(T(ar, u)) t"></i>
+                        }
+                    </div>
+                    <div class="rp-g2">
+                        <div class="rp-felt"><small>Fra uke</small><select @bind="_fordelFra">@UkeValg()</select></div>
+                        <div class="rp-felt"><small>Til uke</small><select @bind="_fordelTil">@UkeValg()</select></div>
+                    </div>
+                    <div class="rp-felt"><small>Timer totalt i perioden</small><input inputmode="decimal" @bind="_fordelTimer" /></div>
+                    <div class="rp-knr">
+                        <button type="button" class="rp-kn rp-kn-p" @onclick="@(() => FordelJevnt(ar))">Fordel jevnt</button>
+                        <button type="button" class="rp-kn" @onclick="@(() => TomAlle(ar))">Tøm alle uker</button>
+                    </div>
+                    <small class="rp-dempet">Erstatter timene i valgt periode. Enkeltuker kan endres i tabellen etterpå.</small>
+                </div>
+            </div>
+            @if (ar.Kategori == UkeplanKategori.Potensiell)
+            {
+                <div class="rp-boks">
+                    <div class="rp-bh">Sannsynlighet <b class="rp-ml rp-bla">@ar.Sannsynlighet %</b></div>
+                    <div class="rp-bb">
+                        <input type="range" min="0" max="100" step="10" value="@ar.Sannsynlighet" @onchange="@(e => SettSannsynlighet(ar, e))" aria-label="Sannsynlighet" />
+                        <small class="rp-dempet">Timene telles med @ar.Sannsynlighet % i summen når «Potensielle i sum» er på. Settes prosjektet til registrert eller under arbeid, flyttes raden til Mindre prosjekter.</small>
+                    </div>
+                </div>
+            }
+            <div class="rp-felt">
+                <small>Ansvarlig</small>
+                <select value="@(ar.AnsvarligId ?? 0)" @onchange="@(e => SettAnsvarlig(ar, e))">
+                    <option value="0">Ingen</option>
+                    @foreach (var l in _ledere)
+                    {
+                        <option value="@l.Id">@l.Navn</option>
+                    }
+                </select>
+            </div>
+            @if (ar.ProsjektId is null)
+            {
+                <div class="rp-felt"><small>Navn</small><input value="@ar.Navn" @onchange="@(e => SettNavn(ar, e))" /></div>
+            }
+            <div class="rp-knr">
+                @if (ar.ProsjektId is { } prId)
+                {
+                    <a class="rp-kn rp-kn-m" href="@($"/prosjekt/{prId}")">Åpne prosjektet</a>
+                }
+                <button type="button" class="rp-kn rp-rod" @onclick="@(() => FjernRad(ar))">Fjern fra planen</button>
+            </div>
+        </div>
+    </aside>
+}
+else if (_valgtUke is { } vu)
+{
+    var rr = Synlige().Where(r => T(r, vu) > 0).OrderByDescending(r => T(r, vu)).ToList();
+    var tot = rr.Where(r => r.Kategori != UkeplanKategori.Potensiell).Sum(r => T(r, vu));
+    <span class="rp-panel-bak" @onclick="@(() => _valgtUke = null)"></span>
+    <aside class="rp-panel">
+        <div class="rp-ph">
+            <div class="rp-r1">
+                <div><h2>Uke @vu.Nr · @vu.Ar</h2><p>@Fmt(tot) t planlagt av @Fmt(Kap(vu)) t kapasitet</p></div>
+                <button type="button" class="rp-x" aria-label="Lukk" @onclick="@(() => _valgtUke = null)">×</button>
+            </div>
+        </div>
+        <div class="rp-pb">
+            <div class="rp-bar rp-bar-h"><i style="width:@Pst(Math.Min(tot, Kap(vu)), Math.Max(1, Kap(vu)))%;background:@(tot > Kap(vu) ? "#B3261E" : "#1F4E8C")"></i></div>
+            <div class="rp-boks">
+                <div class="rp-bh">Prosjekter denne uka</div>
+                <div class="rp-bb">
+                    @if (rr.Count == 0)
+                    {
+                        <span class="rp-dempet">Ingen timer planlagt.</span>
+                    }
+                    @foreach (var r in rr)
+                    {
+                        var rad = r;
+                        <div class="rp-lr rp-klikk" @onclick="@(() => ApnePanel(rad))"><span><i style="background:@KatFarge(r.Kategori)"></i>@UkeplanService.RadNavn(r) <small>· @Initialer(r.Ansvarlig?.Navn)</small></span><b>@Fmt(T(r, vu)) t@(r.Kategori == UkeplanKategori.Potensiell ? $" ({r.Sannsynlighet} %)" : "")</b></div>
+                    }
+                </div>
+            </div>
+            <div class="rp-boks">
+                <div class="rp-bh">Per prosjektleder</div>
+                <div class="rp-bb">
+                    @foreach (var g in rr.Where(r => r.Kategori != UkeplanKategori.Potensiell).GroupBy(r => r.Ansvarlig?.Navn ?? "Ingen ansvarlig").OrderByDescending(g => g.Sum(r => T(r, vu))))
+                    {
+                        <div class="rp-lr"><span>@g.Key</span><b>@Fmt(g.Sum(r => T(r, vu))) t</b></div>
+                    }
+                </div>
+            </div>
+        </div>
+    </aside>
+}
+
+@if (_visNy)
+{
+    <div class="rp-bak" @onclick="@(() => _visNy = false)">
+        <div class="rp-dlg" role="dialog" aria-modal="true" aria-label="Legg til i ressursplanen" @onclick:stopPropagation="true">
+            <div class="rp-dh">Legg til i ressursplanen</div>
+            <div class="rp-db">
+                <div class="rp-felt"><small>Hva</small><input @bind="_nyNavn" @bind:event="oninput" placeholder="F.eks. SSHF rammeavtale eller nytt prosjekt" /></div>
+                <div class="rp-felt">
+                    <small>Gruppe</small>
+                    <div class="rp-katv">
+                        @foreach (var k in Enum.GetValues<UkeplanKategori>())
+                        {
+                            var kat = k;
+                            <button type="button" class="@(_nyKat == k ? "pa" : "")" @onclick="@(() => _nyKat = kat)"><i style="background:@KatFarge(k)"></i>@KatKort(k)</button>
+                        }
+                    </div>
+                </div>
+                <div class="rp-g2">
+                    <div class="rp-felt">
+                        <small>Ansvarlig</small>
+                        <select @bind="_nyAnsvarlig">
+                            <option value="0">Ingen</option>
+                            @foreach (var l in _ledere)
+                            {
+                                <option value="@l.Id">@l.Navn</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="rp-felt"><small>Timer totalt</small><input inputmode="decimal" @bind="_nyTimer" /></div>
+                </div>
+                <div class="rp-g2">
+                    <div class="rp-felt"><small>Fra uke</small><select @bind="_nyFra">@UkeValg()</select></div>
+                    <div class="rp-felt"><small>Til uke</small><select @bind="_nyTil">@UkeValg()</select></div>
+                </div>
+                <small class="rp-dempet">@(_nyKat == UkeplanKategori.Service ? "Serviceavtaler og rammeavtaler legges inn manuelt med timer fordelt jevnt på ukene." : "Prosjekter i portalen kommer inn av seg selv – bruk dette for ting som ikke er registrert ennå.")</small>
+            </div>
+            <div class="rp-df">
+                <button type="button" class="rp-kn" @onclick="@(() => _visNy = false)">Avbryt</button>
+                <button type="button" class="rp-kn rp-kn-p" @onclick="LagreNy">Legg til</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_visStd)
+{
+    <div class="rp-bak" @onclick="@(() => _visStd = false)">
+        <div class="rp-dlg rp-dlg-s" role="dialog" aria-modal="true" aria-label="Kapasitet" @onclick:stopPropagation="true">
+            <div class="rp-dh">Kapasitet</div>
+            <div class="rp-db">
+                <div class="rp-felt"><small>Standard kapasitet per uke (timer)</small><input inputmode="decimal" @bind="_stdVerdi" /></div>
+                <small class="rp-dempet">Gjelder alle uker uten egen verdi. Uker du har endret (understreket) beholder sin verdi.</small>
+            </div>
+            <div class="rp-df">
+                <button type="button" class="rp-kn" @onclick="@(() => _visStd = false)">Avbryt</button>
+                <button type="button" class="rp-kn rp-kn-p" @onclick="LagreStd">Lagre</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(_toast))
+{
+    <div class="rp-toast" role="status">
+        <span>@_toast</span>
+        @if (_angre is not null)
+        {
+            <button type="button" @onclick="Angre">Angre</button>
+        }
+        <button type="button" aria-label="Lukk" @onclick="@(() => { _toast = null; _angre = null; })">×</button>
+    </div>
+}
+
+@code {
+    private static readonly CultureInfo Nb = CultureInfo.GetCultureInfo("nb-NO");
+    private readonly record struct RadInfo(decimal Kalk, decimal Brukt, decimal Fremover, decimal IkkeFordelt);
+    private sealed record Gruppe(string Id, string Navn, string Farge, List<UkeplanRad> Rader);
+    private readonly record struct Dra(int RadId, int A, int B);
+    private readonly record struct Fly(int RadId, int A, int B, double X, double Y);
+
+    private bool _lastet;
+    private UkeplanService.Uke _denne;
+    private UkeplanService.Uke _fra;
+    private int _antUker = 18;
+    private List<UkeplanService.Uke> _uker = [];
+    private List<UkeplanRad> _rader = [];
+    private Dictionary<int, decimal> _kalk = [];
+    private Dictionary<int, decimal> _brukt = [];
+    private decimal _std;
+    private Dictionary<string, decimal> _kapEgen = [];
+    private List<UkeplanEndring> _endringer = [];
+    private List<Bruker> _ledere = [];
+
+    private string _sok = "";
+    private int _plFilter;
+    private string _gruppering = "kat";
+    private bool _medPot = true;
+    private bool _skjulTomme;
+    private readonly HashSet<string> _lukket = [];
+    private bool _visEndringer;
+
+    // Celleredigering
+    private int? _redRad;
+    private int _redIdx;
+    private string _redVerdi = "";
+    private ElementReference _redRef;
+    private bool _fokusRed;
+
+    // Dra for å fylle
+    private Dra? _dra;
+    private Fly? _fly;
+    private bool _flyTotalt;
+    private string _flyVerdi = "";
+    private ElementReference _flyRef;
+    private bool _fokusFly;
+
+    // Kapasitet
+    private string? _kapRed;
+    private string _kapVerdi = "";
+    private ElementReference _kapRef;
+    private bool _fokusKap;
+    private bool _visStd;
+    private string _stdVerdi = "";
+
+    // Panel
+    private int? _aktivRadId;
+    private UkeplanService.Uke? _valgtUke;
+    private string _fordelFra = "";
+    private string _fordelTil = "";
+    private string _fordelTimer = "";
+
+    // Ny rad
+    private bool _visNy;
+    private string _nyNavn = "";
+    private UkeplanKategori _nyKat = UkeplanKategori.Service;
+    private int _nyAnsvarlig;
+    private string _nyTimer = "";
+    private string _nyFra = "";
+    private string _nyTil = "";
+
+    private string? _toast;
+    private Func<Task>? _angre;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _denne = UkeplanService.Uke.For(DateTime.Today);
+        _fra = _denne.Pluss(-2);
+        _uker = UkeplanService.Uker(_fra, _antUker);
+        await Svc.SynkAsync();
+        _ledere = await Db.Brukere.AsNoTracking()
+            .Where(b => (b.Rolle == BrukerRolle.Admin || b.Rolle == BrukerRolle.Prosjektleder) && b.Aktiv && b.SlettetDato == null && !b.ErSkjult)
+            .OrderBy(b => b.Navn).ToListAsync();
+        await Last();
+        _lastet = true;
+    }
+
+    private async Task Last()
+    {
+        _rader = await Db.UkeplanRader
+            .Include(r => r.Prosjekt).Include(r => r.Ansvarlig).Include(r => r.Timer)
+            .Where(r => !r.Skjult)
+            .ToListAsync();
+        var ider = _rader.Where(r => r.ProsjektId != null).Select(r => r.ProsjektId!.Value).ToList();
+        _kalk = await Svc.KalkulertAsync(ider);
+        _brukt = await Svc.BruktAsync(ider);
+        _std = await Svc.StandardKapasitetAsync();
+        _kapEgen = (await Db.UkeplanKapasitet.AsNoTracking().Where(k => k.Ar != 0).ToListAsync())
+            .ToDictionary(k => $"{k.Ar}-{k.Uke}", k => k.Timer);
+        _endringer = await Db.UkeplanEndringer.AsNoTracking().Where(e => !e.Kvittert).OrderByDescending(e => e.Dato).Take(30).ToListAsync();
+    }
+
+    // ---------- Hjelpere ----------
+    private static string Fmt(decimal v) => Math.Round(v).ToString("N0", Nb);
+    private static string Inv(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+    private static string Inv(decimal v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+    private static string Px(decimal v, decimal maks) => Inv(Math.Max(0, v / maks * 62m));
+    private static string Pst(decimal v, decimal av) => av <= 0 ? "0" : Inv(Math.Clamp(v / av * 100m, 0, 100));
+    private static DateTime Midtuke(UkeplanService.Uke u) => u.Mandag.AddDays(3);
+    private decimal Kap(UkeplanService.Uke u) => _kapEgen.TryGetValue(u.Nokkel, out var k) ? k : _std;
+    private static decimal T(UkeplanRad r, UkeplanService.Uke u) => r.Timer.FirstOrDefault(t => t.Ar == u.Ar && t.Uke == u.Nr)?.Timer ?? 0;
+    private string UkeKlasse(UkeplanService.Uke u) => (u == _denne ? "na " : "") + (_valgtUke == u ? "valgt" : "");
+
+    private static string Initialer(string? navn)
+    {
+        var d = (navn ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return d.Length switch { 0 => "–", 1 => d[0][..Math.Min(2, d[0].Length)].ToUpperInvariant(), _ => $"{d[0][0]}{d[^1][0]}".ToUpperInvariant() };
+    }
+
+    private static string KatFarge(UkeplanKategori k) => k switch
+    {
+        UkeplanKategori.Store => "var(--rp-store)",
+        UkeplanKategori.Mindre => "var(--rp-mindre)",
+        UkeplanKategori.Service => "var(--rp-service)",
+        _ => "var(--rp-pot)"
+    };
+
+    private static string KatKort(UkeplanKategori k) => k switch
+    {
+        UkeplanKategori.Store => "Store",
+        UkeplanKategori.Mindre => "Mindre",
+        UkeplanKategori.Service => "Service",
+        _ => "Potensiell"
+    };
+
+    private static string Prikk(UkeplanRad r)
+    {
+        if (r.Prosjekt is null)
+        {
+            return r.Kategori == UkeplanKategori.Potensiell ? "tilbud" : "man";
+        }
+        if (r.Prosjekt.Status is ProsjektStatus.UnderArbeid or ProsjektStatus.Aktiv)
+        {
+            return "pagar";
+        }
+        return r.Prosjekt.Status == ProsjektStatus.Tilbud ? "tilbud" : "reg";
+    }
+
+    private static (string Klasse, string Tekst) StatusPil(UkeplanRad r) => Prikk(r) switch
+    {
+        "pagar" => ("gronn", "Under arbeid"),
+        "reg" => ("bla", r.Prosjekt?.Status?.Visningsnavn() ?? "Registrert"),
+        "tilbud" => ("gul", "Tilbud sendt"),
+        _ => ("gra", "Lagt inn manuelt")
+    };
+
+    private RadInfo Info(UkeplanRad r)
+    {
+        var kalk = r.ProsjektId is { } p ? _kalk.GetValueOrDefault(p) : 0;
+        var brukt = r.ProsjektId is { } p2 ? _brukt.GetValueOrDefault(p2) : 0;
+        var fremover = r.Timer.Where(t => new UkeplanService.Uke(t.Ar, t.Uke).CompareTo(_denne) >= 0).Sum(t => t.Timer);
+        var ikke = kalk > 0 ? Math.Max(0, kalk - brukt - fremover) : 0;
+        return new RadInfo(kalk, brukt, fremover, ikke);
+    }
+
+    private string UnderTekst(UkeplanRad r, RadInfo info)
+    {
+        var nr = r.ProsjektId is { } p ? $"P-{p}" : "Lagt inn manuelt";
+        if (r.Kategori == UkeplanKategori.Potensiell)
+        {
+            return $"{nr} · {r.Sannsynlighet} % sannsynlig";
+        }
+        return info.Kalk > 0 ? $"{nr} · alt fordelt" : nr;
+    }
+
+    private string CelleStil(UkeplanRad r, decimal t)
+    {
+        if (t <= 0 || r.Kategori == UkeplanKategori.Potensiell)
+        {
+            return "";
+        }
+        var a = Math.Min(1m, t / 80m);
+        var rgb = r.Kategori switch
+        {
+            UkeplanKategori.Store => "31,78,140",
+            UkeplanKategori.Service => "122,77,196",
+            _ => "110,155,216"
+        };
+        return $"background:rgba({rgb},{Inv(0.12m + a * 0.5m)});color:{(a > 0.65m ? "#fff" : "#14213D")}";
+    }
+
+    private List<UkeplanRad> Synlige()
+    {
+        var sok = _sok.Trim();
+        return _rader
+            .Where(r => _plFilter == 0 || r.AnsvarligId == _plFilter)
+            .Where(r => sok.Length == 0 || UkeplanService.RadNavn(r).Contains(sok, StringComparison.CurrentCultureIgnoreCase) || (r.ProsjektId is { } p && $"P-{p}".Contains(sok, StringComparison.OrdinalIgnoreCase)))
+            .Where(r => !_skjulTomme || _uker.Any(u => T(r, u) > 0))
+            // Ferdige prosjekter går ut når de ikke har timer fra og med denne uka.
+            .Where(r => r.Prosjekt?.Status is not (ProsjektStatus.Avsluttet or ProsjektStatus.Overlevert or ProsjektStatus.TilbudAvslatt)
+                || r.Timer.Any(t => t.Timer > 0 && new UkeplanService.Uke(t.Ar, t.Uke).CompareTo(_denne) >= 0))
+            .OrderBy(r => UkeplanService.RadNavn(r), StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+    }
+
+    private List<Gruppe> Grupper(List<UkeplanRad> vis)
+    {
+        if (_gruppering == "pl")
+        {
+            return vis.GroupBy(r => r.AnsvarligId ?? 0)
+                .Select(g => new Gruppe($"pl{g.Key}", g.First().Ansvarlig?.Navn ?? "Ingen ansvarlig", "#9AA1AB", g.ToList()))
+                .OrderBy(g => g.Navn == "Ingen ansvarlig").ThenBy(g => g.Navn)
+                .ToList();
+        }
+        return Enum.GetValues<UkeplanKategori>()
+            .Select(k => new Gruppe($"k{(int)k}", UkeplanService.KategoriNavn(k), KatFarge(k), vis.Where(r => r.Kategori == k).ToList()))
+            .Where(g => g.Rader.Count > 0)
+            .ToList();
+    }
+
+    private void VekslGruppe(string id)
+    {
+        if (!_lukket.Remove(id))
+        {
+            _lukket.Add(id);
+        }
+    }
+
+    private void SettPeriode(int antall)
+    {
+        _antUker = antall;
+        _uker = UkeplanService.Uker(_fra, _antUker);
+    }
+
+    private RenderFragment UkeValg() => __builder =>
+    {
+        foreach (var u in UkeplanService.Uker(_fra, 60))
+        {
+            <option value="@u.Nokkel">Uke @u.Nr · @u.Ar</option>
+        }
+    };
+
+    private static UkeplanService.Uke? LesUke(string nokkel)
+    {
+        var d = nokkel.Split('-');
+        return d.Length == 2 && int.TryParse(d[0], out var a) && int.TryParse(d[1], out var n) ? new UkeplanService.Uke(a, n) : null;
+    }
+
+    private static decimal? LesTall(string? s) =>
+        decimal.TryParse((s ?? "").Replace(" ", "").Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : null;
+
+    private void Vis(string tekst, Func<Task>? angre = null)
+    {
+        _toast = tekst;
+        _angre = angre;
+    }
+
+    private async Task Angre()
+    {
+        var a = _angre;
+        _angre = null;
+        _toast = null;
+        if (a is not null)
+        {
+            await a();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (_fokusRed)
+            {
+                _fokusRed = false;
+                await _redRef.FocusAsync();
+            }
+            if (_fokusFly)
+            {
+                _fokusFly = false;
+                await _flyRef.FocusAsync();
+            }
+            if (_fokusKap)
+            {
+                _fokusKap = false;
+                await _kapRef.FocusAsync();
+            }
+        }
+        catch (Exception)
+        {
+            // Feltet kan være borte før fokus settes - ingen fare.
+        }
+    }
+
+    // ---------- Timer i ukene ----------
+    private Dictionary<string, decimal> Kopi(UkeplanRad r) => r.Timer.ToDictionary(t => $"{t.Ar}-{t.Uke}", t => t.Timer);
+
+    private void SettTimer(UkeplanRad r, UkeplanService.Uke u, decimal verdi)
+    {
+        var t = r.Timer.FirstOrDefault(x => x.Ar == u.Ar && x.Uke == u.Nr);
+        if (verdi > 0)
+        {
+            if (t is null)
+            {
+                r.Timer.Add(new UkeplanTimer { RadId = r.Id, Ar = u.Ar, Uke = u.Nr, Timer = verdi });
+            }
+            else
+            {
+                t.Timer = verdi;
+            }
+        }
+        else if (t is not null)
+        {
+            r.Timer.Remove(t);
+            Db.UkeplanTimer.Remove(t);
+        }
+    }
+
+    private async Task Gjenopprett(UkeplanRad r, Dictionary<string, decimal> kopi)
+    {
+        foreach (var t in r.Timer.ToList())
+        {
+            r.Timer.Remove(t);
+            Db.UkeplanTimer.Remove(t);
+        }
+        await Db.SaveChangesAsync();
+        foreach (var (k, v) in kopi)
+        {
+            if (LesUke(k) is { } u)
+            {
+                SettTimer(r, u, v);
+            }
+        }
+        await Db.SaveChangesAsync();
+    }
+
+    private void StartDra(UkeplanRad r, int idx, MouseEventArgs e)
+    {
+        if (e.Button != 0 || (_redRad == r.Id && _redIdx == idx))
+        {
+            return;
+        }
+        _fly = null;
+        _dra = new Dra(r.Id, idx, idx);
+    }
+
+    private void UtvidDra(UkeplanRad r, int idx)
+    {
+        if (_dra is { } d && d.RadId == r.Id && d.B != idx)
+        {
+            _dra = d with { B = idx };
+        }
+    }
+
+    private async Task SluttDra(UkeplanRad r, int idx, MouseEventArgs e)
+    {
+        if (_dra is not { } d)
+        {
+            return;
+        }
+        _dra = null;
+        var a = Math.Min(d.A, d.B);
+        var b = Math.Max(d.A, d.B);
+        if (a == b)
+        {
+            await StartRediger(r, a);
+            return;
+        }
+        var rest = Info(r).IkkeFordelt;
+        _flyVerdi = rest > 0 ? Fmt(rest / (b - a + 1)) : "20";
+        _flyTotalt = false;
+        _fly = new Fly(d.RadId, a, b, e.ClientX, e.ClientY);
+        _fokusFly = true;
+    }
+
+    private void AvsluttDra()
+    {
+        // Slipper musa utenfor raden: behold markeringen som et utvalg.
+        if (_dra is { } d && d.A != d.B)
+        {
+            _dra = null;
+            _fly = new Fly(d.RadId, Math.Min(d.A, d.B), Math.Max(d.A, d.B), 400, 300);
+            _flyVerdi = "20";
+            _fokusFly = true;
+        }
+        else
+        {
+            _dra = null;
+        }
+    }
+
+    private async Task StartRediger(UkeplanRad r, int idx)
+    {
+        if (_redRad is not null)
+        {
+            await LagreCelle(0);
+        }
+        _redRad = r.Id;
+        _redIdx = idx;
+        var t = T(r, _uker[idx]);
+        _redVerdi = t > 0 ? Inv(t) : "";
+        _fokusRed = true;
+    }
+
+    private async Task LagreCelle(int neste)
+    {
+        if (_redRad is not { } radId)
+        {
+            return;
+        }
+        var r = _rader.FirstOrDefault(x => x.Id == radId);
+        var idx = _redIdx;
+        _redRad = null;
+        if (r is null || idx >= _uker.Count)
+        {
+            return;
+        }
+        var verdi = LesTall(_redVerdi) ?? 0;
+        if (verdi != T(r, _uker[idx]))
+        {
+            SettTimer(r, _uker[idx], Math.Max(0, verdi));
+            await Db.SaveChangesAsync();
+        }
+        if (neste != 0 && idx + neste >= 0 && idx + neste < _uker.Count)
+        {
+            await StartRediger(r, idx + neste);
+        }
+    }
+
+    private async Task RedTast(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await LagreCelle(e.ShiftKey ? -1 : 1);
+        }
+        else if (e.Key == "Escape")
+        {
+            _redRad = null;
+        }
+    }
+
+    private async Task FyllUt()
+    {
+        if (_fly is not { } f || _rader.FirstOrDefault(r => r.Id == f.RadId) is not { } r)
+        {
+            return;
+        }
+        var n = f.B - f.A + 1;
+        var x = LesTall(_flyVerdi) ?? 0;
+        var per = _flyTotalt ? Math.Round(x / n, 1) : x;
+        var kopi = Kopi(r);
+        for (var i = f.A; i <= f.B; i++)
+        {
+            SettTimer(r, _uker[i], per);
+        }
+        await Db.SaveChangesAsync();
+        _fly = null;
+        Vis($"{UkeplanService.RadNavn(r)}: {Fmt(per)} t/uke i uke {_uker[f.A].Nr}–{_uker[f.B].Nr}", () => Gjenopprett(r, kopi));
+    }
+
+    private async Task TomUtvalg()
+    {
+        if (_fly is not { } f || _rader.FirstOrDefault(r => r.Id == f.RadId) is not { } r)
+        {
+            return;
+        }
+        var kopi = Kopi(r);
+        for (var i = f.A; i <= f.B; i++)
+        {
+            SettTimer(r, _uker[i], 0);
+        }
+        await Db.SaveChangesAsync();
+        _fly = null;
+        Vis($"Uke {_uker[f.A].Nr}–{_uker[f.B].Nr} er tømt", () => Gjenopprett(r, kopi));
+    }
+
+    private async Task FlyTast(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await FyllUt();
+        }
+        else if (e.Key == "Escape")
+        {
+            _fly = null;
+        }
+    }
+
+    // ---------- Kapasitet ----------
+    private void StartKap(UkeplanService.Uke u)
+    {
+        if (_kapRed == u.Nokkel)
+        {
+            return;
+        }
+        _kapRed = u.Nokkel;
+        _kapVerdi = Inv(Kap(u));
+        _fokusKap = true;
+    }
+
+    private async Task LagreKap()
+    {
+        if (_kapRed is not { } nokkel || LesUke(nokkel) is not { } u)
+        {
+            return;
+        }
+        _kapRed = null;
+        var v = LesTall(_kapVerdi);
+        if (v is null || v.Value == Kap(u))
+        {
+            return;
+        }
+        var ny = v.Value == _std ? (decimal?)null : Math.Max(0, v.Value);
+        await Svc.SettKapasitetAsync(u.Ar, u.Nr, ny);
+        if (ny is null)
+        {
+            _kapEgen.Remove(nokkel);
+        }
+        else
+        {
+            _kapEgen[nokkel] = ny.Value;
+        }
+        Vis($"Kapasiteten i uke {u.Nr} er {Fmt(Kap(u))} t");
+    }
+
+    private async Task KapTast(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await LagreKap();
+        }
+        else if (e.Key == "Escape")
+        {
+            _kapRed = null;
+        }
+    }
+
+    private void ApneStd()
+    {
+        _stdVerdi = Inv(_std);
+        _visStd = true;
+    }
+
+    private async Task LagreStd()
+    {
+        if (LesTall(_stdVerdi) is not { } v || v < 0)
+        {
+            return;
+        }
+        await Svc.SettKapasitetAsync(0, 0, v);
+        _std = v;
+        _visStd = false;
+        Vis($"Standard kapasitet er {Fmt(v)} t per uke");
+    }
+
+    // ---------- Panel ----------
+    private void ApnePanel(UkeplanRad r)
+    {
+        _valgtUke = null;
+        _aktivRadId = r.Id;
+        var med = r.Timer.Where(t => t.Timer > 0).Select(t => new UkeplanService.Uke(t.Ar, t.Uke)).Where(u => u.CompareTo(_denne) >= 0).ToList();
+        var fra = med.Count > 0 ? med.MinBy(u => u.Mandag) : _denne;
+        var til = med.Count > 0 ? med.MaxBy(u => u.Mandag) : _denne.Pluss(7);
+        _fordelFra = fra.Nokkel;
+        _fordelTil = til.Nokkel;
+        var info = Info(r);
+        _fordelTimer = Fmt(info.Kalk > 0 ? Math.Max(0, info.Kalk - info.Brukt) : info.Fremover);
+    }
+
+    private void LukkPanel() => _aktivRadId = null;
+
+    private void VisUke(UkeplanService.Uke u)
+    {
+        _aktivRadId = null;
+        _valgtUke = _valgtUke == u ? null : u;
+    }
+
+    private async Task SettKategori(UkeplanRad r, UkeplanKategori k)
+    {
+        var gml = r.Kategori;
+        if (gml == k)
+        {
+            return;
+        }
+        r.Kategori = k;
+        await Db.SaveChangesAsync();
+        Vis($"Flyttet til {UkeplanService.KategoriNavn(k)}", async () =>
+        {
+            r.Kategori = gml;
+            await Db.SaveChangesAsync();
+        });
+    }
+
+    private async Task SettSannsynlighet(UkeplanRad r, ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var v))
+        {
+            r.Sannsynlighet = Math.Clamp(v, 0, 100);
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    private async Task SettAnsvarlig(UkeplanRad r, ChangeEventArgs e)
+    {
+        var id = int.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : (int?)null;
+        r.AnsvarligId = id;
+        r.Ansvarlig = _ledere.FirstOrDefault(l => l.Id == id) is { } l ? await Db.Brukere.FindAsync(l.Id) : null;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task SettNavn(UkeplanRad r, ChangeEventArgs e)
+    {
+        var navn = e.Value?.ToString()?.Trim();
+        if (!string.IsNullOrEmpty(navn))
+        {
+            r.Navn = navn;
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    private async Task FordelJevnt(UkeplanRad r)
+    {
+        if (LesUke(_fordelFra) is not { } fra || LesUke(_fordelTil) is not { } til)
+        {
+            return;
+        }
+        if (til.CompareTo(fra) < 0)
+        {
+            Vis("Til-uke må være etter fra-uke");
+            return;
+        }
+        var t = LesTall(_fordelTimer) ?? 0;
+        var uker = new List<UkeplanService.Uke>();
+        for (var u = fra; u.CompareTo(til) <= 0; u = u.Pluss(1))
+        {
+            uker.Add(u);
+        }
+        var per = Math.Round(t / uker.Count, 1);
+        var kopi = Kopi(r);
+        foreach (var u in uker)
+        {
+            SettTimer(r, u, per);
+        }
+        await Db.SaveChangesAsync();
+        Vis($"{Fmt(t)} t fordelt på {uker.Count} uker – {Inv(per)} t/uke", () => Gjenopprett(r, kopi));
+    }
+
+    private async Task TomAlle(UkeplanRad r)
+    {
+        var kopi = Kopi(r);
+        foreach (var t in r.Timer.ToList())
+        {
+            r.Timer.Remove(t);
+            Db.UkeplanTimer.Remove(t);
+        }
+        await Db.SaveChangesAsync();
+        Vis("Alle uker er tømt", () => Gjenopprett(r, kopi));
+    }
+
+    private async Task FjernRad(UkeplanRad r)
+    {
+        r.Skjult = true;
+        await Db.SaveChangesAsync();
+        _rader.Remove(r);
+        _aktivRadId = null;
+        Vis($"«{UkeplanService.RadNavn(r)}» er fjernet fra planen", async () =>
+        {
+            r.Skjult = false;
+            await Db.SaveChangesAsync();
+            _rader.Add(r);
+        });
+    }
+
+    // ---------- Endringer ----------
+    private async Task Kvitter(UkeplanEndring e)
+    {
+        await Db.UkeplanEndringer.Where(x => x.Id == e.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Kvittert, true));
+        _endringer.Remove(e);
+    }
+
+    private async Task Planlegg(UkeplanEndring e)
+    {
+        await Kvitter(e);
+        _visEndringer = false;
+        if (_rader.FirstOrDefault(r => r.Id == e.RadId) is { } r)
+        {
+            ApnePanel(r);
+        }
+    }
+
+    private async Task AngreAvslag(UkeplanEndring e)
+    {
+        await Kvitter(e);
+        var r = await Db.UkeplanRader.Include(x => x.Prosjekt).Include(x => x.Ansvarlig).Include(x => x.Timer).FirstOrDefaultAsync(x => x.Id == e.RadId);
+        if (r is not null)
+        {
+            r.Skjult = false;
+            await Db.SaveChangesAsync();
+            if (!_rader.Contains(r))
+            {
+                _rader.Add(r);
+            }
+            Vis($"«{UkeplanService.RadNavn(r)}» er lagt tilbake i planen");
+        }
+    }
+
+    // ---------- Legg til ----------
+    private void ApneNy()
+    {
+        _nyNavn = "";
+        _nyKat = UkeplanKategori.Service;
+        _nyAnsvarlig = 0;
+        _nyTimer = "";
+        _nyFra = _denne.Nokkel;
+        _nyTil = _denne.Pluss(15).Nokkel;
+        _visNy = true;
+    }
+
+    private async Task LagreNy()
+    {
+        var navn = _nyNavn.Trim();
+        if (navn.Length == 0)
+        {
+            Vis("Skriv hva raden gjelder");
+            return;
+        }
+        var r = new UkeplanRad
+        {
+            Navn = navn,
+            Kategori = _nyKat,
+            AnsvarligId = _nyAnsvarlig > 0 ? _nyAnsvarlig : null
+        };
+        Db.UkeplanRader.Add(r);
+        await Db.SaveChangesAsync();
+        if (LesUke(_nyFra) is { } fra && LesUke(_nyTil) is { } til && til.CompareTo(fra) >= 0 && LesTall(_nyTimer) is { } t && t > 0)
+        {
+            var uker = new List<UkeplanService.Uke>();
+            for (var u = fra; u.CompareTo(til) <= 0; u = u.Pluss(1))
+            {
+                uker.Add(u);
+            }
+            var per = Math.Round(t / uker.Count, 1);
+            foreach (var u in uker)
+            {
+                SettTimer(r, u, per);
+            }
+            await Db.SaveChangesAsync();
+        }
+        if (r.AnsvarligId is { } aid)
+        {
+            r.Ansvarlig = await Db.Brukere.FindAsync(aid);
+        }
+        _rader.Add(r);
+        _lukket.Remove($"k{(int)r.Kategori}");
+        _visNy = false;
+        Vis($"«{navn}» er lagt til", async () =>
+        {
+            Db.UkeplanRader.Remove(r);
+            await Db.SaveChangesAsync();
+            _rader.Remove(r);
+        });
+    }
+
+    private async Task SkrivUt() => await JS.InvokeVoidAsync("print");
+}

@@ -235,6 +235,8 @@ public static class PortalModulRegister
                     new Lenke("Kalkulatorer", "StepLock-kalkulator og andre kalkulatorer samlet på ett sted.", "kalkulatorer", "receipt", KalkulatorUndermoduler, ModulTilgang.FraProsjektleder),
                     new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield", KreverModul: TilleggsModuler.Ce),
                     new Lenke("Prosjektøkonomi", "Økonomien i pågående prosjekter, og etterkalkyle når de er overlevert.", "prosjektokonomi", "trend-up", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Okonomi),
+                    // Ressursplan (2026-11-17): timer per uke fremover mot kapasitet - bare prosjektleder og admin.
+                    new Lenke("Ressursplan", "Timer per uke fremover for alle prosjekter, mot kapasiteten.", "ressursplan", "calendar", null, ModulTilgang.FraProsjektleder),
                     // Begge ligger i venstremenyen og vises derfor ikke som
                     // egne kort i kategorien.
                     new Lenke("Timeregistrering", "Registrer timer på en arbeidsordre.", "timeregistrering", "clock", null, ModulTilgang.Alle, KunIMeny: true, KreverModul: TilleggsModuler.Timer),
@@ -386,7 +388,7 @@ public static class PortalModulRegister
     public static readonly HashSet<string> StandardIMeny = new(StringComparer.OrdinalIgnoreCase)
     {
         "dashbord", "kunngjoringer", "todo",
-        "arbeidsordre", "kalkulatorer", "prosjektokonomi", "timeregistrering", "fravar",
+        "arbeidsordre", "kalkulatorer", "prosjektokonomi", "ressursplan", "timeregistrering", "fravar",
         "tickets", "lager", "kassa",
         "oppsettmodul", "komponentprismodul", "brukerkundemodul", "rapportermodul"
     };
