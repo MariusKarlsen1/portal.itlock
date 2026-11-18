@@ -30,6 +30,11 @@ public class Kunde
     public DateTime? NesteOppfolgingsDato { get; set; }
     public decimal? FastPaslagProsent { get; set; }
 
+    // Fast timepris for kunden (kr/t). Fylles inn på nye tilbud i stedet for
+    // standarden fra priskodene i admin. Null = bruk standarden.
+    public decimal? FastTimeprisMontasje { get; set; }
+    public decimal? FastTimeprisProsjektledelse { get; set; }
+
     // Brukes til å sortere/summere salg pr. kundetype i Kunderapporten - se
     // RapportKunde.razor.
     public KundeType? Type { get; set; }

@@ -4015,6 +4015,12 @@ namespace PortalItlock.Web.Migrations
                     b.Property<decimal?>("FastPaslagProsent")
                         .HasColumnType("TEXT");
 
+                    b.Property<decimal?>("FastTimeprisMontasje")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("FastTimeprisProsjektledelse")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Kontaktperson")
                         .HasColumnType("TEXT");
 

@@ -1182,6 +1182,35 @@ public partial class KundeSkjema
         _redigerPaslag = false;
     }
 
+    // Faste timepriser (montasje og prosjektledelse) på kunden.
+    private bool _redigerTimepris;
+
+    private async Task LagreTimepriser()
+    {
+        var entitet = await Db.Kunder.FirstOrDefaultAsync(k => k.Id == Id);
+        if (entitet is null)
+        {
+            return;
+        }
+
+        entitet.FastTimeprisMontasje = _kunde!.FastTimeprisMontasje is > 0 ? _kunde.FastTimeprisMontasje : null;
+        entitet.FastTimeprisProsjektledelse = _kunde.FastTimeprisProsjektledelse is > 0 ? _kunde.FastTimeprisProsjektledelse : null;
+        await Db.SaveChangesAsync();
+        _redigerTimepris = false;
+        _paslagMelding = "Faste timepriser lagret.";
+    }
+
+    private void AvbrytTimepriser()
+    {
+        foreach (var navn in new[] { nameof(Kunde.FastTimeprisMontasje), nameof(Kunde.FastTimeprisProsjektledelse) })
+        {
+            var felt = Db.Entry(_kunde!).Property(navn);
+            felt.CurrentValue = felt.OriginalValue;
+            felt.IsModified = false;
+        }
+        _redigerTimepris = false;
+    }
+
     private void AvbrytPaslag()
     {
         var felt = Db.Entry(_kunde!).Property(k => k.FastPaslagProsent);

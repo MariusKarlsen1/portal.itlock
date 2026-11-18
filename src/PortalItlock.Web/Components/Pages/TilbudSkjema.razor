@@ -370,6 +370,10 @@ else if (_tilbud is not null)
                                             {
                                                 <span>Estimert fra varer: @FormatTimer(BeregnetMontasjetimer)</span>
                                             }
+                                            @if (mont is not null && TimeprisKilde(mont.Salgspris) is { } kilde)
+                                            {
+                                                <span class="tk-tp-kilde">· @kilde</span>
+                                            }
                                         </p>
                                     </div>
                                     <div class="tk-arb">
@@ -397,7 +401,7 @@ else if (_tilbud is not null)
                                         <label class="tk-felt">Timekost<span class="input-suffix-wrap"><input @bind="_tilbud.MontasjeInnpris" @bind:after="MontasjeEndret" placeholder="0" /><span class="input-suffix">kr/t</span></span></label>
                                         <label class="tk-felt">Timepris<span class="input-suffix-wrap"><input @bind="_tilbud.Timepris" @bind:after="MontasjeEndret" /><span class="input-suffix">kr/t</span></span></label>
                                     </div>
-                                    <p class="tk-mont-hint"><span>Estimert fra varer: @FormatTimer(BeregnetMontasjetimer)</span></p>
+                                    <p class="tk-mont-hint"><span>Estimert fra varer: @FormatTimer(BeregnetMontasjetimer)</span>@if (TimeprisKilde(_tilbud.Timepris) is { } kilde2) {<span class="tk-tp-kilde">· @kilde2</span>}</p>
                                 }
                                 @{ var andre = KodeLinjer.Where(k => k != MontasjeLinje && k != ProsjektledelseLinje && k != RiggLinje).ToList(); }
                                 @if (_tilbud.BrukerKodelinjer && andre.Count > 0)
@@ -1363,6 +1367,7 @@ else if (_tilbud is not null)
             _byggetrinnListe = ByggetrinnHelper.Sorter(byggetrinnFraPlantegninger).ToList();
 
             _prisKoder = (await PrisKodeSvc.SikreStandardAsync()).Where(k => k.Aktiv).OrderBy(k => k.Rekkefolge).ThenBy(k => k.Kode).ToList();
+            SettStandardTimepris();
             if (KonverterTilKodelinjerAutomatisk())
             {
                 await Db.SaveChangesAsync();
@@ -3128,6 +3133,43 @@ else if (_tilbud is not null)
     // Et utkast med varer som har montasjetid får montasjetimene som en egen
     // linje blant varene (standard montasjekode) av seg selv. Skjer bare én
     // gang per tilbud: fjerner man linjen etterpå, kommer den ikke tilbake.
+    // Fast timepris på kunden (kundekortet), ellers standarden fra priskodene i admin.
+    private decimal? KundeTimeprisMontasje => _tilbud?.Prosjekt?.Kunde?.FastTimeprisMontasje;
+    private decimal? KundeTimeprisProsjektledelse => _tilbud?.Prosjekt?.Kunde?.FastTimeprisProsjektledelse;
+
+    // Nytt tilbud uten egne timepriser: fyll inn kundens faste timepris eller
+    // standarden fra admin, og timekost fra admin. Tilbud som er i gang endres ikke.
+    private void SettStandardTimepris()
+    {
+        var t = _tilbud!;
+        if (t.BrukerKodelinjer || t.Status != EndringsmeldingStatus.Utkast)
+        {
+            return;
+        }
+
+        var montasje = _prisKoder.FirstOrDefault(k => k.ErMontasje)
+            ?? _prisKoder.FirstOrDefault(k => k.Type == PrisKodeType.Arbeid && k.Enhet == PrisKodeEnhet.Time);
+        if (t.Timepris <= 0 && (KundeTimeprisMontasje ?? montasje?.Salgspris) is > 0 and var pris)
+        {
+            t.Timepris = pris;
+        }
+        if (t.MontasjeInnpris is null or 0 && montasje?.Kostpris is > 0 and var kost)
+        {
+            t.MontasjeInnpris = kost;
+        }
+    }
+
+    // Hvor timeprisen på montasje kommer fra - vises under feltet.
+    private string? TimeprisKilde(decimal pris)
+    {
+        if (KundeTimeprisMontasje is { } k && k == pris)
+        {
+            return "Fast timepris fra kunden";
+        }
+        var montasje = _prisKoder.FirstOrDefault(x => x.ErMontasje);
+        return montasje is not null && montasje.Salgspris == pris ? "Standard fra admin" : null;
+    }
+
     private bool KonverterTilKodelinjerAutomatisk()
     {
         var t = _tilbud!;
@@ -3186,7 +3228,7 @@ else if (_tilbud is not null)
         {
             var linje = KodeLinjeBeregner.LinjeFra(montasje, t.EstimertTimerOverride ?? BeregnetMontasjetimer);
             linje.ErMontasje = true;
-            linje.Salgspris = t.Timepris > 0 ? t.Timepris : montasje.Salgspris;
+            linje.Salgspris = t.Timepris > 0 ? t.Timepris : KundeTimeprisMontasje ?? montasje.Salgspris;
             linje.Kostpris = t.MontasjeInnpris is > 0 ? t.MontasjeInnpris.Value : montasje.Kostpris;
             linje.FraMontasjetid = t.EstimertTimerOverride is null;
             linje.Rekkefolge = rekkefolge++;
@@ -3215,6 +3257,14 @@ else if (_tilbud is not null)
         var forsteTimer = k.Type == PrisKodeType.Arbeid && k.Enhet == PrisKodeEnhet.Time && !_tilbud!.KodeLinjer.Any(l => l.Type == PrisKodeType.Arbeid);
         var linje = KodeLinjeBeregner.LinjeFra(k, forsteTimer ? BeregnetMontasjetimer : 1);
         linje.FraMontasjetid = forsteTimer && k.ErMontasje;
+        if (k.ErMontasje && KundeTimeprisMontasje is { } kp)
+        {
+            linje.Salgspris = kp;
+        }
+        else if (string.Equals(k.Navn.Trim(), "Prosjektledelse", StringComparison.OrdinalIgnoreCase) && KundeTimeprisProsjektledelse is { } kpl)
+        {
+            linje.Salgspris = kpl;
+        }
         // Nye koder legges nederst. Med felles rekkefølge må de også komme etter varene.
         var siste = _tilbud!.KodeLinjer.Select(l => l.Rekkefolge)
             .Concat(_tilbud.FellesRekkefolge ? _tilbud.Linjer.Select(l => l.Rekkefolge) : [])
@@ -3328,6 +3378,10 @@ else if (_tilbud is not null)
 
             linje = KodeLinjeBeregner.LinjeFra(kode, 0);
             linje.ErMontasje = true;
+            if (KundeTimeprisMontasje is { } kp)
+            {
+                linje.Salgspris = kp;
+            }
             linje.Rekkefolge = NesteRekkefolge();
             _tilbud!.KodeLinjer.Add(linje);
         }
@@ -3379,6 +3433,7 @@ else if (_tilbud is not null)
         {
             var l = KodeLinjeBeregner.LinjeFra(kode, 0);
             l.ErMontasje = false;
+            l.Salgspris = KundeTimeprisProsjektledelse ?? l.Salgspris;
             return l;
         }
 
@@ -3392,7 +3447,7 @@ else if (_tilbud is not null)
             Enhet = PrisKodeEnhet.Time,
             Antall = 0,
             Kostpris = mont?.Kostpris ?? _tilbud?.MontasjeInnpris ?? 0,
-            Salgspris = mont?.Salgspris ?? _tilbud?.Timepris ?? 0
+            Salgspris = KundeTimeprisProsjektledelse ?? mont?.Salgspris ?? _tilbud?.Timepris ?? 0
         };
     }
 
