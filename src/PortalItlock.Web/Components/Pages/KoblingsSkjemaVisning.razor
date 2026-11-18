@@ -397,6 +397,8 @@ else if (_skjema is not null)
                                 }
                             </g>
                         }
+                        @* Halvmåne der streker krysser, prikk der de er koblet. *@
+                        @((MarkupString)KoblingsKryss.Svg(KoblingsKryss.Linjer(_streker, KabelVifte, p => System.Text.Json.JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(p) ?? []), LerretAspekt))
                     </svg>
 
                     @foreach (var s in _streker.Where(s => s.ErKabel && !string.IsNullOrWhiteSpace(s.Navn)))
@@ -405,27 +407,6 @@ else if (_skjema is not null)
                         if (merke is not null)
                         {
                             <div class="ks-kabel-merke" style="left:@Inv(merke.X)%; top:@Inv(merke.Y)%">@KabelEtikett(s)</div>
-                        }
-                    }
-
-                    @* Navnet på hver leder ved enden, så det er lett å se hvor den kobles. *@
-                    @foreach (var s in _streker.Where(s => s.ErKabel))
-                    {
-                        var vifte = KabelVifte(s);
-                        if (vifte is null)
-                        {
-                            continue;
-                        }
-                        var str = Inv(Math.Clamp(vifte.Mellom * 0.82, 0.35, 1.2));
-                        foreach (var l in vifte.Ledere)
-                        {
-                            var et = KoblingsKabel.LagEtikett(l, LerretAspekt);
-                            if (et is null)
-                            {
-                                continue;
-                            }
-                            <span class="ks-leder-navn @(et.Etter ? "etter" : "foran")"
-                                  style="left:@Inv(et.Punkt.X)%; top:@Inv(et.Punkt.Y)%; --v:@(Inv(et.Vinkel))deg; --fs:@(str)cqw; --f:@KoblingsKabel.Hex(l.Leder.Farge)">@KoblingsKabel.LederNavn(l.Leder)</span>
                         }
                     }
 
@@ -579,6 +560,20 @@ else if (_skjema is not null)
                                 @foreach (var (verdi, navn) in KoblingsKabel.Avstander)
                                 {
                                     <button type="button" class="@(Math.Abs(faktor - verdi) < 0.001 ? "pa" : "")" @onclick="@(() => EndreStrek(kabelStrek, s => s.LederAvstand = KoblingsKabel.AvstandVerdi(verdi)))">@navn</button>
+                                }
+                            </div>
+                        </div>
+                        <div class="ks-avstand" role="group" aria-label="Lengde på ledere">
+                            @{ var lengdeF = KoblingsKabel.LengdeFaktor(kabelStrek.LederLengde); }
+                            <span>Lengde på ledere <b>@Math.Round(lengdeF * 100) %</b></span>
+                            <input type="range" min="@Inv(KoblingsKabel.MinLengde * 100)" max="@Inv(KoblingsKabel.MaksLengde * 100)" step="5"
+                                   value="@Inv(Math.Round(lengdeF * 100))" aria-label="Lengde på ledere i prosent"
+                                   @oninput="@(e => DraLederLengde(kabelStrek, e.Value?.ToString()))"
+                                   @onchange="@(e => SettLederLengde(kabelStrek, e.Value?.ToString()))" />
+                            <div>
+                                @foreach (var (verdi, navn) in KoblingsKabel.Lengder)
+                                {
+                                    <button type="button" class="@(Math.Abs(lengdeF - verdi) < 0.001 ? "pa" : "")" @onclick="@(() => EndreStrek(kabelStrek, s => s.LederLengde = KoblingsKabel.LengdeVerdi(verdi)))">@navn</button>
                                 }
                             </div>
                         </div>
@@ -949,7 +944,7 @@ else if (_skjema is not null)
     {
         if (firstRender)
         {
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=21");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=22");
             _dotNetRef = DotNetObjectReference.Create(this);
         }
 
@@ -1090,7 +1085,8 @@ else if (_skjema is not null)
             LedereJson = s.LedereJson,
             Navn = s.Navn,
             KabelType = s.KabelType,
-            LederAvstand = s.LederAvstand
+            LederAvstand = s.LederAvstand,
+            LederLengde = s.LederLengde
         }).ToList();
 
     private void PushUndo()
@@ -1232,7 +1228,8 @@ else if (_skjema is not null)
                 LedereJson = s.LedereJson,
                 Navn = s.Navn,
                 KabelType = s.KabelType,
-                LederAvstand = s.LederAvstand
+                LederAvstand = s.LederAvstand,
+                LederLengde = s.LederLengde
             });
         }
 
@@ -1961,6 +1958,40 @@ else if (_skjema is not null)
         await Db.SaveChangesAsync();
     }
 
+    // Piltast med en strek valgt: flytter hele streken (0,1 % per trykk,
+    // Shift = 2 %). Én angre-rad per runde med trykk.
+    private DateTime _sistPil;
+
+    [JSInvokable]
+    public async Task OnPilStrek(double dx, double dy)
+    {
+        if (_valgtStrek is not { } strek)
+        {
+            return;
+        }
+        var punkter = System.Text.Json.JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(strek.PunkterJson) ?? [];
+        if (punkter.Count == 0)
+        {
+            return;
+        }
+        if (DateTime.UtcNow - _sistPil > TimeSpan.FromSeconds(1.5))
+        {
+            PushUndo();
+        }
+        _sistPil = DateTime.UtcNow;
+        // Hele streken flyttes likt, men ikke ut av lerretet.
+        dx = Math.Clamp(dx, -punkter.Min(q => q.X), 100 - punkter.Max(q => q.X));
+        dy = Math.Clamp(dy, -punkter.Min(q => q.Y), 100 - punkter.Max(q => q.Y));
+        foreach (var q in punkter)
+        {
+            q.X = Math.Round(q.X + dx, 3);
+            q.Y = Math.Round(q.Y + dy, 3);
+        }
+        strek.PunkterJson = System.Text.Json.JsonSerializer.Serialize(punkter);
+        await Db.SaveChangesAsync();
+        StateHasChanged();
+    }
+
     [JSInvokable]
     public async Task OnSlettTastetrykk()
     {
@@ -2198,7 +2229,7 @@ else if (_skjema is not null)
             return null;
         }
         var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(s.PunkterJson) ?? [];
-        return KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(s.LedereJson), LerretAspekt, s.LederAvstand);
+        return KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(s.LedereJson), LerretAspekt, s.LederAvstand, s.LederLengde);
     }
 
     private static string KabelEtikett(KoblingsStrek s) =>
@@ -2384,6 +2415,35 @@ else if (_skjema is not null)
             _avstandDras = true;
         }
         strek.LederAvstand = KoblingsKabel.AvstandVerdi(f);
+    }
+
+    private void DraLederLengde(KoblingsStrek strek, string? verdi)
+    {
+        if (LesProsent(verdi) is not { } f)
+        {
+            return;
+        }
+        if (!_avstandDras)
+        {
+            PushUndo();
+            _avstandDras = true;
+        }
+        strek.LederLengde = KoblingsKabel.LengdeVerdi(f);
+    }
+
+    private async Task SettLederLengde(KoblingsStrek strek, string? verdi)
+    {
+        if (LesProsent(verdi) is not { } f)
+        {
+            return;
+        }
+        if (!_avstandDras)
+        {
+            PushUndo();
+        }
+        _avstandDras = false;
+        strek.LederLengde = KoblingsKabel.LengdeVerdi(f);
+        await Db.SaveChangesAsync();
     }
 
     private async Task SettLederAvstand(KoblingsStrek strek, string? verdi)

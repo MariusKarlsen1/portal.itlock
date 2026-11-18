@@ -1422,6 +1422,12 @@ export function enableKeyboardShortcuts(containerEl, dotNetRef) {
         const selected = Array.from(containerEl.querySelectorAll('.kobling-symbol-marker-selected'))
             .filter(el => el.dataset.laast !== 'true');
         if (!selected.length) {
+            // Ingen komponent valgt, men en strek: flytt streken.
+            if (containerEl.querySelector('.ks-strek-valgt[data-strekid]')) {
+                e.preventDefault();
+                const s = e.shiftKey ? NUDGE_STEP_LANGT : NUDGE_STEP;
+                dotNetRef.invokeMethodAsync('OnPilStrek', delta[0] * s, delta[1] * s);
+            }
             return;
         }
 

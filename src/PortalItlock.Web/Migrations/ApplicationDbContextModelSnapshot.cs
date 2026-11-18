@@ -3873,6 +3873,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("LederAvstand")
                         .HasColumnType("TEXT");
 
+                    b.Property<double?>("LederLengde")
+                        .HasColumnType("REAL");
+
                     b.Property<string>("LedereJson")
                         .HasColumnType("TEXT");
 

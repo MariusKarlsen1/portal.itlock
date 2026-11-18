@@ -26,6 +26,10 @@ public class KoblingsStrek
     // Avstand mellom lederne der kabelen deler seg: "Tett", "Bred" eller null (normal).
     public string? LederAvstand { get; set; }
 
+    // Hvor langt de løse lederne stikker ut av kabelen, som faktor (1 = standard).
+    // Null = standard.
+    public double? LederLengde { get; set; }
+
     public bool ErKabel => LedereJson is not null;
 }
 

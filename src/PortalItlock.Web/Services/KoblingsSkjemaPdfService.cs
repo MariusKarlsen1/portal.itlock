@@ -179,6 +179,14 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                 $"<polyline points='{pts}' fill='none' stroke='{strek.Farge}' stroke-width='{Inv(strek.Tykkelse * 0.15)}' {dashAttr} />");
         }
 
+        // Halvmåne der streker krysser, prikk der de er koblet - som på skjermen.
+        var pdfAspekt = ViewBoxHoyde / ViewBoxBredde;
+        sb.Append(KoblingsKryss.Svg(
+            KoblingsKryss.Linjer(streker,
+                s => KoblingsKabel.LagVifte(JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(s.PunkterJson) ?? [], KoblingsKabel.Les(s.LedereJson), pdfAspekt, s.LederAvstand, s.LederLengde),
+                j => JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(j) ?? []),
+            pdfAspekt, yFaktor: ViewBoxHoyde / 100.0, breddeFaktor: 0.14, ikkeSkalerende: false));
+
         foreach (var s in symboler)
         {
             var x = s.PosX;
@@ -253,7 +261,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
     // Kabel med ledere: tykk sort kabel som deler seg i fargede ledere i hver ende.
     private static void TegnKabel(StringBuilder sb, KoblingsStrek strek, List<KoblingsStrekPunkt> punkter)
     {
-        var vifte = KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(strek.LedereJson), ViewBoxHoyde / ViewBoxBredde, strek.LederAvstand);
+        var vifte = KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(strek.LedereJson), ViewBoxHoyde / ViewBoxBredde, strek.LederAvstand, strek.LederLengde);
         if (vifte is null)
         {
             return;
@@ -274,19 +282,6 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             var dash = l.Leder.Stiplet ? "stroke-dasharray='0.6,0.45'" : "";
             sb.Append(CultureInfo.InvariantCulture,
                 $"<polyline points='{pts}' fill='none' stroke='{KoblingsKabel.Hex(l.Leder.Farge)}' stroke-width='0.32' stroke-linejoin='round' stroke-linecap='round' {dash} />");
-        }
-
-        // Navnet på hver leder ved enden, som på skjermen.
-        var fs = Math.Clamp(vifte.Mellom * 0.82, 0.45, 1.1);
-        foreach (var l in vifte.Ledere)
-        {
-            if (KoblingsKabel.LagEtikett(l, ViewBoxHoyde / ViewBoxBredde) is not { } et)
-            {
-                continue;
-            }
-            var dx = et.Etter ? fs * 0.45 : -fs * 0.6;
-            sb.Append(CultureInfo.InvariantCulture,
-                $"<text transform='translate({Inv(et.Punkt.X)},{Inv(YtilVb(et.Punkt.Y))}) rotate({Inv(et.Vinkel)})' x='{Inv(dx)}' y='{Inv(fs * 0.35)}' font-size='{Inv(fs)}' font-family='Arial, sans-serif' font-weight='bold' text-anchor='{(et.Etter ? "start" : "end")}' fill='#2a2622'>{System.Net.WebUtility.HtmlEncode(KoblingsKabel.LederNavn(l.Leder))}</text>");
         }
 
         if (!string.IsNullOrWhiteSpace(strek.Navn))

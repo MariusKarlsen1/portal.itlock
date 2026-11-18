@@ -197,6 +197,20 @@ public static class KoblingsKabel
         return Math.Abs(faktor - 1.0) < 0.001 ? null : faktor.ToString(CultureInfo.InvariantCulture);
     }
 
+    // Lengden på lederne ut av kabelen (KoblingsStrek.LederLengde), som faktor.
+    public static readonly (double Faktor, string Navn)[] Lengder = [(0.5, "Kort"), (1.0, "Normal"), (1.8, "Lang")];
+    public const double MinLengde = 0.3;
+    public const double MaksLengde = 3.0;
+
+    public static double LengdeFaktor(double? lengde) =>
+        lengde is double f && double.IsFinite(f) ? Math.Clamp(f, MinLengde, MaksLengde) : 1.0;
+
+    public static double? LengdeVerdi(double faktor)
+    {
+        faktor = Math.Round(Math.Clamp(faktor, MinLengde, MaksLengde), 2);
+        return Math.Abs(faktor - 1.0) < 0.001 ? null : faktor;
+    }
+
     // Avstanden mellom to naboledere i prosent av lerretets bredde.
     public static double LederAvstand(int antall, string? avstand) =>
         Math.Min(0.75, 7.0 / Math.Max(1, antall)) * AvstandFaktor(avstand);
@@ -204,7 +218,7 @@ public static class KoblingsKabel
     // Punktene er i prosent av lerretet. aspekt = høyde/bredde på lerretet,
     // slik at lederne står vinkelrett på kabelen også når lerretet ikke er
     // kvadratisk. Alle punkter som returneres er også i prosent.
-    public static Vifte? LagVifte(List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, string? avstand = null)
+    public static Vifte? LagVifte(List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, string? avstand = null, double? lengde = null)
     {
         if (punkter.Count < 2 || ledere.Count == 0)
         {
@@ -213,8 +227,9 @@ public static class KoblingsKabel
 
         var linjer = new List<LederLinje>();
         var mellom = LederAvstand(ledere.Count, avstand);
-        var forste = LagEnde(punkter, ledere, aspekt, mellom, fraStart: true, linjer, out var startKropp, out var startEnde);
-        var siste = LagEnde(punkter, ledere, aspekt, mellom, fraStart: false, linjer, out var sluttKropp, out var sluttEnde);
+        var lf = LengdeFaktor(lengde);
+        var forste = LagEnde(punkter, ledere, aspekt, mellom, lf, fraStart: true, linjer, out var startKropp, out var startEnde);
+        var siste = LagEnde(punkter, ledere, aspekt, mellom, lf, fraStart: false, linjer, out var sluttKropp, out var sluttEnde);
         if (!forste || !siste)
         {
             return null;
@@ -241,7 +256,7 @@ public static class KoblingsKabel
     }
 
     private static bool LagEnde(
-        List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, double mellom, bool fraStart,
+        List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, double mellom, double lf, bool fraStart,
         List<LederLinje> linjer, out KoblingsStrekPunkt kroppStart, out Ende ende)
     {
         var p0 = fraStart ? punkter[0] : punkter[^1];
@@ -283,8 +298,9 @@ public static class KoblingsKabel
 
         // Den sorte kabelen går helt ut til enden der man klikket, og lederne
         // begynner der og vifter ut videre i samme retning (bort fra kabelen).
-        const double vifte = 2.0;
-        const double lengde = 4.0;
+        // Standard er kortere enn før (vifte 2,0 / lengde 4,0); lf justerer begge.
+        var vifte = 1.2 * lf;
+        var lengde = 2.4 * lf;
         const double rett = 0.05;
         var n = ledere.Count;
 
