@@ -1267,7 +1267,7 @@ public partial class KundeSkjema
         var ordre = new Arbeidsordre { Tittel = "Ny arbeidsordre", KundeId = Id };
         Db.Arbeidsordre.Add(ordre);
         await Db.SaveChangesAsync();
-        Nav.NavigateTo($"/arbeidsordre/{ordre.Id}");
+        Nav.NavigateTo($"/arbeidsordre/{ordre.Id}?fane=detaljer");
     }
 
     private async Task OpprettTicket()
