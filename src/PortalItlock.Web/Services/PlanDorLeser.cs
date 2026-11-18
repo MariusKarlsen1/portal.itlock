@@ -25,6 +25,11 @@ public static partial class PlanDorLeser
     [GeneratedRegex(@"^(\d{3,4})[x×X\*](\d{3,4})$")]
     private static partial Regex MmRegex();
 
+    // «1 090x2 690» / «990x2 390»: mål med mellomrom som tusenskille. PDF-en
+    // deler det i flere ord («1», «090x2», «690»), så de settes sammen først.
+    [GeneratedRegex(@"(?:^|\s)(?:(\d)\s)?(\d{3})\s?[x×]\s?(\d)\s(\d{3})(?:\s|$)")]
+    private static partial Regex DeltMaalRegex();
+
     [GeneratedRegex(@"^\d{1,4}([.,]\d{1,2})?(m²|m2)?$")]
     private static partial Regex ArealRegex();
 
@@ -43,6 +48,26 @@ public static partial class PlanDorLeser
         return null;
     }
 
+    // Mål skrevet over flere ord rett etter dørmerket (i rekkefølgen i PDF-en).
+    private static (int B, int H)? DeltMaal(Side side, Ord m)
+    {
+        var i = side.Ord.IndexOf(m);
+        if (i < 0) return null;
+        bool Naer(Ord o) => P.Avst(o.Midt, m.Midt) < m.Storrelse * 5;
+        var etter = side.Ord.Skip(i + 1).Take(4).TakeWhile(Naer).Select(o => o.Tekst.Trim()).ToList();
+        var tekst = string.Join(" ", etter);
+        // Rotert tekst: bredden kan stå rett foran merket («990 | ID-01-2 | x2 | 390»).
+        if (tekst.StartsWith('x') && i > 0 && Naer(side.Ord[i - 1]))
+        {
+            tekst = side.Ord[i - 1].Tekst.Trim() + tekst;
+        }
+        var t = DeltMaalRegex().Match(tekst);
+        if (!t.Success) return null;
+        var b = int.Parse(t.Groups[2].Value) + (t.Groups[1].Success ? int.Parse(t.Groups[1].Value) * 1000 : 0);
+        var h = int.Parse(t.Groups[3].Value) * 1000 + int.Parse(t.Groups[4].Value);
+        return b is >= 400 and <= 3500 && h is >= 1500 and <= 4000 ? (b, h) : null;
+    }
+
     public static List<Bue> FinnBuer(Side side)
     {
         var ut = new List<Bue>();
@@ -55,7 +80,13 @@ public static partial class PlanDorLeser
             }
         }
         // fjern doble (samme bue tegnet to ganger)
-        return ut.Where((b, i) => !ut.Take(i).Any(x => P.Avst(x.Senter, b.Senter) < b.Radius * 0.05 && Math.Abs(x.Radius - b.Radius) < b.Radius * 0.05)).ToList();
+        var unike = ut.Where((b, i) => !ut.Take(i).Any(x => P.Avst(x.Senter, b.Senter) < b.Radius * 0.05 && Math.Abs(x.Radius - b.Radius) < b.Radius * 0.05)).ToList();
+        // En hel sirkel (f.eks. stiplet snusirkel) tegnes som fire kvartbuer med samme
+        // senter. Det er ikke en dør: en dørbue står alene rundt hengselet.
+        bool Samme(Bue x, Bue b) => P.Avst(x.Senter, b.Senter) < b.Radius * 0.05 && Math.Abs(x.Radius - b.Radius) < b.Radius * 0.05;
+        bool Lik(P a, P b, double r) => P.Avst(a, b) < r * 0.05;
+        return unike.Where(b => !unike.Any(x => x != b && Samme(x, b)
+            && (Lik(x.A, b.A, b.Radius) || Lik(x.A, b.B, b.Radius) || Lik(x.B, b.A, b.Radius) || Lik(x.B, b.B, b.Radius)))).ToList();
     }
 
     // Deler en punktliste der retningen skifter brått (hjørne), så en bue med rette biter rundt også blir funnet.
@@ -115,25 +146,64 @@ public static partial class PlanDorLeser
     // Hvilket endepunkt av buen er døren i åpen stilling? Der det går en strek (dørbladet) fra hengselet.
     private static P? AapenEnde(Bue bue, Side side)
     {
-        var tol = bue.Radius * 0.18;
-        bool Blad(P ende)
+        var r = bue.Radius;
+        // Dørbladet i åpen stilling: en strek (eller siden i et tynt rektangel)
+        // som går fra hengselet langs radien ut mot buens ende. Rektangelet kan
+        // ligge litt forskjøvet fra hengselpunktet (bladets tykkelse).
+        var streker = side.Streker.Select(s => (s.A, s.B))
+            .Concat(side.Linjer.Where(l => l.Any(p => P.Avst(p, bue.Senter) < r * 0.3))
+                .SelectMany(l => l.Zip(l.Skip(1), (p, q) => (p, q))))
+            .ToList();
+        bool Blad(P ende, double maks)
         {
-            var retning = ende - bue.Senter;
-            foreach (var s in side.Streker)
+            var u = (ende - bue.Senter) * (1 / r);
+            var nn = new P(-u.Y, u.X);
+            foreach (var (sa, sb) in streker)
             {
-                foreach (var (fra, til) in new[] { (s.A, s.B), (s.B, s.A) })
+                var va = sa - bue.Senter;
+                var vb = sb - bue.Senter;
+                double ta = va.X * u.X + va.Y * u.Y, tb = vb.X * u.X + vb.Y * u.Y;
+                double da = va.X * nn.X + va.Y * nn.Y, db = vb.X * nn.X + vb.Y * nn.Y;
+                var tMin = Math.Min(ta, tb);
+                var tMax = Math.Max(ta, tb);
+                if (Math.Abs(da) > r * 0.15 || Math.Abs(db) > r * 0.15) continue;
+                if (tMin < -r * 0.25 || tMin > r * 0.25) continue;
+                if (tMax < r * 0.75 || tMax > maks) continue;
+                return true;
+            }
+            return false;
+        }
+        // Sikrest: dørbladet ender nøyaktig der buen slutter. Karm og terskel
+        // langs veggen går litt forbi buens ende, og vegger går videre.
+        bool EnderPaBuen(P ende)
+        {
+            var u = (ende - bue.Senter) * (1 / r);
+            var nn = new P(-u.Y, u.X);
+            foreach (var (sa, sb) in streker)
+            {
+                foreach (var (fra, til) in new[] { (sa, sb), (sb, sa) })
                 {
-                    if (P.Avst(fra, bue.Senter) > tol) continue;
-                    var v = til - fra;
-                    if (v.Len < bue.Radius * 0.6) continue;
-                    var cos = (v.X * retning.X + v.Y * retning.Y) / (v.Len * retning.Len);
-                    if (cos > 0.97) return true;
+                    if (P.Avst(til, ende) > r * 0.03) continue;
+                    var v = fra - bue.Senter;
+                    var t = v.X * u.X + v.Y * u.Y;
+                    var d = v.X * nn.X + v.Y * nn.Y;
+                    if (Math.Abs(d) <= r * 0.15 && Math.Abs(t) <= r * 0.15) return true;
                 }
             }
             return false;
         }
-        var a = Blad(bue.A);
-        var b = Blad(bue.B);
+        var ea = EnderPaBuen(bue.A);
+        var eb = EnderPaBuen(bue.B);
+        if (ea != eb) return ea ? bue.A : bue.B;
+
+        // Ellers: en strek omtrent like lang som døra (veggstreker er lengre).
+        var a = Blad(bue.A, r * 1.3);
+        var b = Blad(bue.B, r * 1.3);
+        if (a == b)
+        {
+            a = Blad(bue.A, double.MaxValue);
+            b = Blad(bue.B, double.MaxValue);
+        }
         if (a == b) return null;
         return a ? bue.A : bue.B;
     }
@@ -168,6 +238,8 @@ public static partial class PlanDorLeser
         var kjente = kjenteKoder.Select(DorTypeSkjemaLeser.Norm).Where(k => k.Length > 1).ToHashSet();
         var merker = side.Ord.Where(o => kjente.Contains(DorTypeSkjemaLeser.Norm(o.Tekst)) || KodeRegex().IsMatch(o.Tekst.Trim())).ToList();
         var maalOrd = side.Ord.Where(o => Maal(o.Tekst.Trim()) is not null).ToList();
+        // Dørmerker kobles til nærmeste bue. Buer uten merke foreslås bare når
+        // dørbladet er tegnet (ellers er det ofte noe annet enn en dør).
         var buer = FinnBuer(side);
         var rom = FinnRom(side, [.. merker, .. maalOrd]);
         var brukteBuer = new HashSet<Bue>();
@@ -188,19 +260,23 @@ public static partial class PlanDorLeser
         foreach (var m in merker)
         {
             var usikkert = new List<string>();
-            var maal = maalOrd.Where(x => P.Avst(x.Midt, m.Midt) < Math.Max(m.Storrelse, x.Storrelse) * 5)
-                .OrderBy(x => P.Avst(x.Midt, m.Midt)).Select(x => Maal(x.Tekst.Trim())).FirstOrDefault();
+            var maalNaer = maalOrd.Where(x => P.Avst(x.Midt, m.Midt) < Math.Max(m.Storrelse, x.Storrelse) * 5)
+                .OrderBy(x => P.Avst(x.Midt, m.Midt)).FirstOrDefault();
+            var maal = maalNaer is null ? DeltMaal(side, m) : Maal(maalNaer.Tekst.Trim());
             if (maal is null) usikkert.Add("mål ikke funnet");
             merkeTilBue.TryGetValue(m, out var bue);
-            var (pos, slag, romPunkt, toFloyet) = bue is null ? (m.Midt, (string?)null, m.Midt, false) : Analyser(bue, side, buer, brukteBuer, usikkert);
-            if (bue is null) usikkert.Add("fant ikke dørbuen");
+            // Uten dørbue (f.eks. tømrerplan uten slag): dørmerket står i åpningen,
+            // så døra legges midt i merket. Høyre/venstre må settes for hånd.
+            var merkeMidt = DeltMaalOrd(side, m) is { } mo ? (m.Midt + mo.Midt) * 0.5 : m.Midt;
+            var (pos, slag, romPunkt, toFloyet) = bue is null ? (merkeMidt, (string?)null, merkeMidt, false) : Analyser(bue, side, buer, brukteBuer, usikkert);
+            if (bue is null) usikkert.Add("slag ikke tegnet");
             var r = NaermesteRom(romPunkt, rom, usikkert);
             ut.Add(new FunnetDor(pos.X / side.Bredde * 100, pos.Y / side.Hoyde * 100, m.Tekst.Trim().ToUpperInvariant(),
                 maal?.B, maal?.H, slag, r?.Navn, r?.Nr, toFloyet, true, bue is not null, usikkert));
         }
 
         // Dørbuer uten merke (foreslås, men er ikke huket av)
-        foreach (var b in buer.Where(b => !brukteBuer.Contains(b)))
+        foreach (var b in buer.Where(b => !brukteBuer.Contains(b) && AapenEnde(b, side) is not null))
         {
             var usikkert = new List<string> { "uten dørmerke" };
             var (pos, slag, romPunkt, toFloyet) = Analyser(b, side, buer, brukteBuer, usikkert);
@@ -211,6 +287,14 @@ public static partial class PlanDorLeser
     }
 
     private static P Aapning(Bue b) => (b.A + b.B) * 0.5;
+
+    // Ordet med «x» i målet rett etter merket, for å finne midten av dørmerket.
+    private static Ord? DeltMaalOrd(Side side, Ord m)
+    {
+        var i = side.Ord.IndexOf(m);
+        return i < 0 ? null : side.Ord.Skip(i + 1).Take(3)
+            .FirstOrDefault(o => o.Tekst.Contains('x') && P.Avst(o.Midt, m.Midt) < m.Storrelse * 5);
+    }
 
     private static (P Pos, string? Slag, P RomPunkt, bool ToFloyet) Analyser(Bue bue, Side side, List<Bue> alle, HashSet<Bue> brukte, List<string> usikkert)
     {
@@ -231,13 +315,15 @@ public static partial class PlanDorLeser
         var h = c - midt;
         var slag = h.X * hoyre.X + h.Y * hoyre.Y > 0 ? "H" : "V";
 
-        // tofløyet: en annen bue som lukker mot samme punkt
-        var partner = alle.FirstOrDefault(x => x != bue && Math.Abs(x.Radius - bue.Radius) < bue.Radius * 0.5
+        // tofløyet: en annen bue som lukker mot samme punkt (også med ulik bredde,
+        // f.eks. 1390 = stor fløy + liten sidefløy). Døra legges midt mellom hengslene.
+        var partner = alle.FirstOrDefault(x => x != bue && x.Radius > bue.Radius * 0.2 && x.Radius < bue.Radius * 5
             && (P.Avst(x.A, pc) < bue.Radius * 0.15 || P.Avst(x.B, pc) < bue.Radius * 0.15));
         if (partner is not null)
         {
             brukte.Add(partner);
-            return (pc, null, pc + n * (bue.Radius * 0.6), true);
+            var mellom = (c + partner.Senter) * 0.5;
+            return (mellom, null, mellom + n * (bue.Radius * 0.6), true);
         }
         return (midt, slag, midt + n * (bue.Radius * 0.6), false);
     }
