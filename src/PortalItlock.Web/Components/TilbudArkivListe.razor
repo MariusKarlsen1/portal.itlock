@@ -1,0 +1,416 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject VisningPreferanseService VisningPref
+@inject NavigationManager Nav
+
+@* Godkjente og Avslåtte tilbud: samme liste som Tilbud-oversikten
+   (godkjente-avslatte-tilbud-som-tilbud.html), status Godkjent/Avslått,
+   nøkkeltall med summen øverst, år i nedtrekk og sum nederst. *@
+<div class="prosjekter-side @(_full ? "pr-full" : "")">
+<div class="side-tittel prosjekt-header">
+    <div class="prosjekt-header-tittel">
+        <span class="prosjekt-header-ikon @(ErAvslatt ? "pa-ikon-rod" : "pa-ikon-gronn")"><Icon Name="@(ErAvslatt ? "x-circle" : "check-circle")" /></span>
+        <h1>@(ErAvslatt ? "Avslåtte tilbud" : "Godkjente tilbud")</h1>
+    </div>
+    <p class="prosjekt-intro">@(ErAvslatt ? "Alle tilbud kunden har takket nei til." : "Alle tilbud kunden har godkjent.")</p>
+</div>
+
+@if (_lastet && _tilbud.Count > 0)
+{
+    var iAr = IAr;
+    var sum = iAr.Sum(t => t.Sum);
+    var (godkjent, besvart) = TilbudServiceSvar.Vinnerrate(_svar, _ar);
+    <div class="pa-kpi">
+        <div>
+            <span class="pa-lbl">@(ErAvslatt ? (_ar is int ar1 ? $"Tapt i {ar1}" : "Tapt totalt") : (_ar is int ar2 ? $"Vunnet i {ar2}" : "Vunnet totalt"))</span>
+            <b class="@(ErAvslatt ? "pa-rod" : "pa-gronn")">@Kr(sum)</b>
+            <small>@iAr.Count tilbud
+                @if (_ar is int a && _tilbud.Any(t => t.Dato.Year == a - 1))
+                {
+                    var ifjor = _tilbud.Where(t => t.Dato.Year == a - 1).Sum(t => t.Sum);
+                    var endring = ifjor == 0 ? 0 : (int)Math.Round((sum - ifjor) / ifjor * 100);
+                    @* Godkjent: mer er bra. Avslått: mindre tapt er bra. *@
+                    var bra = ErAvslatt ? endring <= 0 : endring >= 0;
+                    <span class="@(bra ? "pa-opp" : "pa-ned")">· @(endring >= 0 ? "▲" : "▼") @Math.Abs(endring) % mot @(a - 1)</span>
+                }
+            </small>
+        </div>
+        @if (ErAvslatt)
+        {
+            <div>
+                <span class="pa-lbl">Tapsrate</span>
+                <b>@(besvart == 0 ? "–" : $"{Math.Round((besvart - godkjent) * 100m / besvart)} %")</b>
+                <small>@(besvart - godkjent) av @besvart besvarte</small>
+            </div>
+        }
+        else
+        {
+            <div>
+                <span class="pa-lbl">Vinnerrate</span>
+                <b>@(besvart == 0 ? "–" : $"{Math.Round(godkjent * 100m / besvart)} %")</b>
+                <small>@godkjent av @besvart besvarte</small>
+            </div>
+        }
+    </div>
+}
+
+<div class="pr-ramme">
+<div class="prosjekt-toolbar">
+    <div class="pa-venstre">
+        <a class="filter-button pa-tilbake" href="/tilbud-service"><Icon Name="arrow-left" />Til tilbud</a>
+        <label class="sok-felt prosjekt-sok">
+            <Icon Name="search" />
+            <input @bind="_sok" @bind:event="oninput" @bind:after="TilForsteSide" placeholder="Søk på tilbud eller kunde" />
+        </label>
+    </div>
+
+    <div class="prosjekt-toolbar-knapper">
+        <select class="sorter-velger" title="Velg år" value="@(_ar?.ToString() ?? "alle")" @onchange="@(e => { _ar = (string)e.Value! == "alle" ? null : int.Parse((string)e.Value!); _side = 1; })">
+            <option value="alle">Alle år (@_tilbud.Count)</option>
+            @foreach (var (ar, antall) in AlleAr)
+            {
+                <option value="@ar">@ar (@antall)</option>
+            }
+        </select>
+        <select class="sorter-velger" value="@_sortering" @onchange="@(e => { _sortering = (string)e.Value!; _side = 1; })">
+            <option value="nyeste">Sorter: Nyeste først</option>
+            <option value="eldste">Sorter: Eldste først</option>
+            <option value="sum">Sorter: Høyeste sum</option>
+            <option value="navn">Sorter: Alfabetisk</option>
+        </select>
+        <div class="prosjekt-filterpopup-anker">
+            <button type="button" class="@(AntallAktiveFiltre > 0 ? "edit-button-active" : "filter-button")" @onclick="@(() => _visFilter = !_visFilter)">
+                <Icon Name="filter" />Filtrer@(AntallAktiveFiltre > 0 ? $" ({AntallAktiveFiltre})" : "")
+            </button>
+            @if (_visFilter)
+            {
+                <div class="prosjekt-filterpopup">
+                    <div class="prosjekt-filterpopup-header">
+                        <strong>Filtrer tilbud</strong>
+                        <button type="button" class="prosjekt-filterpopup-lukk" @onclick="@(() => _visFilter = false)" title="Lukk"><Icon Name="x" /></button>
+                    </div>
+
+                    @if (!ErAvslatt)
+                    {
+                        <label class="prosjekt-filterpopup-select-rad">
+                            Fakturering
+                            <select value="@_fakturaFilter" @onchange="@(e => { _fakturaFilter = (string)e.Value!; _side = 1; })">
+                                <option value="alle">Alle</option>
+                                <option value="ikke">Ikke fakturert</option>
+                                <option value="fakturert">Fakturert</option>
+                            </select>
+                        </label>
+                    }
+                    <label class="prosjekt-filterpopup-select-rad">
+                        Kunde
+                        <select value="@_kundeFilter" @onchange="@(e => { _kundeFilter = (string)e.Value!; _side = 1; })">
+                            <option value="">Alle</option>
+                            @foreach (var n in Navn(t => t.KundeNavn))
+                            {
+                                <option value="@n">@n</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="prosjekt-filterpopup-select-rad">
+                        Opprettet av
+                        <select value="@_opprettetAvFilter" @onchange="@(e => { _opprettetAvFilter = (string)e.Value!; _side = 1; })">
+                            <option value="">Alle</option>
+                            @foreach (var n in Navn(t => t.OpprettetAvNavn))
+                            {
+                                <option value="@n">@n</option>
+                            }
+                        </select>
+                    </label>
+
+                    <div class="prosjekt-filterpopup-bunn">
+                        <button type="button" class="prosjekt-filterpopup-nullstill" @onclick="@(() => { _fakturaFilter = "alle"; _kundeFilter = ""; _opprettetAvFilter = ""; _side = 1; })">Nullstill</button>
+                        <button type="button" class="prosjekt-filterpopup-vis" @onclick="@(() => _visFilter = false)">Vis resultater (@Filtrert.Count)</button>
+                    </div>
+                </div>
+            }
+        </div>
+        <button type="button" class="pr-utvid" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
+    </div>
+</div>
+
+@if (!_lastet)
+{
+    <p class="list-empty">Laster …</p>
+}
+else if (_tilbud.Count == 0)
+{
+    <p class="list-empty">@(ErAvslatt ? "Ingen avslåtte tilbud ennå." : "Ingen godkjente tilbud ennå.")</p>
+}
+else if (Filtrert.Count == 0)
+{
+    <p class="list-empty">Ingen tilbud passer søket eller filteret.</p>
+}
+else
+{
+    <div class="prosjekt-tablewrap">
+        <table class="prosjekt-table">
+            <thead>
+                <tr class="prosjekt-thr">
+                    <th>Tilbud</th>
+                    <th>Kunde</th>
+                    <th>Status</th>
+                    <th>Opprettet av</th>
+                    <th>Sendt</th>
+                    <th>@(ErAvslatt ? "Avslått" : "Godkjent")</th>
+                    <th>Svartid</th>
+                    @if (!ErAvslatt)
+                    {
+                        <th>Arbeidsordre</th>
+                    }
+                    <th class="pa-pris-th">Sum eks. mva</th>
+                    <th class="pr-meny-th"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var t in Sidevisning)
+                {
+                    <tr @key="t.TilbudId" class="prosjekt-tr" @onclick="@(() => Nav.NavigateTo($"/tilbud/{t.TilbudId}"))">
+                        <td class="prosjekt-td-navn">@t.Tittel@if (t.ProsjektNavn is not null) {<small class="pa-sub">Prosjekt: @t.ProsjektNavn</small>}</td>
+                        <td>@if (t.KundeNavn is null) { <span class="pr-tom">—</span> } else { @t.KundeNavn }</td>
+                        <td><StatusPill Tekst="@Status.Visningsnavn()" Ikon="@Status.PillIkon()" Farge="@(ErAvslatt ? "rod" : "gronn")" /></td>
+                        <td>
+                            @if (string.IsNullOrWhiteSpace(t.OpprettetAvNavn))
+                            {
+                                <span class="pr-tom">—</span>
+                            }
+                            else
+                            {
+                                <span class="pr-person"><u>@Initialer(t.OpprettetAvNavn)</u>@t.OpprettetAvNavn</span>
+                            }
+                        </td>
+                        <td class="pa-dato">@if (t.SendtDato is { } s) { @s.ToString("dd.MM.yyyy") } else { <span class="pr-tom">—</span> }</td>
+                        <td class="pa-dato">@t.Dato.ToString("dd.MM.yyyy")</td>
+                        <td class="pa-dato">@if (t.Svartid is int d) { @($"{d} dag{(d == 1 ? "" : "er")}") } else { <span class="pr-tom">—</span> }</td>
+                        @if (!ErAvslatt)
+                        {
+                            <td @onclick:stopPropagation="true">
+                                @if (t.AoId is int aoId)
+                                {
+                                    var fak = t.AoStatus == ArbeidsordreStatus.Fakturert;
+                                    var ferdig = t.AoStatus == ArbeidsordreStatus.Ferdig;
+                                    <a class="pa-ao @(fak ? "fak" : "")" href="@($"/arbeidsordre/{aoId}")">AO-@aoId · @(fak ? "Fakturert" : ferdig ? "Ferdigmeldt" : "Pågår")</a>
+                                }
+                                else
+                                {
+                                    <span class="pr-tom">—</span>
+                                }
+                            </td>
+                        }
+                        <td class="pa-pris">@if (t.Sum > 0) { @Kr(t.Sum) } else { <span class="pr-tom">—</span> }</td>
+                        <td class="pr-meny-td" @onclick:stopPropagation="true">
+                            <span class="kun-leder"><RadMeny Navn="@t.Tittel" RedigerHref="@($"/tilbud/{t.TilbudId}")" OnSlett="@(() => { _slettId = t.TilbudId; _slettNavn = t.Tittel; })" /></span>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="prosjekt-pagerad">
+        <span class="prosjekt-pagerad-tekst pa-sum">
+            Viser @((GjeldendeSide - 1) * _perSide + 1)–@Math.Min(GjeldendeSide * _perSide, Filtrert.Count) av @Filtrert.Count · Sum <b>@Kr(Filtrert.Sum(t => t.Sum))</b>
+            <select class="pa-perside" title="Antall per side" value="@_perSide" @onchange="@(async e => { _perSide = int.Parse((string)e.Value!); _side = 1; await VisningPref.SettPerSideAsync(PerSideNokkel, _perSide); })">
+                <option value="10">10 per side</option>
+                <option value="15">15 per side</option>
+                <option value="20">20 per side</option>
+            </select>
+        </span>
+        @if (AntallSider > 1)
+        {
+            <div class="prosjekt-pager">
+                <button type="button" disabled="@(GjeldendeSide <= 1)" @onclick="@(() => _side = GjeldendeSide - 1)"><Icon Name="chevron-down" /></button>
+                @for (var i = 1; i <= AntallSider; i++)
+                {
+                    var side = i;
+                    <button type="button" class="@(side == GjeldendeSide ? "aktiv" : "")" @onclick="@(() => _side = side)">@side</button>
+                }
+                <button type="button" disabled="@(GjeldendeSide >= AntallSider)" @onclick="@(() => _side = GjeldendeSide + 1)"><Icon Name="chevron-down" /></button>
+            </div>
+        }
+    </div>
+}
+</div>
+</div>
+
+<SlettDialog Type="SletteType.Tilbud" Id="_slettId" Navn="@_slettNavn" OnLukk="@(() => _slettId = null)" OnSlettet="@((int id) => _tilbud.RemoveAll(t => t.TilbudId == id))" />
+
+@code {
+    // "godkjent" eller "avslatt"
+    [Parameter, EditorRequired] public string Arkiv { get; set; } = "godkjent";
+
+    private bool ErAvslatt => Arkiv == "avslatt";
+    private EndringsmeldingStatus Status => ErAvslatt ? EndringsmeldingStatus.Avslatt : EndringsmeldingStatus.Godkjent;
+    private string PerSideNokkel => ErAvslatt ? "perside-tilbud-avslatte" : "perside-tilbud-godkjente";
+    private string BreddeNokkel => ErAvslatt ? "avslatte-tilbud-bredde" : "godkjente-tilbud-bredde";
+
+    private static readonly System.Globalization.CultureInfo Kultur = System.Globalization.CultureInfo.GetCultureInfo("nb-NO");
+
+    private sealed class TilbudRad
+    {
+        public int TilbudId { get; set; }
+        public string Tittel { get; set; } = "";
+        public string? KundeNavn { get; set; }
+        public string? ProsjektNavn { get; set; }
+        public string? OpprettetAvNavn { get; set; }
+        public DateTime? SendtDato { get; set; }
+        public decimal? SendtSum { get; set; }
+        // Når kunden godkjente / avslo.
+        public DateTime Dato { get; set; }
+        public decimal Sum { get; set; }
+        public int? AoId { get; set; }
+        public ArbeidsordreStatus? AoStatus { get; set; }
+
+        public int? Svartid => SendtDato is { } s ? Math.Max(0, (Dato.Date - s.Date).Days) : null;
+    }
+
+    private List<TilbudRad> _tilbud = [];
+    private List<TilbudServiceSvar.Svar> _svar = [];
+    private bool _lastet;
+    private bool _full;
+    private bool _visFilter;
+    private string _sok = "";
+    private string _sortering = "nyeste";
+    private int? _ar;
+    private string _fakturaFilter = "alle";
+    private string _kundeFilter = "";
+    private string _opprettetAvFilter = "";
+    private int _perSide = 10;
+    private int _side = 1;
+    private int? _slettId;
+    private string? _slettNavn;
+
+    private int AntallAktiveFiltre =>
+        (_fakturaFilter == "alle" ? 0 : 1) + (_kundeFilter.Length == 0 ? 0 : 1) + (_opprettetAvFilter.Length == 0 ? 0 : 1);
+
+    private List<(int Ar, int Antall)> AlleAr => _tilbud
+        .GroupBy(t => t.Dato.Year)
+        .OrderByDescending(g => g.Key)
+        .Select(g => (g.Key, g.Count()))
+        .ToList();
+
+    private List<TilbudRad> IAr => _tilbud.Where(t => _ar is null || t.Dato.Year == _ar).ToList();
+
+    private List<string> Navn(Func<TilbudRad, string?> velg) => _tilbud
+        .Select(velg)
+        .Where(n => !string.IsNullOrWhiteSpace(n))
+        .Select(n => n!)
+        .Distinct()
+        .OrderBy(n => n, StringComparer.Create(Kultur, true))
+        .ToList();
+
+    private List<TilbudRad> Filtrert
+    {
+        get
+        {
+            var sok = _sok.Trim();
+            IEnumerable<TilbudRad> q = IAr
+                .Where(t => _fakturaFilter switch
+                {
+                    "ikke" => t.AoStatus != ArbeidsordreStatus.Fakturert,
+                    "fakturert" => t.AoStatus == ArbeidsordreStatus.Fakturert,
+                    _ => true
+                })
+                .Where(t => _kundeFilter.Length == 0 || t.KundeNavn == _kundeFilter)
+                .Where(t => _opprettetAvFilter.Length == 0 || t.OpprettetAvNavn == _opprettetAvFilter)
+                .Where(t => sok.Length == 0
+                    || t.Tittel.Contains(sok, StringComparison.CurrentCultureIgnoreCase)
+                    || (t.KundeNavn?.Contains(sok, StringComparison.CurrentCultureIgnoreCase) ?? false)
+                    || (t.ProsjektNavn?.Contains(sok, StringComparison.CurrentCultureIgnoreCase) ?? false)
+                    || t.TilbudId.ToString() == sok.TrimStart('#'));
+            q = _sortering switch
+            {
+                "eldste" => q.OrderBy(t => t.Dato),
+                "sum" => q.OrderByDescending(t => t.Sum),
+                "navn" => q.OrderBy(t => t.Tittel, StringComparer.Create(Kultur, true)),
+                _ => q.OrderByDescending(t => t.Dato)
+            };
+            return q.ToList();
+        }
+    }
+
+    private int AntallSider => Math.Max(1, (int)Math.Ceiling(Filtrert.Count / (double)_perSide));
+    private int GjeldendeSide => Math.Clamp(_side, 1, AntallSider);
+    private List<TilbudRad> Sidevisning => Filtrert.Skip((GjeldendeSide - 1) * _perSide).Take(_perSide).ToList();
+
+    private void TilForsteSide() => _side = 1;
+
+    private static string Kr(decimal v) => v.ToString("N0", Kultur) + " kr";
+
+    private static string Initialer(string navn) => string.Concat(
+        navn.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(d => char.ToUpperInvariant(d[0])));
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync(BreddeNokkel, _full ? "full" : "normal");
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _perSide = await VisningPref.HentPerSideAsync(PerSideNokkel, _perSide);
+        _full = await VisningPref.HentAsync(BreddeNokkel, "normal") == "full";
+
+        var status = Status;
+        _tilbud = await Db.Tilbud
+            .Where(t => t.Prosjekt != null && t.Status == status)
+            .Select(t => new TilbudRad
+            {
+                TilbudId = t.Id,
+                Tittel = t.Tittel,
+                KundeNavn = t.Prosjekt!.Kunde != null ? t.Prosjekt.Kunde.Navn : null,
+                ProsjektNavn = t.Prosjekt.Status == ProsjektStatus.Serviceavtale ? null : t.Prosjekt.Navn,
+                OpprettetAvNavn = t.OpprettetAvNavn,
+                SendtDato = t.SendtDato,
+                SendtSum = t.SendtSum
+            })
+            .ToListAsync();
+
+        _svar = await TilbudServiceSvar.HentAsync(Db);
+        var svarDato = _svar.ToDictionary(s => s.TilbudId, s => s.Dato);
+        var beregnet = await TilbudServiceSvar.BeregnSummerAsync(Db, _tilbud.Where(t => t.SendtSum is null).Select(t => t.TilbudId));
+
+        Dictionary<int, (int Id, ArbeidsordreStatus Status)> ordre = [];
+        if (!ErAvslatt)
+        {
+            var ider = _tilbud.Select(t => (int?)t.TilbudId).ToList();
+            var tilbudIder = _tilbud.Select(t => t.TilbudId).ToList();
+            var hoved = await Db.Arbeidsordre
+                .Where(a => ider.Contains(a.TilbudId))
+                .Select(a => new { a.Id, TilbudId = a.TilbudId!.Value, a.Status, a.FullfortDato })
+                .ToListAsync();
+            var ekstra = await Db.ArbeidsordreTilbud
+                .Where(x => tilbudIder.Contains(x.TilbudId))
+                .Select(x => new { x.Arbeidsordre!.Id, x.TilbudId, x.Arbeidsordre.Status, x.Arbeidsordre.FullfortDato })
+                .ToListAsync();
+            ordre = hoved.Concat(ekstra)
+                .GroupBy(a => a.TilbudId)
+                // Ferdigmeldte/fakturerte først, ellers den nyeste arbeidsordren.
+                .ToDictionary(g => g.Key, g => g
+                    .OrderByDescending(a => a.Status == ArbeidsordreStatus.Fakturert || a.Status == ArbeidsordreStatus.Ferdig)
+                    .ThenByDescending(a => a.FullfortDato).ThenByDescending(a => a.Id)
+                    .Select(a => (a.Id, a.Status)).First());
+        }
+
+        foreach (var t in _tilbud)
+        {
+            t.Dato = svarDato.GetValueOrDefault(t.TilbudId, DateTime.Today);
+            t.Sum = t.SendtSum ?? beregnet.GetValueOrDefault(t.TilbudId);
+            if (ordre.TryGetValue(t.TilbudId, out var ao))
+            {
+                t.AoId = ao.Id;
+                t.AoStatus = ao.Status;
+            }
+        }
+
+        _ar = _tilbud.Any(t => t.Dato.Year == DateTime.Today.Year) ? DateTime.Today.Year : null;
+        _lastet = true;
+    }
+}
