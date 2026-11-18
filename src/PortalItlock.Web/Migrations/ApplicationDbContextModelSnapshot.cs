@@ -1521,6 +1521,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Enhet")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("ErEgendefinert")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("ErForbruksvare")
                         .HasColumnType("INTEGER");
 

@@ -64,6 +64,10 @@ public class Component
     // bare på typen, og produktet velges senere (Spesifiser komponenter / runden).
     public bool ErPlassholder { get; set; }
 
+    // Egendefinert vare lagt rett på en dør (fritekst). Hører bare til den
+    // døra og vises ikke i komponentregisteret eller i varesøket.
+    public bool ErEgendefinert { get; set; }
+
     public bool ILagerstyring { get; set; }
     public int Lagerantall { get; set; }
     public int? Minimumsbeholdning { get; set; }
