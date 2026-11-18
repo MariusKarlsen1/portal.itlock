@@ -196,6 +196,8 @@ builder.Services.AddHttpClient<DatabaseBackupService>(client =>
 });
 builder.Services.AddHostedService<DatabaseBackupBackgroundService>();
 builder.Services.AddHostedService<BlobKolonneOmorganisering>();
+// Flytter filene på varene ut av databasen og over på disk (KomponentFilLager).
+builder.Services.AddHostedService<KomponentFilFlytting>();
 builder.Services.AddSingleton<PdfLogo>();
 builder.Services.AddSingleton<PostnummerService>();
 builder.Services.AddSingleton<PresenceService>();

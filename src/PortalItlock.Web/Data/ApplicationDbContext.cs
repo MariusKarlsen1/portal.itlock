@@ -311,7 +311,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         SynkKodelinjer();
         var varsler = FinnVarsler();
         var komponentEndringer = FinnKomponentEndringer();
-        var resultat = base.SaveChanges(acceptAllChangesOnSuccess);
+        var filer = ForberedKomponentFiler();
+        int resultat;
+        try
+        {
+            resultat = base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+        catch
+        {
+            FullforKomponentFiler(filer, lagret: false);
+            throw;
+        }
+        FullforKomponentFiler(filer, lagret: true);
         if (SkrivKomponentLogg(komponentEndringer))
         {
             try
@@ -335,7 +346,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         SynkKodelinjer();
         var varsler = FinnVarsler();
         var komponentEndringer = FinnKomponentEndringer();
-        var resultat = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        var filer = ForberedKomponentFiler();
+        int resultat;
+        try
+        {
+            resultat = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+        catch
+        {
+            FullforKomponentFiler(filer, lagret: false);
+            throw;
+        }
+        FullforKomponentFiler(filer, lagret: true);
         if (SkrivKomponentLogg(komponentEndringer))
         {
             try
@@ -349,6 +371,146 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         }
         SendVarsler(varsler);
         return resultat;
+    }
+
+    // ---- Filene på varene ligger på disk (Services/KomponentFilLager) ----
+    // Bilde, FDV, montasjeblad og datablad lagres som filer ved siden av
+    // databasen. Ved lagring skrives fila til disk og kolonnen i databasen
+    // står tom; KomponentFilerExtensions.LastFilerAsync leser dem inn igjen.
+    private string? _komponentFilMappe;
+    private bool _komponentFilMappeLest;
+
+    internal string? KomponentFilMappe
+    {
+        get
+        {
+            if (!_komponentFilMappeLest)
+            {
+                _komponentFilMappeLest = true;
+                try
+                {
+                    _komponentFilMappe = Database.IsSqlite() ? PortalItlock.Web.Services.KomponentFilLager.Mappe(Database.GetConnectionString()) : null;
+                }
+                catch (InvalidOperationException)
+                {
+                    _komponentFilMappe = null;
+                }
+            }
+            return _komponentFilMappe;
+        }
+    }
+
+    // Kolonne "*" = hele varen er slettet.
+    private sealed record FilEndring(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry Entry, string Kolonne, byte[]? Data, string? Midlertidig, bool EtterLagring);
+
+    private List<FilEndring> ForberedKomponentFiler()
+    {
+        var liste = new List<FilEndring>();
+        if (KomponentFilMappe is not { } mappe)
+        {
+            return liste;
+        }
+
+        foreach (var e in ChangeTracker.Entries<ComponentFiler>().ToList())
+        {
+            if (e.State is not (EntityState.Modified or EntityState.Added))
+            {
+                continue;
+            }
+
+            // Ny vare: Id finnes først etter lagring, så fila skrives etterpå.
+            var nyVare = e.State == EntityState.Added && e.Property(nameof(ComponentFiler.Id)).IsTemporary;
+            foreach (var k in PortalItlock.Web.Services.KomponentFilLager.Kolonner)
+            {
+                var prop = e.Property(k);
+                var data = (byte[]?)prop.CurrentValue;
+                if (nyVare)
+                {
+                    if (data is not null)
+                    {
+                        liste.Add(new FilEndring(e, k, data, null, EtterLagring: true));
+                    }
+                    continue;
+                }
+
+                if (e.State == EntityState.Modified && !prop.IsModified)
+                {
+                    continue;
+                }
+
+                // Lagt til på en vare som fantes (filene var ikke lastet): bare
+                // filene som er satt skrives, de andre blir liggende på disken.
+                if (e.State == EntityState.Added && data is null)
+                {
+                    continue;
+                }
+
+                var tmp = data is null ? null : PortalItlock.Web.Services.KomponentFilLager.SkrivMidlertidig(mappe, e.Entity.Id, k, data);
+                liste.Add(new FilEndring(e, k, data, tmp, EtterLagring: false));
+                prop.CurrentValue = null;
+            }
+        }
+
+        foreach (var e in ChangeTracker.Entries<Component>().Where(e => e.State == EntityState.Deleted))
+        {
+            liste.Add(new FilEndring(e, "*", null, null, false));
+        }
+        return liste;
+    }
+
+    private void FullforKomponentFiler(List<FilEndring> liste, bool lagret)
+    {
+        if (liste.Count == 0 || KomponentFilMappe is not { } mappe)
+        {
+            return;
+        }
+
+        foreach (var f in liste)
+        {
+            if (f.Kolonne == "*")
+            {
+                if (lagret)
+                {
+                    PortalItlock.Web.Services.KomponentFilLager.SlettVare(mappe, ((Component)f.Entry.Entity).Id);
+                }
+                continue;
+            }
+
+            var prop = f.Entry.Property(f.Kolonne);
+            if (!lagret)
+            {
+                // Ingenting ble lagret: fila i minnet settes tilbake, så neste forsøk lagrer den.
+                if (f.Midlertidig is not null)
+                {
+                    PortalItlock.Web.Services.KomponentFilLager.SlettStille(f.Midlertidig);
+                }
+                if (!f.EtterLagring)
+                {
+                    prop.CurrentValue = f.Data;
+                }
+                continue;
+            }
+
+            var id = ((ComponentFiler)f.Entry.Entity).Id;
+            if (f.EtterLagring)
+            {
+                PortalItlock.Web.Services.KomponentFilLager.Skriv(mappe, id, f.Kolonne, f.Data!);
+                Database.ExecuteSqlRaw($"UPDATE \"Components\" SET \"{f.Kolonne}\" = NULL WHERE \"Id\" = {id}");
+            }
+            else if (f.Midlertidig is not null)
+            {
+                PortalItlock.Web.Services.KomponentFilLager.Flytt(f.Midlertidig, mappe, id, f.Kolonne);
+            }
+            else
+            {
+                PortalItlock.Web.Services.KomponentFilLager.Slett(mappe, id, f.Kolonne);
+            }
+
+            // Fila er fortsatt med på varen i minnet, uten å regnes som endret.
+            prop.CurrentValue = f.Data;
+            prop.OriginalValue = f.Data;
+            prop.IsModified = false;
+        }
     }
 
     // ---- Komponentlogg på dører (DorKomponentLogg) ----

@@ -159,6 +159,22 @@ public sealed class OrganisasjonKopiService(OrganisasjonBackupService backup, IL
             await Kjor(con, "DETACH DATABASE kilde;");
         }
 
+        // Filene på varene ligger på disk: kopier dem til de nye varene.
+        if (KomponentFilLager.Mappe(kildeCs) is { } fraMappe && KomponentFilLager.Mappe(mottakerCs) is { } tilMappe)
+        {
+            foreach (var (gammel, ny) in motor.Kart("Components"))
+            {
+                try
+                {
+                    KomponentFilLager.KopierVare(fraMappe, (int)gammel, tilMappe, (int)ny);
+                }
+                catch (Exception ex)
+                {
+                    logger?.LogWarning(ex, "Kunne ikke kopiere filene til vare {Id}", gammel);
+                }
+            }
+        }
+
         var tabeller = motor.Teller.Where(x => x.Value > 0).OrderBy(x => x.Key).Select(x => (x.Key, x.Value)).ToList();
         return new(true, $"Kopiert {tabeller.Sum(x => x.Value)} rader fra {kildeNavn}.", tabeller);
     }
@@ -279,6 +295,7 @@ public sealed class OrganisasjonKopiService(OrganisasjonBackupService backup, IL
         }
 
         private Dictionary<long, long> Map(string t) => _map.TryGetValue(t, out var m) ? m : _map[t] = [];
+        public IReadOnlyDictionary<long, long> Kart(string t) => Map(t);
         private HashSet<long> Nye(string t) => _nye.TryGetValue(t, out var m) ? m : _nye[t] = [];
 
         /// Kopierer rader fra kilde.tabell (alle, eller de med Id i utvalget).

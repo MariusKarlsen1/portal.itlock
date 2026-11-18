@@ -9,10 +9,12 @@ using PortalItlock.Web.Models;
 namespace PortalItlock.Web.Services;
 
 // Backup per organisasjon. Hver organisasjon er én SQLite-fil som også
-// inneholder bilder og vedlegg, så én kopi er hele portalen deres.
+// inneholder bilder og vedlegg, så én kopi er hele portalen deres. Filene på
+// varene ligger på disk (KomponentFilLager) og bakes inn i kopien.
 //
 // Slik tas en kopi:
-// 1. VACUUM INTO lager en konsistent kopi mens portalen er i bruk.
+// 1. VACUUM INTO lager en konsistent kopi mens portalen er i bruk, og filene
+//    på varene legges inn i kopien.
 // 2. Kopien kontrolleres med PRAGMA integrity_check.
 // 3. Den komprimeres (gzip) og krypteres (AES-256-GCM, se BackupKryptering).
 // 4. Den lastes opp til lagringen (Azure eller mappe på serveren).
@@ -124,6 +126,11 @@ public class OrganisasjonBackupService(
                 cmd.CommandText = "VACUUM INTO $mal";
                 cmd.Parameters.AddWithValue("$mal", kopi);
                 await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            if (tenant is not null)
+            {
+                await KomponentFilLager.BakInnAsync(kopi, KomponentFilLager.Mappe(tenant.ConnectionString), ct);
             }
 
             backup.DatabaseStorrelse = new FileInfo(kopi).Length;
@@ -365,6 +372,11 @@ public class OrganisasjonBackupService(
             }
 
             File.Copy(hentet, mal, overwrite: true);
+
+            // Kopien har filene på varene inne i seg. Filene på disken hører til
+            // dagens data, så de fjernes; KomponentFilFlytting flytter kopiens
+            // filer ut igjen. Til da leses de fra databasen.
+            KomponentFilLager.TomMappe(KomponentFilLager.Mappe(tenant.ConnectionString));
 
             // En eldre kopi kan mangle nyere tabeller.
             var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options;

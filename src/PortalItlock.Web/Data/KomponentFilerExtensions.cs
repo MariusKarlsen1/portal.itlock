@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PortalItlock.Web.Models;
+using PortalItlock.Web.Services;
 
 namespace PortalItlock.Web.Data;
 
@@ -23,7 +24,58 @@ public static class KomponentFilerExtensions
             await db.Entry(komponent).Reference(c => c.Filer).LoadAsync();
         }
 
+        FyllFraDisk(db, komponent);
         return komponent;
+    }
+
+    // Filene ligger på disk (KomponentFilLager). De legges inn på varen som om
+    // de var lest fra databasen - uendret, så de ikke lagres på nytt.
+    private static void FyllFraDisk(ApplicationDbContext db, Component komponent)
+    {
+        if (db.KomponentFilMappe is not { } mappe || komponent.Id <= 0)
+        {
+            return;
+        }
+
+        var fraDisk = KomponentFilLager.Kolonner
+            .Select(k => (Kolonne: k, Data: KomponentFilLager.Les(mappe, komponent.Id, k)))
+            .Where(x => x.Data is not null)
+            .ToList();
+        if (fraDisk.Count == 0)
+        {
+            return;
+        }
+
+        var sporet = db.Entry(komponent).State != EntityState.Detached;
+        if (komponent.Filer is null)
+        {
+            var filer = new ComponentFiler { Id = komponent.Id };
+            if (sporet)
+            {
+                db.Entry(filer).State = EntityState.Unchanged;
+            }
+            komponent.Filer = filer;
+        }
+
+        var e = sporet ? db.Entry(komponent.Filer) : null;
+        foreach (var (kolonne, data) in fraDisk)
+        {
+            if (e is not null)
+            {
+                var prop = e.Property(kolonne);
+                if (prop.CurrentValue is not null)
+                {
+                    continue;
+                }
+                prop.CurrentValue = data;
+                prop.OriginalValue = data;
+                prop.IsModified = false;
+            }
+            else
+            {
+                typeof(ComponentFiler).GetProperty(kolonne)!.SetValue(komponent.Filer, data);
+            }
+        }
     }
 
     public static async Task<Component?> LastFilerAsync(this ApplicationDbContext db, Task<Component?> henting)
@@ -39,7 +91,18 @@ public static class KomponentFilerExtensions
             throw new ArgumentException($"Ukjent filkolonne «{kolonne}».", nameof(kolonne));
         }
 
-        return db.RaderMedBlobAsync("Components", kolonne, ider);
+        return MedFilAsync(db, kolonne, ider);
+    }
+
+    // I databasen (ikke flyttet ennå) eller på disk.
+    private static async Task<HashSet<int>> MedFilAsync(ApplicationDbContext db, string kolonne, IReadOnlyCollection<int>? ider)
+    {
+        var svar = await db.RaderMedBlobAsync("Components", kolonne, ider);
+        if (db.KomponentFilMappe is { } mappe)
+        {
+            svar.UnionWith(KomponentFilLager.IderMedFil(mappe, kolonne, ider));
+        }
+        return svar;
     }
 
     // Id-ene til radene der BLOB-kolonnen har innhold. Tabell/kolonne kommer

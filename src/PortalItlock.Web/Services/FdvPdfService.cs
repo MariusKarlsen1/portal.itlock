@@ -30,7 +30,10 @@ public class FdvPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantCont
             .Include(c => c.FdvDokumenter)
             .OrderBy(c => c.Navn)
             .ToListAsync();
-        await db.Set<ComponentFiler>().Where(f => ider.Contains(f.Id)).LoadAsync();
+        foreach (var k in komponenter)
+        {
+            await db.LastFilerAsync(k);
+        }
         return komponenter;
     }
 

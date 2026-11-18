@@ -58,6 +58,9 @@ public class DatabaseBackupService(ApplicationDbContext db, HttpClient http, ICo
             File.Copy(dbPath, tempCopy, overwrite: true);
             try
             {
+                // Filene på varene ligger på disk - legg dem inn i kopien.
+                await KomponentFilLager.BakInnAsync(tempCopy, KomponentFilLager.Mappe(connectionString));
+                SqliteConnection.ClearAllPools();
                 raw = await File.ReadAllBytesAsync(tempCopy);
             }
             finally
