@@ -109,6 +109,14 @@ public class BlobKolonneOmorganisering(IServiceScopeFactory scopeFactory, ILogge
             return;
         }
 
+        // Triggere fra en jobb som ble avbrutt, uten "__ny"-kolonnene de skriver
+        // til, ville stoppet all lagring av filer i tabellen. Fjern dem.
+        if (!info.Keys.Any(k => k.EndsWith("__ny", StringComparison.Ordinal)))
+        {
+            await KjorAsync(con, $"DROP TRIGGER IF EXISTS \"omorg_{tabell}_u\";", ct);
+            await KjorAsync(con, $"DROP TRIGGER IF EXISTS \"omorg_{tabell}_i\";", ct);
+        }
+
         // Rydd bort gamle kolonner fra et tidligere bytte (frigjør plass).
         foreach (var gml in info.Keys.Where(k => k.Contains("__gml", StringComparison.Ordinal)).ToList())
         {
@@ -124,6 +132,18 @@ public class BlobKolonneOmorganisering(IServiceScopeFactory scopeFactory, ILogge
             .ToList();
         if (kolonner.Count == 0)
         {
+            return;
+        }
+
+        // Kopieringen trenger like mye ledig plass som filene i kolonnene tar.
+        // Er det ikke nok, hoppes den over: ellers fylles disken, og da kan
+        // ingen lagre noe i portalen. Neste oppstart prøver igjen.
+        var behov = await BlobStorrelseAsync(con, tabell, kolonner.Where(k => !info.ContainsKey(k + "__ny")).ToList(), ct);
+        var ledig = LedigPlass(tilkobling);
+        if (ledig is long l && l < behov + behov / 5 + 200_000_000)
+        {
+            logger.LogWarning("Blob-omorganisering av {Tabell} hoppet over: trenger ca. {Behov} MB, bare {Ledig} MB ledig på disken.",
+                tabell, behov / 1_000_000, l / 1_000_000);
             return;
         }
 
@@ -217,6 +237,40 @@ public class BlobKolonneOmorganisering(IServiceScopeFactory scopeFactory, ILogge
 
             await KjorAsync(con, $"UPDATE \"{tabell}\" SET \"{kolonne}\" = NULL WHERE \"Id\" IN ({string.Join(",", ider)});", ct);
             await Task.Delay(25, ct);
+        }
+    }
+
+    private static async Task<long> BlobStorrelseAsync(SqliteConnection con, string tabell, List<string> kolonner, CancellationToken ct)
+    {
+        if (kolonner.Count == 0)
+        {
+            return 0;
+        }
+
+        // length() på en BLOB leser bare posthodet, ikke selve fila.
+        await using var cmd = con.CreateCommand();
+        cmd.CommandText = $"SELECT {string.Join(" + ", kolonner.Select(k => $"COALESCE(SUM(length(\"{k}\")), 0)"))} FROM \"{tabell}\";";
+        cmd.CommandTimeout = 120;
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct) ?? 0L);
+    }
+
+    // Ledig plass på disken databasefila ligger på. Null om det ikke kan leses.
+    internal static long? LedigPlass(string tilkobling)
+    {
+        try
+        {
+            var fil = new SqliteConnectionStringBuilder(tilkobling).DataSource;
+            if (string.IsNullOrWhiteSpace(fil) || fil == ":memory:")
+            {
+                return null;
+            }
+
+            var mappe = Path.GetDirectoryName(Path.GetFullPath(fil));
+            return mappe is null ? null : new DriveInfo(mappe).AvailableFreeSpace;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 
