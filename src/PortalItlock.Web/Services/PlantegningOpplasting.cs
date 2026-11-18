@@ -73,12 +73,21 @@ public static class PlantegningOpplasting
         await db.SaveChangesAsync();
     }
 
+    // «Tegning (2).pdf» fra nedlastinger er samme tegning som «Tegning.pdf».
+    public static string UtenKopiNummer(string navn) =>
+        System.Text.RegularExpressions.Regex.Replace(navn, @"\s*\(\d{1,3}\)\s*$", "").Trim();
+
+    // Sammenligner navn uten store/små bokstaver, ekstra mellomrom og kopinummer.
+    public static string Nokkel(string navn) =>
+        System.Text.RegularExpressions.Regex.Replace(UtenKopiNummer(TekstReparasjon.Fiks(navn).Trim()), @"\s+", " ").ToLowerInvariant();
+
     public static async Task<Resultat> LagreAsync(ApplicationDbContext db, int prosjektId, string navn,
         string? byggetrinn, string filnavn, string contentType, byte[] data)
     {
-        var rent = TekstReparasjon.Fiks(navn).Trim();
+        var rent = UtenKopiNummer(TekstReparasjon.Fiks(navn).Trim());
+        var nokkel = Nokkel(rent);
         var eksisterende = (await db.Plantegninger.Where(p => p.ProsjektId == prosjektId).ToListAsync())
-            .Where(p => string.Equals(p.Navn.Trim(), rent, StringComparison.OrdinalIgnoreCase))
+            .Where(p => Nokkel(p.Navn) == nokkel)
             .OrderByDescending(p => p.Id)
             .FirstOrDefault();
 
