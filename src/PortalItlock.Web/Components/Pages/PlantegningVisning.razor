@@ -45,6 +45,9 @@ else if (_plantegning is not null)
                         <button type="button" class="@(_visBrann ? "pa pa-brann" : "")" @onclick="@(() => { _visBrann = true; _visRevisjonId = null; })">Branntegning</button>
                     </div>
                 }
+                <button type="button" class="plan-ny-rev" @onclick="@(() => { _visNyRevisjon = true; _nyRevFeil = null; })" title="Erstatt tegningen med en ny versjon. Dører og utstyr står på samme plass.">
+                    <Icon Name="upload" />Last opp ny revisjon
+                </button>
                 <button type="button" class="plan-finn-dorer" @onclick="@(() => _visDorFinner = true)" title="Les dørmerker, høyre/venstre og rom fra PDF-en og opprett dørene">
                     <Icon Name="upload" />Les dører fra PDF
                 </button>
@@ -85,6 +88,34 @@ else if (_plantegning is not null)
         @if (!string.IsNullOrEmpty(_dorFinnerMelding))
         {
             <p class="plan-rev-hint"><Icon Name="check" />@_dorFinnerMelding <button type="button" @onclick="@(() => _dorFinnerMelding = null)">OK</button></p>
+        }
+
+        @if (_visNyRevisjon)
+        {
+            <div class="nr-bak" @onclick="LukkNyRevisjon"></div>
+            <div class="nr-dlg" role="dialog" aria-modal="true" aria-label="Last opp ny revisjon">
+                <h3>Last opp ny revisjon</h3>
+                <p class="nr-hjelp">Erstatter tegningen «@_plantegning.Navn». Nå: Rev. @_plantegning.Revisjon.</p>
+                <ul class="nr-liste">
+                    <li><Icon Name="check" />Blir Rev. @(_plantegning.Revisjon + 1). Rev. @_plantegning.Revisjon arkiveres og kan åpnes igjen.</li>
+                    <li><Icon Name="check" />Dører, utstyr og prikker står på samme plass.</li>
+                    <li><Icon Name="check" />Tegningen lagres akkurat som du laster den opp. Filnavnet spiller ingen rolle.</li>
+                </ul>
+                @if (!string.IsNullOrEmpty(_nyRevFeil))
+                {
+                    <p class="form-error">@_nyRevFeil</p>
+                }
+                <div class="nr-knapper">
+                    <button type="button" class="nr-kn" @onclick="LukkNyRevisjon" disabled="@_lasterNyRev">Avbryt</button>
+                    <label class="nr-kn nr-kn-p @(_lasterNyRev ? "av" : "")">
+                        <Icon Name="upload" />@(_lasterNyRev ? "Laster opp …" : $"Velg fil og last opp Rev. {_plantegning.Revisjon + 1}")
+                        @if (!_lasterNyRev)
+                        {
+                            <InputFile OnChange="LastOppNyRevisjon" accept="image/*,.pdf,application/pdf" />
+                        }
+                    </label>
+                </div>
+            </div>
         }
 
         @if (_visBranntegningDlg)
@@ -328,6 +359,56 @@ else if (_plantegning is not null)
     private bool _harBrann;
     private bool _visBrann;
     private bool _visBranntegningDlg;
+
+    // Ny revisjon lastet opp rett på denne tegningen (uavhengig av filnavn).
+    private bool _visNyRevisjon;
+    private bool _lasterNyRev;
+    private string? _nyRevFeil;
+
+    private void LukkNyRevisjon()
+    {
+        if (!_lasterNyRev)
+        {
+            _visNyRevisjon = false;
+        }
+    }
+
+    private async Task LastOppNyRevisjon(Microsoft.AspNetCore.Components.Forms.InputFileChangeEventArgs e)
+    {
+        if (_plantegning is null)
+        {
+            return;
+        }
+        _nyRevFeil = null;
+        _lasterNyRev = true;
+        try
+        {
+            var lest = await PlantegningOpplasting.LesAsync(e.File);
+            if (lest.Data is null)
+            {
+                _nyRevFeil = lest.Feil;
+                return;
+            }
+            await PlantegningOpplasting.NyRevisjonAsync(Db, _plantegning, e.File.Name, lest.ContentType, lest.Data);
+            _revisjoner = await Db.PlantegningRevisjoner.AsNoTracking()
+                .Where(r => r.PlantegningId == _plantegning.Id)
+                .OrderByDescending(r => r.Revisjon)
+                .Select(r => new RevisjonValg(r.Id, r.Revisjon, r.OpplastetDato, r.ErstattetDato))
+                .ToListAsync();
+            _visRevisjonId = null;
+            _visBrann = false;
+            _visNyRevisjon = false;
+            _dorFinnerMelding = $"Rev. {_plantegning.Revisjon} er lastet opp. Dører og utstyr står på samme plass.";
+        }
+        catch (Exception)
+        {
+            _nyRevFeil = "Klarte ikke å lagre den nye revisjonen. Prøv igjen.";
+        }
+        finally
+        {
+            _lasterNyRev = false;
+        }
+    }
     private bool _visDorFinner;
     private string? _dorFinnerMelding;
 

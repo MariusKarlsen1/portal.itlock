@@ -81,6 +81,30 @@ public static class PlantegningOpplasting
     public static string Nokkel(string navn) =>
         System.Text.RegularExpressions.Regex.Replace(UtenKopiNummer(TekstReparasjon.Fiks(navn).Trim()), @"\s+", " ").ToLowerInvariant();
 
+    // Ny revisjon av en bestemt tegning: den gjeldende filen arkiveres som
+    // revisjon, den nye lagres akkurat som den er, og dører og utstyr blir
+    // stående (posisjonene er i prosent av tegningen).
+    public static async Task NyRevisjonAsync(ApplicationDbContext db, Plantegning tegning,
+        string filnavn, string contentType, byte[] data)
+    {
+        await db.Entry(tegning).Reference(p => p.Fil).LoadAsync();
+        db.PlantegningRevisjoner.Add(new PlantegningRevisjon
+        {
+            PlantegningId = tegning.Id,
+            Revisjon = tegning.Revisjon,
+            Filnavn = tegning.Filnavn,
+            ContentType = tegning.ContentType,
+            Data = tegning.Data,
+            OpplastetDato = tegning.RevidertDato ?? tegning.OpprettetDato,
+        });
+        tegning.Data = data;
+        tegning.Filnavn = filnavn;
+        tegning.ContentType = contentType;
+        tegning.Revisjon++;
+        tegning.RevidertDato = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
     public static async Task<Resultat> LagreAsync(ApplicationDbContext db, int prosjektId, string navn,
         string? byggetrinn, string filnavn, string contentType, byte[] data)
     {
@@ -93,22 +117,7 @@ public static class PlantegningOpplasting
 
         if (eksisterende is not null)
         {
-            await db.Entry(eksisterende).Reference(p => p.Fil).LoadAsync();
-            db.PlantegningRevisjoner.Add(new PlantegningRevisjon
-            {
-                PlantegningId = eksisterende.Id,
-                Revisjon = eksisterende.Revisjon,
-                Filnavn = eksisterende.Filnavn,
-                ContentType = eksisterende.ContentType,
-                Data = eksisterende.Data,
-                OpplastetDato = eksisterende.RevidertDato ?? eksisterende.OpprettetDato,
-            });
-            eksisterende.Data = data;
-            eksisterende.Filnavn = filnavn;
-            eksisterende.ContentType = contentType;
-            eksisterende.Revisjon++;
-            eksisterende.RevidertDato = DateTime.UtcNow;
-            await db.SaveChangesAsync();
+            await NyRevisjonAsync(db, eksisterende, filnavn, contentType, data);
             return new Resultat(eksisterende, true);
         }
 
