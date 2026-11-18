@@ -17,6 +17,7 @@ public static class Oppdateringer
         new("1.2", new DateOnly(2026, 11, 18),
         [
             new(Type.Nytt, "layers", "Ny revisjon av plantegning", "Egen knapp inne på tegningen. Dørene står der de sto."),
+            new(Type.Nytt, "tag", "Fast timepris på kunden", "Settes på kundekortet og fylles inn på nye tilbud."),
             new(Type.Nytt, "sparkle", "Hva er nytt", "Etter hver oppdatering ser du de viktigste endringene her."),
             new(Type.Bedre, "zap", "Raskere portal", "Varebilder og dokumenter lagres smartere."),
         ]),
