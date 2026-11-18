@@ -5,6 +5,9 @@ public class Nokkelsystem
     public int Id { get; set; }
     public required string Systemnummer { get; set; }
 
+    // Kunden i kunderegisteret, om systemet er koblet til en. Kundenavn
+    // beholdes som tekst (vises i lister og på eldre systemer uten kobling).
+    public int? KundeId { get; set; }
     public string? Kundenavn { get; set; }
     public string? Adresse { get; set; }
     public string? Postnr { get; set; }

@@ -9,6 +9,7 @@
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
 @inject PortalItlock.Web.Services.VisningPreferanseService VisningPref
+@inject PortalItlock.Web.Services.PostnummerService Postnummer
 
 <PageTitle>@(Id.HasValue ? $"System {_form.Systemnummer}" : "Nytt system")</PageTitle>
 
@@ -355,6 +356,9 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        _kunder = await Db.Kunder.AsNoTracking().OrderBy(k => k.Navn)
+            .Select(k => new KundeValg(k.Id, k.Navn, k.Adresse, k.Postnr, k.Sted, k.Kontaktperson, k.Telefon, k.Epost))
+            .ToListAsync();
         _full = await VisningPref.HentAsync("systemkort-bredde", "normal") == "full";
     }
 
@@ -1236,11 +1240,48 @@ else
             <section class="k-rk">
                 <h3>Adresse og kontakt</h3>
                 <div class="k-rk-f">
-                    <label class="k-rk-hel">Kunde / bedrift<input @bind="_form.Kundenavn" /></label>
-                    <label>Adresse<input @bind="_form.Adresse" /></label>
-                    <label>Post nr<input @bind="_form.Postnr" /></label>
-                    <label>Sted<input @bind="_form.Sted" /></label>
-                    <label>Kontaktperson<input @bind="_form.Kontaktperson" /></label>
+                    <label class="k-rk-hel">
+                        Kunde / bedrift
+                        <select value="@(_form.KundeId?.ToString() ?? "")" @onchange="VelgKunde">
+                            <option value="">Ikke valgt</option>
+                            @foreach (var k in _kunder)
+                            {
+                                <option value="@k.Id">@k.Navn@(string.IsNullOrWhiteSpace(k.Sted) ? "" : $" · {k.Sted}")</option>
+                            }
+                        </select>
+                    </label>
+                    @if (_form.KundeId is null && !string.IsNullOrWhiteSpace(_form.Kundenavn))
+                    {
+                        <label class="k-rk-hel">Kundenavn (ikke i kunderegisteret)<input @bind="_form.Kundenavn" /></label>
+                    }
+                    <label>Adresse<AdresseFelt @bind-Value="_form.Adresse" Valgt="VelgAdresse" Placeholder="F.eks. Gartnerveien 2" /></label>
+                    <label>Post nr<input @bind="_form.Postnr" @bind:after="OppdaterStedFraPostnr" inputmode="numeric" /></label>
+                    <label>Sted<input @bind="_form.Sted" @bind:after="OppdaterPostnrFraSted" /></label>
+                    @if (_kontakter.Count > 0 && !_annenKontakt)
+                    {
+                        <label>
+                            Kontaktperson
+                            <select value="@(_form.Kontaktperson ?? "")" @onchange="VelgKontakt">
+                                <option value="">Velg kontaktperson</option>
+                                @foreach (var k in _kontakter)
+                                {
+                                    <option value="@k.Navn">@k.Navn@(string.IsNullOrWhiteSpace(k.Rolle) ? "" : $" ({k.Rolle})")</option>
+                                }
+                                <option value="__annen">Annen person …</option>
+                            </select>
+                        </label>
+                    }
+                    else
+                    {
+                        <label>
+                            Kontaktperson
+                            <input @bind="_form.Kontaktperson" />
+                            @if (_kontakter.Count > 0)
+                            {
+                                <button type="button" class="k-velg-kunde" @onclick="() => _annenKontakt = false">Velg fra kunden</button>
+                            }
+                        </label>
+                    }
                     <label>Telefon<input @bind="_form.Telefon" /></label>
                     <label>E-post<input @bind="_form.Epost" /></label>
                 </div>
@@ -1266,6 +1307,108 @@ else
             }
         </div>;
     private Nokkelsystem _form = new() { Systemnummer = "" };
+
+    // ---------- Kunde, adresse og kontaktperson (som på prosjekt) ----------
+    private sealed record KundeValg(int Id, string Navn, string? Adresse, string? Postnr, string? Sted, string? Kontaktperson, string? Telefon, string? Epost);
+    private sealed record KontaktValg(string Navn, string? Rolle, string? Telefon, string? Epost);
+    private List<KundeValg> _kunder = [];
+    private List<KontaktValg> _kontakter = [];
+    private bool _annenKontakt;
+
+    // Velger man en kunde, fylles navn, adresse og hovedkontakt ut fra kundekortet.
+    private async Task VelgKunde(ChangeEventArgs e)
+    {
+        _form.KundeId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        if (_kunder.FirstOrDefault(k => k.Id == _form.KundeId) is not { } kunde)
+        {
+            _form.Kundenavn = null;
+            await LastKontakter();
+            return;
+        }
+
+        _form.Kundenavn = kunde.Navn;
+        if (!string.IsNullOrWhiteSpace(kunde.Adresse) || !string.IsNullOrWhiteSpace(kunde.Postnr))
+        {
+            _form.Adresse = kunde.Adresse;
+            _form.Postnr = kunde.Postnr;
+            _form.Sted = kunde.Sted;
+        }
+        _form.Kontaktperson = kunde.Kontaktperson;
+        _form.Telefon = kunde.Telefon;
+        _form.Epost = kunde.Epost;
+        await LastKontakter();
+    }
+
+    // Kundens hovedkontakt + kontaktpersoner fra kundekortet.
+    private async Task LastKontakter()
+    {
+        _kontakter = [];
+        if (_form.KundeId is int kid && _kunder.FirstOrDefault(k => k.Id == kid) is { } kunde)
+        {
+            if (!string.IsNullOrWhiteSpace(kunde.Kontaktperson))
+            {
+                _kontakter.Add(new(kunde.Kontaktperson.Trim(), "Hovedkontakt", kunde.Telefon, kunde.Epost));
+            }
+            var personer = await Db.KundeKontaktpersoner.AsNoTracking().Where(k => k.KundeId == kid).OrderBy(k => k.Navn).ToListAsync();
+            foreach (var pr in personer)
+            {
+                if (!string.IsNullOrWhiteSpace(pr.Navn) && !_kontakter.Any(k => string.Equals(k.Navn, pr.Navn.Trim(), StringComparison.OrdinalIgnoreCase)))
+                {
+                    _kontakter.Add(new(pr.Navn.Trim(), pr.Rolle, pr.Telefon, pr.Epost));
+                }
+            }
+        }
+        // Står det en person som ikke finnes på kunden, vises fritekstfeltet så den ikke forsvinner.
+        _annenKontakt = !string.IsNullOrWhiteSpace(_form.Kontaktperson)
+            && !_kontakter.Any(k => string.Equals(k.Navn, _form.Kontaktperson.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void VelgKontakt(ChangeEventArgs e)
+    {
+        var verdi = e.Value?.ToString() ?? "";
+        if (verdi == "__annen")
+        {
+            _annenKontakt = true;
+            _form.Kontaktperson = null;
+            return;
+        }
+        if (string.IsNullOrEmpty(verdi))
+        {
+            _form.Kontaktperson = null;
+            return;
+        }
+        _form.Kontaktperson = verdi;
+        if (_kontakter.FirstOrDefault(x => x.Navn == verdi) is { } k)
+        {
+            _form.Telefon = k.Telefon;
+            _form.Epost = k.Epost;
+        }
+    }
+
+    // Adresse fra Kartverket fyller også postnr og sted.
+    private void VelgAdresse(PortalItlock.Web.Services.AdresseTreff t)
+    {
+        _form.Adresse = t.Adresse;
+        _form.Postnr = t.Postnr;
+        _form.Sted = t.Sted;
+    }
+
+    private void OppdaterPostnrFraSted()
+    {
+        if (Postnummer.SlaOppPostnr(_form.Sted) is { } nr
+            && !string.Equals(Postnummer.SlaOpp(_form.Postnr), _form.Sted?.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            _form.Postnr = nr;
+        }
+    }
+
+    private void OppdaterStedFraPostnr()
+    {
+        if (Postnummer.SlaOpp(_form.Postnr) is { } sted)
+        {
+            _form.Sted = sted;
+        }
+    }
     private List<Rekvirent> _rekvirenter = [];
     private List<NokkelKvittering> _kvitteringer = [];
     private List<NokkelKvittering> _nyeKvitteringer = [];
@@ -1356,6 +1499,13 @@ else
             _kvitteringer = existing.Kvitteringer;
             _vedlegg = existing.Vedlegg;
             _opprinneligNotater = existing.Notater;
+            // Eldre systemer har bare kundenavnet: kobles til kunden med samme navn.
+            if (existing.KundeId is null && !string.IsNullOrWhiteSpace(existing.Kundenavn)
+                && _kunder.Where(k => string.Equals(k.Navn.Trim(), existing.Kundenavn.Trim(), StringComparison.OrdinalIgnoreCase)).ToList() is [var treff])
+            {
+                existing.KundeId = treff.Id;
+            }
+            await LastKontakter();
             await LastHendelserAsync();
         }
         else

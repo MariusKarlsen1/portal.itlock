@@ -5162,6 +5162,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Kontaktperson")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("KundeId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Kundenavn")
                         .HasColumnType("TEXT");
 
