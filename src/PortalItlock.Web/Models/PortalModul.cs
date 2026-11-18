@@ -312,7 +312,7 @@ public static class PortalModulRegister
             "Salg, kontantfaktura og oppgjør",
             [
                 new LenkeGruppe("Moduler", [
-                    new Lenke("Kassa", "Salg med kort eller kontant, kontantfaktura, dagsoppgjør og bankavstemming", "kassa", "receipt", null, ModulTilgang.Alle, KunIMeny: true, KreverModul: TilleggsModuler.Kassa),
+                    new Lenke("Kassa", "Salg med kort eller kontant, kontantfaktura, dagsoppgjør og bankavstemming", "kassa", "receipt", null, ModulTilgang.FraProsjektleder, KunIMeny: true, KreverModul: TilleggsModuler.Kassa),
                 ]),
             ]),
 

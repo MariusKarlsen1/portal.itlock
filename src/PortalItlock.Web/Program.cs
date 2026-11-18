@@ -1312,7 +1312,7 @@ app.MapGet("/kassa/salg/{id:int}/kvittering", async (int id, ApplicationDbContex
     var firma = KassaDokument.FraTenant(tenant.Current, await kassa.OppsettAsync());
     var tittel = (s.Type == KasseSalgType.Kreditnota ? "Kreditnota " : "Kontantfaktura ") + s.Nummer;
     return Results.Content(KassaDokument.UtskriftSide(tittel, KassaDokument.Lapp(s, firma, gjelder)), "text/html; charset=utf-8");
-}).RequireAuthorization();
+}).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
 
 app.MapGet("/kassa/dagsoppgjor/{id:int}/rapport", async (int id, ApplicationDbContext db, KassaService kassa, ITenantContext tenant) =>
 {
@@ -1325,7 +1325,7 @@ app.MapGet("/kassa/dagsoppgjor/{id:int}/rapport", async (int id, ApplicationDbCo
     var linjer = await db.KasseSalgLinjer.AsNoTracking().Where(l => l.KasseSalg!.DagsoppgjorId == id).ToListAsync();
     var firma = KassaDokument.FraTenant(tenant.Current, await kassa.OppsettAsync());
     return Results.Content(KassaDokument.UtskriftSide($"Dagsrapport {o.Lukket:dd.MM.yyyy}", KassaDokument.Dagsrapport(o, firma, KassaService.MvaFordeling(linjer))), "text/html; charset=utf-8");
-}).RequireAuthorization();
+}).RequireAuthorization(p => p.RequireRole("Admin", "Prosjektleder"));
 
 app.MapGet("/kassa/salg.csv", async (int ar, int mnd, ApplicationDbContext db) =>
 {

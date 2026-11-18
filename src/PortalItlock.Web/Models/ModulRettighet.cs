@@ -68,9 +68,7 @@ public static class ModulRettigheter
         ["timeregistrering"] = Rettighet.Full,
         ["fravar"] = Rettighet.Full,
 
-        // Kassa: montører i butikken kan selge og ta dagsoppgjør. Måneds-
-        // oppgjør, bankavstemming og kassevarer er for prosjektleder/admin.
-        ["kassa"] = Rettighet.Opprett
+        // Kassa er bevisst ikke med: montører skal ikke ha tilgang til kassa.
     };
 
     public static Rettighet For(BrukerRolle? rolle, string modul) => rolle switch
@@ -93,6 +91,12 @@ public static class ModulRettigheter
     public static bool KanOpprette(BrukerRolle? rolle, string modul) => For(rolle, modul) >= Rettighet.Opprett;
 
     public static bool KanRedigere(BrukerRolle? rolle, string modul) => For(rolle, modul) == Rettighet.Full;
+
+    // Slette noe i portalen er bare for admin og prosjektleder. Montører skal
+    // ikke kunne slette noe (uttrykkelig ønske 2026-11-18), heller ikke i
+    // moduler der de ellers har full tilgang. Unntak: egne, personlige ting
+    // som egne timer som ikke er godkjent, egne søknader, gjøremål og notater.
+    public static bool KanSlette(BrukerRolle? rolle) => rolle is BrukerRolle.Admin or BrukerRolle.Prosjektleder;
 
     // ---------- Navngitte unntak ----------
     //
