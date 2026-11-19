@@ -1,4 +1,4 @@
-﻿@rendermode InteractiveServer
+@rendermode InteractiveServer
 @implements IDisposable
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
@@ -413,11 +413,51 @@
         _visVarsler = false;
     }
 
-    private void GaTilbake()
+    private async Task GaTilbake()
     {
         var relativSti = Nav.ToBaseRelativePath(Nav.Uri);
-        Nav.NavigateTo(PortalItlock.Web.Services.NavigasjonHjelper.FinnForelderSti(relativSti));
+        Nav.NavigateTo(await ForelderAsync(relativSti) ?? PortalItlock.Web.Services.NavigasjonHjelper.FinnForelderSti(relativSti));
     }
+
+    // Plantegning, dør og koblingsskjema har ingen egen listeside: «Tilbake» går
+    // til prosjektet (eller serviceavtalen) / koblingskategorien de hører til.
+    private async Task<string?> ForelderAsync(string relativSti)
+    {
+        var deler = relativSti.Split('?', '#')[0].Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (deler.Length < 2 || !int.TryParse(deler[1], out var id))
+        {
+            return null;
+        }
+        try
+        {
+            switch (deler[0])
+            {
+                case "plantegning":
+                    if (deler.Length > 2)
+                    {
+                        return $"/plantegning/{id}";
+                    }
+                    var tegning = await Db.Plantegninger.AsNoTracking().Where(p => p.Id == id)
+                        .Select(p => new { p.ProsjektId, Status = p.Prosjekt != null ? p.Prosjekt.Status : null }).FirstOrDefaultAsync();
+                    return tegning is null ? null : TilProsjekt(tegning.ProsjektId, tegning.Status, "plantegninger");
+                case "dor":
+                    var dor = await Db.Dorer.AsNoTracking().Where(d => d.Id == id)
+                        .Select(d => new { d.ProsjektId, Status = d.Prosjekt != null ? d.Prosjekt.Status : null }).FirstOrDefaultAsync();
+                    return dor is null ? null : TilProsjekt(dor.ProsjektId, dor.Status, "dorer");
+                case "koblingsskjema":
+                    var kat = await Db.KoblingsSkjemaer.AsNoTracking().Where(s => s.Id == id).Select(s => (int?)s.KategoriId).FirstOrDefaultAsync();
+                    return kat is null ? null : $"/guide/kobling/{kat}";
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // DbContext opptatt: bruk den enkle regelen.
+        }
+        return null;
+    }
+
+    private static string TilProsjekt(int prosjektId, ProsjektStatus? status, string fane) =>
+        status == ProsjektStatus.Serviceavtale ? $"/serviceavtaler/{prosjektId}?fane=dorer" : $"/prosjekter/{prosjektId}?fane={fane}";
 
     private void OnVerktoylinjeEndret() => InvokeAsync(StateHasChanged);
 

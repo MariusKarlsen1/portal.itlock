@@ -21,11 +21,24 @@ public static class NavigasjonHjelper
         }
 
         var segmenter = sti.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segmenter.Length == 2 && (int.TryParse(segmenter[1], out _) || segmenter[1] is "ny" or "pdf"))
+        if (segmenter.Length == 2 && (int.TryParse(segmenter[1], out _) || segmenter[1] is "ny" or "pdf")
+            && FinnesSide("/" + segmenter[0]))
         {
             return "/" + segmenter[0];
         }
 
         return "/";
     }
+
+    // Sider som finnes uten parametre (f.eks. /prosjekter). «/plantegning» finnes
+    // ikke - da ga «Tilbake» før en 404-side.
+    private static readonly Lazy<HashSet<string>> Sider = new(() =>
+        typeof(NavigasjonHjelper).Assembly.GetTypes()
+            .SelectMany(t => t.GetCustomAttributes(typeof(Microsoft.AspNetCore.Components.RouteAttribute), false)
+                .Cast<Microsoft.AspNetCore.Components.RouteAttribute>())
+            .Select(r => "/" + r.Template.Trim('/'))
+            .Where(t => !t.Contains('{'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+    public static bool FinnesSide(string sti) => Sider.Value.Contains("/" + sti.Trim('/'));
 }

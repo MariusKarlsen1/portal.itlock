@@ -28,3 +28,13 @@ public class DorNummerTests
         Assert.Equal(en, to);
     }
 }
+
+public class NavigasjonHjelperTests
+{
+    [Theory]
+    [InlineData("prosjekter/12", "/prosjekter")]
+    [InlineData("plantegning/5", "/")]
+    [InlineData("arbeidsordre/ny", "/arbeidsordre")]
+    public void Tilbake_GarAldriTilSideSomIkkeFinnes(string sti, string forventet) =>
+        Assert.Equal(forventet, NavigasjonHjelper.FinnForelderSti(sti));
+}
