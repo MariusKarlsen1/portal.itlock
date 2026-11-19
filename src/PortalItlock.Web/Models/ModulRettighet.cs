@@ -64,6 +64,11 @@ public static class ModulRettigheter
         ["ce-godkjenninger"] = Rettighet.Les,
         // Tilbud service er bevisst ikke med: montører skal ikke se tilbud.
 
+        // Serviceavtaler: montører ser, redigerer og oppretter avtaler (ønske
+        // 2026-11-19). Sletting er fortsatt bare for leder (KanSlette), og
+        // priser/prising vises ikke for montører.
+        ["service"] = Rettighet.Full,
+
         // Egne timer og fravær fører de selv.
         ["timeregistrering"] = Rettighet.Full,
         ["fravar"] = Rettighet.Full,

@@ -64,7 +64,7 @@ public class ModulRettigheterTests
     [InlineData("fravar", Rettighet.Full)]
     // Kunder, drift og administrasjon: ingenting.
     [InlineData("kunder", Rettighet.Ingen)]
-    [InlineData("service", Rettighet.Ingen)]
+    [InlineData("service", Rettighet.Full)]
     [InlineData("tickets", Rettighet.Ingen)]
     [InlineData("foresporsler", Rettighet.Ingen)]
     [InlineData("oppsettmodul", Rettighet.Ingen)]
@@ -149,7 +149,7 @@ public class ModulRettigheterTests
             .ToList();
 
         Assert.Equal(
-            new[] { "abc-kalkulator", "befaringsliste", "fravar", "lasekasse-utskiftning", "lasutskifting", "timeregistrering" },
+            new[] { "abc-kalkulator", "befaringsliste", "fravar", "lasekasse-utskiftning", "lasutskifting", "service", "timeregistrering" },
             medFullTilgang);
     }
 

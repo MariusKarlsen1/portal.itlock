@@ -229,7 +229,7 @@ public static class PortalModulRegister
                     new Lenke("Prosjekter", "Dører, tegninger og status per prosjekt.", "prosjekter", "folder"),
                     new Lenke("Arbeidsordre", "Jobber, timer og status samlet.", "arbeidsordre", "check-circle"),
                     new Lenke("Finn dørpakke", "Velg krav og få riktig dørpakke.", "finn-dorpakke", "box"),
-                    new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.FraProsjektleder),
+                    new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.Alle),
                     new Lenke("Tilbud", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
                     // KA1: kalkulatorene samles i én modul - StepLock ligger bare der, ikke i venstremenyen.
                     new Lenke("Kalkulatorer", "StepLock-kalkulator og andre kalkulatorer samlet på ett sted.", "kalkulatorer", "receipt", KalkulatorUndermoduler, ModulTilgang.FraProsjektleder),

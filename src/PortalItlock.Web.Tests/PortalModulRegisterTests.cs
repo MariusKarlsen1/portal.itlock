@@ -44,7 +44,8 @@ public class PortalModulRegisterTests
     // Godkjenninger er IKKE med - den skal de ikke se.
     private static readonly Dictionary<BrukerRolle, string[]> BevisstLagtTil = new()
     {
-        [BrukerRolle.Montor] = ["finn-dorpakke", "systemregister"],
+        // Serviceavtaler (2026-11-19): montører ser, redigerer og oppretter avtaler.
+        [BrukerRolle.Montor] = ["finn-dorpakke", "systemregister", "service"],
         // Prosjektøkonomi (2026-10-20): ny modul for prosjektleder og admin.
         // StepLock-kalkulator: viser nettopriser, derfor ikke for montører.
         // Ressursplan (2026-11-17): timer per uke, bare prosjektleder og admin.
@@ -81,7 +82,7 @@ public class PortalModulRegisterTests
         var montor = PortalModulRegister.BladLenkerFor(BrukerRolle.Montor).Select(l => l.Href).ToHashSet();
 
         // Moduler montører ikke skal se i det hele tatt.
-        foreach (var sperret in new[] { "tickets", "kunder", "service", "foresporsler", "tilbud-service", "timegodkjenning", "brukere", "komponenter" })
+        foreach (var sperret in new[] { "tickets", "kunder", "foresporsler", "tilbud-service", "timegodkjenning", "brukere", "komponenter" })
         {
             Assert.DoesNotContain(sperret, montor);
         }
