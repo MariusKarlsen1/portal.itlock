@@ -99,6 +99,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ServiceMinuttLinje> ServiceMinuttLinjer => Set<ServiceMinuttLinje>();
     public DbSet<ServiceKategoriPris> ServiceKategoriPriser => Set<ServiceKategoriPris>();
     public DbSet<ServicePrisRegel> ServicePrisRegler => Set<ServicePrisRegel>();
+    public DbSet<ServicePrisKategori> ServicePrisKategorier => Set<ServicePrisKategori>();
+    public DbSet<ServiceTilleggMal> ServiceTilleggMaler => Set<ServiceTilleggMal>();
+    public DbSet<ServiceavtaleLinje> ServiceavtaleLinjer => Set<ServiceavtaleLinje>();
     public DbSet<ServicePrisRegelBetingelse> ServicePrisRegelBetingelser => Set<ServicePrisRegelBetingelse>();
     public DbSet<ServicePrisRegelVersjon> ServicePrisRegelVersjoner => Set<ServicePrisRegelVersjon>();
     public DbSet<DorKomponentLogg> DorKomponentLogger => Set<DorKomponentLogg>();

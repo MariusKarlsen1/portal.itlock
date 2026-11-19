@@ -1,0 +1,306 @@
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+@* Prising og Tillegg for prismodell «Antall» (Prototype serviceavtale-ny-prising-tilbud.html
+   og serviceavtale-mobil.html): kategoriene fra Oppsett med − / + for antall per runde,
+   runder i året og sum til høyre. På mobil blir radene kort med store knapper, og summen
+   står fast nederst. Alt lagres med en gang. *@
+@if (_prosjekt is not null)
+{
+    var b = Beregning;
+    <div class="sp">
+        @if (!_prosjekt.ServiceErTilbud && _prosjekt.ServiceGodkjentArspris is { } godkjent && Math.Abs(godkjent - b.Arspris) >= 0.5m)
+        {
+            <div class="sp-endret">
+                <span>Avtaleprisen er @Kr(godkjent)@(_prosjekt.ServiceGodkjentDato is { } d ? $", godkjent {d:dd.MM.yyyy}" : ""). Ny beregning er @Kr(b.Arspris). Avtaleprisen endres ikke før du godkjenner.</span>
+                <button type="button" class="sp-knapp sp-p" @onclick="GodkjennNyPris"><Icon Name="check" />Godkjenn @Kr(b.Arspris)</button>
+            </div>
+        }
+
+        <div class="sp-grid">
+            <div class="sp-hoved">
+                @if (Visning == "tillegg")
+                {
+                    <h2>Tillegg</h2>
+                    <p class="sp-hint">Faste priser i tillegg til kategoriene, f.eks. oppmøte, kjøring og påslag. Bare linjer som er fylt ut, regnes med og kommer på tilbudet.</p>
+                    <div class="sp-liste">
+                        <div class="sp-rad sp-th sp-till"><span>Beskrivelse</span><span>Hvordan</span><span class="n">Pris / sats</span><span class="n">Antall</span><span class="n">Per år</span><span></span></div>
+                        @foreach (var t in Tillegg)
+                        {
+                            var ar = ServiceavtaleAntall.TilleggPerAr(t, b.Kategorier, b.Runder);
+                            <div class="sp-rad sp-till @(ar > 0 ? "aktiv" : "tom")" @key="t.Id">
+                                <span><input class="sp-navn" value="@t.Navn" placeholder="Hva gjelder linjen?" @onchange="@(e => LagreNavn(t, e.Value))" /></span>
+                                <span>
+                                    <select value="@(t.TilleggType ?? ServiceavtaleLinje.PerRunde)" @onchange="@(e => SettType(t, e.Value))">
+                                        @foreach (var (kode, navn) in ServiceavtaleAntall.Typer)
+                                        {
+                                            <option value="@kode">@navn</option>
+                                        }
+                                    </select>
+                                    <small>@Forklaring(t, b)</small>
+                                </span>
+                                <span class="n"><span class="sp-inp"><input inputmode="decimal" value="@(t.Pris > 0 ? Tall(t.Pris) : "")" placeholder="0" @onchange="@(e => SettPris(t, e.Value))" /><em>@(t.TilleggType == ServiceavtaleLinje.Prosent ? "%" : "kr")</em></span></span>
+                                <span class="n">
+                                    @if (t.TilleggType != ServiceavtaleLinje.Prosent)
+                                    {
+                                        <span class="sp-inp smal"><input inputmode="decimal" value="@Tall(t.Antall)" @onchange="@(e => SettAntall(t, e.Value))" /><em>@AntallEnhet(t)</em></span>
+                                    }
+                                </span>
+                                <span class="n sp-sum-l">@(ar > 0 ? Kr(ar) : "–")</span>
+                                <span class="n"><button type="button" class="sp-x" title="Fjern linjen" @onclick="@(() => Fjern(t))">×</button></span>
+                            </div>
+                        }
+                        @if (Tillegg.Count == 0)
+                        {
+                            <p class="sp-tom">Ingen tillegg. Trykk «Ny linje».</p>
+                        }
+                    </div>
+                    <div class="sp-under">
+                        <button type="button" class="sp-knapp" @onclick="NyttTillegg"><Icon Name="plus" />Ny linje</button>
+                        <small>F.eks. rigg, parkering, bom eller timer utenom kategoriene.</small>
+                    </div>
+                }
+                else
+                {
+                    <h2>Prising</h2>
+                    <p class="sp-hint">Trykk + på det dere skal ha service på. Antallet gjelder én servicerunde. Prisene kommer fra Oppsett, men kan endres på denne avtalen.</p>
+                    <div class="sp-runder">
+                        <span>Servicerunder i året</span>
+                        <div class="sp-chips" role="group" aria-label="Servicerunder i året">
+                            @foreach (var r in new[] { 1, 2, 3, 4, 6, 12 })
+                            {
+                                <button type="button" class="@(b.Runder == r ? "pa" : "")" @onclick="@(() => SettRunder(r))">@r</button>
+                            }
+                        </div>
+                        <small>@RunderTekst(b.Runder)</small>
+                    </div>
+                    <div class="sp-liste">
+                        <div class="sp-rad sp-th sp-kat"><span>Kategori</span><span>Antall per runde</span><span class="n">Pris per stk.</span><span class="n">Per runde</span><span class="n">Per år</span></div>
+                        @foreach (var k in Kategorier)
+                        {
+                            var n = k.Antall;
+                            <div class="sp-rad sp-kat @(n > 0 ? "aktiv" : "tom")" @key="k.Id">
+                                <span class="sp-katnavn"><b>@k.Navn</b>@if (!string.IsNullOrWhiteSpace(k.Beskrivelse)) {<small>@k.Beskrivelse</small>}</span>
+                                <span class="sp-teller">
+                                    <button type="button" class="m" aria-label="@($"Færre {k.Navn}")" disabled="@(n <= 0)" @onclick="@(() => Steg(k, -1))">−</button>
+                                    <input inputmode="numeric" aria-label="@($"Antall {k.Navn}")" value="@Tall(n)" @onchange="@(e => SettAntall(k, e.Value))" />
+                                    <button type="button" class="p" aria-label="@($"Flere {k.Navn}")" @onclick="@(() => Steg(k, 1))">+</button>
+                                </span>
+                                <span class="n">
+                                    <span class="sp-inp"><input inputmode="decimal" value="@Tall(k.Pris)" @onchange="@(e => SettPris(k, e.Value))" /><em>kr</em></span>
+                                    @if (k.StandardPris is { } sp && sp != k.Pris)
+                                    {
+                                        <button type="button" class="sp-egen" title="@($"Tilbake til prisen i Oppsett ({Kr(sp)})")" @onclick="@(() => TilbakeTilStandard(k))">Endret ↺</button>
+                                    }
+                                </span>
+                                <span class="n sp-mob-skjul">@(n > 0 ? Kr(n * k.Pris) : "–")</span>
+                                <span class="n sp-sum-l">@(n > 0 ? Kr(n * k.Pris * b.Runder) : "–")</span>
+                            </div>
+                        }
+                        @if (Kategorier.Count == 0)
+                        {
+                            <p class="sp-tom">Ingen kategorier. Legg dem inn under Oppsett → Priser.</p>
+                        }
+                    </div>
+                    <div class="sp-under">
+                        <small>Fast oppmøte, kjøring, påslag og andre tillegg legger du inn på fanen Tillegg.</small>
+                        <span class="sp-sp"></span>
+                        @if (Kategorier.Any(k => k.Antall > 0))
+                        {
+                            <button type="button" class="sp-lenke" @onclick="Nullstill">Nullstill antall</button>
+                        }
+                    </div>
+                }
+            </div>
+
+            <aside class="sp-sum">
+                <h3>Sum</h3>
+                @if (b.PerRunde == 0 && b.Tillegg == 0)
+                {
+                    <p class="sp-tom-sum">Trykk + på kategoriene for å bygge opp prisen.</p>
+                }
+                <div class="sp-r sp-mob-skjul"><span>Per servicerunde</span><b>@Kr(b.PerRunde)</b></div>
+                <div class="sp-r sp-mob-skjul"><span>× @b.Runder @(b.Runder == 1 ? "runde" : "runder") i året</span><span>@Kr(b.Kategorier)</span></div>
+                <div class="sp-r sp-mob-skjul"><span>Tillegg</span><span>@(b.Tillegg > 0 ? Kr(b.Tillegg) : "–")</span></div>
+                <div class="sp-rabatt sp-mob-skjul">Rabatt <span class="sp-inp smal"><input inputmode="decimal" value="@Tall(_prosjekt.ServiceRabattProsent ?? 0)" @onchange="SettRabatt" /><em>%</em></span><span class="sp-sp"></span>@(b.Rabatt > 0 ? "−" + Kr(b.Rabatt) : "")</div>
+                <div class="sp-r sp-ar"><span>Per år eks. mva</span><b>@Kr(b.Arspris)</b></div>
+                <div class="sp-r sp-mob-skjul"><span>Mva 25 %</span><span>@Kr(b.Mva)</span></div>
+                <div class="sp-r sp-stor sp-mob-skjul"><span>Per år inkl. mva</span><span>@Kr(b.InklMva)</span></div>
+                <div class="sp-mnd">@Kr(b.PerManed) per måned eks. mva · @Tall(Kategorier.Sum(k => k.Antall)) per runde</div>
+                @if (OnTilTilbud.HasDelegate)
+                {
+                    <button type="button" class="sp-knapp sp-p sp-bred" disabled="@(b.Arspris <= 0)" @onclick="OnTilTilbud">Gå til tilbud &rarr;</button>
+                }
+            </aside>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+    // "prising" eller "tillegg"
+    [Parameter] public string Visning { get; set; } = "prising";
+    [Parameter] public EventCallback OnEndret { get; set; }
+    [Parameter] public EventCallback OnTilTilbud { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private int? _lastet;
+    private Prosjekt? _prosjekt;
+    private List<ServiceavtaleLinje> _linjer = [];
+
+    private List<ServiceavtaleLinje> Kategorier => _linjer.Where(l => !l.ErTillegg).OrderBy(l => l.Rekkefolge).ThenBy(l => l.Id).ToList();
+    private List<ServiceavtaleLinje> Tillegg => _linjer.Where(l => l.ErTillegg).OrderBy(l => l.Rekkefolge).ThenBy(l => l.Id).ToList();
+    private ServiceavtaleAntall.Beregning Beregning => ServiceavtaleAntall.Beregn(_prosjekt!, _linjer);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_lastet == ProsjektId)
+        {
+            return;
+        }
+        _lastet = ProsjektId;
+        _prosjekt = await Db.Prosjekter.FirstOrDefaultAsync(p => p.Id == ProsjektId);
+        _linjer = await Db.ServiceavtaleLinjer.Where(l => l.ProsjektId == ProsjektId).ToListAsync();
+        if (_prosjekt is not null && _linjer.Count == 0)
+        {
+            // Avtale uten linjer (f.eks. laget før Oppsett hadde kategorier): hent fra Oppsett.
+            _linjer = await ServiceavtaleAntall.LagLinjer(Db, ProsjektId);
+            Db.ServiceavtaleLinjer.AddRange(_linjer);
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    private async Task Lagre()
+    {
+        await Db.SaveChangesAsync();
+        await OnEndret.InvokeAsync();
+    }
+
+    private Task Steg(ServiceavtaleLinje k, int steg)
+    {
+        k.Antall = Math.Max(0, Math.Floor(k.Antall) + steg);
+        return Lagre();
+    }
+
+    private Task SettAntall(ServiceavtaleLinje l, object? v)
+    {
+        l.Antall = LesTall(v) ?? 0;
+        return Lagre();
+    }
+
+    private Task SettPris(ServiceavtaleLinje l, object? v)
+    {
+        l.Pris = LesTall(v) ?? 0;
+        return Lagre();
+    }
+
+    private Task TilbakeTilStandard(ServiceavtaleLinje l)
+    {
+        l.Pris = l.StandardPris ?? l.Pris;
+        return Lagre();
+    }
+
+    private Task LagreNavn(ServiceavtaleLinje l, object? v)
+    {
+        var navn = v?.ToString()?.Trim();
+        if (string.IsNullOrEmpty(navn))
+        {
+            return Task.CompletedTask;
+        }
+        l.Navn = navn;
+        return Lagre();
+    }
+
+    private Task SettType(ServiceavtaleLinje l, object? v)
+    {
+        l.TilleggType = v?.ToString() ?? ServiceavtaleLinje.PerRunde;
+        if (l.TilleggType != ServiceavtaleLinje.PerKm && l.Antall <= 0)
+        {
+            l.Antall = 1;
+        }
+        return Lagre();
+    }
+
+    private Task SettRunder(int r)
+    {
+        _prosjekt!.ServiceGangerPerAr = r;
+        return Lagre();
+    }
+
+    private Task SettRabatt(ChangeEventArgs e)
+    {
+        var v = LesTall(e.Value);
+        _prosjekt!.ServiceRabattProsent = v is > 0 ? Math.Min(100, v.Value) : null;
+        return Lagre();
+    }
+
+    private Task Nullstill()
+    {
+        foreach (var k in Kategorier)
+        {
+            k.Antall = 0;
+        }
+        return Lagre();
+    }
+
+    private Task NyttTillegg()
+    {
+        var l = new ServiceavtaleLinje
+        {
+            ProsjektId = ProsjektId, ErTillegg = true, Navn = "Nytt tillegg", TilleggType = ServiceavtaleLinje.PerRunde,
+            Antall = 1, Rekkefolge = (_linjer.Count == 0 ? 0 : _linjer.Max(x => x.Rekkefolge)) + 1
+        };
+        Db.ServiceavtaleLinjer.Add(l);
+        _linjer.Add(l);
+        return Lagre();
+    }
+
+    private Task Fjern(ServiceavtaleLinje l)
+    {
+        Db.ServiceavtaleLinjer.Remove(l);
+        _linjer.Remove(l);
+        return Lagre();
+    }
+
+    private async Task GodkjennNyPris()
+    {
+        var navn = AuthStateTask is null ? null : (await AuthStateTask).User.Identity?.Name;
+        _prosjekt!.ServiceGodkjentArspris = Beregning.Arspris;
+        _prosjekt.ServiceGodkjentDato = DateTime.Now;
+        _prosjekt.ServiceGodkjentAv = navn;
+        await Lagre();
+    }
+
+    private static string Forklaring(ServiceavtaleLinje t, ServiceavtaleAntall.Beregning b) => t.TilleggType switch
+    {
+        ServiceavtaleLinje.PerKm => $"Km tur/retur × {b.Runder} runder i året",
+        ServiceavtaleLinje.Prosent => $"Av kategoriene ({Kr(b.Kategorier)})",
+        ServiceavtaleLinje.PerAr => "Fast beløp per år",
+        _ => $"× {b.Runder} runder i året"
+    };
+
+    private static string AntallEnhet(ServiceavtaleLinje t) => t.TilleggType switch
+    {
+        ServiceavtaleLinje.PerKm => "km",
+        ServiceavtaleLinje.PerAr => "per år",
+        _ => "per runde"
+    };
+
+    private static string RunderTekst(int r) => r switch { 1 => "1 gang i året", 12 => "hver måned", _ => $"{r} ganger i året" };
+
+    private static string Kr(decimal v) => ServiceavtaleAntall.Kr(v);
+
+    private static string Tall(decimal v) => v.ToString("0.##", Kultur);
+
+    private static decimal? LesTall(object? v)
+    {
+        var t = v?.ToString()?.Replace(" ", "").Replace(" ", "").Replace("kr", "").Replace("%", "").Replace(',', '.');
+        return decimal.TryParse(t, NumberStyles.Number, CultureInfo.InvariantCulture, out var d) && d >= 0 ? d : null;
+    }
+}

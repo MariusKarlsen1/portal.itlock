@@ -20,6 +20,8 @@ public static class ServiceavtalePris
 {
     public const int Minutter = 0;
     public const int Kategorisert = 1;
+    // Antall per kategori × pris fra Oppsett, pluss tillegg (ServiceavtaleAntall).
+    public const int Antall = 2;
 
     public sealed record Prislinje(string Tjeneste, string Pris);
 
@@ -114,7 +116,14 @@ public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfL
         var org = RapportProfil.Fra(tenantContext.Current);
         var kunde = p.Kunde?.Navn ?? "kunden";
         var runder = ServiceavtalePris.RunderPerAr(p);
-        var tekst = string.IsNullOrWhiteSpace(p.ServiceavtaleTekst) ? ServiceavtalePris.StandardTekst(org.Navn, kunde, runder) : p.ServiceavtaleTekst;
+        // Prismodell «Antall»: linjene fra Prising og Tillegg, og {kunde}/{pris} … flettes inn i teksten.
+        var antallModell = p.ServicePrismodell == ServiceavtalePris.Antall;
+        var linjer = antallModell ? await db.ServiceavtaleLinjer.AsNoTracking().Where(l => l.ProsjektId == prosjektId).OrderBy(l => l.Rekkefolge).ThenBy(l => l.Id).ToListAsync() : [];
+        var beregning = antallModell ? ServiceavtaleAntall.Beregn(p, linjer) : null;
+        var valg = ServiceavtaleAntall.Valg(p);
+        var tekst = antallModell
+            ? ServiceavtaleAntall.Flett(string.IsNullOrWhiteSpace(p.ServiceavtaleTekst) ? ServiceavtaleAntall.StandardTekst(org.Navn) : p.ServiceavtaleTekst, p, beregning!)
+            : string.IsNullOrWhiteSpace(p.ServiceavtaleTekst) ? ServiceavtalePris.StandardTekst(org.Navn, kunde, runder) : p.ServiceavtaleTekst;
         var kontakt = p.Prosjektleder?.Navn ?? (org.ErStandard ? FirmaInfo.Kontaktperson : null);
         var seksjoner = Seksjoner(tekst);
 
@@ -181,6 +190,23 @@ public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfL
                             row.RelativeItem().Column(c => ForsideRenderer.Render(c, s.Html));
                         });
                     }
+
+                    if (beregning is not null)
+                    {
+                        col.Item().PaddingTop(16).Element(e => Etikett(e, "Pris", org.Aksent));
+                        col.Item().PaddingTop(6).Element(e => Pristabell(e, linjer, beregning, valg));
+                        if (valg.Contains(ServiceavtaleAntall.VisSignatur))
+                        {
+                            col.Item().PaddingTop(46).Row(r =>
+                            {
+                                r.RelativeItem().BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(4)
+                                    .Text($"Sted / dato / signatur – {kunde}").FontSize(8).FontColor(RapportMal.Dempet);
+                                r.ConstantItem(40);
+                                r.RelativeItem().BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(4)
+                                    .Text($"Sted / dato / signatur – {org.Navn}").FontSize(8).FontColor(RapportMal.Dempet);
+                            });
+                        }
+                    }
                 });
 
                 page.Footer().PaddingHorizontal(2, Unit.Centimetre).PaddingBottom(1.2f, Unit.Centimetre).Element(e => RapportMal.Bunn(e, org));
@@ -188,6 +214,115 @@ public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfL
         });
 
         return dokument.GeneratePdf();
+    }
+
+    // Prismodell «Antall»: kategoriene med antall, tilleggene og summen. Tynne linjer, ingen grå rader (PDF-stil N1).
+    private static void Pristabell(IContainer e, List<ServiceavtaleLinje> linjer, ServiceavtaleAntall.Beregning b, HashSet<string> valg)
+    {
+        var kategorier = linjer.Where(l => !l.ErTillegg && l.Antall > 0 && l.Pris > 0).ToList();
+        var tillegg = linjer.Where(l => l.ErTillegg).Select(t => (Linje: t, Ar: ServiceavtaleAntall.TilleggPerAr(t, b.Kategorier, b.Runder))).Where(x => x.Ar > 0).ToList();
+        var visStk = valg.Contains(ServiceavtaleAntall.VisStk);
+        var visRunde = valg.Contains(ServiceavtaleAntall.VisRunde);
+        static string Kr(decimal v) => ServiceavtaleAntall.Kr(v);
+        static string Tall(decimal v) => v.ToString("0.##", CultureInfo.GetCultureInfo("nb-NO"));
+        static IContainer H(IContainer x) => x.BorderBottom(0.75f).BorderColor(RapportMal.Linje).PaddingVertical(4);
+        static IContainer C(IContainer x) => x.BorderBottom(0.5f).BorderColor(RapportMal.Linje).PaddingVertical(4);
+        static void Hode(IContainer x, string t) => x.Text(t.ToUpperInvariant()).FontSize(7).Bold().FontColor(RapportMal.Svak);
+
+        e.Column(col =>
+        {
+            if (valg.Contains(ServiceavtaleAntall.VisLinjer) && kategorier.Count > 0)
+            {
+                col.Item().PaddingTop(6).Table(t =>
+                {
+                    t.ColumnsDefinition(c =>
+                    {
+                        c.RelativeColumn(3);
+                        c.ConstantColumn(50);
+                        if (visStk) c.ConstantColumn(72);
+                        if (visRunde) c.ConstantColumn(72);
+                        c.ConstantColumn(78);
+                    });
+                    t.Header(h =>
+                    {
+                        h.Cell().Element(H).Element(x => Hode(x, "Service"));
+                        h.Cell().Element(H).AlignRight().Element(x => Hode(x, "Antall"));
+                        if (visStk) h.Cell().Element(H).AlignRight().Element(x => Hode(x, "Per stk."));
+                        if (visRunde) h.Cell().Element(H).AlignRight().Element(x => Hode(x, "Per runde"));
+                        h.Cell().Element(H).AlignRight().Element(x => Hode(x, "Per år"));
+                    });
+                    foreach (var l in kategorier)
+                    {
+                        t.Cell().Element(C).Text(l.Navn);
+                        t.Cell().Element(C).AlignRight().Text(Tall(l.Antall));
+                        if (visStk) t.Cell().Element(C).AlignRight().Text(Kr(l.Pris));
+                        if (visRunde) t.Cell().Element(C).AlignRight().Text(Kr(l.Antall * l.Pris));
+                        t.Cell().Element(C).AlignRight().Text(Kr(l.Antall * l.Pris * b.Runder));
+                    }
+                });
+            }
+
+            if (tillegg.Count > 0)
+            {
+                col.Item().PaddingTop(10).Table(t =>
+                {
+                    t.ColumnsDefinition(c =>
+                    {
+                        c.RelativeColumn(3);
+                        c.RelativeColumn(3);
+                        c.ConstantColumn(78);
+                    });
+                    t.Header(h =>
+                    {
+                        h.Cell().Element(H).Element(x => Hode(x, "Tillegg"));
+                        h.Cell().Element(H).Element(x => Hode(x, "Sats"));
+                        h.Cell().Element(H).AlignRight().Element(x => Hode(x, "Per år"));
+                    });
+                    foreach (var (l, ar) in tillegg)
+                    {
+                        var sats = l.TilleggType switch
+                        {
+                            ServiceavtaleLinje.Prosent => $"{Tall(l.Pris)} % påslag",
+                            ServiceavtaleLinje.PerKm => $"{Kr(l.Pris)} per km, {Tall(l.Antall)} km per runde",
+                            ServiceavtaleLinje.PerAr => $"{Kr(l.Pris)} per år{(l.Antall != 1 ? $" × {Tall(l.Antall)}" : "")}",
+                            _ => $"{Kr(l.Pris)} per runde{(l.Antall != 1 ? $" × {Tall(l.Antall)}" : "")}"
+                        };
+                        t.Cell().Element(C).Text(l.Navn);
+                        t.Cell().Element(C).Text(sats).FontColor(RapportMal.Dempet);
+                        t.Cell().Element(C).AlignRight().Text(Kr(ar));
+                    }
+                });
+            }
+
+            col.Item().PaddingTop(10).AlignRight().Width(250).Column(s =>
+            {
+                void Rad(string a, string v, bool fet = false, bool linje = false)
+                {
+                    var c = s.Item();
+                    if (linje)
+                    {
+                        c = c.BorderTop(1.2f).BorderColor(PdfStil.Ink).PaddingTop(5);
+                    }
+                    c.Row(r =>
+                    {
+                        var ta = r.RelativeItem().Text(a);
+                        var tv = r.AutoItem().Text(v);
+                        if (fet)
+                        {
+                            ta.Bold().FontSize(11);
+                            tv.Bold().FontSize(11);
+                        }
+                    });
+                }
+                Rad($"{b.Runder} servicerunder i året", Kr(b.Kategorier));
+                if (b.Tillegg > 0) Rad("Tillegg", Kr(b.Tillegg));
+                if (b.Rabatt > 0) Rad("Rabatt", "−" + Kr(b.Rabatt));
+                Rad("Per år eks. mva", Kr(b.Arspris));
+                Rad("Mva 25 %", Kr(b.Mva));
+                Rad("Per år inkl. mva", Kr(b.InklMva), fet: true, linje: true);
+                if (valg.Contains(ServiceavtaleAntall.VisMnd)) Rad("Per måned eks. mva", Kr(b.PerManed));
+            });
+        });
     }
 
     private static void Etikett(IContainer e, string tekst, Color farge) =>

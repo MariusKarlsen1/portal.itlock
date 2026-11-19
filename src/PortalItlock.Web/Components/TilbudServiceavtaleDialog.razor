@@ -1,0 +1,98 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+@* «+ Tilbud serviceavtale»: navn og adresse, så Opprett. Avtalen starter som et tilbud
+   (prismodell «Antall») med kategoriene og tilleggene fra Oppsett, og åpnes på Prising. *@
+@if (Vis)
+{
+    <div class="tsd-bak" @onclick="Lukk">
+        <div class="tsd" role="dialog" aria-modal="true" aria-label="Tilbud serviceavtale" @onclick:stopPropagation="true">
+            <div class="tsd-h"><b>Tilbud serviceavtale</b><button type="button" class="tsd-x" title="Lukk" aria-label="Lukk" @onclick="Lukk">×</button></div>
+            <div class="tsd-b">
+                <label>Navn på avtalen / bygget<input @bind="_navn" @bind:event="oninput" placeholder="F.eks. «Flekkefjord sykehjem»" autocomplete="off" /></label>
+                <label>Adresse<input @bind="_adresse" placeholder="Gate, postnr og sted" autocomplete="off" /></label>
+                <label>Kunde <small>(valgfritt, kan settes senere)</small>
+                    <select @bind="_kundeId">
+                        <option value="">Velg kunde …</option>
+                        @foreach (var k in _kunder)
+                        {
+                            <option value="@k.Id">@k.Navn</option>
+                        }
+                    </select>
+                </label>
+            </div>
+            <div class="tsd-f">
+                <button type="button" class="tsd-k" @onclick="Lukk">Avbryt</button>
+                <button type="button" class="tsd-k tsd-p" @onclick="Opprett" disabled="@(string.IsNullOrWhiteSpace(_navn) || _arbeider)">Opprett</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Vis { get; set; }
+    [Parameter] public EventCallback OnLukk { get; set; }
+
+    private string _navn = "";
+    private string? _adresse;
+    private int? _kundeId;
+    private bool _arbeider;
+    private List<(int Id, string Navn)> _kunder = [];
+    private bool _forrigeVis;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Vis && !_forrigeVis)
+        {
+            _navn = "";
+            _adresse = null;
+            _kundeId = null;
+            if (_kunder.Count == 0)
+            {
+                _kunder = (await Db.Kunder.AsNoTracking().OrderBy(k => k.Navn).Select(k => new { k.Id, k.Navn }).ToListAsync())
+                    .Select(k => (k.Id, k.Navn)).ToList();
+            }
+        }
+        _forrigeVis = Vis;
+    }
+
+    private Task Lukk() => OnLukk.InvokeAsync();
+
+    private async Task Opprett()
+    {
+        var navn = _navn.Trim();
+        if (navn.Length == 0 || _arbeider)
+        {
+            return;
+        }
+        _arbeider = true;
+        try
+        {
+            var prosjekt = new Prosjekt
+            {
+                Navn = navn,
+                KundeId = _kundeId,
+                Adresse = string.IsNullOrWhiteSpace(_adresse) ? null : _adresse.Trim(),
+                Status = ProsjektStatus.Serviceavtale,
+                ServicePrismodell = ServiceavtalePris.Antall,
+                ServiceErTilbud = true,
+                ServiceGangerPerAr = 2
+            };
+            Db.Prosjekter.Add(prosjekt);
+            await Db.SaveChangesAsync();
+
+            Db.ServiceavtaleLinjer.AddRange(await ServiceavtaleAntall.LagLinjer(Db, prosjekt.Id));
+            await Db.SaveChangesAsync();
+
+            Nav.NavigateTo($"/serviceavtaler/{prosjekt.Id}?fane=prising");
+        }
+        finally
+        {
+            _arbeider = false;
+        }
+    }
+}

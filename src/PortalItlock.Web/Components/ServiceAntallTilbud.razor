@@ -1,0 +1,179 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject LagretPdfService LagretPdfService
+@inject ServiceavtaleTilbudPdfService TilbudPdf
+@inject ITenantContext TenantCtx
+
+@* Tilbud for prismodell «Antall»: som «Innhold i PDF» på vanlige tilbud – valg for hva
+   som vises, forside-mal med «Bruk», samme tekstredigerer, og Generer PDF / Forhåndsvis.
+   Prisene hentes fra Prising og Tillegg. *@
+@if (_prosjekt is not null)
+{
+    <div class="st">
+        <div class="st-hode">
+            <span class="st-ikon"><Icon Name="file-text" /></span>
+            <h2>Innhold i PDF</h2>
+            <span class="st-sp"></span>
+            <span class="st-sum">Pris per år eks. mva <b>@ServiceavtaleAntall.Kr(_arspris)</b></span>
+        </div>
+
+        <label class="checkbox-row"><input type="checkbox" checked="@Har(ServiceavtaleAntall.VisLinjer)" @onchange="@(e => SettValg(ServiceavtaleAntall.VisLinjer, e))" /> Vis hver kategori med antall</label>
+        <label class="checkbox-row"><input type="checkbox" checked="@Har(ServiceavtaleAntall.VisStk)" @onchange="@(e => SettValg(ServiceavtaleAntall.VisStk, e))" /> Vis pris per stk.</label>
+        <label class="checkbox-row"><input type="checkbox" checked="@Har(ServiceavtaleAntall.VisRunde)" @onchange="@(e => SettValg(ServiceavtaleAntall.VisRunde, e))" /> Vis pris per runde</label>
+        <label class="checkbox-row"><input type="checkbox" checked="@Har(ServiceavtaleAntall.VisMnd)" @onchange="@(e => SettValg(ServiceavtaleAntall.VisMnd, e))" /> Vis pris per måned</label>
+        <label class="checkbox-row"><input type="checkbox" checked="@Har(ServiceavtaleAntall.VisSignatur)" @onchange="@(e => SettValg(ServiceavtaleAntall.VisSignatur, e))" /> Felt for signatur</label>
+
+        <label class="st-felt">
+            Forside-mal
+            <div class="forside-mal-rad">
+                <select @bind="_valgtMalId">
+                    <option value="">Velg forside...</option>
+                    <option value="-1">Standard serviceavtale</option>
+                    @foreach (var f in _forsideMaler)
+                    {
+                        <option value="@f.Id">@f.Navn</option>
+                    }
+                </select>
+                <button type="button" class="cancel-button" @onclick="BrukMal" disabled="@(_valgtMalId is null)">Bruk</button>
+            </div>
+        </label>
+
+        @* Ikke <label>: et klikk i teksten ble sendt videre til knappene i verktøylinjen. *@
+        <div class="st-felt">
+            <span>Forside / forbehold</span>
+            <ForsideTekstRedigering @bind-Value="_tekst" @bind-Value:after="LagreTekst" Rows="10" Placeholder="Tekst til forsiden av tilbudet, f.eks. forbehold og betingelser. Tom = standardteksten." />
+            <small class="st-flett">Skriv <code>{kunde}</code>, <code>{bygg}</code>, <code>{adresse}</code>, <code>{runder}</code> eller <code>{pris}</code> i teksten, så fylles det inn på tilbudet.</small>
+        </div>
+
+        @if (!string.IsNullOrEmpty(_melding))
+        {
+            <p class="saved-hint">@_melding</p>
+        }
+
+        <div class="form-actions">
+            <button type="button" class="save-button" @onclick="GenererPdf" disabled="@_arbeider">Generer PDF</button>
+            <button type="button" class="cancel-button" @onclick="Forhandsvis">Forhåndsvis</button>
+        </div>
+
+        @if (_lagrede.Count > 0)
+        {
+            <div class="st-lagrede"><LagredePdfListe Pdfer="_lagrede" Tittel="Lagrede tilbud" /></div>
+        }
+    </div>
+
+    <PdfPreviewModal Url="@_url" Tittel="Tilbud på serviceavtale" SaveMessage="@_lagretMelding"
+                     OnSave="LagrePdf" OnClose="@(() => _url = null)" />
+}
+
+@code {
+    [Parameter, EditorRequired] public int ProsjektId { get; set; }
+
+    private int? _lastet;
+    private Prosjekt? _prosjekt;
+    private decimal _arspris;
+    private string? _tekst;
+    private int? _valgtMalId;
+    private List<TilbudForside> _forsideMaler = [];
+    private List<LagretPdf> _lagrede = [];
+    private string? _url;
+    private string? _lagretMelding;
+    private string? _melding;
+    private bool _arbeider;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_lastet == ProsjektId)
+        {
+            return;
+        }
+        _lastet = ProsjektId;
+        _prosjekt = await Db.Prosjekter.Include(p => p.Kunde).FirstOrDefaultAsync(p => p.Id == ProsjektId);
+        if (_prosjekt is null)
+        {
+            return;
+        }
+        _tekst = _prosjekt.ServiceavtaleTekst;
+        _forsideMaler = await Db.TilbudForsider.AsNoTracking().OrderBy(f => f.Navn).ToListAsync();
+        _lagrede = await LagretPdfService.HentAsync("Serviceavtaletilbud", ProsjektId);
+        _arspris = ServiceavtaleAntall.Beregn(_prosjekt, await Db.ServiceavtaleLinjer.AsNoTracking().Where(l => l.ProsjektId == ProsjektId).ToListAsync()).Arspris;
+    }
+
+    private bool Har(string valg) => ServiceavtaleAntall.Valg(_prosjekt!).Contains(valg);
+
+    private async Task SettValg(string valg, ChangeEventArgs e)
+    {
+        var sett = ServiceavtaleAntall.Valg(_prosjekt!);
+        if (e.Value is true)
+        {
+            sett.Add(valg);
+        }
+        else
+        {
+            sett.Remove(valg);
+        }
+        _prosjekt!.ServiceTilbudValg = string.Join(",", sett);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task BrukMal()
+    {
+        if (_valgtMalId == -1)
+        {
+            _tekst = ServiceavtaleAntall.StandardTekst(RapportProfil.Fra(TenantCtx.Current).Navn);
+        }
+        else if (_forsideMaler.FirstOrDefault(m => m.Id == _valgtMalId) is { } mal)
+        {
+            _tekst = mal.Innhold;
+        }
+        else
+        {
+            return;
+        }
+        await LagreTekst();
+    }
+
+    private async Task LagreTekst()
+    {
+        _prosjekt!.ServiceavtaleTekst = string.IsNullOrWhiteSpace(_tekst) ? null : _tekst;
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task Forhandsvis()
+    {
+        await LagreTekst();
+        _lagretMelding = null;
+        _url = $"/serviceavtale/{ProsjektId}/tilbud/pdf?v={DateTime.UtcNow.Ticks}";
+    }
+
+    private async Task GenererPdf()
+    {
+        _arbeider = true;
+        try
+        {
+            await LagreTekst();
+            await LagrePdf();
+            _melding = _lagretMelding;
+            _url = $"/serviceavtale/{ProsjektId}/tilbud/pdf?v={DateTime.UtcNow.Ticks}";
+        }
+        finally
+        {
+            _arbeider = false;
+        }
+    }
+
+    private async Task LagrePdf()
+    {
+        var bytes = await TilbudPdf.GenerateAsync(ProsjektId);
+        if (bytes is null || _prosjekt is null)
+        {
+            return;
+        }
+        var pdf = await LagretPdfService.LagreAsync("Serviceavtaletilbud", ProsjektId,
+            $"Tilbud serviceavtale - {_prosjekt.Navn} - {DateTime.Now:dd.MM.yyyy HH.mm}.pdf", bytes);
+        _lagrede.Insert(0, pdf);
+        _lagretMelding = "PDF-en er lagret under Lagrede tilbud.";
+    }
+}

@@ -226,7 +226,12 @@ public static class ServiceRegelMotor
         var res = dorer.Select(d => (Dor: d, Res: Klassifiser(d, regler, typeKart))).ToList();
         var regelmodell = p.ServicePrismodell == ServiceavtalePris.Kategorisert;
         Beregning beregning;
-        if (regelmodell)
+        if (p.ServicePrismodell == ServiceavtalePris.Antall)
+        {
+            var b = ServiceavtaleAntall.Beregn(p, await db.ServiceavtaleLinjer.AsNoTracking().Where(l => l.ProsjektId == p.Id).ToListAsync());
+            beregning = new Beregning(b.PerRunde, b.Tillegg, b.PerRunde, b.Runder, 0, b.Arspris, 0, false);
+        }
+        else if (regelmodell)
         {
             var grunnlag = res.Where(x => x.Res.Regel is not null).Sum(x => PrisForKategori(x.Res.Regel!, kategoriPriser));
             beregning = Beregn(p, grunnlag, res.Where(x => x.Res.Regel is not null).Sum(x => x.Res.Regel!.Minutter), kategoriPriser);
@@ -261,12 +266,19 @@ public static class ServiceRegelMotor
             .Include(d => d.Funksjoner).ToListAsync();
         var kategoriPriser = await db.ServiceKategoriPriser.AsNoTracking().Where(k => ider.Contains(k.ProsjektId)).ToListAsync();
         var linjer = await db.ServiceMinuttLinjer.AsNoTracking().Where(l => ider.Contains(l.ProsjektId)).ToListAsync();
+        var antallIder = prosjekter.Where(p => p.ServicePrismodell == ServiceavtalePris.Antall).Select(p => p.Id).ToList();
+        var antallLinjer = antallIder.Count == 0 ? [] : await db.ServiceavtaleLinjer.AsNoTracking().Where(l => antallIder.Contains(l.ProsjektId)).ToListAsync();
         var svar = new Dictionary<int, (decimal, bool)>();
         foreach (var p in prosjekter)
         {
             if (p.ServiceGodkjentArspris is { } g)
             {
                 svar[p.Id] = (g, true);
+                continue;
+            }
+            if (p.ServicePrismodell == ServiceavtalePris.Antall)
+            {
+                svar[p.Id] = (ServiceavtaleAntall.Beregn(p, antallLinjer.Where(l => l.ProsjektId == p.Id)).Arspris, false);
                 continue;
             }
             var kp = kategoriPriser.Where(k => k.ProsjektId == p.Id).ToList();

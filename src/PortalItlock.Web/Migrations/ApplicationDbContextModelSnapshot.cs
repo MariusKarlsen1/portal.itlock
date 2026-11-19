@@ -6048,6 +6048,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Risikoklasse")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("ServiceErTilbud")
+                        .HasColumnType("INTEGER");
+
                     b.Property<decimal?>("ServiceFastTillegg")
                         .HasColumnType("TEXT");
 
@@ -6089,6 +6092,9 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<int?>("ServiceSjekklisteId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("ServiceTilbudValg")
+                        .HasColumnType("TEXT");
 
                     b.Property<decimal?>("ServiceTimepris")
                         .HasColumnType("TEXT");
@@ -7053,6 +7059,30 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ServiceMinuttLinjer");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ServicePrisKategori", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Beskrivelse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Pris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ServicePrisKategorier");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ServicePrisRegel", b =>
                 {
                     b.Property<int>("Id")
@@ -7176,6 +7206,31 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("ServiceSjekklister");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.ServiceTilleggMal", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("Pris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ServiceTilleggMaler");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.ServiceVarselSendt", b =>
                 {
                     b.Property<int>("Id")
@@ -7188,6 +7243,47 @@ namespace PortalItlock.Web.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("ServiceVarselSendt");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ServiceavtaleLinje", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal>("Antall")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Beskrivelse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("ErTillegg")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Navn")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Pris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ProsjektId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rekkefolge")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal?>("StandardPris")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TilleggType")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProsjektId");
+
+                    b.ToTable("ServiceavtaleLinjer");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServiceavtaleSjekkpunkt", b =>
@@ -10554,6 +10650,17 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired();
 
                     b.Navigation("Regel");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.ServiceavtaleLinje", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Prosjekt", "Prosjekt")
+                        .WithMany()
+                        .HasForeignKey("ProsjektId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Prosjekt");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ServiceavtaleSjekkpunkt", b =>

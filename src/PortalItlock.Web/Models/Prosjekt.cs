@@ -140,6 +140,12 @@ public class Prosjekt
     // osv.). Null = ikke satt; da leses intervallet fra rundene i stedet.
     public int? ServiceGangerPerAr { get; set; }
 
+    // Prismodell «Antall» (ServiceavtalePris.Antall): avtalen er et tilbud til det
+    // godkjennes. Da har den bare fanene Prising, Tillegg og Tilbud.
+    public bool ServiceErTilbud { get; set; }
+    // Hva tilbuds-PDF-en viser, kommaseparert (se ServiceavtaleAntall.Valg).
+    public string? ServiceTilbudValg { get; set; }
+
     // Sjekklisten servicerundene på avtalen får (se ServiceSjekkliste). Null =
     // standardlisten. Bevisst uten navigasjon/FK - slettes en liste, settes
     // feltet tilbake til null i koden (ServiceSjekklistemal.razor).
