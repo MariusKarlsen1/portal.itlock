@@ -14,6 +14,14 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.3", new DateOnly(2026, 11, 19),
+        [
+            new(Type.Nytt, "search", "Beslag på serviceavtaler", "Legg til og fjern rett i lista, med søk i komponentregisteret."),
+            new(Type.Bedre, "list", "Arkivlistene", "Ferdigstilte, avslåtte, godkjente, fakturerte: lik vanlig liste, med år og sum."),
+            new(Type.Bedre, "grid", "Dashbord", "Oversikten har samme tabeller som Arbeidsordre."),
+            new(Type.Nytt, "users", "Montører og serviceavtaler", "Montører kan se, redigere og opprette serviceavtaler."),
+            new(Type.Fikset, "shield", "Tilgang for montører", "Ingen kassa og ingen sletting. Prosjekt og dører er bare til visning."),
+        ]),
         new("1.2", new DateOnly(2026, 11, 18),
         [
             new(Type.Nytt, "layers", "Ny revisjon av plantegning", "Egen knapp inne på tegningen. Dørene står der de sto."),
