@@ -35,3 +35,19 @@ public class DorKomponent
     public int? MontertAvBrukerId { get; set; }
     public Bruker? MontertAvBruker { get; set; }
 }
+
+// Varene på en dør står alltid i samme rekkefølge: først det dørprodusenten (Ld)
+// og elektro (Le) leverer, så våre varer etter komponenttype (rekkefølgen i
+// komponentregisteret, f.eks. automatikk før albuebrytere), og opsjoner nederst.
+public static class DorKomponentRekkefolge
+{
+    private static readonly StringComparer Navn = StringComparer.Create(System.Globalization.CultureInfo.GetCultureInfo("nb-NO"), true);
+
+    public static IEnumerable<DorKomponent> IFastRekkefolge(this IEnumerable<DorKomponent> varer) => varer
+        .OrderBy(k => k.ErOpsjon)
+        .ThenBy(k => k.LevertAv switch { LevertAv.Ld => 0, LevertAv.Le => 1, _ => 2 })
+        .ThenBy(k => k.Component?.Type?.Sortering ?? int.MaxValue)
+        .ThenBy(k => k.Component?.Type is null ? 1 : 0)
+        .ThenBy(k => k.Component?.Type?.Navn ?? "", Navn)
+        .ThenBy(k => k.Component?.Navn ?? "", Navn);
+}

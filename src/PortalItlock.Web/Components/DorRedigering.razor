@@ -89,7 +89,7 @@
                 else
                 {
                     <div class="mobil-beslag-liste">
-                        @foreach (var dk in Dor.Komponenter.Where(k => !k.ErOpsjon))
+                        @foreach (var dk in Dor.Komponenter.Where(k => !k.ErOpsjon).IFastRekkefolge())
                         {
                             <div @key="dk.ComponentId" class="mobil-beslag-kort">
                                 @if (!dk.MonteresAvOss)
@@ -596,7 +596,7 @@ else
     {
     @foreach (var opsjon in BeslagPaneler)
     {
-        var liste = Dor.Komponenter.Where(k => k.ErOpsjon == opsjon).ToList();
+        var liste = Dor.Komponenter.Where(k => k.ErOpsjon == opsjon).IFastRekkefolge().ToList();
         var valgtHer = liste.Count(k => _valgteBeslagComponentIds.Contains(k.ComponentId));
     <div class="dor-seksjon-panel beslag-panel @(opsjon ? "beslag-panel-opsjon" : "") @(!opsjon && _draOpsjon is not null ? "bs-slipp-mal" : "") @(!opsjon && _overSlipp ? "bs-slipp-over" : "")"
          @ondragover="@(() => { if (!opsjon && _draOpsjon is not null) _overSlipp = true; })" @ondragover:preventDefault="@(!opsjon)"
@@ -658,8 +658,13 @@ else
                             title="@(valgtHer == 0 ? "Huk av beslag i listen først" : "Kopier de valgte beslagene til andre dører")"
                             @onclick="@(() => _visKopierPanel = !_visKopierPanel)"><Icon Name="clipboard" />Kopier til andre dører</button>
                 }
+                @if (!opsjon && liste.Count > 0 && !KunLes)
+                {
+                    <button type="button" class="bs-kn" disabled="@(valgtHer == 0)" title="@(valgtHer == 0 ? "Huk av varer i listen først" : "Flytt de valgte varene ned til opsjon")" @onclick="@(() => FlyttValgte(tilOpsjon: true))"><Icon Name="arrow-down" />Flytt valgte til opsjon</button>
+                }
                 @if (opsjon && liste.Count > 0 && !KunLes)
                 {
+                    <button type="button" class="bs-kn" disabled="@(valgtHer == 0)" title="@(valgtHer == 0 ? "Huk av varer i listen først" : "Flytt de valgte varene opp til beslag")" @onclick="@(() => FlyttValgte(tilOpsjon: false))"><Icon Name="arrow-up" />Flytt valgte til beslag</button>
                     <button type="button" class="bs-kn" title="Kunden har tatt hele opsjonen - flytt alle varene til beslag" @onclick="FlyttAlleTilBeslag"><Icon Name="arrow-up" />Flytt alle til beslag</button>
                 }
                 @if (!opsjon && !KunLes && DorensPakke is { } oppdPakke)
@@ -798,7 +803,10 @@ else
         <table class="linje-table bs-tab">
             <thead>
                 <tr>
-                    <th></th>
+                    <th>@if (!KunLes && liste.Count > 0)
+                        {
+                            <input type="checkbox" title="Merk alle" aria-label="Merk alle" checked="@(valgtHer == liste.Count)" @onchange="@(e => MerkAlleIListe(liste, (bool)e.Value!))" />
+                        }</th>
                     <th>Vare</th>
                     <th>Antall</th>
                     <th>Enhet</th>
@@ -1129,7 +1137,7 @@ else
 
         var dorer = await Db.Dorer
             .Where(d => d.ProsjektId == Dor.ProsjektId)
-            .Include(d => d.Komponenter).ThenInclude(k => k.Component)
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
             .Include(d => d.Funksjoner)
             .ToListAsync();
         var aktuelle = dorer.Where(d => d.Id == Dor.Id || PakkeFor(d)?.Id == pakke.Id).ToList();
@@ -1235,6 +1243,7 @@ else
             return;
         }
         var alle = Dor.Komponenter.Where(k => k.ErOpsjon).ToList();
+        BrytPakkeVedFlytting();
         foreach (var dk in alle)
         {
             dk.ErOpsjon = false;
@@ -1258,6 +1267,7 @@ else
         {
             return;
         }
+        BrytPakkeVedFlytting();
         dk.ErOpsjon = false;
         LoggHendelse($"Flyttet {dk.Component?.Navn} fra opsjon til beslag");
         OppdaterStatusFraBeslag();
@@ -1265,6 +1275,66 @@ else
         await TilbudSync.SyncSylinderAsync(Dor.ProsjektId, dk.ComponentId);
         _savedMessage = $"«{dk.Component?.Navn}» er flyttet til beslag.";
         await OnSaved.InvokeAsync();
+    }
+
+    // Merk alle / ingen i én liste (beslag eller opsjon).
+    private void MerkAlleIListe(List<DorKomponent> liste, bool merk)
+    {
+        foreach (var dk in liste)
+        {
+            if (merk)
+            {
+                _valgteBeslagComponentIds.Add(dk.ComponentId);
+            }
+            else
+            {
+                _valgteBeslagComponentIds.Remove(dk.ComponentId);
+            }
+        }
+    }
+
+    // Flytter de valgte varene mellom beslag og opsjon.
+    private async Task FlyttValgte(bool tilOpsjon)
+    {
+        if (KunLes)
+        {
+            return;
+        }
+        var valgte = Dor.Komponenter.Where(k => k.ErOpsjon != tilOpsjon && _valgteBeslagComponentIds.Contains(k.ComponentId)).ToList();
+        if (valgte.Count == 0)
+        {
+            return;
+        }
+        BrytPakkeVedFlytting();
+        foreach (var dk in valgte)
+        {
+            dk.ErOpsjon = tilOpsjon;
+            _valgteBeslagComponentIds.Remove(dk.ComponentId);
+        }
+        LoggHendelse($"Flyttet {valgte.Count} {(valgte.Count == 1 ? "vare" : "varer")} {(tilOpsjon ? "fra beslag til opsjon" : "fra opsjon til beslag")}");
+        OppdaterStatusFraBeslag();
+        await Db.SaveChangesAsync();
+        foreach (var dk in valgte)
+        {
+            await TilbudSync.SyncSylinderAsync(Dor.ProsjektId, dk.ComponentId);
+        }
+        if (tilOpsjon)
+        {
+            _visOpsjon = true;
+        }
+        _savedMessage = $"{valgte.Count} {(valgte.Count == 1 ? "vare" : "varer")} flyttet til {(tilOpsjon ? "opsjon" : "beslag")}.";
+        await OnSaved.InvokeAsync();
+    }
+
+    // Flyttes noe mellom beslag og opsjon, stemmer ikke døren med pakken lenger.
+    private void BrytPakkeVedFlytting()
+    {
+        if (DorensPakke is { } pakke)
+        {
+            BrytPakke(Dor);
+            LoggHendelse($"Pakken «{pakke.Navn}» tatt bort (varer flyttet mellom beslag og opsjon)");
+            _pakkeEndring = null;
+        }
     }
 
     private async Task LeggTilPakkeFraVelger(int pakkeId)
