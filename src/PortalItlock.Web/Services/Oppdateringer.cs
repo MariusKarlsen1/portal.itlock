@@ -14,7 +14,12 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
-        new("1.12", new DateOnly(2026, 11, 19),
+        new("1.13", new DateOnly(2026, 11, 19),
+        [
+            new(Type.Nytt, "file-text", "Tekst på hver leder", "Skriv fri tekst i begge ender av hver leder i en kabel, f.eks. «+12V» eller «NO»."),
+            new(Type.Bedre, "edit", "Over lederen eller på enden", "Velg hvor teksten på lederne skal stå."),
+        ]),
+        new("1.12",new DateOnly(2026, 11, 19),
         [
             new(Type.Nytt, "list", "Velg dører på opsjonstilbud", "Filtrer på dørnummer, pakke og etasje, og huk av dørene du vil ha med."),
             new(Type.Nytt, "layers", "Sorter og grupper opsjonene", "F.eks. etasje og så pakke, med delsum per gruppe på PDF-en."),

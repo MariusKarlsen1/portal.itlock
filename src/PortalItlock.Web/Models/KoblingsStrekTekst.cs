@@ -32,6 +32,37 @@ public static class KoblingsStrekTekst
 
     public sealed record Plassering(double X, double Y, string Klasse, string Tekst);
 
+    // Tekst ved enden av hver leder i en flerlederkabel. Plasseringen («over» eller
+    // «på enden») følger valget på kabelen. Farge = lederens farge, sort på hvit leder.
+    public sealed record LederPlassering(Plassering P, string Farge, bool Hvit);
+
+    public static IEnumerable<LederPlassering> ForLedere(KoblingsStrek s, KoblingsKabel.Vifte? v, double aspekt)
+    {
+        if (v is null)
+        {
+            yield break;
+        }
+        foreach (var l in v.Ledere)
+        {
+            var tekst = l.ErStart ? l.Leder.TekstStart : l.Leder.TekstSlutt;
+            if (string.IsNullOrWhiteSpace(tekst) || l.Punkter.Count < 2 || Ved(l.Punkter[^1], l.Punkter[^2], aspekt) is not { } p)
+            {
+                continue;
+            }
+            var hvit = l.Leder.Farge == "Hvit";
+            var plass = p with { Tekst = tekst.Trim() };
+            if (s.TekstVedEnden)
+            {
+                plass = plass with { Klasse = plass.Klasse.Replace("ks-st-", "ks-se-") };
+            }
+            yield return new LederPlassering(plass, s.TekstFarge ?? (hvit ? "#14213D" : KoblingsKabel.Hex(l.Leder.Farge)), hvit);
+        }
+    }
+
+    public static bool HarLederTekst(KoblingsStrek s) =>
+        s.ErKabel && !string.IsNullOrEmpty(s.LedereJson) && s.LedereJson.Contains("\"Tekst", StringComparison.Ordinal)
+        && KoblingsKabel.Les(s.LedereJson).Any(l => !string.IsNullOrWhiteSpace(l.TekstStart) || !string.IsNullOrWhiteSpace(l.TekstSlutt));
+
     public static IEnumerable<Plassering> For(KoblingsStrek s, List<KoblingsStrekPunkt> p, double aspekt)
     {
         foreach (var t in Plasser(s, p, aspekt))

@@ -31,6 +31,10 @@ public sealed class KoblingsLeder
     // noen ledere kan gå kort til én klemme og andre lenger til en annen.
     public double? LengdeStart { get; set; }
     public double? LengdeSlutt { get; set; }
+
+    // Fri tekst ved enden av lederen i hver ende, som på en vanlig strek (f.eks. «+12V» eller «NO»).
+    public string? TekstStart { get; set; }
+    public string? TekstSlutt { get; set; }
 }
 
 // Flerlederkabel på koblingsskjema: en tykk sort kabel som deler seg i

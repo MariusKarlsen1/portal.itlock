@@ -192,10 +192,23 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             if (strek.ErKabel)
             {
                 TegnKabel(sb, strek, punkter, f);
+                if (KoblingsStrekTekst.HarLederTekst(strek))
+                {
+                    var v = KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(strek.LedereJson), ViewBoxHoyde / ViewBoxBredde, strek.LederAvstand, strek.LederLengde, strek.KabelMerkePlass);
+                    foreach (var lt in KoblingsStrekTekst.ForLedere(strek, v, ViewBoxHoyde / ViewBoxBredde))
+                    {
+                        SkrivTekst(lt.P, lt.Farge, lt.Hvit);
+                    }
+                }
                 continue;
             }
 
             foreach (var t in KoblingsStrekTekst.For(strek, punkter, ViewBoxHoyde / ViewBoxBredde))
+            {
+                SkrivTekst(t, KoblingsStrekTekst.Farge(strek), KoblingsStrekTekst.ErHvit(strek.Farge));
+            }
+
+            void SkrivTekst(KoblingsStrekTekst.Plassering t, string farge, bool hvit)
             {
                 var ty = YtilVb(t.Y);
                 var (tx, anker, gy) = t.Klasse switch
@@ -212,7 +225,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                 if (Ledig(tx + (anker == "end" ? -1 : anker == "middle" ? 0 : 1) * t.Tekst.Length * navnStr * 0.3, gy, t.Tekst, navnStr))
                 {
                     sb.Append(CultureInfo.InvariantCulture,
-                        $"<text x='{Inv(tx)}' y='{Inv(gy)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='{anker}' fill='{KoblingsStrekTekst.Farge(strek)}'{(KoblingsStrekTekst.ErHvit(strek.Farge) ? $" stroke='#fff' stroke-width='{Inv(navnStr * 0.25)}' paint-order='stroke'" : "")}>{System.Net.WebUtility.HtmlEncode(t.Tekst)}</text>");
+                        $"<text x='{Inv(tx)}' y='{Inv(gy)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='{anker}' fill='{farge}'{(hvit ? $" stroke='#fff' stroke-width='{Inv(navnStr * 0.25)}' paint-order='stroke'" : "")}>{System.Net.WebUtility.HtmlEncode(t.Tekst)}</text>");
                 }
             }
 
