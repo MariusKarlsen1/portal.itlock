@@ -21,7 +21,7 @@ export function getClickPercent(containerEl, clientX, clientY) {
     return { x, y };
 }
 
-export function initZoomPan(wrapEl, canvasEl) {
+export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     if (wrapEl.dataset.zoomPanBound === '1') {
         return;
     }
@@ -33,11 +33,17 @@ export function initZoomPan(wrapEl, canvasEl) {
     const step = 0.12;
     let zoom = 1;
 
-    canvasEl.style.width = '100%';
+    // Blazor eier bredden (style="width:N%"). Zoomen leses derfra hver gang, og
+    // ny zoom sendes tilbake til Blazor - ellers satte neste rendring (f.eks. når
+    // man redigerer) bredden tilbake, og musehjul-zoomen hoppet tilbake.
+    function naa() {
+        const w = parseFloat(canvasEl.style.width);
+        return w > 0 ? w / 100 : zoom;
+    }
 
     function applyZoom(nextZoom, cursorX, cursorY) {
-        const prevZoom = zoom;
-        zoom = Math.min(maxZoom, Math.max(minZoom, nextZoom));
+        const prevZoom = naa();
+        zoom = Math.round(Math.min(maxZoom, Math.max(minZoom, nextZoom)) * 100) / 100;
         if (zoom === prevZoom) {
             return;
         }
@@ -46,12 +52,15 @@ export function initZoomPan(wrapEl, canvasEl) {
         canvasEl.style.width = (zoom * 100) + '%';
         wrapEl.scrollLeft = (wrapEl.scrollLeft + cursorX) * ratio - cursorX;
         wrapEl.scrollTop = (wrapEl.scrollTop + cursorY) * ratio - cursorY;
+        if (dotNetRef) {
+            dotNetRef.invokeMethodAsync('OnZoomHjul', Math.round(zoom * 100)).catch(() => { });
+        }
     }
 
     wrapEl.addEventListener('wheel', (e) => {
         e.preventDefault();
         const rect = wrapEl.getBoundingClientRect();
-        applyZoom(zoom * (e.deltaY < 0 ? 1 + step : 1 / (1 + step)), e.clientX - rect.left, e.clientY - rect.top);
+        applyZoom(naa() * (e.deltaY < 0 ? 1 + step : 1 / (1 + step)), e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
 
     const dragThreshold = 4;
@@ -141,7 +150,7 @@ export function initZoomPan(wrapEl, canvasEl) {
                 panning = false;
                 pinching = true;
                 pinchStartDist = pinchDistance();
-                pinchStartZoom = zoom;
+                pinchStartZoom = naa();
                 return;
             }
 
