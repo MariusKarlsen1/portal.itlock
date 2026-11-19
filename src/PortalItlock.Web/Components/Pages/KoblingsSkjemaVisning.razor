@@ -346,7 +346,7 @@ else if (_skjema is not null)
 
             <div class="kobling-canvas-wrap" @ref="_canvasWrapRef">
                 <div class="kobling-canvas @(_redigerModus && !_tegnStrekModus ? "kobling-canvas-rediger" : "") @(_tegnStrekModus ? "ks-tegner" : "") @(_skjema?.VisRutenett == true ? "ks-rutenett" : "")"
-                     style="width:@(_zoom.ToString(CultureInfo.InvariantCulture))%"
+                     style="width:@(_zoom.ToString(CultureInfo.InvariantCulture))%; --ks-skala:@(_skala.ToString(CultureInfo.InvariantCulture))"
                      data-rediger="@(_redigerModus ? "1" : "0")"
                      @ondragover="@(() => { })" @ondragover:preventDefault="true"
                      @ondrop="DroppKomponent"
@@ -400,7 +400,7 @@ else if (_skjema is not null)
                             </g>
                         }
                         @* Halvmåne der streker krysser, prikk der de er koblet. *@
-                        @((MarkupString)KoblingsKryss.Svg(KoblingsKryss.Linjer(_streker, KabelVifte, p => System.Text.Json.JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(p) ?? []), LerretAspekt, pxPerProsent: _pxPerProsent))
+                        @((MarkupString)KoblingsKryss.Svg(KoblingsKryss.Linjer(_streker, KabelVifte, p => System.Text.Json.JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(p) ?? []), LerretAspekt, pxPerProsent: _pxPerProsent / _skala))
                     </svg>
 
                     @foreach (var s in _streker.Where(s => s.ErKabel && !string.IsNullOrWhiteSpace(s.Navn) && !s.SkjulNavn))
@@ -425,7 +425,7 @@ else if (_skjema is not null)
                         <KoblingsSymbolElement @key="symbol.Id" Symbol="symbol"
                                                 Selected="@(_valgteSymbolIds.Contains(symbol.Id))"
                                                 VisNavn="@(_skjema?.VisKomponentnavn ?? true)"
-                                                VisResizeHandle="@(_redigerModus && !_tegnStrekModus && !symbol.ErLaast)"
+                                                VisResizeHandle="@(_redigerModus && !_tegnStrekModus && !symbol.ErLaast && _valgteSymbolIds.Contains(symbol.Id))"
                                                 VisEgnePorter="_redigerModus" />
                     }
 
@@ -743,8 +743,12 @@ else if (_skjema is not null)
                             </label>
                             <label>
                                 Størrelse <b>@sym.FontStorrelse px</b>
-                                <input type="range" min="8" max="48" step="1" @bind="sym.FontStorrelse" @bind:event="oninput" @bind:after="LagreSymbol" />
+                                <input type="range" min="6" max="48" step="1" @bind="sym.FontStorrelse" @bind:event="oninput" @bind:after="LagreSymbol" />
                             </label>
+                            <label class="checkbox-row">
+                                <input type="checkbox" checked="@sym.Fet" @onchange="@(async e => { sym.Fet = (bool)e.Value!; await LagreSymbol(); })" /> <b>Fet skrift</b>
+                            </label>
+                            <p class="ks-panel-hint">Dra i hjørnet for å gjøre boksen rundt teksten så liten du vil.</p>
                         }
                         else
                         {
@@ -924,6 +928,11 @@ else if (_skjema is not null)
     // samme størrelse på skjermen når man zoomer.
     private double _pxPerProsent = KoblingsKryss.StandardPxPerProsent;
 
+    // Skala for tekst, prikker og halvmåner: blir mindre når man zoomer ut
+    // (lerretet er smalere enn 1200 px), men aldri større når man zoomer inn.
+    private double _skala = 1;
+    private const double ReferanseBredde = 1200;
+
     [JSInvokable]
     public void OnLerretBredde(double bredde)
     {
@@ -931,6 +940,7 @@ else if (_skjema is not null)
         if (ny > 0 && Math.Abs(ny - _pxPerProsent) > _pxPerProsent * 0.03)
         {
             _pxPerProsent = ny;
+            _skala = Math.Round(Math.Clamp(bredde / ReferanseBredde, 0.35, 1), 3);
             StateHasChanged();
         }
     }
@@ -1004,7 +1014,7 @@ else if (_skjema is not null)
     {
         if (firstRender)
         {
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=26");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=27");
             _dotNetRef = DotNetObjectReference.Create(this);
         }
 
@@ -1132,7 +1142,8 @@ else if (_skjema is not null)
             ZIndex = s.ZIndex,
             ErLaast = s.ErLaast,
             PorterJson = s.PorterJson,
-            SkjulNavn = s.SkjulNavn
+            SkjulNavn = s.SkjulNavn,
+            Fet = s.Fet
         }).ToList();
 
     private static List<KoblingsStrek> KloneStreker(List<KoblingsStrek> kilde) =>
@@ -1514,8 +1525,9 @@ else if (_skjema is not null)
             Farge = type is KoblingsElementType.Tekstboks or KoblingsElementType.Punkt ? "#1d1f22" : "#835e41",
             PosX = 45,
             PosY = 45,
-            Bredde = type switch { KoblingsElementType.Tekstboks => 12, KoblingsElementType.Punkt => 1.2, _ => 10 },
-            Hoyde = type switch { KoblingsElementType.Tekstboks => 4, KoblingsElementType.Punkt => 1.2 * 16 / 13.0, _ => 10 },
+            Bredde = type switch { KoblingsElementType.Tekstboks => 6, KoblingsElementType.Punkt => 0.8, _ => 10 },
+            Hoyde = type switch { KoblingsElementType.Tekstboks => 2.4, KoblingsElementType.Punkt => 0.8 * 16 / 13.0, _ => 10 },
+            FontStorrelse = 13,
             ZIndex = (_symboler.Count > 0 ? _symboler.Max(s => s.ZIndex) : 0) + 1
         };
 
@@ -2230,7 +2242,8 @@ else if (_skjema is not null)
                 Hoyde = s.Hoyde,
                 ZIndex = nesteZIndex,
                 PorterJson = s.PorterJson,
-                SkjulNavn = s.SkjulNavn
+                SkjulNavn = s.SkjulNavn,
+                Fet = s.Fet
             };
             Db.KoblingsSymboler.Add(kopi);
             nye.Add(kopi);

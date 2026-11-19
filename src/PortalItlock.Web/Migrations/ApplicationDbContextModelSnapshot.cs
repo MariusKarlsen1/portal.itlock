@@ -3930,6 +3930,9 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("Fet")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("FontStorrelse")
                         .HasColumnType("INTEGER");
 

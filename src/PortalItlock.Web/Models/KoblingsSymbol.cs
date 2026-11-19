@@ -45,4 +45,7 @@ public class KoblingsSymbol
 
     // Navnet skjules på tegningen for denne komponenten (beholdes i lister og PDF-tabeller).
     public bool SkjulNavn { get; set; }
+
+    // Tekstboks: fet skrift.
+    public bool Fet { get; set; }
 }
