@@ -14,6 +14,14 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.4", new DateOnly(2026, 11, 19),
+        [
+            new(Type.Bedre, "link", "Enklere koblingsskjema", "Rediger-knapp, navn rett over, kort panel. Mer ligger under «Mer …»."),
+            new(Type.Nytt, "box", "Nye symboler", "Strømforsyning 24V, adapter 12V, relékort og klemmerekker."),
+            new(Type.Nytt, "edit", "Raskere redigering", "Ctrl+C / Ctrl+V, Delete eller Backspace, og fri flytting."),
+            new(Type.Bedre, "eye", "Ryddigere tegning", "Vanlige kabelfarger, skjul navn, og punkter vises bare ved musepekeren."),
+            new(Type.Fikset, "check-circle", "Forhåndsvisning", "Skjemalista viser nå komponentene, ikke bare strekene."),
+        ]),
         new("1.3", new DateOnly(2026, 11, 19),
         [
             new(Type.Nytt, "search", "Beslag på serviceavtaler", "Legg til og fjern rett i lista, med søk i komponentregisteret."),
