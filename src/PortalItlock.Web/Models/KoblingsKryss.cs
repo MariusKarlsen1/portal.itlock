@@ -21,10 +21,10 @@ public static class KoblingsKryss
 
     public sealed record Prikk(int Linje, KoblingsStrekPunkt Punkt);
 
-    private const double Radius = 1.0;     // halvmånen, i prosent av bredden (+ litt for tykke understreker)
-    private const double Stykke = 0.8;     // biten av understreken som tegnes på nytt
+    private const double Radius = 0.45;    // halvmånen, i prosent av bredden (+ litt for tykke understreker)
+    private const double Stykke = 0.4;     // biten av understreken som tegnes på nytt
     private const double Toleranse = 0.15; // hvor nær en ende må være en strek for å regnes som koblet
-    private const double PrikkRadius = 0.42;
+    private const double PrikkRadius = 0.2;
 
     // Alle streker slik de tegnes, i rekkefølge. vifte gir kabelens ledere.
     public static List<Linje> Linjer(IEnumerable<KoblingsStrek> streker, Func<KoblingsStrek, KoblingsKabel.Vifte?> vifte, Func<string, List<KoblingsStrekPunkt>> punkter)
@@ -75,7 +75,7 @@ public static class KoblingsKryss
                     var (bx, by) = V(po[a + 1]);
                     double dx = bx - ax, dy = by - ay;
                     var lo = Math.Sqrt(dx * dx + dy * dy);
-                    var r = Radius + linjer[under].Bredde * 0.08;
+                    var r = Radius + linjer[under].Bredde * 0.04;
                     if (lo < 2 * r + 0.1)
                     {
                         continue;
@@ -214,7 +214,17 @@ public static class KoblingsKryss
                 sb.Append($"<line x1='{I(h.U1.X)}' y1='{I(h.U1.Y * yFaktor)}' x2='{I(h.U2.X)}' y2='{I(h.U2.Y * yFaktor)}' stroke='{u.Kant}' stroke-width='{B(3.6)}'{ns} />");
             }
             sb.Append($"<line x1='{I(h.U1.X)}' y1='{I(h.U1.Y * yFaktor)}' x2='{I(h.U2.X)}' y2='{I(h.U2.Y * yFaktor)}' stroke='{u.Farge}' stroke-width='{B(u.Bredde)}'{ns} />");
-            var bue = $"M{Pt(h.A)} A{I(h.R)},{I(h.R / aspekt * yFaktor)} 0 0 1 {Pt(h.B)}";
+        }
+        // Halvmånene: hopp som ligger tett på samme strek blir én liten bue over
+        // alle (f.eks. over to ledere som går side om side).
+        foreach (var (over, a, bSlutt, r) in SlaSammen(hopp, aspekt))
+        {
+            var o = linjer[over];
+            double dx = bSlutt.X - a.X, dy = (bSlutt.Y - a.Y) * aspekt;
+            var halv = Math.Sqrt(dx * dx + dy * dy) / 2;
+            // Langs streken: halve lengden. På tvers: like høy som en enkelt halvmåne.
+            var (rx, ry) = Math.Abs(dx) >= Math.Abs(dy) ? (halv, r) : (r, halv);
+            var bue = $"M{Pt(a)} A{I(rx)},{I(ry / aspekt * yFaktor)} 0 0 1 {Pt(bSlutt)}";
             if (o.Kant is not null)
             {
                 sb.Append($"<path d='{bue}' fill='none' stroke='{o.Kant}' stroke-width='{B(3.6)}' stroke-linecap='round'{ns} />");
@@ -232,6 +242,48 @@ public static class KoblingsKryss
         }
         sb.Append("</g>");
         return sb.ToString();
+    }
+
+    // Hopp på samme strek som overlapper eller nesten møtes, slås sammen til ett.
+    public static List<(int Over, KoblingsStrekPunkt A, KoblingsStrekPunkt B, double R)> SlaSammen(List<Hopp> hopp, double aspekt)
+    {
+        var res = new List<(int Over, KoblingsStrekPunkt A, KoblingsStrekPunkt B, double R)>();
+        foreach (var gruppe in hopp.GroupBy(h => h.Over))
+        {
+            // Hoppene på en strek grupperes per rett linje (samme retning og samme linje),
+            // og sorteres langs den.
+            var igjen = gruppe.ToList();
+            while (igjen.Count > 0)
+            {
+                var f = igjen[0];
+                double ux = f.B.X - f.A.X, uy = (f.B.Y - f.A.Y) * aspekt;
+                var l = Math.Sqrt(ux * ux + uy * uy);
+                ux /= l;
+                uy /= l;
+                double Langs(KoblingsStrekPunkt p) => (p.X - f.A.X) * ux + (p.Y - f.A.Y) * aspekt * uy;
+                double Tvers(KoblingsStrekPunkt p) => Math.Abs((p.X - f.A.X) * uy - (p.Y - f.A.Y) * aspekt * ux);
+                var linje = igjen.Where(h => Tvers(h.A) < 0.05 && Tvers(h.B) < 0.05).OrderBy(h => Langs(h.A)).ToList();
+                igjen.RemoveAll(linje.Contains);
+
+                var (a, b, r) = (linje[0].A, linje[0].B, linje[0].R);
+                foreach (var h in linje.Skip(1))
+                {
+                    if (Langs(h.A) <= Langs(b) + 0.15)
+                    {
+                        if (Langs(h.B) > Langs(b))
+                        {
+                            b = h.B;
+                        }
+                        r = Math.Max(r, h.R);
+                        continue;
+                    }
+                    res.Add((gruppe.Key, a, b, r));
+                    (a, b, r) = (h.A, h.B, h.R);
+                }
+                res.Add((gruppe.Key, a, b, r));
+            }
+        }
+        return res;
     }
 
     private static double Avst(double ax, double ay, double bx, double by) =>

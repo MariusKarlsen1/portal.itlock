@@ -1296,7 +1296,11 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                 const dw = ((e.clientX - startClientX) / rect.width) * 100;
                 const dh = ((e.clientY - startClientY) / rect.height) * 100;
                 const newWidth = snapToGrid(containerEl, Math.max(2, startWidthPct + dw));
-                const newHeight = snapToGrid(containerEl, Math.max(2, startHeightPct + dh));
+                // Bilder beholder formen sin, så rammen alltid følger bildet.
+                const bilde = markerEl.querySelector('img.kobling-symbol-bilde');
+                const newHeight = bilde && bilde.naturalWidth > 0
+                    ? Math.round(newWidth * (bilde.naturalHeight / bilde.naturalWidth) * (rect.width / rect.height) * 100) / 100
+                    : snapToGrid(containerEl, Math.max(2, startHeightPct + dh));
                 markerEl.style.width = newWidth + '%';
                 markerEl.style.height = newHeight + '%';
                 markerEl.dataset.w = newWidth;

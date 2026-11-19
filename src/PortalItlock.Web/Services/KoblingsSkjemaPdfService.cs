@@ -58,6 +58,10 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
         var streker = await db.KoblingsStreker
             .Where(s => s.KoblingsSkjemaId == skjemaId)
             .ToListAsync();
+        if (KoblingsTilpasning.TilpassSkjema(symboler, streker))
+        {
+            await db.SaveChangesAsync();
+        }
 
         var bibliotekIds = symboler
             .Where(s => s.SymbolBibliotekId.HasValue)

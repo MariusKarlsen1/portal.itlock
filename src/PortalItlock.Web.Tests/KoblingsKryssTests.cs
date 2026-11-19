@@ -35,4 +35,24 @@ public class KoblingsKryssTests
         Assert.Empty(prikker);
         Assert.NotEmpty(KoblingsKryss.Svg([L(10, 50, 90, 50), L(50, 10, 50, 90)], 0.8));
     }
+
+    [Fact]
+    public void ToTetteLedere_GirEnBue_IkkeTo()
+    {
+        // Rød loddrett strek over grønn og gul som går tett side om side.
+        var linjer = new List<KoblingsKryss.Linje> { L(10, 50, 90, 50), L(10, 50.6, 90, 50.6), L(50, 10, 50, 90) };
+        var (hopp, _) = KoblingsKryss.Finn(linjer, 1);
+        Assert.Equal(2, hopp.Count);
+        var buer = KoblingsKryss.SlaSammen(hopp, 1);
+        var bue = Assert.Single(buer);
+        Assert.True(bue.B.Y - bue.A.Y < 2, "Buen skal være liten");
+    }
+
+    [Fact]
+    public void KryssLangtFraHverandre_GirToBuer()
+    {
+        var linjer = new List<KoblingsKryss.Linje> { L(10, 30, 90, 30), L(10, 70, 90, 70), L(50, 10, 50, 90) };
+        var (hopp, _) = KoblingsKryss.Finn(linjer, 1);
+        Assert.Equal(2, KoblingsKryss.SlaSammen(hopp, 1).Count);
+    }
 }
