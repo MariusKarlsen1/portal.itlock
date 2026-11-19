@@ -1380,10 +1380,11 @@ export function enableEditorSnarveier(containerEl, dotNetRef) {
     };
     containerEl._editorSnarveier = handler;
     document.addEventListener('keydown', handler);
+    dokumentLyttere.add(handler);
 }
 
 export function disableEditorSnarveier(containerEl) {
-    if (containerEl._editorSnarveier) {
+    if (containerEl && containerEl._editorSnarveier) {
         document.removeEventListener('keydown', containerEl._editorSnarveier);
         containerEl._editorSnarveier = null;
     }
@@ -1488,9 +1489,13 @@ export function enableKeyboardShortcuts(containerEl, dotNetRef) {
 
     containerEl._keyboardShortcutsHandler = handler;
     document.addEventListener('keydown', handler);
+    dokumentLyttere.add(handler);
 }
 
 export function disableKeyboardShortcuts(containerEl) {
+    if (!containerEl) {
+        return;
+    }
     if (containerEl._keyboardShortcutsHandler) {
         document.removeEventListener('keydown', containerEl._keyboardShortcutsHandler);
         containerEl._keyboardShortcutsHandler = null;
@@ -1665,6 +1670,7 @@ export function observerLerretBredde(canvasEl, dotNetRef) {
         }
     };
     canvasEl._breddeObs = new ResizeObserver(meld);
+    observatorer.add(canvasEl._breddeObs);
     canvasEl._breddeObs.observe(canvasEl);
     meld();
 }
@@ -1674,4 +1680,28 @@ export function stoppObserverLerret(canvasEl) {
         canvasEl._breddeObs.disconnect();
         canvasEl._breddeObs = null;
     }
+}
+
+
+// Rydder opp alt modulen har koblet til dokumentet, uten å trenge lerretet
+// (det er ofte allerede fjernet når Blazor kaller DisposeAsync - da kom
+// «An unhandled error» når man gikk inn og ut av et skjema).
+const dokumentLyttere = new Set();
+const observatorer = new Set();
+
+export function ryddOpp() {
+    for (const h of dokumentLyttere) {
+        document.removeEventListener('keydown', h);
+    }
+    dokumentLyttere.clear();
+    for (const o of observatorer) {
+        o.disconnect();
+    }
+    observatorer.clear();
+    try {
+        stopStrekTegning();
+    } catch {
+        // ingen strektegning i gang
+    }
+    clearTimeout(nudgeSaveTimer);
 }
