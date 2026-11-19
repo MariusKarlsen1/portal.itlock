@@ -4,6 +4,7 @@
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider TilgangAuth
 
 @* Serviceavtale → «Dører og beslag» D8 (Prototype serviceavtalemodul komplett PC.html):
    enkel tabell Dør · Rom · Etasje · Status. Trykk på en dør åpner dørkortet K1 som
@@ -18,15 +19,8 @@
         <span class="sdp-sp"></span>
         @if (KanRedigere)
         {
-            @* E1 «Rett i listen» og E3 «Avkrysning» (Prototype serviceavtale rediger dorer.html) *@
-            <span class="sdp-seg">
-                <button type="button" class="@(_visning == "liste" ? "pa" : "")" @onclick="@(() => _visning = "liste")">Liste</button>
-                <button type="button" class="@(_visning == "kryss" ? "pa" : "")" @onclick="@(() => { _visning = "kryss"; _red = false; _valgte.Clear(); })">Avkrysning</button>
-            </span>
-            @if (_visning == "liste")
-            {
-                <button type="button" class="sdp-knapp @(_red ? "sdp-knapp-gronn" : "")" @onclick="@(() => { _red = !_red; _valgte.Clear(); })"><Icon Name="@(_red ? "check" : "edit")" />@(_red ? "Ferdig" : "Rediger dører")</button>
-            }
+            @* serviceavtale-beslag-enkelt.html: beslag legges til og fjernes rett i lista,
+               uten redigeringsmodus. «+ Beslag» søker i hele komponentregisteret. *@
             <button type="button" class="sdp-knapp" @onclick="OnPlantegninger"><Icon Name="map" />Plantegninger</button>
             <button type="button" class="sdp-knapp" @onclick="OnImporter"><Icon Name="upload" />Importer fra Excel</button>
         }
@@ -65,38 +59,25 @@
         }
         else
         {
-        @if (_red)
-        {
-            <p class="sdp-hjelp">Trykk på et beslag for å velge vare · × fjerner · «+ Beslag» legger til. Kryss av flere dører for å legge til på alle.</p>
-        }
         <div class="sdp-wrap">
             <table class="sdp-tb sdp-m1">
-                <thead><tr>@if (_red) {<th class="sdp-k-cb"><input type="checkbox" checked="@(_dorer.Count > 0 && _valgte.Count == _dorer.Count)" @onchange="VelgAlle" /></th>}<th class="sdp-k-nr">Dør</th><th class="sdp-k-rom">Rom</th><th class="sdp-k-etg">Etasje</th><th>Beslag</th>@if (VisPriser) {<th class="n">Kategori · per runde</th>}<th>Status</th><th></th></tr></thead>
+                <thead><tr>@if (KanRedigere) {<th class="sdp-k-cb"><input type="checkbox" title="Velg alle" checked="@(_dorer.Count > 0 && _valgte.Count == _dorer.Count)" @onchange="VelgAlle" /></th>}<th class="sdp-k-nr">Dør</th><th class="sdp-k-rom">Rom</th><th class="sdp-k-etg">Etasje</th><th>Beslag</th>@if (VisPriser) {<th class="n">Kategori · per runde</th>}<th>Status</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var d in _dorer)
                     {
                         var res = _res.GetValueOrDefault(d.Id);
-                        <tr @key="d.Id" class="@(_valgte.Contains(d.Id) ? "sdp-valgt" : "")" @onclick="@(() => { if (!_red) { _valgt = d; } })">
-                            @if (_red)
+                        <tr @key="d.Id" class="@(_valgte.Contains(d.Id) ? "sdp-valgt" : "")" @onclick="@(() => _valgt = d)">
+                            @if (KanRedigere)
                             {
                                 <td class="sdp-k-cb" @onclick:stopPropagation="true"><input type="checkbox" checked="@_valgte.Contains(d.Id)" @onchange="@(() => { if (!_valgte.Remove(d.Id)) { _valgte.Add(d.Id); } })" /></td>
                             }
                             <td class="sdp-nr"><i class="sdp-dot @d.Farge"></i><b>@d.Dornummer</b></td>
                             <td>@(d.Rom ?? "–")</td>
                             <td>@(d.Etasje ?? "–")</td>
-                            @if (_red)
+                            @if (KanRedigere)
                             {
-                                <td>
-                                    <div class="sdp-bcs">
-                                        @foreach (var b in d.Beslag)
-                                        {
-                                            <span class="sdp-bc @(b.ErPlassholder ? "ps" : "")" title="Trykk for å velge vare" @onclick="@(() => ApneVare(d, b))">
-                                                @b.Type<small>@(b.ErPlassholder ? "velg vare" : b.Produkt)@(b.Antall > 1 ? $" × {b.Antall}" : "")</small>
-                                                <button type="button" class="sdp-bc-x" title="Fjern" @onclick="@(() => FjernBeslag(d, b))" @onclick:stopPropagation="true">×</button>
-                                            </span>
-                                        }
-                                        <button type="button" class="sdp-legg" @onclick="@(() => ApneLeggTil(d.Id))">+ Beslag</button>
-                                    </div>
+                                <td @onclick:stopPropagation="true">
+                                    @BeslagChips(d)
                                 </td>
                             }
                             else
@@ -108,10 +89,25 @@
                                 <td class="n sdp-pris">@if (res is not null) {<span class="sdp-kat">@res.Kategori</span><b>@(res.Regel is null ? "–" : Kr(ServiceRegelMotor.PrisForKategori(res.Regel, _kp)))</b>}</td>
                             }
                             <td><StatusPill Tekst="@StatusTekst(d.Farge)" Ikon="@StatusIkon(d.Farge)" Farge="@d.Farge" /></td>
-                            <td class="n"><button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => _valgt = d)" @onclick:stopPropagation="true">Dørkort</button></td>
+                            <td class="n sdp-handl" @onclick:stopPropagation="true">
+                                @if (_slettDorId == d.Id)
+                                {
+                                    <span class="sdp-bekreft">Slett dør @d.Dornummer?</span>
+                                    <button type="button" class="sdp-knapp sdp-liten sdp-knapp-rod" disabled="@_jobber" @onclick="@(() => SlettDor(d))">Ja, slett</button>
+                                    <button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => _slettDorId = null)">Avbryt</button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => _valgt = d)">Dørkort</button>
+                                    @if (KanRedigere)
+                                    {
+                                        <span class="kun-leder"><RadMeny Navn="@($"dør {d.Dornummer}")" RedigerHref="@($"/dor/{d.Id}")" OnSlett="@(() => _slettDorId = d.Id)" /></span>
+                                    }
+                                }
+                            </td>
                         </tr>
                     }
-                    @if (KanRedigere && !_red)
+                    @if (KanRedigere)
                     {
                         var ny = NyResultat();
                         <tr class="sdp-ny">
@@ -154,12 +150,13 @@
                 </tbody>
             </table>
         </div>
-        @if (_red && _valgte.Count > 0)
+        @if (KanRedigere && _valgte.Count > 0)
         {
             <div class="sdp-bulk">
                 <b>@_valgte.Count @(_valgte.Count == 1 ? "dør" : "dører") valgt</b>
                 <span class="sdp-sp"></span>
-                <button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => ApneLeggTil(null))">+ Legg til beslag på alle</button>
+                <button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => ApneLeggTil(null))">+ Legg til beslag på valgte</button>
+                <button type="button" class="sdp-knapp sdp-liten sdp-knapp-rod" @onclick="@(() => _pop = new Pop("fjerntype", null, Tittel: $"Fjern beslag fra {_valgte.Count} valgte dører"))">Fjern beslag fra valgte</button>
                 <button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => _valgte.Clear())">Avbryt</button>
             </div>
         }
@@ -173,27 +170,37 @@
 
 @if (_pop is { } pop)
 {
-    <div class="sdp-bak" @onclick="LukkPop">
-        <div class="sdp-pop" @onclick:stopPropagation="true">
+    <div class="sdp-bak sdp-bak-pop" @onclick="LukkPop">
+        <div class="sdp-pop @(pop.Modus == "sok" ? "sdp-pop-sok" : "")" @onclick:stopPropagation="true">
             <div class="sdp-pop-h">
                 <b>@PopTittel(pop)</b>
                 <span class="sdp-sp"></span>
+                @if (pop.Modus == "sok")
+                {
+                    <span class="sdp-mini">Søker i komponentregisteret</span>
+                }
                 <button type="button" class="sdp-x" title="Lukk" @onclick="LukkPop">×</button>
             </div>
+            @if (pop.Modus == "sok")
+            {
+                @SokPanel(pop)
+            }
+            else
+            {
             <div class="sdp-pop-b">
-                @if (pop.Modus == "leggtil")
+                @if (pop.Modus == "fjerntype")
                 {
-                    <span class="sdp-mini">Typen legges til som «ikke spesifisert». Velg vare nå eller senere.</span>
+                    var typerValgt = BeslagPaValgte();
+                    <span class="sdp-mini">Trykk på beslaget som skal fjernes fra de valgte dørene.</span>
+                    @if (typerValgt.Count == 0)
+                    {
+                        <span class="sdp-mini">De valgte dørene har ingen beslag.</span>
+                    }
                     <div class="sdp-typer">
-                        @foreach (var st in ServiceRegelMotor.Servicetyper)
+                        @foreach (var (navn, antall) in typerValgt)
                         {
-                            <button type="button" class="sdp-chip" @onclick="@(() => LeggTilServicetype(st))">@st</button>
+                            <button type="button" class="sdp-chip sdp-chip-rod" disabled="@_jobber" @onclick="@(() => FjernTypeFraValgte(navn))">@navn <small>@antall @(antall == 1 ? "dør" : "dører")</small></button>
                         }
-                        @foreach (var t in EgneTyper)
-                        {
-                            <button type="button" class="sdp-chip" @onclick="@(() => LeggTilType(t))">@t.Navn</button>
-                        }
-                        <button type="button" class="sdp-chip sdp-chip-ny" @onclick="@(() => { _pop = pop with { Modus = "nytype" }; _nyTypeNavn = ""; _nyTypeService = ""; })">+ Ny type</button>
                     </div>
                 }
                 else if (pop.Modus == "nytype")
@@ -214,35 +221,20 @@
                         <span class="sdp-feil">@_typeFeil</span>
                     }
                     <div class="sdp-pop-f">
-                        <button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => _pop = pop with { Modus = "leggtil" })">Tilbake</button>
+                        <button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => _pop = pop with { Modus = "sok" })">Tilbake</button>
                         <button type="button" class="sdp-knapp sdp-liten sdp-knapp-p" disabled="@string.IsNullOrWhiteSpace(_nyTypeNavn)" @onclick="OpprettType">Opprett og legg til</button>
                     </div>
                 }
-                else if (pop.Modus == "vare")
-                {
-                    <input class="sdp-in" placeholder="Søk vare eller varenr …" value="@_vareSok" @oninput="SokVare" />
-                    <div class="sdp-varer">
-                        @foreach (var c in _vareTreff)
-                        {
-                            <button type="button" class="@(c.Id == pop.ComponentId ? "pa" : "")" @onclick="@(() => VelgVare(c.Id))">@c.Navn<small>@(c.Produktkode ?? "")</small></button>
-                        }
-                        @if (_vareTreff.Count == 0)
-                        {
-                            <span class="sdp-mini">Ingen varer av denne typen@(string.IsNullOrWhiteSpace(_vareSok) ? "" : " med det søket")</span>
-                        }
-                        @if (pop.PlassholderId is { } plId)
-                        {
-                            <button type="button" class="@(pop.ErPlassholder ? "pa" : "")" @onclick="@(() => VelgVare(plId))">Ikke spesifisert<small>velg senere</small></button>
-                        }
-                    </div>
-                    <div class="sdp-pop-f">
-                        <label class="sdp-ant">Antall <input type="number" min="1" value="@pop.Antall" @onchange="SettAntall" /></label>
-                        <span class="sdp-sp"></span>
-                        <button type="button" class="sdp-knapp sdp-liten sdp-fjern" @onclick="FjernFraPop">Fjern fra døren</button>
-                    </div>
-                }
             </div>
+            }
         </div>
+    </div>
+}
+@if (_angre is { } angre)
+{
+    <div class="sdp-toast" role="status">
+        <span>@angre.Tekst</span>
+        <button type="button" disabled="@_jobber" @onclick="Angre">Angre</button>
     </div>
 }
 @if (_valgt is { } v)
@@ -306,7 +298,7 @@
                 </div>
                 <div class="sdp-kol">
                     <div class="sdp-s">
-                        <div class="sdp-sh"><b>Beslag på døren</b><small>@v.Beslag.Count stk</small></div>
+                        <div class="sdp-sh"><b>Beslag på døren</b><small>@v.Beslag.Count stk</small>@if (KanRedigere) {<button type="button" class="sdp-legg sdp-legg-h" @onclick="@(() => ApneLeggTil(v.Id))">+ Legg til beslag</button>}</div>
                         @if (v.Beslag.Count == 0)
                         {
                             <div class="sdp-rad sdp-mini">Ingen beslag registrert på døren.</div>
@@ -314,7 +306,7 @@
                         else
                         {
                             <table class="sdp-tb">
-                                <thead><tr><th>Beslag</th><th>Produkt</th><th>Leverandør · varenr</th><th class="n">Ant.</th><th>Montert</th></tr></thead>
+                                <thead><tr><th>Beslag</th><th>Produkt</th><th>Leverandør · varenr</th><th class="n">Ant.</th><th>Montert</th>@if (KanRedigere) {<th></th>}</tr></thead>
                                 <tbody>
                                     @foreach (var b in v.Beslag)
                                     {
@@ -333,6 +325,21 @@
                                             <td class="sdp-mini">@(b.Leverandor ?? "–") · @(b.Varenr ?? "–")</td>
                                             <td class="n">@b.Antall</td>
                                             <td>@(b.MontertDato?.ToString("dd.MM.yyyy") ?? "–")</td>
+                                            @if (KanRedigere)
+                                            {
+                                                <td class="n sdp-handl">
+                                                    @if (_bekreft == (v.Id, b.ComponentId))
+                                                    {
+                                                        <button type="button" class="sdp-knapp sdp-liten sdp-knapp-rod" disabled="@_jobber" @onclick="@(() => FjernBeslag(v, b))">Fjern</button>
+                                                        <button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => _bekreft = null)">Nei</button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button type="button" class="sdp-knapp sdp-liten" @onclick="@(() => ApneVare(v, b))">Bytt</button>
+                                                        <button type="button" class="sdp-bc-x" title="Fjern fra døren" @onclick="@(() => _bekreft = (v.Id, b.ComponentId))">×</button>
+                                                    }
+                                                </td>
+                                            }
                                         </tr>
                                     }
                                 </tbody>
@@ -502,13 +509,10 @@
 
     // ---- E1 «Rett i listen» og E3 «Avkrysning» ----
     private string _visning = "liste";
-    private bool _red;
     private readonly HashSet<int> _valgte = [];
     private List<ComponentType> _typer = [];
     private sealed record Pop(string Modus, int? DorId, int ComponentId = 0, int? TypeId = null, string? Servicetype = null, int? PlassholderId = null, bool ErPlassholder = false, int Antall = 1, string? Tittel = null);
     private Pop? _pop;
-    private string _vareSok = "";
-    private List<Component> _vareTreff = [];
     private string _nyTypeNavn = "", _nyTypeService = "";
     private string? _typeFeil;
     private sealed record Kol(string Navn, string? Servicetype, int? TypeId);
@@ -629,28 +633,234 @@
         }
     }
 
-    private void ApneLeggTil(int? dorId)
+    // ---- serviceavtale-beslag-enkelt.html: søk i komponentregisteret ----
+    private sealed record RegVare(int Id, string Navn, string? Produktkode, string? Gtin, string? Leverandor, int? TypeId, string? TypeNavn, decimal? Pris, string Sok);
+    private sealed class KurvRad
+    {
+        public int ComponentId { get; init; }
+        public string Navn { get; init; } = "";
+        public string Type { get; init; } = "";
+        public bool ErPlassholder { get; init; }
+        public int Antall { get; set; } = 1;
+    }
+    private sealed record AngreInfo(string Tekst, List<DorKomponent> Fjernet, long Nr);
+
+    private List<RegVare>? _register;
+    private List<int> _nyligBrukt = [];
+    private string _sok = "";
+    private string? _sokSt;       // servicetype-filter (Dørlukker osv.)
+    private int? _sokTypeId;      // filter på én komponenttype
+    private string _sokLev = "";
+    private int _fokus;
+    private readonly List<KurvRad> _kurv = [];
+    private List<RegVare> _synlige = [];
+    private (int DorId, int ComponentId)? _bekreft;
+    private int? _slettDorId;
+    private AngreInfo? _angre;
+    private long _angreNr;
+
+    private void ApneLeggTil(int? dorId) => _ = ApneSok(dorId, null);
+
+    private Task ApneVare(DorRad d, BeslagRad b) => ApneSok(d.Id, b);
+
+    private async Task ApneSok(int? dorId, BeslagRad? bytt)
     {
         var navn = dorId is { } id ? _dorer.FirstOrDefault(d => d.Id == id)?.Dornummer : null;
-        _pop = new Pop("leggtil", dorId, Tittel: dorId is null ? $"Legg til på {_valgte.Count} valgte dører" : $"Legg til beslag på {navn}");
+        var tittel = bytt is not null ? $"Bytt {bytt.Type.ToLowerInvariant()} på {navn}"
+            : dorId is null ? $"Legg til beslag på {_valgte.Count} valgte dører" : $"Legg til beslag på {navn}";
+        _pop = new Pop("sok", dorId, bytt?.ComponentId ?? 0, bytt?.TypeId, ServicetypeFor(bytt?.TypeId), Antall: bytt?.Antall ?? 1, Tittel: tittel);
+        _sok = "";
+        _sokLev = "";
+        _sokSt = bytt is null ? null : ServicetypeFor(bytt.TypeId);
+        _sokTypeId = bytt is not null && _sokSt is null ? bytt.TypeId : null;
+        _fokus = 0;
+        _kurv.Clear();
         _typeFeil = null;
+        if (_register is null)
+        {
+            var rader = await Db.Components.AsNoTracking()
+                .Where(c => c.Aktiv && !c.ErPlassholder && !c.ErEgendefinert)
+                .OrderBy(c => c.Navn)
+                .Select(c => new { c.Id, c.Navn, c.Produktkode, c.Gtin, Lev = c.Leverandor ?? c.Produsent, c.ComponentTypeId, TypeNavn = c.Type != null ? c.Type.Navn : null, Pris = c.PrisVeiledende ?? c.PrisNetto })
+                .ToListAsync();
+            _register = rader.Select(c => new RegVare(c.Id, c.Navn, c.Produktkode, c.Gtin, c.Lev, c.ComponentTypeId, c.TypeNavn, c.Pris,
+                string.Join(' ', c.Navn, c.Produktkode, c.Gtin, c.Lev, c.TypeNavn).ToLowerInvariant())).ToList();
+            var siste = await Db.DorKomponenter.AsNoTracking().OrderByDescending(k => k.DorId).Select(k => k.ComponentId).Take(300).ToListAsync();
+            var ider = _register.Select(r => r.Id).ToHashSet();
+            _nyligBrukt = siste.Where(ider.Contains).Distinct().Take(8).ToList();
+        }
+    }
+
+    private bool PasserFilter(RegVare r) =>
+        (_sokSt is null || (r.TypeId is { } t && string.Equals(_typeKart.GetValueOrDefault(t), _sokSt, StringComparison.OrdinalIgnoreCase)))
+        && (_sokTypeId is null || r.TypeId == _sokTypeId)
+        && (_sokLev.Length == 0 || r.Leverandor == _sokLev);
+
+    // Treffene i grupper: før man skriver kommer varene på avtalen og nylig brukte først.
+    private List<(string Tittel, List<RegVare> Varer)> SokGrupper()
+    {
+        var liste = (_register ?? []).Where(PasserFilter);
+        var q = _sok.Trim().ToLowerInvariant();
+        List<(string, List<RegVare>)> grupper = [];
+        if (q.Length > 0)
+        {
+            var ord = q.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var treff = liste.Where(r => ord.All(r.Sok.Contains))
+                .OrderByDescending(r => r.Navn.StartsWith(q, StringComparison.OrdinalIgnoreCase))
+                .ThenBy(r => r.Navn).Take(60).ToList();
+            grupper.Add(($"{treff.Count}{(treff.Count == 60 ? "+" : "")} treff i komponentregisteret", treff));
+        }
+        else
+        {
+            var alle = liste.ToList();
+            var paAvtalen = _dorer.SelectMany(d => d.Beslag).Select(b => b.ComponentId).ToHashSet();
+            var avtale = alle.Where(r => paAvtalen.Contains(r.Id)).ToList();
+            var nylig = _nyligBrukt.Select(id => alle.FirstOrDefault(r => r.Id == id)).Where(r => r is not null && !paAvtalen.Contains(r.Id)).Select(r => r!).ToList();
+            var vist = avtale.Concat(nylig).Select(r => r.Id).ToHashSet();
+            if (avtale.Count > 0) grupper.Add(("Brukt på denne avtalen", avtale));
+            if (nylig.Count > 0) grupper.Add(("Nylig brukt", nylig));
+            grupper.Add(("Hele komponentregisteret", alle.Where(r => !vist.Contains(r.Id)).Take(40).ToList()));
+        }
+        _synlige = grupper.SelectMany(g => g.Item2).ToList();
+        return grupper.Where(g => g.Item2.Count > 0).ToList();
+    }
+
+    private List<string> Leverandorer => (_register ?? []).Select(r => r.Leverandor).Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => l!)
+        .Distinct().OrderBy(l => l, StringComparer.Create(CultureInfo.GetCultureInfo("nb-NO"), true)).ToList();
+
+    private static MarkupString Uthev(string? tekst, string sok)
+    {
+        var t = tekst ?? "";
+        var q = sok.Trim();
+        var i = q.Length == 0 ? -1 : t.IndexOf(q, StringComparison.OrdinalIgnoreCase);
+        static string enc(string x) => System.Net.WebUtility.HtmlEncode(x);
+        return new MarkupString(i < 0 ? enc(t) : enc(t[..i]) + "<mark>" + enc(t.Substring(i, q.Length)) + "</mark>" + enc(t[(i + q.Length)..]));
+    }
+
+    private void SokTast(KeyboardEventArgs e)
+    {
+        if (e.Key == "ArrowDown") _fokus = Math.Min(_fokus + 1, Math.Max(0, _synlige.Count - 1));
+        else if (e.Key == "ArrowUp") _fokus = Math.Max(0, _fokus - 1);
+        else if (e.Key == "Enter" && _fokus < _synlige.Count) VekslKurv(_synlige[_fokus]);
+        else if (e.Key == "Escape") LukkPop();
+    }
+
+    private void VekslKurv(RegVare r)
+    {
+        if (_pop is { Modus: "sok", ComponentId: not 0 })
+        {
+            _kurv.Clear(); // bytte: bare én vare
+        }
+        if (_kurv.RemoveAll(k => k.ComponentId == r.Id) == 0)
+        {
+            _kurv.Add(new KurvRad { ComponentId = r.Id, Navn = r.Navn, Type = r.TypeNavn ?? "Vare", Antall = _pop?.ComponentId is not 0 ? _pop!.Antall : 1 });
+        }
+    }
+
+    // «Ikke spesifisert» for typen som er valgt i filteret (velg vare senere).
+    private string? PlassholderNavn => _sokSt ?? (_sokTypeId is { } id ? _typer.FirstOrDefault(t => t.Id == id)?.Navn : null);
+
+    private async Task LeggIkkeSpesifisert()
+    {
+        Component? komp = _sokSt is { } st && _plass.TryGetValue(st, out var p) ? p
+            : _sokTypeId is { } id && _typer.FirstOrDefault(t => t.Id == id) is { } type ? await DorBeslagEndring.PlassholderFor(Db, type) : null;
+        if (komp is null || _kurv.Any(k => k.ComponentId == komp.Id)) return;
+        if (_pop is { ComponentId: not 0 }) _kurv.Clear();
+        _kurv.Add(new KurvRad { ComponentId = komp.Id, Navn = "ikke spesifisert", Type = PlassholderNavn ?? "", ErPlassholder = true });
+    }
+
+    private async Task LagreKurv()
+    {
+        if (_pop is not { Modus: "sok" } p || _kurv.Count == 0 || _jobber) return;
+        var kurv = _kurv.ToList();
+        var mal = Mal(p).ToList();
+        var navn = mal.Count == 1 ? _dorer.FirstOrDefault(d => d.Id == mal[0])?.Dornummer : $"{mal.Count} dører";
+        _pop = null;
+        if (p.ComponentId != 0 && p.DorId is { } dorId)
+        {
+            var ny = kurv[0];
+            await Jobb(async () =>
+            {
+                await DorBeslagEndring.Bytt(Db, dorId, p.ComponentId, ny.ComponentId);
+                await DorBeslagEndring.SettAntall(Db, dorId, ny.ComponentId, ny.Antall);
+            });
+            VisMelding($"{ny.Type} byttet på {navn}", []);
+            return;
+        }
+        await Jobb(async () =>
+        {
+            foreach (var k in kurv)
+            {
+                await DorBeslagEndring.LeggTil(Db, mal, k.ComponentId, k.Antall);
+            }
+        });
+        VisMelding($"{(kurv.Count == 1 ? kurv[0].Type : $"{kurv.Count} beslag")} lagt til på {navn}", []);
+    }
+
+    private async Task FjernBeslag(DorRad d, BeslagRad b)
+    {
+        _bekreft = null;
+        List<DorKomponent> fjernet = [];
+        await Jobb(async () => fjernet = await DorBeslagEndring.FjernMedKopi(Db, [d.Id], [b.ComponentId]));
+        VisMelding($"{b.Type} fjernet fra {d.Dornummer}", fjernet);
+    }
+
+    private List<(string Navn, int Antall)> BeslagPaValgte() => _dorer.Where(d => _valgte.Contains(d.Id))
+        .SelectMany(d => d.Beslag.Select(b => (b.Type, d.Id))).Distinct()
+        .GroupBy(x => x.Type).Select(g => (g.Key, g.Count())).OrderBy(x => x.Key).ToList();
+
+    private async Task FjernTypeFraValgte(string type)
+    {
+        var dorer = _dorer.Where(d => _valgte.Contains(d.Id)).ToList();
+        var komp = dorer.SelectMany(d => d.Beslag).Where(b => b.Type == type).Select(b => b.ComponentId).Distinct().ToList();
+        _pop = null;
+        List<DorKomponent> fjernet = [];
+        await Jobb(async () => fjernet = await DorBeslagEndring.FjernMedKopi(Db, dorer.Select(d => d.Id), komp));
+        VisMelding($"{type} fjernet fra {fjernet.Select(k => k.DorId).Distinct().Count()} dører", fjernet);
+    }
+
+    private async Task Angre()
+    {
+        if (_angre is not { } a) return;
+        _angre = null;
+        if (a.Fjernet.Count > 0)
+        {
+            await Jobb(() => DorBeslagEndring.Gjenopprett(Db, a.Fjernet));
+        }
+    }
+
+    // Kort melding nederst; «Angre» er med når noe ble fjernet.
+    private void VisMelding(string tekst, List<DorKomponent> fjernet)
+    {
+        var nr = ++_angreNr;
+        _angre = new AngreInfo(tekst, fjernet, nr);
+        _ = Task.Delay(6000).ContinueWith(_ => InvokeAsync((Action)(() =>
+        {
+            if (_angre?.Nr == nr)
+            {
+                _angre = null;
+                StateHasChanged();
+            }
+        })));
+    }
+
+    private async Task SlettDor(DorRad d)
+    {
+        if (!await Tilgang.KanSletteAsync(TilgangAuth)) return;
+        await Jobb(async () =>
+        {
+            if (await Db.Dorer.FirstOrDefaultAsync(x => x.Id == d.Id && x.ProsjektId == ProsjektId) is { } dor)
+            {
+                Db.Dorer.Remove(dor);
+                await Db.SaveChangesAsync();
+            }
+        });
+        _slettDorId = null;
+        _valgte.Remove(d.Id);
+        VisMelding($"Dør {d.Dornummer} er slettet", []);
     }
 
     private IEnumerable<int> Mal(Pop p) => p.DorId is { } id ? [id] : _valgte.ToList();
-
-    private async Task LeggTilServicetype(string st)
-    {
-        if (_pop is not { } p || !_plass.TryGetValue(st, out var komp)) return;
-        _pop = null;
-        await Jobb(() => DorBeslagEndring.LeggTil(Db, Mal(p), komp.Id));
-    }
-
-    private async Task LeggTilType(ComponentType t)
-    {
-        if (_pop is not { } p) return;
-        _pop = null;
-        await Jobb(async () => await DorBeslagEndring.LeggTil(Db, Mal(p), (await DorBeslagEndring.PlassholderFor(Db, t)).Id));
-    }
 
     private async Task OpprettType()
     {
@@ -677,68 +887,6 @@
         }
     }
 
-    private async Task ApneVare(DorRad d, BeslagRad b)
-    {
-        var st = ServicetypeFor(b.TypeId);
-        int? plassId = st is not null && _plass.TryGetValue(st, out var pl) ? pl.Id
-            : b.ErPlassholder ? b.ComponentId : null;
-        _pop = new Pop("vare", d.Id, b.ComponentId, b.TypeId, st, plassId, b.ErPlassholder, b.Antall, $"{b.Type} på {d.Dornummer}");
-        _vareSok = "";
-        await HentVarer();
-    }
-
-    private async Task SokVare(ChangeEventArgs e)
-    {
-        _vareSok = e.Value?.ToString() ?? "";
-        await HentVarer();
-    }
-
-    private async Task HentVarer()
-    {
-        if (_pop is not { } p) return;
-        var typeIder = p.Servicetype is { } st
-            ? _typeKart.Where(kv => string.Equals(kv.Value, st, StringComparison.OrdinalIgnoreCase)).Select(kv => kv.Key).ToList()
-            : p.TypeId is { } tid ? [tid] : new List<int>();
-        var q = Db.Components.AsNoTracking().Where(c => !c.ErPlassholder && c.Aktiv && c.ComponentTypeId != null && typeIder.Contains(c.ComponentTypeId.Value));
-        var sok = _vareSok.Trim();
-        if (sok.Length > 0)
-        {
-            q = q.Where(c => c.Navn.Contains(sok) || (c.Produktkode != null && c.Produktkode.Contains(sok)));
-        }
-        _vareTreff = await q.OrderBy(c => c.Navn).Take(40).ToListAsync();
-        if (p.ComponentId != 0 && !p.ErPlassholder && _vareTreff.All(c => c.Id != p.ComponentId)
-            && await Db.Components.AsNoTracking().FirstOrDefaultAsync(c => c.Id == p.ComponentId) is { } naa)
-        {
-            _vareTreff.Insert(0, naa);
-        }
-    }
-
-    private async Task VelgVare(int componentId)
-    {
-        if (_pop is not { DorId: { } dorId } p) return;
-        _pop = null;
-        await Jobb(() => DorBeslagEndring.Bytt(Db, dorId, p.ComponentId, componentId));
-    }
-
-    private async Task SettAntall(ChangeEventArgs e)
-    {
-        if (_pop is not { DorId: { } dorId } p || !int.TryParse(e.Value?.ToString(), out var n)) return;
-        _pop = p with { Antall = Math.Max(1, n) };
-        await DorBeslagEndring.SettAntall(Db, dorId, p.ComponentId, n);
-        await LastAsync();
-        await OnEndret.InvokeAsync();
-    }
-
-    private async Task FjernFraPop()
-    {
-        if (_pop is not { DorId: { } dorId } p) return;
-        _pop = null;
-        await Jobb(() => DorBeslagEndring.Fjern(Db, dorId, [p.ComponentId]));
-    }
-
-    private async Task FjernBeslag(DorRad d, BeslagRad b) =>
-        await Jobb(() => DorBeslagEndring.Fjern(Db, d.Id, [b.ComponentId]));
-
     private void LukkPop()
     {
         _pop = null;
@@ -748,8 +896,138 @@
     private static string PopTittel(Pop p) => p.Tittel ?? p.Modus switch
     {
         "nytype" => "Ny komponenttype",
-        "vare" => "Velg vare",
         _ => "Legg til beslag"
+    };
+
+    // Beslagene som brikker i lista: trykk = bytt vare, × = fjern (bekreftes på brikken).
+    private RenderFragment BeslagChips(DorRad d) =>
+        @<div class="sdp-bcs">
+            @foreach (var b in d.Beslag)
+            {
+                if (_bekreft == (d.Id, b.ComponentId))
+                {
+                    <span class="sdp-bc sdp-bc-bekreft">
+                        Fjern @b.Type?
+                        <button type="button" class="sdp-bc-ja" disabled="@_jobber" @onclick="@(() => FjernBeslag(d, b))">Ja</button>
+                        <button type="button" class="sdp-bc-nei" @onclick="@(() => _bekreft = null)">Nei</button>
+                    </span>
+                }
+                else
+                {
+                    <span class="sdp-bc @(b.ErPlassholder ? "ps" : "")" title="Trykk for å bytte vare eller antall" @onclick="@(() => ApneVare(d, b))">
+                        @b.Type<small>@(b.ErPlassholder ? "velg vare" : b.Produkt)@(b.Antall > 1 ? $" × {b.Antall}" : "")</small>
+                        <button type="button" class="sdp-bc-x" title="Fjern" @onclick="@(() => _bekreft = (d.Id, b.ComponentId))" @onclick:stopPropagation="true">×</button>
+                    </span>
+                }
+            }
+            <button type="button" class="sdp-legg" @onclick="@(() => ApneLeggTil(d.Id))">+ Beslag</button>
+        </div>;
+
+    private RenderFragment SokPanel(Pop pop) => __builder =>
+    {
+        var grupper = SokGrupper();
+        var idx = 0;
+        var bytt = pop.ComponentId != 0;
+        <label class="sdp-sok">
+            <Icon Name="search" />
+            <input @bind="_sok" @bind:event="oninput" @bind:after="@(() => _fokus = 0)" @onkeydown="SokTast" placeholder="Søk på navn, produktkode, GTIN, leverandør eller type …" autofocus />
+        </label>
+        <div class="sdp-sok-filtre">
+            <button type="button" class="@(_sokSt is null && _sokTypeId is null ? "pa" : "")" @onclick="@(() => { _sokSt = null; _sokTypeId = null; _fokus = 0; })">Alle</button>
+            @foreach (var st in ServiceRegelMotor.Servicetyper)
+            {
+                <button type="button" class="@(_sokSt == st ? "pa" : "")" @onclick="@(() => { _sokSt = st; _sokTypeId = null; _fokus = 0; })">@st</button>
+            }
+            @foreach (var t in EgneTyper)
+            {
+                <button type="button" class="@(_sokTypeId == t.Id ? "pa" : "")" @onclick="@(() => { _sokTypeId = t.Id; _sokSt = null; _fokus = 0; })">@t.Navn</button>
+            }
+            <button type="button" class="sdp-sok-ny" @onclick="@(() => { _pop = pop with { Modus = "nytype" }; _nyTypeNavn = ""; _nyTypeService = ""; })">+ Ny type</button>
+            <select class="sdp-sok-lev" value="@_sokLev" @onchange="@(e => { _sokLev = (string)e.Value!; _fokus = 0; })">
+                <option value="">Alle leverandører</option>
+                @foreach (var l in Leverandorer)
+                {
+                    <option value="@l">@l</option>
+                }
+            </select>
+        </div>
+        <div class="sdp-sok-res">
+            @if (_register is null)
+            {
+                <p class="sdp-sok-tom">Laster komponentregisteret …</p>
+            }
+            else if (grupper.Count == 0)
+            {
+                <div class="sdp-sok-tom">
+                    Ingen varer i komponentregisteret passer@(string.IsNullOrWhiteSpace(_sok) ? " filteret" : $" «{_sok.Trim()}»").
+                    <div>
+                        @if (PlassholderNavn is not null)
+                        {
+                            <button type="button" class="sdp-knapp sdp-liten" @onclick="LeggIkkeSpesifisert">Legg til som ikke spesifisert</button>
+                        }
+                        <a class="sdp-knapp sdp-liten sdp-knapp-p" href="/komponenter" target="_blank">Opprett ny vare i komponentregisteret</a>
+                    </div>
+                </div>
+            }
+            else
+            {
+                @foreach (var (tittel, varer) in grupper)
+                {
+                    <div class="sdp-sok-grp">@tittel</div>
+                    @foreach (var r in varer)
+                    {
+                        var i = idx++;
+                        var lagt = _kurv.Any(k => k.ComponentId == r.Id);
+                        <div class="sdp-sok-vare @(i == _fokus ? "fokus" : "") @(lagt ? "lagt" : "")" @key="@($"{tittel}-{r.Id}")" @onclick="@(() => VekslKurv(r))">
+                            <span class="sdp-sok-bilde"><span>@((r.TypeNavn ?? r.Navn).Length >= 2 ? (r.TypeNavn ?? r.Navn)[..2].ToUpperInvariant() : "?")</span><img src="@($"/komponent/{r.Id}/bilde?w=80")" alt="" loading="lazy" onerror="this.remove()" /></span>
+                            <span class="sdp-sok-tekst"><b>@Uthev(r.Navn, _sok)</b><small>@Uthev(string.Join(" · ", new[] { r.Leverandor, r.Produktkode }.Where(s => !string.IsNullOrWhiteSpace(s))), _sok)</small></span>
+                            @if (r.TypeNavn is not null)
+                            {
+                                <span class="sdp-sok-tag">@r.TypeNavn</span>
+                            }
+                            else
+                            {
+                                <span></span>
+                            }
+                            <span class="sdp-sok-pris">@(r.Pris is { } pr ? Kr(pr) : "")</span>
+                            <button type="button" class="sdp-sok-pluss" title="@(lagt ? "Fjern fra listen" : "Legg til")">@(lagt ? "✓" : "+")</button>
+                        </div>
+                    }
+                }
+                @if (PlassholderNavn is { } pn)
+                {
+                    <div class="sdp-sok-vare" @onclick="LeggIkkeSpesifisert">
+                        <span class="sdp-sok-bilde"><span>?</span></span>
+                        <span class="sdp-sok-tekst"><b>Ikke spesifisert @pn.ToLowerInvariant()</b><small>Legg til typen nå, velg vare senere</small></span>
+                        <span class="sdp-sok-tag sdp-sok-tag-ny">Velg senere</span><span></span><span></span>
+                    </div>
+                }
+            }
+        </div>
+        @if (_kurv.Count > 0)
+        {
+            <div class="sdp-kurv">
+                <span class="sdp-kurv-lbl">@(bytt ? "Byttes til" : "Legges til")</span>
+                @foreach (var k in _kurv)
+                {
+                    <span class="sdp-kurv-k">
+                        @k.Type: @(k.ErPlassholder ? "ikke spesifisert" : k.Navn)
+                        <span class="sdp-kurv-ant">
+                            <button type="button" @onclick="@(() => k.Antall = Math.Max(1, k.Antall - 1))">−</button>
+                            <b>@k.Antall</b>
+                            <button type="button" @onclick="@(() => k.Antall++)">+</button>
+                        </span>
+                        <button type="button" class="sdp-bc-x" title="Ta bort" @onclick="@(() => _kurv.Remove(k))">×</button>
+                    </span>
+                }
+            </div>
+        }
+        <div class="sdp-sok-bunn">
+            <span class="sdp-mini">@(_kurv.Count == 0 ? "Trykk på en vare, eller bruk piltastene og Enter" : "")</span>
+            <span class="sdp-sp"></span>
+            <button type="button" class="sdp-knapp" @onclick="LukkPop">Avbryt</button>
+            <button type="button" class="sdp-knapp sdp-knapp-p" disabled="@(_kurv.Count == 0 || _jobber)" @onclick="LagreKurv">@(bytt ? "Bytt" : _kurv.Count > 1 ? $"Legg til {_kurv.Count} beslag" : "Legg til")</button>
+        </div>
     };
     private sealed record SakRad(string Tittel, string Status, bool ErAvvik, DateTime Dato);
     private sealed record HistRad(DateTime Dato, string Tittel, string? Tekst, string Farge);
@@ -865,6 +1143,11 @@
             })
             .ToList();
         await LastPriser();
+        if (_valgt is { } apen)
+        {
+            _valgt = _dorer.FirstOrDefault(d => d.Id == apen.Id);
+            _detaljerLastet.Remove(apen.Id);
+        }
         _lastet = true;
     }
 

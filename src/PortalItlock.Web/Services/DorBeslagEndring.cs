@@ -28,19 +28,23 @@ public static class DorBeslagEndring
         return komp;
     }
 
-    public static async Task LeggTil(ApplicationDbContext db, IEnumerable<int> dorIder, int componentId)
+    public static Task LeggTil(ApplicationDbContext db, IEnumerable<int> dorIder, int componentId) => LeggTil(db, dorIder, componentId, 1);
+
+    /// Legger varen på dørene med antall. Har døren varen fra før, økes antallet.
+    public static async Task LeggTil(ApplicationDbContext db, IEnumerable<int> dorIder, int componentId, int antall)
     {
+        antall = Math.Max(1, antall);
         var ider = dorIder.Distinct().ToList();
         var finnes = await db.DorKomponenter.Where(k => ider.Contains(k.DorId) && k.ComponentId == componentId).ToListAsync();
         foreach (var id in ider)
         {
             if (finnes.FirstOrDefault(k => k.DorId == id) is { } k)
             {
-                k.Antall++;
+                k.Antall += antall;
             }
             else
             {
-                db.DorKomponenter.Add(new DorKomponent { DorId = id, ComponentId = componentId, Antall = 1, Montert = true });
+                db.DorKomponenter.Add(new DorKomponent { DorId = id, ComponentId = componentId, Antall = antall, Montert = true });
             }
         }
         await Lagre(db);
@@ -90,6 +94,46 @@ public static class DorBeslagEndring
         var ider = componentIder.ToList();
         var rader = await db.DorKomponenter.Where(k => k.DorId == dorId && ider.Contains(k.ComponentId)).ToListAsync();
         db.DorKomponenter.RemoveRange(rader);
+        await Lagre(db);
+    }
+
+    /// Fjerner varene fra dørene og gir tilbake kopier, så det kan angres med Gjenopprett.
+    public static async Task<List<DorKomponent>> FjernMedKopi(ApplicationDbContext db, IEnumerable<int> dorIder, IEnumerable<int> componentIder)
+    {
+        var dorer = dorIder.Distinct().ToList();
+        var ider = componentIder.Distinct().ToList();
+        var rader = await db.DorKomponenter.Where(k => dorer.Contains(k.DorId) && ider.Contains(k.ComponentId)).ToListAsync();
+        var kopi = rader.Select(k => new DorKomponent
+        {
+            DorId = k.DorId, ComponentId = k.ComponentId, Antall = k.Antall, Enhet = k.Enhet, Plassering = k.Plassering,
+            LevertAv = k.LevertAv, Montert = k.Montert, MontertDato = k.MontertDato, MontertAvBrukerId = k.MontertAvBrukerId
+        }).ToList();
+        db.DorKomponenter.RemoveRange(rader);
+        await Lagre(db);
+        return kopi;
+    }
+
+    /// Legger tilbake beslag som ble fjernet (Angre).
+    public static async Task Gjenopprett(ApplicationDbContext db, IEnumerable<DorKomponent> kopier)
+    {
+        var liste = kopier.ToList();
+        var dorer = liste.Select(k => k.DorId).Distinct().ToList();
+        var finnesDor = await db.Dorer.Where(d => dorer.Contains(d.Id)).Select(d => d.Id).ToListAsync();
+        foreach (var k in liste.Where(k => finnesDor.Contains(k.DorId)))
+        {
+            if (await db.DorKomponenter.FirstOrDefaultAsync(x => x.DorId == k.DorId && x.ComponentId == k.ComponentId) is { } har)
+            {
+                har.Antall += k.Antall;
+            }
+            else
+            {
+                db.DorKomponenter.Add(new DorKomponent
+                {
+                    DorId = k.DorId, ComponentId = k.ComponentId, Antall = k.Antall, Enhet = k.Enhet, Plassering = k.Plassering,
+                    LevertAv = k.LevertAv, Montert = k.Montert, MontertDato = k.MontertDato, MontertAvBrukerId = k.MontertAvBrukerId
+                });
+            }
+        }
         await Lagre(db);
     }
 
