@@ -2456,6 +2456,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("MontertDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("MontorInfo")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Notater")
                         .HasColumnType("TEXT");
 

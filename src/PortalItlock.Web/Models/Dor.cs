@@ -47,6 +47,10 @@ public class Dor
     public string? Slagretning { get; set; }
     public string? Notater { get; set; }
 
+    // Beskjed til montøren (vises øverst på beslag, på oversikten og i montørappen),
+    // f.eks. hvordan døra skal kobles.
+    public string? MontorInfo { get; set; }
+
     public string? Brann { get; set; }
     public string? Lyd { get; set; }
     public string? Energi { get; set; }
