@@ -14,6 +14,12 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.6", new DateOnly(2026, 11, 19),
+        [
+            new(Type.Fikset, "link", "Små halvmåner og prikker", "Like små uansett zoom, og blir mindre når du zoomer ut."),
+            new(Type.Nytt, "file-text", "Fet skrift og små tekstbokser", "Tekst og prikk kan gjøres så små du vil."),
+            new(Type.Bedre, "edit", "Ryddigere redigering", "Firkanten for størrelse vises bare på det du har valgt."),
+        ]),
         new("1.5", new DateOnly(2026, 11, 19),
         [
             new(Type.Fikset, "link", "Koblingsskjema ser riktig ut", "Små prikker og halvmåner. Rammen følger bildet, også på gamle skjema."),
