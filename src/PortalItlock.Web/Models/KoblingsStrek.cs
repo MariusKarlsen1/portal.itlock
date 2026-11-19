@@ -27,6 +27,12 @@ public class KoblingsStrek
     public string? TekstStart { get; set; }
     public string? TekstSlutt { get; set; }
 
+    // Merkingen står på enden av streken (i forlengelsen) i stedet for over den.
+    public bool TekstVedEnden { get; set; }
+
+    // Egen farge på merkingen (null = samme som streken).
+    public string? TekstFarge { get; set; }
+
     // Kabelbetegnelse, f.eks. "6 PAR 0,6 PT HF (maks 100 m)".
     public string? KabelType { get; set; }
 

@@ -9,6 +9,15 @@ public static class KoblingsStrekTekst
 
     public static IEnumerable<Plassering> For(KoblingsStrek s, List<KoblingsStrekPunkt> p, double aspekt)
     {
+        foreach (var t in Plasser(s, p, aspekt))
+        {
+            // På enden: teksten står i forlengelsen av streken, midt på linja.
+            yield return s.TekstVedEnden ? t with { Klasse = t.Klasse.Replace("ks-st-", "ks-se-") } : t;
+        }
+    }
+
+    private static IEnumerable<Plassering> Plasser(KoblingsStrek s, List<KoblingsStrekPunkt> p, double aspekt)
+    {
         if (p.Count < 2)
         {
             yield break;

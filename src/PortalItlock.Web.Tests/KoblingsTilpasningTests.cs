@@ -71,4 +71,12 @@ public class KoblingsStrekTekstTests
         var s = new KoblingsStrek { PunkterJson = "[]", TekstStart = "  " };
         Assert.Empty(KoblingsStrekTekst.For(s, P(10, 50, 40, 50), 1));
     }
+
+    [Fact]
+    public void TekstVedEnden_GirEgneKlasser()
+    {
+        var s = new KoblingsStrek { PunkterJson = "[]", TekstStart = "NO", TekstVedEnden = true };
+        var t = Assert.Single(KoblingsStrekTekst.For(s, P(10, 50, 40, 50), 1));
+        Assert.Equal("ks-se-hoyre", t.Klasse);
+    }
 }

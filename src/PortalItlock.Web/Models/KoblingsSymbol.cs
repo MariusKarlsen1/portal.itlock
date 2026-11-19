@@ -48,4 +48,7 @@ public class KoblingsSymbol
 
     // Tekstboks: fet skrift.
     public bool Fet { get; set; }
+
+    // Kablene vises helt inn til punktet, oppå komponenten (ellers forsvinner de bak den).
+    public bool KablerOver { get; set; }
 }

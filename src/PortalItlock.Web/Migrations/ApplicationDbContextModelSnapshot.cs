@@ -3895,11 +3895,17 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("Stiplet")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("TekstFarge")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("TekstSlutt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TekstStart")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("TekstVedEnden")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Tykkelse")
                         .HasColumnType("INTEGER");
@@ -3941,6 +3947,9 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<double>("Hoyde")
                         .HasColumnType("REAL");
+
+                    b.Property<bool>("KablerOver")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("KoblingsSkjemaId")
                         .HasColumnType("INTEGER");

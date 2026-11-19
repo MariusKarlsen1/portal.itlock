@@ -180,6 +180,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             return true;
         }
 
+        var strekStart = sb.Length;
         foreach (var strek in streker)
         {
             var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(strek.PunkterJson) ?? [];
@@ -199,15 +200,19 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                 var ty = YtilVb(t.Y);
                 var (tx, anker, gy) = t.Klasse switch
                 {
+                    "ks-se-hoyre" => (t.X - navnStr * 0.4, "end", ty + navnStr * 0.35),
+                    "ks-se-venstre" => (t.X + navnStr * 0.4, "start", ty + navnStr * 0.35),
+                    "ks-se-ned" => (t.X, "middle", ty - navnStr * 0.4),
+                    "ks-se-opp" => (t.X, "middle", ty + navnStr * 1.1),
                     "ks-st-venstre" => (t.X - navnStr * 0.6, "end", ty - navnStr * 0.3),
                     "ks-st-ned" => (t.X + navnStr * 0.4, "start", ty + navnStr * 1.2),
                     "ks-st-opp" => (t.X + navnStr * 0.4, "start", ty - navnStr * 0.5),
                     _ => (t.X + navnStr * 0.6, "start", ty - navnStr * 0.3)
                 };
-                if (Ledig(tx + (anker == "end" ? -1 : 1) * t.Tekst.Length * navnStr * 0.3, gy, t.Tekst, navnStr))
+                if (Ledig(tx + (anker == "end" ? -1 : anker == "middle" ? 0 : 1) * t.Tekst.Length * navnStr * 0.3, gy, t.Tekst, navnStr))
                 {
                     sb.Append(CultureInfo.InvariantCulture,
-                        $"<text x='{Inv(tx)}' y='{Inv(gy)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='{anker}' fill='{strek.Farge}'>{System.Net.WebUtility.HtmlEncode(t.Tekst)}</text>");
+                        $"<text x='{Inv(tx)}' y='{Inv(gy)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='{anker}' fill='{strek.TekstFarge ?? strek.Farge}'>{System.Net.WebUtility.HtmlEncode(t.Tekst)}</text>");
                 }
             }
 
@@ -216,6 +221,8 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             sb.Append(CultureInfo.InvariantCulture,
                 $"<polyline points='{pts}' fill='none' stroke='{strek.Farge}' stroke-width='{Inv(strek.Tykkelse * 0.15 * f)}' {dashAttr} />");
         }
+
+        var strekSvg = sb.ToString(strekStart, sb.Length - strekStart);
 
         // Halvmåne der streker krysser, prikk der de er koblet - som på skjermen.
         var pdfAspekt = ViewBoxHoyde / ViewBoxBredde;
@@ -291,6 +298,19 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                 sb.Append(CultureInfo.InvariantCulture,
                     $"<text x='{Inv(cx)}' y='{Inv(y - navnStr * 0.4)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='middle' fill='#14213D'>{System.Net.WebUtility.HtmlEncode(s.Navn)}</text>");
             }
+        }
+
+        // Kabler som skal vises helt inn til punktet: tegnes på nytt oppå de komponentene.
+        var over = symboler.Where(s => s.KablerOver).ToList();
+        if (over.Count > 0)
+        {
+            sb.Append("<defs><clipPath id='kabler-over'>");
+            foreach (var k in over)
+            {
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"<rect x='{Inv(k.PosX)}' y='{Inv(YtilVb(k.PosY))}' width='{Inv(k.Bredde)}' height='{Inv(k.Hoyde * (ViewBoxHoyde / 100.0))}' />");
+            }
+            sb.Append("</clipPath></defs><g clip-path='url(#kabler-over)'>").Append(strekSvg).Append("</g>");
         }
 
         sb.Append("</svg>");
