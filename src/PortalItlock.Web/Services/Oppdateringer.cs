@@ -14,6 +14,13 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.7", new DateOnly(2026, 11, 19),
+        [
+            new(Type.Fikset, "check-circle", "Feilmelding i koblingsskjema", "Siden krasjer ikke lenger når du redigerer raskt."),
+            new(Type.Bedre, "search", "Zoom så langt du vil", "Teksten krymper og skjules når du zoomer ut, så ingenting går over hverandre."),
+            new(Type.Bedre, "file-text", "Bedre PDF og forhåndsvisning", "Tegningen fyller plassen og er ikke lenger klemt sammen."),
+            new(Type.Bedre, "users", "Mobil for montører", "Koblingsskjemaet zoomer og skalerer som i portalen."),
+        ]),
         new("1.6", new DateOnly(2026, 11, 19),
         [
             new(Type.Fikset, "link", "Små halvmåner og prikker", "Like små uansett zoom, og blir mindre når du zoomer ut."),
