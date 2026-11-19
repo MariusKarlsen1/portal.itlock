@@ -208,7 +208,26 @@ else if (_kategori is not null)
 
         _loadetKategoriId = KategoriId;
 
-        var kategori = await Db.KoblingsKategorier.FirstOrDefaultAsync(k => k.Id == KategoriId);
+        // Når man går ut av et koblingsskjema kan editoren fortsatt være i ferd med å lagre
+        // på samme databasekobling. Da venter vi litt og prøver igjen i stedet for å krasje.
+        KoblingsKategori? kategori = null;
+        for (var forsok = 1; ; forsok++)
+        {
+            try
+            {
+                kategori = await Db.KoblingsKategorier.AsNoTracking().FirstOrDefaultAsync(k => k.Id == KategoriId);
+                if (kategori is not null)
+                {
+                    await LastSkjemaer();
+                }
+                break;
+            }
+            catch (InvalidOperationException) when (forsok < 5)
+            {
+                await Task.Delay(200);
+            }
+        }
+
         if (kategori is null)
         {
             _ugyldigKategori = true;
@@ -217,13 +236,12 @@ else if (_kategori is not null)
 
         _ugyldigKategori = false;
         _kategori = kategori;
-
-        await LastSkjemaer();
     }
 
     private async Task LastSkjemaer()
     {
         _skjemaer = await Db.KoblingsSkjemaer
+            .AsNoTracking()
             .Where(s => s.KategoriId == KategoriId)
             .Include(s => s.Symboler)
             .Include(s => s.Streker)
@@ -231,10 +249,11 @@ else if (_kategori is not null)
             .Include(s => s.Dor)
             .OrderByDescending(s => s.OppdatertDato ?? s.OpprettetDato)
             .ToListAsync();
-        // Eldre skjema: rammen rundt komponentene tilpasses bildet (og lagres).
-        if (_skjemaer.Select(sk => KoblingsTilpasning.TilpassSkjema(sk.Symboler, sk.Streker)).ToList().Any(e => e))
+        // Eldre skjema: rammen rundt komponentene tilpasses bildet, bare for visning her.
+        // Selve rettelsen lagres når skjemaet åpnes (editoren og PDF-en gjør det).
+        foreach (var sk in _skjemaer)
         {
-            await Db.SaveChangesAsync();
+            KoblingsTilpasning.TilpassSkjema(sk.Symboler, sk.Streker);
         }
 
         if (_valgtId is null || !_skjemaer.Any(s => s.Id == _valgtId))
