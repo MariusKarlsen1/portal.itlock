@@ -157,6 +157,23 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
             ? TilbudBeregningHelper.PrisPerDor(tilbud, l => (l.ComponentId.HasValue && monteringMinutterPerComponent.TryGetValue(l.ComponentId.Value, out var mm) ? mm : null) ?? l.MontasjeMinutter ?? 0)
             : null;
 
+        // Opsjoner per dør med gruppering (etasje/pakke): gruppeverdiene til hver dør,
+        // så PDF-en kan skrive en overskrift med delsum når gruppen skifter.
+        Dictionary<int, List<string>>? dorGrupper = null;
+        var grupperingFelt = OpsjonDorOrden.LesGruppering(tilbud.OpsjonGruppering);
+        if (dorPriser is not null && grupperingFelt.Count > 0)
+        {
+            var dorIder = tilbud.Linjer.Where(l => l.DorId is not null).Select(l => l.DorId!.Value).Distinct().ToList();
+            var gDorer = await db.Dorer.AsNoTracking().Where(d => dorIder.Contains(d.Id)).Include(d => d.Komponenter).ToListAsync();
+            var pakker = (await db.Packages.AsNoTracking().Include(p => p.Komponenter).Include(p => p.DorFunksjoner).ToListAsync())
+                .Select(DorPakkeService.Info).ToList();
+            dorGrupper = gDorer.ToDictionary(d => d.Id, d =>
+            {
+                var info = OpsjonDorOrden.Info(d, DorPakkeService.PakkeFor(d, pakker)?.Navn);
+                return grupperingFelt.Select(g => OpsjonDorOrden.GruppeVerdi(info, g)).ToList();
+            });
+        }
+
         // Samme vare kan stå på flere linjer i tilbudet (f.eks. med ulik pris) - på dørene
         // brukes prisen fra den første linjen vi leverer selv.
         var utprisPerComponent = linjer.Where(l => l.ComponentId.HasValue)
@@ -368,7 +385,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                     if (visSammendrag)
                     {
                         // Fordeles montasjen på dørene, står den ikke i sammendraget.
-                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, RabattFor, arbeidstidTimer, montasjePaDorer ? 0 : montasjekost, org.Aksent, org.AksentLys, montasjePaDorer ? [] : KodeRader(tilbud), dorPriser);
+                        RenderProduktsammendrag(col, tilbud, linjer, visRabatt, RabattFor, arbeidstidTimer, montasjePaDorer ? 0 : montasjekost, org.Aksent, org.AksentLys, montasjePaDorer ? [] : KodeRader(tilbud), dorPriser, dorGrupper);
                     }
 
                     if (visDorer)
@@ -404,7 +421,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
     }
 
     private static void RenderProduktsammendrag(ColumnDescriptor col, Tilbud tilbud, List<TilbudLinje> linjer, bool visRabatt, Func<TilbudLinje, decimal> rabattFor, decimal monteringTimer, decimal montasjekost, Color aksent, Color aksentLys,
-        List<(string Kode, string Navn, decimal Belop)> kodeRader, Dictionary<int, TilbudBeregningHelper.DorPris>? dorPriser = null)
+        List<(string Kode, string Navn, decimal Belop)> kodeRader, Dictionary<int, TilbudBeregningHelper.DorPris>? dorPriser = null,
+        Dictionary<int, List<string>>? dorGrupper = null)
     {
         var visVarenummer = !tilbud.SkjulVarenummerISammendrag;
         var visLevering = linjer.Any(l => l.LevertAv != LevertAv.F);
@@ -491,11 +509,51 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                 table.Cell().BorderBottom(0.5f).BorderColor(SandBorder).PaddingVertical(4).PaddingHorizontal(6)
                     .AlignRight().Text(FormatKr(delsum)).Bold().FontColor(Ink);
             }
+            // Gruppeoverskrift (f.eks. etasje, så pakke) med summen av dørene i gruppen.
+            List<string> forrigeGruppe = [];
+            void SkrivGrupper(int dorId)
+            {
+                if (dorGrupper is null || dorPriser is null || !dorGrupper.TryGetValue(dorId, out var nokler))
+                {
+                    return;
+                }
+                for (var k = 0; k < nokler.Count; k++)
+                {
+                    if (forrigeGruppe.Count > k && forrigeGruppe.Take(k + 1).SequenceEqual(nokler.Take(k + 1)))
+                    {
+                        continue;
+                    }
+                    var niva = k;
+                    var sum = dorGrupper.Where(x => x.Value.Take(niva + 1).SequenceEqual(nokler.Take(niva + 1)))
+                        .Sum(x => dorPriser.TryGetValue(x.Key, out var p) ? p.Total : 0);
+                    table.Cell().ColumnSpan((uint)totaltAntallKolonner)
+                        .PaddingTop(niva == 0 ? 10 : 6).BorderBottom(niva == 0 ? 1.2f : 0.6f).BorderColor(niva == 0 ? aksent : SandBorder)
+                        .PaddingVertical(4).PaddingLeft(niva == 0 ? 0 : 8).PaddingRight(6)
+                        .Row(rad =>
+                        {
+                            var navn = rad.RelativeItem().Text(nokler[niva]).Bold().FontColor(niva == 0 ? aksent : Ink);
+                            if (niva == 0)
+                            {
+                                navn.FontSize(11);
+                            }
+                            rad.AutoItem().AlignRight().Text(t =>
+                            {
+                                t.Span("Sum  ").FontSize(8).FontColor(Ink);
+                                t.Span(FormatKrHel(sum)).Bold().FontColor(Ink);
+                            });
+                        });
+                }
+                forrigeGruppe = nokler;
+            }
             foreach (var l in linjer)
             {
                 if (l.ErGruppering)
                 {
                     SkrivDelsum();
+                    if (l.DorId is int gDor)
+                    {
+                        SkrivGrupper(gDor);
+                    }
                     delsumNavn = string.IsNullOrWhiteSpace(l.Navn) ? "" : l.Navn;
                     delsum = 0;
                     delsumVarer = 0;

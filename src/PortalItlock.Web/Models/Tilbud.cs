@@ -40,6 +40,11 @@ public class Tilbud
     public string? OpsjonDorer { get; set; }
     public bool OpsjonPerDor { get; set; } = true;
 
+    // Rekkefølge, gruppering og overskrift på dørene (se Services/OpsjonDorOrden.cs).
+    public string? OpsjonSortering { get; set; }
+    public string? OpsjonGruppering { get; set; }
+    public string? OpsjonOverskrift { get; set; }
+
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     // Hvem som opprettet den. Settes automatisk ved lagring (ApplicationDbContext)

@@ -604,36 +604,21 @@ else if (_tilbud is not null)
                     <b>Opsjoner fra dørene</b>
                     <span>Bare varene som ligger under «Opsjon beslag» på dørene kommer med, og montasjetiden regnes bare fra dem.</span>
                 </div>
-                <div class="tk-opsjon-visning" role="group" aria-label="Visning">
-                    <button type="button" class="@(_tilbud.OpsjonPerDor ? "pa" : "")" aria-pressed="@(_tilbud.OpsjonPerDor ? "true" : "false")" @onclick="@(() => SettOpsjonPerDor(true))">
-                        <b>Per dør</b><small>Dørnavn med varene under, og pris per dør inkl. varer og montering</small>
-                    </button>
-                    <button type="button" class="@(!_tilbud.OpsjonPerDor ? "pa" : "")" aria-pressed="@(!_tilbud.OpsjonPerDor ? "true" : "false")" @onclick="@(() => SettOpsjonPerDor(false))">
-                        <b>Samlet</b><small>Alle opsjonsbeslag og montering samlet, som et vanlig tilbud</small>
-                    </button>
-                </div>
                 @if (_opsjonDorer.Count == 0)
                 {
+                    <div class="tk-opsjon-visning" role="group" aria-label="Visning">
+                        <button type="button" class="@(_tilbud.OpsjonPerDor ? "pa" : "")" aria-pressed="@(_tilbud.OpsjonPerDor ? "true" : "false")" @onclick="@(() => SettOpsjonPerDor(true))">
+                            <b>Per dør</b><small>Dørnavn med varene under, og pris per dør inkl. varer og montering</small>
+                        </button>
+                        <button type="button" class="@(!_tilbud.OpsjonPerDor ? "pa" : "")" aria-pressed="@(!_tilbud.OpsjonPerDor ? "true" : "false")" @onclick="@(() => SettOpsjonPerDor(false))">
+                            <b>Samlet</b><small>Alle opsjonsbeslag og montering samlet, som et vanlig tilbud</small>
+                        </button>
+                    </div>
                     <p class="tk-opsjon-tom">Ingen dører har opsjoner ennå. Huk av «Opsjon» under Beslag på døren og legg varene under «Opsjon beslag».</p>
                 }
                 else
                 {
-                    <div class="tk-opsjon-dorer-hode">
-                        <span>Dører med opsjoner <em>@(valgte?.Count ?? _opsjonDorer.Count) av @_opsjonDorer.Count valgt</em></span>
-                        <button type="button" @onclick="@(() => VelgAlleOpsjonDorer(true))">Velg alle</button>
-                        <button type="button" @onclick="@(() => VelgAlleOpsjonDorer(false))">Ingen</button>
-                    </div>
-                    <div class="tk-opsjon-dorer">
-                        @foreach (var d in _opsjonDorer)
-                        {
-                            var dor = d;
-                            var paa = valgte is null || valgte.Contains(d.Id);
-                            <label @key="d.Id" class="@(paa ? "paa" : "")">
-                                <input type="checkbox" checked="@paa" @onchange="@(() => VeksleOpsjonDor(dor.Id))" />
-                                <b>@d.Navn</b><small>@d.Antall @(d.Antall == 1 ? "vare" : "varer")</small>
-                            </label>
-                        }
-                    </div>
+                    @OpsjonVelger(valgte)
                 }
             </div>
         }
@@ -2130,7 +2115,7 @@ else if (_tilbud is not null)
     // ---- Opsjonstilbud ----
     private bool ErOpsjon => _tilbud?.Type == TilbudType.Opsjon;
 
-    private sealed record OpsjonDor(int Id, string Navn, int Antall);
+    private sealed record OpsjonDor(int Id, string Navn, int Antall, OpsjonDorOrden.DorInfo Info, string Varer);
     private List<OpsjonDor> _opsjonDorer = [];
 
     private static string DorNavn(Dor d) =>
@@ -2146,11 +2131,18 @@ else if (_tilbud is not null)
 
         var dorer = await Db.Dorer.AsNoTracking()
             .Where(d => d.ProsjektId == _tilbud!.ProsjektId && d.Komponenter.Any(k => k.ErOpsjon))
-            .Select(d => new { Dor = d, Antall = d.Komponenter.Count(k => k.ErOpsjon) })
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component)
             .ToListAsync();
+        var pakker = (await Db.Packages.AsNoTracking().Include(p => p.Komponenter).Include(p => p.DorFunksjoner).ToListAsync())
+            .Select(DorPakkeService.Info).ToList();
         _opsjonDorer = dorer
-            .OrderBy(x => x.Dor.Dornummer, StringComparer.OrdinalIgnoreCase)
-            .Select(x => new OpsjonDor(x.Dor.Id, DorNavn(x.Dor), x.Antall))
+            .Select(d =>
+            {
+                var ops = d.Komponenter.Where(k => k.ErOpsjon).ToList();
+                var varer = string.Join(", ", ops.Where(k => k.Component is not null)
+                    .Select(k => k.Antall > 1 ? $"{k.Component!.Navn} x{k.Antall}" : k.Component!.Navn));
+                return new OpsjonDor(d.Id, DorNavn(d), ops.Count, OpsjonDorOrden.Info(d, DorPakkeService.PakkeFor(d, pakker)?.Navn), varer);
+            })
             .ToList();
     }
 
@@ -2179,6 +2171,476 @@ else if (_tilbud is not null)
 
     private async Task VelgAlleOpsjonDorer(bool alle) =>
         await LagreOpsjonDorer(alle ? _opsjonDorer.Select(d => d.Id).ToHashSet() : []);
+
+    // ---- Velger for dørene: filter, sortering, gruppering og overskrift ----
+    private readonly HashSet<string> _fDor = [];
+    private readonly HashSet<string> _fPakke = [];
+    private readonly HashSet<string> _fEtasje = [];
+    private string _fSok = "";
+    private string _dorSok = "";
+    private string _visValgt = "alle";
+    private string? _apenMeny;
+
+    private bool OpsjonFiltrert => _fSok.Trim().Length > 0 || _fDor.Count > 0 || _fPakke.Count > 0 || _fEtasje.Count > 0;
+
+    private bool PasserOpsjonFilter(OpsjonDor d)
+    {
+        var q = _fSok.Trim();
+        var i = d.Info;
+        return (q.Length == 0 || $"{i.Dornummer} {i.Navn} {i.Pakke} {i.Etasje}".Contains(q, StringComparison.OrdinalIgnoreCase))
+            && (_fDor.Count == 0 || _fDor.Contains(i.Dornummer))
+            && (_fPakke.Count == 0 || _fPakke.Contains(OpsjonDorOrden.GruppeVerdi(i, "pakke")))
+            && (_fEtasje.Count == 0 || _fEtasje.Contains(OpsjonDorOrden.GruppeVerdi(i, "etasje")));
+    }
+
+    private List<OpsjonDor> OpsjonOrdnet()
+    {
+        var perId = _opsjonDorer.ToDictionary(d => d.Id);
+        return OpsjonDorOrden.Ordne(_opsjonDorer.Select(d => d.Info), _tilbud!.OpsjonSortering, _tilbud.OpsjonGruppering)
+            .Select(i => perId[i.Id]).ToList();
+    }
+
+    private List<OpsjonDor> OpsjonVisning(HashSet<int>? valgte) => OpsjonOrdnet()
+        .Where(PasserOpsjonFilter)
+        .Where(d => _visValgt == "alle" || (_visValgt == "valgte") == (valgte is null || valgte.Contains(d.Id)))
+        .ToList();
+
+    private List<string> OpsjonVerdier(string felt) => _opsjonDorer
+        .Select(d => OpsjonDorOrden.GruppeVerdi(d.Info, felt)).Distinct()
+        .OrderBy(v => v == OpsjonDorOrden.UtenVerdi(felt)).ThenBy(v => v, StringComparer.CurrentCultureIgnoreCase).ToList();
+
+    private void VeksleMeny(string meny) => _apenMeny = _apenMeny == meny ? null : meny;
+
+    private static void Veksle(HashSet<string> s, string v)
+    {
+        if (!s.Remove(v))
+        {
+            s.Add(v);
+        }
+    }
+
+    private void NullstillOpsjonFilter()
+    {
+        _fSok = "";
+        _fDor.Clear();
+        _fPakke.Clear();
+        _fEtasje.Clear();
+    }
+
+    private async Task VelgOpsjonDorer(IEnumerable<int> ider, bool paa)
+    {
+        var valgte = ValgteOpsjonDorer ?? _opsjonDorer.Select(d => d.Id).ToHashSet();
+        foreach (var id in ider)
+        {
+            if (paa)
+            {
+                valgte.Add(id);
+            }
+            else
+            {
+                valgte.Remove(id);
+            }
+        }
+        await LagreOpsjonDorer(valgte);
+        _syncMessage = "Trykk «Synk opsjoner fra dørene» for å oppdatere varelinjene med dørene du har valgt.";
+    }
+
+    private async Task VeksleOpsjonDorRad(int id)
+    {
+        await VeksleOpsjonDor(id);
+        _syncMessage = "Trykk «Synk opsjoner fra dørene» for å oppdatere varelinjene med dørene du har valgt.";
+    }
+
+    private List<(string Felt, bool Stigende)> OpsjonSort => OpsjonDorOrden.LesSortering(_tilbud!.OpsjonSortering);
+    private List<string> OpsjonGrupper => OpsjonDorOrden.LesGruppering(_tilbud!.OpsjonGruppering);
+
+    private async Task SettOpsjonSort(int nivaa, string felt)
+    {
+        var s = OpsjonSort;
+        if (nivaa == 0)
+        {
+            var stigende = s[0].Felt == felt ? s[0].Stigende : true;
+            s[0] = (felt, stigende);
+        }
+        else if (string.IsNullOrEmpty(felt))
+        {
+            s = s.Take(1).ToList();
+        }
+        else if (s.Count > 1)
+        {
+            s[1] = (felt, s[1].Stigende);
+        }
+        else
+        {
+            s.Add((felt, true));
+        }
+        _tilbud!.OpsjonSortering = s.Count == 1 && s[0] == ("id", true) ? null : OpsjonDorOrden.LagSortering(s);
+        await ReordneOpsjoner();
+    }
+
+    private async Task SnuOpsjonSort(int nivaa)
+    {
+        var s = OpsjonSort;
+        if (nivaa >= s.Count)
+        {
+            return;
+        }
+        s[nivaa] = (s[nivaa].Felt, !s[nivaa].Stigende);
+        _tilbud!.OpsjonSortering = OpsjonDorOrden.LagSortering(s);
+        await ReordneOpsjoner();
+    }
+
+    // Klikk på kolonneoverskriften: sorter på den (eller snu hvis den allerede er valgt).
+    private async Task SorterOpsjonKolonne(string felt)
+    {
+        if (OpsjonSort[0].Felt == felt)
+        {
+            await SnuOpsjonSort(0);
+        }
+        else
+        {
+            await SettOpsjonSort(0, felt);
+        }
+    }
+
+    private async Task SettOpsjonGruppe(int nivaa, string felt)
+    {
+        var g = OpsjonGrupper;
+        if (nivaa == 0)
+        {
+            g = string.IsNullOrEmpty(felt) ? [] : [felt, .. g.Skip(1).Where(x => x != felt)];
+        }
+        else
+        {
+            g = g.Take(1).ToList();
+            if (!string.IsNullOrEmpty(felt) && g.Count == 1 && g[0] != felt)
+            {
+                g.Add(felt);
+            }
+        }
+        _tilbud!.OpsjonGruppering = g.Count == 0 ? null : string.Join(",", g);
+        await ReordneOpsjoner();
+    }
+
+    private async Task VeksleOpsjonOverskrift(string felt)
+    {
+        var o = OpsjonDorOrden.LesOverskrift(_tilbud!.OpsjonOverskrift);
+        if (!o.Remove(felt))
+        {
+            o.Add(felt);
+        }
+        o = OpsjonDorOrden.Felt.Keys.Where(o.Contains).ToList();
+        _tilbud.OpsjonOverskrift = o.Count == 0 || o.SequenceEqual(["id", "navn"]) ? null : string.Join(",", o);
+        await ReordneOpsjoner();
+    }
+
+    // Sortering, gruppering og overskrift gjelder med en gang: varelinjene som allerede
+    // er synket flyttes og overskriftene får nytt navn. Priser og antall røres ikke.
+    private async Task ReordneOpsjoner()
+    {
+        var t = _tilbud!;
+        if (t.OpsjonPerDor && t.Linjer.Any(l => l.DorId is not null))
+        {
+            var infoPerDor = _opsjonDorer.ToDictionary(d => d.Id, d => d.Info);
+            var dorLinjer = t.Linjer.Where(l => l.DorId is not null).OrderBy(l => l.Rekkefolge).ToList();
+            var dorIder = dorLinjer.Select(l => l.DorId!.Value).Distinct().ToList();
+            var kjente = OpsjonDorOrden.Ordne(dorIder.Where(infoPerDor.ContainsKey).Select(id => infoPerDor[id]), t.OpsjonSortering, t.OpsjonGruppering)
+                .Select(i => i.Id).ToList();
+            var andre = TabellRader().Where(r => r.Vare is null || r.Vare.DorId is null).ToList();
+            var nr = 0;
+            foreach (var id in kjente.Concat(dorIder.Where(id => !infoPerDor.ContainsKey(id))))
+            {
+                foreach (var l in dorLinjer.Where(l => l.DorId == id).OrderBy(l => l.ErGruppering ? 0 : 1).ThenBy(l => l.Rekkefolge))
+                {
+                    l.Rekkefolge = nr++;
+                    if (l.ErGruppering && infoPerDor.TryGetValue(id, out var info))
+                    {
+                        l.Navn = OpsjonDorOrden.Overskrift(info, t.OpsjonOverskrift);
+                    }
+                }
+            }
+            foreach (var r in andre)
+            {
+                if (r.Vare is { } v)
+                {
+                    v.Rekkefolge = nr++;
+                }
+                else if (t.FellesRekkefolge && r.Kode is { } k)
+                {
+                    k.Rekkefolge = nr++;
+                }
+            }
+        }
+        await Db.SaveChangesAsync();
+    }
+
+    private RenderFragment OpsjonVelger(HashSet<int>? valgte) => __builder =>
+    {
+        var t = _tilbud!;
+        var liste = OpsjonVisning(valgte);
+        var grupper = OpsjonGrupper;
+        var sort = OpsjonSort;
+        var priser = t.OpsjonPerDor ? TilbudBeregningHelper.PrisPerDor(t, LinjeMinutter) : null;
+        decimal? Sum(int id) => priser is not null && priser.TryGetValue(id, out var p) ? p.Total : null;
+        bool Valgt(int id) => valgte is null || valgte.Contains(id);
+        var antallValgt = _opsjonDorer.Count(d => Valgt(d.Id));
+        var overskrift = OpsjonDorOrden.LesOverskrift(t.OpsjonOverskrift);
+        var dorTreff = _opsjonDorer.Select(d => d.Info).OrderBy(i => i.Dornummer, StringComparer.CurrentCultureIgnoreCase)
+            .Where(i => _dorSok.Trim().Length == 0 || $"{i.Dornummer} {i.Navn}".Contains(_dorSok.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+        var synligeValgt = liste.Count(d => Valgt(d.Id));
+
+        @if (_apenMeny is not null)
+        {
+            <div class="ov-bakgrunn" @onclick="@(() => _apenMeny = null)"></div>
+        }
+        <div class="ov-bar">
+            <label class="ov-sok"><Icon Name="search" /><input type="search" placeholder="Søk dør-ID, navn, pakke" @bind="_fSok" @bind:event="oninput" /></label>
+
+            <div class="ov-nt @(_fDor.Count > 0 ? "aktiv" : "") @(_apenMeny == "dor" ? "aapen" : "")">
+                <button type="button" @onclick="@(() => VeksleMeny("dor"))"><span class="lbl">Dørnummer</span>@NtTekst(_fDor)</button>
+                @if (_apenMeny == "dor")
+                {
+                    <div class="ov-pop">
+                        <input class="ov-minisok" type="search" placeholder="Søk dørnummer eller navn" @bind="_dorSok" @bind:event="oninput" />
+                        <div class="ov-dorliste">
+                            @foreach (var i in dorTreff)
+                            {
+                                var nr = i.Dornummer;
+                                <label @key="i.Id"><input type="checkbox" checked="@_fDor.Contains(nr)" @onchange="@(() => Veksle(_fDor, nr))" /><b>@nr</b><span>@i.Navn</span></label>
+                            }
+                            @if (dorTreff.Count == 0)
+                            {
+                                <div class="ov-tittel">Ingen treff</div>
+                            }
+                        </div>
+                        <div class="ov-fot">
+                            <button type="button" @onclick="@(() => { foreach (var i in dorTreff) { _fDor.Add(i.Dornummer); } })">Velg alle</button>
+                            <button type="button" @onclick="@(() => _fDor.Clear())">Nullstill</button>
+                        </div>
+                    </div>
+                }
+            </div>
+            @foreach (var (felt, navn, sett) in new[] { ("pakke", "Pakke", _fPakke), ("etasje", "Etasje", _fEtasje) })
+            {
+                var f = felt;
+                var s = sett;
+                <div class="ov-nt @(s.Count > 0 ? "aktiv" : "") @(_apenMeny == f ? "aapen" : "")">
+                    <button type="button" @onclick="@(() => VeksleMeny(f))"><span class="lbl">@navn</span>@NtTekst(s)</button>
+                    @if (_apenMeny == f)
+                    {
+                        <div class="ov-pop">
+                            @foreach (var v in OpsjonVerdier(f))
+                            {
+                                var verdi = v;
+                                <label><input type="checkbox" checked="@s.Contains(verdi)" @onchange="@(() => Veksle(s, verdi))" />@verdi<small>@_opsjonDorer.Count(d => OpsjonDorOrden.GruppeVerdi(d.Info, f) == verdi)</small></label>
+                            }
+                            <div class="ov-fot">
+                                <button type="button" @onclick="@(() => { foreach (var v in OpsjonVerdier(f)) { s.Add(v); } })">Velg alle</button>
+                                <button type="button" @onclick="@(() => s.Clear())">Nullstill</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="ov-nt @(_apenMeny == "sort" ? "aapen" : "")">
+                <button type="button" @onclick="@(() => VeksleMeny("sort"))"><span class="lbl">Sorter</span>@(OpsjonDorOrden.Felt[sort[0].Felt]) @(sort[0].Stigende ? "↑" : "↓")@(sort.Count > 1 ? $", {OpsjonDorOrden.Felt[sort[1].Felt]}" : "")</button>
+                @if (_apenMeny == "sort")
+                {
+                    <div class="ov-pop bred">
+                        <div class="ov-tittel">Sorter etter</div>
+                        <div class="ov-rad2">
+                            <span>Først</span>
+                            <select value="@sort[0].Felt" @onchange="@(e => SettOpsjonSort(0, e.Value?.ToString() ?? "id"))">
+                                @foreach (var (k, n) in OpsjonDorOrden.Felt)
+                                {
+                                    <option value="@k">@n</option>
+                                }
+                            </select>
+                            <button type="button" class="ov-retning" title="Snu rekkefølgen" @onclick="@(() => SnuOpsjonSort(0))">@(sort[0].Stigende ? "↑" : "↓")</button>
+                        </div>
+                        <div class="ov-rad2">
+                            <span>Deretter</span>
+                            <select value="@(sort.Count > 1 ? sort[1].Felt : "")" @onchange="@(e => SettOpsjonSort(1, e.Value?.ToString() ?? ""))">
+                                <option value="">Ingen</option>
+                                @foreach (var (k, n) in OpsjonDorOrden.Felt)
+                                {
+                                    <option value="@k">@n</option>
+                                }
+                            </select>
+                            <button type="button" class="ov-retning" title="Snu rekkefølgen" style="@(sort.Count > 1 ? "" : "visibility:hidden")" @onclick="@(() => SnuOpsjonSort(1))">@(sort.Count > 1 && !sort[1].Stigende ? "↓" : "↑")</button>
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="ov-nt @(grupper.Count > 0 ? "aktiv" : "") @(_apenMeny == "grp" ? "aapen" : "")">
+                <button type="button" @onclick="@(() => VeksleMeny("grp"))"><span class="lbl">Grupper</span>@(grupper.Count == 0 ? "Ingen" : string.Join(", ", grupper.Select(g => OpsjonDorOrden.GruppeFelt[g])))</button>
+                @if (_apenMeny == "grp")
+                {
+                    <div class="ov-pop bred">
+                        <div class="ov-tittel">Grupper etter</div>
+                        @for (var n = 0; n < 2; n++)
+                        {
+                            var nivaa = n;
+                            <div class="ov-rad2">
+                                <span>@(nivaa == 0 ? "Først" : "Deretter")</span>
+                                <select value="@(grupper.ElementAtOrDefault(nivaa) ?? "")" disabled="@(nivaa == 1 && grupper.Count == 0)" @onchange="@(e => SettOpsjonGruppe(nivaa, e.Value?.ToString() ?? ""))">
+                                    <option value="">Ingen</option>
+                                    @foreach (var (k, gn) in OpsjonDorOrden.GruppeFelt)
+                                    {
+                                        <option value="@k">@gn</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                        <p class="ov-hjelp">Hver gruppe får egen overskrift med delsum på tilbuds-PDF-en.</p>
+                    </div>
+                }
+            </div>
+
+            <span class="ov-sp"></span>
+
+            <div class="ov-nt @(_apenMeny == "vis" ? "aapen" : "")">
+                <button type="button" @onclick="@(() => VeksleMeny("vis"))"><span class="lbl">Tilbudet</span>@(t.OpsjonPerDor ? "Per dør" : "Samlet")</button>
+                @if (_apenMeny == "vis")
+                {
+                    <div class="ov-pop hoyre bred">
+                        <div class="ov-tittel">Visning på tilbudet</div>
+                        <button type="button" class="ov-valgk @(t.OpsjonPerDor ? "pa" : "")" @onclick="@(() => SettOpsjonPerDor(true))"><span class="prikk"></span><span><b>Per dør</b><small>Pris per dør inkl. varer og montering</small></span></button>
+                        <button type="button" class="ov-valgk @(!t.OpsjonPerDor ? "pa" : "")" @onclick="@(() => SettOpsjonPerDor(false))"><span class="prikk"></span><span><b>Samlet</b><small>Alt samlet, som et vanlig tilbud</small></span></button>
+                        <div class="ov-tittel">Overskrift per dør</div>
+                        @foreach (var (k, n) in OpsjonDorOrden.Felt)
+                        {
+                            var felt = k;
+                            <label><input type="checkbox" checked="@overskrift.Contains(felt)" @onchange="@(() => VeksleOpsjonOverskrift(felt))" />@(felt == "pakke" ? "Pakkenavn" : n)</label>
+                        }
+                    </div>
+                }
+            </div>
+
+            @if (OpsjonFiltrert)
+            {
+                <div class="ov-aktive">
+                    @if (_fSok.Trim().Length > 0)
+                    {
+                        <span class="ov-tag">Søk: @_fSok<button type="button" title="Fjern" @onclick="@(() => _fSok = "")">×</button></span>
+                    }
+                    @foreach (var (sett, verdi) in _fDor.Select(v => (_fDor, v)).Concat(_fPakke.Select(v => (_fPakke, v))).Concat(_fEtasje.Select(v => (_fEtasje, v))).ToList())
+                    {
+                        var s = sett;
+                        var v = verdi;
+                        <span class="ov-tag">@v<button type="button" title="Fjern" @onclick="@(() => s.Remove(v))">×</button></span>
+                    }
+                    <button type="button" class="ov-nullstill" @onclick="NullstillOpsjonFilter">Nullstill alt</button>
+                </div>
+            }
+        </div>
+
+        <div class="ov-ramme">
+            <div class="ov-status">
+                <span><b>@antallValgt av @_opsjonDorer.Count</b> dører valgt</span>
+                <span class="ov-sp"></span>
+                @if (OpsjonFiltrert)
+                {
+                    <button type="button" class="ov-kn lilla" @onclick="@(() => VelgOpsjonDorer(_opsjonDorer.Where(PasserOpsjonFilter).Select(d => d.Id), true))">+ Velg alle i filteret</button>
+                    <button type="button" class="ov-kn" @onclick="@(() => VelgOpsjonDorer(_opsjonDorer.Where(PasserOpsjonFilter).Select(d => d.Id), false))">− Fjern alle i filteret</button>
+                }
+                <span class="ov-visvalg" role="group" aria-label="Vis">
+                    @foreach (var (k, n) in new[] { ("alle", "Alle"), ("valgte", "Valgte"), ("ikke", "Ikke valgt") })
+                    {
+                        var v = k;
+                        <button type="button" class="@(_visValgt == v ? "pa" : "")" @onclick="@(() => _visValgt = v)">@n</button>
+                    }
+                </span>
+            </div>
+            <div class="ov-tw">
+                <table class="ov-tabell">
+                    <thead>
+                        <tr>
+                            <th class="ov-boks"><input type="checkbox" title="Velg alle som vises" checked="@(liste.Count > 0 && synligeValgt == liste.Count)" @onchange="@(() => VelgOpsjonDorer(liste.Select(d => d.Id), synligeValgt != liste.Count))" /></th>
+                            @foreach (var (k, n) in OpsjonDorOrden.Felt)
+                            {
+                                var felt = k;
+                                <th class="ov-sorter" @onclick="@(() => SorterOpsjonKolonne(felt))">@n@if (sort[0].Felt == felt) { <span class="pil">@(sort[0].Stigende ? "↑" : "↓")</span> }</th>
+                            }
+                            <th>Opsjoner</th>
+                            @if (priser is not null)
+                            {
+                                <th class="n">Pris inkl. montering</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{
+                            List<string> forrige = [];
+                            var kolonner = 6 + (priser is not null ? 1 : 0);
+                        }
+                        @foreach (var d in liste)
+                        {
+                            var nokler = grupper.Select(g => OpsjonDorOrden.GruppeVerdi(d.Info, g)).ToList();
+                            for (var k = 0; k < nokler.Count; k++)
+                            {
+                                if (forrige.Count > k && forrige.Take(k + 1).SequenceEqual(nokler.Take(k + 1)))
+                                {
+                                    continue;
+                                }
+                                var niva = k;
+                                var medl = liste.Where(x => grupper.Take(niva + 1).Select((g, j) => OpsjonDorOrden.GruppeVerdi(x.Info, g) == nokler[j]).All(b => b)).ToList();
+                                var v = medl.Count(x => Valgt(x.Id));
+                                var gsum = medl.Where(x => Valgt(x.Id)).Sum(x => Sum(x.Id) ?? 0);
+                                var ider = medl.Select(x => x.Id).ToList();
+                                var alleValgt = v == medl.Count;
+                                <tr class="ov-g@(niva + 1)" @key="@($"g{niva}-{string.Join("|", nokler.Take(niva + 1))}")">
+                                    <td class="ov-boks"><input type="checkbox" checked="@alleValgt" @onchange="@(() => VelgOpsjonDorer(ider, !alleValgt))" /></td>
+                                    <td colspan="@(kolonner - 1 - (priser is not null ? 1 : 0))" class="ov-gnavn">@nokler[niva]<small>@v av @medl.Count valgt</small></td>
+                                    @if (priser is not null)
+                                    {
+                                        <td class="n">@(gsum > 0 ? gsum.ToString("N0", CultureInfo.GetCultureInfo("nb-NO")) + " kr" : "")</td>
+                                    }
+                                </tr>
+                            }
+                            forrige = nokler;
+                            var dor = d;
+                            var paa = Valgt(d.Id);
+                            var sum = Sum(d.Id);
+                            <tr @key="d.Id" class="ov-rad @(paa ? "" : "av")" @onclick="@(() => VeksleOpsjonDorRad(dor.Id))">
+                                <td class="ov-boks"><input type="checkbox" checked="@paa" @onclick:stopPropagation="true" @onchange="@(() => VeksleOpsjonDorRad(dor.Id))" /></td>
+                                <td class="ov-id">@d.Info.Dornummer</td>
+                                <td>@d.Info.Navn</td>
+                                <td>@d.Info.Etasje</td>
+                                <td><span class="ov-pakke @(d.Info.Pakke is null ? "ingen" : "")">@(d.Info.Pakke ?? "Ingen pakke")</span></td>
+                                <td class="ov-varer">@d.Varer</td>
+                                @if (priser is not null)
+                                {
+                                    <td class="n">@(sum is decimal s ? s.ToString("N0", CultureInfo.GetCultureInfo("nb-NO")) + " kr" : "–")</td>
+                                }
+                            </tr>
+                        }
+                        @if (liste.Count == 0)
+                        {
+                            <tr><td colspan="@kolonner" class="ov-tomt">Ingen dører passer filteret.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    };
+
+    private static RenderFragment NtTekst(HashSet<string> s) => __builder =>
+    {
+        if (s.Count == 0)
+        {
+            <span>Alle</span>
+        }
+        else if (s.Count == 1)
+        {
+            <span>@s.First()</span>
+        }
+        else
+        {
+            <span class="ant">@s.Count</span>
+        }
+    };
 
     private async Task SettOpsjonPerDor(bool perDor)
     {
@@ -2268,8 +2730,15 @@ else if (_tilbud is not null)
             // Linjer som ikke kommer fra dørene (og kodelinjer) står etter dørene.
             var andre = TabellRader().Where(r => r.Vare is null || r.Vare.DorId is null).ToList();
             var nr = 0;
-            foreach (var g in opsjoner.GroupBy(dk => dk.DorId).OrderBy(g => g.First().Dor!.Dornummer, StringComparer.OrdinalIgnoreCase))
+            // Dørene i rekkefølgen og med overskriften som er valgt over (OpsjonDorOrden).
+            var perDor = opsjoner.GroupBy(dk => dk.DorId).ToDictionary(g => g.Key);
+            var infoPerDor = _opsjonDorer.ToDictionary(d => d.Id, d => d.Info);
+            var rekkefolge = OpsjonDorOrden.Ordne(
+                perDor.Keys.Select(id => infoPerDor.TryGetValue(id, out var i) ? i : OpsjonDorOrden.Info(perDor[id].First().Dor!, null)),
+                t.OpsjonSortering, t.OpsjonGruppering);
+            foreach (var info in rekkefolge)
             {
+                var g = perDor[info.Id];
                 var dor = g.First().Dor!;
                 var grp = t.Linjer.FirstOrDefault(l => l.ErGruppering && l.DorId == dor.Id);
                 if (grp is null)
@@ -2278,6 +2747,7 @@ else if (_tilbud is not null)
                     t.Linjer.Add(grp);
                     Db.TilbudLinjer.Add(grp);
                 }
+                grp.Navn = OpsjonDorOrden.Overskrift(info, t.OpsjonOverskrift);
                 grp.Rekkefolge = nr++;
 
                 foreach (var dk in g.OrderBy(dk => dk.Component!.Navn, StringComparer.OrdinalIgnoreCase))

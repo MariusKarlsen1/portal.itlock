@@ -8026,8 +8026,17 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("OpsjonDorer")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("OpsjonGruppering")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OpsjonOverskrift")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("OpsjonPerDor")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("OpsjonSortering")
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("PrisType")
                         .HasColumnType("INTEGER");
