@@ -189,7 +189,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             KoblingsKryss.Linjer(streker,
                 s => KoblingsKabel.LagVifte(JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(s.PunkterJson) ?? [], KoblingsKabel.Les(s.LedereJson), pdfAspekt, s.LederAvstand, s.LederLengde),
                 j => JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(j) ?? []),
-            pdfAspekt, yFaktor: ViewBoxHoyde / 100.0, breddeFaktor: 0.14, ikkeSkalerende: false));
+            pdfAspekt, yFaktor: ViewBoxHoyde / 100.0, breddeFaktor: 0.14, ikkeSkalerende: false, pxPerProsent: 1 / 0.14));
 
         foreach (var s in symboler)
         {

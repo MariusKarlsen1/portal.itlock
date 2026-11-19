@@ -1647,3 +1647,23 @@ export function stoppPortPlassering() {
         f();
     }
 }
+
+
+// Sier fra til Blazor når lerretets bredde endres (zoom, vindu), så halvmåner
+// og prikker kan tegnes like store på skjermen uansett zoom.
+export function observerLerretBredde(canvasEl, dotNetRef) {
+    if (!canvasEl || canvasEl._breddeObs) {
+        return;
+    }
+    let sist = 0;
+    const meld = () => {
+        const w = canvasEl.getBoundingClientRect().width;
+        if (w > 0 && Math.abs(w - sist) > 2) {
+            sist = w;
+            dotNetRef.invokeMethodAsync('OnLerretBredde', w);
+        }
+    };
+    canvasEl._breddeObs = new ResizeObserver(meld);
+    canvasEl._breddeObs.observe(canvasEl);
+    meld();
+}

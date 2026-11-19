@@ -21,10 +21,13 @@ public static class KoblingsKryss
 
     public sealed record Prikk(int Linje, KoblingsStrekPunkt Punkt);
 
-    private const double Radius = 0.45;    // halvmånen, i prosent av bredden (+ litt for tykke understreker)
-    private const double Stykke = 0.4;     // biten av understreken som tegnes på nytt
-    private const double Toleranse = 0.15; // hvor nær en ende må være en strek for å regnes som koblet
-    private const double PrikkRadius = 0.2;
+    // Størrelsene er i skjermpiksler, så halvmåner og prikker er like små
+    // uansett zoom. pxPerProsent = hvor mange piksler 1 % av lerretets bredde er.
+    private const double RadiusPx = 5;      // halvmånen (+ litt for tykke understreker)
+    private const double StykkePx = 3.5;    // biten av understreken som tegnes på nytt
+    private const double PrikkPx = 2.6;     // prikken der streker er koblet
+    private const double Toleranse = 0.15;  // hvor nær en ende må være en strek for å regnes som koblet (prosent)
+    public const double StandardPxPerProsent = 10;
 
     // Alle streker slik de tegnes, i rekkefølge. vifte gir kabelens ledere.
     public static List<Linje> Linjer(IEnumerable<KoblingsStrek> streker, Func<KoblingsStrek, KoblingsKabel.Vifte?> vifte, Func<string, List<KoblingsStrekPunkt>> punkter)
@@ -55,8 +58,9 @@ public static class KoblingsKryss
     }
 
     // aspekt = høyde/bredde på lerretet, så halvmånene blir runde.
-    public static (List<Hopp> Hopp, List<Prikk> Prikker) Finn(IReadOnlyList<Linje> linjer, double aspekt)
+    public static (List<Hopp> Hopp, List<Prikk> Prikker) Finn(IReadOnlyList<Linje> linjer, double aspekt, double pxPerProsent = StandardPxPerProsent)
     {
+        var Stykke = StykkePx / pxPerProsent;
         (double X, double Y) V(KoblingsStrekPunkt p) => (p.X, p.Y * aspekt);
         KoblingsStrekPunkt P(double x, double y) => new() { X = x, Y = y / aspekt };
 
@@ -75,7 +79,7 @@ public static class KoblingsKryss
                     var (bx, by) = V(po[a + 1]);
                     double dx = bx - ax, dy = by - ay;
                     var lo = Math.Sqrt(dx * dx + dy * dy);
-                    var r = Radius + linjer[under].Bredde * 0.04;
+                    var r = (RadiusPx + linjer[under].Bredde * 0.4) / pxPerProsent;
                     if (lo < 2 * r + 0.1)
                     {
                         continue;
@@ -184,14 +188,15 @@ public static class KoblingsKryss
     // SVG for laget oppå strekene. yFaktor gjør om prosent-Y til viewBox-Y.
     // breddeFaktor gjør om skjermpiksler til viewBox-enheter (1 og
     // ikkeSkalerende = true på skjermen, der bredden er i piksler).
-    public static string Svg(IReadOnlyList<Linje> linjer, double aspekt, double yFaktor = 1, double breddeFaktor = 1, bool ikkeSkalerende = true, string bakgrunn = "#fff")
+    public static string Svg(IReadOnlyList<Linje> linjer, double aspekt, double yFaktor = 1, double breddeFaktor = 1, bool ikkeSkalerende = true, string bakgrunn = "#fff", double pxPerProsent = StandardPxPerProsent)
     {
         if (linjer.Count < 2)
         {
             return "";
         }
 
-        var (hopp, prikker) = Finn(linjer, aspekt);
+        var (hopp, prikker) = Finn(linjer, aspekt, pxPerProsent);
+        var PrikkRadius = PrikkPx / pxPerProsent;
         if (hopp.Count == 0 && prikker.Count == 0)
         {
             return "";
@@ -203,21 +208,24 @@ public static class KoblingsKryss
         string B(double px) => I(px * breddeFaktor);
 
         var sb = new StringBuilder("<g class='ks-kryss' pointer-events='none'>");
+        var buer = SlaSammen(hopp, aspekt, 1.5 / pxPerProsent);
+        // Gapet i overstreken (én gang per bue, også når flere kryss er slått sammen).
+        foreach (var (over, a, bSlutt, _) in buer)
+        {
+            var o = linjer[over];
+            sb.Append($"<line x1='{I(a.X)}' y1='{I(a.Y * yFaktor)}' x2='{I(bSlutt.X)}' y2='{I(bSlutt.Y * yFaktor)}' stroke='{bakgrunn}' stroke-width='{B(Math.Max(o.Bredde, o.Kant is null ? 0 : 3.6) + 2.5)}'{ns} />");
+        }
+        // Biten av understreken som går under buen.
         foreach (var h in hopp)
         {
-            var o = linjer[h.Over];
             var u = linjer[h.Under];
-            // Gapet i overstreken, så biten av understreken, så halvmånen.
-            sb.Append($"<line x1='{I(h.A.X)}' y1='{I(h.A.Y * yFaktor)}' x2='{I(h.B.X)}' y2='{I(h.B.Y * yFaktor)}' stroke='{bakgrunn}' stroke-width='{B(Math.Max(o.Bredde, o.Kant is null ? 0 : 3.6) + 2.5)}'{ns} />");
             if (u.Kant is not null)
             {
                 sb.Append($"<line x1='{I(h.U1.X)}' y1='{I(h.U1.Y * yFaktor)}' x2='{I(h.U2.X)}' y2='{I(h.U2.Y * yFaktor)}' stroke='{u.Kant}' stroke-width='{B(3.6)}'{ns} />");
             }
             sb.Append($"<line x1='{I(h.U1.X)}' y1='{I(h.U1.Y * yFaktor)}' x2='{I(h.U2.X)}' y2='{I(h.U2.Y * yFaktor)}' stroke='{u.Farge}' stroke-width='{B(u.Bredde)}'{ns} />");
         }
-        // Halvmånene: hopp som ligger tett på samme strek blir én liten bue over
-        // alle (f.eks. over to ledere som går side om side).
-        foreach (var (over, a, bSlutt, r) in SlaSammen(hopp, aspekt))
+        foreach (var (over, a, bSlutt, r) in buer)
         {
             var o = linjer[over];
             double dx = bSlutt.X - a.X, dy = (bSlutt.Y - a.Y) * aspekt;
@@ -245,7 +253,7 @@ public static class KoblingsKryss
     }
 
     // Hopp på samme strek som overlapper eller nesten møtes, slås sammen til ett.
-    public static List<(int Over, KoblingsStrekPunkt A, KoblingsStrekPunkt B, double R)> SlaSammen(List<Hopp> hopp, double aspekt)
+    public static List<(int Over, KoblingsStrekPunkt A, KoblingsStrekPunkt B, double R)> SlaSammen(List<Hopp> hopp, double aspekt, double mellomrom = 0.15)
     {
         var res = new List<(int Over, KoblingsStrekPunkt A, KoblingsStrekPunkt B, double R)>();
         foreach (var gruppe in hopp.GroupBy(h => h.Over))
@@ -268,7 +276,7 @@ public static class KoblingsKryss
                 var (a, b, r) = (linje[0].A, linje[0].B, linje[0].R);
                 foreach (var h in linje.Skip(1))
                 {
-                    if (Langs(h.A) <= Langs(b) + 0.15)
+                    if (Langs(h.A) <= Langs(b) + mellomrom)
                     {
                         if (Langs(h.B) > Langs(b))
                         {
