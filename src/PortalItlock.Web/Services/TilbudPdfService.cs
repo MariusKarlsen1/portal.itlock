@@ -245,7 +245,8 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                     // Fargekolonnen til venstre
                     row.ConstantItem(160).Background(org.AksentLys).PaddingVertical(42).PaddingHorizontal(20).Column(kol =>
                     {
-                        kol.Item().Element(e => org.TegnLogo(e, pdfLogo, 26));
+                        // Firmanavnet i stedet for en liten logo (ønske fra kunde 2026-11-19).
+                        kol.Item().Text(org.Navn).FontSize(18).Bold().FontColor(org.Aksent).LineHeight(1.1f);
                         kol.Item().ExtendVertical().AlignBottom().Column(bunn =>
                         {
                         if (!string.IsNullOrWhiteSpace(kontaktNavn))
@@ -326,15 +327,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                             Felt("Levering", string.IsNullOrWhiteSpace(tilbud.Leveringstid) ? "-" : tilbud.Leveringstid);
                         });
 
-                        kol.Item().ExtendVertical().AlignBottom().BorderTop(1.5f).BorderColor(org.Aksent).PaddingTop(10).Row(sum =>
-                        {
-                            sum.RelativeItem().Column(c =>
-                            {
-                                c.Item().Text("Totalt eks. mva").FontSize(9).FontColor(Colors.Grey.Darken2);
-                                c.Item().Text($"{FormatKrHel(totaltUtenMva * (1 + MvaSats))} inkl. mva").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
-                            });
-                            sum.AutoItem().AlignBottom().Text(FormatKrHel(totaltUtenMva)).FontSize(24).Bold();
-                        });
+                        // Forsiden er bare informasjon - prisen står på neste side.
                     });
                 });
             });
@@ -350,7 +343,7 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                 {
                     col.Item().Row(row =>
                     {
-                        row.RelativeItem().AlignBottom().Element(e => org.TegnLogo(e, pdfLogo, 20));
+                        row.RelativeItem().AlignBottom().Text(org.Navn).FontSize(13).Bold().FontColor(org.Aksent);
                         row.RelativeItem().AlignRight().AlignBottom().Column(c =>
                         {
                             c.Item().AlignRight().Text(tilbud.Tittel).FontSize(9).SemiBold();
