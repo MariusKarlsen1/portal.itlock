@@ -608,6 +608,22 @@ else
         }
         @* B1: samme stil som Arbeidsordre - grått hode med fremdrift, verktøylinje på én linje,
            tabell med varebilde og annenhver grå/hvit rad. *@
+        @if (!opsjon && _pakkeEndring is { } pe)
+        {
+            var antallMedPakke = AndreDorerMedPakke(pe.Pakke.Id) + 1;
+            <div class="bs-bekreft-alle bs-pakke-endring">
+                <span>
+                    Du har @(pe.Endringer.Count == 1 ? (pe.Endringer[0].LagtTil ? "lagt til" : "fjernet") : "endret") @string.Join(", ", pe.Endringer.Select(e => $"«{e.Navn}»"))
+                    på en dør med pakken «<b>@pe.Pakke.Navn</b>». Skal endringen gjelde bare denne døren, eller alle @antallMedPakke dørene med pakken i prosjektet?
+                    Pakkenavnet tas bort, siden varene ikke lenger er som i pakken.
+                </span>
+                <button type="button" class="cancel-button" @onclick="BarePakkeDenneDoren">Bare denne døren</button>
+                @if (antallMedPakke > 1)
+                {
+                    <button type="button" class="add-button" @onclick="PakkeEndringPaAlleDorer"><Icon Name="refresh" />Alle @antallMedPakke dørene</button>
+                }
+            </div>
+        }
         @if (!opsjon && _bekreftOppdaterAlle && DorensPakke is { } allePakke)
         {
             var antallAlle = AndreDorerMedPakke(allePakke.Id) + 1;
@@ -1625,6 +1641,7 @@ else
         Db.Components.Add(component);
         await Db.SaveChangesAsync();
 
+        var pakkeFor = _opsjonModus ? null : DorensPakke;
         var dk = new DorKomponent { DorId = Dor.Id, ComponentId = component.Id, Component = component, Antall = 1, Enhet = component.Enhet, ErOpsjon = _opsjonModus };
         Dor.Komponenter.Add(dk);
         Db.DorKomponenter.Add(dk);
@@ -1632,6 +1649,10 @@ else
 
         OppdaterStatusFraBeslag();
         await Db.SaveChangesAsync();
+        if (pakkeFor is not null)
+        {
+            HuskPakkeEndring(pakkeFor, component.Id, component.Navn, lagtTil: true);
+        }
 
         _egendefinertNavn = "";
         _egendefinertEnhet = null;
@@ -1655,6 +1676,8 @@ else
         {
             return;
         }
+        var pakkeFor = _opsjonModus ? null : DorensPakke;
+        var nyPaDoren = Dor.Komponenter.All(dk => dk.ComponentId != r.Id);
         var existing = Dor.Komponenter.FirstOrDefault(dk => dk.ComponentId == r.Id);
         if (existing is not null && existing.ErOpsjon != _opsjonModus)
         {
@@ -1681,6 +1704,10 @@ else
         OppdaterStatusFraBeslag();
         await Db.SaveChangesAsync();
         await TilbudSync.SyncSylinderAsync(Dor.ProsjektId, r.Id);
+        if (pakkeFor is not null && nyPaDoren)
+        {
+            HuskPakkeEndring(pakkeFor, r.Id, r.Navn, lagtTil: true);
+        }
         _componentSearch = "";
         _searchResults = [];
         await OnSaved.InvokeAsync();
@@ -1914,11 +1941,102 @@ else
         {
             return;
         }
+        var pakkeFor = dk.ErOpsjon ? null : DorensPakke;
         LoggHendelse($"Fjernet {dk.Component?.Navn}");
         Db.DorKomponenter.Remove(dk);
         Dor.Komponenter.Remove(dk);
         OppdaterStatusFraBeslag();
         await Db.SaveChangesAsync();
+        if (pakkeFor is not null)
+        {
+            HuskPakkeEndring(pakkeFor, dk.ComponentId, dk.Component?.Navn ?? "vare", lagtTil: false);
+        }
+        await OnSaved.InvokeAsync();
+    }
+
+    // ---- Endring på en dør med pakke: bare denne døren, eller alle med pakken ----
+    private sealed record VareEndring(int ComponentId, string Navn, bool LagtTil);
+    private sealed record PakkeEndring(PakkeOption Pakke, List<VareEndring> Endringer);
+    private PakkeEndring? _pakkeEndring;
+
+    private void HuskPakkeEndring(PakkeOption pakke, int componentId, string navn, bool lagtTil)
+    {
+        if (_pakkeEndring is null || _pakkeEndring.Pakke.Id != pakke.Id)
+        {
+            _pakkeEndring = new PakkeEndring(pakke, []);
+        }
+        // Lagt til og fjernet igjen før man har valgt: opphever hverandre.
+        var motsatt = _pakkeEndring.Endringer.FindIndex(e => e.ComponentId == componentId && e.LagtTil != lagtTil);
+        if (motsatt >= 0)
+        {
+            _pakkeEndring.Endringer.RemoveAt(motsatt);
+        }
+        else
+        {
+            _pakkeEndring.Endringer.Add(new VareEndring(componentId, navn, lagtTil));
+        }
+        if (_pakkeEndring.Endringer.Count == 0)
+        {
+            _pakkeEndring = null;
+        }
+    }
+
+    // Pakken brytes på døren: PakkeId 0 = «ikke pakke lenger» (gjenkjennes ikke på nytt).
+    private static void BrytPakke(Dor dor)
+    {
+        dor.PakkeId = 0;
+        dor.PakkeKomponentIder = null;
+        dor.PakkeFunksjonIder = null;
+    }
+
+    private async Task BarePakkeDenneDoren()
+    {
+        if (KunLes || _pakkeEndring is null)
+        {
+            return;
+        }
+        BrytPakke(Dor);
+        LoggHendelse($"Pakken «{_pakkeEndring.Pakke.Navn}» tatt bort (varene endret)");
+        _pakkeEndring = null;
+        await Db.SaveChangesAsync();
+        await OnSaved.InvokeAsync();
+    }
+
+    private async Task PakkeEndringPaAlleDorer()
+    {
+        if (KunLes || _pakkeEndring is not { } pe)
+        {
+            return;
+        }
+        var ider = AlleDorer.Where(d => d.Id != Dor.Id && PakkeFor(d)?.Id == pe.Pakke.Id).Select(d => d.Id).ToList();
+        var dorer = await Db.Dorer.Include(d => d.Komponenter).ThenInclude(k => k.Component).Where(d => ider.Contains(d.Id)).ToListAsync();
+        foreach (var dor in dorer)
+        {
+            foreach (var e in pe.Endringer)
+            {
+                var har = dor.Komponenter.FirstOrDefault(k => k.ComponentId == e.ComponentId && !k.ErOpsjon);
+                if (e.LagtTil && har is null && dor.Komponenter.All(k => k.ComponentId != e.ComponentId))
+                {
+                    var mal = Dor.Komponenter.FirstOrDefault(k => k.ComponentId == e.ComponentId);
+                    var ny = new DorKomponent { DorId = dor.Id, ComponentId = e.ComponentId, Antall = mal?.Antall ?? 1, Enhet = mal?.Enhet };
+                    dor.Komponenter.Add(ny);
+                    Db.DorKomponenter.Add(ny);
+                    LoggHendelse($"La til {e.Navn} (endret pakken «{pe.Pakke.Navn}» på alle dører)", dor);
+                }
+                else if (!e.LagtTil && har is not null)
+                {
+                    dor.Komponenter.Remove(har);
+                    Db.DorKomponenter.Remove(har);
+                    LoggHendelse($"Fjernet {e.Navn} (endret pakken «{pe.Pakke.Navn}» på alle dører)", dor);
+                }
+            }
+            BrytPakke(dor);
+        }
+        BrytPakke(Dor);
+        LoggHendelse($"Pakken «{pe.Pakke.Navn}» tatt bort (varene endret på alle {dorer.Count + 1} dører)");
+        _pakkeEndring = null;
+        await Db.SaveChangesAsync();
+        _savedMessage = $"Endringen er gjort på {dorer.Count + 1} dører.";
         await OnSaved.InvokeAsync();
     }
 
