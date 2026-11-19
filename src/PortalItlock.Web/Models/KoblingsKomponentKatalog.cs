@@ -114,11 +114,20 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("magnetlas", "Magnetlås", 13, 384, 227),
     ];
 
+    // Strømforsyning og relé (2026-11-19).
+    public static readonly List<KoblingsKomponent> StromOgRele =
+    [
+        Illustrasjon("stromforsyning-24v", "Strømforsyning 24V", 12, 524, 589),
+        Illustrasjon("adapter-12v", "Adapter 12V", 6, 336, 584),
+        Illustrasjon("relekort", "Relékort", 9, 524, 344),
+    ];
+
     public static readonly List<KoblingsKomponentGruppe> Grupper =
     [
         new("Låser og sluttstykker", LaserOgSluttstykker),
         new("Lesere og sentraler", LesereOgSentraler),
         new("Ved døra", UtstyrVedDora),
+        new("Strøm og relé", StromOgRele),
     ];
 
     // Eldre komponenter vises ikke lenger i paletten, men koblingsskjemaer som
