@@ -122,6 +122,36 @@ public static class KoblingsKryss
             }
         }
 
+        // Halvmånene skal aldri gå over hverandre: står to kryss tett (på samme
+        // strek, eller to streker som krysser den samme), krympes buene så de
+        // får plass. Slik blir det små, separate buer også når man zoomer ut.
+        if (hopp.Count > 1)
+        {
+            var senter = hopp.Select(h => ((h.A.X + h.B.X) / 2, (h.A.Y + h.B.Y) / 2 * aspekt)).ToList();
+            var ny = new List<Hopp>(hopp.Count);
+            for (var i = 0; i < hopp.Count; i++)
+            {
+                var h = hopp[i];
+                var r = h.R;
+                for (var j = 0; j < hopp.Count; j++)
+                {
+                    if (j != i)
+                    {
+                        r = Math.Min(r, Avst(senter[i].Item1, senter[i].Item2, senter[j].Item1, senter[j].Item2) * 0.42);
+                    }
+                }
+                r = Math.Max(r, h.R * 0.25);
+                if (r < h.R - 1e-9)
+                {
+                    var (cx, cy) = senter[i];
+                    double ux = (h.B.X - h.A.X) / (2 * h.R), uy = (h.B.Y - h.A.Y) * aspekt / (2 * h.R);
+                    h = h with { A = P(cx - ux * r, cy - uy * r), B = P(cx + ux * r, cy + uy * r), R = r };
+                }
+                ny.Add(h);
+            }
+            hopp = ny;
+        }
+
         // Prikker: en ende som ligger på en annen strek (ikke på enden av den),
         // eller der tre eller flere ender møtes.
         var prikker = new List<Prikk>();

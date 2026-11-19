@@ -5,6 +5,8 @@
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Components.Pages
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
 @* Koblingsskjemaet tegnet som i portalen, men bare til å se på: ingen
    redigering, ingen tilkoblingspunkter og ingen kabeljournal. Brukes i
@@ -12,7 +14,7 @@
    KoblingsSkjemaVisning, og symbolene med samme KoblingsSymbolElement. *@
 @if (_skjema is not null)
 {
-    <div class="kl-lerret @(_skjema.VisRutenett ? "kl-rutenett" : "")">
+    <div class="kl-lerret @(_skjema.VisRutenett ? "kl-rutenett" : "")" @ref="_lerret">
         <svg class="kl-streker" viewBox="0 0 100 100" preserveAspectRatio="none">
             @foreach (var s in _streker)
             {
@@ -27,27 +29,27 @@
                                 <ellipse cx="@Inv(e.Senter.X)" cy="@Inv(e.Senter.Y)" rx="@Inv(e.Rx)" ry="@Inv(e.Ry)" fill="#000" />
                             }
                         </mask>
-                        <polyline points="@Punkter(s.PunkterJson)" fill="none" stroke="@KoblingsKabel.KabelFarge" stroke-width="7"
+                        <polyline points="@Punkter(s.PunkterJson)" fill="none" stroke="@KoblingsKabel.KabelFarge" stroke-width="@Inv(7 * LinjeSkala)"
                                   stroke-linejoin="round" stroke-linecap="round" mask="url(#kl-km-@s.Id)" vector-effect="non-scaling-stroke" />
                         @foreach (var l in vifte.Ledere)
                         {
                             var pts = Pts(l.Punkter);
                             @if (l.Leder.Farge == "Hvit")
                             {
-                                <polyline points="@pts" fill="none" stroke="#9a948c" stroke-width="3.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
+                                <polyline points="@pts" fill="none" stroke="#9a948c" stroke-width="@Inv(3.6 * LinjeSkala)" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
                             }
-                            <polyline points="@pts" fill="none" stroke="@KoblingsKabel.Hex(l.Leder.Farge)" stroke-width="2.2"
+                            <polyline points="@pts" fill="none" stroke="@KoblingsKabel.Hex(l.Leder.Farge)" stroke-width="@Inv(2.2 * LinjeSkala)"
                                       stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="@(l.Leder.Stiplet ? "4,3" : null)" vector-effect="non-scaling-stroke" />
                         }
                     }
                     else
                     {
-                        <polyline points="@Punkter(s.PunkterJson)" fill="none" stroke="@s.Farge" stroke-width="@s.Tykkelse"
+                        <polyline points="@Punkter(s.PunkterJson)" fill="none" stroke="@s.Farge" stroke-width="@Inv(Math.Max(0.6, s.Tykkelse * LinjeSkala))"
                                   stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="@(s.Stiplet ? "6,4" : null)" vector-effect="non-scaling-stroke" />
                     }
                 </g>
             }
-            @((MarkupString)KoblingsKryss.Svg(KoblingsKryss.Linjer(_streker, KabelVifte, p => System.Text.Json.JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(p) ?? []), LerretAspekt))
+            @((MarkupString)KoblingsKryss.Svg(KoblingsKryss.Linjer(_streker, KabelVifte, p => System.Text.Json.JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(p) ?? []), LerretAspekt, breddeFaktor: LinjeSkala, pxPerProsent: _pxPerProsent / _skala))
         </svg>
 
         @foreach (var s in _streker.Where(s => !s.ErKabel && (s.TekstStart is not null || s.TekstSlutt is not null)))
@@ -80,6 +82,63 @@
     private const double LerretAspekt = 13.0 / 16.0;
 
     private KoblingsSkjema? _skjema;
+
+    // Som i editoren: størrelsen på halvmåner, prikker og linjer følger hvor
+    // bred tegningen er på skjermen (zoom), så de ikke vokser når man zoomer inn.
+    private ElementReference _lerret;
+    private IJSObjectReference? _modul;
+    private DotNetObjectReference<KoblingsLesevisning>? _ref;
+    private double _pxPerProsent = KoblingsKryss.StandardPxPerProsent;
+    private double _skala = 1;
+    private double LinjeSkala => Math.Max(0.4, _skala);
+
+    [JSInvokable]
+    public void OnLerretBredde(double bredde)
+    {
+        var ny = bredde / 100;
+        if (ny > 0 && Math.Abs(ny - _pxPerProsent) > _pxPerProsent * 0.03)
+        {
+            _pxPerProsent = ny;
+            _skala = Math.Round(Math.Clamp(bredde / 1200, 0.2, 1), 3);
+            StateHasChanged();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_skjema is null || _ref is not null)
+        {
+            return;
+        }
+        try
+        {
+            _modul = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=28");
+            _ref = DotNetObjectReference.Create(this);
+            await _modul.InvokeVoidAsync("observerLerretBredde", _lerret, _ref);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _ref?.Dispose();
+        if (_modul is not null)
+        {
+            try
+            {
+                await _modul.InvokeVoidAsync("stoppObserverLerret", _lerret);
+                await _modul.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (JSException)
+            {
+            }
+        }
+    }
     private List<KoblingsSymbol> _symboler = [];
     private List<KoblingsStrek> _streker = [];
 

@@ -27,8 +27,9 @@ export function initZoomPan(wrapEl, canvasEl) {
     }
     wrapEl.dataset.zoomPanBound = '1';
 
-    const minZoom = 0.5;
-    const maxZoom = 3;
+    // Zoom fritt: langt ut for oversikt, og så langt inn man vil.
+    const minZoom = 0.15;
+    const maxZoom = 12;
     const step = 0.12;
     let zoom = 1;
 
@@ -50,7 +51,7 @@ export function initZoomPan(wrapEl, canvasEl) {
     wrapEl.addEventListener('wheel', (e) => {
         e.preventDefault();
         const rect = wrapEl.getBoundingClientRect();
-        applyZoom(zoom + (e.deltaY < 0 ? step : -step), e.clientX - rect.left, e.clientY - rect.top);
+        applyZoom(zoom * (e.deltaY < 0 ? 1 + step : 1 / (1 + step)), e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
 
     const dragThreshold = 4;
@@ -1666,4 +1667,11 @@ export function observerLerretBredde(canvasEl, dotNetRef) {
     canvasEl._breddeObs = new ResizeObserver(meld);
     canvasEl._breddeObs.observe(canvasEl);
     meld();
+}
+
+export function stoppObserverLerret(canvasEl) {
+    if (canvasEl && canvasEl._breddeObs) {
+        canvasEl._breddeObs.disconnect();
+        canvasEl._breddeObs = null;
+    }
 }

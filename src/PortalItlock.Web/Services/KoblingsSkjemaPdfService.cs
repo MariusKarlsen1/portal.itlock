@@ -94,7 +94,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                         ("Kategori", skjema.Kategori?.Navn), ("Prosjekt", skjema.Prosjekt?.Navn),
                         ("Dato", DateTime.Now.ToString("dd.MM.yyyy")));
 
-                    col.Item().AlignCenter().Width(650).Height(360).Svg(svg).FitArea();
+                    col.Item().AlignCenter().Height(400).Svg(svg).FitArea();
 
                     col.Item().Column(listCol =>
                     {
@@ -149,7 +149,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
     };
 
     private const double ViewBoxBredde = 100;
-    private const double ViewBoxHoyde = 75;
+    private const double ViewBoxHoyde = 81.25;
 
     private static string BuildSvg(
         List<KoblingsSymbol> symboler,
@@ -157,11 +157,28 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
         Dictionary<int, KoblingsSymbolBibliotek> bibliotek,
         Func<string?, string?> lesTegning)
     {
+        var (vx, vy, vb, vh) = Utsnitt(symboler, streker);
+        // Tekst måles i enheter av utsnittet: ca. 7 pt når tegningen fyller ~770 pt.
+        var navnStr = vb * 7.0 / 770;
+        // Strekene blir like tynne på arket uansett hvor mye tegningen forstørres.
+        var f = vb / ViewBoxBredde;
         var sb = new StringBuilder();
         sb.Append(CultureInfo.InvariantCulture,
-            $"<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 {ViewBoxBredde} {ViewBoxHoyde}'>");
+            $"<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='{Inv(vx)} {Inv(vy)} {Inv(vb)} {Inv(vh)}'>");
         sb.Append(CultureInfo.InvariantCulture,
-            $"<rect x='0' y='0' width='{ViewBoxBredde}' height='{ViewBoxHoyde}' fill='white' />");
+            $"<rect x='{Inv(vx)}' y='{Inv(vy)}' width='{Inv(vb)}' height='{Inv(vh)}' fill='white' />");
+        var etiketter = new List<(double X0, double Y0, double X1, double Y1)>();
+        bool Ledig(double cx, double grunnlinje, string tekst, double str)
+        {
+            var halv = tekst.Length * str * 0.3;
+            var r = (cx - halv, grunnlinje - str, cx + halv, grunnlinje + str * 0.2);
+            if (etiketter.Any(e => r.Item1 < e.X1 && r.Item3 > e.X0 && r.Item2 < e.Y1 && r.Item4 > e.Y0))
+            {
+                return false; // ville gått over en annen tekst: utelates
+            }
+            etiketter.Add(r);
+            return true;
+        }
 
         foreach (var strek in streker)
         {
@@ -173,14 +190,31 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
 
             if (strek.ErKabel)
             {
-                TegnKabel(sb, strek, punkter);
+                TegnKabel(sb, strek, punkter, f);
                 continue;
             }
 
+            foreach (var t in KoblingsStrekTekst.For(strek, punkter, ViewBoxHoyde / ViewBoxBredde))
+            {
+                var ty = YtilVb(t.Y);
+                var (tx, anker, gy) = t.Klasse switch
+                {
+                    "ks-st-venstre" => (t.X - navnStr * 0.6, "end", ty - navnStr * 0.3),
+                    "ks-st-ned" => (t.X + navnStr * 0.4, "start", ty + navnStr * 1.2),
+                    "ks-st-opp" => (t.X + navnStr * 0.4, "start", ty - navnStr * 0.5),
+                    _ => (t.X + navnStr * 0.6, "start", ty - navnStr * 0.3)
+                };
+                if (Ledig(tx + (anker == "end" ? -1 : 1) * t.Tekst.Length * navnStr * 0.3, gy, t.Tekst, navnStr))
+                {
+                    sb.Append(CultureInfo.InvariantCulture,
+                        $"<text x='{Inv(tx)}' y='{Inv(gy)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='{anker}' fill='{strek.Farge}'>{System.Net.WebUtility.HtmlEncode(t.Tekst)}</text>");
+                }
+            }
+
             var pts = string.Join(" ", punkter.Select(p => $"{Inv(p.X)},{Inv(YtilVb(p.Y))}"));
-            var dashAttr = strek.Stiplet ? $"stroke-dasharray='{Inv(strek.Tykkelse * 0.5)},{Inv(strek.Tykkelse * 0.35)}'" : "";
+            var dashAttr = strek.Stiplet ? $"stroke-dasharray='{Inv(strek.Tykkelse * 0.5 * f)},{Inv(strek.Tykkelse * 0.35 * f)}'" : "";
             sb.Append(CultureInfo.InvariantCulture,
-                $"<polyline points='{pts}' fill='none' stroke='{strek.Farge}' stroke-width='{Inv(strek.Tykkelse * 0.15)}' {dashAttr} />");
+                $"<polyline points='{pts}' fill='none' stroke='{strek.Farge}' stroke-width='{Inv(strek.Tykkelse * 0.15 * f)}' {dashAttr} />");
         }
 
         // Halvmåne der streker krysser, prikk der de er koblet - som på skjermen.
@@ -189,7 +223,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             KoblingsKryss.Linjer(streker,
                 s => KoblingsKabel.LagVifte(JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(s.PunkterJson) ?? [], KoblingsKabel.Les(s.LedereJson), pdfAspekt, s.LederAvstand, s.LederLengde),
                 j => JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(j) ?? []),
-            pdfAspekt, yFaktor: ViewBoxHoyde / 100.0, breddeFaktor: 0.14, ikkeSkalerende: false, pxPerProsent: 1 / 0.14));
+            pdfAspekt, yFaktor: ViewBoxHoyde / 100.0, breddeFaktor: 0.14 * f, ikkeSkalerende: false, pxPerProsent: 1 / (0.14 * f)));
 
         foreach (var s in symboler)
         {
@@ -243,18 +277,19 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                     break;
                 case KoblingsElementType.Tekstboks:
                     sb.Append(CultureInfo.InvariantCulture,
-                        $"<text x='{Inv(cx)}' y='{Inv(cy)}' font-size='{Inv(s.FontStorrelse * 0.1)}' font-family='Arial, sans-serif' text-anchor='middle' fill='{s.Farge}'>{System.Net.WebUtility.HtmlEncode(s.Tekst ?? "")}</text>");
+                        $"<text x='{Inv(cx)}' y='{Inv(cy + s.FontStorrelse / 12.0 * 0.35)}' font-size='{Inv(s.FontStorrelse / 12.0)}' font-family='Arial, sans-serif' text-anchor='middle'{(s.Fet ? " font-weight='bold'" : "")} fill='{s.Farge}'>{System.Net.WebUtility.HtmlEncode(s.Tekst ?? "")}</text>");
                     break;
                 case KoblingsElementType.Punkt:
                     sb.Append(CultureInfo.InvariantCulture,
-                        $"<circle cx='{Inv(cx)}' cy='{Inv(cy)}' r='{Inv(Math.Min(w, h) / 2)}' fill='{s.Farge}' stroke='white' stroke-width='0.2' />");
+                        $"<circle cx='{Inv(cx)}' cy='{Inv(cy)}' r='{Inv(Math.Min(w, h) / 2)}' fill='{s.Farge}' />");
                     break;
             }
 
-            if (!string.IsNullOrWhiteSpace(s.Navn) && s.ElementType != KoblingsElementType.Tekstboks)
+            if (!string.IsNullOrWhiteSpace(s.Navn) && !s.SkjulNavn && s.ElementType is not (KoblingsElementType.Tekstboks or KoblingsElementType.Punkt)
+                && Ledig(cx, y - navnStr * 0.4, s.Navn, navnStr))
             {
                 sb.Append(CultureInfo.InvariantCulture,
-                    $"<text x='{Inv(cx)}' y='{Inv(y - 0.8)}' font-size='2.2' font-family='Arial, sans-serif' text-anchor='middle' fill='black'>{System.Net.WebUtility.HtmlEncode(s.Navn)}</text>");
+                    $"<text x='{Inv(cx)}' y='{Inv(y - navnStr * 0.4)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='middle' fill='#14213D'>{System.Net.WebUtility.HtmlEncode(s.Navn)}</text>");
             }
         }
 
@@ -262,8 +297,34 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
         return sb.ToString();
     }
 
+    // Utsnittet rundt alt som er tegnet (i viewBox-enheter), med litt luft.
+    private static (double X, double Y, double B, double H) Utsnitt(List<KoblingsSymbol> symboler, List<KoblingsStrek> streker)
+    {
+        var xs = new List<double>();
+        var ys = new List<double>();
+        foreach (var s in symboler)
+        {
+            xs.Add(s.PosX);
+            xs.Add(s.PosX + s.Bredde);
+            ys.Add(YtilVb(s.PosY) - 2.5);
+            ys.Add(YtilVb(s.PosY + s.Hoyde));
+        }
+        foreach (var p in streker.SelectMany(st => JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(st.PunkterJson) ?? []))
+        {
+            xs.Add(p.X);
+            ys.Add(YtilVb(p.Y));
+        }
+        if (xs.Count == 0)
+        {
+            return (0, 0, ViewBoxBredde, ViewBoxHoyde);
+        }
+        const double luft = 2;
+        double x0 = xs.Min() - luft, x1 = xs.Max() + luft, y0 = ys.Min() - luft, y1 = ys.Max() + luft;
+        return (x0, y0, Math.Max(10, x1 - x0), Math.Max(8, y1 - y0));
+    }
+
     // Kabel med ledere: tykk sort kabel som deler seg i fargede ledere i hver ende.
-    private static void TegnKabel(StringBuilder sb, KoblingsStrek strek, List<KoblingsStrekPunkt> punkter)
+    private static void TegnKabel(StringBuilder sb, KoblingsStrek strek, List<KoblingsStrekPunkt> punkter, double f)
     {
         var vifte = KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(strek.LedereJson), ViewBoxHoyde / ViewBoxBredde, strek.LederAvstand, strek.LederLengde);
         if (vifte is null)
@@ -274,25 +335,25 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
         static string Pts(IEnumerable<KoblingsStrekPunkt> p) => string.Join(" ", p.Select(q => $"{Inv(q.X)},{Inv(YtilVb(q.Y))}"));
 
         sb.Append(CultureInfo.InvariantCulture,
-            $"<polyline points='{Pts(vifte.Kropp)}' fill='none' stroke='{KoblingsKabel.KabelFarge}' stroke-width='0.9' stroke-linejoin='round' stroke-linecap='round' />");
+            $"<polyline points='{Pts(vifte.Kropp)}' fill='none' stroke='{KoblingsKabel.KabelFarge}' stroke-width='{Inv(0.9 * f)}' stroke-linejoin='round' stroke-linecap='round' />");
         foreach (var l in vifte.Ledere)
         {
             var pts = Pts(l.Punkter);
             if (l.Leder.Farge == "Hvit")
             {
                 sb.Append(CultureInfo.InvariantCulture,
-                    $"<polyline points='{pts}' fill='none' stroke='#9a948c' stroke-width='0.5' stroke-linejoin='round' stroke-linecap='round' />");
+                    $"<polyline points='{pts}' fill='none' stroke='#9a948c' stroke-width='{Inv(0.5 * f)}' stroke-linejoin='round' stroke-linecap='round' />");
             }
             var dash = l.Leder.Stiplet ? "stroke-dasharray='0.6,0.45'" : "";
             sb.Append(CultureInfo.InvariantCulture,
-                $"<polyline points='{pts}' fill='none' stroke='{KoblingsKabel.Hex(l.Leder.Farge)}' stroke-width='0.32' stroke-linejoin='round' stroke-linecap='round' {dash} />");
+                $"<polyline points='{pts}' fill='none' stroke='{KoblingsKabel.Hex(l.Leder.Farge)}' stroke-width='{Inv(0.32 * f)}' stroke-linejoin='round' stroke-linecap='round' {dash} />");
         }
 
         if (!string.IsNullOrWhiteSpace(strek.Navn))
         {
             var etikett = $"{strek.Navn} · {(string.IsNullOrWhiteSpace(strek.KabelType) ? KoblingsKabel.MalNavn(KoblingsKabel.Les(strek.LedereJson)) : strek.KabelType)}";
             sb.Append(CultureInfo.InvariantCulture,
-                $"<text x='{Inv(vifte.Merke.X)}' y='{Inv(YtilVb(vifte.Merke.Y) - 1.1)}' font-size='1.3' font-weight='bold' font-family='Arial, sans-serif' text-anchor='middle' fill='#2a2622'>{System.Net.WebUtility.HtmlEncode(etikett)}</text>");
+                $"<text x='{Inv(vifte.Merke.X)}' y='{Inv(YtilVb(vifte.Merke.Y) - 1.1)}' font-size='{Inv(1.3 * f)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='middle' fill='#2a2622'>{System.Net.WebUtility.HtmlEncode(etikett)}</text>");
         }
     }
 
@@ -351,5 +412,5 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
 
     private static double YtilVb(double prosentY) => prosentY * (ViewBoxHoyde / 100.0);
 
-    private static string Inv(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+    private static string Inv(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
 }

@@ -2,7 +2,8 @@
 // tegningen, ikke hele siden, så dørarket åpner seg i vanlig størrelse.
 // Punktet mellom fingrene blir liggende der det er mens man zoomer.
 window.planZoom = (function () {
-    var MIN = 100, MAKS = 400;
+    // Zoom så langt inn man vil (tekst og streker følger med uten å bli store).
+    var MIN = 100, MAKS = 1500;
 
     function flate(rull) { return rull.querySelector('.mp-plan-flate, .zoom-flate'); }
 
