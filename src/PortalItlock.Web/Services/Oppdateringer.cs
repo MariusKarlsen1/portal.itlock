@@ -14,6 +14,13 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.5", new DateOnly(2026, 11, 19),
+        [
+            new(Type.Fikset, "link", "Koblingsskjema ser riktig ut", "Små prikker og halvmåner. Rammen følger bildet, også på gamle skjema."),
+            new(Type.Bedre, "edit", "Koblingspunkter legger du selv", "Ingen faste punkter på komponentene lenger."),
+            new(Type.Nytt, "file-text", "Tekst ved strekenden", "F.eks. «+12V» eller «NO» rett over streken der den er koblet."),
+            new(Type.Nytt, "plus", "Fri tekst og sort prikk", "Skriv hva du vil, endre størrelse og dra dit du vil."),
+        ]),
         new("1.4", new DateOnly(2026, 11, 19),
         [
             new(Type.Bedre, "link", "Enklere koblingsskjema", "Rediger-knapp, navn rett over, kort panel. Mer ligger under «Mer …»."),
