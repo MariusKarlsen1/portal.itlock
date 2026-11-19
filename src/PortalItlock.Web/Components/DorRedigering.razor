@@ -53,7 +53,7 @@
                             }
                             else
                             {
-                                @string.Join(", ", Dor.Funksjoner.Select(f => f.Navn))
+                                @string.Join(", ", Dor.Funksjoner.IFastRekkefolge().Select(f => f.Navn))
                             }
                         </span>
                     </div>
@@ -328,7 +328,7 @@ else
         <div class="skjema-seksjon">
             <p class="skjema-seksjon-tittel">Grunnleggende</p>
             <div class="field-grid">
-                <label>Dørnummer<input @bind="Dor.Dornummer" /></label>
+                <label>Dørnummer<input @bind="Dor.Dornummer" @bind:after="SjekkDornummer" /></label>
                 <label>Romnr<input @bind="Dor.Romnr" /></label>
                 <label>Dør til<input @bind="Dor.DorTil" placeholder="Rom døren går inn til" /></label>
                 <label>Etasje<input @bind="Dor.Etasje" /></label>
@@ -516,7 +516,7 @@ else
             @if (Dor.Funksjoner.Count > 0)
             {
                 <ul class="funksjon-chip-list">
-                    @foreach (var f in Dor.Funksjoner)
+                    @foreach (var f in Dor.Funksjoner.IFastRekkefolge())
                     {
                         <li @key="f.Id" class="funksjon-chip">
                             @f.Navn
@@ -1359,6 +1359,12 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        // Husk dørnummeret slik det var lagret, så et duplikat kan settes tilbake.
+        if (_godkjentForDorId != Dor.Id)
+        {
+            _godkjentForDorId = Dor.Id;
+            _godkjentNr = Dor.Dornummer;
+        }
         if (_avvikLastetForDorId == Dor.Id)
         {
             return;
@@ -2040,6 +2046,29 @@ else
         await OnSaved.InvokeAsync();
     }
 
+    // Dørnummeret er unikt i prosjektet: finnes det fra før, settes det tilbake.
+    private string? _godkjentNr;
+    private int? _godkjentForDorId;
+
+    private async Task SjekkDornummer()
+    {
+        var nytt = PortalItlock.Web.Services.DorNummer.Norm(Dor.Dornummer);
+        if (nytt.Length == 0)
+        {
+            Dor.Dornummer = _godkjentNr ?? Dor.Dornummer;
+            _savedMessage = "Dørnummer kan ikke være tomt.";
+            return;
+        }
+        if (await PortalItlock.Web.Services.DorNummer.FinnesAsync(Db, Dor.ProsjektId, nytt, Dor.Id))
+        {
+            _savedMessage = PortalItlock.Web.Services.DorNummer.Melding(nytt);
+            Dor.Dornummer = _godkjentNr ?? Dor.Dornummer;
+            return;
+        }
+        Dor.Dornummer = nytt;
+        _godkjentNr = nytt;
+    }
+
     // Brukes av «Ferdig» øverst i dørkortet.
     public Task LagreAsync() => LagreDor();
 
@@ -2047,6 +2076,13 @@ else
     {
         if (KunLes)
         {
+            return;
+        }
+        if (_godkjentNr is not null && !PortalItlock.Web.Services.DorNummer.Likt(Dor.Dornummer, _godkjentNr)
+            && await PortalItlock.Web.Services.DorNummer.FinnesAsync(Db, Dor.ProsjektId, Dor.Dornummer, Dor.Id))
+        {
+            _savedMessage = PortalItlock.Web.Services.DorNummer.Melding(Dor.Dornummer);
+            Dor.Dornummer = _godkjentNr;
             return;
         }
         Dor.SynkBxH();
@@ -2095,12 +2131,15 @@ else
         }
 
         var nyeDorer = new List<Dor>();
+        var brukteNr = await PortalItlock.Web.Services.DorNummer.BrukteAsync(Db, Dor.ProsjektId);
         for (var i = 1; i <= _kloneAntall; i++)
         {
+            var kopiNr = PortalItlock.Web.Services.DorNummer.Ledig(brukteNr, $"{Dor.Dornummer} - kopi {i}");
+            brukteNr.Add(kopiNr);
             var kopi = new Dor
             {
                 ProsjektId = Dor.ProsjektId,
-                Dornummer = $"{Dor.Dornummer} - kopi {i}",
+                Dornummer = kopiNr,
                 Romnr = Dor.Romnr,
                 DorTil = Dor.DorTil,
                 Etasje = Dor.Etasje,

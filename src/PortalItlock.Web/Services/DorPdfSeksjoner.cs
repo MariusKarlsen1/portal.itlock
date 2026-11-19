@@ -62,7 +62,7 @@ public static class DorPdfSeksjoner
                     fc.Item().PaddingTop(4).Inlined(il =>
                     {
                         il.Spacing(4);
-                        foreach (var f in dor.Funksjoner.OrderBy(f => f.Forkortelse ?? f.Navn))
+                        foreach (var f in dor.Funksjoner.IFastRekkefolge())
                         {
                             il.Item().Background(lys).CornerRadius(8).PaddingVertical(2).PaddingHorizontal(7).Text(t =>
                             {

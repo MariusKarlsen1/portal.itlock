@@ -105,7 +105,7 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                             table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(d.Romnr ?? "");
                             table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(d.DorTil ?? "");
                             table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(string.IsNullOrWhiteSpace(d.Brann) ? "–" : d.Brann);
-                            table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(string.Join(" · ", d.Funksjoner
+                            table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Text(string.Join(" · ", d.Funksjoner.IFastRekkefolge()
                                 .Where(f => !string.IsNullOrWhiteSpace(f.Forkortelse)).Select(f => f.Forkortelse)));
                             table.Cell().Element(c => ListePdfStil.Rad(c, zebra)).Row(r =>
                             {
@@ -149,7 +149,7 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             var cy = (d.PosY!.Value / 100.0) * bildeHoyde;
             var farge = StatusFarge[d.Status];
             var label = string.IsNullOrWhiteSpace(d.Romnr) ? d.Dornummer : d.Romnr;
-            var funksjoner = string.Join(", ", d.Funksjoner
+            var funksjoner = string.Join(", ", d.Funksjoner.IFastRekkefolge()
                 .Where(f => !string.IsNullOrWhiteSpace(f.Forkortelse))
                 .Select(f => f.Forkortelse));
 
