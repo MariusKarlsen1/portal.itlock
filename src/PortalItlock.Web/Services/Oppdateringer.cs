@@ -14,6 +14,13 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.8", new DateOnly(2026, 11, 19),
+        [
+            new(Type.Fikset, "check-circle", "Feilmelding i koblingsskjema", "Kom når man gikk inn og ut av et skjema. Nå rettet."),
+            new(Type.Nytt, "box", "Dupliser koblingsskjema", "Lag en kopi med alt innhold å bygge videre på."),
+            new(Type.Bedre, "search", "Ryddig ved utzoom", "Tekst ved kabler og tekstbokser vises når du zoomer inn."),
+            new(Type.Nytt, "plus", "StepLock OSDP", "Nytt symbol under «Lesere og sentraler»."),
+        ]),
         new("1.7", new DateOnly(2026, 11, 19),
         [
             new(Type.Fikset, "check-circle", "Feilmelding i koblingsskjema", "Siden krasjer ikke lenger når du redigerer raskt."),
