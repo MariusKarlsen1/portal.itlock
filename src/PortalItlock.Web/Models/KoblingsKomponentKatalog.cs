@@ -87,6 +87,7 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("sluttstykke-kraftig", "El-sluttstykke kraftig", 5.5, 135, 372),
         Illustrasjon("motorlas-kabel-hvit", "Motorlås med kabel", 8, 198, 338),
         Illustrasjon("motorlas-kabel-sort", "Motorlås med kabel, sort", 8, 209, 337),
+        Illustrasjon("motorlas-kasse", "Motorlås (låskasse)", 12, 574, 264),
         Illustrasjon("krokfallas-vrider", "Krokfallås (vrider)", 7, 159, 335),
         Illustrasjon("krokfallas-sylinder", "Krokfallås (sylinder)", 7.5, 178, 340),
     ];
