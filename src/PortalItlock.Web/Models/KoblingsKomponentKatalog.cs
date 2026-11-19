@@ -7,7 +7,9 @@ namespace PortalItlock.Web.Models;
 // Bilde peker på en produktlik SVG-tegning i wwwroot/img/kobling. Bredde er
 // startbredden i prosent av lerretet og Forhold er høyde/bredde på tegningen,
 // slik at den legges inn uten å bli strukket.
-public sealed record KoblingsKomponent(string Nokkel, string Navn, string Ikon, string? Bilde = null, double Bredde = 8, double Forhold = 1);
+// Porter: faste koblingspunkter (PorterJson) komponenten får når den legges inn,
+// f.eks. én per skrue på en klemmerekke. UtenNavn: legges inn uten navn på tegningen.
+public sealed record KoblingsKomponent(string Nokkel, string Navn, string Ikon, string? Bilde = null, double Bredde = 8, double Forhold = 1, string? Porter = null, bool UtenNavn = false);
 
 public sealed record KoblingsKomponentGruppe(string Tittel, List<KoblingsKomponent> Komponenter);
 
@@ -122,12 +124,24 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("relekort", "Relékort", 9, 524, 436),
     ];
 
+    // Klemmerekker som legges oppå komponentene; hver skrue er et koblingspunkt.
+    public static readonly List<KoblingsKomponent> Klemmerekker = [.. new[] { 2, 3, 4, 6, 8 }.Select(Klemme)];
+
+    private static KoblingsKomponent Klemme(int poler)
+    {
+        var porter = "[" + string.Join(",", Enumerable.Range(0, poler).Select(i =>
+            $"[0.5,{((2 + i * 40 + 20) / (poler * 40.0 + 4)).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)}]")) + "]";
+        return new($"k-klemme-{poler}", $"Klemmerekke {poler}-polet", "box", $"/img/kobling/klemme-{poler}.svg",
+            1.6, (poler * 40.0 + 4) / 44, porter, UtenNavn: true);
+    }
+
     public static readonly List<KoblingsKomponentGruppe> Grupper =
     [
         new("Låser og sluttstykker", LaserOgSluttstykker),
         new("Lesere og sentraler", LesereOgSentraler),
         new("Ved døra", UtstyrVedDora),
         new("Strøm og relé", StromOgRele),
+        new("Klemmerekker", Klemmerekker),
     ];
 
     // Eldre komponenter vises ikke lenger i paletten, men koblingsskjemaer som

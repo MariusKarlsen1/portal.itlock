@@ -42,4 +42,7 @@ public class KoblingsSymbol
     // [[x,y],...] i andel (0-1) av symbolets bredde/høyde. Null = de fire
     // vanlige punktene midt på hver kant.
     public string? PorterJson { get; set; }
+
+    // Navnet skjules på tegningen for denne komponenten (beholdes i lister og PDF-tabeller).
+    public bool SkjulNavn { get; set; }
 }

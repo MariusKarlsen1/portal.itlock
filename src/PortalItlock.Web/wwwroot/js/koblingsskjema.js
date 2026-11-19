@@ -1344,6 +1344,12 @@ export function enableEditorSnarveier(containerEl, dotNetRef) {
             kommando = e.shiftKey ? 'gjorom' : 'angre';
         } else if (ctrl && tast === 'y') {
             kommando = 'gjorom';
+        } else if (ctrl && tast === 'c' && !window.getSelection()?.toString()) {
+            kommando = 'kopier';
+        } else if (ctrl && tast === 'v') {
+            kommando = 'lim';
+        } else if (ctrl && tast === 'd') {
+            kommando = 'dupliser';
         } else if (!ctrl && !e.altKey) {
             if (tast === 's') {
                 kommando = 'strek';
@@ -1408,7 +1414,7 @@ export function enableKeyboardShortcuts(containerEl, dotNetRef) {
 
         const arrows = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
 
-        if (e.key === 'Delete') {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
             e.preventDefault();
             dotNetRef.invokeMethodAsync('OnSlettTastetrykk');
             return;

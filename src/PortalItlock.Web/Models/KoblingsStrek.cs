@@ -20,6 +20,9 @@ public class KoblingsStrek
     // Kabelnavn som vises på tegningen og i kabellisten, f.eks. "K1".
     public string? Navn { get; set; }
 
+    // Kabelnavnet vises ikke på tegningen.
+    public bool SkjulNavn { get; set; }
+
     // Kabelbetegnelse, f.eks. "6 PAR 0,6 PT HF (maks 100 m)".
     public string? KabelType { get; set; }
 

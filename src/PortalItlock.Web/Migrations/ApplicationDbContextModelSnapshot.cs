@@ -3889,6 +3889,9 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("SkjulNavn")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("Stiplet")
                         .HasColumnType("INTEGER");
 
@@ -3947,6 +3950,9 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<double>("PosY")
                         .HasColumnType("REAL");
+
+                    b.Property<bool>("SkjulNavn")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("Strokbredde")
                         .HasColumnType("INTEGER");

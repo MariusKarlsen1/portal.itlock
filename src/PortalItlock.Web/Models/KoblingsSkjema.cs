@@ -17,7 +17,8 @@ public class KoblingsSkjema
     // Tegneflaten er hvit uten rutenett som standard. Rutenettet kan fortsatt
     // slås på pr. skjema i "Rutenett"-menyen i editoren.
     public bool VisRutenett { get; set; }
-    public bool SnapTilRutenett { get; set; } = true;
+    // Nye skjema: fri flytting (2026-11-19). Kan slås på per skjema.
+    public bool SnapTilRutenett { get; set; }
     public bool VisKomponentnavn { get; set; } = true;
 
     // Valgfri kobling til et prosjekt - skjemaet vises da som vedlegg på prosjektet.
