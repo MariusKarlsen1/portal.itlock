@@ -297,11 +297,20 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                     break;
             }
 
-            if (!string.IsNullOrWhiteSpace(s.Navn) && !s.SkjulNavn && s.ElementType is not (KoblingsElementType.Tekstboks or KoblingsElementType.Punkt)
-                && Ledig(cx, y - navnStr * 0.4, s.Navn, navnStr))
+            if (!string.IsNullOrWhiteSpace(s.Navn) && !s.SkjulNavn && s.ElementType is not (KoblingsElementType.Tekstboks or KoblingsElementType.Punkt))
             {
-                sb.Append(CultureInfo.InvariantCulture,
-                    $"<text x='{Inv(cx)}' y='{Inv(y - navnStr * 0.4)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='middle' fill='#14213D'>{System.Net.WebUtility.HtmlEncode(s.Navn)}</text>");
+                var (nx, ny, nAnker, nSenter) = s.NavnPlass switch
+                {
+                    "under" => (cx, y + h + navnStr * 1.05, "middle", cx),
+                    "venstre" => (x - navnStr * 0.4, cy + navnStr * 0.35, "end", x - navnStr * 0.4 - s.Navn.Length * navnStr * 0.3),
+                    "hoyre" => (x + w + navnStr * 0.4, cy + navnStr * 0.35, "start", x + w + navnStr * 0.4 + s.Navn.Length * navnStr * 0.3),
+                    _ => (cx, y - navnStr * 0.4, "middle", cx)
+                };
+                if (Ledig(nSenter, ny, s.Navn, navnStr))
+                {
+                    sb.Append(CultureInfo.InvariantCulture,
+                        $"<text x='{Inv(nx)}' y='{Inv(ny)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='{nAnker}' fill='#14213D'>{System.Net.WebUtility.HtmlEncode(s.Navn)}</text>");
+                }
             }
         }
 
@@ -331,6 +340,12 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
         {
             xs.Add(s.PosX);
             xs.Add(s.PosX + s.Bredde);
+            if (!s.SkjulNavn && !string.IsNullOrWhiteSpace(s.Navn))
+            {
+                if (s.NavnPlass == "venstre") xs.Add(s.PosX - s.Navn.Length * 0.6 - 1);
+                if (s.NavnPlass == "hoyre") xs.Add(s.PosX + s.Bredde + s.Navn.Length * 0.6 + 1);
+                if (s.NavnPlass == "under") ys.Add(YtilVb(s.PosY + s.Hoyde) + 2.5);
+            }
             ys.Add(YtilVb(s.PosY) - 2.5);
             ys.Add(YtilVb(s.PosY + s.Hoyde));
         }

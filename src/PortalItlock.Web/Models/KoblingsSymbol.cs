@@ -51,4 +51,7 @@ public class KoblingsSymbol
 
     // Kablene vises helt inn til punktet, oppå komponenten (ellers forsvinner de bak den).
     public bool KablerOver { get; set; }
+
+    // Hvor navnet står: null = over, "under", "venstre" eller "hoyre".
+    public string? NavnPlass { get; set; }
 }
