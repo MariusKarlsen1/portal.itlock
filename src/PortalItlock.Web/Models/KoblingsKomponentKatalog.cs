@@ -119,7 +119,7 @@ public static class KoblingsKomponentKatalog
     [
         Illustrasjon("stromforsyning-24v", "Strømforsyning 24V", 12, 524, 589),
         Illustrasjon("adapter-12v", "Adapter 12V", 6, 336, 584),
-        Illustrasjon("relekort", "Relékort", 9, 524, 344),
+        Illustrasjon("relekort", "Relékort", 9, 524, 436),
     ];
 
     public static readonly List<KoblingsKomponentGruppe> Grupper =
