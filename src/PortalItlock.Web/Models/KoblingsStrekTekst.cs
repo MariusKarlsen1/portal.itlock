@@ -5,6 +5,31 @@ namespace PortalItlock.Web.Models;
 // (ikke ut over komponenten den er koblet til).
 public static class KoblingsStrekTekst
 {
+    // Hvit (eller nesten hvit) strek: tegnes med grå kant, og merkingen blir sort
+    // med hvit boks rundt, så begge synes mot hvit bakgrunn.
+    public const string HvitKant = "#9a948c";
+
+    public static bool ErHvit(string? farge)
+    {
+        if (string.IsNullOrWhiteSpace(farge) || !farge.StartsWith('#'))
+        {
+            return false;
+        }
+        var h = farge.TrimStart('#');
+        if (h.Length == 3)
+        {
+            h = string.Concat(h.Select(c => $"{c}{c}"));
+        }
+        if (h.Length < 6 || !int.TryParse(h[..6], System.Globalization.NumberStyles.HexNumber, null, out var v))
+        {
+            return false;
+        }
+        return ((v >> 16) & 255) >= 225 && ((v >> 8) & 255) >= 225 && (v & 255) >= 225;
+    }
+
+    // Fargen på merkingen: valgt farge, ellers strekens farge - men sort på hvite streker.
+    public static string Farge(KoblingsStrek s) => s.TekstFarge ?? (ErHvit(s.Farge) ? "#14213D" : s.Farge);
+
     public sealed record Plassering(double X, double Y, string Klasse, string Tekst);
 
     public static IEnumerable<Plassering> For(KoblingsStrek s, List<KoblingsStrekPunkt> p, double aspekt)

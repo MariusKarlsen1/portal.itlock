@@ -3867,6 +3867,9 @@ namespace PortalItlock.Web.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("KabelMerkePlass")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("KabelType")
                         .HasColumnType("TEXT");
 

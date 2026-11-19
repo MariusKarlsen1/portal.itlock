@@ -56,3 +56,29 @@ public class KoblingsKryssTests
         Assert.Equal(2, KoblingsKryss.SlaSammen(hopp, 1).Count);
     }
 }
+
+public class KoblingsKabelLengdeTests
+{
+    private static List<KoblingsStrekPunkt> P(params double[] xy) =>
+        Enumerable.Range(0, xy.Length / 2).Select(i => new KoblingsStrekPunkt { X = xy[2 * i], Y = xy[2 * i + 1] }).ToList();
+
+    [Fact]
+    public void LederMedEgenLengde_StikkerLengreUt()
+    {
+        var ledere = new List<KoblingsLeder> { new() { Farge = "Rød" }, new() { Farge = "Blå", LengdeStart = 2.0 } };
+        var v = KoblingsKabel.LagVifte(P(50, 50, 90, 50), ledere, 1)!;
+        var start = v.Ledere.Where(l => l.ErStart).ToDictionary(l => l.Indeks, l => l.Punkter[^1].X);
+        // Kabelen går mot høyre, så lederne stikker ut mot venstre: lengre = lavere X.
+        Assert.True(start[1] < start[0] - 1);
+    }
+
+    [Fact]
+    public void KabelnavnVedStart_LiggerNaerStart()
+    {
+        var ledere = new List<KoblingsLeder> { new() };
+        var midt = KoblingsKabel.LagVifte(P(10, 50, 90, 50), ledere, 1)!.Merke;
+        var start = KoblingsKabel.LagVifte(P(10, 50, 90, 50), ledere, 1, merkePlass: "start")!.Merke;
+        Assert.Equal(50, midt.X, 1);
+        Assert.True(start.X < 20);
+    }
+}

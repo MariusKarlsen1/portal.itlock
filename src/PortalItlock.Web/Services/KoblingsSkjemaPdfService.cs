@@ -212,12 +212,17 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
                 if (Ledig(tx + (anker == "end" ? -1 : anker == "middle" ? 0 : 1) * t.Tekst.Length * navnStr * 0.3, gy, t.Tekst, navnStr))
                 {
                     sb.Append(CultureInfo.InvariantCulture,
-                        $"<text x='{Inv(tx)}' y='{Inv(gy)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='{anker}' fill='{strek.TekstFarge ?? strek.Farge}'>{System.Net.WebUtility.HtmlEncode(t.Tekst)}</text>");
+                        $"<text x='{Inv(tx)}' y='{Inv(gy)}' font-size='{Inv(navnStr)}' font-weight='bold' font-family='Arial, sans-serif' text-anchor='{anker}' fill='{KoblingsStrekTekst.Farge(strek)}'{(KoblingsStrekTekst.ErHvit(strek.Farge) ? $" stroke='#fff' stroke-width='{Inv(navnStr * 0.25)}' paint-order='stroke'" : "")}>{System.Net.WebUtility.HtmlEncode(t.Tekst)}</text>");
                 }
             }
 
             var pts = string.Join(" ", punkter.Select(p => $"{Inv(p.X)},{Inv(YtilVb(p.Y))}"));
             var dashAttr = strek.Stiplet ? $"stroke-dasharray='{Inv(strek.Tykkelse * 0.5 * f)},{Inv(strek.Tykkelse * 0.35 * f)}'" : "";
+            if (KoblingsStrekTekst.ErHvit(strek.Farge))
+            {
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"<polyline points='{pts}' fill='none' stroke='{KoblingsStrekTekst.HvitKant}' stroke-width='{Inv((strek.Tykkelse * 0.15 + 0.25) * f)}' stroke-linejoin='round' />");
+            }
             sb.Append(CultureInfo.InvariantCulture,
                 $"<polyline points='{pts}' fill='none' stroke='{strek.Farge}' stroke-width='{Inv(strek.Tykkelse * 0.15 * f)}' {dashAttr} />");
         }
@@ -228,7 +233,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
         var pdfAspekt = ViewBoxHoyde / ViewBoxBredde;
         sb.Append(KoblingsKryss.Svg(
             KoblingsKryss.Linjer(streker,
-                s => KoblingsKabel.LagVifte(JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(s.PunkterJson) ?? [], KoblingsKabel.Les(s.LedereJson), pdfAspekt, s.LederAvstand, s.LederLengde),
+                s => KoblingsKabel.LagVifte(JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(s.PunkterJson) ?? [], KoblingsKabel.Les(s.LedereJson), pdfAspekt, s.LederAvstand, s.LederLengde, s.KabelMerkePlass),
                 j => JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(j) ?? []),
             pdfAspekt, yFaktor: ViewBoxHoyde / 100.0, breddeFaktor: 0.14 * f, ikkeSkalerende: false, pxPerProsent: 1 / (0.14 * f)));
 
@@ -346,7 +351,7 @@ public class KoblingsSkjemaPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
     // Kabel med ledere: tykk sort kabel som deler seg i fargede ledere i hver ende.
     private static void TegnKabel(StringBuilder sb, KoblingsStrek strek, List<KoblingsStrekPunkt> punkter, double f)
     {
-        var vifte = KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(strek.LedereJson), ViewBoxHoyde / ViewBoxBredde, strek.LederAvstand, strek.LederLengde);
+        var vifte = KoblingsKabel.LagVifte(punkter, KoblingsKabel.Les(strek.LedereJson), ViewBoxHoyde / ViewBoxBredde, strek.LederAvstand, strek.LederLengde, strek.KabelMerkePlass);
         if (vifte is null)
         {
             return;

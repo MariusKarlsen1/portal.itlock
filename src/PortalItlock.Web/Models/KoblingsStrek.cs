@@ -33,6 +33,9 @@ public class KoblingsStrek
     // Egen farge på merkingen (null = samme som streken).
     public string? TekstFarge { get; set; }
 
+    // Kabelnavnet (K1 · 8-leder): null = midt på, "start" eller "slutt" = ved den enden.
+    public string? KabelMerkePlass { get; set; }
+
     // Kabelbetegnelse, f.eks. "6 PAR 0,6 PT HF (maks 100 m)".
     public string? KabelType { get; set; }
 

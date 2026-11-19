@@ -51,7 +51,7 @@ public static class KoblingsKryss
             }
             else if (!s.ErKabel)
             {
-                res.Add(new Linje(p, s.Farge, s.Tykkelse));
+                res.Add(new Linje(p, s.Farge, s.Tykkelse, Kant: KoblingsStrekTekst.ErHvit(s.Farge) ? KoblingsStrekTekst.HvitKant : null));
             }
         }
         return res;

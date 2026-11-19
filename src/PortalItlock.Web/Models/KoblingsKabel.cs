@@ -26,6 +26,11 @@ public sealed class KoblingsLeder
     // uten kryssinger) fra kabelen til siste punkt i Start/Slutt.
     public bool StartAuto { get; set; }
     public bool SluttAuto { get; set; }
+
+    // Egen lengde ut av kabelen i hver ende (faktor, null = som de andre), så
+    // noen ledere kan gå kort til én klemme og andre lenger til en annen.
+    public double? LengdeStart { get; set; }
+    public double? LengdeSlutt { get; set; }
 }
 
 // Flerlederkabel på koblingsskjema: en tykk sort kabel som deler seg i
@@ -218,7 +223,7 @@ public static class KoblingsKabel
     // Punktene er i prosent av lerretet. aspekt = høyde/bredde på lerretet,
     // slik at lederne står vinkelrett på kabelen også når lerretet ikke er
     // kvadratisk. Alle punkter som returneres er også i prosent.
-    public static Vifte? LagVifte(List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, string? avstand = null, double? lengde = null)
+    public static Vifte? LagVifte(List<KoblingsStrekPunkt> punkter, List<KoblingsLeder> ledere, double aspekt, string? avstand = null, double? lengde = null, string? merkePlass = null)
     {
         if (punkter.Count < 2 || ledere.Count == 0)
         {
@@ -239,16 +244,27 @@ public static class KoblingsKabel
         kropp.AddRange(punkter.Skip(1).Take(punkter.Count - 2));
         kropp.Add(sluttKropp);
 
-        // Kabelnavnet plasseres midt på den lengste biten.
+        // Kabelnavnet: midt på den lengste biten, eller nær den enden som er valgt.
         var merke = punkter[0];
-        var lengst = -1.0;
-        for (var i = 0; i < punkter.Count - 1; i++)
+        if (merkePlass is "start" or "slutt")
         {
-            var l = Avstand(punkter[i], punkter[i + 1], aspekt);
-            if (l > lengst)
+            var a = merkePlass == "start" ? punkter[0] : punkter[^1];
+            var b = merkePlass == "start" ? punkter[1] : punkter[^2];
+            var d = Avstand(a, b, aspekt);
+            var t = d <= 0 ? 0 : Math.Min(0.5, 4.0 / d);
+            merke = new KoblingsStrekPunkt { X = a.X + (b.X - a.X) * t, Y = a.Y + (b.Y - a.Y) * t };
+        }
+        else
+        {
+            var lengst = -1.0;
+            for (var i = 0; i < punkter.Count - 1; i++)
             {
-                lengst = l;
-                merke = new KoblingsStrekPunkt { X = (punkter[i].X + punkter[i + 1].X) / 2, Y = (punkter[i].Y + punkter[i + 1].Y) / 2 };
+                var l = Avstand(punkter[i], punkter[i + 1], aspekt);
+                if (l > lengst)
+                {
+                    lengst = l;
+                    merke = new KoblingsStrekPunkt { X = (punkter[i].X + punkter[i + 1].X) / 2, Y = (punkter[i].Y + punkter[i + 1].Y) / 2 };
+                }
             }
         }
 
@@ -384,7 +400,10 @@ public static class KoblingsKabel
             }
             else
             {
-                vei = [fra, Til(vifte, o), Til(lengde, o)];
+                // Egen lengde på denne lederen i denne enden (ellers som de andre).
+                var egenLengde = (fraStart ? ledere[i].LengdeStart : ledere[i].LengdeSlutt) is double el && double.IsFinite(el)
+                    ? Math.Clamp(el, MinLengde, MaksLengde) : 1.0;
+                vei = [fra, Til(vifte, o), Til(Math.Max(vifte + 0.2, lengde * egenLengde), o)];
                 fri = true;
             }
             linjer.Add(new LederLinje(ledere[i], UtenDobbelt(vei, aspekt), i, fraStart, fri));
