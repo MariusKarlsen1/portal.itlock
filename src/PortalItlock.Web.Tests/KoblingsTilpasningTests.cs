@@ -49,3 +49,26 @@ public class KoblingsTilpasningTests
         Assert.Equal(70, p[1].Y, 2);
     }
 }
+
+public class KoblingsStrekTekstTests
+{
+    private static List<KoblingsStrekPunkt> P(params double[] xy) =>
+        Enumerable.Range(0, xy.Length / 2).Select(i => new KoblingsStrekPunkt { X = xy[2 * i], Y = xy[2 * i + 1] }).ToList();
+
+    [Fact]
+    public void TekstVedEndene_StarInnMotStreken()
+    {
+        var s = new KoblingsStrek { PunkterJson = "[]", TekstStart = "+12V", TekstSlutt = "NO" };
+        var t = KoblingsStrekTekst.For(s, P(10, 50, 40, 50, 40, 80), 13.0 / 16.0).ToList();
+        Assert.Equal(2, t.Count);
+        Assert.Equal(("+12V", "ks-st-hoyre", 10.0), (t[0].Tekst, t[0].Klasse, t[0].X));
+        Assert.Equal(("NO", "ks-st-opp", 80.0), (t[1].Tekst, t[1].Klasse, t[1].Y));
+    }
+
+    [Fact]
+    public void TomTekst_GirIngenting()
+    {
+        var s = new KoblingsStrek { PunkterJson = "[]", TekstStart = "  " };
+        Assert.Empty(KoblingsStrekTekst.For(s, P(10, 50, 40, 50), 1));
+    }
+}

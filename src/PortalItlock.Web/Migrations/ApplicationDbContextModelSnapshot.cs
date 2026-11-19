@@ -3895,6 +3895,12 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("Stiplet")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("TekstSlutt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TekstStart")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Tykkelse")
                         .HasColumnType("INTEGER");
 

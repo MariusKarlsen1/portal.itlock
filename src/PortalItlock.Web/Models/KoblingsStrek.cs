@@ -23,6 +23,10 @@ public class KoblingsStrek
     // Kabelnavnet vises ikke på tegningen.
     public bool SkjulNavn { get; set; }
 
+    // Tekst rett over streken ved enden den er koblet til, f.eks. «+12V» eller «NO».
+    public string? TekstStart { get; set; }
+    public string? TekstSlutt { get; set; }
+
     // Kabelbetegnelse, f.eks. "6 PAR 0,6 PT HF (maks 100 m)".
     public string? KabelType { get; set; }
 

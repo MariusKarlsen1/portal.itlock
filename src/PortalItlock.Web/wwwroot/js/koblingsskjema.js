@@ -327,8 +327,11 @@ function porterForBoks(b, erPunkt) {
 }
 
 // Egne tilkoblingspunkter (data-porter = [[x,y],...] i andel av symbolets
-// størrelse). Finnes de, brukes bare de - ellers de vanlige punktene.
-function porterForSymbol(el, b) {
+// størrelse). Finnes de, brukes bare de. Komponenter og bilder har ingen faste
+// punkter lenger (2026-11-19) - punktene legges til selv. medStandard = true
+// brukes bare for å finne streker som allerede sitter i et gammelt kantpunkt,
+// så de fortsatt følger med når komponenten flyttes.
+function porterForSymbol(el, b, medStandard = true) {
     let egne = [];
     try {
         egne = JSON.parse(el.dataset.porter || '[]');
@@ -338,14 +341,18 @@ function porterForSymbol(el, b) {
     if (Array.isArray(egne) && egne.length) {
         return egne.map((p, i) => ({ side: 'e' + i, x: b.x + p[0] * b.w, y: b.y + p[1] * b.h }));
     }
-    return porterForBoks(b, el.dataset.elementtype === 'Punkt');
+    const type = el.dataset.elementtype;
+    if (!medStandard && (type === 'Komponent' || type === 'Bilde')) {
+        return [];
+    }
+    return porterForBoks(b, type === 'Punkt');
 }
 
 function porterForMarker(m) {
     if (m.dataset.elementtype === 'Tekstboks') {
         return [];
     }
-    return porterForSymbol(m, markerBoks(m));
+    return porterForSymbol(m, markerBoks(m), false);
 }
 
 function allePorter(canvasEl) {
