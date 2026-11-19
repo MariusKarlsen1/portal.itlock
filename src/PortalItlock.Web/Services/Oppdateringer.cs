@@ -14,6 +14,12 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.10", new DateOnly(2026, 11, 19),
+        [
+            new(Type.Bedre, "link", "Hvit kabel", "Grå kant rundt, og sort merking i hvit boks."),
+            new(Type.Nytt, "edit", "Kabel med ledere", "Velg hvor kabelnavnet står, og lengde på hver leder."),
+            new(Type.Nytt, "plus", "Motorlås (låskasse)", "Nytt symbol under «Låser og sluttstykker»."),
+        ]),
         new("1.9", new DateOnly(2026, 11, 19),
         [
             new(Type.Nytt, "link", "Kabler helt inn til punktet", "Velg på komponenten om kablene skal synes oppå den."),
