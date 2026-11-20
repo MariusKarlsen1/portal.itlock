@@ -233,6 +233,19 @@ public static class ServiceavtaleAntall
         return true;
     }
 
+    /// På en serviceavtale er alt allerede montert: alle dører står som ferdig montert
+    /// og alle beslag vi monterer som montert.
+    public static async Task MarkerMontert(ApplicationDbContext db, int prosjektId)
+    {
+        var na = DateTime.Now;
+        await db.Dorer.Where(d => d.ProsjektId == prosjektId && d.Status != MontasjeStatus.FerdigMontert)
+            .ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, MontasjeStatus.FerdigMontert));
+        await db.DorKomponenter.Where(k => k.Dor!.ProsjektId == prosjektId && !k.Montert)
+            .ExecuteUpdateAsync(x => x
+                .SetProperty(k => k.Montert, true)
+                .SetProperty(k => k.MontertDato, k => k.MontertDato ?? na));
+    }
+
     /// Bytter en eksisterende avtale (med runder eller pris fra før) til det nye oppsettet:
     /// prismodell «Antall», Prising fylt inn med dørene telt per kategori. Avtalen er
     /// allerede i drift, så den blir ikke et tilbud. Rundene og alt annet beholdes.
