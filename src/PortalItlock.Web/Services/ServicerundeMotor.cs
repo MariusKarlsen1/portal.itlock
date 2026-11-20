@@ -264,7 +264,7 @@ public static class ServicerundeMotor
             var a = new Avvik
             {
                 DorId = d.DorId,
-                Tittel = $"Servicerunde {runde.Dato:dd.MM.yyyy}: {punkter.FirstOrDefault()?.Tekst ?? "avvik"}{(punkter.Count > 1 ? $" (+{punkter.Count - 1})" : "")}",
+                Tittel = $"Servicerunde {runde.Dato:dd.MM.yyyy}: {punkter.FirstOrDefault()?.Tekst ?? (string.IsNullOrWhiteSpace(d.Notat) ? "avvik" : d.Notat)}{(punkter.Count > 1 ? $" (+{punkter.Count - 1})" : "")}",
                 Beskrivelse = string.Join("\n", linjer) + (string.IsNullOrWhiteSpace(d.Notat) ? "" : $"\n\nNotat: {d.Notat}"),
                 OpprettetAvBrukerId = brukerId,
                 ServicerundeDorId = d.Id
