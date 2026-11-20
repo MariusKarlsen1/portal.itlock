@@ -1,0 +1,365 @@
+@page "/servicerunder/{RundeId:int}/enkel"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+@inject AuthenticationStateProvider TilgangAuth
+
+<PageTitle>Servicerunde</PageTitle>
+
+@* Servicerunde for nye serviceavtaler (Prototype serviceavtale-etter-godkjent.html): egen side
+   med bare Plantegning og Dører. Dørene er hentet inn da runden startet. Trykk på en dør:
+   dørvinduet åpnes som før, med Sjekket / Avvik / Bilde / Byttet del øverst. Alt havner på
+   døren med tidspunkt. Fullførte runder vises bare (ingen knapper). *@
+@if (_runde is null)
+{
+    <p class="form-error">@(_ikkeFunnet ? "Fant ikke servicerunden." : "Laster …")</p>
+}
+else
+{
+    var ferdig = _runde.FullfortDato is not null;
+    var ok = _dorer.Count(d => d.Status == ServicerundeDorStatus.Ok);
+    var avvik = _dorer.Count(d => d.Status == ServicerundeDorStatus.Avvik);
+    var sjekket = ok + avvik;
+    <div class="se">
+        <div class="se-topp">
+            <a class="se-kn" href="@($"/serviceavtaler/{_runde.ProsjektId}?fane=service")">← Tilbake</a>
+            <div class="se-tittel">
+                <small>Servicerunde · @_avtaleNavn</small>
+                <h1>@RundeNavn(_runde.Dato) <span>@_runde.Dato.ToString("dd.MM.yyyy")@(_runde.UtfortAvBruker is { } u ? $" · {u.Navn}" : "")</span></h1>
+            </div>
+            <div class="se-fremdrift">
+                <div class="se-bar"><i style="width:@(_dorer.Count == 0 ? 0 : sjekket * 100 / _dorer.Count)%"></i></div>
+                <small>@sjekket av @_dorer.Count dører sjekket@if (avvik > 0) {<b> · @avvik avvik</b>}</small>
+            </div>
+            @if (ferdig)
+            {
+                <span class="se-pill ok">✓ Utført @_runde.FullfortDato!.Value.ToString("dd.MM.yyyy")</span>
+            }
+            else
+            {
+                <a class="se-kn se-gronn @(sjekket == 0 ? "av" : "")" href="@($"/servicerunder/{_runde.Id}")" title="Oppsummering, bilder, signatur og servicerapport">Fullfør runde →</a>
+            }
+        </div>
+
+        @if (ferdig)
+        {
+            <div class="se-les"><b>👁 Bare visning.</b> Du ser hva som ble gjort på runden. Trykk på en dør for å se detaljene. Ingenting kan endres her.</div>
+        }
+        else if (_sjekkpunkter.Count > 0)
+        {
+            <details class="se-sjekk" open="@(sjekket == 0)">
+                <summary>Sjekkliste for avtalen <em>@_sjekkpunkter.Count</em></summary>
+                <ul>
+                    @foreach (var p in _sjekkpunkter)
+                    {
+                        <li>@p</li>
+                    }
+                </ul>
+            </details>
+        }
+
+        <div class="se-faner">
+            <button type="button" class="@(_fane == "plan" ? "pa" : "")" @onclick="@(() => _fane = "plan")">Plantegning</button>
+            <button type="button" class="@(_fane == "dorer" ? "pa" : "")" @onclick="@(() => _fane = "dorer")">Dører <em>@sjekket/@_dorer.Count</em></button>
+            <span class="se-sp"></span>
+            <span class="se-forkl"><i class="se-pr"></i>Ikke sjekket <i class="se-pr ok"></i>Sjekket <i class="se-pr avvik"></i>Avvik</span>
+        </div>
+
+        @if (_fane == "plan")
+        {
+            @if (_tegninger.Count == 0)
+            {
+                <p class="se-tom">Ingen av dørene står på en plantegning. Bruk fanen Dører.</p>
+            }
+            else
+            {
+                var tegning = _tegninger.FirstOrDefault(t => t.Id == _tegningId) ?? _tegninger[0];
+                <label class="se-velg">Tegning
+                    <select value="@tegning.Id" @onchange="@(e => _tegningId = int.TryParse(e.Value?.ToString(), out var v) ? v : null)">
+                        @foreach (var t in _tegninger)
+                        {
+                            var paTegning = _dorer.Where(d => d.PlantegningId == t.Id).ToList();
+                            <option value="@t.Id">@t.Navn (@paTegning.Count(d => d.Status is ServicerundeDorStatus.Ok or ServicerundeDorStatus.Avvik) av @paTegning.Count sjekket)</option>
+                        }
+                    </select>
+                </label>
+                <div class="se-plan">
+                    <img src="@($"/plantegningbilde/{tegning.Id}?r={tegning.Revisjon}")" alt="@tegning.Navn" />
+                    @foreach (var d in _dorer.Where(d => d.PlantegningId == tegning.Id && d.PosX.HasValue && d.PosY.HasValue))
+                    {
+                        var dor = d;
+                        <button type="button" class="se-pkt @Klasse(dor.Status)" title="@($"{dor.Dornummer} {dor.Rom}")"
+                                style="left:@Inv(dor.PosX!.Value)%; top:@Inv(dor.PosY!.Value)%;" @onclick="@(() => Apne(dor))"><span>@dor.Dornummer</span></button>
+                    }
+                </div>
+                <p class="se-hint">Trykk på en dør. Dørvinduet åpnes som før@(ferdig ? "" : ", med Sjekket og Avvik øverst").</p>
+            }
+        }
+        else
+        {
+            <div class="se-liste">
+                @foreach (var d in _dorer)
+                {
+                    var dor = d;
+                    <div class="se-rad @Klasse(dor.Status)" @onclick="@(() => Apne(dor))">
+                        <i class="se-pr stor @Klasse(dor.Status)"></i>
+                        <div class="se-rad-t">
+                            <b>@dor.Dornummer</b> <span>@string.Join(" · ", new[] { dor.Rom, dor.Kategori, dor.PlantegningNavn }.Where(x => !string.IsNullOrWhiteSpace(x)))</span>
+                            @if (dor.Status == ServicerundeDorStatus.Avvik && !string.IsNullOrWhiteSpace(dor.Notat))
+                            {
+                                <small class="se-avvik">⚠ @dor.Notat</small>
+                            }
+                        </div>
+                        @if (ferdig)
+                        {
+                            <span class="se-pill @Klasse(dor.Status)">@StatusTekst(dor.Status)</span>
+                        }
+                        else
+                        {
+                            <span class="se-radkn" @onclick:stopPropagation="true">
+                                <button type="button" class="se-kn @(dor.Status == ServicerundeDorStatus.Ok ? "se-gronn" : "")" @onclick="@(() => SettOk(dor))">✓ Sjekket</button>
+                                <button type="button" class="se-kn" @onclick="@(() => { Apne(dor); _visAvvik = true; })">⚠ Avvik</button>
+                            </span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (_valgt is { } v)
+    {
+        <div class="se-modal-bak" @onclick="Lukk"></div>
+        <div class="se-modal" role="dialog" aria-modal="true" aria-label="@($"Dør {v.Dornummer}")">
+            <div class="se-rv @Klasse(v.Status)">
+                <div class="se-rv-t">
+                    <small>@RundeNavn(_runde.Dato)</small>
+                    <b>@(v.Status == ServicerundeDorStatus.Ok ? "✓ Sjekket" : v.Status == ServicerundeDorStatus.Avvik ? "⚠ Avvik registrert" : "Ikke sjekket ennå")</b>
+                    @if (v.KontrollertDato is { } kd)
+                    {
+                        <small>@kd.ToString("dd.MM.yyyy HH:mm")</small>
+                    }
+                </div>
+                @if (!ferdig)
+                {
+                    <button type="button" class="se-stor ok @(v.Status == ServicerundeDorStatus.Ok ? "pa" : "")" @onclick="@(() => SettOk(v))">✓ Sjekket</button>
+                    <button type="button" class="se-stor avvik @(v.Status == ServicerundeDorStatus.Avvik ? "pa" : "")" @onclick="@(() => _visAvvik = !_visAvvik)">⚠ Avvik</button>
+                    <label class="se-kn se-fil">📷 Bilde / video<InputFile OnChange="LastOpp" accept="image/*,video/*" multiple /></label>
+                    <button type="button" class="se-kn" @onclick="@(() => _visBytte = !_visBytte)">🔧 Byttet del</button>
+                    <button type="button" class="se-kn se-p" disabled="@(NesteDor(v) is null)" @onclick="Neste">Neste dør →</button>
+                }
+                <button type="button" class="se-x" aria-label="Lukk" @onclick="Lukk">×</button>
+            </div>
+            @if (!string.IsNullOrEmpty(_melding))
+            {
+                <p class="se-melding">@_melding</p>
+            }
+            @if (_visAvvik && !ferdig)
+            {
+                <div class="se-skjema">
+                    <label>Hva er feil?<textarea rows="2" @bind="_avvikTekst" placeholder="F.eks. sluttstykke slitt, må byttes"></textarea></label>
+                    <div class="se-skjema-kn"><button type="button" class="se-kn" @onclick="@(() => _visAvvik = false)">Avbryt</button><button type="button" class="se-kn se-rod" disabled="@string.IsNullOrWhiteSpace(_avvikTekst)" @onclick="@(() => SettAvvik(v))">Lagre avvik</button></div>
+                </div>
+            }
+            @if (_visBytte && !ferdig)
+            {
+                <div class="se-skjema">
+                    <label>Hva ble byttet?<input @bind="_bytteTekst" placeholder="F.eks. lukkearm, sluttstykke, sylinder" /></label>
+                    <div class="se-skjema-kn"><button type="button" class="se-kn" @onclick="@(() => _visBytte = false)">Avbryt</button><button type="button" class="se-kn se-p" disabled="@string.IsNullOrWhiteSpace(_bytteTekst)" @onclick="@(() => LagreBytte(v))">Lagre</button></div>
+                </div>
+            }
+            <div class="se-dorside">
+                <DorDetalj @key="@($"{v.DorId}-{_dorNokkel}")" Id="v.DorId" IModal="true" OnLukk="Lukk" />
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public int RundeId { get; set; }
+
+    private sealed record Tegning(int Id, string Navn, int Revisjon);
+
+    private Servicerunde? _runde;
+    private bool _ikkeFunnet;
+    private string _avtaleNavn = "";
+    private List<ServicerundeDor> _dorer = [];
+    private List<Tegning> _tegninger = [];
+    private List<string> _sjekkpunkter = [];
+    private string _fane = "plan";
+    private int? _tegningId;
+    private ServicerundeDor? _valgt;
+    private bool _visAvvik;
+    private bool _visBytte;
+    private string? _avvikTekst;
+    private string? _bytteTekst;
+    private string? _melding;
+    private int _dorNokkel;
+    private int? _brukerId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var auth = await TilgangAuth.GetAuthenticationStateAsync();
+        _brukerId = int.TryParse(auth.User.FindFirst("BrukerId")?.Value, out var b) ? b : null;
+
+        _runde = await Db.Servicerunder.Include(r => r.UtfortAvBruker).FirstOrDefaultAsync(r => r.Id == RundeId);
+        if (_runde is null)
+        {
+            _ikkeFunnet = true;
+            return;
+        }
+        _avtaleNavn = await Db.Prosjekter.Where(p => p.Id == _runde.ProsjektId).Select(p => p.Navn).FirstOrDefaultAsync() ?? "";
+        _dorer = await Db.ServicerundeDorer.Where(d => d.ServicerundeId == RundeId).OrderBy(d => d.Rekkefolge).ThenBy(d => d.Dornummer).ToListAsync();
+        var ider = _dorer.Where(d => d.PlantegningId.HasValue).Select(d => d.PlantegningId!.Value).Distinct().ToList();
+        _tegninger = await Db.Plantegninger.AsNoTracking().Where(p => ider.Contains(p.Id)).OrderBy(p => p.Navn)
+            .Select(p => new Tegning(p.Id, p.Navn, p.Revisjon)).ToListAsync();
+        _sjekkpunkter = await Db.ServiceavtaleSjekkpunkter.AsNoTracking().Where(p => p.ProsjektId == _runde.ProsjektId)
+            .OrderBy(p => p.Rekkefolge).Select(p => p.Tekst).ToListAsync();
+        if (_tegninger.Count == 0)
+        {
+            _fane = "dorer";
+        }
+    }
+
+    private void Apne(ServicerundeDor d)
+    {
+        _valgt = d;
+        _visAvvik = false;
+        _visBytte = false;
+        _avvikTekst = d.Status == ServicerundeDorStatus.Avvik ? d.Notat : null;
+        _bytteTekst = null;
+        _melding = null;
+        if (d.PlantegningId is { } t)
+        {
+            _tegningId = t;
+        }
+    }
+
+    private void Lukk() => _valgt = null;
+
+    private ServicerundeDor? NesteDor(ServicerundeDor fra) =>
+        _dorer.SkipWhile(d => d != fra).Skip(1).Concat(_dorer.TakeWhile(d => d != fra))
+            .FirstOrDefault(d => d.Status is not (ServicerundeDorStatus.Ok or ServicerundeDorStatus.Avvik));
+
+    private void Neste()
+    {
+        if (_valgt is { } v && NesteDor(v) is { } n)
+        {
+            Apne(n);
+        }
+    }
+
+    private bool KanEndre => _runde?.FullfortDato is null;
+
+    private async Task SettOk(ServicerundeDor d)
+    {
+        if (!KanEndre)
+        {
+            return;
+        }
+        var tilbake = d.Status == ServicerundeDorStatus.Ok;
+        d.Status = tilbake ? ServicerundeDorStatus.IkkeKontrollert : ServicerundeDorStatus.Ok;
+        d.KontrollertDato = tilbake ? null : DateTime.Now;
+        d.KontrollertAvBrukerId = tilbake ? null : _brukerId;
+        if (!tilbake && string.IsNullOrWhiteSpace(d.Notat) is false && d.Notat!.StartsWith("Avvik:", StringComparison.Ordinal))
+        {
+            d.Notat = null;
+        }
+        await Db.SaveChangesAsync();
+        _melding = tilbake ? null : $"{d.Dornummer} er sjekket {DateTime.Now:HH:mm}.";
+    }
+
+    private async Task SettAvvik(ServicerundeDor d)
+    {
+        if (!KanEndre || string.IsNullOrWhiteSpace(_avvikTekst))
+        {
+            return;
+        }
+        d.Status = ServicerundeDorStatus.Avvik;
+        d.Notat = _avvikTekst.Trim();
+        d.KontrollertDato = DateTime.Now;
+        d.KontrollertAvBrukerId = _brukerId;
+        await Db.SaveChangesAsync();
+        _visAvvik = false;
+        _melding = $"Avvik registrert på {d.Dornummer} {DateTime.Now:HH:mm}.";
+    }
+
+    private async Task LagreBytte(ServicerundeDor d)
+    {
+        if (!KanEndre || string.IsNullOrWhiteSpace(_bytteTekst) || _runde is null)
+        {
+            return;
+        }
+        Db.ServicerundeDeler.Add(new ServicerundeDel { ServicerundeId = _runde.Id, DorId = d.DorId, Beskrivelse = _bytteTekst.Trim(), Dato = DateTime.Now });
+        await Db.SaveChangesAsync();
+        _visBytte = false;
+        _bytteTekst = null;
+        _melding = $"Byttet del registrert på {d.Dornummer}.";
+    }
+
+    // Bilder og video lagres på døren (Bilder og historikk på dørkortet) med tidspunkt.
+    private async Task LastOpp(InputFileChangeEventArgs e)
+    {
+        if (!KanEndre || _valgt is not { } d)
+        {
+            return;
+        }
+        var antall = 0;
+        foreach (var fil in e.GetMultipleFiles(20))
+        {
+            if (fil.Size > 50_000_000)
+            {
+                _melding = $"«{fil.Name}» er for stor (maks 50 MB).";
+                continue;
+            }
+            using var buffer = new MemoryStream();
+            await using (var stream = fil.OpenReadStream(maxAllowedSize: 50_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+            Db.DorMedia.Add(new DorMedia
+            {
+                DorId = d.DorId,
+                Data = buffer.ToArray(),
+                ContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType,
+                Filnavn = fil.Name,
+                Tidspunkt = DorMediaTidspunkt.Etter
+            });
+            antall++;
+        }
+        await Db.SaveChangesAsync();
+        if (antall > 0)
+        {
+            _melding = $"{antall} {(antall == 1 ? "fil" : "filer")} lagt på {d.Dornummer}. Ligger under Bilder og historikk.";
+            _dorNokkel++;
+        }
+    }
+
+    private static string Klasse(string status) => status switch
+    {
+        ServicerundeDorStatus.Ok => "ok",
+        ServicerundeDorStatus.Avvik => "avvik",
+        _ => ""
+    };
+
+    private static string StatusTekst(string status) => status switch
+    {
+        ServicerundeDorStatus.Ok => "✓ Sjekket",
+        ServicerundeDorStatus.Avvik => "⚠ Avvik",
+        ServicerundeDorStatus.IkkeRelevant => "Ikke relevant",
+        _ => "Ikke sjekket"
+    };
+
+    private static string RundeNavn(DateTime d) =>
+        (d.Month is 12 or 1 or 2 ? "Vinter" : d.Month <= 5 ? "Vår" : d.Month <= 8 ? "Sommer" : "Høst") + " " + d.Year;
+
+    private static string Inv(double v) => v.ToString(CultureInfo.InvariantCulture);
+}
