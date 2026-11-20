@@ -102,7 +102,7 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("iloq-kodeleser", "iLOQ kodeleser", 6, 377, 677),
         Illustrasjon("iloq-leser-slank", "iLOQ leser (slank)", 4, 130, 298),
         Illustrasjon("steplock-osdp", "StepLock OSDP dørkontroller", 20, 794, 809),
-        Illustrasjon("arx-dorsentral", "ARX dørsentral", 22, 974, 979),
+        Illustrasjon("arx-dorsentral", "ARX dørsentral", 22, 1149, 1013),
     ];
 
     public static readonly List<KoblingsKomponent> UtstyrVedDora =

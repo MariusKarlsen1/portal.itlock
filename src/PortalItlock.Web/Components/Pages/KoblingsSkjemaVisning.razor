@@ -358,6 +358,7 @@ else if (_skjema is not null)
                      style="width:@(_zoom.ToString(CultureInfo.InvariantCulture))%; --ks-skala:@(_skala.ToString(CultureInfo.InvariantCulture))"
                      data-rediger="@(_redigerModus ? "1" : "0")"
                      data-marker-modus="@(_markerModus && _redigerModus ? "1" : "0")"
+                     data-harvalg="@(_valgteSymbolIds.Count + _valgteStrekIds.Count > 0 || _valgtStrek is not null ? "1" : "0")"
                      @ondragover="@(() => { })" @ondragover:preventDefault="true"
                      @ondrop="DroppKomponent"
                      @ref="_canvasRef">
@@ -416,6 +417,11 @@ else if (_skjema is not null)
                             </defs>
                             <g clip-path="url(#ks-over-klipp)">@StrekLag(false)</g>
                         </svg>
+                    }
+
+                    @if (_redigerModus && ValgRamme() is { } vr)
+                    {
+                        <div class="ks-valgramme" style="left:calc(@Inv(vr.X1)% - 10px); top:calc(@Inv(vr.Y1)% - 10px); width:calc(@Inv(vr.X2 - vr.X1)% + 20px); height:calc(@Inv(vr.Y2 - vr.Y1)% + 20px)"><span>@vr.Antall markert · Ctrl + C kopierer</span></div>
                     }
 
                     @* Knekkpunkter, tilkoblingspunkter og hjelpelinjer - innholdet tegnes av koblingsskjema.js. *@
@@ -1102,7 +1108,7 @@ else if (_skjema is not null)
     {
         if (firstRender)
         {
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=34");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=35");
             _dotNetRef = DotNetObjectReference.Create(this);
         }
 
@@ -1126,6 +1132,12 @@ else if (_skjema is not null)
                     await _module.InvokeVoidAsync("enableEditorSnarveier", _canvasRef, _dotNetRef);
                     await _module.InvokeVoidAsync("observerLerretBredde", _canvasRef, _dotNetRef);
                 }
+
+                if (kobleTil)
+                {
+                    _sendtSkisse = null;
+                }
+                await OppdaterSkisse();
 
                 // Knekkpunktene til valgt strek tegnes av JS etter hver rendring.
                 await _module.InvokeVoidAsync("oppdaterEditorUi", _canvasRef,
@@ -1543,7 +1555,7 @@ else if (_skjema is not null)
                 MarkerAlle();
                 break;
             case "lim":
-                await LimInn();
+                await LimInn(null, null);
                 break;
             case "dupliser":
                 if (_valgteSymbolIds.Count == 0 && _selectedSymbol is { } d)
@@ -2482,10 +2494,90 @@ else if (_skjema is not null)
         Utklipp.Sett(await HentUtklippNokkel(), innhold);
         _sistInnlimt = innhold;
         _innlimtGanger = 0;
-        VisUtklippMelding($"Kopiert: {Beskriv(innhold)}. Åpne et annet skjema og trykk Ctrl + V.");
+        VisUtklippMelding($"Kopiert: {Beskriv(innhold)}. Gå til et annet skjema, trykk der du vil ha det, og trykk Ctrl + V.");
     }
 
-    private async Task LimInn()
+    private sealed record Ramme(double X1, double Y1, double X2, double Y2, int Antall);
+
+    // Rammen rundt alt som er markert (vises når mer enn én ting er markert).
+    private Ramme? ValgRamme()
+    {
+        var antall = _valgteSymbolIds.Count + _valgteStrekIds.Count;
+        if (antall < 2)
+        {
+            return null;
+        }
+        var b = Grenser(_symboler.Where(s => _valgteSymbolIds.Contains(s.Id)), _streker.Where(s => _valgteStrekIds.Contains(s.Id)));
+        return b is null ? null : new Ramme(b.Value.X1, b.Value.Y1, b.Value.X2, b.Value.Y2, antall);
+    }
+
+    private static (double X1, double Y1, double X2, double Y2)? Grenser(IEnumerable<KoblingsSymbol> symboler, IEnumerable<KoblingsStrek> streker)
+    {
+        double x1 = double.MaxValue, y1 = double.MaxValue, x2 = double.MinValue, y2 = double.MinValue;
+        foreach (var s in symboler)
+        {
+            x1 = Math.Min(x1, s.PosX); y1 = Math.Min(y1, s.PosY);
+            x2 = Math.Max(x2, s.PosX + s.Bredde); y2 = Math.Max(y2, s.PosY + s.Hoyde);
+        }
+        foreach (var s in streker)
+        {
+            foreach (var p in JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(s.PunkterJson) ?? [])
+            {
+                x1 = Math.Min(x1, p.X); y1 = Math.Min(y1, p.Y);
+                x2 = Math.Max(x2, p.X); y2 = Math.Max(y2, p.Y);
+            }
+        }
+        return x1 > x2 ? null : (x1, y1, x2, y2);
+    }
+
+    // Skissen som følger musen etter Ctrl + C (sendes til koblingsskjema.js).
+    private string? _sendtSkisse;
+
+    private string? SkisseJson()
+    {
+        if (UtklippInnhold is not { Antall: > 0 } u || Grenser(u.Symboler, u.Streker) is not { } g)
+        {
+            return null;
+        }
+        static string F(double v) => Math.Round(v, 3).ToString(CultureInfo.InvariantCulture);
+        var rekt = u.Symboler.Select(s => $"[{F(s.PosX - g.X1)},{F(s.PosY - g.Y1)},{F(s.Bredde)},{F(s.Hoyde)}]");
+        var linjer = u.Streker.Select(s => "[" + string.Join(",", (JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(s.PunkterJson) ?? [])
+            .Select(p => $"{F(p.X - g.X1)},{F(p.Y - g.Y1)}")) + "]");
+        return $"{{\"w\":{F(Math.Max(g.X2 - g.X1, 0.5))},\"h\":{F(Math.Max(g.Y2 - g.Y1, 0.5))},\"rekt\":[{string.Join(",", rekt)}],\"linjer\":[{string.Join(",", linjer)}]}}";
+    }
+
+    private async Task OppdaterSkisse()
+    {
+        if (_module is null || _fane != "rediger")
+        {
+            return;
+        }
+        var json = SkisseJson();
+        if (json == _sendtSkisse)
+        {
+            return;
+        }
+        _sendtSkisse = json;
+        try
+        {
+            await _module.InvokeVoidAsync("settSkisse", _canvasRef, json);
+        }
+        catch (JSException)
+        {
+            _sendtSkisse = null;
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnLimInnVed(double? x, double? y)
+    {
+        await LimInn(x, y);
+        StateHasChanged();
+    }
+
+    private Task LimInn() => LimInn(null, null);
+
+    private async Task LimInn(double? midtX, double? midtY)
     {
         if (_skjema is null || Utklipp.Hent(await HentUtklippNokkel()) is not { Antall: > 0 } innhold)
         {
@@ -2505,6 +2597,14 @@ else if (_skjema is not null)
         }
         _innlimtGanger++;
         var forskyv = (innhold.FraSkjemaId == _skjema.Id ? 4 : 0) + 4 * (_innlimtGanger - 1);
+        double flyttX = forskyv, flyttY = forskyv;
+        // Trykket man på tegningen (krysset) eller står musen over den: midten av det
+        // kopierte havner der.
+        if (midtX is { } mx && midtY is { } my && Grenser(innhold.Symboler, innhold.Streker) is { } g)
+        {
+            flyttX = Math.Clamp(mx, 0, 100) - (g.X1 + g.X2) / 2;
+            flyttY = Math.Clamp(my, 0, 100) - (g.Y1 + g.Y2) / 2;
+        }
 
         PushUndo();
         var nesteZIndex = (_symboler.Count > 0 ? _symboler.Max(s => s.ZIndex) : 0) + 1;
@@ -2513,8 +2613,8 @@ else if (_skjema is not null)
         {
             n.Id = 0;
             n.KoblingsSkjemaId = _skjema.Id;
-            n.PosX += forskyv;
-            n.PosY += forskyv;
+            n.PosX += flyttX;
+            n.PosY += flyttY;
             n.ZIndex = nesteZIndex++;
             n.ErLaast = false;
         }
@@ -2523,13 +2623,13 @@ else if (_skjema is not null)
         {
             n.Id = 0;
             n.KoblingsSkjemaId = _skjema.Id;
-            if (forskyv != 0)
+            if (flyttX != 0 || flyttY != 0)
             {
                 var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(n.PunkterJson) ?? [];
                 foreach (var p in punkter)
                 {
-                    p.X += forskyv;
-                    p.Y += forskyv;
+                    p.X += flyttX;
+                    p.Y += flyttY;
                 }
                 n.PunkterJson = JsonSerializer.Serialize(punkter);
             }
@@ -2552,7 +2652,11 @@ else if (_skjema is not null)
             _valgteStrekIds.Add(n.Id);
         }
         _selectedSymbol = nyeSymboler.Count == 1 && nyeStreker.Count == 0 ? nyeSymboler[0] : null;
-        VisUtklippMelding($"Limt inn: {Beskriv(innhold)}. Flytt med piltastene.");
+        VisUtklippMelding($"Limt inn: {Beskriv(innhold)}. Dra for å flytte, eller bruk piltastene.");
+        if (_module is not null)
+        {
+            try { await _module.InvokeVoidAsync("nullstillLimpunkt", _canvasRef); } catch (JSException) { }
+        }
     }
 
     private async Task DupliserValgte()

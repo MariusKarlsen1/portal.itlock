@@ -1397,6 +1397,11 @@ export function enableEditorSnarveier(containerEl, dotNetRef) {
     if (containerEl._editorSnarveier) {
         return;
     }
+    // Ctrl + V limer inn der krysset står (trykk på tegningen først), ellers der musen er.
+    const limInn = () => {
+        const p = containerEl._limpunkt || containerEl._mus || null;
+        dotNetRef.invokeMethodAsync('OnLimInnVed', p ? p.x : null, p ? p.y : null);
+    };
     const handler = (e) => {
         const tag = (e.target.tagName || '').toLowerCase();
         if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable || !containerEl.isConnected) {
@@ -1407,8 +1412,13 @@ export function enableEditorSnarveier(containerEl, dotNetRef) {
         if (containerEl.dataset.rediger !== '1') {
             if (ctrl && tast === 'v' && !window.getSelection()?.toString()) {
                 e.preventDefault();
-                dotNetRef.invokeMethodAsync('OnSnarvei', 'lim');
+                limInn();
             }
+            return;
+        }
+        if (ctrl && tast === 'v') {
+            e.preventDefault();
+            limInn();
             return;
         }
         // Tekst som er markert inne på tegningen (f.eks. etter å ha dratt over merking)
@@ -1451,6 +1461,109 @@ export function enableEditorSnarveier(containerEl, dotNetRef) {
     containerEl._editorSnarveier = handler;
     document.addEventListener('keydown', handler);
     dokumentLyttere.add(handler);
+}
+
+// Skissen av det som er kopiert: følger musen over tegningen, og et klikk på et
+// tomt sted setter krysset der Ctrl + V limer inn. data = { w, h, rekt: [[x,y,w,h]],
+// linjer: [[x,y,x,y,...]] } i prosent av lerretet, regnet fra øverste venstre hjørne.
+export function settSkisse(canvasEl, dataJson) {
+    const data = dataJson ? JSON.parse(dataJson) : null;
+    canvasEl._skisseData = data;
+    let el = canvasEl.querySelector(':scope > .ks-skisse');
+    if (!data) {
+        el?.remove();
+        canvasEl._limpunkt = null;
+        tegnLimpunkt(canvasEl);
+        return;
+    }
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'ks-skisse';
+        el.style.display = 'none';
+        canvasEl.appendChild(el);
+    }
+    el.style.width = data.w + '%';
+    el.style.height = data.h + '%';
+    const vb = `0 0 ${Math.max(data.w, 0.01)} ${Math.max(data.h, 0.01)}`;
+    el.innerHTML = `<svg viewBox="${vb}" preserveAspectRatio="none">`
+        + data.rekt.map(r => `<rect x="${r[0]}" y="${r[1]}" width="${r[2]}" height="${r[3]}" rx="0.3" fill="rgba(31,111,235,0.08)" stroke="#1f6feb" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>`).join('')
+        + data.linjer.map(l => `<polyline points="${l.join(' ')}" fill="none" stroke="#1f6feb" stroke-width="2.5" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>`).join('')
+        + '</svg>';
+
+    if (canvasEl._skisseKoblet) {
+        return;
+    }
+    canvasEl._skisseKoblet = true;
+    const pst = (e) => {
+        const r = canvasEl.getBoundingClientRect();
+        return { x: (e.clientX - r.left) / r.width * 100, y: (e.clientY - r.top) / r.height * 100 };
+    };
+    const flytt = (p) => {
+        const s = canvasEl.querySelector(':scope > .ks-skisse');
+        const d = canvasEl._skisseData;
+        if (!s || !d) {
+            return;
+        }
+        const synlig = p && canvasEl.dataset.harvalg !== '1';
+        s.style.display = synlig ? 'block' : 'none';
+        if (synlig) {
+            s.style.left = (p.x - d.w / 2) + '%';
+            s.style.top = (p.y - d.h / 2) + '%';
+        }
+    };
+    canvasEl.addEventListener('pointermove', (e) => {
+        canvasEl._mus = pst(e);
+        if (!canvasEl._limpunkt) {
+            flytt(canvasEl._mus);
+        }
+    });
+    canvasEl.addEventListener('pointerleave', () => {
+        canvasEl._mus = null;
+        if (!canvasEl._limpunkt) {
+            flytt(null);
+        }
+    });
+    // Klikk på et tomt sted (eller på et bakgrunnsbilde) setter krysset.
+    canvasEl.addEventListener('click', (e) => {
+        if (!canvasEl._skisseData || canvasEl.dataset.harvalg === '1' || currentStrekTegning) {
+            return;
+        }
+        const marker = e.target.closest && e.target.closest('.kobling-symbol-marker');
+        if (marker) {
+            const m = marker.getBoundingClientRect();
+            const c = canvasEl.getBoundingClientRect();
+            if (!(marker.classList.contains('kobling-symbol-marker-laast') || m.width * m.height > c.width * c.height * 0.45)) {
+                return;
+            }
+        }
+        canvasEl._limpunkt = pst(e);
+        tegnLimpunkt(canvasEl);
+        flytt(canvasEl._limpunkt);
+    }, true);
+    canvasEl._flyttSkisse = flytt;
+}
+
+function tegnLimpunkt(canvasEl) {
+    let k = canvasEl.querySelector(':scope > .ks-limpunkt');
+    const p = canvasEl._limpunkt;
+    if (!p) {
+        k?.remove();
+        return;
+    }
+    if (!k) {
+        k = document.createElement('div');
+        k.className = 'ks-limpunkt';
+        k.innerHTML = '<span>Ctrl + V limer inn her</span>';
+        canvasEl.appendChild(k);
+    }
+    k.style.left = p.x + '%';
+    k.style.top = p.y + '%';
+}
+
+export function nullstillLimpunkt(canvasEl) {
+    canvasEl._limpunkt = null;
+    tegnLimpunkt(canvasEl);
+    canvasEl._flyttSkisse?.(canvasEl._mus);
 }
 
 export function disableEditorSnarveier(containerEl) {
