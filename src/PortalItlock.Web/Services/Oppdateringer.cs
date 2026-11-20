@@ -14,6 +14,11 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.22", new DateOnly(2026, 11, 20),
+        [
+            new(Type.Fikset, "check-circle", "Kopier og lim inn i koblingsskjema", "Dra en boks oppå tegningen, også over bakgrunnsbildet. Ctrl + V virker uten å trykke Rediger først."),
+            new(Type.Nytt, "edit", "Ctrl + A og Ctrl + dra", "Marker alt med Ctrl + A, eller dra en boks hvor som helst med Ctrl inne."),
+        ]),
         new("1.21", new DateOnly(2026, 11, 20),
         [
             new(Type.Nytt, "maximize", "Marker i koblingsskjema", "Trykk Marker (M) og dra en boks hvor som helst. Kopier og lim inn på et annet skjema."),
