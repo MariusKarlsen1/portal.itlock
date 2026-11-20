@@ -14,7 +14,15 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
-        new("1.14", new DateOnly(2026, 11, 20),
+        new("1.15", new DateOnly(2026, 11, 20),
+        [
+            new(Type.Nytt, "tool", "Enklere servicerunder", "Trykk på døren på plantegningen og velg Sjekket eller Avvik. Bilder og byttede deler havner på døren."),
+            new(Type.Nytt, "door", "Serviceavtaler som prosjekter", "Dører, plantegninger, FDV, personer og vedlegg er de samme som på prosjektet, og avtalen har egen sjekkliste."),
+            new(Type.Nytt, "file-text", "Tilbud på serviceavtale", "Forside som på vanlige tilbud, ferdig avtaletekst og tillegg fra + på Prising. Fra prosjekt telles dørene automatisk."),
+            new(Type.Nytt, "map", "Kjøring på tilbud", "Antall kjøringer foreslås ut fra montasjetimene."),
+            new(Type.Fikset, "check-circle", "Plantegning og tilbud", "Tegningen flytter seg ikke ved «Ny dør her», og forespørselen kommer med på tilbudet."),
+        ]),
+        new("1.14",new DateOnly(2026, 11, 20),
         [
             new(Type.Nytt, "file-text", "Tilbud serviceavtale", "Trykk + på antall per kategori, legg til tillegg og lag tilbudet som PDF."),
             new(Type.Nytt, "check-circle", "Tilbud godkjent", "Gjør tilbudet til en serviceavtale med dører, plantegninger og servicerunder."),
