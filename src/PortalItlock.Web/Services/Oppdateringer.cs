@@ -14,6 +14,11 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.21", new DateOnly(2026, 11, 20),
+        [
+            new(Type.Nytt, "maximize", "Marker i koblingsskjema", "Trykk Marker (M) og dra en boks hvor som helst. Kopier og lim inn på et annet skjema."),
+            new(Type.Bedre, "door", "Tydeligere dørark på mobil", "Beslag fra dørprodusent og elektro har fargede LD- og LE-merker."),
+        ]),
         new("1.20", new DateOnly(2026, 11, 20),
         [
             new(Type.Bedre, "list", "Ryddigere forside på mobil", "Snarveiene står samlet i én liste, så mer får plass uten å scrolle."),
