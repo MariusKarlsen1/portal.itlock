@@ -886,7 +886,7 @@ export function initStrekRedigering(canvasEl, dotNetRef) {
     }
 
     canvasEl.addEventListener('pointerdown', (e) => {
-        if (e.button !== 0 || canvasEl.dataset.locked === '1' || currentStrekTegning) {
+        if (e.button !== 0 || canvasEl.dataset.locked === '1' || currentStrekTegning || canvasEl.dataset.markerModus === '1') {
             return;
         }
         const valgtId = parseInt(canvasEl.dataset.valgtstrek || '0', 10);
@@ -1425,6 +1425,8 @@ export function enableEditorSnarveier(containerEl, dotNetRef) {
                 kommando = 'velg';
             } else if (tast === 't') {
                 kommando = 'tekst';
+            } else if (tast === 'm') {
+                kommando = 'marker';
             } else if (e.key === 'Escape' && !currentStrekTegning) {
                 kommando = 'avvelg';
             }
@@ -1582,14 +1584,7 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
     let startX = 0;
     let startY = 0;
 
-    canvasEl.addEventListener('pointerdown', (e) => {
-        if (e.button !== 0 || canvasEl.dataset.locked === '1') {
-            return;
-        }
-        if (e.target !== canvasEl && !e.target.classList.contains('kobling-strek-svg-overlay')) {
-            return;
-        }
-
+    function startBoks(e) {
         active = true;
         startX = e.clientX;
         startY = e.clientY;
@@ -1597,6 +1592,33 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         box.className = 'kobling-rubber-band';
         canvasEl.appendChild(box);
         safeCapture(canvasEl, e.pointerId);
+    }
+
+    // «Marker»-verktøyet (eller M): boksen kan dras hvor som helst, også oppå
+    // komponenter og bilder. Låste komponenter (f.eks. et bakgrunnsbilde) flyttes
+    // aldri, så der starter boksen også uten verktøyet.
+    canvasEl.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || canvasEl.dataset.locked === '1' || currentStrekTegning) {
+            return;
+        }
+        const markerModus = canvasEl.dataset.markerModus === '1';
+        const laast = e.target.closest && e.target.closest('.kobling-symbol-marker-laast');
+        if (!markerModus && (!laast || e.target.closest('.kobling-resize-handle'))) {
+            return;
+        }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        startBoks(e);
+    }, true);
+
+    canvasEl.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || canvasEl.dataset.locked === '1' || active) {
+            return;
+        }
+        if (e.target !== canvasEl && !e.target.classList.contains('kobling-strek-svg-overlay')) {
+            return;
+        }
+        startBoks(e);
     });
 
     canvasEl.addEventListener('pointermove', (e) => {
@@ -1637,7 +1659,10 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         markers.forEach(m => {
             const r = m.getBoundingClientRect();
             const intersects = r.left < boxRect.right && r.right > boxRect.left && r.top < boxRect.bottom && r.bottom > boxRect.top;
-            if (intersects) {
+            // Låste komponenter og bilder som ligger rundt hele boksen (bakgrunnen) tas ikke med.
+            const bakgrunn = m.classList.contains('kobling-symbol-marker-laast')
+                || (r.left <= boxRect.left && r.right >= boxRect.right && r.top <= boxRect.top && r.bottom >= boxRect.bottom);
+            if (intersects && !bakgrunn) {
                 matched.push(parseInt(m.dataset.symbolid, 10));
             }
         });
