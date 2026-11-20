@@ -16,7 +16,7 @@
 <div class="ma">
     <AppHode Ikon="tool" Sand="true" Tittel="Serviceavtaler" Under="@(_alle ? "Alle serviceavtaler" : "Mine serviceavtaler")">
         <span class="ma-skille"></span>
-        <button type="button" class="ma-ikonknapp" @onclick="@(() => { _visNy = true; _feil = null; })" aria-label="Ny serviceavtale"><Icon Name="plus" /></button>
+        <button type="button" class="ma-ikonknapp" @onclick="@(() => { _visNy = true; _feil = null; })" aria-label="@(_erMontor ? "Ny serviceavtale" : "Tilbud serviceavtale")"><Icon Name="plus" /></button>
     </AppHode>
 
     <div class="ma-sok">
@@ -25,7 +25,7 @@
         <input type="search" placeholder="Søk" aria-label="Søk" @bind="_sok" @bind:event="oninput" />
     </div>
 
-    <div class="ma-liste">
+    <div class="ma-liste ma-sebra">
         @if (!_lastet)
         {
             <p class="ma-tom">Laster …</p>
@@ -41,9 +41,13 @@
                 <div class="ma-kort-ramme" @key="a.Id">
                     <a class="ma-kort" href="@($"/app/serviceavtale/{a.Id}")">
                         <span class="ma-kort-tekst">
-                            <h3>@a.Navn<em>Service</em></h3>
+                            <h3>@a.Navn<em>@(a.ErTilbud ? "Tilbud" : "Service")</em></h3>
                             <span class="ma-linje dempet">
-                                @if (a.PagarRunde)
+                                @if (a.ErTilbud)
+                                {
+                                    <i class="ma-prikk ma-prikk-pagaende"></i><span>Tilbud – ikke godkjent ennå</span>
+                                }
+                                else if (a.PagarRunde)
                                 {
                                     <i class="ma-prikk ma-prikk-pagaende"></i><span>Runde pågår · @a.Kontrollert av @a.RundeDorer dører</span>
                                 }
@@ -70,7 +74,36 @@
     </div>
     <div class="ma-bunnlinje">@Liste.Count serviceavtaler</div>
 
-    @if (_visNy)
+    @if (_visNy && !_erMontor)
+    {
+        <div class="ma-ark-bak" @onclick="@(() => _visNy = false)">
+            <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Tilbud serviceavtale">
+                <div class="ma-ark-handtak"></div>
+                <h3 style="margin:0.2rem 0 0.2rem">Tilbud serviceavtale</h3>
+                <p class="ma-tom" style="padding:0 0 0.4rem;text-align:left">Fyll inn navn og adresse. Så kommer du rett til Prising, der du trykker + på antall.</p>
+                <label class="ma-felt"><b>Navn</b><input type="text" @bind="_nyNavn" @bind:event="oninput" placeholder="F.eks. Storgata 5" /></label>
+                <label class="ma-felt"><b>Adresse</b><input type="text" @bind="_nyAdresse" placeholder="F.eks. Storgata 5, Egersund" /></label>
+                <label class="ma-felt"><b>Kunde (valgfritt)</b>
+                    <select @bind="_nyKundeId">
+                        <option value="">Ingen kunde ennå</option>
+                        @foreach (var k in _kunder)
+                        {
+                            <option value="@k.Id">@k.Navn</option>
+                        }
+                    </select>
+                </label>
+                @if (_feil is not null)
+                {
+                    <p class="ma-feil">@_feil</p>
+                }
+                <div class="ma-under">
+                    <button type="button" class="ma-knapp" @onclick="OpprettTilbud" disabled="@(string.IsNullOrWhiteSpace(_nyNavn) || _lagrer)"><Icon Name="plus" />Opprett</button>
+                    <button type="button" class="ma-knapp sek" @onclick="@(() => _visNy = false)">Avbryt</button>
+                </div>
+            </div>
+        </div>
+    }
+    else if (_visNy)
     {
         <div class="ma-ark-bak" @onclick="@(() => _visNy = false)">
             <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-label="Ny serviceavtale">
@@ -104,11 +137,11 @@
 @code {
     [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
 
-    private sealed record Rad(int Id, string Navn, string? Kunde, string? Adresse, int? Ansvarlig, int Dorer, int ApneSaker, DateTime? Neste, bool PagarRunde, int Kontrollert, int RundeDorer);
+    private sealed record Rad(int Id, string Navn, string? Kunde, string? Adresse, int? Ansvarlig, int Dorer, int ApneSaker, DateTime? Neste, bool PagarRunde, int Kontrollert, int RundeDorer, bool ErTilbud);
 
     private List<Rad> _avtaler = [];
     private List<Kunde> _kunder = [];
-    private bool _lastet, _alle, _visNy, _lagrer;
+    private bool _lastet, _alle = true, _visNy, _lagrer, _erMontor;
     private string _sok = "";
     private int? _brukerId;
     private string _nyNavn = "";
@@ -123,20 +156,26 @@
             || (a.Kunde?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false)
             || (a.Adresse?.Contains(_sok, StringComparison.OrdinalIgnoreCase) ?? false))
         .OrderByDescending(a => a.PagarRunde)
+        .ThenByDescending(a => a.ErTilbud)
         .ThenBy(a => a.Neste ?? DateTime.MaxValue)
         .ThenBy(a => a.Navn)
         .ToList();
 
     protected override async Task OnInitializedAsync()
     {
-        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("BrukerId")?.Value, out var id))
+        if (AuthStateTask is not null)
         {
-            _brukerId = id;
+            var bruker = (await AuthStateTask).User;
+            if (int.TryParse(bruker.FindFirst("BrukerId")?.Value, out var id))
+            {
+                _brukerId = id;
+            }
+            _erMontor = bruker.IsInRole("Montor") && !bruker.IsInRole("Admin") && !bruker.IsInRole("Prosjektleder");
         }
 
         var prosjekter = await Db.Prosjekter.AsNoTracking()
             .Where(p => (p.Status == ProsjektStatus.Serviceavtale && !p.ErServiceoppdrag) || p.HarServiceavtale)
-            .Select(p => new { p.Id, p.Navn, Kunde = p.Kunde != null ? p.Kunde.Navn : null, p.Adresse, p.AnsvarligMontorId })
+            .Select(p => new { p.Id, p.Navn, Kunde = p.Kunde != null ? p.Kunde.Navn : null, p.Adresse, p.AnsvarligMontorId, p.ServiceErTilbud })
             .ToListAsync();
         var ider = prosjekter.Select(p => p.Id).ToList();
         var dorer = await Db.Dorer.AsNoTracking().Where(d => ider.Contains(d.ProsjektId))
@@ -157,11 +196,38 @@
             return new Rad(p.Id, p.Navn, p.Kunde, p.Adresse, p.AnsvarligMontorId,
                 dorer.GetValueOrDefault(p.Id), avvik.GetValueOrDefault(p.Id),
                 planlagt.TryGetValue(p.Id, out var d) ? d : null,
-                pa is not null, pa?.Kontrollert ?? 0, pa?.Dorer ?? 0);
+                pa is not null, pa?.Kontrollert ?? 0, pa?.Dorer ?? 0, p.ServiceErTilbud);
         }).ToList();
-        _alle = _brukerId is null || !_avtaler.Any(a => a.Ansvarlig == _brukerId);
         _kunder = await Db.Kunder.AsNoTracking().OrderBy(k => k.Navn).ToListAsync();
         _lastet = true;
+    }
+
+    // Tilbud serviceavtale: samme som «Tilbud serviceavtale» på PC (TilbudServiceavtaleDialog),
+    // og rett til Prising.
+    private async Task OpprettTilbud()
+    {
+        var navn = _nyNavn.Trim();
+        if (navn.Length == 0 || _lagrer)
+        {
+            _feil = "Skriv navn på bygget eller avtalen.";
+            return;
+        }
+        _lagrer = true;
+        var p = new Prosjekt
+        {
+            Navn = navn,
+            KundeId = _nyKundeId,
+            Adresse = string.IsNullOrWhiteSpace(_nyAdresse) ? null : _nyAdresse.Trim(),
+            Status = ProsjektStatus.Serviceavtale,
+            ServicePrismodell = ServiceavtalePris.Antall,
+            ServiceErTilbud = true,
+            ServiceGangerPerAr = 1
+        };
+        Db.Prosjekter.Add(p);
+        await Db.SaveChangesAsync();
+        Db.ServiceavtaleLinjer.AddRange(await ServiceavtaleAntall.LagLinjer(Db, p.Id));
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo($"/app/serviceavtale/{p.Id}?fane=prising");
     }
 
     private async Task Opprett()

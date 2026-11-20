@@ -233,6 +233,70 @@ public static class ServiceavtaleAntall
         return true;
     }
 
+    /// Tilbudet godkjent: avtalen blir en vanlig serviceavtale med alle fanene, prisen
+    /// låses som avtalepris, og tilbuds-PDF-en lagres under Lagrede tilbud.
+    /// Brukes både fra PC (ServiceavtaleDetalj) og mobil (MontorServiceavtale).
+    public static async Task<Beregning> GodkjennTilbud(ApplicationDbContext db, Prosjekt p, string? godkjentAv, int? montorId,
+        ServiceavtaleTilbudPdfService tilbudPdf, LagretPdfService lagretPdf)
+    {
+        var b = Beregn(p, await db.ServiceavtaleLinjer.AsNoTracking().Where(l => l.ProsjektId == p.Id).ToListAsync());
+        p.ServiceErTilbud = false;
+        p.ServiceGodkjentArspris = b.Arspris;
+        p.ServiceGodkjentDato = DateTime.Now;
+        p.ServiceGodkjentAv = godkjentAv;
+        p.ServiceavtaleOpprettet ??= DateTime.Now;
+        p.AnsvarligMontorId = montorId;
+        await db.SaveChangesAsync();
+
+        var bytes = await tilbudPdf.GenerateAsync(p.Id);
+        if (bytes is not null)
+        {
+            await lagretPdf.LagreAsync("Serviceavtaletilbud", p.Id,
+                $"Godkjent tilbud serviceavtale - {p.Navn} - {DateTime.Now:dd.MM.yyyy}.pdf", bytes);
+        }
+        return b;
+    }
+
+    /// Eldre runde (registrert før dør-for-dør) åpnes i den nye visningen med plantegning
+    /// og dører: den får avtalens dører, alle huket av som OK med rundens dato, og er utført.
+    public static async Task KlargjorEldreRunde(ApplicationDbContext db, int rundeId)
+    {
+        var runde = await db.Servicerunder.FirstOrDefaultAsync(x => x.Id == rundeId);
+        if (runde is null)
+        {
+            return;
+        }
+        if (!await db.ServicerundeDorer.AnyAsync(d => d.ServicerundeId == runde.Id))
+        {
+            var dorer = await db.Dorer.AsNoTracking().Where(d => d.ProsjektId == runde.ProsjektId)
+                .OrderBy(d => d.Dornummer).ToListAsync();
+            var tegningIder = dorer.Where(d => d.PlantegningId.HasValue).Select(d => d.PlantegningId!.Value).Distinct().ToList();
+            var tegninger = await db.Plantegninger.AsNoTracking().Where(p => tegningIder.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => p.Navn);
+            var i = 0;
+            foreach (var d in dorer)
+            {
+                db.ServicerundeDorer.Add(new ServicerundeDor
+                {
+                    ServicerundeId = runde.Id,
+                    DorId = d.Id,
+                    Dornummer = d.Dornummer,
+                    Rom = d.Romnr ?? d.DorTil,
+                    PlantegningId = d.PlantegningId,
+                    PlantegningNavn = d.PlantegningId is { } t ? tegninger.GetValueOrDefault(t) : null,
+                    PosX = d.PosX,
+                    PosY = d.PosY,
+                    Status = ServicerundeDorStatus.Ok,
+                    KontrollertDato = runde.Dato,
+                    Rekkefolge = i++
+                });
+            }
+        }
+        runde.DorForDor = true;
+        runde.FullfortDato ??= runde.Dato;
+        await db.SaveChangesAsync();
+    }
+
     /// På en serviceavtale er alt allerede montert: alle dører står som ferdig montert
     /// og alle beslag vi monterer som montert.
     public static async Task MarkerMontert(ApplicationDbContext db, int prosjektId)

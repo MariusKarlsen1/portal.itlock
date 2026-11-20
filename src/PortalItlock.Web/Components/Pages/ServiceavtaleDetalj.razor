@@ -812,22 +812,8 @@ else if (_prosjekt is not null)
         _godkjenner = true;
         try
         {
-            var b = ServiceavtaleAntall.Beregn(_prosjekt, await Db.ServiceavtaleLinjer.AsNoTracking().Where(l => l.ProsjektId == ProsjektId).ToListAsync());
             var navn = (await TilgangAuth.GetAuthenticationStateAsync()).User.Identity?.Name;
-            _prosjekt.ServiceErTilbud = false;
-            _prosjekt.ServiceGodkjentArspris = b.Arspris;
-            _prosjekt.ServiceGodkjentDato = DateTime.Now;
-            _prosjekt.ServiceGodkjentAv = navn;
-            _prosjekt.ServiceavtaleOpprettet ??= DateTime.Now;
-            _prosjekt.AnsvarligMontorId = _godkjennMontorId;
-            await Db.SaveChangesAsync();
-
-            var bytes = await TilbudPdf.GenerateAsync(ProsjektId);
-            if (bytes is not null)
-            {
-                await LagretPdfService.LagreAsync("Serviceavtaletilbud", ProsjektId,
-                    $"Godkjent tilbud serviceavtale - {_prosjekt.Navn} - {DateTime.Now:dd.MM.yyyy}.pdf", bytes);
-            }
+            var b = await ServiceavtaleAntall.GodkjennTilbud(Db, _prosjekt, navn, _godkjennMontorId, TilbudPdf, LagretPdfService);
 
             _visGodkjenn = false;
             _avtaleStatus = await ServiceRegelMotor.HentAvtaleStatus(Db, _prosjekt);
@@ -962,41 +948,8 @@ else if (_prosjekt is not null)
     // dører: den får avtalens dører, alle huket av som OK med rundens dato, og er utført.
     private async Task ApneEldre(RundeRad r)
     {
-        var runde = await Db.Servicerunder.FirstOrDefaultAsync(x => x.Id == r.Id);
-        if (runde is null)
-        {
-            return;
-        }
-        if (!await Db.ServicerundeDorer.AnyAsync(d => d.ServicerundeId == runde.Id))
-        {
-            var dorer = await Db.Dorer.AsNoTracking().Where(d => d.ProsjektId == ProsjektId)
-                .OrderBy(d => d.Dornummer).ToListAsync();
-            var tegningIder = dorer.Where(d => d.PlantegningId.HasValue).Select(d => d.PlantegningId!.Value).Distinct().ToList();
-            var tegninger = await Db.Plantegninger.AsNoTracking().Where(p => tegningIder.Contains(p.Id))
-                .ToDictionaryAsync(p => p.Id, p => p.Navn);
-            var i = 0;
-            foreach (var d in dorer)
-            {
-                Db.ServicerundeDorer.Add(new ServicerundeDor
-                {
-                    ServicerundeId = runde.Id,
-                    DorId = d.Id,
-                    Dornummer = d.Dornummer,
-                    Rom = d.Romnr ?? d.DorTil,
-                    PlantegningId = d.PlantegningId,
-                    PlantegningNavn = d.PlantegningId is { } t ? tegninger.GetValueOrDefault(t) : null,
-                    PosX = d.PosX,
-                    PosY = d.PosY,
-                    Status = ServicerundeDorStatus.Ok,
-                    KontrollertDato = runde.Dato,
-                    Rekkefolge = i++
-                });
-            }
-        }
-        runde.DorForDor = true;
-        runde.FullfortDato ??= runde.Dato;
-        await Db.SaveChangesAsync();
-        Nav.NavigateTo($"/servicerunder/{runde.Id}/enkel");
+        await ServiceavtaleAntall.KlargjorEldreRunde(Db, r.Id);
+        Nav.NavigateTo($"/servicerunder/{r.Id}/enkel");
     }
     private readonly HashSet<int> _apneSteg = [1, 2];
 
