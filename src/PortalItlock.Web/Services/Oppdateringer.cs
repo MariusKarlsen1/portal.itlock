@@ -14,6 +14,14 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.18", new DateOnly(2026, 11, 20),
+        [
+            new(Type.Fikset, "check-circle", "Serviceavtaler på mobil", "Siden ser riktig ut igjen."),
+            new(Type.Bedre, "list", "Annenhver grå rad på mobil", "Også på ordre og prosjekter."),
+            new(Type.Bedre, "search", "Jevnere zoom i koblingsskjema", "Hold mellomrom og dra for å flytte rundt, også når du redigerer."),
+            new(Type.Bedre, "edit", "Dobbeltklikk for panelet", "Panelet for en komponent åpnes med dobbeltklikk, og kabler oppå komponenter kan trykkes på."),
+            new(Type.Bedre, "box", "Nye ARX-tegninger", "ARX dørsentral og ARX Power X008 i samme stil som de andre."),
+        ]),
         new("1.17", new DateOnly(2026, 11, 20),
         [
             new(Type.Nytt, "shield", "Serviceavtaler på mobil", "Tilbud fra +, Prising og Tilbud, og fanene Runder, Dører, Plan og Avvik."),
