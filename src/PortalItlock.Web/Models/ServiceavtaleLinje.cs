@@ -9,6 +9,10 @@ public class ServicePrisKategori
     public string? Beskrivelse { get; set; }
     public decimal Pris { get; set; }
     public int Rekkefolge { get; set; }
+
+    // Hvilke dører kategorien teller når et prosjekt gjøres om til serviceavtale
+    // (ServiceavtaleAntall.Telling). Null = gjettes ut fra navnet.
+    public string? Type { get; set; }
 }
 
 // Oppsett → Tillegg: faste tillegg som fylles inn på fanen Tillegg på hver ny avtale,

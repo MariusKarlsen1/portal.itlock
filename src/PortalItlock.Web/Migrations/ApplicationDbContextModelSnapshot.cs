@@ -7078,6 +7078,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("Rekkefolge")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Type")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.ToTable("ServicePrisKategorier");

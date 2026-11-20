@@ -14,14 +14,84 @@ namespace PortalItlock.Web.Services;
 /// </summary>
 public static class ServiceavtaleAntall
 {
-    public static readonly (string Navn, string Beskrivelse, decimal Pris)[] StandardKategorier =
+    public static readonly (string Navn, string Beskrivelse, decimal Pris, string Type)[] StandardKategorier =
     [
-        ("Dørautomatikk", "Slagdørsautomatikk, åpner og lukker", 1250),
-        ("Skyvedørsautomatikk", "Skyvedør med sensorer og nødåpning", 1650),
-        ("Mekanisk", "Låskasse, sylinder, beslag og dørlukker", 350),
-        ("2-fløyet dør", "To dørblad, koordinator og stangbeslag", 600),
-        ("Adgangskontroll", "Kortleser, elektrisk lås og sentral", 900),
+        ("Dørautomatikk", "Slagdørsautomatikk, åpner og lukker", 1250, TypeAutomatikk),
+        ("Skyvedørsautomatikk", "Skyvedør med sensorer og nødåpning", 1650, TypeSkyvedor),
+        ("Mekanisk", "Låskasse, sylinder, beslag og dørlukker", 350, TypeMekanisk),
+        ("2-fløyet dør", "To dørblad, koordinator og stangbeslag", 600, TypeTofloyet),
+        ("Adgangskontroll", "Kortleser, elektrisk lås og sentral", 900, TypeAdgang),
     ];
+
+    // ---- Telling av dører når et prosjekt gjøres om til serviceavtale ----
+    public const string TypeAutomatikk = "automatikk";
+    public const string TypeSkyvedor = "skyvedor";
+    public const string TypeTofloyet = "tofloyet";
+    public const string TypeAdgang = "adgang";
+    public const string TypeMekanisk = "mekanisk";
+
+    public static readonly (string Kode, string Navn)[] KategoriTyper =
+    [
+        (TypeAutomatikk, "Dører med dørautomatikk"),
+        (TypeSkyvedor, "Dører med skyvedørsautomatikk"),
+        (TypeTofloyet, "Dører med panikkbeslag/koordinator"),
+        (TypeAdgang, "Dører med kortleser"),
+        (TypeMekanisk, "Mekaniske dører uten automatikk"),
+    ];
+
+    /// Typen kategorien teller: satt i Oppsett, ellers gjettet ut fra navnet.
+    public static string? KategoriType(string? type, string navn)
+    {
+        if (type is not null)
+        {
+            return type.Length == 0 ? null : type; // "" = telles ikke
+        }
+        var n = navn.ToLowerInvariant();
+        return n.Contains("skyvedør") ? TypeSkyvedor
+            : n.Contains("automatikk") ? TypeAutomatikk
+            : n.Contains("fløy") || n.Contains("panikk") ? TypeTofloyet
+            : n.Contains("adgang") || n.Contains("kortleser") ? TypeAdgang
+            : n.Contains("mekanisk") ? TypeMekanisk
+            : null;
+    }
+
+    private static readonly string[] MekaniskeTyper = ["Dørlukker", "Dørvrider", "Sylinder", "Mekanisk lås", "Elektrisk sluttstykke"];
+
+    /// Kategoritypene én dør hører til, ut fra servicetypene på beslagene:
+    /// skyvedørsautomatikk; dørautomatikk (slagdør); panikkbeslag/koordinator = 2-fløyet
+    /// (og da ikke mekanisk); kortleser = adgangskontroll i tillegg; mekanisk = lukker,
+    /// vrider, sylinder, lås eller el-sluttstykke uten automatikk.
+    public static HashSet<string> DorTyper(IReadOnlySet<string> typer)
+    {
+        bool Har(string t) => typer.Contains(t);
+        var res = new HashSet<string>();
+        var skyvedor = Har("Skyvedørsautomatikk");
+        var automatikk = Har("Dørautomatikk") && !skyvedor;
+        var tofloyet = Har("Koordinator") || Har("Panikkbeslag");
+        if (skyvedor) res.Add(TypeSkyvedor);
+        if (automatikk) res.Add(TypeAutomatikk);
+        if (tofloyet) res.Add(TypeTofloyet);
+        if (Har("Kortleser")) res.Add(TypeAdgang);
+        if (!skyvedor && !automatikk && !tofloyet && MekaniskeTyper.Any(Har)) res.Add(TypeMekanisk);
+        return res;
+    }
+
+    /// Antall dører per kategoritype på et prosjekt.
+    public static async Task<Dictionary<string, int>> TellDorer(ApplicationDbContext db, int prosjektId)
+    {
+        var typeKart = await ServiceRegelMotor.HentTypeKart(db);
+        var dorer = await db.Dorer.AsNoTracking().Where(d => d.ProsjektId == prosjektId)
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component).ToListAsync();
+        var svar = new Dictionary<string, int>();
+        foreach (var d in dorer)
+        {
+            foreach (var t in DorTyper(ServiceRegelMotor.TyperPaDor(d, typeKart)))
+            {
+                svar[t] = svar.GetValueOrDefault(t) + 1;
+            }
+        }
+        return svar;
+    }
 
     public static readonly (string Navn, string Type, decimal? Pris)[] StandardTillegg =
     [
@@ -89,9 +159,9 @@ public static class ServiceavtaleAntall
         if (!await db.ServicePrisKategorier.AnyAsync())
         {
             var i = 0;
-            foreach (var (navn, besk, pris) in StandardKategorier)
+            foreach (var (navn, besk, pris, type) in StandardKategorier)
             {
-                db.ServicePrisKategorier.Add(new ServicePrisKategori { Navn = navn, Beskrivelse = besk, Pris = pris, Rekkefolge = i++ });
+                db.ServicePrisKategorier.Add(new ServicePrisKategori { Navn = navn, Beskrivelse = besk, Pris = pris, Type = type, Rekkefolge = i++ });
             }
             var j = 0;
             if (!await db.ServiceTilleggMaler.AnyAsync())
@@ -107,7 +177,7 @@ public static class ServiceavtaleAntall
 
     /// Linjene en ny avtale får: kategoriene slik de står i Oppsett nå. Tillegg legges til
     /// fra + på Prising når de trengs.
-    public static async Task<List<ServiceavtaleLinje>> LagLinjer(ApplicationDbContext db, int prosjektId)
+    public static async Task<List<ServiceavtaleLinje>> LagLinjer(ApplicationDbContext db, int prosjektId, Dictionary<string, int>? antall = null)
     {
         await SikreStandard(db);
         var kat = await db.ServicePrisKategorier.AsNoTracking().OrderBy(k => k.Rekkefolge).ThenBy(k => k.Id).ToListAsync();
@@ -115,9 +185,33 @@ public static class ServiceavtaleAntall
         var r = 0;
         foreach (var k in kat)
         {
-            linjer.Add(new ServiceavtaleLinje { ProsjektId = prosjektId, Navn = k.Navn, Beskrivelse = k.Beskrivelse, Pris = k.Pris, StandardPris = k.Pris, Rekkefolge = r++ });
+            var ant = antall is not null && KategoriType(k.Type, k.Navn) is { } kt ? antall.GetValueOrDefault(kt) : 0;
+            linjer.Add(new ServiceavtaleLinje { ProsjektId = prosjektId, Navn = k.Navn, Beskrivelse = k.Beskrivelse, Pris = k.Pris, StandardPris = k.Pris, Antall = ant, Rekkefolge = r++ });
         }
         return linjer;
+    }
+
+    /// Prosjekt som er gjort om til serviceavtale (eller avtale uten noe fra før): blir et
+    /// tilbud med prismodell «Antall», og Prising fylles inn med dørene telt per kategori.
+    /// Avtaler som allerede har runder, pris eller prislinjer, røres ikke.
+    public static async Task<bool> GjorOmTilTilbud(ApplicationDbContext db, Prosjekt p)
+    {
+        if (p.ServicePrismodell == ServiceavtalePris.Antall || p.ServiceGodkjentArspris is not null
+            || await db.Servicerunder.AnyAsync(r => r.ProsjektId == p.Id)
+            || await db.ServiceKategoriPriser.AnyAsync(k => k.ProsjektId == p.Id)
+            || await db.ServiceMinuttLinjer.AnyAsync(k => k.ProsjektId == p.Id))
+        {
+            return false;
+        }
+        p.ServicePrismodell = ServiceavtalePris.Antall;
+        p.ServiceErTilbud = true;
+        p.ServiceGangerPerAr ??= 1;
+        if (!await db.ServiceavtaleLinjer.AnyAsync(l => l.ProsjektId == p.Id))
+        {
+            db.ServiceavtaleLinjer.AddRange(await LagLinjer(db, p.Id, await TellDorer(db, p.Id)));
+        }
+        await db.SaveChangesAsync();
+        return true;
     }
 
     /// Fletter inn {kunde}, {bygg}, {adresse}, {runder} og {pris} i tilbudsteksten (HTML).

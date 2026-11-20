@@ -66,3 +66,37 @@ public class ServiceavtaleAntallTests
         Assert.Equal(["mnd"], ServiceavtaleAntall.Valg(new Prosjekt { Navn = "A", ServiceTilbudValg = " mnd ," }));
     }
 }
+
+// Prosjekt → serviceavtale: dørene telles per kategori ut fra beslagene.
+public class ServiceavtaleTellingTests
+{
+    private static HashSet<string> T(params string[] t) => ServiceavtaleAntall.DorTyper(t.ToHashSet());
+
+    [Fact]
+    public void Automatikk_OgKortleser_GirBegge() =>
+        Assert.Equal(new HashSet<string> { "automatikk", "adgang" }, T("Dørautomatikk", "Kortleser", "Elektrisk sluttstykke"));
+
+    [Fact]
+    public void Skyvedor_ErIkkeSlagdorsautomatikk() =>
+        Assert.Equal(new HashSet<string> { "skyvedor" }, T("Skyvedørsautomatikk", "Dørautomatikk"));
+
+    [Fact]
+    public void Panikkbeslag_ErBare2Floyet() =>
+        Assert.Equal(new HashSet<string> { "tofloyet" }, T("Panikkbeslag", "Dørlukker", "Sylinder"));
+
+    [Fact]
+    public void Kortleser_UtenAutomatikk_ErAdgangOgMekanisk() =>
+        Assert.Equal(new HashSet<string> { "adgang", "mekanisk" }, T("Kortleser", "Elektrisk sluttstykke"));
+
+    [Fact]
+    public void BareLukkerOgVrider_ErMekanisk() =>
+        Assert.Equal(new HashSet<string> { "mekanisk" }, T("Dørlukker", "Dørvrider"));
+
+    [Fact]
+    public void KategoriType_FraNavnOgTom()
+    {
+        Assert.Equal("tofloyet", ServiceavtaleAntall.KategoriType(null, "2-fløyet dør"));
+        Assert.Equal("skyvedor", ServiceavtaleAntall.KategoriType(null, "Skyvedørsautomatikk"));
+        Assert.Null(ServiceavtaleAntall.KategoriType("", "Mekanisk"));
+    }
+}
