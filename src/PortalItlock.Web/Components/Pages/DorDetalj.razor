@@ -856,6 +856,20 @@ else
                                     <button type="button" class="ds-bilde ds-bilde-ny" @onclick="@(() => VelgFane("logg"))">+ Last opp</button>
                                 </div>
                             </div>
+                            @* Merknad: kommer med på beslagslisten og dørskjemaet (MERKNAD, se DorPdfSeksjoner). *@
+                            <div class="ds-seksjon ds-merknad">
+                                <h4>Merknad <span class="ds-merknad-status">@_merknadStatus</span></h4>
+                                @if (_kanRedigereMerknad)
+                                {
+                                    <textarea rows="4" placeholder="Nyttig å vite om døra, f.eks. «Kjør kabel via himling» eller «Dørblad byttes våren 2027». Kommer med på beslagslisten og dørskjemaet."
+                                              value="@_dor.Notater" @oninput="@(e => MerknadEndret((string?)e.Value))" @onblur="LagreMerknad"></textarea>
+                                    <small>Lagres automatisk og kommer med som merknad på beslagslisten og dørskjemaet.</small>
+                                }
+                                else
+                                {
+                                    <p class="ds-merknad-tekst">@(string.IsNullOrWhiteSpace(_dor.Notater) ? "Ingen merknad." : _dor.Notater)</p>
+                                }
+                            </div>
                         </div>
                     </div>
                     break;
@@ -1235,6 +1249,8 @@ else
         }
 
         _notFound = false;
+        _kanRedigereMerknad = await PortalItlock.Web.Services.Tilgang.KanRedigereAsync(TilgangAuth, "prosjekter");
+        _merknadStatus = null;
 
         // Dør på serviceavtale: alt er montert.
         if (_dor.Prosjekt?.Status == ProsjektStatus.Serviceavtale
@@ -1509,6 +1525,46 @@ else
 
         await Db.SaveChangesAsync();
         await LastAsync();
+    }
+
+    private bool _kanRedigereMerknad;
+    private string? _merknadStatus;
+    private CancellationTokenSource? _merknadVent;
+
+    // Lagres et øyeblikk etter at man slutter å skrive, og når feltet forlates.
+    private void MerknadEndret(string? tekst)
+    {
+        if (_dor is null)
+        {
+            return;
+        }
+        _dor.Notater = string.IsNullOrWhiteSpace(tekst) ? null : tekst;
+        _merknadStatus = "Lagrer …";
+        _merknadVent?.Cancel();
+        _merknadVent = new CancellationTokenSource();
+        var token = _merknadVent.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(900, token);
+                await InvokeAsync(async () => { await LagreMerknad(); StateHasChanged(); });
+            }
+            catch (TaskCanceledException)
+            {
+            }
+        });
+    }
+
+    private async Task LagreMerknad()
+    {
+        if (_dor is null || !_kanRedigereMerknad || _merknadStatus is null or "Lagret")
+        {
+            return;
+        }
+        _merknadVent?.Cancel();
+        await Db.SaveChangesAsync();
+        _merknadStatus = "Lagret";
     }
 
     private async Task LastOppMedia(InputFileChangeEventArgs e)
