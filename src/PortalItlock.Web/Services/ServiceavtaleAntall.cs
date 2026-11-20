@@ -206,13 +206,22 @@ public static class ServiceavtaleAntall
     /// Avtaler som allerede har runder, pris eller prislinjer, røres ikke.
     public static async Task<bool> GjorOmTilTilbud(ApplicationDbContext db, Prosjekt p)
     {
-        if (p.ServicePrismodell == ServiceavtalePris.Antall || p.ServiceGodkjentArspris is not null
-            || await db.Servicerunder.AnyAsync(r => r.ProsjektId == p.Id)
-            || await db.ServiceKategoriPriser.AnyAsync(k => k.ProsjektId == p.Id)
-            || await db.ServiceMinuttLinjer.AnyAsync(k => k.ProsjektId == p.Id))
+        if (p.ServicePrismodell == ServiceavtalePris.Antall)
         {
             return false;
         }
+        // Gjort om fra prosjekt nå (ServiceErTilbud satt da statusen ble endret): det nye
+        // gjelder alltid, også om prosjektet har hatt runder før – de beholdes.
+        var fraProsjekt = p.ServiceErTilbud;
+        if (!fraProsjekt && (p.ServiceGodkjentArspris is not null
+            || await db.Servicerunder.AnyAsync(r => r.ProsjektId == p.Id)
+            || await db.ServiceKategoriPriser.AnyAsync(k => k.ProsjektId == p.Id)
+            || await db.ServiceMinuttLinjer.AnyAsync(k => k.ProsjektId == p.Id)))
+        {
+            return false;
+        }
+        p.ServiceGodkjentArspris = null;
+        p.ServiceGodkjentDato = null;
         p.ServicePrismodell = ServiceavtalePris.Antall;
         p.ServiceErTilbud = true;
         p.ServiceGangerPerAr ??= 1;
@@ -222,6 +231,25 @@ public static class ServiceavtaleAntall
         }
         await db.SaveChangesAsync();
         return true;
+    }
+
+    /// Bytter en eksisterende avtale (med runder eller pris fra før) til det nye oppsettet:
+    /// prismodell «Antall», Prising fylt inn med dørene telt per kategori. Avtalen er
+    /// allerede i drift, så den blir ikke et tilbud. Rundene og alt annet beholdes.
+    public static async Task ByttTilNyttOppsett(ApplicationDbContext db, Prosjekt p)
+    {
+        if (p.ServicePrismodell == ServiceavtalePris.Antall)
+        {
+            return;
+        }
+        p.ServicePrismodell = ServiceavtalePris.Antall;
+        p.ServiceErTilbud = false;
+        p.ServiceGangerPerAr ??= 1;
+        if (!await db.ServiceavtaleLinjer.AnyAsync(l => l.ProsjektId == p.Id))
+        {
+            db.ServiceavtaleLinjer.AddRange(await LagLinjer(db, p.Id, await TellDorer(db, p.Id)));
+        }
+        await db.SaveChangesAsync();
     }
 
     /// Fletter inn {kunde}, {bygg}, {adresse}, {runder} og {pris} i tilbudsteksten (HTML).

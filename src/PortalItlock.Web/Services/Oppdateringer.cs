@@ -14,7 +14,13 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
-        new("1.15", new DateOnly(2026, 11, 20),
+        new("1.16", new DateOnly(2026, 11, 20),
+        [
+            new(Type.Bedre, "file-text", "Prosjekt til serviceavtale", "Får alltid det nye oppsettet med Prising og Tilbud. Tidligere runder følger med."),
+            new(Type.Nytt, "sparkle", "Bytt til nytt oppsett", "Eldre serviceavtaler kan få de nye fanene og rundene med én knapp."),
+            new(Type.Bedre, "list", "Annenhver grå rad på mobil", "Arbeidsordre, prosjekter, serviceavtaler og dører, som på PC."),
+        ]),
+        new("1.15",new DateOnly(2026, 11, 20),
         [
             new(Type.Nytt, "tool", "Enklere servicerunder", "Trykk på døren på plantegningen og velg Sjekket eller Avvik. Bilder og byttede deler havner på døren."),
             new(Type.Nytt, "door", "Serviceavtaler som prosjekter", "Dører, plantegninger, FDV, personer og vedlegg er de samme som på prosjektet, og avtalen har egen sjekkliste."),
