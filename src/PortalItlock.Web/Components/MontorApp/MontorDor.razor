@@ -1,0 +1,390 @@
+@page "/app/dor/{Id:int}"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin,Prosjektleder,Montor")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject NavigationManager Nav
+
+<PageTitle>@(_dor is null ? "Dør" : $"Dør {_dor.Dornummer}")</PageTitle>
+
+@* Døra i mobilvisningen, i samme stil som prosjektet og serviceavtalen. Info,
+   beslag, historikk (avvik, driftsmeldinger, servicerunder og byttede deler),
+   bilder og video (ta bilde rett fra telefonen) og dokumenter for varene.
+   Tilbake går dit man kom fra (?fra=/app/...), så man blir i mobilvisningen. *@
+<div class="mp">
+    @if (!_lastet)
+    {
+        <p class="mp-tom">Laster …</p>
+    }
+    else if (_dor is null)
+    {
+        <p class="mp-tom">Fant ikke døra. <a href="@Tilbake">Tilbake</a></p>
+    }
+    else
+    {
+        var d = _dor;
+        <header class="mp-topp">
+            <div class="mp-hode">
+                <a class="mp-ikb" href="@Tilbake" aria-label="Tilbake"><Icon Name="chevron-left" /></a>
+                <div class="mp-tittel">
+                    <h1>Dør @d.Dornummer@(Rom(d) is { } rom ? " · " + rom : "")</h1>
+                    <small>@string.Join(" · ", new[] { d.Prosjekt?.Navn, d.Plantegning?.Navn ?? d.Etasje }.Where(s => !string.IsNullOrWhiteSpace(s)))</small>
+                </div>
+            </div>
+            <div class="mp-tall">
+                <div>
+                    <small>Beslag</small>
+                    <b>@d.Komponenter.Sum(k => k.BeslagAntall) <span>@(ErServiceavtale ? "montert" : $"{d.Komponenter.Where(k => k.MonteresAvOss && k.Montert).Sum(k => k.BeslagAntall)} montert")</span></b>
+                </div>
+                <div>
+                    <small>Åpne saker</small>
+                    <b>@ApneSaker <span>@(ApneSaker == 1 ? "avvik/melding" : "avvik/meldinger")</span></b>
+                </div>
+            </div>
+        </header>
+
+        <nav class="mp-faner" role="tablist" style="grid-template-columns:repeat(5, 1fr)">
+            @foreach (var (key, navn) in new[] { ("info", "Info"), ("beslag", "Beslag"), ("historikk", "Historikk"), ("bilder", "Bilder"), ("dok", "Dok") })
+            {
+                var k = key;
+                <button type="button" role="tab" class="@(_fane == k ? "paa" : "")" aria-selected="@(_fane == k)" @onclick="@(() => VelgFane(k))">@navn</button>
+            }
+        </nav>
+
+        @if (_fane == "info")
+        {
+            @if (!string.IsNullOrWhiteSpace(d.MontorInfo))
+            {
+                <div class="sv-melding" style="background:#eef3fb;color:#1d3f6e"><Icon Name="clipboard" /><span><b>Til montøren:</b> @d.MontorInfo</span></div>
+            }
+            <div class="mp-kort sv-sebra" style="margin-top:0.7rem">
+                @foreach (var (navn, verdi) in Felter(d))
+                {
+                    <div class="mp-rad"><span class="mp-rad-tekst"><small>@navn</small><b>@verdi</b></span></div>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(d.Notater))
+            {
+                <div class="mp-gruppe"><span>Notater</span></div>
+                <p class="sv-notat">@d.Notater</p>
+            }
+            @if (_skjemaer.Count > 0)
+            {
+                <div class="mp-gruppe"><span>Koblingsskjema</span><span>@_skjemaer.Count</span></div>
+                <div class="mp-kort sv-sebra">
+                    @foreach (var s in _skjemaer)
+                    {
+                        <a class="mp-rad" href="@($"/app/kobling/{s.Id}")">
+                            <span class="mp-ik"><Icon Name="link" /></span><span class="mp-rad-tekst"><b>@s.Navn</b><small>Åpne skjemaet</small></span><span class="mp-pil"><Icon Name="chevron-right" /></span>
+                        </a>
+                    }
+                </div>
+            }
+        }
+        else if (_fane == "beslag")
+        {
+            @if (d.Komponenter.Count == 0)
+            {
+                <p class="mp-tom">Ingen beslag er registrert på døra.</p>
+            }
+            <div class="sv-sebra">
+                @foreach (var dk in d.Komponenter.IFastRekkefolge())
+                {
+                    var montert = ErServiceavtale || dk.Montert || !dk.MonteresAvOss;
+                    <div class="mp-beslag sv-beslag" style="cursor:default">
+                        <span class="mp-hake @(montert ? "paa" : "")">@if (montert) {<Icon Name="check" />}</span>
+                        <span class="mp-beslag-tekst">
+                            <b>@(dk.Component?.Type?.Navn ?? dk.Component?.Navn ?? "Beslag")@(dk.Antall > 1 ? $" · {dk.Antall} stk" : "")</b>
+                            <small>@(dk.Component?.Navn ?? "")@(dk.MonteresAvOss ? "" : " · " + dk.LevertAv.Visningsnavn())@(dk.MontertDato is { } md && !ErServiceavtale ? $" · montert {md:dd.MM.yyyy}" : "")</small>
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+        else if (_fane == "historikk")
+        {
+            @if (_historikk.Count == 0)
+            {
+                <p class="mp-tom">Ingen avvik, driftsmeldinger, servicerunder eller byttede deler på døra ennå.</p>
+            }
+            else
+            {
+                <div class="sv-hist" style="padding:0.4rem 0.9rem 1rem">
+                    @foreach (var h in _historikk)
+                    {
+                        <div class="sv-hist-rad sv-hist-@h.Type">
+                            <i></i>
+                            <span><b>@h.Tittel</b><small>@h.Tidspunkt.ToString("dd.MM.yyyy HH:mm")@(h.Under is null ? "" : " · " + h.Under)</small></span>
+                        </div>
+                    }
+                </div>
+            }
+        }
+        else if (_fane == "bilder")
+        {
+            <div class="sv-start">
+                <label class="mp-knapp sv-last-opp">
+                    <Icon Name="camera" />@(_laster ? "Laster opp …" : "Ta bilde eller velg fil")
+                    <InputFile OnChange="LastOpp" accept="image/*,video/*" capture="environment" disabled="@_laster" />
+                </label>
+                @if (_feil is not null)
+                {
+                    <p class="mp-feil" role="alert">@_feil</p>
+                }
+            </div>
+            @if (_media.Count == 0)
+            {
+                <p class="mp-tom">Ingen bilder eller video på døra ennå.</p>
+            }
+            else
+            {
+                <div class="sv-media" style="padding:0.4rem 0.8rem 1.2rem">
+                    @foreach (var m in _media)
+                    {
+                        <a href="@($"/dormedia/{m.Id}")" target="_blank" rel="noopener">
+                            @if (m.ContentType.StartsWith("video", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <span class="sv-video"><Icon Name="play" /></span>
+                            }
+                            else
+                            {
+                                <img src="@($"/dormedia/{m.Id}")" alt="@m.Filnavn" loading="lazy" />
+                            }
+                            <small>@m.OpprettetDato.ToString("dd.MM.yy HH:mm")</small>
+                        </a>
+                    }
+                </div>
+            }
+        }
+        else if (_fane == "dok")
+        {
+            @if (!_dokLastet)
+            {
+                <p class="mp-tom">Laster …</p>
+            }
+            else if (_dok.Count == 0)
+            {
+                <p class="mp-tom">Ingen av varene på døra har dokumenter ennå.</p>
+            }
+            else
+            {
+                <div class="mp-kort sv-sebra" style="margin-top:0.6rem">
+                    @foreach (var x in _dok)
+                    {
+                        <a class="mp-rad" href="@($"/app/dok/{x.Type}/{x.Kilde}/{x.Id}?p={d.ProsjektId}&fra={Uri.EscapeDataString($"/app/dor/{Id}?fane=dok&fra={Uri.EscapeDataString(Tilbake)}")}")">
+                            <span class="mp-ik"><Icon Name="file-text" /></span>
+                            <span class="mp-rad-tekst"><b>@x.Navn</b><small>@x.Vare · @KomponentDokumenter.Navn(x.Type)</small></span>
+                            <span class="mp-pil"><Icon Name="chevron-right" /></span>
+                        </a>
+                    }
+                </div>
+            }
+        }
+
+        <div class="sv-bunnknapper">
+            <button type="button" class="mp-knapp sv-rod" @onclick="@(() => _meldAvvik = true)"><Icon Name="alert-triangle" />Meld avvik</button>
+        </div>
+
+        @if (_meldAvvik)
+        {
+            <MeldAvvikDialog ProsjektId="d.ProsjektId" DorId="d.Id" OnLukk="@(() => _meldAvvik = false)" OnMeldt="AvvikMeldt" />
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [SupplyParameterFromQuery] public string? Fane { get; set; }
+    [SupplyParameterFromQuery(Name = "fra")] public string? Fra { get; set; }
+
+    private sealed record Hist(string Type, DateTime Tidspunkt, string Tittel, string? Under);
+    private sealed record Media(int Id, string ContentType, string Filnavn, DateTime OpprettetDato);
+    private sealed record Skjema(int Id, string Navn);
+    private sealed record DokRad(string Type, string Kilde, int Id, string Navn, string Vare);
+
+    private Dor? _dor;
+    private bool _lastet, _laster, _meldAvvik, _dokLastet;
+    private int? _lastetId;
+    private string _fane = "info";
+    private string? _feil;
+    private int _apneAvvik, _apneMeldinger;
+    private List<Hist> _historikk = [];
+    private List<Media> _media = [];
+    private List<Skjema> _skjemaer = [];
+    private List<DokRad> _dok = [];
+
+    private bool ErServiceavtale => _dor?.Prosjekt?.Status == ProsjektStatus.Serviceavtale;
+    private int ApneSaker => _apneAvvik + _apneMeldinger;
+
+    // Bare lenker inne i mobilvisningen godtas som «tilbake», ellers til prosjektet/avtalen.
+    private string Tilbake => Fra is { } f && f.StartsWith("/app/", StringComparison.Ordinal) && !f.StartsWith("//", StringComparison.Ordinal)
+        ? f
+        : _dor is null ? "/app"
+        : ErServiceavtale ? $"/app/serviceavtale/{_dor.ProsjektId}?fane=dorer" : $"/app/prosjekt/{_dor.ProsjektId}";
+
+    private static string? Rom(Dor d) => !string.IsNullOrWhiteSpace(d.Romnr) ? d.Romnr : !string.IsNullOrWhiteSpace(d.DorTil) ? d.DorTil : null;
+
+    private static IEnumerable<(string, string)> Felter(Dor d)
+    {
+        var liste = new List<(string, string?)>
+        {
+            ("Dørnummer", d.Dornummer),
+            ("Rom / dør til", Rom(d)),
+            ("Etasje", d.Etasje),
+            ("Plantegning", d.Plantegning?.Navn),
+            ("Dørtype", d.Dortype),
+            ("Mål (B × H)", d.MalTekst),
+            ("Slagretning", d.Slagretning),
+            ("Brannklasse", d.Brann),
+            ("Tofløyet", d.ToFloyet ? "Ja" : null),
+        };
+        return liste.Where(x => !string.IsNullOrWhiteSpace(x.Item2)).Select(x => (x.Item1, x.Item2!));
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Fane is "info" or "beslag" or "historikk" or "bilder" or "dok")
+        {
+            _fane = Fane;
+        }
+        if (_lastetId == Id)
+        {
+            return;
+        }
+        _lastetId = Id;
+        await Last();
+        if (_fane == "dok")
+        {
+            await LastDok();
+        }
+        _lastet = true;
+    }
+
+    private async Task Last()
+    {
+        _dor = await Db.Dorer.AsNoTracking()
+            .Include(d => d.Prosjekt)
+            .Include(d => d.Plantegning)
+            .Include(d => d.Komponenter).ThenInclude(k => k.Component).ThenInclude(c => c!.Type)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(d => d.Id == Id);
+        if (_dor is null)
+        {
+            return;
+        }
+
+        _apneAvvik = await Db.Avvik.CountAsync(a => a.DorId == Id && a.Status != AvvikStatus.Godkjent && a.Status != AvvikStatus.Lukket);
+        _apneMeldinger = (await DriftHelper.HentMeldinger(Db, Db.Driftsmeldinger.Where(m => m.DorId == Id))).Count(m => m.ErApen);
+
+        var hist = new List<Hist>();
+        hist.AddRange((await Db.Avvik.AsNoTracking().Where(a => a.DorId == Id)
+                .Select(a => new { a.OpprettetDato, a.Tittel, a.Beskrivelse, a.Status }).ToListAsync())
+            .Select(a => new Hist("avvik", a.OpprettetDato, "Avvik: " + (string.IsNullOrWhiteSpace(a.Tittel) ? Forkort(a.Beskrivelse) : a.Tittel), a.Status.Visningsnavn())));
+        hist.AddRange((await Db.Driftsmeldinger.AsNoTracking().Where(m => m.DorId == Id)
+                .Select(m => new { m.OpprettetDato, m.Tittel, m.Tekst }).ToListAsync())
+            .Select(m => new Hist("melding", m.OpprettetDato, "Driftsmelding: " + (string.IsNullOrWhiteSpace(m.Tittel) ? Forkort(m.Tekst) : m.Tittel), null)));
+        hist.AddRange((await Db.ServicerundeDorer.AsNoTracking()
+                .Where(x => x.DorId == Id && (x.Servicerunde!.FullfortDato != null || x.KontrollertDato != null))
+                .Select(x => new { x.Servicerunde!.Dato, x.KontrollertDato, x.Status, x.Notat }).ToListAsync())
+            .Select(x => x.Status == ServicerundeDorStatus.Avvik
+                ? new Hist("avvik", x.KontrollertDato ?? x.Dato, "Servicerunde: avvik", x.Notat)
+                : new Hist("ok", x.KontrollertDato ?? x.Dato, "Servicerunde: sjekket", string.IsNullOrWhiteSpace(x.Notat) ? null : x.Notat)));
+        hist.AddRange((await Db.ServicerundeDeler.AsNoTracking().Where(x => x.DorId == Id)
+                .Select(x => new { x.Dato, x.Beskrivelse, x.Feil }).ToListAsync())
+            .Select(x => new Hist("byttet", x.Dato, "Byttet: " + x.Beskrivelse, x.Feil)));
+        _historikk = hist.OrderByDescending(h => h.Tidspunkt).ToList();
+
+        _media = await Db.DorMedia.AsNoTracking().Where(m => m.DorId == Id).OrderByDescending(m => m.OpprettetDato)
+            .Select(m => new Media(m.Id, m.ContentType, m.Filnavn, m.OpprettetDato)).ToListAsync();
+        _skjemaer = await Db.KoblingsSkjemaer.AsNoTracking().Where(s => s.DorId == Id)
+            .OrderBy(s => s.Navn).Select(s => new Skjema(s.Id, s.Navn)).ToListAsync();
+    }
+
+    private static string Forkort(string t) => t.Length <= 70 ? t : t[..70].TrimEnd() + "…";
+
+    private async Task VelgFane(string fane)
+    {
+        _fane = fane;
+        if (fane == "dok")
+        {
+            await LastDok();
+        }
+    }
+
+    // Monteringsanvisninger, datablad og FDV for varene på døra (som Dok på prosjektet).
+    private async Task LastDok()
+    {
+        if (_dokLastet || _dor is null)
+        {
+            return;
+        }
+        var varer = _dor.Komponenter.Where(k => k.Component is not null).Select(k => k.Component!).DistinctBy(c => c.Id).ToList();
+        var ider = varer.Select(c => c.Id).ToList();
+        var navn = varer.ToDictionary(c => c.Id, c => c.Navn);
+        var dok = new List<DokRad>();
+        foreach (var (type, kolonne) in new[] { ("montasjeblad", "MontasjebladData"), ("datablad", "DatabladData"), ("fdv", "FdvData") })
+        {
+            foreach (var kid in await Db.KomponenterMedFilAsync(kolonne, ider))
+            {
+                dok.Add(new DokRad(type, "vare", kid, KomponentDokumenter.Navn(type), navn.GetValueOrDefault(kid, "")));
+            }
+        }
+        dok.AddRange((await Db.ComponentMontasjebladDokumenter.AsNoTracking().Where(x => ider.Contains(x.ComponentId)).Select(x => new { x.Id, x.ComponentId, x.Filnavn }).ToListAsync())
+            .Select(x => new DokRad("montasjeblad", "ekstra", x.Id, Path.GetFileNameWithoutExtension(x.Filnavn), navn.GetValueOrDefault(x.ComponentId, ""))));
+        dok.AddRange((await Db.ComponentDatabladDokumenter.AsNoTracking().Where(x => ider.Contains(x.ComponentId)).Select(x => new { x.Id, x.ComponentId, x.Filnavn }).ToListAsync())
+            .Select(x => new DokRad("datablad", "ekstra", x.Id, Path.GetFileNameWithoutExtension(x.Filnavn), navn.GetValueOrDefault(x.ComponentId, ""))));
+        dok.AddRange((await Db.ComponentFdvDokumenter.AsNoTracking().Where(x => ider.Contains(x.ComponentId)).Select(x => new { x.Id, x.ComponentId, x.Filnavn }).ToListAsync())
+            .Select(x => new DokRad("fdv", "ekstra", x.Id, Path.GetFileNameWithoutExtension(x.Filnavn), navn.GetValueOrDefault(x.ComponentId, ""))));
+        _dok = dok.OrderBy(x => Array.IndexOf(KomponentDokumenter.Typer, x.Type)).ThenBy(x => x.Vare).ToList();
+        _dokLastet = true;
+    }
+
+    private async Task LastOpp(InputFileChangeEventArgs e)
+    {
+        _feil = null;
+        var fil = e.File;
+        if (fil.Size > 50_000_000)
+        {
+            _feil = $"«{fil.Name}» er for stor (maks 50 MB).";
+            return;
+        }
+        _laster = true;
+        try
+        {
+            using var buffer = new MemoryStream();
+            await using (var stream = fil.OpenReadStream(maxAllowedSize: 50_000_000))
+            {
+                await stream.CopyToAsync(buffer);
+            }
+            var media = new DorMedia
+            {
+                DorId = Id,
+                Data = buffer.ToArray(),
+                ContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType,
+                Filnavn = fil.Name,
+                Tidspunkt = DorMediaTidspunkt.Etter
+            };
+            Db.DorMedia.Add(media);
+            await Db.SaveChangesAsync();
+            Db.Entry(media).State = EntityState.Detached;
+            _media.Insert(0, new Media(media.Id, media.ContentType, media.Filnavn, media.OpprettetDato));
+        }
+        catch (Exception)
+        {
+            _feil = "Kunne ikke laste opp filen. Prøv igjen.";
+        }
+        finally
+        {
+            _laster = false;
+        }
+    }
+
+    private async Task AvvikMeldt()
+    {
+        _meldAvvik = false;
+        await Last();
+    }
+}
