@@ -122,7 +122,7 @@ public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfL
         var beregning = antallModell ? ServiceavtaleAntall.Beregn(p, linjer) : null;
         var valg = ServiceavtaleAntall.Valg(p);
         var tekst = antallModell
-            ? ServiceavtaleAntall.Flett(string.IsNullOrWhiteSpace(p.ServiceavtaleTekst) ? ServiceavtaleAntall.StandardTekst(org.Navn) : p.ServiceavtaleTekst, p, beregning!)
+            ? ServiceavtaleAntall.Flett(string.IsNullOrWhiteSpace(p.ServiceavtaleTekst) ? ServiceavtaleAntall.StandardTekst(org.Navn, org.Telefon) : p.ServiceavtaleTekst, p, beregning!)
             : string.IsNullOrWhiteSpace(p.ServiceavtaleTekst) ? ServiceavtalePris.StandardTekst(org.Navn, kunde, runder) : p.ServiceavtaleTekst;
         var kontakt = p.Prosjektleder?.Navn ?? (org.ErStandard ? FirmaInfo.Kontaktperson : null);
         var seksjoner = Seksjoner(tekst);
@@ -348,19 +348,23 @@ public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfL
                         ForsideRenderer.Render(col, tekst);
                         col.Item().Height(10);
                     }
-                    col.Item().PaddingTop(6).Element(x => Etikett(x, "Pris", org.Aksent));
-                    col.Item().PaddingTop(4).Element(x => Pristabell(x, linjer, b, valg));
-                    if (valg.Contains(ServiceavtaleAntall.VisSignatur))
+                    // Pris og signatur holdes samlet på samme side.
+                    col.Item().ShowEntire().Column(pris =>
                     {
-                        col.Item().PaddingTop(46).Row(r =>
+                        pris.Item().PaddingTop(6).Element(x => Etikett(x, "Pris", org.Aksent));
+                        pris.Item().PaddingTop(4).Element(x => Pristabell(x, linjer, b, valg));
+                        if (valg.Contains(ServiceavtaleAntall.VisSignatur))
                         {
-                            r.RelativeItem().BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(4)
-                                .Text($"Sted / dato / signatur – {kunde?.Navn ?? "kunde"}").FontSize(8).FontColor(RapportMal.Dempet);
-                            r.ConstantItem(40);
-                            r.RelativeItem().BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(4)
-                                .Text($"Sted / dato / signatur – {org.Navn}").FontSize(8).FontColor(RapportMal.Dempet);
-                        });
-                    }
+                            pris.Item().PaddingTop(46).Row(r =>
+                            {
+                                r.RelativeItem().BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(4)
+                                    .Text($"Sted / dato / signatur – {kunde?.Navn ?? "kunde"}").FontSize(8).FontColor(RapportMal.Dempet);
+                                r.ConstantItem(40);
+                                r.RelativeItem().BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(4)
+                                    .Text($"Sted / dato / signatur – {org.Navn}").FontSize(8).FontColor(RapportMal.Dempet);
+                            });
+                        }
+                    });
                 });
                 page.Footer().Element(x => RapportMal.Bunn(x, org));
             });

@@ -134,15 +134,63 @@ public static class ServiceavtaleAntall
 
     public static string Kr(decimal v) => Math.Round(v).ToString("#,##0", CultureInfo.GetCultureInfo("nb-NO")) + " kr";
 
-    /// Standardtekst på tilbudet når avtalen ikke har sin egen. Kunde, bygg, runder og
-    /// datoer står fast på forsiden, og prisen i tabellen – teksten trenger dem ikke.
-    public static string StandardTekst(string org) =>
-        "<h2>Om avtalen</h2>" +
-        "<p>Takk for forespørselen. Vi har gleden av å gi tilbud på serviceavtale for dører, beslag, automatikk og adgangskontroll.</p>" +
-        "<p>På hver servicerunde kontrollerer, justerer og smører vi utstyret, og retter feil vi finner. Avvik og utført arbeid dokumenteres i en servicerapport etter hver runde.</p>" +
-        "<h3>Forbehold</h3>" +
-        "<ul><li>Avtalen løper i 12 måneder og fornyes automatisk med 3 måneders oppsigelse.</li>" +
-        "<li>Prisene justeres årlig etter konsumprisindeksen.</li>" +
-        "<li>Deler og reparasjoner utover service faktureres etter medgått tid og materiell.</li></ul>" +
-        $"<p>Med vennlig hilsen<br>{System.Net.WebUtility.HtmlEncode(org)}</p>";
+    /// Standardteksten på tilbud for serviceavtale («Service- og vedlikeholdsavtale»).
+    /// Firmanavnet settes inn der det står XXXX AS, og vakttelefonen fra firmaet hvis den finnes.
+    /// Kunde, bygg, runder og datoer står fast på forsiden, og prisen i tabellen på side 2.
+    public static string StandardTekst(string org, string? vakttelefon = null)
+    {
+        var f = System.Net.WebUtility.HtmlEncode(org);
+        var tlf = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(vakttelefon) ? "XXX XX XXX" : vakttelefon);
+        return
+            "<h2>Service- og vedlikeholdsavtale</h2>" +
+            "<p><em>(Gjelder dører og dørmiljø omfattet av avtalen)</em></p>" +
+            "<h3>Omfang</h3>" +
+            "<p>Denne service- og vedlikeholdsavtalen gjelder dører og dørmiljø som er mer merket med dørfunksjonskode «serviceavtale (SA), i Full Kontroll, og er ikke knyttet til prosjektleveranse, montasje, entrepriseforhold eller prosjektforutsetninger.</p>" +
+            "<p>Formålet med avtalen er å sikre at dører, beslag og automatikker:</p>" +
+            "<ul><li>fungerer korrekt og sikkert i daglig bruk</li>" +
+            "<li>opprettholder krav til CE-samsvar, brann og rømning</li>" +
+            "<li>vedlikeholdes i henhold til gjeldende regler, forskrifter og produsentenes anvisninger</li></ul>" +
+            "<h3>Service og vedlikehold – omfatter</h3>" +
+            $"<p>{f} forplikter seg til å utføre forebyggende vedlikehold og grunnservice i henhold til produsentens instruksjoner, gjeldende standarder og FDV.</p>" +
+            "<p>Servicebesøk omfatter normalt følgende arbeider:</p>" +
+            "<ul><li>Gjennomgang og mekanisk justering av skyvedørblader, slagdører og gulvstyringer</li>" +
+            "<li>Justering av dørlukkere og dørautomatikker (åpnehastighet, lukkehastighet, kraft, tider m.m.)</li>" +
+            "<li>Rengjøring og smøring av løpeskinner, drivverk, lås, beslag og bevegelige deler</li>" +
+            "<li>Kontroll og justering av sensorer, sikkerhetsfunksjoner og styreenheter</li>" +
+            "<li>Utskifting og reparasjon av defekte slitedeler innenfor avtalt omfang</li>" +
+            "<li>Funksjonstest av dører, inkludert samspill mellom mekanikk, automatikk, lås og sikkerhetsfunksjoner</li></ul>" +
+            $"<p>Periodisk vedlikehold utføres av {f} sine egne montører, eller av innleide montører direkte underlagt {f}, med nødvendig kompetanse og opplæring for å utføre arbeidet.</p>" +
+            "<h3>CE-merking, brann og rømning</h3>" +
+            "<p>Service og vedlikehold skal bidra til at:</p>" +
+            "<ul><li>CE-merkede dører og automatikker opprettholder forutsetningene for sikker bruk</li>" +
+            "<li>brann- og rømningsdører fungerer som prosjektert og ikke utgjør hinder for rømning</li>" +
+            "<li>sikkerhetsfunksjoner ikke forringes over tid</li></ul>" +
+            "<p>Avtalen omfatter kontroll og justering for å opprettholde funksjon og sikkerhet, men erstatter ikke krav til oppgraderinger eller endringer som følge av nye myndighetskrav.</p>" +
+            "<h3>Vaktordning og responstid</h3>" +
+            $"<p>Vakttelefon: {tlf}</p>" +
+            $"<p>{f} skal være tilgjengelig for kontakt med teknisk personell på dagtid<br>(kl. 07:00/08:00 – 15:00/16:00).</p>" +
+            $"<p>Ved akutt behov for å sikre personer eller bygget, skal {f} stille servicemontør på plass innen 3 timer, der dette er praktisk mulig.</p>" +
+            "<p>Utenom ordinær arbeidstid (døgnservice) utføres kun nødreparasjoner for å sikre personer eller bygget.</p>" +
+            "<p>Omfattende reparasjoner utføres ikke utenom ordinær arbeidstid med mindre dette er særskilt rekvirert.</p>" +
+            "<h3>Feilmeldinger og historikk</h3>" +
+            "<p>Alle feilmeldinger, servicebesøk og utskiftede komponenter loggføres fortløpende i Full Kontroll, slik at full historikk på alle dører i anlegget er tilgjengelig.</p>" +
+            "<h3>Informasjon, avvik og større tiltak</h3>" +
+            $"<p>{f} forplikter seg til å informere eier om:</p>" +
+            "<ul><li>feil, slitasje eller forhold som faller utenfor avtalt serviceomfang</li>" +
+            "<li>anbefalte reparasjoner eller forebyggende tiltak som bør utføres for å sikre tilfredsstillende drift og sikkerhet</li></ul>" +
+            "<p>Større reparasjoner eller utskiftinger utføres kun etter avtale med eier.</p>" +
+            $"<p>Dersom eier velger å ikke gjennomføre anbefalte tiltak som er nødvendige for sikker og forsvarlig drift, forbeholder {f} seg retten til å trekke aktuell dør eller anlegg ut av vedlikeholdsavtalen.</p>" +
+            "<h3>Unntak og avgrensninger</h3>" +
+            "<p>Avtalen omfatter ikke leveranser eller arbeider som følge av endrede forskrifter eller myndighetspålegg.</p>" +
+            $"<ul><li>{f} er kun ansvarlig for utstyr og montasje utført av {f} eller våre samarbeidspartnere.</li>" +
+            "<li>Skader som følge av ytre påvirkning, feil bruk, hærverk eller manglende tilgang omfattes ikke av avtalen.</li></ul>" +
+            "<h3>Kontaktpersoner</h3>" +
+            $"<p>{f} og kunde utveksler oversikt over kontaktpersoner med definerte ansvarsområder for drift, service og varsling.</p>" +
+            "<h3>Rapportering i Full Kontroll</h3>" +
+            "<p>Kunde får tilgang til Full Kontroll via driftslisens og har sanntidsoversikt over dører og servicepunkter.</p>" +
+            "<p>I Full Kontroll vises blant annet:</p>" +
+            "<ul><li>utførte serviceoppgaver i sanntid (24/7)</li>" +
+            "<li>historikk per dør</li>" +
+            "<li>anbefalte tiltak og deler som bør vurderes ved neste service</li></ul>";
+    }
 }
