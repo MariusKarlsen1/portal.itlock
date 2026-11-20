@@ -14,6 +14,10 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.20", new DateOnly(2026, 11, 20),
+        [
+            new(Type.Bedre, "list", "Ryddigere forside på mobil", "Snarveiene står samlet i én liste, så mer får plass uten å scrolle."),
+        ]),
         new("1.19", new DateOnly(2026, 11, 20),
         [
             new(Type.Nytt, "door", "Dørsiden på mobil", "Info, beslag, historikk, bilder og dokumenter, og meld avvik rett fra døra."),
