@@ -125,6 +125,11 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
 
     public sealed record TilkoblingResultat(bool Ok, string? Feilmelding, string? FirmaNavn, string? BrukerNavn);
 
+    // «The employee token cannot be used for this consumer and consumer token»: ansattnøkkelen
+    // er laget for en annen applikasjon enn consumer-tokenet.
+    public static bool ErFeilApplikasjon(string? feilmelding) =>
+        feilmelding?.Contains("cannot be used for this consumer", StringComparison.OrdinalIgnoreCase) == true;
+
     public async Task<TilkoblingResultat> TestTilkoblingAsync(CancellationToken ct = default)
     {
         try
