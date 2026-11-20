@@ -14,6 +14,12 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.24", new DateOnly(2026, 11, 20),
+        [
+            new(Type.Nytt, "shield", "Tofaktor-innlogging", "Kode fra en gratis autentiseringsapp i tillegg til passordet. Slå på under brukermenyen."),
+            new(Type.Nytt, "lock", "Reservekoder og husket enhet", "Åtte reservekoder hvis telefonen er borte, og du kan slippe koden på egen PC i 30 dager."),
+            new(Type.Nytt, "users", "Admin kan kreve tofaktor", "Krev det per rolle under Brukere, og tilbakestill for den som har mistet telefonen."),
+        ]),
         new("1.23", new DateOnly(2026, 11, 20),
         [
             new(Type.Bedre, "edit", "Tydelig markering i koblingsskjema", "Det du markerer blir blått, med ramme og antall. Ctrl + V limer inn der du trykker."),
