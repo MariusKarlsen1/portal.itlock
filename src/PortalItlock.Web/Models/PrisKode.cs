@@ -111,6 +111,15 @@ public class TilbudKodeLinje
 
     // Linjen er montasjetimene (fra montasjekoden). Rigg og drift regnes av disse.
     public bool ErMontasje { get; set; }
+
+    // «Kjøring / transport» under Info (Prototype tilbud-kjoring.html): antall kjøringer
+    // følger montasjetimene ÷ 7,5 (TransportAuto) til antallet endres for hånd.
+    // Per kjøring: Enhet Stk og Antall = kjøringer. Per km: Enhet Km og
+    // Antall = kjøringer × KmPerTur.
+    public bool ErTransport { get; set; }
+    public bool TransportAuto { get; set; }
+    public decimal? KmPerTur { get; set; }
+    public decimal? Kjoringer { get; set; }
 }
 
 // Kjøring og tillegg montøren fører på arbeidsordren (utkjøringstillegg,

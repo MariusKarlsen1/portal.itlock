@@ -393,6 +393,7 @@ else if (_tilbud is not null)
                                         </div>
                                         <p class="tk-mont-hint"><span>Timene regnes av montasjetimene. Timekost og timepris følger montasje.</span></p>
                                     </div>
+                                    @TransportBoks(montTimer)
                                 }
                                 else
                                 {
@@ -403,7 +404,7 @@ else if (_tilbud is not null)
                                     </div>
                                     <p class="tk-mont-hint"><span>Estimert fra varer: @FormatTimer(BeregnetMontasjetimer)</span>@if (TimeprisKilde(_tilbud.Timepris) is { } kilde2) {<span class="tk-tp-kilde">· @kilde2</span>}</p>
                                 }
-                                @{ var andre = KodeLinjer.Where(k => k != MontasjeLinje && k != ProsjektledelseLinje && k != RiggLinje).ToList(); }
+                                @{ var andre = KodeLinjer.Where(k => k != MontasjeLinje && k != ProsjektledelseLinje && k != RiggLinje && !k.ErTransport).ToList(); }
                                 @if (_tilbud.BrukerKodelinjer && andre.Count > 0)
                                 {
                                     <div class="tk-tillegg">
@@ -3580,9 +3581,15 @@ else if (_tilbud is not null)
 
     private void OppdaterKodelinjer()
     {
-        foreach (var l in _tilbud!.KodeLinjer.Where(l => l.FraMontasjetid))
+        foreach (var l in _tilbud!.KodeLinjer.Where(l => l.FraMontasjetid && !l.ErTransport))
         {
             l.Antall = BeregnetMontasjetimer;
+        }
+
+        // Kjøringene følger montasjetimene til antallet er endret for hånd.
+        if (TransportLinje is { TransportAuto: true } tl)
+        {
+            SettTransportTurer(tl, AnbefaltTransport);
         }
 
         KodeLinjeBeregner.Synk(_tilbud, UtprisVarer);
@@ -3892,6 +3899,181 @@ else if (_tilbud is not null)
 
         return decimal.TryParse(tekst, NumberStyles.Number, CultureInfo.InvariantCulture, out var v) && v >= 0 ? v : null;
     }
+
+
+    // ---- Kjøring / transport (Prototype tilbud-kjoring.html) ----
+    // Anbefalt antall kjøringer = montasjetimene ÷ 7,5 timer per dag, rundet opp.
+    private const decimal TransportTimerPerDag = 7.5m;
+
+    private TilbudKodeLinje? TransportLinje => KodeLinjer.FirstOrDefault(l => l.ErTransport);
+
+    private int AnbefaltTransport => (MontasjeLinje?.Antall ?? 0) is var t && t > 0 ? (int)Math.Ceiling(t / TransportTimerPerDag) : 0;
+
+    private static decimal TransportTurer(TilbudKodeLinje l) =>
+        l.Kjoringer ?? (l.Enhet == PrisKodeEnhet.Km ? (l.KmPerTur is > 0 ? Math.Round(l.Antall / l.KmPerTur.Value, 2) : 0) : l.Antall);
+
+    private static void SettTransportTurer(TilbudKodeLinje l, decimal turer)
+    {
+        l.Kjoringer = turer;
+        l.Antall = l.Enhet == PrisKodeEnhet.Km ? turer * (l.KmPerTur ?? 0) : turer;
+    }
+
+    private TilbudKodeLinje NyTransport(bool perKm)
+    {
+        var enhet = perKm ? PrisKodeEnhet.Km : PrisKodeEnhet.Stk;
+        var kode = _prisKoder.FirstOrDefault(k => k.Aktiv && k.Type == PrisKodeType.Kjoring && k.Enhet == enhet);
+        var l = kode is not null
+            ? KodeLinjeBeregner.LinjeFra(kode, 0)
+            : new TilbudKodeLinje { Kode = perKm ? "200" : "210", Navn = "Kjøring", Type = PrisKodeType.Kjoring, Enhet = enhet, Antall = 0 };
+        l.Navn = "Kjøring / transport";
+        l.ErTransport = true;
+        l.TransportAuto = true;
+        l.ErMontasje = false;
+        l.FraMontasjetid = false;
+        return l;
+    }
+
+    private async Task SettTransport(ChangeEventArgs e, string felt)
+    {
+        if (LesTall(e) is not { } v)
+        {
+            return;
+        }
+
+        var linje = TransportLinje;
+        if (linje is null)
+        {
+            if (v == 0)
+            {
+                return;
+            }
+            linje = NyTransport(false);
+            linje.Rekkefolge = NesteRekkefolge();
+            SettTransportTurer(linje, AnbefaltTransport);
+            _tilbud!.KodeLinjer.Add(linje);
+        }
+
+        switch (felt)
+        {
+            case "turer":
+                linje.TransportAuto = v == AnbefaltTransport;
+                SettTransportTurer(linje, v);
+                break;
+            case "km":
+                var turer = TransportTurer(linje);
+                linje.KmPerTur = v;
+                SettTransportTurer(linje, linje.TransportAuto ? AnbefaltTransport : turer);
+                break;
+            case "kost":
+                linje.Kostpris = v;
+                break;
+            case "salg":
+                linje.Salgspris = v;
+                break;
+        }
+
+        // 0 kjøringer: linjen fjernes, så den ikke står med 0 kr på tilbudet.
+        if (felt == "turer" && v == 0)
+        {
+            FjernTransport(linje);
+        }
+
+        await LagreKodelinjer();
+    }
+
+    private void FjernTransport(TilbudKodeLinje linje)
+    {
+        _tilbud!.KodeLinjer.Remove(linje);
+        if (linje.Id != 0)
+        {
+            Db.TilbudKodeLinjer.Remove(linje);
+        }
+    }
+
+    // Per kjøring (fast pris per tur) eller per km (km tur/retur × pris per km).
+    private async Task SettTransportModus(bool perKm)
+    {
+        var linje = TransportLinje;
+        if (linje is null || (linje.Enhet == PrisKodeEnhet.Km) == perKm)
+        {
+            return;
+        }
+        var turer = TransportTurer(linje);
+        var ny = NyTransport(perKm);
+        linje.Enhet = ny.Enhet;
+        linje.Kode = ny.Kode;
+        linje.PrisKodeId = ny.PrisKodeId;
+        linje.Kostpris = ny.Kostpris;
+        linje.Salgspris = ny.Salgspris;
+        SettTransportTurer(linje, turer);
+        await LagreKodelinjer();
+    }
+
+    private async Task BrukAnbefaltTransport()
+    {
+        if (TransportLinje is not { } linje)
+        {
+            return;
+        }
+        linje.TransportAuto = true;
+        SettTransportTurer(linje, AnbefaltTransport);
+        await LagreKodelinjer();
+    }
+
+    private RenderFragment TransportBoks(decimal montTimer) => __builder =>
+    {
+        var tl = TransportLinje;
+        var anb = AnbefaltTransport;
+        var turer = tl is null ? anb : TransportTurer(tl);
+        var perKm = tl?.Enhet == PrisKodeEnhet.Km;
+        var sum = tl is null ? default : KodeLinjeBeregner.Sum(tl, _tilbud!.KodeLinjer, UtprisVarer);
+        var nyKode = tl is null ? NyTransport(false) : null;
+        <div class="tk-arb tk-transport">
+            <div class="tk-arb-h"><span>Kjøring / transport<small>@turer.ToString("0.##", Kultur) @(turer == 1 ? "kjøring" : "kjøringer")</small></span><b>@FormatKrHel(tl is null ? 0 : sum.Salg)</b></div>
+            <div class="tk-transport-anb">
+                <span>Anbefalt: <b>@anb @(anb == 1 ? "kjøring" : "kjøringer")</b></span>
+                <small>@FormatTimer(montTimer) montasje ÷ 7,5 t per dag</small>
+                <span class="tk-transport-sp"></span>
+                @if (tl is not null && !tl.TransportAuto && turer != anb)
+                {
+                    <span class="tk-transport-endret">Endret</span>
+                    <button type="button" class="tk-lenkeknapp" @onclick="BrukAnbefaltTransport">Bruk anbefalt</button>
+                }
+            </div>
+            <div class="tk-ff tk-ff3-mont">
+                <label class="tk-felt">Antall kjøringer<span class="input-suffix-wrap"><input inputmode="decimal" value="@turer.ToString("0.##", CultureInfo.InvariantCulture)" @onchange="@(e => SettTransport(e, "turer"))" /><span class="input-suffix">stk.</span></span></label>
+                <div class="tk-felt">Prisen regnes
+                    <span class="tk-transport-seg" role="group" aria-label="Prisen regnes">
+                        <button type="button" class="@(!perKm ? "pa" : "")" disabled="@(tl is null)" @onclick="@(() => SettTransportModus(false))">Per kjøring</button>
+                        <button type="button" class="@(perKm ? "pa" : "")" disabled="@(tl is null)" @onclick="@(() => SettTransportModus(true))">Per km</button>
+                    </span>
+                </div>
+                @if (perKm)
+                {
+                    <label class="tk-felt">Km tur/retur<span class="input-suffix-wrap"><input inputmode="decimal" placeholder="0" value="@(tl!.KmPerTur?.ToString("0.##", CultureInfo.InvariantCulture))" @onchange="@(e => SettTransport(e, "km"))" /><span class="input-suffix">km</span></span></label>
+                }
+                else
+                {
+                    <span></span>
+                }
+            </div>
+            <div class="tk-ff tk-ff3-mont">
+                <label class="tk-felt">@(perKm ? "Kost per km" : "Kost per kjøring")<span class="input-suffix-wrap"><input inputmode="decimal" value="@((tl?.Kostpris ?? nyKode!.Kostpris).ToString("0.##", CultureInfo.InvariantCulture))" @onchange="@(e => SettTransport(e, "kost"))" /><span class="input-suffix">kr</span></span></label>
+                <label class="tk-felt">@(perKm ? "Pris per km" : "Pris per kjøring")<span class="input-suffix-wrap"><input inputmode="decimal" value="@((tl?.Salgspris ?? nyKode!.Salgspris).ToString("0.##", CultureInfo.InvariantCulture))" @onchange="@(e => SettTransport(e, "salg"))" /><span class="input-suffix">kr</span></span></label>
+                <span></span>
+            </div>
+            <p class="tk-mont-hint">
+                @if (tl is null)
+                {
+                    <span>Skriv inn en pris for å legge kjøringen på tilbudet.</span>
+                }
+                else
+                {
+                    <span>@(perKm ? $"{turer.ToString("0.##", Kultur)} × {(tl.KmPerTur ?? 0).ToString("0.##", Kultur)} km × {FormatKrHel(tl.Salgspris)}" : $"{turer.ToString("0.##", Kultur)} × {FormatKrHel(tl.Salgspris)}") · kost @FormatKrHel(sum.Kost) · DB @FormatKrHel(sum.Salg - sum.Kost)</span>
+                }
+            </p>
+        </div>
+    };
 
     // Prosjektledelse: timelinje for arbeid med navnet «Prosjektledelse».
     private TilbudKodeLinje? ProsjektledelseLinje => KodeLinjer.FirstOrDefault(l =>

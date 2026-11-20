@@ -8320,8 +8320,17 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("ErMontasje")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("ErTransport")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("FraMontasjetid")
                         .HasColumnType("INTEGER");
+
+                    b.Property<decimal?>("Kjoringer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("KmPerTur")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Kode")
                         .IsRequired()
@@ -8344,6 +8353,9 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<int>("TilbudId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("TransportAuto")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Type")
