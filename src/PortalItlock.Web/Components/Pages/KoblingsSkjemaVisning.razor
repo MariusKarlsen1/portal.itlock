@@ -12,6 +12,8 @@
 @inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider TilgangAuth
 @inject ApplicationDbContext Db
 @inject IJSRuntime JS
+@inject ITenantContext TenantCtx
+@inject KoblingsUtklipp Utklipp
 @inject NavigationManager Nav
 @inject KoblingsSkjemaPdfService PdfService
 @inject LagretPdfService LagretPdfService
@@ -189,7 +191,8 @@ else if (_skjema is not null)
                     }
                 </div>
                 <span class="ksa-skille"></span>
-                <button class="kun-leder" type="button" title="Slett valgte (Delete)" disabled="@(_valgteSymbolIds.Count == 0 && _selectedSymbol is null && _valgtStrek is null)" @onclick="SlettValgtFraVerktoylinje"><Icon Name="trash" /><span>Slett</span></button>
+                <button type="button" title="@(UtklippInnhold is { } ui ? $"Lim inn {ui.Antall} kopiert (Ctrl + V)" : "Marker og kopier noe først (Ctrl + C)")" disabled="@(UtklippInnhold is null)" @onclick="LimInn"><Icon Name="box" /><span>Lim inn</span></button>
+                <button class="kun-leder" type="button" title="Slett valgte (Delete)" disabled="@(_valgteSymbolIds.Count == 0 && _valgteStrekIds.Count == 0 && _selectedSymbol is null && _valgtStrek is null)" @onclick="SlettValgtFraVerktoylinje"><Icon Name="trash" /><span>Slett</span></button>
             </div>
             @if (_visKomponentSkuff)
             {
@@ -486,20 +489,23 @@ else if (_skjema is not null)
             }
         </div>
 
-        @if (_redigerModus && (_valgteSymbolIds.Count > 1 || _valgtStrek is not null || _tegnStrekModus || _selectedSymbol is not null))
+        @if (_redigerModus && (_valgteSymbolIds.Count + _valgteStrekIds.Count > 1 || _valgtStrek is not null || _tegnStrekModus || _selectedSymbol is not null))
         {
             <div class="kobling-side-panel ksa-panel">
-                @if (_valgteSymbolIds.Count > 1)
+                @if (_valgteSymbolIds.Count + _valgteStrekIds.Count > 1)
                 {
                     <div class="kobling-symbol-panel">
                         <div class="kobling-symbol-panel-header">
-                            <h2>@_valgteSymbolIds.Count valgt</h2>
+                            <h2>@(_valgteSymbolIds.Count + _valgteStrekIds.Count) valgt</h2>
                             <button type="button" class="cancel-button" @onclick="AvbrytValg">Lukk</button>
                         </div>
+                        <p class="ks-panel-hint">@ValgtTekst()</p>
                         <div class="kobling-symbol-panel-actions">
-                            <button type="button" class="save-button" @onclick="DupliserValgte">Dupliser valgte</button>
+                            <button type="button" class="save-button" @onclick="KopierValgte" title="Ctrl + C">Kopier</button>
+                            <button type="button" class="cancel-button" @onclick="DupliserValgte" title="Ctrl + D">Dupliser</button>
                             <button type="button" class="delete-button kun-leder" @onclick="SlettValgte">Slett valgte</button>
                         </div>
+                        <p class="ks-panel-hint">Kopier, åpne et annet skjema og trykk Ctrl + V eller «Lim inn».</p>
                     </div>
                 }
                 else if (_valgtStrek is { ErKabel: true })
@@ -916,6 +922,7 @@ else if (_skjema is not null)
     private KoblingsStrek? _valgtStrek;
     private KoblingsKomponent? _draKomponent;
     private readonly HashSet<int> _valgteSymbolIds = [];
+    private readonly HashSet<int> _valgteStrekIds = [];
     private string? _pdfPreviewUrl;
     private List<LagretPdf> _lagredePdfer = [];
     private string? _pdfSavedMessage;
@@ -1024,6 +1031,7 @@ else if (_skjema is not null)
         _selectedSymbol = null;
         _valgtStrek = null;
         _valgteSymbolIds.Clear();
+        _valgteStrekIds.Clear();
         _undoStack.Clear();
         _redoStack.Clear();
         _redigerModus = false;
@@ -1081,7 +1089,7 @@ else if (_skjema is not null)
     {
         if (firstRender)
         {
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=30");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=31");
             _dotNetRef = DotNetObjectReference.Create(this);
         }
 
@@ -1350,7 +1358,7 @@ else if (_skjema is not null)
                         }
                     </mask>
                     <polyline data-strekid="@(medId ? s.Id : null)" data-kabel="1" points="@PunkterTilSvgPoints(s.PunkterJson)" fill="none"
-                              class="@(_valgtStrek?.Id == s.Id ? "ks-strek-valgt" : null)"
+                              class="@(_valgtStrek?.Id == s.Id || _valgteStrekIds.Contains(s.Id) ? "ks-strek-valgt" : null)"
                               stroke="@KoblingsKabel.KabelFarge" stroke-width="@Inv(7 * LinjeSkala)"
                               stroke-linejoin="round" stroke-linecap="round"
                               mask="@($"url(#{maskId})")"
@@ -1380,7 +1388,7 @@ else if (_skjema is not null)
                                   vector-effect="non-scaling-stroke" />
                     }
                     <polyline data-strekid="@(medId ? s.Id : null)" points="@PunkterTilSvgPoints(s.PunkterJson)" fill="none"
-                              class="@(_valgtStrek?.Id == s.Id ? "ks-strek-valgt" : null)"
+                              class="@(_valgtStrek?.Id == s.Id || _valgteStrekIds.Contains(s.Id) ? "ks-strek-valgt" : null)"
                               stroke="@s.Farge" stroke-width="@Inv(Math.Max(0.6, s.Tykkelse * LinjeSkala))"
                               stroke-linejoin="round" stroke-linecap="round"
                               stroke-dasharray="@(s.Stiplet ? "6,4" : null)"
@@ -1502,7 +1510,7 @@ else if (_skjema is not null)
                 AvbrytValg();
                 break;
             case "kopier":
-                _utklipp = _valgteSymbolIds.Count > 0 ? _valgteSymbolIds.ToList() : _selectedSymbol is { } k ? [k.Id] : _utklipp;
+                await KopierValgte();
                 break;
             case "lim":
                 await LimInn();
@@ -1755,6 +1763,7 @@ else if (_skjema is not null)
         _valgtStrek = _valgtStrek?.Id == s.Id ? null : s;
         _selectedSymbol = null;
         _valgteSymbolIds.Clear();
+        _valgteStrekIds.Clear();
     }
 
     [JSInvokable]
@@ -1768,6 +1777,7 @@ else if (_skjema is not null)
         {
             _selectedSymbol = null;
             _valgteSymbolIds.Clear();
+            _valgteStrekIds.Clear();
         }
 
         StateHasChanged();
@@ -2099,6 +2109,7 @@ else if (_skjema is not null)
     private void AvbrytValg()
     {
         _valgteSymbolIds.Clear();
+        _valgteStrekIds.Clear();
         _selectedSymbol = null;
     }
 
@@ -2206,7 +2217,7 @@ else if (_skjema is not null)
         {
             return;
         }
-        if (_valgteSymbolIds.Count > 1)
+        if (_valgteSymbolIds.Count + _valgteStrekIds.Count > 1 || (_valgteStrekIds.Count > 0 && _selectedSymbol is null))
         {
             await SlettValgte();
         }
@@ -2223,7 +2234,7 @@ else if (_skjema is not null)
     }
 
     [JSInvokable]
-    public void OnRubberBandValgt(string idsJson, bool shiftKey)
+    public void OnRubberBandValgt(string idsJson, bool shiftKey, double x1, double y1, double x2, double y2)
     {
         var ids = JsonSerializer.Deserialize<List<int>>(idsJson) ?? [];
         _valgtStrek = null;
@@ -2231,11 +2242,23 @@ else if (_skjema is not null)
         if (!shiftKey)
         {
             _valgteSymbolIds.Clear();
+            _valgteStrekIds.Clear();
         }
 
         foreach (var id in ids)
         {
             _valgteSymbolIds.Add(id);
+        }
+
+        // Streker og kabler som ligger helt inni boksen blir også markert.
+        const double slakk = 0.5;
+        foreach (var strek in _streker)
+        {
+            var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(strek.PunkterJson) ?? [];
+            if (punkter.Count > 0 && punkter.All(p => p.X >= x1 - slakk && p.X <= x2 + slakk && p.Y >= y1 - slakk && p.Y <= y2 + slakk))
+            {
+                _valgteStrekIds.Add(strek.Id);
+            }
         }
 
         _selectedSymbol = _valgteSymbolIds.Count == 1
@@ -2288,24 +2311,133 @@ else if (_skjema is not null)
         await LagreDb();
     }
 
-    // Ctrl + C / Ctrl + V: kopien legges litt forskjøvet, og neste innliming
-    // forskyves videre fra den forrige.
-    private List<int> _utklipp = [];
+    // Ctrl + C / Ctrl + V: det som er markert (komponenter, kabler, streker og tekst)
+    // legges på brukerens utklippstavle og kan limes inn her eller på et annet skjema.
+    // På samme skjema legges kopien litt forskjøvet; på et annet skjema på samme sted.
+    // Neste innliming forskyves videre fra den forrige.
+    private string? _utklippNokkel;
+    private KoblingsUtklipp.Innhold? _sistInnlimt;
+    private int _innlimtGanger;
 
-    private async Task LimInn()
+    private KoblingsUtklipp.Innhold? UtklippInnhold => _utklippNokkel is null ? null : Utklipp.Hent(_utklippNokkel);
+
+    private string ValgtTekst()
     {
-        var ids = _utklipp.Where(id => _symboler.Any(s => s.Id == id)).ToList();
-        if (ids.Count == 0)
+        var deler = new List<string>();
+        if (_valgteSymbolIds.Count > 0)
+        {
+            deler.Add($"{_valgteSymbolIds.Count} {(_valgteSymbolIds.Count == 1 ? "komponent" : "komponenter")}");
+        }
+        var kabler = _streker.Count(s => _valgteStrekIds.Contains(s.Id) && s.ErKabel);
+        var streker = _valgteStrekIds.Count - kabler;
+        if (kabler > 0)
+        {
+            deler.Add($"{kabler} {(kabler == 1 ? "kabel" : "kabler")}");
+        }
+        if (streker > 0)
+        {
+            deler.Add($"{streker} {(streker == 1 ? "strek" : "streker")}");
+        }
+        return string.Join(", ", deler);
+    }
+
+    private async Task<string> HentUtklippNokkel()
+    {
+        if (_utklippNokkel is null)
+        {
+            var bruker = AuthState is null ? null : (await AuthState).User;
+            _utklippNokkel = KoblingsUtklipp.Nokkel(TenantCtx.Current?.Id,
+                bruker?.FindFirst("BrukerId")?.Value ?? bruker?.Identity?.Name);
+        }
+        return _utklippNokkel;
+    }
+
+    private async Task KopierValgte()
+    {
+        if (_skjema is null)
         {
             return;
         }
-        _valgteSymbolIds.Clear();
-        foreach (var id in ids)
+        var symboler = _symboler.Where(s => _valgteSymbolIds.Contains(s.Id)).ToList();
+        if (symboler.Count == 0 && _selectedSymbol is { } k)
         {
-            _valgteSymbolIds.Add(id);
+            symboler.Add(k);
         }
-        await DupliserValgte();
-        _utklipp = _valgteSymbolIds.ToList();
+        var streker = _streker.Where(s => _valgteStrekIds.Contains(s.Id)).ToList();
+        if (symboler.Count == 0 && streker.Count == 0 && _valgtStrek is { } st)
+        {
+            streker.Add(st);
+        }
+        if (symboler.Count == 0 && streker.Count == 0)
+        {
+            return;
+        }
+        var innhold = new KoblingsUtklipp.Innhold(_skjema.Id, KloneSymboler(symboler), KloneStreker(streker));
+        Utklipp.Sett(await HentUtklippNokkel(), innhold);
+        _sistInnlimt = innhold;
+        _innlimtGanger = 0;
+    }
+
+    private async Task LimInn()
+    {
+        if (_skjema is null || Utklipp.Hent(await HentUtklippNokkel()) is not { Antall: > 0 } innhold)
+        {
+            return;
+        }
+        if (!ReferenceEquals(innhold, _sistInnlimt))
+        {
+            _sistInnlimt = innhold;
+            _innlimtGanger = 0;
+        }
+        _innlimtGanger++;
+        var forskyv = (innhold.FraSkjemaId == _skjema.Id ? 4 : 0) + 4 * (_innlimtGanger - 1);
+
+        PushUndo();
+        var nesteZIndex = (_symboler.Count > 0 ? _symboler.Max(s => s.ZIndex) : 0) + 1;
+        var nyeSymboler = KloneSymboler(innhold.Symboler.ToList());
+        foreach (var n in nyeSymboler)
+        {
+            n.Id = 0;
+            n.KoblingsSkjemaId = _skjema.Id;
+            n.PosX += forskyv;
+            n.PosY += forskyv;
+            n.ZIndex = nesteZIndex++;
+            n.ErLaast = false;
+        }
+        var nyeStreker = KloneStreker(innhold.Streker.ToList());
+        foreach (var n in nyeStreker)
+        {
+            n.Id = 0;
+            n.KoblingsSkjemaId = _skjema.Id;
+            if (forskyv != 0)
+            {
+                var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(n.PunkterJson) ?? [];
+                foreach (var p in punkter)
+                {
+                    p.X += forskyv;
+                    p.Y += forskyv;
+                }
+                n.PunkterJson = JsonSerializer.Serialize(punkter);
+            }
+        }
+        Db.KoblingsSymboler.AddRange(nyeSymboler);
+        Db.KoblingsStreker.AddRange(nyeStreker);
+        await LagreDb();
+
+        _symboler.AddRange(nyeSymboler);
+        _streker.AddRange(nyeStreker);
+        _valgtStrek = null;
+        _valgteSymbolIds.Clear();
+        _valgteStrekIds.Clear();
+        foreach (var n in nyeSymboler)
+        {
+            _valgteSymbolIds.Add(n.Id);
+        }
+        foreach (var n in nyeStreker)
+        {
+            _valgteStrekIds.Add(n.Id);
+        }
+        _selectedSymbol = nyeSymboler.Count == 1 && nyeStreker.Count == 0 ? nyeSymboler[0] : null;
     }
 
     private async Task DupliserValgte()
@@ -2366,7 +2498,7 @@ else if (_skjema is not null)
         {
             return;
         }
-        if (_valgteSymbolIds.Count == 0)
+        if (_valgteSymbolIds.Count == 0 && _valgteStrekIds.Count == 0)
         {
             return;
         }
@@ -2374,15 +2506,22 @@ else if (_skjema is not null)
         PushUndo();
 
         var kilder = _symboler.Where(s => _valgteSymbolIds.Contains(s.Id)).ToList();
+        var streker = _streker.Where(s => _valgteStrekIds.Contains(s.Id)).ToList();
         Db.KoblingsSymboler.RemoveRange(kilder);
+        Db.KoblingsStreker.RemoveRange(streker);
         await LagreDb();
 
         foreach (var s in kilder)
         {
             _symboler.Remove(s);
         }
+        foreach (var s in streker)
+        {
+            _streker.Remove(s);
+        }
 
         _valgteSymbolIds.Clear();
+        _valgteStrekIds.Clear();
         _selectedSymbol = null;
     }
 

@@ -1584,7 +1584,12 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
             }
         });
 
-        dotNetRef.invokeMethodAsync('OnRubberBandValgt', JSON.stringify(matched), e.shiftKey);
+        // Boksen i prosent av lerretet, så streker og kabler inni den også blir markert.
+        const c = canvasEl.getBoundingClientRect();
+        const px = (v) => (v - c.left) / c.width * 100;
+        const py = (v) => (v - c.top) / c.height * 100;
+        dotNetRef.invokeMethodAsync('OnRubberBandValgt', JSON.stringify(matched), e.shiftKey,
+            px(boxRect.left), py(boxRect.top), px(boxRect.right), py(boxRect.bottom));
     });
 
 }
