@@ -14,6 +14,11 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.23", new DateOnly(2026, 11, 20),
+        [
+            new(Type.Bedre, "edit", "Tydelig markering i koblingsskjema", "Det du markerer blir blått, med ramme og antall. Ctrl + V limer inn der du trykker."),
+            new(Type.Nytt, "box", "Nye bilder av komponenter", "ARX dørsentral og StepLock OSDP med alle klemmene."),
+        ]),
         new("1.22", new DateOnly(2026, 11, 20),
         [
             new(Type.Fikset, "check-circle", "Kopier og lim inn i koblingsskjema", "Dra en boks oppå tegningen, også over bakgrunnsbildet. Ctrl + V virker uten å trykke Rediger først."),
