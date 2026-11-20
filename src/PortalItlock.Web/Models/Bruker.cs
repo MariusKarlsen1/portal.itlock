@@ -18,6 +18,18 @@ public class Bruker
     // Sist brukeren logget inn med e-post og passord. Vises i adminportalen.
     public DateTime? SistInnlogget { get; set; }
 
+    // Tofaktor med autentiseringsapp (TOTP, se Services/Tofaktor.cs). Hemmeligheten
+    // lagres kryptert (HemmelighetService). Reservekodene lagres bare som hash.
+    public string? TofaktorHemmelighet { get; set; }
+    public DateTime? TofaktorPaDato { get; set; }
+    public string? TofaktorReservekoder { get; set; }
+    // Siste tidssteg som ble brukt, så samme kode ikke kan brukes to ganger.
+    public long? TofaktorSisteSteg { get; set; }
+    // Byttes når husket enheter skal glemmes (eller tofaktor tilbakestilles).
+    public string? TofaktorStempel { get; set; }
+
+    public bool TofaktorPa => TofaktorPaDato is not null && !string.IsNullOrEmpty(TofaktorHemmelighet);
+
     // Satt når brukeren er slettet, men har timer, arbeidsordre o.l. som må
     // bli liggende. Personen er da fjernet (ingen innlogging, ingen e-post),
     // og vises ikke i brukerlistene, men registreringene står fortsatt på navnet.

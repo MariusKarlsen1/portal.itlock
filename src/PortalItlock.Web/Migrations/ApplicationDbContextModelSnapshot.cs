@@ -1085,6 +1085,21 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("TildelteModuler")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("TofaktorHemmelighet")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("TofaktorPaDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TofaktorReservekoder")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("TofaktorSisteSteg")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TofaktorStempel")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("TopplinjeSnarveier")
                         .HasColumnType("TEXT");
 
@@ -7677,6 +7692,20 @@ namespace PortalItlock.Web.Migrations
                     b.HasIndex("ServicerundeId");
 
                     b.ToTable("ServicerundeSjekkpunkter");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.SikkerhetInnstillinger", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("KrevTofaktorRoller")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SikkerhetInnstillinger");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.SjekklisteMal", b =>

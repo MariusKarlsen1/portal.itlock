@@ -1,0 +1,324 @@
+@page "/tofaktor"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject HemmelighetService Hemmeligheter
+@inject NavigationManager Nav
+
+<PageTitle>Tofaktor-innlogging</PageTitle>
+
+@* Tofaktor med autentiseringsapp (forslag tofaktor-2fa.html). Hemmeligheten lages
+   her, men lagres først når brukeren har skrevet en riktig kode fra appen, så
+   ingen låser seg ute ved å skanne feil. Reservekodene vises bare én gang. *@
+<div class="tf">
+    <div class="side-header">
+        <div class="side-header-venstre">
+            <span class="side-header-ikon"><Icon Name="shield" /></span>
+            <div>
+                <h1>Tofaktor-innlogging</h1>
+                <p class="section-hint">En kode fra appen på telefonen i tillegg til passordet. Gratis, og koden virker også uten nett.</p>
+            </div>
+        </div>
+    </div>
+
+    @if (_bruker is null)
+    {
+        <p class="tf-tekst">@(_somAnnen ? "Du ser portalen som en annen bruker. Tofaktor settes opp av hver enkelt, innlogget som seg selv." : "Laster …")</p>
+    }
+    else
+    {
+        @if (Krav == 1 && !_bruker.TofaktorPa)
+        {
+            <div class="tf-krav"><Icon Name="alert" /><span><b>Organisasjonen krever tofaktor for rollen din.</b> Sett det opp her for å fortsette i portalen.</span></div>
+        }
+
+        <div class="tf-kort">
+            <div class="tf-hode">
+                <span class="tf-ik"><Icon Name="shield" /></span>
+                <div class="tf-hode-tekst">
+                    <h2>Tofaktor med autentiseringsapp</h2>
+                    <small>@_bruker.Epost</small>
+                </div>
+                @if (_bruker.TofaktorPa)
+                {
+                    <span class="tf-pill tf-pa">● På</span>
+                }
+                else if (_nyHemmelighet is not null)
+                {
+                    <span class="tf-pill tf-oppsett">Settes opp</span>
+                }
+                else
+                {
+                    <span class="tf-pill tf-av">Av</span>
+                }
+            </div>
+
+            <div class="tf-inn">
+                @if (_reservekoder is not null)
+                {
+                    <div class="tf-ok"><Icon Name="check" /><span>Tofaktor er slått på. Neste gang du logger inn på en ny enhet, blir du spurt om koden fra appen.</span></div>
+                    <h3>Reservekoder</h3>
+                    <p class="tf-tekst">Bruk én av disse hvis du ikke har telefonen. Hver kode virker én gang. Skriv dem ut eller lagre dem et trygt sted – de vises bare nå.</p>
+                    <div class="tf-reserve">
+                        @foreach (var k in _reservekoder)
+                        {
+                            <span>@k</span>
+                        }
+                    </div>
+                    <div class="tf-knapper">
+                        <a class="knapp-sekundaer" href="@ReserveFil()" download="reservekoder-full-kontroll.txt"><Icon Name="download" />Last ned</a>
+                        <button type="button" class="knapp-primaer" @onclick="FerdigMedReserve"><Icon Name="check" />Jeg har tatt vare på dem</button>
+                    </div>
+                }
+                else if (_nyHemmelighet is not null)
+                {
+                    <div class="tf-steg">
+                        <span class="tf-nr">1</span>
+                        <div>
+                            <h3>Last ned en autentiseringsapp</h3>
+                            <p class="tf-tekst">Gratis i App Store og Google Play. Bruk en app på telefonen du har med deg.</p>
+                            <div class="tf-apper"><span>Google Authenticator</span><span>Microsoft Authenticator</span><span>Authy</span><span>LastPass</span></div>
+                        </div>
+
+                        <span class="tf-nr">2</span>
+                        <div>
+                            <h3>Skann QR-koden</h3>
+                            <p class="tf-tekst">Trykk + i appen og velg «Skann QR-kode».</p>
+                            <div class="tf-qr">
+                                <img src="@_qr" alt="QR-kode for autentiseringsappen" width="186" height="186" />
+                                <div>
+                                    <p class="tf-tekst">Kan du ikke skanne?</p>
+                                    @if (_visNokkel)
+                                    {
+                                        <div class="tf-nokkel">@Tofaktor.Formater(_nyHemmelighet)</div>
+                                        <p class="tf-liten">Velg «Skriv inn nøkkel» i appen. Kontonavn: Full Kontroll (@_bruker.Epost). Tidsbasert.</p>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="tf-lenke" @onclick="@(() => _visNokkel = true)">Vis hemmelig nøkkel for manuelt oppsett</button>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                        <span class="tf-nr">3</span>
+                        <div>
+                            <h3>Skriv inn koden fra appen</h3>
+                            <p class="tf-tekst">Appen viser en ny 6-sifret kode hvert 30. sekund.</p>
+                            <input class="tf-kode" inputmode="numeric" maxlength="7" autocomplete="one-time-code" placeholder="123 456" @bind="_kode" @bind:event="oninput" @onkeydown="@(async e => { if (e.Key == "Enter") await SlaPa(); })" />
+                            @if (_feil is not null)
+                            {
+                                <p class="tf-feil">@_feil</p>
+                            }
+                            <div class="tf-knapper">
+                                <button type="button" class="knapp-primaer" @onclick="SlaPa" disabled="@_lagrer"><Icon Name="check" />Slå på</button>
+                                <button type="button" class="knapp-sekundaer" @onclick="Avbryt">Avbryt</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (_bruker.TofaktorPa)
+                {
+                    <div class="tf-ok"><Icon Name="check" /><span>Tofaktor er på siden @_bruker.TofaktorPaDato!.Value.ToString("dd.MM.yyyy"). Du blir spurt om koden når du logger inn på en ny enhet.</span></div>
+                    <p class="tf-liten">@Tofaktor.AntallReservekoder(_bruker.TofaktorReservekoder) av 8 reservekoder er ubrukt.</p>
+                    @if (_melding is not null)
+                    {
+                        <p class="tf-melding">@_melding</p>
+                    }
+                    <div class="tf-knapper">
+                        <button type="button" class="knapp-sekundaer" @onclick="NyeReservekoder"><Icon Name="lock" />Lag nye reservekoder</button>
+                        <button type="button" class="knapp-sekundaer" @onclick="GlemEnheter"><Icon Name="refresh" />Glem husket enheter</button>
+                        @if (!_krevd)
+                        {
+                            <button type="button" class="knapp-sekundaer tf-rod" @onclick="@(() => { _visSlaAv = true; _kode = ""; _feil = null; })"><Icon Name="x-circle" />Slå av</button>
+                        }
+                    </div>
+                    @if (_krevd)
+                    {
+                        <p class="tf-liten">Organisasjonen krever tofaktor for rollen din, så det kan ikke slås av.</p>
+                    }
+                    @if (_visSlaAv)
+                    {
+                        <div class="tf-slaav">
+                            <b>Slå av tofaktor?</b>
+                            <p class="tf-tekst">Skriv inn koden fra appen for å bekrefte.</p>
+                            <input class="tf-kode" inputmode="numeric" maxlength="7" autocomplete="one-time-code" placeholder="123 456" @bind="_kode" @bind:event="oninput" />
+                            @if (_feil is not null)
+                            {
+                                <p class="tf-feil">@_feil</p>
+                            }
+                            <div class="tf-knapper">
+                                <button type="button" class="knapp-sekundaer tf-rod" @onclick="SlaAv">Slå av</button>
+                                <button type="button" class="knapp-sekundaer" @onclick="@(() => _visSlaAv = false)">Avbryt</button>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <p class="tf-tekst">Slå på for å gjøre kontoen tryggere. Selv om noen får tak i passordet ditt, kommer de ikke inn uten telefonen din.</p>
+                    <div class="tf-knapper">
+                        <button type="button" class="knapp-primaer" @onclick="StartOppsett"><Icon Name="shield" />Slå på tofaktor</button>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [CascadingParameter] private Task<Microsoft.AspNetCore.Components.Authorization.AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "krav")] public int? Krav { get; set; }
+
+    private Bruker? _bruker;
+    private bool _somAnnen, _krevd, _visNokkel, _visSlaAv, _lagrer, _harKravClaim;
+    private string? _nyHemmelighet, _qr, _feil, _melding;
+    private string _kode = "";
+    private List<string>? _reservekoder;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+        var u = (await AuthStateTask).User;
+        _harKravClaim = u.FindFirst(TofaktorInnlogging.KravClaim) is not null;
+        if (u.FindFirst("AdminBrukerId") is not null)
+        {
+            _somAnnen = true;
+            return;
+        }
+        if (!int.TryParse(u.FindFirst("BrukerId")?.Value, out var id))
+        {
+            return;
+        }
+        _bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == id);
+        if (_bruker is not null)
+        {
+            _krevd = (await Tofaktor.KrevdeRollerAsync(Db)).Contains(_bruker.Rolle);
+            if (Krav == 1 && !_bruker.TofaktorPa)
+            {
+                StartOppsett();
+            }
+        }
+    }
+
+    private void StartOppsett()
+    {
+        if (_bruker is null)
+        {
+            return;
+        }
+        _nyHemmelighet = Tofaktor.NyHemmelighet();
+        _qr = Tofaktor.QrDataUri(Tofaktor.OtpUri(_bruker.Epost, _nyHemmelighet));
+        _visNokkel = false;
+        _kode = "";
+        _feil = null;
+        _melding = null;
+    }
+
+    private void Avbryt()
+    {
+        _nyHemmelighet = null;
+        _qr = null;
+        _kode = "";
+        _feil = null;
+    }
+
+    private async Task SlaPa()
+    {
+        if (_bruker is null || _nyHemmelighet is null || _lagrer)
+        {
+            return;
+        }
+        if (!Tofaktor.Sjekk(_nyHemmelighet, _kode, null, out var steg))
+        {
+            _feil = "Koden stemmer ikke. Sjekk at klokka på telefonen er riktig, og skriv koden som står i appen nå.";
+            return;
+        }
+        _lagrer = true;
+        try
+        {
+            var (koder, lagret) = Tofaktor.NyeReservekoder();
+            _bruker.TofaktorHemmelighet = Hemmeligheter.Krypter(_nyHemmelighet);
+            _bruker.TofaktorPaDato = DateTime.Now;
+            _bruker.TofaktorSisteSteg = steg;
+            _bruker.TofaktorReservekoder = lagret;
+            _bruker.TofaktorStempel = Guid.NewGuid().ToString("N");
+            await Db.SaveChangesAsync();
+            _reservekoder = koder;
+            _nyHemmelighet = null;
+            _qr = null;
+            _kode = "";
+            _feil = null;
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+
+    private void FerdigMedReserve()
+    {
+        _reservekoder = null;
+        // Var tofaktor krevd ved innlogging: ny innloggings-cookie uten kravet.
+        if (_harKravClaim)
+        {
+            Nav.NavigateTo("/account/tofaktor-ferdig", forceLoad: true);
+        }
+    }
+
+    private async Task NyeReservekoder()
+    {
+        if (_bruker is null)
+        {
+            return;
+        }
+        var (koder, lagret) = Tofaktor.NyeReservekoder();
+        _bruker.TofaktorReservekoder = lagret;
+        await Db.SaveChangesAsync();
+        _reservekoder = koder;
+        _melding = null;
+    }
+
+    private async Task GlemEnheter()
+    {
+        if (_bruker is null)
+        {
+            return;
+        }
+        _bruker.TofaktorStempel = Guid.NewGuid().ToString("N");
+        await Db.SaveChangesAsync();
+        _melding = "Alle enheter som var husket, må skrive kode neste gang.";
+    }
+
+    private async Task SlaAv()
+    {
+        if (_bruker is null || _krevd)
+        {
+            return;
+        }
+        var hemmelighet = Hemmeligheter.Dekrypter(_bruker.TofaktorHemmelighet);
+        if (hemmelighet is null || !Tofaktor.Sjekk(hemmelighet, _kode, _bruker.TofaktorSisteSteg, out _))
+        {
+            _feil = "Koden stemmer ikke.";
+            return;
+        }
+        Tofaktor.SlaAv(_bruker);
+        await Db.SaveChangesAsync();
+        _visSlaAv = false;
+        _kode = "";
+        _feil = null;
+        _melding = null;
+    }
+
+    private string ReserveFil() =>
+        "data:text/plain;charset=utf-8," + Uri.EscapeDataString(
+            "Reservekoder for Full Kontroll (" + _bruker?.Epost + ")\r\nHver kode virker én gang.\r\n\r\n"
+            + string.Join("\r\n", _reservekoder ?? []) + "\r\n");
+}

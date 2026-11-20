@@ -737,12 +737,36 @@ app.Use(async (context, next) =>
     await next();
 });
 
+// Organisasjonen krever tofaktor for rollen, og brukeren har ikke satt det opp:
+// alle sider sender til /tofaktor til det er gjort (innlogging og Blazor-koblingen
+// er unntatt, ellers kan siden ikke vises).
+app.Use(async (context, next) =>
+{
+    if (context.User.FindFirst(TofaktorInnlogging.KravClaim) is not null && HttpMethods.IsGet(context.Request.Method))
+    {
+        var sti = context.Request.Path.Value ?? "/";
+        var unntatt = sti.StartsWith("/tofaktor", StringComparison.OrdinalIgnoreCase)
+            || sti.StartsWith("/account", StringComparison.OrdinalIgnoreCase)
+            || sti.StartsWith("/login", StringComparison.OrdinalIgnoreCase)
+            || sti.StartsWith("/_blazor", StringComparison.OrdinalIgnoreCase)
+            || sti.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase)
+            || sti.StartsWith("/_content", StringComparison.OrdinalIgnoreCase)
+            || Path.HasExtension(sti);
+        if (!unntatt)
+        {
+            context.Response.Redirect("/tofaktor?krav=1");
+            return;
+        }
+    }
+    await next();
+});
+
 app.UseRateLimiter();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
-app.MapPost("/account/login", async (HttpContext http, TenantOppslagService oppslag) =>
+app.MapPost("/account/login", async (HttpContext http, TenantOppslagService oppslag, IDataProtectionProvider vern) =>
 {
     var form = await http.Request.ReadFormAsync();
     var epost = form["username"].ToString().Trim();
@@ -779,6 +803,19 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
         return Results.Redirect($"/login?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
     }
 
+    // Tofaktor: riktig passord er ikke nok. Brukeren får en kortvarig, kryptert
+    // «venter på kode»-cookie og må skrive koden fra appen (/account/tofaktor),
+    // med mindre denne enheten er husket for brukeren de siste 30 dagene.
+    if (bruker.TofaktorPa && !TofaktorInnlogging.ErHusket(http, vern, tenant.Id, bruker))
+    {
+        TofaktorInnlogging.SettVenter(http, vern, tenant.Id, bruker.Id, safeReturnUrl, 0);
+        return Results.Redirect("/login?tofaktor=1");
+    }
+
+    var maaSetteOppTofaktor = !bruker.TofaktorPa
+        && bruker.Rolle != BrukerRolle.Kunde
+        && await TofaktorInnlogging.ErKrevdAsync(tenant.ConnectionString, bruker.Rolle);
+
     // Eieren skjules i organisasjonen hver gang han logger inn - virker også for
     // organisasjoner som ikke ble gjennomgått ved oppstart (f.eks. prøveperiode).
     if (EpostHjelper.ErLik(bruker.Epost, PortalItlock.Web.Services.FirmaInfo.EierEpost) && !bruker.ErSkjult)
@@ -812,11 +849,107 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
         new("BrukerId", bruker.Id.ToString()),
         new("TenantId", tenant.Id.ToString())
     };
+    if (maaSetteOppTofaktor)
+    {
+        // Organisasjonen krever tofaktor for rollen: brukeren sendes til oppsettet
+        // til det er gjort (se mellomvaren TofaktorKrav lenger ned).
+        claims.Add(new Claim(TofaktorInnlogging.KravClaim, "1"));
+    }
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
 
-    return Results.Redirect(safeReturnUrl);
+    return Results.Redirect(maaSetteOppTofaktor ? "/tofaktor?krav=1" : safeReturnUrl);
 }).AllowAnonymous().RequireRateLimiting("login");
+
+// Steg 2 i innloggingen: koden fra autentiseringsappen (eller en reservekode).
+// Bare den som nettopp har skrevet riktig passord har «venter»-cookien, og den
+// varer i 10 minutter og tåler 5 feil før man må begynne på nytt.
+app.MapPost("/account/tofaktor", async (HttpContext http, PlatformDbContext platformDb, IDataProtectionProvider vern, HemmelighetService hemmeligheter) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var venter = TofaktorInnlogging.LesVenter(http, vern);
+    if (venter is null)
+    {
+        return Results.Redirect("/login?tofaktorUtlopt=1");
+    }
+
+    var tenant = await platformDb.Tenants.FirstOrDefaultAsync(t => t.Id == venter.TenantId && t.Status == TenantStatus.Aktiv);
+    if (tenant is null)
+    {
+        TofaktorInnlogging.FjernVenter(http);
+        return Results.Redirect("/login?stengt=1");
+    }
+
+    await using var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options);
+    var bruker = await db.Brukere.FirstOrDefaultAsync(b => b.Id == venter.BrukerId && b.Aktiv);
+    if (bruker is null || !bruker.TofaktorPa)
+    {
+        TofaktorInnlogging.FjernVenter(http);
+        return Results.Redirect("/login?tofaktorUtlopt=1");
+    }
+
+    var reserve = form["modus"].ToString() == "reserve";
+    var ok = false;
+    if (reserve)
+    {
+        ok = Tofaktor.BrukReservekode(bruker, form["kode"].ToString());
+    }
+    else if (hemmeligheter.Dekrypter(bruker.TofaktorHemmelighet) is { } hemmelighet
+             && Tofaktor.Sjekk(hemmelighet, form["kode"].ToString(), bruker.TofaktorSisteSteg, out var steg))
+    {
+        bruker.TofaktorSisteSteg = steg;
+        ok = true;
+    }
+
+    if (!ok)
+    {
+        if (venter.Feil + 1 >= 5)
+        {
+            TofaktorInnlogging.FjernVenter(http);
+            return Results.Redirect("/login?tofaktorForMange=1");
+        }
+        TofaktorInnlogging.SettVenter(http, vern, venter.TenantId, venter.BrukerId, venter.ReturnUrl, venter.Feil + 1);
+        return Results.Redirect($"/login?tofaktor=1&feil=1{(reserve ? "&reserve=1" : "")}");
+    }
+
+    bruker.SistInnlogget = DateTime.Now;
+    await db.SaveChangesAsync();
+    TofaktorInnlogging.FjernVenter(http);
+    if (form["husk"].ToString() is "on" or "true" or "1")
+    {
+        TofaktorInnlogging.Husk(http, vern, tenant.Id, bruker);
+    }
+
+    var claims = new List<Claim>
+    {
+        new(ClaimTypes.Name, bruker.Navn),
+        new(ClaimTypes.Role, bruker.Rolle.ToString()),
+        new("BrukerId", bruker.Id.ToString()),
+        new("TenantId", tenant.Id.ToString())
+    };
+    var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    return Results.Redirect(venter.ReturnUrl);
+}).AllowAnonymous().RequireRateLimiting("login");
+
+// Etter at brukeren har satt opp tofaktor (krevd av organisasjonen): ny
+// innloggings-cookie uten kravet, så man slipper ut av oppsettsiden.
+app.MapGet("/account/tofaktor-ferdig", async (HttpContext http, ApplicationDbContext db) =>
+{
+    if (!int.TryParse(http.User.FindFirst("BrukerId")?.Value, out var brukerId))
+    {
+        return Results.Redirect("/login");
+    }
+    var bruker = await db.Brukere.AsNoTracking().FirstOrDefaultAsync(b => b.Id == brukerId);
+    if (bruker is null || !bruker.TofaktorPa || http.User.FindFirst(TofaktorInnlogging.KravClaim) is null)
+    {
+        return Results.Redirect("/");
+    }
+    var claims = http.User.Claims.Where(c => c.Type != TofaktorInnlogging.KravClaim).ToList();
+    var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    return Results.Redirect("/");
+}).RequireAuthorization();
 
 app.MapPost("/account/glemt-passord", async (HttpContext http, TenantOppslagService oppslag, EmailService epost) =>
 {
@@ -912,6 +1045,7 @@ app.MapPost("/account/tilbakestill-passord", async (HttpContext http, PlatformDb
 
 app.MapPost("/account/logout", async (HttpContext http) =>
 {
+    TofaktorInnlogging.FjernVenter(http);
     await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     return Results.Redirect("/login");
 }).RequireAuthorization();

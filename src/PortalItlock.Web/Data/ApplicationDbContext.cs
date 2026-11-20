@@ -182,6 +182,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<LagerReservasjon> LagerReservasjoner => Set<LagerReservasjon>();
     public DbSet<LagerInnstillinger> LagerInnstillinger => Set<LagerInnstillinger>();
     public DbSet<OkonomiInnstillinger> OkonomiInnstillinger => Set<OkonomiInnstillinger>();
+    public DbSet<SikkerhetInnstillinger> SikkerhetInnstillinger => Set<SikkerhetInnstillinger>();
     public DbSet<TilbudBudsjett> TilbudBudsjetter => Set<TilbudBudsjett>();
     public DbSet<ProsjektEtterkalkyle> ProsjektEtterkalkyler => Set<ProsjektEtterkalkyle>();
     public DbSet<ProsjektAkonto> ProsjektAkontoer => Set<ProsjektAkonto>();

@@ -35,6 +35,20 @@
             <div class="br-rolleliste">
                 <div class="pa"><span>Alle brukere</span><small>@_brukere.Count</small></div>
             </div>
+            <div class="br-tofaktor">
+                <b><Icon Name="shield" />Krev tofaktor</b>
+                <small>De som ikke har det, må sette det opp neste gang de logger inn.</small>
+                @foreach (var rolle in StabRoller)
+                {
+                    var r = rolle;
+                    var iRolle = _brukere.Where(b => b.Rolle == r && b.Aktiv).ToList();
+                    <label>
+                        <input type="checkbox" checked="@_krevTofaktor.Contains(r)" @onchange="@(e => VekslKrav(r, e.Value is true))" />
+                        <span>@r.Visningsnavn()</span>
+                        <em>@iRolle.Count(b => b.Tofaktor)/@iRolle.Count</em>
+                    </label>
+                }
+            </div>
             <div class="br-meny-bunn">
                 @foreach (var l in _lisensStatus.Where(l => l.Tildelt > 0 && LisensTypeExtensions.Ansatte.Contains(l.Type)))
                 {
@@ -131,6 +145,10 @@
                                 <span class="rad-navn">
                                     <span class="avatar">@Initialer(b.Navn)</span>
                                     <b>@b.Navn</b>
+                                    @if (b.Tofaktor)
+                                    {
+                                        <span class="br-2fa" title="Tofaktor er på"><Icon Name="shield" />2FA</span>
+                                    }
                                     @if (!b.Aktiv)
                                     {
                                         <span class="deaktivert-merke">Deaktivert</span>
@@ -199,6 +217,10 @@
                                             {
                                                 <button type="button" class="lenke-knapp" @onclick="@(() => NullstillPassord(b))"><Icon Name="lock" />Nullstill passord</button>
                                             }
+                                            @if (b.Tofaktor)
+                                            {
+                                                <button type="button" class="lenke-knapp" title="Brukeren har mistet telefonen: tofaktor slås av, og settes opp på nytt" @onclick="@(() => TilbakestillTofaktor(b))"><Icon Name="shield" />Tilbakestill tofaktor</button>
+                                            }
                                             @if (b.Aktiv)
                                             {
                                                 <button type="button" class="lenke-knapp" @onclick="@(() => SettAktiv(b, false))"><Icon Name="x-circle" />Deaktiver</button>
@@ -247,6 +269,7 @@
         public bool HarPassord { get; set; }
         public int FerieKvote { get; set; }
         public bool Aktiv { get; set; } = true;
+        public bool Tofaktor { get; set; }
         public HashSet<string> Tildelte { get; set; } = [];
         public string? TildelteRaa { get; set; }
     }
@@ -352,8 +375,10 @@
                 FerieKvote = b.FerieKvote
                 , Aktiv = b.Aktiv
                 , TildelteRaa = b.TildelteModuler
+                , Tofaktor = b.TofaktorPaDato != null && b.TofaktorHemmelighet != null
             })
             .ToListAsync();
+        _krevTofaktor = await Tofaktor.KrevdeRollerAsync(Db);
         foreach (var r in _brukere)
         {
             r.Tildelte = ModulTildeling.Les(r.TildelteRaa);
@@ -442,6 +467,41 @@
         _feil = null;
         _melding = $"\"{navn}\" er lagret.";
         _apenId = null;
+        await LoadAsync();
+    }
+
+    private HashSet<BrukerRolle> _krevTofaktor = [];
+
+    private async Task VekslKrav(BrukerRolle rolle, bool krev)
+    {
+        if (krev) _krevTofaktor.Add(rolle); else _krevTofaktor.Remove(rolle);
+        var rad = await Db.SikkerhetInnstillinger.FirstOrDefaultAsync();
+        if (rad is null)
+        {
+            rad = new SikkerhetInnstillinger();
+            Db.SikkerhetInnstillinger.Add(rad);
+        }
+        rad.KrevTofaktorRoller = string.Join(",", _krevTofaktor.OrderBy(r => r));
+        await Db.SaveChangesAsync();
+        _melding = krev
+            ? $"Tofaktor er krevd for {rolle.Visningsnavn().ToLowerInvariant()}. De som ikke har det, setter det opp neste gang de logger inn."
+            : $"Tofaktor er ikke lenger krevd for {rolle.Visningsnavn().ToLowerInvariant()}.";
+        _feil = null;
+    }
+
+    // Mistet telefon: tofaktor slås av, husket enheter glemmes, og brukeren setter
+    // det opp på nytt (krever organisasjonen det, skjer det ved neste innlogging).
+    private async Task TilbakestillTofaktor(BrukerRad rad)
+    {
+        var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == rad.Id);
+        if (bruker is null)
+        {
+            return;
+        }
+        Tofaktor.SlaAv(bruker);
+        await Db.SaveChangesAsync();
+        _melding = $"Tofaktor er tilbakestilt for \"{rad.Navn}\". De logger inn med passord og kan sette opp tofaktor på nytt.";
+        _feil = null;
         await LoadAsync();
     }
 
