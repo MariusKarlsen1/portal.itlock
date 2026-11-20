@@ -8180,6 +8180,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<bool>("VisEnhetspris")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("VisForesporselIPdf")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("VisKodelinjerIPdf")
                         .HasColumnType("INTEGER");
 

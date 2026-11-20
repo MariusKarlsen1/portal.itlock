@@ -32,6 +32,8 @@ public class Tilbud
     public bool VisAlleDorerFraBeslagsliste { get; set; }
     public bool SkjulVarenummerISammendrag { get; set; }
     public bool VisPrisPerDor { get; set; }
+    // Teksten i «Forespørsel / beskrivelse» (Info) står øverst på side 2 i PDF-en.
+    public bool VisForesporselIPdf { get; set; } = true;
     public string? ByggetrinnFilter { get; set; }
 
     // Opsjonstilbud (TilbudType.Opsjon): hvilke dører som er med (kommaliste

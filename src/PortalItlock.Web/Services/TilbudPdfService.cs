@@ -372,6 +372,13 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
 
                 page.Content().PaddingTop(14).Column(col =>
                 {
+                    if (tilbud.VisForesporselIPdf && !string.IsNullOrWhiteSpace(tilbud.ForesporselBeskrivelse))
+                    {
+                        Etikett(col, "Forespørsel", org.Aksent);
+                        col.Item().PaddingTop(4).Text(tilbud.ForesporselBeskrivelse.Trim()).FontSize(10).LineHeight(1.4f);
+                        col.Item().Height(16);
+                    }
+
                     if (!string.IsNullOrWhiteSpace(tilbud.Forside))
                     {
                         ForsideRenderer.Render(col, tilbud.Forside);
