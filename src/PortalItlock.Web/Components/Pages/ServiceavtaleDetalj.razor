@@ -438,7 +438,7 @@ else if (_prosjekt is not null)
                                 @foreach (var r in _dorRunder)
                                 {
                                     var pa = r.FullfortDato is null;
-                                    <tr @key="r.Id" class="klikk" @onclick="@(() => Nav.NavigateTo(RundeUrl(r.Id)))">
+                                    <tr @key="r.Id" class="klikk" @onclick="@(() => Nav.NavigateTo(pa ? RundeUrl(r.Id) : $"/servicerunder/{r.Id}/enkel"))">
                                         <td><b>@Sesong(r.Dato)</b></td>
                                         <td>@(pa ? $"Startet {r.Dato:dd.MM.yyyy}" : Periode(r.Dato, r.FullfortDato!.Value))</td>
                                         <td>@(r.Montor ?? "–")</td>
@@ -452,17 +452,17 @@ else if (_prosjekt is not null)
                                                 <StatusPill Tekst="Utført" Ikon="check" Farge="gronn" />
                                             }
                                         </td>
-                                        <td class="n"><a class="sa-knapp sa-knapp-liten @(pa ? "sa-knapp-p" : "")" href="@RundeUrl(r.Id)" @onclick:stopPropagation="true">@(pa ? "Fortsett" : "Åpne")</a></td>
+                                        <td class="n"><a class="sa-knapp sa-knapp-liten @(pa ? "sa-knapp-p" : "")" href="@(pa ? RundeUrl(r.Id) : $"/servicerunder/{r.Id}/enkel")" @onclick:stopPropagation="true">@(pa ? "Fortsett" : "Åpne")</a></td>
                                     </tr>
                                 }
                                 @foreach (var r in eldre)
                                 {
-                                    <tr @key="@($"e{r.Id}")" class="klikk" @onclick="@(() => _lesRunde = r)">
+                                    <tr @key="@($"e{r.Id}")" class="klikk" @onclick="@(() => ApneEldre(r))">
                                         <td><b>@Sesong(r.Dato)</b></td>
                                         <td>@r.Dato.ToString("dd.MM.yyyy")</td>
                                         <td>@(r.UtfortAvNavn ?? "–")</td>
                                         <td><StatusPill Tekst="Utført" Ikon="check" Farge="gronn" /></td>
-                                        <td class="n"><button type="button" class="sa-knapp sa-knapp-liten" @onclick="@(() => _lesRunde = r)" @onclick:stopPropagation="true">Åpne</button></td>
+                                        <td class="n"><button type="button" class="sa-knapp sa-knapp-liten" @onclick="@(() => ApneEldre(r))" @onclick:stopPropagation="true">Åpne</button></td>
                                     </tr>
                                 }
                                 @foreach (var p in _planlagteRunder)
@@ -957,6 +957,47 @@ else if (_prosjekt is not null)
     private Dictionary<int, List<LagretPdf>> _lagredePdfer = [];
     private readonly HashSet<int> _utfoldedeRunder = [];
     private RundeRad? _lesRunde;
+
+    // Eldre runde (registrert før dør-for-dør) åpnes i den nye visningen med plantegning og
+    // dører: den får avtalens dører, alle huket av som OK med rundens dato, og er utført.
+    private async Task ApneEldre(RundeRad r)
+    {
+        var runde = await Db.Servicerunder.FirstOrDefaultAsync(x => x.Id == r.Id);
+        if (runde is null)
+        {
+            return;
+        }
+        if (!await Db.ServicerundeDorer.AnyAsync(d => d.ServicerundeId == runde.Id))
+        {
+            var dorer = await Db.Dorer.AsNoTracking().Where(d => d.ProsjektId == ProsjektId)
+                .OrderBy(d => d.Dornummer).ToListAsync();
+            var tegningIder = dorer.Where(d => d.PlantegningId.HasValue).Select(d => d.PlantegningId!.Value).Distinct().ToList();
+            var tegninger = await Db.Plantegninger.AsNoTracking().Where(p => tegningIder.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => p.Navn);
+            var i = 0;
+            foreach (var d in dorer)
+            {
+                Db.ServicerundeDorer.Add(new ServicerundeDor
+                {
+                    ServicerundeId = runde.Id,
+                    DorId = d.Id,
+                    Dornummer = d.Dornummer,
+                    Rom = d.Romnr ?? d.DorTil,
+                    PlantegningId = d.PlantegningId,
+                    PlantegningNavn = d.PlantegningId is { } t ? tegninger.GetValueOrDefault(t) : null,
+                    PosX = d.PosX,
+                    PosY = d.PosY,
+                    Status = ServicerundeDorStatus.Ok,
+                    KontrollertDato = runde.Dato,
+                    Rekkefolge = i++
+                });
+            }
+        }
+        runde.DorForDor = true;
+        runde.FullfortDato ??= runde.Dato;
+        await Db.SaveChangesAsync();
+        Nav.NavigateTo($"/servicerunder/{runde.Id}/enkel");
+    }
     private readonly HashSet<int> _apneSteg = [1, 2];
 
     private DateOnly _nyDato = DateOnly.FromDateTime(DateTime.Today);
