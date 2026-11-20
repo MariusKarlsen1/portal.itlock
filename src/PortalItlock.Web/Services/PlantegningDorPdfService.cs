@@ -142,33 +142,159 @@ public class PlantegningDorPdfService(ApplicationDbContext db, PdfLogo pdfLogo, 
             $"<image xlink:href='data:{plantegning.ContentType};base64,{base64}' href='data:{plantegning.ContentType};base64,{base64}' x='0' y='0' width='{bildeBredde}' height='{bildeHoyde}' preserveAspectRatio='none' />");
 
         var fontSize = radius * 0.95;
+        var funkFont = fontSize * 0.95;
 
-        foreach (var d in dorer)
+        // Plassering uten overlapp: hver dør får én etikett (dørnummer øverst,
+        // funksjonene under). Den legges på nærmeste ledige plass rundt prikken –
+        // først rett over, så under, til siden og skrått, stadig lenger ut. Er den
+        // flyttet unna prikken, går en tynn strek til prikken. Prikkene tegnes til
+        // slutt, så de aldri blir dekket.
+        var punkter = dorer.Select(d =>
         {
-            var cx = (d.PosX!.Value / 100.0) * bildeBredde;
-            var cy = (d.PosY!.Value / 100.0) * bildeHoyde;
-            var farge = StatusFarge[d.Status];
-            var label = string.IsNullOrWhiteSpace(d.Romnr) ? d.Dornummer : d.Romnr;
             var funksjoner = string.Join(", ", d.Funksjoner.IFastRekkefolge()
                 .Where(f => !string.IsNullOrWhiteSpace(f.Forkortelse))
                 .Select(f => f.Forkortelse));
-
-            // Dørnummer/romnr over prikken.
-            AppendSentrertLabel(sb, cx, cy - radius - fontSize * 0.65, label, fontSize, "#292927", "white", "#00000026");
-
-            sb.Append(CultureInfo.InvariantCulture,
-                $"<circle cx='{Inv(cx)}' cy='{Inv(cy)}' r='{Inv(radius)}' fill='{farge}' stroke='white' stroke-width='{Inv(radius * 0.22)}' />");
-
-            // Dørfunksjoner under prikken.
-            if (!string.IsNullOrEmpty(funksjoner))
+            var navn = string.IsNullOrWhiteSpace(d.Romnr) ? d.Dornummer : d.Romnr!;
+            var wNavn = TekstBredde(navn, fontSize);
+            var wFunk = string.IsNullOrEmpty(funksjoner) ? 0 : TekstBredde(funksjoner, funkFont);
+            var hNavn = fontSize * 1.4;
+            var hFunk = string.IsNullOrEmpty(funksjoner) ? 0 : funkFont * 1.4;
+            return new Etikett
             {
-                AppendSentrertLabel(sb, cx, cy + radius + fontSize * 1.35, funksjoner, fontSize * 0.95, "white", ItlockAksent, null);
+                Cx = d.PosX!.Value / 100.0 * bildeBredde,
+                Cy = d.PosY!.Value / 100.0 * bildeHoyde,
+                Farge = StatusFarge[d.Status],
+                Navn = navn,
+                Funksjoner = funksjoner,
+                WNavn = wNavn,
+                WFunk = wFunk,
+                HNavn = hNavn,
+                HFunk = hFunk,
+                W = Math.Max(wNavn, wFunk),
+                H = hNavn + hFunk
+            };
+        }).ToList();
+
+        var luft = radius * 0.35;
+        var plassert = new List<(double X, double Y, double W, double H)>();
+        double Overlapp((double X, double Y, double W, double H) r)
+        {
+            double sum = 0;
+            foreach (var o in plassert)
+            {
+                var ox = Math.Min(r.X + r.W, o.X + o.W) - Math.Max(r.X, o.X) + luft;
+                var oy = Math.Min(r.Y + r.H, o.Y + o.H) - Math.Max(r.Y, o.Y) + luft;
+                if (ox > 0 && oy > 0) sum += ox * oy;
             }
+            foreach (var p in punkter)
+            {
+                var ox = Math.Min(r.X + r.W, p.Cx + radius) - Math.Max(r.X, p.Cx - radius) + luft;
+                var oy = Math.Min(r.Y + r.H, p.Cy + radius) - Math.Max(r.Y, p.Cy - radius) + luft;
+                if (ox > 0 && oy > 0) sum += ox * oy * 4;
+            }
+            // Utenfor tegningen teller også som overlapp.
+            if (r.X < 0) sum += -r.X * r.H;
+            if (r.Y < 0) sum += -r.Y * r.W;
+            if (r.X + r.W > bildeBredde) sum += (r.X + r.W - bildeBredde) * r.H;
+            if (r.Y + r.H > bildeHoyde) sum += (r.Y + r.H - bildeHoyde) * r.W;
+            return sum;
+        }
+
+        // Tette områder først, så dørene med flest naboer får de beste plassene.
+        var rekkefolge = punkter.OrderByDescending(p => punkter.Count(q => Math.Abs(q.Cx - p.Cx) < p.W * 1.5 && Math.Abs(q.Cy - p.Cy) < p.H * 2.5)).ToList();
+        var retninger = new (double Dx, double Dy)[] { (0, -1), (0, 1), (1, 0), (-1, 0), (1, -1), (-1, -1), (1, 1), (-1, 1) };
+        foreach (var e in rekkefolge)
+        {
+            (double X, double Y, double W, double H) best = default;
+            var bestScore = double.MaxValue;
+            var bestRing = 0;
+            for (var ring = 0; ring < 18 && bestScore > 0; ring++)
+            {
+                var avstand = radius * 1.25 + ring * Math.Max(e.H, radius * 2) * 0.75;
+                foreach (var (dx, dy) in retninger)
+                {
+                    // Nærmeste kant av etiketten ligger «avstand» fra midten av prikken.
+                    var x = dx == 0 ? e.Cx - e.W / 2 : e.Cx + dx * (avstand + e.W / 2) - e.W / 2;
+                    var y = dy == 0 ? e.Cy - e.H / 2 : e.Cy + dy * (avstand + e.H / 2) - e.H / 2;
+                    var rekt = (x, y, e.W, e.H);
+                    var overlapp = Overlapp(rekt);
+                    if (overlapp + ring * 0.0001 < bestScore)
+                    {
+                        bestScore = overlapp + ring * 0.0001;
+                        best = rekt;
+                        bestRing = ring;
+                    }
+                    if (overlapp <= 0)
+                    {
+                        bestScore = 0;
+                        break;
+                    }
+                }
+            }
+            e.X = best.X;
+            e.Y = best.Y;
+            e.Strek = bestRing > 0;
+            plassert.Add(best);
+        }
+
+        // 1) streker fra prikk til etikett som er flyttet unna
+        foreach (var e in punkter.Where(e => e.Strek))
+        {
+            var tx = Math.Clamp(e.Cx, e.X, e.X + e.W);
+            var ty = Math.Clamp(e.Cy, e.Y, e.Y + e.H);
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<line x1='{Inv(e.Cx)}' y1='{Inv(e.Cy)}' x2='{Inv(tx)}' y2='{Inv(ty)}' stroke='{ItlockAksent}' stroke-width='{Inv(radius * 0.18)}' stroke-opacity='0.75' />");
+        }
+
+        // 2) etikettene
+        foreach (var e in punkter)
+        {
+            var navnX = e.X + (e.W - e.WNavn) / 2;
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<rect x='{Inv(navnX)}' y='{Inv(e.Y)}' width='{Inv(e.WNavn)}' height='{Inv(e.HNavn)}' fill='white' stroke='#00000040' stroke-width='{Inv(fontSize * 0.06)}' />");
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<text x='{Inv(e.X + e.W / 2)}' y='{Inv(e.Y + e.HNavn - fontSize * 0.36)}' font-size='{Inv(fontSize)}' font-family='Arial, sans-serif' font-weight='bold' fill='#292927' text-anchor='middle'>{System.Net.WebUtility.HtmlEncode(e.Navn)}</text>");
+            if (!string.IsNullOrEmpty(e.Funksjoner))
+            {
+                var fx = e.X + (e.W - e.WFunk) / 2;
+                var fy = e.Y + e.HNavn;
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"<rect x='{Inv(fx)}' y='{Inv(fy)}' width='{Inv(e.WFunk)}' height='{Inv(e.HFunk)}' fill='{ItlockAksent}' />");
+                sb.Append(CultureInfo.InvariantCulture,
+                    $"<text x='{Inv(e.X + e.W / 2)}' y='{Inv(fy + e.HFunk - funkFont * 0.36)}' font-size='{Inv(funkFont)}' font-family='Arial, sans-serif' font-weight='bold' fill='white' text-anchor='middle'>{System.Net.WebUtility.HtmlEncode(e.Funksjoner)}</text>");
+            }
+        }
+
+        // 3) prikkene øverst
+        foreach (var e in punkter)
+        {
+            sb.Append(CultureInfo.InvariantCulture,
+                $"<circle cx='{Inv(e.Cx)}' cy='{Inv(e.Cy)}' r='{Inv(radius)}' fill='{e.Farge}' stroke='white' stroke-width='{Inv(radius * 0.22)}' />");
         }
 
         sb.Append("</svg>");
         return sb.ToString();
     }
+
+    private sealed class Etikett
+    {
+        public double Cx { get; init; }
+        public double Cy { get; init; }
+        public required string Farge { get; init; }
+        public required string Navn { get; init; }
+        public required string Funksjoner { get; init; }
+        public double WNavn { get; init; }
+        public double WFunk { get; init; }
+        public double HNavn { get; init; }
+        public double HFunk { get; init; }
+        public double W { get; init; }
+        public double H { get; init; }
+        public double X { get; set; }
+        public double Y { get; set; }
+        public bool Strek { get; set; }
+    }
+
+    private static double TekstBredde(string tekst, double fontSize) => tekst.Length * fontSize * 0.62 + fontSize * 0.6;
 
     private static void AppendSentrertLabel(StringBuilder sb, double cx, double baselineY, string tekst, double fontSize, string tekstfarge, string bakgrunnsfarge, string? kantfarge)
     {
