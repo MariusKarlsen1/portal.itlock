@@ -137,6 +137,10 @@ else if (_skjema is not null)
         {
             <div class="ks-verktoylinje">
                 <button type="button" class="ks-knapp ks-knapp-primaer" @onclick="StartRedigering"><Icon Name="edit" />Rediger</button>
+                @if (UtklippInnhold is { } kopi)
+                {
+                    <button type="button" class="ks-knapp ks-knapp-hvit" title="Ctrl + V" @onclick="LimInn"><Icon Name="box" />Lim inn kopiert (@kopi.Antall)</button>
+                }
                 @if (!string.IsNullOrEmpty(_savedMessage))
                 {
                     <span class="saved-hint">@_savedMessage</span>
@@ -901,6 +905,11 @@ else if (_skjema is not null)
                       OnSave="LagreKoblingsskjemaPdf" OnClose="@(() => _pdfPreviewUrl = null)" />
 }
 
+@if (_utklippMelding is not null)
+{
+    <div class="ks-utklipp-melding" role="status"><Icon Name="check" />@_utklippMelding</div>
+}
+
 @code {
     [Parameter] public int Id { get; set; }
 
@@ -1055,6 +1064,7 @@ else if (_skjema is not null)
             return;
         }
 
+        await HentUtklippNokkel();
         _valgtProsjektId = _skjema.ProsjektId?.ToString() ?? "";
         _prosjekter = await Db.Prosjekter.OrderBy(p => p.Navn).ToListAsync();
         _lagredePdfer = await LagretPdfService.HentAsync("Koblingsskjema", Id);
@@ -1092,7 +1102,7 @@ else if (_skjema is not null)
     {
         if (firstRender)
         {
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=33");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=34");
             _dotNetRef = DotNetObjectReference.Create(this);
         }
 
@@ -1528,6 +1538,9 @@ else if (_skjema is not null)
                 break;
             case "kopier":
                 await KopierValgte();
+                break;
+            case "alle":
+                MarkerAlle();
                 break;
             case "lim":
                 await LimInn();
@@ -2399,6 +2412,52 @@ else if (_skjema is not null)
         return _utklippNokkel;
     }
 
+    // Kort beskjed nederst på skjermen («Kopiert …», «Limt inn …»).
+    private string? _utklippMelding;
+    private int _meldingNr;
+
+    private async void VisUtklippMelding(string tekst)
+    {
+        var nr = ++_meldingNr;
+        _utklippMelding = tekst;
+        StateHasChanged();
+        await Task.Delay(2600);
+        if (nr == _meldingNr)
+        {
+            _utklippMelding = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static string Beskriv(KoblingsUtklipp.Innhold i)
+    {
+        var deler = new List<string>();
+        if (i.Symboler.Count > 0) deler.Add($"{i.Symboler.Count} {(i.Symboler.Count == 1 ? "komponent" : "komponenter")}");
+        var kabler = i.Streker.Count(s => s.ErKabel);
+        if (kabler > 0) deler.Add($"{kabler} {(kabler == 1 ? "kabel" : "kabler")}");
+        var streker = i.Streker.Count - kabler;
+        if (streker > 0) deler.Add($"{streker} {(streker == 1 ? "strek" : "streker")}");
+        return string.Join(", ", deler);
+    }
+
+    // Ctrl + A: alt på tegningen unntatt låste komponenter (f.eks. bakgrunnsbilde).
+    private void MarkerAlle()
+    {
+        _valgtStrek = null;
+        _visSymbolPanel = false;
+        _valgteSymbolIds.Clear();
+        _valgteStrekIds.Clear();
+        foreach (var s in _symboler.Where(s => !s.ErLaast))
+        {
+            _valgteSymbolIds.Add(s.Id);
+        }
+        foreach (var s in _streker)
+        {
+            _valgteStrekIds.Add(s.Id);
+        }
+        _selectedSymbol = _valgteSymbolIds.Count == 1 && _valgteStrekIds.Count == 0 ? _symboler.First(s => s.Id == _valgteSymbolIds.First()) : null;
+    }
+
     private async Task KopierValgte()
     {
         if (_skjema is null)
@@ -2423,13 +2482,21 @@ else if (_skjema is not null)
         Utklipp.Sett(await HentUtklippNokkel(), innhold);
         _sistInnlimt = innhold;
         _innlimtGanger = 0;
+        VisUtklippMelding($"Kopiert: {Beskriv(innhold)}. Åpne et annet skjema og trykk Ctrl + V.");
     }
 
     private async Task LimInn()
     {
         if (_skjema is null || Utklipp.Hent(await HentUtklippNokkel()) is not { Antall: > 0 } innhold)
         {
+            VisUtklippMelding("Ingenting er kopiert ennå. Marker og trykk Ctrl + C først.");
             return;
+        }
+        // Står skjemaet bare til visning, går det i Rediger først.
+        if (!_redigerModus)
+        {
+            await StartRedigering();
+            _visKomponentSkuff = false;
         }
         if (!ReferenceEquals(innhold, _sistInnlimt))
         {
@@ -2485,6 +2552,7 @@ else if (_skjema is not null)
             _valgteStrekIds.Add(n.Id);
         }
         _selectedSymbol = nyeSymboler.Count == 1 && nyeStreker.Count == 0 ? nyeSymboler[0] : null;
+        VisUtklippMelding($"Limt inn: {Beskriv(innhold)}. Flytt med piltastene.");
     }
 
     private async Task DupliserValgte()

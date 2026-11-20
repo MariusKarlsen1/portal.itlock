@@ -1398,15 +1398,25 @@ export function enableEditorSnarveier(containerEl, dotNetRef) {
         return;
     }
     const handler = (e) => {
-        if (containerEl.dataset.rediger !== '1') {
-            return;
-        }
         const tag = (e.target.tagName || '').toLowerCase();
-        if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) {
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable || !containerEl.isConnected) {
             return;
         }
         const ctrl = e.ctrlKey || e.metaKey;
         const tast = e.key.toLowerCase();
+        if (containerEl.dataset.rediger !== '1') {
+            if (ctrl && tast === 'v' && !window.getSelection()?.toString()) {
+                e.preventDefault();
+                dotNetRef.invokeMethodAsync('OnSnarvei', 'lim');
+            }
+            return;
+        }
+        // Tekst som er markert inne på tegningen (f.eks. etter å ha dratt over merking)
+        // skal ikke stoppe Ctrl + C.
+        const utvalg = window.getSelection();
+        if (utvalg && utvalg.rangeCount && containerEl.contains(utvalg.anchorNode)) {
+            utvalg.removeAllRanges();
+        }
         let kommando = null;
         if (ctrl && tast === 'z') {
             kommando = e.shiftKey ? 'gjorom' : 'angre';
@@ -1418,6 +1428,8 @@ export function enableEditorSnarveier(containerEl, dotNetRef) {
             kommando = 'lim';
         } else if (ctrl && tast === 'd') {
             kommando = 'dupliser';
+        } else if (ctrl && tast === 'a') {
+            kommando = 'alle';
         } else if (!ctrl && !e.altKey) {
             if (tast === 's') {
                 kommando = 'strek';
@@ -1585,6 +1597,7 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
     let startY = 0;
 
     function startBoks(e) {
+        window.getSelection()?.removeAllRanges();
         active = true;
         startX = e.clientX;
         startY = e.clientY;
@@ -1601,9 +1614,16 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         if (e.button !== 0 || canvasEl.dataset.locked === '1' || currentStrekTegning) {
             return;
         }
-        const markerModus = canvasEl.dataset.markerModus === '1';
-        const laast = e.target.closest && e.target.closest('.kobling-symbol-marker-laast');
-        if (!markerModus && (!laast || e.target.closest('.kobling-resize-handle'))) {
+        const markerModus = canvasEl.dataset.markerModus === '1' || e.ctrlKey || e.metaKey;
+        const marker = e.target.closest && e.target.closest('.kobling-symbol-marker');
+        let bakgrunn = !!(marker && marker.classList.contains('kobling-symbol-marker-laast'));
+        if (marker && !bakgrunn && !marker.classList.contains('kobling-symbol-marker-selected')) {
+            // Et bilde som dekker det meste av tegningen er bakgrunn: dra der gir markeringsboks.
+            const m = marker.getBoundingClientRect();
+            const c = canvasEl.getBoundingClientRect();
+            bakgrunn = m.width * m.height > c.width * c.height * 0.45;
+        }
+        if (!markerModus && (!bakgrunn || e.target.closest('.kobling-resize-handle'))) {
             return;
         }
         e.preventDefault();
