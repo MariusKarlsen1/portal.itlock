@@ -156,6 +156,7 @@ else if (_prosjekt is not null)
                 <button type="button" class="@FaneKlasse("pdorer")" @onclick="@(() => _activeTab = "pdorer")"><Icon Name="door" />Dører @if (_dorer.Count > 0) {<em>@_dorer.Count</em>}</button>
                 <button type="button" class="@FaneKlasse("pplan")" @onclick="@(() => _activeTab = "pplan")"><Icon Name="map" />Plantegninger</button>
                 <button type="button" class="@FaneKlasse("pdorid")" @onclick="@(() => _activeTab = "pdorid")">Dør ID</button>
+                <button type="button" class="@FaneKlasse("sjekkliste")" @onclick="@(() => _activeTab = "sjekkliste")"><Icon Name="check-circle" />Sjekkliste @if (_avtalePunkter.Count > 0) {<em>@_avtalePunkter.Count</em>}</button>
                 <button type="button" class="@FaneKlasse("avvik")" @onclick="@(() => _activeTab = "avvik")"><Icon Name="alert" />Driftsmeldinger og avvik @if (ApneAvvikOgMeldinger.Count > 0) {<em class="r">@ApneAvvikOgMeldinger.Count</em>}</button>
                 <button type="button" class="@FaneKlasse("pfdv")" @onclick="@(() => _activeTab = "pfdv")">FDV</button>
                 @if (_naverendeRolle != BrukerRolle.Montor)
@@ -203,6 +204,54 @@ else if (_prosjekt is not null)
         else if (ErAntallModell && _activeTab == "tilbud" && _naverendeRolle != BrukerRolle.Montor)
         {
             <ServiceAntallTilbud ProsjektId="ProsjektId" />
+        }
+        else if (_activeTab == "sjekkliste")
+        {
+            @* Sjekklisten for avtalen: en vanlig liste. Den vises som oversikt når en ny servicerunde startes. *@
+            <section class="sl">
+                <div class="sl-topp">
+                    <div>
+                        <h2>Sjekkliste</h2>
+                        <p>Det som skal sjekkes på avtalen. Lista vises som oversikt når en ny servicerunde startes, så montøren vet hva som skal gås gjennom.</p>
+                    </div>
+                    @if (_avtalePunkter.Count == 0 && _naverendeRolle != BrukerRolle.Montor)
+                    {
+                        <button type="button" class="sa-knapp" @onclick="FyllInnForslag"><Icon Name="sparkle" />Fyll inn forslag</button>
+                    }
+                </div>
+                @if (_sjekklistemal.Count > 0)
+                {
+                    <p class="sl-felles"><Icon Name="info" />I tillegg kommer @_sjekklistemal.Count @(_sjekklistemal.Count == 1 ? "punkt" : "punkter") fra den felles sjekklisten.</p>
+                }
+                @if (_avtalePunkter.Count == 0)
+                {
+                    <p class="sl-tom">Ingen sjekkpunkter ennå. Legg til under, eller trykk «Fyll inn forslag» for punkter ut fra kategoriene på Prising.</p>
+                }
+                else
+                {
+                    <ol class="sl-liste">
+                        @foreach (var p in _avtalePunkter.OrderBy(p => p.Rekkefolge))
+                        {
+                            var punkt = p;
+                            <li @key="punkt.Id">
+                                <span class="sl-boks" aria-hidden="true"></span>
+                                <span class="sl-tekst">@punkt.Tekst</span>
+                                @if (_naverendeRolle != BrukerRolle.Montor)
+                                {
+                                    <button type="button" class="sl-x" title="Fjern punktet" aria-label="@($"Fjern {punkt.Tekst}")" @onclick="@(() => FjernFastPunkt(punkt))">×</button>
+                                }
+                            </li>
+                        }
+                    </ol>
+                }
+                @if (_naverendeRolle != BrukerRolle.Montor)
+                {
+                    <div class="sl-ny">
+                        <input @bind="_nyttFastPunkt" @bind:event="oninput" placeholder="Nytt sjekkpunkt, f.eks. «Brannholdere slipper ved alarm»" @onkeydown="@(async e => { if (e.Key == "Enter") await LeggTilFastPunkt(); })" />
+                        <button type="button" class="sa-knapp sa-knapp-p" disabled="@string.IsNullOrWhiteSpace(_nyttFastPunkt)" @onclick="LeggTilFastPunkt"><Icon Name="plus" />Legg til</button>
+                    </div>
+                }
+            </section>
         }
         else if (_activeTab is "pdorer" or "pplan" or "pdorid" or "pfdv" or "ppersoner" or "pvedlegg")
         {
@@ -622,6 +671,27 @@ else if (_prosjekt is not null)
     // ---- Tilbud serviceavtale (prismodell «Antall») ----
     private bool ErAntallModell => _prosjekt?.ServicePrismodell == ServiceavtalePris.Antall;
 
+    // Forslag til sjekkliste ut fra kategoriene som har antall på Prising.
+    private async Task FyllInnForslag()
+    {
+        var linjer = await Db.ServiceavtaleLinjer.AsNoTracking().Where(l => l.ProsjektId == ProsjektId && !l.ErTillegg && l.Antall > 0).ToListAsync();
+        var typer = (await Db.ServicePrisKategorier.AsNoTracking().ToListAsync())
+            .Where(k => linjer.Any(l => l.Navn == k.Navn))
+            .Select(k => ServiceavtaleAntall.KategoriType(k.Type, k.Navn))
+            .OfType<string>().Distinct().ToList();
+        if (typer.Count == 0)
+        {
+            typer = [.. ServiceavtaleAntall.StandardPunkter.Keys];
+        }
+        foreach (var t in typer)
+        {
+            foreach (var tekst in ServiceavtaleAntall.StandardPunkter[t].Where(x => _avtalePunkter.All(p => p.Tekst != x)))
+            {
+                await LagreFastPunkt(tekst);
+            }
+        }
+    }
+
     private static string ProsjektFane(string fane) => fane switch
     {
         "pdorer" => "dorer",
@@ -1000,7 +1070,7 @@ else if (_prosjekt is not null)
 
         _loadedId = ProsjektId;
         _lasterFerdig = false;
-        _activeTab = Fane is "fdv" ? "rapporter" : Fane is "service" or "dorer" or "plantegninger" or "rapporter" or "prising" or "avvik" or "tillegg" or "tilbud" or "pdorer" or "pplan" or "pdorid" or "pfdv" or "ppersoner" or "pvedlegg" ? Fane : "service";
+        _activeTab = Fane is "fdv" ? "rapporter" : Fane is "service" or "dorer" or "plantegninger" or "rapporter" or "prising" or "avvik" or "tillegg" or "tilbud" or "sjekkliste" or "pdorer" or "pplan" or "pdorid" or "pfdv" or "ppersoner" or "pvedlegg" ? Fane : "service";
         _notFound = false;
         _savedMessage = null;
         NullstillSkjema();

@@ -55,6 +55,16 @@ public static class ServiceavtaleAntall
             : null;
     }
 
+    /// Forslag til sjekkpunkter for avtalen ut fra kategoriene som er i bruk på Prising.
+    public static readonly Dictionary<string, string[]> StandardPunkter = new()
+    {
+        [TypeAutomatikk] = ["Sensorer og sikkerhetsfunksjoner på dørautomatikk", "Åpne-/lukkehastighet og kraft", "Nødåpning og batteri"],
+        [TypeSkyvedor] = ["Sensorer og sikkerhetsfunksjoner på skyvedører", "Løpeskinner og gulvstyringer rengjort og smurt", "Nødåpning og batteri på skyvedører"],
+        [TypeTofloyet] = ["Koordinator", "Panikkbeslag / stangbeslag", "Dørlukkere på begge fløyer"],
+        [TypeAdgang] = ["Kortlesere", "El-sluttstykker og el-låser", "Dørkontakter og sentral"],
+        [TypeMekanisk] = ["Låser og sylindre", "Dørlukkere justert", "Smøring av beslag og hengsler"],
+    };
+
     private static readonly string[] MekaniskeTyper = ["Dørlukker", "Dørvrider", "Sylinder", "Mekanisk lås", "Elektrisk sluttstykke"];
 
     /// Kategoritypene én dør hører til, ut fra servicetypene på beslagene:
