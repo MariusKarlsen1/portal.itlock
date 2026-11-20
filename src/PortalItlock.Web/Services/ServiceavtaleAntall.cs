@@ -105,25 +105,17 @@ public static class ServiceavtaleAntall
         }
     }
 
-    /// Linjene en ny avtale får: kategoriene og tilleggene slik de står i Oppsett nå.
+    /// Linjene en ny avtale får: kategoriene slik de står i Oppsett nå. Tillegg legges til
+    /// fra + på Prising når de trengs.
     public static async Task<List<ServiceavtaleLinje>> LagLinjer(ApplicationDbContext db, int prosjektId)
     {
         await SikreStandard(db);
         var kat = await db.ServicePrisKategorier.AsNoTracking().OrderBy(k => k.Rekkefolge).ThenBy(k => k.Id).ToListAsync();
-        var till = await db.ServiceTilleggMaler.AsNoTracking().OrderBy(k => k.Rekkefolge).ThenBy(k => k.Id).ToListAsync();
         var linjer = new List<ServiceavtaleLinje>();
         var r = 0;
         foreach (var k in kat)
         {
             linjer.Add(new ServiceavtaleLinje { ProsjektId = prosjektId, Navn = k.Navn, Beskrivelse = k.Beskrivelse, Pris = k.Pris, StandardPris = k.Pris, Rekkefolge = r++ });
-        }
-        foreach (var t in till)
-        {
-            linjer.Add(new ServiceavtaleLinje
-            {
-                ProsjektId = prosjektId, ErTillegg = true, Navn = t.Navn, TilleggType = t.Type, Pris = t.Pris ?? 0, StandardPris = t.Pris,
-                Antall = t.Type == ServiceavtaleLinje.PerKm ? 0 : 1, Rekkefolge = r++
-            });
         }
         return linjer;
     }
@@ -142,11 +134,15 @@ public static class ServiceavtaleAntall
 
     public static string Kr(decimal v) => Math.Round(v).ToString("#,##0", CultureInfo.GetCultureInfo("nb-NO")) + " kr";
 
-    /// Standardtekst på tilbudet når avtalen ikke har sin egen.
+    /// Standardtekst på tilbudet når avtalen ikke har sin egen. Kunde, bygg, runder og
+    /// datoer står fast på forsiden, og prisen i tabellen – teksten trenger dem ikke.
     public static string StandardTekst(string org) =>
-        "<h2>Tilbud på serviceavtale</h2>" +
-        "<p>Vi har gleden av å gi tilbud på serviceavtale for {bygg}, {adresse}.</p>" +
-        "<p>Avtalen omfatter {runder} servicerunder i året. På hver runde kontrollerer, justerer og smører vi dører, beslag, automatikk og adgangskontroll, og retter feil vi finner. Avvik og utført arbeid dokumenteres i en servicerapport etter hver runde.</p>" +
-        "<p><strong>Pris for avtalen er {pris} per år eks. mva.</strong></p>" +
+        "<h2>Om avtalen</h2>" +
+        "<p>Takk for forespørselen. Vi har gleden av å gi tilbud på serviceavtale for dører, beslag, automatikk og adgangskontroll.</p>" +
+        "<p>På hver servicerunde kontrollerer, justerer og smører vi utstyret, og retter feil vi finner. Avvik og utført arbeid dokumenteres i en servicerapport etter hver runde.</p>" +
+        "<h3>Forbehold</h3>" +
+        "<ul><li>Avtalen løper i 12 måneder og fornyes automatisk med 3 måneders oppsigelse.</li>" +
+        "<li>Prisene justeres årlig etter konsumprisindeksen.</li>" +
+        "<li>Deler og reparasjoner utover service faktureres etter medgått tid og materiell.</li></ul>" +
         $"<p>Med vennlig hilsen<br>{System.Net.WebUtility.HtmlEncode(org)}</p>";
 }

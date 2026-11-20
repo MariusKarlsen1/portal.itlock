@@ -135,6 +135,11 @@ public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfL
             ("Kontaktperson", kontakt)
         };
 
+        if (beregning is not null)
+        {
+            return TilbudMedForside(p, org, linjer, beregning, valg, tekst);
+        }
+
         var dokument = Document.Create(container =>
         {
             container.Page(page =>
@@ -216,12 +221,159 @@ public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfL
         return dokument.GeneratePdf();
     }
 
+    // Tilbud serviceavtale (prismodell «Antall»): enkel forside som på vanlige tilbud –
+    // grå kolonne til venstre med firma og kontakt, tittel, bygg, «Til» og datoer til høyre,
+    // uten pris. Side 2: teksten og forbeholdene, pristabellen og signatur.
+    private byte[] TilbudMedForside(Prosjekt p, RapportProfil org, List<ServiceavtaleLinje> linjer,
+        ServiceavtaleAntall.Beregning b, HashSet<string> valg, string tekst)
+    {
+        var gra = Color.FromHex("#F4F5F6");
+        var kunde = p.Kunde;
+        var kundeAdresse = kunde is null ? null : string.Join(", ", new[] { kunde.Adresse, string.Join(" ", new[] { kunde.Postnr, kunde.Sted }.Where(x => !string.IsNullOrWhiteSpace(x))) }.Where(x => !string.IsNullOrWhiteSpace(x)));
+        var kontaktNavn = p.Prosjektleder?.Navn ?? (org.ErStandard ? FirmaInfo.Kontaktperson : null);
+        var kontaktEpost = p.Prosjektleder?.Epost ?? org.Epost;
+        var dato = NorskTid.Idag;
+        var nummer = $"SA-{dato.Year}-{p.Id:000}";
+        var runder = b.Runder == 1 ? "1 gang i året" : $"{b.Runder} ganger i året";
+        var byggAdresse = string.Join(", ", new[] { p.Adresse, p.Sted }.Where(x => !string.IsNullOrWhiteSpace(x)));
+
+        var dokument = Document.Create(doc =>
+        {
+            doc.Page(page =>
+            {
+                page.Size(PageSizes.A4);
+                page.Margin(0);
+                page.DefaultTextStyle(x => x.FontSize(10).FontColor(PdfStil.Ink));
+                page.Content().Row(row =>
+                {
+                    row.ConstantItem(160).Background(gra).PaddingVertical(42).PaddingHorizontal(20).Column(kol =>
+                    {
+                        kol.Item().Text(org.Navn).FontSize(18).Bold().FontColor(org.Aksent).LineHeight(1.1f);
+                        kol.Item().ExtendVertical().AlignBottom().Column(bunn =>
+                        {
+                            if (!string.IsNullOrWhiteSpace(kontaktNavn))
+                            {
+                                bunn.Item().Element(x => Etikett(x, "Kontaktperson", org.Aksent));
+                                bunn.Item().PaddingTop(2).Text(kontaktNavn).FontSize(9.5f).SemiBold();
+                                if (!string.IsNullOrWhiteSpace(org.Telefon))
+                                {
+                                    bunn.Item().Text(org.Telefon).FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                                }
+                                if (!string.IsNullOrWhiteSpace(kontaktEpost))
+                                {
+                                    bunn.Item().Text(kontaktEpost).FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                                }
+                                bunn.Item().Height(12);
+                            }
+                            bunn.Item().Element(x => Etikett(x, "Firma", org.Aksent));
+                            bunn.Item().PaddingTop(2).Text(org.Navn).FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                            if (!string.IsNullOrWhiteSpace(org.Adresse))
+                            {
+                                bunn.Item().Text(org.Adresse).FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                            }
+                            if (!string.IsNullOrWhiteSpace(org.OrgNr))
+                            {
+                                bunn.Item().Text($"Org.nr {org.OrgNr}").FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                            }
+                        });
+                    });
+
+                    row.RelativeItem().PaddingVertical(42).PaddingHorizontal(40).Column(kol =>
+                    {
+                        kol.Item().Height(150);
+                        kol.Item().Element(x => Etikett(x, $"Serviceavtale {nummer}", org.Aksent));
+                        kol.Item().PaddingTop(6).Text("Tilbud på serviceavtale").FontSize(28).Bold().LineHeight(1.15f);
+                        kol.Item().PaddingTop(4).Text(p.Navn).FontSize(12).FontColor(Colors.Grey.Darken2);
+                        if (!string.IsNullOrWhiteSpace(byggAdresse))
+                        {
+                            kol.Item().Text(byggAdresse).FontSize(10).FontColor(Colors.Grey.Darken1);
+                        }
+
+                        if (kunde is not null)
+                        {
+                            kol.Item().PaddingTop(56).Column(til =>
+                            {
+                                til.Item().Element(x => Etikett(x, "Til", org.Aksent));
+                                til.Item().PaddingTop(2).Text(kunde.Navn).FontSize(12).SemiBold();
+                                if (!string.IsNullOrWhiteSpace(kundeAdresse))
+                                {
+                                    til.Item().Text(kundeAdresse).FontSize(9).FontColor(Colors.Grey.Darken2);
+                                }
+                            });
+                        }
+
+                        kol.Item().PaddingTop(22).Table(t =>
+                        {
+                            t.ColumnsDefinition(c =>
+                            {
+                                c.RelativeColumn();
+                                c.RelativeColumn();
+                            });
+                            void Felt(string etikett, string verdi) => t.Cell().PaddingBottom(10).Column(c =>
+                            {
+                                c.Item().Element(x => Etikett(x, etikett, org.Aksent));
+                                c.Item().PaddingTop(1).Text(verdi).FontSize(10).SemiBold();
+                            });
+                            Felt("Dato", dato.ToString("dd.MM.yyyy"));
+                            Felt("Gyldig til", dato.AddDays(30).ToString("dd.MM.yyyy"));
+                            Felt("Service", runder);
+                        });
+                        // Forsiden er bare informasjon – prisen står på neste side.
+                    });
+                });
+            });
+
+            doc.Page(page =>
+            {
+                page.Size(PageSizes.A4);
+                page.Margin(2, Unit.Centimetre);
+                page.DefaultTextStyle(x => x.FontSize(10).FontColor(PdfStil.Ink).LineHeight(1.4f));
+                page.Header().Column(col =>
+                {
+                    col.Item().Row(r =>
+                    {
+                        r.RelativeItem().AlignBottom().Text(org.Navn).FontSize(13).Bold().FontColor(org.Aksent);
+                        r.RelativeItem().AlignRight().AlignBottom().Column(c =>
+                        {
+                            c.Item().AlignRight().Text("Tilbud på serviceavtale").FontSize(9).SemiBold();
+                            c.Item().AlignRight().Text($"{nummer} · {p.Navn}").FontSize(7.5f).FontColor(Colors.Grey.Darken1);
+                        });
+                    });
+                    col.Item().PaddingTop(6).BorderBottom(2).BorderColor(org.Aksent);
+                });
+                page.Content().PaddingTop(14).Column(col =>
+                {
+                    if (!string.IsNullOrWhiteSpace(tekst))
+                    {
+                        ForsideRenderer.Render(col, tekst);
+                        col.Item().Height(10);
+                    }
+                    col.Item().PaddingTop(6).Element(x => Etikett(x, "Pris", org.Aksent));
+                    col.Item().PaddingTop(4).Element(x => Pristabell(x, linjer, b, valg));
+                    if (valg.Contains(ServiceavtaleAntall.VisSignatur))
+                    {
+                        col.Item().PaddingTop(46).Row(r =>
+                        {
+                            r.RelativeItem().BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(4)
+                                .Text($"Sted / dato / signatur – {kunde?.Navn ?? "kunde"}").FontSize(8).FontColor(RapportMal.Dempet);
+                            r.ConstantItem(40);
+                            r.RelativeItem().BorderTop(0.75f).BorderColor(RapportMal.Linje).PaddingTop(4)
+                                .Text($"Sted / dato / signatur – {org.Navn}").FontSize(8).FontColor(RapportMal.Dempet);
+                        });
+                    }
+                });
+                page.Footer().Element(x => RapportMal.Bunn(x, org));
+            });
+        });
+        return dokument.GeneratePdf();
+    }
+
     // Prismodell «Antall»: kategoriene med antall, tilleggene og summen. Tynne linjer, ingen grå rader (PDF-stil N1).
     private static void Pristabell(IContainer e, List<ServiceavtaleLinje> linjer, ServiceavtaleAntall.Beregning b, HashSet<string> valg)
     {
         var kategorier = linjer.Where(l => !l.ErTillegg && l.Antall > 0 && l.Pris > 0).ToList();
         var tillegg = linjer.Where(l => l.ErTillegg).Select(t => (Linje: t, Ar: ServiceavtaleAntall.TilleggPerAr(t, b.Kategorier, b.Runder))).Where(x => x.Ar > 0).ToList();
-        var visStk = valg.Contains(ServiceavtaleAntall.VisStk);
+        const bool visStk = false;
         var visRunde = valg.Contains(ServiceavtaleAntall.VisRunde);
         static string Kr(decimal v) => ServiceavtaleAntall.Kr(v);
         static string Tall(decimal v) => v.ToString("0.##", CultureInfo.GetCultureInfo("nb-NO"));
@@ -320,7 +472,6 @@ public class ServiceavtaleTilbudPdfService(ApplicationDbContext db, PdfLogo pdfL
                 Rad("Per år eks. mva", Kr(b.Arspris));
                 Rad("Mva 25 %", Kr(b.Mva));
                 Rad("Per år inkl. mva", Kr(b.InklMva), fet: true, linje: true);
-                if (valg.Contains(ServiceavtaleAntall.VisMnd)) Rad("Per måned eks. mva", Kr(b.PerManed));
             });
         });
     }

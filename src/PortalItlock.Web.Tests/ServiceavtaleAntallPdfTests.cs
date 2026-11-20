@@ -46,9 +46,7 @@ public class ServiceavtaleAntallPdfTests
         var linjer = await ServiceavtaleAntall.LagLinjer(db, p.Id);
         linjer.First(l => l.Navn == "Dørautomatikk").Antall = 4;
         linjer.First(l => l.Navn == "Mekanisk").Antall = 12;
-        var kjoring = linjer.First(l => l.TilleggType == ServiceavtaleLinje.PerKm);
-        kjoring.Pris = 8;
-        kjoring.Antall = 60;
+        linjer.Add(new ServiceavtaleLinje { ProsjektId = p.Id, ErTillegg = true, Navn = "Kjøring", TilleggType = ServiceavtaleLinje.PerKm, Pris = 8, Antall = 60, Rekkefolge = 99 });
         db.ServiceavtaleLinjer.AddRange(linjer);
         await db.SaveChangesAsync();
 
