@@ -101,7 +101,7 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("salto-kodeleser", "SALTO kodeleser", 7, 293, 316),
         Illustrasjon("iloq-kodeleser", "iLOQ kodeleser", 6, 377, 677),
         Illustrasjon("iloq-leser-slank", "iLOQ leser (slank)", 4, 130, 298),
-        Illustrasjon("steplock-osdp", "StepLock OSDP dørkontroller", 20, 794, 809),
+        Illustrasjon("steplock-osdp", "StepLock OSDP dørkontroller", 20, 1075, 1108),
         Illustrasjon("arx-dorsentral", "ARX dørsentral", 22, 1149, 1013),
     ];
 
