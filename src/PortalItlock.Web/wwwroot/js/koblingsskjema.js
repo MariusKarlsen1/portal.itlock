@@ -41,26 +41,46 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
         return w > 0 ? w / 100 : zoom;
     }
 
+    // Nettleserens scroll-ankring flytter innholdet når bredden endres - av, så
+    // punktet under musepekeren står stille når man zoomer.
+    wrapEl.style.overflowAnchor = 'none';
+    let meldTimer = null;
+
     function applyZoom(nextZoom, cursorX, cursorY) {
         const prevZoom = naa();
-        zoom = Math.round(Math.min(maxZoom, Math.max(minZoom, nextZoom)) * 100) / 100;
-        if (zoom === prevZoom) {
+        zoom = Math.min(maxZoom, Math.max(minZoom, nextZoom));
+        if (Math.abs(zoom - prevZoom) < 0.0005) {
             return;
         }
 
         const ratio = zoom / prevZoom;
+        const venstre = (wrapEl.scrollLeft + cursorX) * ratio - cursorX;
+        const topp = (wrapEl.scrollTop + cursorY) * ratio - cursorY;
         canvasEl.style.width = (zoom * 100) + '%';
-        wrapEl.scrollLeft = (wrapEl.scrollLeft + cursorX) * ratio - cursorX;
-        wrapEl.scrollTop = (wrapEl.scrollTop + cursorY) * ratio - cursorY;
+        wrapEl.scrollLeft = venstre;
+        wrapEl.scrollTop = topp;
         if (dotNetRef) {
-            dotNetRef.invokeMethodAsync('OnZoomHjul', Math.round(zoom * 100)).catch(() => { });
+            // Blazor får zoomen først når man har stoppet, så hjulet ikke hakker.
+            clearTimeout(meldTimer);
+            meldTimer = setTimeout(() => {
+                dotNetRef.invokeMethodAsync('OnZoomHjul', Math.round(naa() * 100)).catch(() => { });
+            }, 180);
         }
     }
 
     wrapEl.addEventListener('wheel', (e) => {
         e.preventDefault();
         const rect = wrapEl.getBoundingClientRect();
-        applyZoom(naa() * (e.deltaY < 0 ? 1 + step : 1 / (1 + step)), e.clientX - rect.left, e.clientY - rect.top);
+        // Shift + hjul flytter sidelengs, ellers zoomer hjulet mot musepekeren.
+        if (e.shiftKey && !e.ctrlKey) {
+            wrapEl.scrollLeft += e.deltaY || e.deltaX;
+            return;
+        }
+        // Styreflate gir mange små hakk, musehjul få store: steget følger hvor mye hjulet går.
+        const piksler = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+        const grense = Math.max(-120, Math.min(120, piksler));
+        const faktor = Math.exp(-grense * (e.ctrlKey ? 0.01 : 0.0011));
+        applyZoom(naa() * faktor, e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
 
     const dragThreshold = 4;
@@ -99,9 +119,31 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
     // Hold inne høyre museknapp og dra for å flytte rundt på skissen, som på
     // plantegningen. Virker også mens man redigerer og tegner kabler.
     let hoyrePan = null;
+    let mellomrom = false;
+    const tastNed = (e) => {
+        const tag = (e.target.tagName || '').toLowerCase();
+        if (e.code !== 'Space' || tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable || !wrapEl.isConnected) {
+            return;
+        }
+        e.preventDefault();
+        if (!mellomrom) {
+            mellomrom = true;
+            wrapEl.classList.add('ks-klar-til-a-dra');
+        }
+    };
+    const tastOpp = (e) => {
+        if (e.code === 'Space') {
+            mellomrom = false;
+            wrapEl.classList.remove('ks-klar-til-a-dra');
+        }
+    };
+    document.addEventListener('keydown', tastNed);
+    document.addEventListener('keyup', tastOpp);
+    dokumentLyttere.add(tastNed);
+    dokumentLyttere.add(tastOpp);
     wrapEl.addEventListener('contextmenu', (e) => e.preventDefault());
     wrapEl.addEventListener('pointerdown', (e) => {
-        if (e.button !== 2 || e.pointerType === 'touch') {
+        if (e.pointerType === 'touch' || !(e.button === 2 || e.button === 1 || (e.button === 0 && mellomrom))) {
             return;
         }
         e.preventDefault();
@@ -409,10 +451,10 @@ function avstandTilLinjestykke(p, a, b) {
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-function finnStrekNaer(canvasEl, clientX, clientY, kunLedere = false) {
+function finnStrekNaer(canvasEl, clientX, clientY, kunLedere = false, maks = STREK_HIT_PX) {
     const rect = canvasRect(canvasEl);
     let best = null;
-    let bestDist = STREK_HIT_PX;
+    let bestDist = maks;
     canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]').forEach(pl => {
         if (kunLedere && !pl.dataset.strekid.startsWith('-')) {
             return;
@@ -867,8 +909,13 @@ export function initStrekRedigering(canvasEl, dotNetRef) {
             return;
         }
 
+        // Oppå en komponent: en kabel eller strek rett under musen går foran, så man
+        // kan trykke på kablene som ligger over f.eks. en automatikk. Ellers velges komponenten.
         if (e.target.closest && e.target.closest('.kobling-symbol-marker')) {
-            return;
+            const handtak = e.target.closest('[class*="resize"], [class*="handtak"]');
+            if (handtak || (finnStrekNaer(canvasEl, e.clientX, e.clientY, true, 6) ?? finnStrekNaer(canvasEl, e.clientX, e.clientY, false, 6)) === null) {
+                return;
+            }
         }
 
         // Lederne ligger oppå enden av kabelen - de går foran når klikket er nær en leder.
@@ -1518,6 +1565,17 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         return;
     }
     canvasEl.dataset.rubberBound = '1';
+
+    // Dobbeltklikk på en komponent åpner panelet med navn, plassering og knapper.
+    canvasEl.addEventListener('dblclick', (e) => {
+        if (canvasEl.dataset.locked === '1' || currentStrekTegning) {
+            return;
+        }
+        const m = e.target.closest && e.target.closest('.kobling-symbol-marker[data-symbolid]');
+        if (m) {
+            dotNetRef.invokeMethodAsync('OnSymbolDobbeltklikk', parseInt(m.dataset.symbolid, 10));
+        }
+    });
 
     let box = null;
     let active = false;
