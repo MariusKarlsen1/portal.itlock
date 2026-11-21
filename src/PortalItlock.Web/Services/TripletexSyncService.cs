@@ -87,20 +87,14 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
 
         foreach (var k in aaSende)
         {
-            var (ny, kundeFeil) = await SendKundeInternAsync(k, ct);
+            var (_, kundeFeil) = await SendKundeInternAsync(k, ct);
             if (kundeFeil is not null)
             {
                 feil.Add(kundeFeil);
                 continue;
             }
-            if (ny)
-            {
-                pushet++;
-            }
-            else
-            {
-                oppdatert++;
-            }
+            // Både nye og endrede kunder er sendt til Tripletex.
+            pushet++;
         }
 
         if (aaSende.Count > 0)

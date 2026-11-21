@@ -164,7 +164,7 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
             // som standard - uten "fields" kommer de bare tilbake som {id, url},
             // og navnet ville alltid blitt tomt.
             using var req = await LagAutorisertForespurselAsync(HttpMethod.Get,
-                "token/session/>whoAmI?fields=employee(firstName,lastName),company(name)", ct);
+                "token/session/>whoAmI?fields=companyId,employee(firstName,lastName),company(name)", ct);
             using var resp = await http.SendAsync(req, ct);
             var raw = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
@@ -174,7 +174,11 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
 
             var parsed = JsonSerializer.Deserialize<ResponseWrapper<LoggedInUserInfoSvar>>(raw, JsonOpts);
             var navn = parsed?.Value?.Employee is { } e ? $"{e.FirstName} {e.LastName}".Trim() : null;
-            var firma = parsed?.Value?.Company?.Name;
+            // Kontonummeret (contextId) med, så man ser hvilken Tripletex-konto
+            // nøklene går til når flere kontoer har samme firmanavn.
+            var firma = parsed?.Value?.Company?.Name is { } fn
+                ? (parsed.Value.CompanyId is { } cid ? $"{fn} (konto {cid})" : fn)
+                : null;
             return new TilkoblingResultat(true, null, firma, navn);
         }
         catch (Exception ex)
@@ -675,6 +679,7 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
 
     private sealed class LoggedInUserInfoSvar
     {
+        public long? CompanyId { get; set; }
         public EmployeeSvar? Employee { get; set; }
         public CompanySvar? Company { get; set; }
     }
