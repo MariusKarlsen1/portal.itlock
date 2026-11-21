@@ -27,33 +27,60 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
 
     // Kjøres både fra bakgrunnsjobben (TripletexSyncBackgroundService) og kan
     // trigges manuelt fra /integrasjoner/tripletex.
+    // Én kundesynk om gangen per organisasjon (database), så bakgrunnsjobben og
+    // kundelisten ikke sender samme nye kunde til Tripletex to ganger.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> Laaser = new();
+
+    private SemaphoreSlim Laas() => Laaser.GetOrAdd(db.Database.GetConnectionString() ?? "", _ => new SemaphoreSlim(1, 1));
+
     public async Task<KundeSyncResultat> SynkroniserKunderAsync(CancellationToken ct = default)
+    {
+        var laas = Laas();
+        await laas.WaitAsync(ct);
+        try
+        {
+            return await SynkroniserKunderInternAsync(ct);
+        }
+        finally
+        {
+            laas.Release();
+        }
+    }
+
+    private async Task<KundeSyncResultat> SynkroniserKunderInternAsync(CancellationToken ct)
     {
         var feil = new List<string>();
         var pushet = 0;
         var hentet = 0;
         var oppdatert = 0;
 
-        // 1) Portal -> Tripletex: kunder opprettet i portalen som ikke er
-        //    sendt til Tripletex ennå (mangler TripletexKundenummer).
-        var nyePortalKunder = await db.Kunder
-            .Where(k => k.TripletexKundenummer == null)
+        // 1) Portal -> Tripletex: nye kunder (uten kundenummer) og kunder som er
+        //    endret i portalen siden sist (TripletexMaSendes). Kontaktpersonene
+        //    sendes med. Kunder uten navn er ikke ferdig utfylt ennå.
+        var aaSende = await db.Kunder
+            .Include(k => k.Kontaktpersoner)
+            .Where(k => k.Navn != "" && (k.TripletexKundenummer == null || k.TripletexMaSendes))
             .ToListAsync(ct);
 
-        foreach (var k in nyePortalKunder)
+        foreach (var k in aaSende)
         {
-            var (id, kundenummer, kundeFeil) = await tripletex.OpprettKundeAsync(TilKundeOppdatering(k), ct);
+            var (ny, kundeFeil) = await SendKundeInternAsync(k, ct);
             if (kundeFeil is not null)
             {
-                feil.Add($"Kunne ikke opprette \"{k.Navn}\" i Tripletex: {kundeFeil}");
+                feil.Add(kundeFeil);
                 continue;
             }
-
-            k.TripletexKundenummer = kundenummer ?? id?.ToString();
-            pushet++;
+            if (ny)
+            {
+                pushet++;
+            }
+            else
+            {
+                oppdatert++;
+            }
         }
 
-        if (pushet > 0)
+        if (aaSende.Count > 0)
         {
             await db.SaveChangesAsync(ct);
         }
@@ -78,6 +105,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
                 .ToHashSet();
 
             var eksisterende = await db.Kunder
+                .Include(k => k.Kontaktpersoner)
                 .Where(k => k.TripletexKundenummer != null && kundenumre.Contains(k.TripletexKundenummer))
                 .ToDictionaryAsync(k => k.TripletexKundenummer!, ct);
 
@@ -88,22 +116,29 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
                     continue;
                 }
 
+                Kunde kunde;
                 if (eksisterende.TryGetValue(tk.CustomerNumber, out var portalKunde))
                 {
-                    // Oppdater eksisterende - "helt likt" betyr feltene skal
-                    // holdes i synk, ikke bare opprettes én gang.
+                    // Endringer som ennå ikke er sendt fra portalen skal ikke overskrives.
+                    if (portalKunde.TripletexMaSendes)
+                    {
+                        continue;
+                    }
+                    // Oppdater eksisterende. Tomme felt i Tripletex visker ikke ut
+                    // det som står i portalen.
                     portalKunde.Navn = tk.Navn;
-                    portalKunde.OrgNr = tk.OrganizationNumber;
-                    portalKunde.Epost = tk.Email;
-                    portalKunde.Telefon = tk.Telefon;
-                    portalKunde.Adresse = tk.Adresse;
-                    portalKunde.Postnr = tk.Postnr;
-                    portalKunde.Sted = tk.Sted;
+                    portalKunde.OrgNr = tk.OrganizationNumber ?? portalKunde.OrgNr;
+                    portalKunde.Epost = tk.Email ?? portalKunde.Epost;
+                    portalKunde.Telefon = tk.Telefon ?? portalKunde.Telefon;
+                    portalKunde.Adresse = tk.Adresse ?? portalKunde.Adresse;
+                    portalKunde.Postnr = tk.Postnr ?? portalKunde.Postnr;
+                    portalKunde.Sted = tk.Sted ?? portalKunde.Sted;
+                    kunde = portalKunde;
                     oppdatert++;
                 }
                 else
                 {
-                    db.Kunder.Add(new Kunde
+                    kunde = new Kunde
                     {
                         Navn = tk.Navn,
                         OrgNr = tk.OrganizationNumber,
@@ -112,9 +147,25 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
                         Adresse = tk.Adresse,
                         Postnr = tk.Postnr,
                         Sted = tk.Sted,
+                        Type = string.IsNullOrWhiteSpace(tk.OrganizationNumber) ? null : KundeType.Bedriftskunde,
                         TripletexKundenummer = tk.CustomerNumber
-                    });
+                    };
+                    db.Kunder.Add(kunde);
                     hentet++;
+                }
+
+                // Kontaktpersonene fra Tripletex som ikke finnes i portalen ennå.
+                var (kontakter, _) = await tripletex.HentKontakterAsync(tk.Id, ct);
+                foreach (var kt in kontakter)
+                {
+                    if (!kunde.Kontaktpersoner.Any(p => string.Equals(p.Navn.Trim(), kt.Navn, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        kunde.Kontaktpersoner.Add(new KundeKontaktperson { Navn = kt.Navn, Epost = kt.Epost, Telefon = kt.Telefon });
+                    }
+                }
+                if (string.IsNullOrWhiteSpace(kunde.Kontaktperson) && kontakter.Count > 0)
+                {
+                    kunde.Kontaktperson = kontakter[0].Navn;
                 }
             }
 
@@ -129,6 +180,146 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         }
 
         return new KundeSyncResultat(pushet, hentet, oppdatert, feil);
+    }
+
+    // Sender én kunde til Tripletex med en gang (Lagre på kundekortet).
+    public async Task<string?> SendKundeAsync(int kundeId, CancellationToken ct = default)
+    {
+        if (!tripletex.ErKonfigurert)
+        {
+            return null;
+        }
+        var laas = Laas();
+        await laas.WaitAsync(ct);
+        try
+        {
+            var kunde = await db.Kunder.Include(k => k.Kontaktpersoner).FirstOrDefaultAsync(k => k.Id == kundeId, ct);
+            if (kunde is null || string.IsNullOrWhiteSpace(kunde.Navn))
+            {
+                return null;
+            }
+            // Kan ha blitt sendt av bakgrunnsjobben i mellomtiden.
+            await db.Entry(kunde).ReloadAsync(ct);
+            if (!kunde.TripletexMaSendes && !string.IsNullOrWhiteSpace(kunde.TripletexKundenummer))
+            {
+                return null;
+            }
+            var (_, kundeFeil) = await SendKundeInternAsync(kunde, ct);
+            await db.SaveChangesAsync(ct);
+            return kundeFeil;
+        }
+        finally
+        {
+            laas.Release();
+        }
+    }
+
+    // Oppretter kunden i Tripletex (eller kobler den til en som finnes der fra
+    // før med samme org.nr. eller navn), eller oppdaterer den, og sender
+    // kontaktpersonene. Ny = true når kunden ble opprettet eller koblet nå.
+    private async Task<(bool Ny, string? Feil)> SendKundeInternAsync(Kunde k, CancellationToken ct)
+    {
+        var ny = string.IsNullOrWhiteSpace(k.TripletexKundenummer);
+        int? tripletexId = null;
+
+        if (ny)
+        {
+            // Finnes firmaet allerede i Tripletex, kobles kunden til den i stedet
+            // for å lage en kunde til.
+            var funnet = !string.IsNullOrWhiteSpace(k.OrgNr) ? await tripletex.FinnKundeMedOrgNrAsync(k.OrgNr!, ct) : null;
+            if (funnet is null)
+            {
+                var (treff, _) = await tripletex.SokKunderAsync(k.Navn, ct);
+                funnet = treff.FirstOrDefault(t => string.Equals(t.Navn.Trim(), k.Navn.Trim(), StringComparison.OrdinalIgnoreCase)
+                    && (string.IsNullOrWhiteSpace(t.OrganizationNumber) || string.IsNullOrWhiteSpace(k.OrgNr)));
+            }
+
+            if (funnet is not null)
+            {
+                k.TripletexKundenummer = funnet.CustomerNumber ?? funnet.Id.ToString();
+                tripletexId = funnet.Id;
+                var oppdaterFeil = await tripletex.OppdaterKundeAsync(funnet.Id, TilKundeOppdatering(k), ct);
+                if (oppdaterFeil is not null)
+                {
+                    return (true, $"Kunne ikke oppdatere \"{k.Navn}\" i Tripletex: {oppdaterFeil}");
+                }
+            }
+            else
+            {
+                var (id, kundenummer, kundeFeil) = await tripletex.OpprettKundeAsync(TilKundeOppdatering(k), ct);
+                if (kundeFeil is not null)
+                {
+                    return (true, $"Kunne ikke opprette \"{k.Navn}\" i Tripletex: {kundeFeil}");
+                }
+                k.TripletexKundenummer = kundenummer ?? id?.ToString();
+                tripletexId = id;
+            }
+        }
+        else
+        {
+            var (id, idFeil) = await TripletexKundeIdAsync(k, ct);
+            if (id is null)
+            {
+                return (false, idFeil);
+            }
+            tripletexId = id;
+            var oppdaterFeil = await tripletex.OppdaterKundeAsync(id.Value, TilKundeOppdatering(k), ct);
+            if (oppdaterFeil is not null)
+            {
+                return (false, $"Kunne ikke oppdatere \"{k.Navn}\" i Tripletex: {oppdaterFeil}");
+            }
+        }
+
+        if (tripletexId is { } tid)
+        {
+            var kontaktFeil = await SendKontakterAsync(k, tid, ct);
+            if (kontaktFeil is not null)
+            {
+                return (ny, $"Kontaktpersonene til \"{k.Navn}\" ble ikke sendt til Tripletex: {kontaktFeil}");
+            }
+        }
+
+        k.TripletexMaSendes = false;
+        return (ny, null);
+    }
+
+    // Kontaktpersonene i portalen, og kundens kontaktperson, sendes til Tripletex.
+    // De som finnes der fra før (samme navn) oppdateres. Ingen slettes i Tripletex.
+    private async Task<string?> SendKontakterAsync(Kunde k, int tripletexKundeId, CancellationToken ct)
+    {
+        var personer = k.Kontaktpersoner
+            .Where(p => !string.IsNullOrWhiteSpace(p.Navn))
+            .Select(p => (Navn: p.Navn.Trim(), p.Epost, p.Telefon))
+            .ToList();
+        if (!string.IsNullOrWhiteSpace(k.Kontaktperson)
+            && !personer.Any(p => string.Equals(p.Navn, k.Kontaktperson.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            personer.Insert(0, (k.Kontaktperson.Trim(), k.Epost, k.Telefon));
+        }
+        if (personer.Count == 0)
+        {
+            return null;
+        }
+
+        var (finnes, hentFeil) = await tripletex.HentKontakterAsync(tripletexKundeId, ct);
+        if (hentFeil is not null)
+        {
+            return hentFeil;
+        }
+        foreach (var p in personer)
+        {
+            var match = finnes.FirstOrDefault(f => string.Equals(f.Navn, p.Navn, StringComparison.OrdinalIgnoreCase));
+            if (match is not null && match.Epost == p.Epost?.Trim() && match.Telefon == p.Telefon?.Trim())
+            {
+                continue;
+            }
+            var lagreFeil = await tripletex.LagreKontaktAsync(match?.Id, tripletexKundeId, p.Navn, p.Epost, p.Telefon, ct);
+            if (lagreFeil is not null)
+            {
+                return lagreFeil;
+            }
+        }
+        return null;
     }
 
     private static TripletexService.KundeOppdatering TilKundeOppdatering(Kunde k) => new(
@@ -216,8 +407,15 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         else
         {
             linjer = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre, koder)
-                .Select(l => new TripletexService.OrdreLinjeInput(
-                    l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall, l.Varenummer))
+                .Select(l =>
+                {
+                    if (l.Varenummer is not null)
+                    {
+                        return new TripletexService.OrdreLinjeInput(l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall, l.Varenummer);
+                    }
+                    var t = ArbeidsordreOkonomiBeregner.TripletexLinje(l);
+                    return new TripletexService.OrdreLinjeInput(t.Beskrivelse, l.Antall, t.Enhetspris, null, t.Innpris, t.RabattProsent);
+                })
                 .ToList();
         }
 

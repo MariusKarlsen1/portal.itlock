@@ -222,6 +222,94 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         k.PhoneNumberMobile ?? k.PhoneNumber,
         k.PostalAddress?.AddressLine1, k.PostalAddress?.PostalCode, k.PostalAddress?.City);
 
+    // Kunden med dette org.nr. i Tripletex, om den finnes. Brukes før en ny
+    // portalkunde opprettes der, så samme firma ikke blir to kunder.
+    public async Task<TripletexKunde?> FinnKundeMedOrgNrAsync(string orgNr, CancellationToken ct = default)
+    {
+        try
+        {
+            var sti = $"customer?organizationNumber={Uri.EscapeDataString(orgNr)}&count=5&fields=id,name,customerNumber,organizationNumber,email,phoneNumber,phoneNumberMobile,postalAddress(addressLine1,postalCode,city)";
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, sti, ct);
+            using var resp = await http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return null;
+            }
+            var parsed = JsonSerializer.Deserialize<ListResponse<CustomerSvar>>(await resp.Content.ReadAsStringAsync(ct), JsonOpts);
+            return (parsed?.Values ?? []).Select(TilTripletexKunde)
+                .FirstOrDefault(k => string.Equals(k.OrganizationNumber?.Replace(" ", ""), orgNr.Replace(" ", ""), StringComparison.Ordinal));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    public sealed record TripletexKontakt(int Id, string Navn, string? Epost, string? Telefon);
+
+    // Kontaktpersonene på en kunde i Tripletex.
+    public async Task<(List<TripletexKontakt> Kontakter, string? Feilmelding)> HentKontakterAsync(int kundeId, CancellationToken ct = default)
+    {
+        try
+        {
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get,
+                $"contact?customerId={kundeId}&count=200&fields=id,firstName,lastName,email,phoneNumberMobile,phoneNumberWork", ct);
+            using var resp = await http.SendAsync(req, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return ([], $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
+            }
+            using var doc = JsonDocument.Parse(raw);
+            var liste = new List<TripletexKontakt>();
+            if (doc.RootElement.TryGetProperty("values", out var verdier))
+            {
+                foreach (var v in verdier.EnumerateArray())
+                {
+                    string? S(string navn) => v.TryGetProperty(navn, out var p) && p.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p.GetString()) ? p.GetString()!.Trim() : null;
+                    var fullt = $"{S("firstName")} {S("lastName")}".Trim();
+                    if (fullt.Length > 0 && v.TryGetProperty("id", out var id))
+                    {
+                        liste.Add(new TripletexKontakt(id.GetInt32(), fullt, S("email"), S("phoneNumberMobile") ?? S("phoneNumberWork")));
+                    }
+                }
+            }
+            return (liste, null);
+        }
+        catch (Exception ex)
+        {
+            return ([], ex.Message);
+        }
+    }
+
+    // Oppretter (id null) eller oppdaterer en kontaktperson på kunden i Tripletex.
+    public async Task<string?> LagreKontaktAsync(int? kontaktId, int kundeId, string navn, string? epost, string? telefon, CancellationToken ct = default)
+    {
+        try
+        {
+            var deler = navn.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var fornavn = deler.Length > 1 ? string.Join(' ', deler[..^1]) : navn.Trim();
+            var etternavn = deler.Length > 1 ? deler[^1] : "";
+            var body = new Dictionary<string, object?>
+            {
+                ["firstName"] = fornavn,
+                ["lastName"] = etternavn,
+                ["email"] = string.IsNullOrWhiteSpace(epost) ? null : epost.Trim(),
+                ["phoneNumberMobile"] = string.IsNullOrWhiteSpace(telefon) ? null : telefon.Trim(),
+                ["customer"] = new { id = kundeId }
+            };
+            using var req = await LagAutorisertForespurselAsync(kontaktId is null ? HttpMethod.Post : HttpMethod.Put,
+                kontaktId is null ? "contact" : $"contact/{kontaktId}", ct);
+            req.Content = JsonContent.Create(body, options: JsonOpts);
+            using var resp = await http.SendAsync(req, ct);
+            return resp.IsSuccessStatusCode ? null : $"Tripletex svarte {(int)resp.StatusCode}: {await resp.Content.ReadAsStringAsync(ct)}";
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+
     public sealed record KundeOppdatering(
         string Navn, string? OrganizationNumber, string? Email, string? Telefon,
         string? Adresse, string? Postnr, string? Sted);
@@ -288,6 +376,8 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
             name = kunde.Navn,
             organizationNumber = string.IsNullOrWhiteSpace(kunde.OrganizationNumber) ? null : kunde.OrganizationNumber,
             email = kunde.Email,
+            // Fakturaene går til samme e-post.
+            invoiceEmail = kunde.Email,
             phoneNumberMobile = kunde.Telefon,
             postalAddress = postadresse,
             isCustomer = true
@@ -298,7 +388,8 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     // og rapportering styres i portalen, se ArbeidsordreOkonomiBeregner). Linjer
     // med Varenummer (priskodene: arbeid, kjøring, tillegg) kobles til produktet
     // med samme nummer i Tripletex, så fakturaen får riktig vare og konto der.
-    public sealed record OrdreLinjeInput(string Beskrivelse, decimal Antall, decimal EnhetsprisEksMva, string? Varenummer = null);
+    public sealed record OrdreLinjeInput(string Beskrivelse, decimal Antall, decimal EnhetsprisEksMva, string? Varenummer = null,
+        decimal? Innpris = null, decimal RabattProsent = 0);
 
     // Oppretter en ordre i Tripletex "klar til fakturering" - IKKE det samme som
     // å fakturere den (det er et eget, separat :invoice-kall som denne
@@ -367,6 +458,15 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
                     // MVA-kodeoversikten i Tripletex hvis dette ikke stemmer.
                     ["vatType"] = new { id = 3 }
                 };
+                // Innkjøpspris og rabatt, så linjen ser ut som når den legges inn i Tripletex.
+                if (l.Innpris is { } inn && inn > 0)
+                {
+                    linje["unitCostCurrency"] = inn;
+                }
+                if (l.RabattProsent > 0)
+                {
+                    linje["discount"] = l.RabattProsent;
+                }
                 if (!string.IsNullOrWhiteSpace(l.Varenummer))
                 {
                     if (produkter.TryGetValue(l.Varenummer.Trim(), out var produktId))

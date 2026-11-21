@@ -52,7 +52,13 @@
         {
             <p class="ma-melding" style="margin:0.8rem 0.9rem 0">@_melding</p>
         }
-        @if (_kanFerdigmelde && a.Status is not (ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert))
+        @if (_erMontor && a.ErTilKontroll)
+        {
+            <div class="ma-under" style="padding:0.9rem 0.9rem 1.2rem">
+                <p class="ma-melding" style="margin:0"><b>Ferdigmeldt @a.MontorFerdigmeldtDato!.Value.ToString("dd.MM HH:mm")</b><br />Kontoret sjekker ordren og sender den til fakturering.</p>
+            </div>
+        }
+        else if (_kanFerdigmelde && a.Status is not (ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert))
         {
             <div class="ma-under" style="padding:0.9rem 0.9rem 1.2rem">
                 <button type="button" class="ma-knapp" style="background:var(--ma-gronn)" @onclick="@(() => _bekreft = true)"><Icon Name="check-circle" />Ferdigmeld ordren</button>
@@ -65,7 +71,7 @@
                 <div class="ma-ark" @onclick:stopPropagation="true" role="dialog" aria-modal="true">
                     <div class="ma-ark-handtak"></div>
                     <h2>Ferdigmelde ordren?</h2>
-                    <p style="margin:0 0 0.4rem;color:var(--itlock-ink-muted)">@a.Id @a.Tittel blir ferdigmeldt og klar for fakturering.@(string.IsNullOrWhiteSpace(a.UtfortArbeid) ? " Du har ikke skrevet utført arbeid under Notater." : "")</p>
+                    <p style="margin:0 0 0.4rem;color:var(--itlock-ink-muted)">@a.Id @a.Tittel @(_erMontor ? "sendes til kontoret, som sjekker den før fakturering." : "blir ferdigmeldt og klar for fakturering.")@(string.IsNullOrWhiteSpace(a.UtfortArbeid) ? " Du har ikke skrevet utført arbeid under Notater." : "")</p>
                     <div class="ma-under">
                         <button type="button" class="ma-knapp" style="background:var(--ma-gronn)" disabled="@_ferdigmelder" @onclick="Ferdigmeld"><Icon Name="check-circle" />@(_ferdigmelder ? "Ferdigmelder …" : "Ferdigmeld")</button>
                         <button type="button" class="ma-knapp sek" disabled="@_ferdigmelder" @onclick="@(() => _bekreft = false)">Avbryt</button>
@@ -109,12 +115,14 @@
     private decimal _mineTimer, _alleTimer;
     private int _antallTimer, _antallTimerAlle, _dorer, _dorerFerdig, _varer, _varerPlukket, _sjekk, _sjekkFerdig, _media;
     private List<string> _deltakere = [];
-    private bool _kanFerdigmelde, _bekreft, _ferdigmelder;
+    private bool _kanFerdigmelde, _bekreft, _ferdigmelder, _erMontor;
     private int _brukerId;
     private string? _melding;
 
-    // Samme ferdigmelding som på arbeidsordren i portalen: status Ferdig og
-    // overføring til Tripletex (alle linjer). Ingen e-post til kunden.
+    // Montøren ferdigmelder: ordren går «Til kontroll» på kontoret, som sjekker
+    // den og ferdigmelder selv - først da går den til Tripletex.
+    // Admin og prosjektleder ferdigmelder som på arbeidsordren i portalen:
+    // status Ferdig og overføring til Tripletex (alle linjer). Ingen e-post til kunden.
     private async Task Ferdigmeld()
     {
         if (!_kanFerdigmelde || _ferdigmelder)
@@ -128,6 +136,23 @@
         {
             _ferdigmelder = false;
             _bekreft = false;
+            return;
+        }
+
+        if (_erMontor)
+        {
+            ordre.MontorFerdigmeldtDato = DateTime.Now;
+            ordre.MontorFerdigmeldtAvBrukerId = _brukerId > 0 ? _brukerId : null;
+            ordre.MontorFerdigmeldtAvNavn = _brukerId > 0 ? await Db.Brukere.Where(b => b.Id == _brukerId).Select(b => b.Navn).FirstOrDefaultAsync() : null;
+            if (ordre.Status is ArbeidsordreStatus.Ny or ArbeidsordreStatus.Planlagt or ArbeidsordreStatus.Klar)
+            {
+                ordre.Status = ArbeidsordreStatus.Pagaende;
+            }
+            await Db.SaveChangesAsync();
+            _melding = "Ordren er ferdigmeldt og sendt til kontroll på kontoret.";
+            _bekreft = false;
+            _ferdigmelder = false;
+            await OnParametersSetAsync();
             return;
         }
 
@@ -169,6 +194,7 @@
         {
             var rolle = Enum.TryParse<BrukerRolle>((await AuthStateTask).User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value, out var r) ? r : (BrukerRolle?)null;
             _kanFerdigmelde = ModulRettigheter.KanFerdigmelde(rolle);
+            _erMontor = rolle == BrukerRolle.Montor;
         }
 
         _a = await Db.Arbeidsordre.AsNoTracking()

@@ -70,6 +70,16 @@ public class Arbeidsordre
     public Bruker? FullfortAvBruker { get; set; }
     public DateTime? FullfortDato { get; set; }
 
+    // Montøren har ferdigmeldt jobben fra mobilen. Ordren står da «Til kontroll»:
+    // kontoret sjekker timer, varer og notater, og ferdigmelder selv. Først da
+    // går den til Tripletex.
+    public DateTime? MontorFerdigmeldtDato { get; set; }
+    public int? MontorFerdigmeldtAvBrukerId { get; set; }
+    public string? MontorFerdigmeldtAvNavn { get; set; }
+
+    public bool ErTilKontroll => MontorFerdigmeldtDato is not null
+        && Status is not (ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert);
+
     // Satt når ordren er sendt til Tripletex som en ordre klar til fakturering
     // (se TripletexSyncService.PushArbeidsordreTilTripletexAsync, kalt fra
     // Ferdigmeld() i ArbeidsordreSkjema.razor) - hindrer at samme arbeidsordre

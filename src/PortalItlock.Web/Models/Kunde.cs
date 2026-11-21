@@ -14,6 +14,10 @@ public class Kunde
     public string? Notater { get; set; }
     public string? TripletexKundenummer { get; set; }
 
+    // Satt når kunden eller kontaktpersonene er endret i portalen og ennå ikke
+    // sendt til Tripletex. Synken sender den og nullstiller.
+    public bool TripletexMaSendes { get; set; }
+
     // Selve bildet ligger i samme tabell, men er skilt ut i KundeBilde slik at
     // det IKKE lastes hver gang en kunde hentes - Include(a => a.Kunde) på f.eks.
     // arbeidsordrelisten hentet ellers kundebildet én gang per rad. Der bildet

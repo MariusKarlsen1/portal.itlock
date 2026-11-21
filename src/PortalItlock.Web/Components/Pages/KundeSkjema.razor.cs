@@ -15,6 +15,29 @@ public partial class KundeSkjema
     [Parameter] public int Id { get; set; }
     [SupplyParameterFromQuery(Name = "fane")] public string? Fane { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [Inject] private TripletexSyncService TripletexSync { get; set; } = default!;
+
+    private static readonly HashSet<string> TripletexFelt =
+        [nameof(Kunde.Navn), nameof(Kunde.OrgNr), nameof(Kunde.Epost), nameof(Kunde.Telefon),
+         nameof(Kunde.Adresse), nameof(Kunde.Postnr), nameof(Kunde.Sted), nameof(Kunde.Kontaktperson)];
+
+    // Lagrer, og merker kunden for sending til Tripletex når noe Tripletex har
+    // (navn, org.nr., kontaktinfo, adresse, kontaktpersoner) er endret.
+    // Bakgrunnsjobben sender den innen kort tid; Lagre-knappen sender med en gang.
+    private async Task LagreDb()
+    {
+        if (_kunde is not null)
+        {
+            var endret = Db.ChangeTracker.Entries<Kunde>().Any(en => en.Entity.Id == _kunde.Id && en.State == EntityState.Modified
+                    && en.Properties.Any(p => p.IsModified && TripletexFelt.Contains(p.Metadata.Name)))
+                || Db.ChangeTracker.Entries<KundeKontaktperson>().Any(en => en.State is EntityState.Added or EntityState.Modified or EntityState.Deleted);
+            if (endret)
+            {
+                _kunde.TripletexMaSendes = true;
+            }
+        }
+        await Db.SaveChangesAsync();
+    }
 
     private enum KundeFane { Oversikt, Oppfolging, Prosjekter, Tilbud, Ordrer, Tickets, Avtaler, Priser, Kontaktpersoner, Dokumenter, Detaljer }
 
@@ -716,7 +739,7 @@ public partial class KundeSkjema
                 });
             }
 
-            await Db.SaveChangesAsync();
+            await LagreDb();
             await LastDokumenterAsync();
         }
         finally
@@ -739,7 +762,7 @@ public partial class KundeSkjema
                 Tidspunkt = DateTime.Now,
                 UtfortAvBrukerId = _naverendeBrukerId
             });
-            await Db.SaveChangesAsync();
+            await LagreDb();
         }
 
         await LastDokumenterAsync();
@@ -935,7 +958,7 @@ public partial class KundeSkjema
         o.VarselDagerFor = _ofDagerFor;
         o.Gjenta = _ofGjenta;
         o.Notat = string.IsNullOrWhiteSpace(_ofNotat) ? null : _ofNotat.Trim();
-        await Db.SaveChangesAsync();
+        await LagreDb();
 
         await LastOppfolgingerAsync();
         await SynkNesteOppfolgingAsync();
@@ -950,7 +973,7 @@ public partial class KundeSkjema
         var start = o.Frist.Date < DateTime.Today ? DateTime.Today.Add(o.Frist.TimeOfDay) : o.Frist;
         o.Frist = start.AddDays(1);
         o.EpostVarselSendt = false;
-        await Db.SaveChangesAsync();
+        await LagreDb();
         await SynkNesteOppfolgingAsync();
         _ofMelding = $"Utsatt til {o.Frist:dd.MM.yyyy}.";
     }
@@ -980,7 +1003,7 @@ public partial class KundeSkjema
             });
         }
 
-        await Db.SaveChangesAsync();
+        await LagreDb();
         await LastOppfolgingerAsync();
         await SynkNesteOppfolgingAsync();
         _ofMelding = o.Gjenta == KundeOppfolgingGjenta.Ikke ? "Markert som utført." : $"Utført – neste er satt opp ({o.Gjenta.Visningsnavn().ToLower()}).";
@@ -989,7 +1012,7 @@ public partial class KundeSkjema
     private async Task FjernGammelOppfolging()
     {
         _kunde!.NesteOppfolgingsDato = null;
-        await Db.SaveChangesAsync();
+        await LagreDb();
         _ofMelding = "Markert som utført.";
     }
 
@@ -999,7 +1022,7 @@ public partial class KundeSkjema
     {
         var apne = _oppfolginger.Where(o => !o.Utfort && o.VarselPortal).ToList();
         _kunde!.NesteOppfolgingsDato = apne.Count == 0 ? null : apne.Min(o => o.VarselDato);
-        await Db.SaveChangesAsync();
+        await LagreDb();
     }
 
     private async Task LeggTilNotat()
@@ -1017,7 +1040,7 @@ public partial class KundeSkjema
             OpprettetAvBruker = _naverendeBruker
         };
         Db.KundeOppfolgingNotater.Add(notat);
-        await Db.SaveChangesAsync();
+        await LagreDb();
 
         _notater.Insert(0, notat);
         _nyttNotat = "";
@@ -1054,7 +1077,7 @@ public partial class KundeSkjema
             Navn = _nyLisensNavn.Trim(),
             UtlopsDato = _nyLisensUtlopsDato
         });
-        await Db.SaveChangesAsync();
+        await LagreDb();
 
         _nyLisensNavn = "";
         _nyLisensUtlopsDato = DateTime.Today.AddYears(1);
@@ -1074,7 +1097,7 @@ public partial class KundeSkjema
         entitet.Navn = l.Navn.Trim();
         entitet.UtlopsDato = l.UtlopsDato;
         entitet.Notat = l.Notat;
-        await Db.SaveChangesAsync();
+        await LagreDb();
         _lisensFeil = null;
         _lisensMelding = "Lagret.";
     }
@@ -1103,7 +1126,7 @@ public partial class KundeSkjema
         }
 
         Db.KundeLisenser.Remove(entitet);
-        await Db.SaveChangesAsync();
+        await LagreDb();
         _lisensMelding = "Lisens fjernet.";
         await LastKundeLisenserAsync();
     }
@@ -1141,7 +1164,7 @@ public partial class KundeSkjema
             ProduktgruppeId = _nyRabattProduktgruppeId.Value,
             RabattProsent = _nyRabattProsent
         });
-        await Db.SaveChangesAsync();
+        await LagreDb();
 
         _nyRabattProduktgruppeId = null;
         _nyRabattProsent = 0;
@@ -1159,7 +1182,7 @@ public partial class KundeSkjema
         }
 
         entitet.RabattProsent = r.RabattProsent;
-        await Db.SaveChangesAsync();
+        await LagreDb();
         _rabattFeil = null;
         _rabattMelding = "Lagret.";
     }
@@ -1195,7 +1218,7 @@ public partial class KundeSkjema
 
         entitet.FastTimeprisMontasje = _kunde!.FastTimeprisMontasje is > 0 ? _kunde.FastTimeprisMontasje : null;
         entitet.FastTimeprisProsjektledelse = _kunde.FastTimeprisProsjektledelse is > 0 ? _kunde.FastTimeprisProsjektledelse : null;
-        await Db.SaveChangesAsync();
+        await LagreDb();
         _redigerTimepris = false;
         _paslagMelding = "Faste timepriser lagret.";
     }
@@ -1228,7 +1251,7 @@ public partial class KundeSkjema
         }
 
         Db.KundeRabatter.Remove(entitet);
-        await Db.SaveChangesAsync();
+        await LagreDb();
         _rabattMelding = "Rabatt fjernet.";
         await LastKundeRabatterAsync();
     }
@@ -1267,7 +1290,7 @@ public partial class KundeSkjema
             }
         }
 
-        await Db.SaveChangesAsync();
+        await LagreDb();
         var malNavn = _andreKunder.FirstOrDefault(k => k.Id == malKundeId)?.Navn ?? "kunden";
         _rabattMelding = $"Rabatter kopiert til {malNavn}.";
         _kopierTilKundeId = null;
@@ -1283,7 +1306,7 @@ public partial class KundeSkjema
         }
 
         entitet.FastPaslagProsent = _kunde!.FastPaslagProsent;
-        await Db.SaveChangesAsync();
+        await LagreDb();
         _paslagMelding = "Fast påslag lagret.";
         _rabattFeil = null;
         await LastKundeRabatterAsync();
@@ -1295,7 +1318,7 @@ public partial class KundeSkjema
     {
         var ordre = new Arbeidsordre { Tittel = "Ny arbeidsordre", KundeId = Id };
         Db.Arbeidsordre.Add(ordre);
-        await Db.SaveChangesAsync();
+        await LagreDb();
         Nav.NavigateTo($"/arbeidsordre/{ordre.Id}?fane=detaljer");
     }
 
@@ -1309,7 +1332,7 @@ public partial class KundeSkjema
 
         var ticket = new Ticket { Tittel = tittel, KundeId = Id };
         Db.Tickets.Add(ticket);
-        await Db.SaveChangesAsync();
+        await LagreDb();
 
         Nav.NavigateTo($"/ticket/{ticket.Id}");
     }
@@ -1394,7 +1417,7 @@ public partial class KundeSkjema
     }
 
     // «Oppdater» i Brreg-stripen på Detaljer: hent og lagre med en gang.
-    private async Task AutoLagre() => await Db.SaveChangesAsync();
+    private async Task AutoLagre() => await LagreDb();
 
     private async Task LastOppBilde(InputFileChangeEventArgs e)
     {
@@ -1420,7 +1443,7 @@ public partial class KundeSkjema
         _kunde.BildeData = buffer.ToArray();
         _kunde.BildeContentType = string.IsNullOrWhiteSpace(fil.ContentType) ? "application/octet-stream" : fil.ContentType;
         _kunde.BildeFilnavn = fil.Name;
-        await Db.SaveChangesAsync();
+        await LagreDb();
         _bildeVersjon++;
     }
 
@@ -1433,8 +1456,20 @@ public partial class KundeSkjema
         }
 
         _error = null;
-        await Db.SaveChangesAsync();
+        await LagreDb();
         _savedMessage = "Lagret.";
+        if (_kunde.TripletexMaSendes)
+        {
+            try
+            {
+                var feil = await TripletexSync.SendKundeAsync(_kunde.Id);
+                _savedMessage = feil is null ? "Lagret, og sendt til Tripletex." : $"Lagret. Tripletex: {feil}";
+            }
+            catch (Exception ex)
+            {
+                _savedMessage = $"Lagret. Tripletex: {ex.Message}";
+            }
+        }
     }
 
     // ---------------- Kontaktpersoner ----------------
@@ -1452,7 +1487,7 @@ public partial class KundeSkjema
             Navn = _nyKontaktpersonNavn.Trim()
         };
         Db.KundeKontaktpersoner.Add(kontaktperson);
-        await Db.SaveChangesAsync();
+        await LagreDb();
 
         _kontaktpersoner.Add(kontaktperson);
         _nyKontaktpersonNavn = "";
@@ -1472,7 +1507,7 @@ public partial class KundeSkjema
         entitet.Rolle = string.IsNullOrWhiteSpace(k.Rolle) ? null : k.Rolle.Trim();
         entitet.Telefon = string.IsNullOrWhiteSpace(k.Telefon) ? null : k.Telefon.Trim();
         entitet.Epost = string.IsNullOrWhiteSpace(k.Epost) ? null : k.Epost.Trim();
-        await Db.SaveChangesAsync();
+        await LagreDb();
     }
 
     private async Task SlettKontaktperson(KundeKontaktperson k)
@@ -1481,7 +1516,7 @@ public partial class KundeSkjema
         if (entitet is not null)
         {
             Db.KundeKontaktpersoner.Remove(entitet);
-            await Db.SaveChangesAsync();
+            await LagreDb();
         }
 
         _kontaktpersoner.Remove(k);
@@ -1491,7 +1526,7 @@ public partial class KundeSkjema
     private async Task SlettKunde()
     {
         Db.Kunder.Remove(_kunde!);
-        await Db.SaveChangesAsync();
+        await LagreDb();
         Nav.NavigateTo("/kunder");
     }
 }

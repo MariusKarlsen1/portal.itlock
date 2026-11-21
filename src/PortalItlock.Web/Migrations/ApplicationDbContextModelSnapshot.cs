@@ -194,6 +194,15 @@ namespace PortalItlock.Web.Migrations
                     b.Property<double?>("Longitude")
                         .HasColumnType("REAL");
 
+                    b.Property<int?>("MontorFerdigmeldtAvBrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MontorFerdigmeldtAvNavn")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("MontorFerdigmeldtDato")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("OpprettetDato")
                         .HasColumnType("TEXT");
 
@@ -4102,6 +4111,9 @@ namespace PortalItlock.Web.Migrations
 
                     b.Property<string>("TripletexKundenummer")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("TripletexMaSendes")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("Type")
                         .HasColumnType("INTEGER");

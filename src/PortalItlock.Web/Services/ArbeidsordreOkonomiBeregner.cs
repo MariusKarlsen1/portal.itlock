@@ -17,7 +17,12 @@ public static class ArbeidsordreOkonomiBeregner
         string? KontoNavn,
         decimal Antall,
         decimal Belop,
-        string? Varenummer = null);
+        string? Varenummer = null,
+        // Bare for Tripletex-ordren: innkjøpspris og veiledende pris per stk, og
+        // produktkoden som står foran navnet (som når ordren legges inn for hånd).
+        decimal? Innpris = null,
+        decimal? Listepris = null,
+        string? Produktkode = null);
 
     // Krever at ordre er lastet med Tilbud.Linjer.Component.Inntektskonto og
     // Varer.Component.Inntektskonto. Med kodelinjer også Tilbud.KodeLinjer,
@@ -35,7 +40,8 @@ public static class ArbeidsordreOkonomiBeregner
             {
                 linjer.Add(new OkonomiLinje(
                     l.Navn, l.ComponentId, l.Component?.Inntektskonto?.Nummer, l.Component?.Inntektskonto?.Navn,
-                    l.Antall, l.Antall * l.Utpris));
+                    l.Antall, l.Antall * l.Utpris,
+                    Innpris: l.Innpris, Listepris: l.PrisVeiledende ?? l.Component?.PrisVeiledende, Produktkode: l.Component?.Produktkode));
             }
 
             if (ordre.Tilbud.BrukerKodelinjer && ordre.Tilbud.KodeLinjer.Count > 0)
@@ -78,10 +84,29 @@ public static class ArbeidsordreOkonomiBeregner
         {
             linjer.Add(new OkonomiLinje(
                 v.Navn, v.ComponentId, v.Component?.Inntektskonto?.Nummer, v.Component?.Inntektskonto?.Navn,
-                v.Antall, v.Antall * v.Utpris));
+                v.Antall, v.Antall * v.Utpris,
+                Innpris: v.Kostpris, Listepris: v.Component?.PrisVeiledende, Produktkode: v.Component?.Produktkode));
         }
 
         return linjer;
+    }
+
+    // Tripletex-linjen for en vare: «produktkode navn», veiledende pris som
+    // enhetspris og rabatten som gir salgsprisen, og innkjøpsprisen. Uten
+    // veiledende pris (eller hvis vi selger over den) går salgsprisen rett inn.
+    public static (string Beskrivelse, decimal Enhetspris, decimal RabattProsent, decimal? Innpris) TripletexLinje(OkonomiLinje l)
+    {
+        var navn = l.Navn.Trim();
+        var kode = l.Produktkode?.Trim();
+        var beskrivelse = string.IsNullOrEmpty(kode) || navn.StartsWith(kode, StringComparison.OrdinalIgnoreCase) ? navn : $"{kode} {navn}";
+        var pris = l.Antall == 0 ? 0 : l.Belop / l.Antall;
+        if (l.Listepris is { } liste && liste > 0 && pris > 0 && pris < liste)
+        {
+            var rabatt = Math.Round((1 - pris / liste) * 100m, 4);
+            return (beskrivelse, liste, rabatt, l.Innpris);
+        }
+
+        return (beskrivelse, Math.Round(pris, 2), 0, l.Innpris);
     }
 
     private static OkonomiLinje Linje(string kode, string navn, decimal belop) =>

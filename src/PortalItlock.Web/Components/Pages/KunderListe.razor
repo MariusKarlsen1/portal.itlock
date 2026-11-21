@@ -287,6 +287,37 @@ else
     private int VisningsSlutt => Math.Min(_filtrert.Count, GjeldendeSide * _sideStorrelse);
     private List<KundeRad> _sidevisning => _filtrert.Skip((GjeldendeSide - 1) * _sideStorrelse).Take(_sideStorrelse).ToList();
 
+    // Kundene synkes med Tripletex når listen åpnes, høyst hvert andre minutt
+    // per organisasjon, i bakgrunnen etter at listen vises.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> SisteAutoSynk = new();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || !Tripletex.ErTilgjengeligForOrganisasjonen || _synkroniserer)
+        {
+            return;
+        }
+        var nokkel = Nav.BaseUri;
+        if (SisteAutoSynk.TryGetValue(nokkel, out var sist) && DateTime.UtcNow - sist < TimeSpan.FromMinutes(2))
+        {
+            return;
+        }
+        SisteAutoSynk[nokkel] = DateTime.UtcNow;
+        try
+        {
+            var r = await TripletexSync.SynkroniserKunderAsync();
+            if (r.HentetFraTripletex + r.PushetTilTripletex + r.Oppdatert > 0)
+            {
+                await LastAlleAsync();
+                StateHasChanged();
+            }
+        }
+        catch (Exception)
+        {
+            // Synk-knappen viser feilen når man trykker den.
+        }
+    }
+
     protected override async Task OnInitializedAsync()
     {
         _sideStorrelseStr = (await VisningPref.HentPerSideAsync("perside-kunder", int.TryParse(_sideStorrelseStr, out var _ps) ? _ps : 10)).ToString();

@@ -20,11 +20,12 @@ public record VarselTeller(
     int ForesporslerVarsel,
     int OkonomiVarsel = 0,
     int EtterkalkyleVarsel = 0,
-    int TilbudsfristVarsel = 0)
+    int TilbudsfristVarsel = 0,
+    int TilKontrollVarsel = 0)
 {
     public int Totalt => AvvikSomVenter + ServiceavtalerVarsel + KunderTrengerOppfolging + VarerLavBeholdning
         + FravarSoknaderVenter + TilvalgVarsel + DriftsmeldingerVarsel + TicketerVarsel + CeGodkjenningerVarsel
-        + KlarTilFaktureringVarsel + LisensVarsel + ForesporslerVarsel + OkonomiVarsel + EtterkalkyleVarsel + TilbudsfristVarsel;
+        + KlarTilFaktureringVarsel + LisensVarsel + ForesporslerVarsel + OkonomiVarsel + EtterkalkyleVarsel + TilbudsfristVarsel + TilKontrollVarsel;
 }
 
 // Delt mellom NavMenu (venstremeny-badge) og TopBar (brukermeny-badge), slik at
@@ -64,6 +65,7 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
         var driftsmeldingerVarsel = 0;
         var ceGodkjenningerVarsel = 0;
         var klarTilFaktureringVarsel = 0;
+        var tilKontrollVarsel = 0;
         var lisensVarsel = 0;
         var foresporslerVarsel = 0;
         var okonomiVarsel = 0;
@@ -118,6 +120,9 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
                 c.Status == CeGodkjenningStatus.Godkjent && c.GyldigTil.Date <= ceTerskel);
 
             klarTilFaktureringVarsel = await db.Arbeidsordre.CountAsync(a => a.Status == ArbeidsordreStatus.Ferdig);
+            // Ferdigmeldt av montør, venter på at kontoret sjekker og ferdigmelder.
+            tilKontrollVarsel = await db.Arbeidsordre.CountAsync(a => a.MontorFerdigmeldtDato != null
+                && a.Status != ArbeidsordreStatus.Ferdig && a.Status != ArbeidsordreStatus.Fakturert);
 
             var lisensTerskel = DateTime.Today.AddDays(30);
             lisensVarsel = await db.KundeLisenser.CountAsync(l => l.UtlopsDato.Date <= lisensTerskel);
@@ -142,6 +147,6 @@ public class VarselTellerService(ApplicationDbContext db, IMemoryCache cache, IT
         return new VarselTeller(
             avvikSomVenter, serviceavtalerVarsel, kunderTrengerOppfolging, varerLavBeholdning,
             fravarSoknaderVenter, tilvalgVarsel, driftsmeldingerVarsel, ticketerVarsel, ceGodkjenningerVarsel,
-            klarTilFaktureringVarsel, lisensVarsel, foresporslerVarsel, okonomiVarsel, etterkalkyleVarsel, tilbudsfristVarsel);
+            klarTilFaktureringVarsel, lisensVarsel, foresporslerVarsel, okonomiVarsel, etterkalkyleVarsel, tilbudsfristVarsel, tilKontrollVarsel);
     }
 }

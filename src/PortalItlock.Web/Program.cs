@@ -263,9 +263,9 @@ builder.Services.AddSingleton<TripletexNokkelOppslag>();
 builder.Services.AddScoped<TripletexService>(sp =>
     sp.GetRequiredService<TripletexNokkelOppslag>().Lag(sp.GetRequiredService<ITenantContext>().Current));
 builder.Services.AddScoped<TripletexSyncService>();
-// Ingen bakgrunnsjobb mot Tripletex. Synkroniseringen kjøres når noen trykker
-// "Synkroniser med Tripletex" i kunderegisteret - da vet man hva som skjer og
-// når, i stedet for at noe flytter kundedata hvert kvarter av seg selv.
+// Kundene holdes like i portalen og Tripletex begge veier, også når ingen har
+// kundelisten åpen. Arbeidsordre sendes fortsatt bare ved ferdigmelding.
+builder.Services.AddHostedService<TripletexKundeSynkBackgroundService>();
 
 // To helt adskilte innloggings-cookies: den vanlige (kundenes egne brukere,
 // per tenant-database) og "Plattform" (kun deg - gir tilgang til /plattform
