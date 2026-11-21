@@ -62,3 +62,17 @@ public class TripletexOrdreLinjeTests
         Assert.False(a.ErTilKontroll);
     }
 }
+
+public class TripletexEpostTests
+{
+    [Theory]
+    [InlineData("post@itlock.no", "post@itlock.no")]
+    [InlineData(" post@itlock.no ", "post@itlock.no")]
+    [InlineData("post@itlock", null)]
+    [InlineData("ola@a.no, kari@b.no", null)]
+    [InlineData("ola nordmann@a.no", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void Ugyldig_epost_sendes_ikke(string? inn, string? ut) =>
+        Assert.Equal(ut, TripletexService.GyldigEpost(inn));
+}

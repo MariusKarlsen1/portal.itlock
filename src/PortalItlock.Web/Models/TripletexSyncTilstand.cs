@@ -7,4 +7,8 @@ public class TripletexSyncTilstand
 {
     public int Id { get; set; } = 1;
     public DateTime? SistSynkronisertKunderUtc { get; set; }
+
+    // Tripletex-kontoen kundenumrene hører til («test:123» / «prod:123»). Byttes
+    // kontoen, nullstilles koblingene og kundene sendes til den nye.
+    public string? TripletexKonto { get; set; }
 }

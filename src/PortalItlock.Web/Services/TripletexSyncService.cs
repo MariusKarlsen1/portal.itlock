@@ -54,6 +54,29 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         var hentet = 0;
         var oppdatert = 0;
 
+        // Ny Tripletex-konto (ny testkonto, eller fra test til ekte Tripletex):
+        // kundenumrene i portalen hører til den gamle kontoen og kan peke på helt
+        // andre kunder i den nye. Koblingene nullstilles, og alle kundene sendes
+        // til den nye kontoen (kobles til eksisterende med samme org.nr./navn).
+        var konto = await tripletex.KontoAsync(ct);
+        if (konto is null)
+        {
+            return new KundeSyncResultat(0, 0, 0, ["Fikk ikke kontakt med Tripletex. Sjekk nøklene under Oppsett → Tripletex."]);
+        }
+        var start = await db.TripletexSyncTilstand.FirstOrDefaultAsync(t => t.Id == 1, ct);
+        if (start is null)
+        {
+            start = new TripletexSyncTilstand { Id = 1 };
+            db.TripletexSyncTilstand.Add(start);
+        }
+        if (start.TripletexKonto is not null && start.TripletexKonto != konto)
+        {
+            await db.Kunder.ExecuteUpdateAsync(k => k.SetProperty(x => x.TripletexKundenummer, (string?)null).SetProperty(x => x.TripletexMaSendes, true), ct);
+            start.SistSynkronisertKunderUtc = null;
+        }
+        start.TripletexKonto = konto;
+        await db.SaveChangesAsync(ct);
+
         // 1) Portal -> Tripletex: nye kunder (uten kundenummer) og kunder som er
         //    endret i portalen siden sist (TripletexMaSendes). Kontaktpersonene
         //    sendes med. Kunder uten navn er ikke ferdig utfylt ennå.
@@ -147,7 +170,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
                         Adresse = tk.Adresse,
                         Postnr = tk.Postnr,
                         Sted = tk.Sted,
-                        Type = string.IsNullOrWhiteSpace(tk.OrganizationNumber) ? null : KundeType.Bedriftskunde,
+                        Type = string.IsNullOrWhiteSpace(tk.OrganizationNumber) ? KundeType.Privatperson : KundeType.Bedriftskunde,
                         TripletexKundenummer = tk.CustomerNumber
                     };
                     db.Kunder.Add(kunde);
@@ -309,7 +332,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         foreach (var p in personer)
         {
             var match = finnes.FirstOrDefault(f => string.Equals(f.Navn, p.Navn, StringComparison.OrdinalIgnoreCase));
-            if (match is not null && match.Epost == p.Epost?.Trim() && match.Telefon == p.Telefon?.Trim())
+            if (match is not null && match.Epost == TripletexService.GyldigEpost(p.Epost) && match.Telefon == p.Telefon?.Trim())
             {
                 continue;
             }

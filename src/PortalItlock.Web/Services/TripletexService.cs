@@ -130,6 +130,32 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     public static bool ErFeilApplikasjon(string? feilmelding) =>
         feilmelding?.Contains("cannot be used for this consumer", StringComparison.OrdinalIgnoreCase) == true;
 
+    // Hvilken Tripletex-konto nøklene går til, f.eks. «test:93305273». Null hvis Tripletex ikke svarer.
+    public async Task<string?> KontoAsync(CancellationToken ct = default)
+    {
+        if (nokler is null)
+        {
+            return null;
+        }
+        try
+        {
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, "token/session/>whoAmI?fields=companyId", ct);
+            using var resp = await http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return null;
+            }
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+            return doc.RootElement.TryGetProperty("value", out var v) && v.TryGetProperty("companyId", out var id) && id.ValueKind == JsonValueKind.Number
+                ? $"{(nokler.Test ? "test" : "prod")}:{id.GetInt64()}"
+                : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     public async Task<TilkoblingResultat> TestTilkoblingAsync(CancellationToken ct = default)
     {
         try
@@ -294,7 +320,7 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
             {
                 ["firstName"] = fornavn,
                 ["lastName"] = etternavn,
-                ["email"] = string.IsNullOrWhiteSpace(epost) ? null : epost.Trim(),
+                ["email"] = GyldigEpost(epost),
                 ["phoneNumberMobile"] = string.IsNullOrWhiteSpace(telefon) ? null : telefon.Trim(),
                 ["customer"] = new { id = kundeId }
             };
@@ -365,6 +391,18 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         }
     }
 
+    // Tripletex avviser hele kunden hvis e-posten ikke er gyldig. En ugyldig
+    // adresse (skrivefeil, to adresser i ett felt) sendes derfor ikke med.
+    public static string? GyldigEpost(string? epost)
+    {
+        var e = epost?.Trim();
+        if (string.IsNullOrEmpty(e) || e.Contains(' ') || e.Contains(',') || e.Contains(';'))
+        {
+            return null;
+        }
+        return System.Text.RegularExpressions.Regex.IsMatch(e, @"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$") ? e : null;
+    }
+
     private static object LagKundeBody(KundeOppdatering kunde)
     {
         object? postadresse = string.IsNullOrWhiteSpace(kunde.Adresse) && string.IsNullOrWhiteSpace(kunde.Postnr) && string.IsNullOrWhiteSpace(kunde.Sted)
@@ -375,11 +413,13 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         {
             name = kunde.Navn,
             organizationNumber = string.IsNullOrWhiteSpace(kunde.OrganizationNumber) ? null : kunde.OrganizationNumber,
-            email = kunde.Email,
+            email = GyldigEpost(kunde.Email),
             // Fakturaene går til samme e-post.
-            invoiceEmail = kunde.Email,
+            invoiceEmail = GyldigEpost(kunde.Email),
             phoneNumberMobile = kunde.Telefon,
             postalAddress = postadresse,
+            // Uten org.nr. er kunden en privatperson.
+            isPrivateIndividual = string.IsNullOrWhiteSpace(kunde.OrganizationNumber),
             isCustomer = true
         };
     }

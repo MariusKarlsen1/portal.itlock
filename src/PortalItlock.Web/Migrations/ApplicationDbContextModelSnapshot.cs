@@ -8755,6 +8755,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("SistSynkronisertKunderUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("TripletexKonto")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.ToTable("TripletexSyncTilstand");
