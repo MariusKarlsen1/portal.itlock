@@ -87,6 +87,51 @@ public static class KoblingsKabel
 
     public static string Skriv(List<KoblingsLeder> ledere) => JsonSerializer.Serialize(ledere);
 
+    // Lederveiene (Start/Slutt) er punkter på lerretet, ikke avstander fra kabelen.
+    // Flyttes hele kabelen (innliming, dra, piltaster), må de flyttes like mye,
+    // ellers blir lederendene stående igjen der kabelen var.
+    public static string? Flytt(string? ledereJson, double dx, double dy) =>
+        Endre(ledereJson, p => { p.X = Math.Round(p.X + dx, 3); p.Y = Math.Round(p.Y + dy, 3); });
+
+    // Endre størrelse rundt et punkt (cx, cy), likt med resten av det markerte.
+    public static string? Skaler(string? ledereJson, double cx, double cy, double faktor) =>
+        Endre(ledereJson, p => { p.X = Math.Round(cx + (p.X - cx) * faktor, 3); p.Y = Math.Round(cy + (p.Y - cy) * faktor, 3); });
+
+    private static string? Endre(string? ledereJson, Action<KoblingsStrekPunkt> endre)
+    {
+        if (ledereJson is null)
+        {
+            return null;
+        }
+        var ledere = Les(ledereJson);
+        foreach (var l in ledere)
+        {
+            foreach (var p in (l.Start ?? []).Concat(l.Slutt ?? []))
+            {
+                endre(p);
+            }
+        }
+        return Skriv(ledere);
+    }
+
+    // Ble streken bare flyttet (alle punkter like mye)? Gir forskyvningen, ellers null.
+    public static (double Dx, double Dy)? RenFlytting(IReadOnlyList<KoblingsStrekPunkt> gammel, IReadOnlyList<KoblingsStrekPunkt> ny)
+    {
+        if (gammel.Count == 0 || gammel.Count != ny.Count)
+        {
+            return null;
+        }
+        double dx = ny[0].X - gammel[0].X, dy = ny[0].Y - gammel[0].Y;
+        for (var i = 1; i < gammel.Count; i++)
+        {
+            if (Math.Abs(ny[i].X - gammel[i].X - dx) > 0.01 || Math.Abs(ny[i].Y - gammel[i].Y - dy) > 0.01)
+            {
+                return null;
+            }
+        }
+        return Math.Abs(dx) < 0.0005 && Math.Abs(dy) < 0.0005 ? null : (dx, dy);
+    }
+
     // Fyller på med standard farge/funksjon eller kutter, til n ledere.
     public static List<KoblingsLeder> MedAntall(List<KoblingsLeder> ledere, int n, bool par = false)
     {
