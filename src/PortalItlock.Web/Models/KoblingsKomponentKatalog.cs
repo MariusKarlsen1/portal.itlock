@@ -103,6 +103,9 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("iloq-leser-slank", "iLOQ leser (slank)", 4, 130, 298),
         Illustrasjon("steplock-osdp", "StepLock OSDP dørkontroller", 20, 1075, 1108),
         Illustrasjon("arx-dorsentral", "ARX dørsentral", 22, 1149, 1013),
+        Illustrasjon("arx-dorsentral-addon", "ARX dørsentral med tilleggskort", 22, 1102, 1101),
+        Illustrasjon("arx-dorsentral-enkel", "ARX dørsentral uten tilleggskort", 22, 1104, 1104),
+        Illustrasjon("arx-sentral-sort", "ARX sentral (sort kapsling)", 11, 477, 1108),
     ];
 
     public static readonly List<KoblingsKomponent> UtstyrVedDora =
@@ -125,7 +128,7 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("stromforsyning-24v", "Strømforsyning 24V", 12, 524, 589),
         Illustrasjon("adapter-12v", "Adapter 12V", 6, 336, 584),
         Illustrasjon("relekort", "Relékort", 9, 524, 436),
-        Illustrasjon("arx-power-x008", "ARX Power X008 med batterier", 26, 924, 774),
+        Illustrasjon("arx-power-x008", "ARX Power X008 med batterier", 26, 1095, 919),
     ];
 
     // Klemmerekker som legges oppå komponentene; hver skrue er et koblingspunkt.
