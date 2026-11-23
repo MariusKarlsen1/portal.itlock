@@ -1093,6 +1093,56 @@ function finnTilkoblinger(canvasEl, grupper) {
     return res;
 }
 
+// Streken (eller kabelen) en id hører til. Ledere i en kabel har negativ id
+// (se KoblingsKabel.LederId): -(strekId * 100 + rest).
+function eierStrek(id) {
+    return id >= 0 ? id : Math.floor(-id / 100);
+}
+
+// Markerte streker og kabler (med lederne sine) som skal flyttes like mye som
+// komponentene, i stedet for å strekkes etter tilkoblingspunktene.
+function markerteStreker(canvasEl) {
+    const ider = new Set();
+    canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline.ks-strek-valgt[data-strekid]').forEach(pl => {
+        const id = parseInt(pl.dataset.strekid, 10);
+        if (id >= 0) {
+            ider.add(id);
+        }
+    });
+    const linjer = [];
+    if (ider.size) {
+        canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]').forEach(pl => {
+            const id = parseInt(pl.dataset.strekid, 10);
+            if (ider.has(eierStrek(id))) {
+                linjer.push({ pl, id, orig: lesPunkter(pl) });
+            }
+        });
+    }
+    return { ider, linjer };
+}
+
+// Tilkoblinger uten de strekene som flyttes hele.
+function utenHele(tilkoblinger, hele) {
+    return hele.ider.size ? tilkoblinger.filter(t => !hele.ider.has(eierStrek(t.id))) : tilkoblinger;
+}
+
+function flyttHele(hele, dx, dy) {
+    for (const l of hele.linjer) {
+        l.resultat = l.orig.map(p => ({ x: p.x + dx, y: p.y + dy }));
+        l.pl.setAttribute('points', punkterTilStr(l.resultat));
+    }
+}
+
+// Bare selve strekene lagres; lederne i en kabel ligger relativt til kabelen og følger med.
+function heleTilJson(hele) {
+    return hele.linjer.filter(l => l.id >= 0 && l.resultat).map(l => ({ Id: l.id, PunkterJson: punkterTilJson(rens(l.resultat)) }));
+}
+
+function tilkoblingerOgHeleTilJson(tilkoblinger, hele) {
+    const liste = JSON.parse(tilkoblingerTilJson(tilkoblinger));
+    return JSON.stringify(liste.concat(heleTilJson(hele)));
+}
+
 function nyPortPos(g, side) {
     const b = markerBoks(g.el);
     return porterForSymbol(g.el, b).find(p => p.side === side) ?? porterForBoks(b, true)[0];
@@ -1231,6 +1281,7 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
             let startY = 0;
             let groupMarkers = [];
             let tilkoblinger = [];
+            let hele = { ider: new Set(), linjer: [] };
 
             markerEl.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1280,7 +1331,8 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                         return;
                     }
                     moved = true;
-                    tilkoblinger = finnTilkoblinger(containerEl, groupMarkers);
+                    hele = markerEl.classList.contains('kobling-symbol-marker-selected') ? markerteStreker(containerEl) : { ider: new Set(), linjer: [] };
+                    tilkoblinger = utenHele(finnTilkoblinger(containerEl, groupMarkers), hele);
                 }
                 const rect = containerEl.getBoundingClientRect();
                 const pdx = (dx / rect.width) * 100;
@@ -1305,6 +1357,10 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                 } else {
                     fjernGuider(containerEl);
                 }
+                if (hele.linjer.length && groupMarkers.length) {
+                    const g0 = groupMarkers[0];
+                    flyttHele(hele, (parseFloat(g0.el.style.left) || 0) - g0.startLeft, (parseFloat(g0.el.style.top) || 0) - g0.startTop);
+                }
                 oppdaterTilkobledeStreker(tilkoblinger);
             });
 
@@ -1322,12 +1378,13 @@ export function attachSymbolMarkers(containerEl, dotNetRef, locked) {
                         X: parseFloat(g.el.style.left),
                         Y: parseFloat(g.el.style.top)
                     }));
-                    dotNetRef.invokeMethodAsync('OnSymbolerFlyttet', JSON.stringify(payload), tilkoblingerTilJson(tilkoblinger));
+                    dotNetRef.invokeMethodAsync('OnSymbolerFlyttet', JSON.stringify(payload), tilkoblingerOgHeleTilJson(tilkoblinger, hele));
                 } else {
                     dotNetRef.invokeMethodAsync('OnSymbolClicked', symbolId, e.shiftKey);
                 }
                 groupMarkers = [];
                 tilkoblinger = [];
+                hele = { ider: new Set(), linjer: [] };
             });
         }
 
@@ -1650,7 +1707,12 @@ export function enableKeyboardShortcuts(containerEl, dotNetRef) {
         const ids = selected.map(el => el.dataset.symbolid).join(',');
         if (!nudge || nudge.containerEl !== containerEl || nudge.ids !== ids) {
             const grupper = selected.map(el => ({ el, startBoks: markerBoks(el) }));
-            nudge = { containerEl, ids, grupper, tilkoblinger: finnTilkoblinger(containerEl, grupper) };
+            const hele = markerteStreker(containerEl);
+            nudge = {
+                containerEl, ids, grupper, hele,
+                tilkoblinger: utenHele(finnTilkoblinger(containerEl, grupper), hele),
+                start: { x: parseFloat(selected[0].style.left) || 0, y: parseFloat(selected[0].style.top) || 0 }
+            };
         }
         for (const markerEl of selected) {
             const w = parseFloat(markerEl.style.width) || 0;
@@ -1661,6 +1723,9 @@ export function enableKeyboardShortcuts(containerEl, dotNetRef) {
             markerEl.style.top = top + '%';
             markerEl.dataset.x = left + w / 2;
             markerEl.dataset.y = top + h / 2;
+        }
+        if (nudge.hele.linjer.length) {
+            flyttHele(nudge.hele, (parseFloat(selected[0].style.left) || 0) - nudge.start.x, (parseFloat(selected[0].style.top) || 0) - nudge.start.y);
         }
         oppdaterTilkobledeStreker(nudge.tilkoblinger);
 
@@ -1676,7 +1741,7 @@ export function enableKeyboardShortcuts(containerEl, dotNetRef) {
                 X: parseFloat(g.el.style.left),
                 Y: parseFloat(g.el.style.top)
             }));
-            dotNetRef.invokeMethodAsync('OnSymbolerFlyttet', JSON.stringify(payload), tilkoblingerTilJson(n.tilkoblinger));
+            dotNetRef.invokeMethodAsync('OnSymbolerFlyttet', JSON.stringify(payload), tilkoblingerOgHeleTilJson(n.tilkoblinger, n.hele));
         }, 400);
     };
 

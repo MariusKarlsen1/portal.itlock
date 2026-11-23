@@ -421,7 +421,12 @@ else if (_skjema is not null)
 
                     @if (_redigerModus && ValgRamme() is { } vr)
                     {
-                        <div class="ks-valgramme" style="left:calc(@Inv(vr.X1)% - 10px); top:calc(@Inv(vr.Y1)% - 10px); width:calc(@Inv(vr.X2 - vr.X1)% + 20px); height:calc(@Inv(vr.Y2 - vr.Y1)% + 20px)"><span>@vr.Antall markert · Ctrl + C kopierer</span></div>
+                        <div class="ks-valgramme" style="left:calc(@Inv(vr.X1)% - 10px); top:calc(@Inv(vr.Y1)% - 10px); width:calc(@Inv(vr.X2 - vr.X1)% + 20px); height:calc(@Inv(vr.Y2 - vr.Y1)% + 20px)"><span>@vr.Antall markert · Ctrl + C kopierer</span>
+                            <div class="ks-valg-storrelse" title="Endre størrelse på det som er markert">
+                                <button type="button" @onclick="@(() => SkalerValgte(1 / 1.1))" aria-label="Mindre">−</button>
+                                <b>Størrelse</b>
+                                <button type="button" @onclick="@(() => SkalerValgte(1.1))" aria-label="Større">+</button>
+                            </div></div>
                     }
 
                     @* Knekkpunkter, tilkoblingspunkter og hjelpelinjer - innholdet tegnes av koblingsskjema.js. *@
@@ -1108,7 +1113,7 @@ else if (_skjema is not null)
     {
         if (firstRender)
         {
-            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=37");
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/koblingsskjema.js?v=38");
             _dotNetRef = DotNetObjectReference.Create(this);
         }
 
@@ -2492,6 +2497,15 @@ else if (_skjema is not null)
             symboler.Add(k);
         }
         var streker = _streker.Where(s => _valgteStrekIds.Contains(s.Id)).ToList();
+        // Kabler og streker som går mellom de markerte komponentene, blir med,
+        // så det limes inn ferdig koblet.
+        foreach (var strek in StrekerMellom(symboler))
+        {
+            if (!streker.Contains(strek))
+            {
+                streker.Add(strek);
+            }
+        }
         if (symboler.Count == 0 && streker.Count == 0 && _valgtStrek is { } st)
         {
             streker.Add(st);
@@ -2505,6 +2519,76 @@ else if (_skjema is not null)
         _sistInnlimt = innhold;
         _innlimtGanger = 0;
         VisUtklippMelding($"Kopiert: {Beskriv(innhold)}. Gå til et annet skjema, trykk der du vil ha det, og trykk Ctrl + V.");
+    }
+
+    // Streker der begge endene ligger på eller ved en av komponentene.
+    private List<KoblingsStrek> StrekerMellom(List<KoblingsSymbol> symboler)
+    {
+        if (symboler.Count == 0)
+        {
+            return [];
+        }
+        const double slakk = 1.5;
+        bool Ved(KoblingsStrekPunkt p) => symboler.Any(s =>
+            p.X >= s.PosX - slakk && p.X <= s.PosX + s.Bredde + slakk && p.Y >= s.PosY - slakk && p.Y <= s.PosY + s.Hoyde + slakk);
+        return _streker.Where(st =>
+        {
+            var p = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(st.PunkterJson) ?? [];
+            return p.Count >= 2 && Ved(p[0]) && Ved(p[^1]);
+        }).ToList();
+    }
+
+    // Endre størrelse på alt som er markert (f.eks. rett etter innliming), rundt midten.
+    private async Task SkalerValgte(double faktor)
+    {
+        var symboler = _symboler.Where(s => _valgteSymbolIds.Contains(s.Id) && !s.ErLaast).ToList();
+        var streker = _streker.Where(s => _valgteStrekIds.Contains(s.Id)).ToList();
+        if ((symboler.Count == 0 && streker.Count == 0) || Grenser(symboler, streker) is not { } g)
+        {
+            return;
+        }
+        // Ikke mindre enn 2 % eller større enn hele tegningen.
+        var bredde = g.X2 - g.X1;
+        if (bredde * faktor < 2 || bredde * faktor > 100)
+        {
+            return;
+        }
+        PushUndo();
+        var cx = (g.X1 + g.X2) / 2;
+        var cy = (g.Y1 + g.Y2) / 2;
+        foreach (var s in symboler)
+        {
+            s.PosX = Math.Round(cx + (s.PosX - cx) * faktor, 3);
+            s.PosY = Math.Round(cy + (s.PosY - cy) * faktor, 3);
+            s.Bredde = Math.Round(s.Bredde * faktor, 3);
+            s.Hoyde = Math.Round(s.Hoyde * faktor, 3);
+        }
+        foreach (var st in streker)
+        {
+            var punkter = JsonSerializer.Deserialize<List<KoblingsStrekPunkt>>(st.PunkterJson) ?? [];
+            foreach (var p in punkter)
+            {
+                p.X = Math.Round(cx + (p.X - cx) * faktor, 3);
+                p.Y = Math.Round(cy + (p.Y - cy) * faktor, 3);
+            }
+            st.PunkterJson = JsonSerializer.Serialize(punkter);
+            if (st.ErKabel)
+            {
+                // Lederveiene er avstander fra kabelen, så de skaleres likt.
+                var ledere = KoblingsKabel.Les(st.LedereJson);
+                foreach (var l in ledere)
+                {
+                    foreach (var p in (l.Start ?? []).Concat(l.Slutt ?? []))
+                    {
+                        p.X = Math.Round(p.X * faktor, 3);
+                        p.Y = Math.Round(p.Y * faktor, 3);
+                    }
+                }
+                st.LedereJson = KoblingsKabel.Skriv(ledere);
+            }
+        }
+        await LagreDb();
+        StateHasChanged();
     }
 
     private sealed record Ramme(double X1, double Y1, double X2, double Y2, int Antall);
