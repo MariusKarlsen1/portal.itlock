@@ -1413,6 +1413,11 @@ export function enableEditorSnarveier(containerEl, dotNetRef) {
             if (ctrl && tast === 'v' && !window.getSelection()?.toString()) {
                 e.preventDefault();
                 limInn();
+            } else if (ctrl && tast === 'a') {
+                // Marker alt på tegningen, ikke teksten på siden. Skjemaet går i Rediger.
+                e.preventDefault();
+                window.getSelection()?.removeAllRanges();
+                dotNetRef.invokeMethodAsync('OnSnarvei', 'alle');
             }
             return;
         }
@@ -1753,6 +1758,36 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         }
         startBoks(e);
     });
+
+    // Visning (ikke Rediger): dra hvor som helst for å markere. Boksen starter
+    // først når musa er dratt litt, så vanlige klikk virker som før.
+    let visStart = null;
+    canvasEl.addEventListener('pointerdown', (e) => {
+        visStart = null;
+        if (e.button !== 0 || active || currentStrekTegning || canvasEl.dataset.rediger === '1') {
+            return;
+        }
+        if (e.target.closest && e.target.closest('a, button, input, textarea, select')) {
+            return;
+        }
+        visStart = e;
+    });
+    canvasEl.addEventListener('pointermove', (e) => {
+        if (!visStart || active) {
+            return;
+        }
+        if ((e.buttons & 1) === 0) {
+            visStart = null;
+            return;
+        }
+        if (Math.hypot(e.clientX - visStart.clientX, e.clientY - visStart.clientY) < 6) {
+            return;
+        }
+        const start = visStart;
+        visStart = null;
+        startBoks(start);
+    });
+    canvasEl.addEventListener('pointerup', () => { visStart = null; });
 
     canvasEl.addEventListener('pointermove', (e) => {
         if (!active || !box) {
