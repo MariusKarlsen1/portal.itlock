@@ -91,6 +91,7 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("krokfallas-vrider", "Krokfallås (vrider)", 7, 159, 335),
         Illustrasjon("krokfallas-sylinder", "Krokfallås (sylinder)", 7.5, 178, 340),
         Illustrasjon("step-st550", "STEP ST550 krokfallås (låskasse)", 13, 1735, 781),
+        Illustrasjon("el-krokfallas-kabel", "El-krokfallås med kabel", 8, 733, 1099),
         Illustrasjon("magnetlas-anker", "Magnetlås med ankerplate", 14, 1740, 888),
     ];
 
