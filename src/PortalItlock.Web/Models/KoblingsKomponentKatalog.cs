@@ -132,7 +132,8 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("stromforsyning-24v", "Strømforsyning 24V", 12, 524, 589),
         Illustrasjon("adapter-12v", "Adapter 12V", 6, 336, 584),
         Illustrasjon("relekort", "Relékort", 9, 524, 436),
-        Illustrasjon("arx-power-x008", "ARX Power X008 med batterier", 26, 1095, 919),
+        // Ekte bilde (nytt filnavn, så nettleseren ikke viser den gamle tegningen fra hurtigminnet).
+        Illustrasjon("arx-power-x008", "ARX Power X008 med batterier", 26, 1095, 919) with { Bilde = "/img/kobling/egne/arx-power-x008-foto.png" },
     ];
 
     // Klemmerekker som legges oppå komponentene; hver skrue er et koblingspunkt.
