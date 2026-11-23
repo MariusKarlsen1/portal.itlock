@@ -456,12 +456,15 @@ function avstandTilLinjestykke(p, a, b) {
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-function finnStrekNaer(canvasEl, clientX, clientY, kunLedere = false, maks = STREK_HIT_PX) {
+function finnStrekNaer(canvasEl, clientX, clientY, kunLedere = false, maks = STREK_HIT_PX, kunKabel = false) {
     const rect = canvasRect(canvasEl);
     let best = null;
     let bestDist = maks;
     canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]').forEach(pl => {
         if (kunLedere && !pl.dataset.strekid.startsWith('-')) {
+            return;
+        }
+        if (kunKabel && pl.dataset.kabel !== '1') {
             return;
         }
         const pts = lesPunkter(pl).map(p => ({
@@ -923,9 +926,11 @@ export function initStrekRedigering(canvasEl, dotNetRef) {
             }
         }
 
-        // Lederne ligger oppå enden av kabelen - de går foran når klikket er nær en leder.
-        const lederId = finnStrekNaer(canvasEl, e.clientX, e.clientY, true);
-        const strekId = lederId ?? finnStrekNaer(canvasEl, e.clientX, e.clientY);
+        // Lederne ligger oppå enden av kabelen - de går foran når klikket er nær en
+        // leder. Trykker man rett på den sorte kabelen, er det kabelen som tas.
+        const kabelId = finnStrekNaer(canvasEl, e.clientX, e.clientY, false, 5, true);
+        const lederId = kabelId === null ? finnStrekNaer(canvasEl, e.clientX, e.clientY, true) : null;
+        const strekId = kabelId ?? lederId ?? finnStrekNaer(canvasEl, e.clientX, e.clientY);
         if (strekId !== null && strekId < 0) {
             // En leder i en kabel: den følger musen videre fra enden. Klikk lager
             // sving, klikk på et tilkoblingspunkt kobler, Esc stopper.
@@ -986,13 +991,13 @@ export function initStrekRedigering(canvasEl, dotNetRef) {
         const siste = drag.orig.length - 1;
         let arr;
         if (drag.type === 'm' && drag.kabel) {
-            // Den sorte kabelen flyttes som en helhet; lederne følger med.
+            // Den sorte kabelen flyttes som en helhet; alle lederne følger med
+            // nøyaktig som de står, også de som er koblet til et punkt.
             const dx = raw.x - drag.start.x;
             const dy = raw.y - drag.start.y;
             arr = drag.orig.map(p => ({ x: p.x + dx, y: p.y + dy }));
             for (const l of drag.kabel) {
-                const n = l.orig.length - 1;
-                l.pl.setAttribute('points', punkterTilStr(l.orig.map((p, i) => (l.fast && i === n ? p : { x: p.x + dx, y: p.y + dy }))));
+                l.pl.setAttribute('points', punkterTilStr(l.orig.map(p => ({ x: p.x + dx, y: p.y + dy }))));
             }
         } else if (drag.type === 'v') {
             drag.tilPort = false;
@@ -1859,7 +1864,18 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         visStart = null;
         startBoks(start);
     });
-    canvasEl.addEventListener('pointerup', () => { visStart = null; });
+    canvasEl.addEventListener('pointerup', (e) => {
+        const klikk = visStart;
+        visStart = null;
+        if (!klikk || active || canvasEl.dataset.rediger === '1') {
+            return;
+        }
+        const id = finnStrekNaer(canvasEl, e.clientX, e.clientY, false, 5, true)
+            ?? finnStrekNaer(canvasEl, e.clientX, e.clientY);
+        if (id !== null) {
+            dotNetRef.invokeMethodAsync('OnStrekKlikkVisning', eierStrek(id));
+        }
+    });
 
     canvasEl.addEventListener('pointermove', (e) => {
         if (!active || !box) {
