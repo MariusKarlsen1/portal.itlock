@@ -90,6 +90,8 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("motorlas-kasse", "Motorlås (låskasse)", 12, 574, 264),
         Illustrasjon("krokfallas-vrider", "Krokfallås (vrider)", 7, 159, 335),
         Illustrasjon("krokfallas-sylinder", "Krokfallås (sylinder)", 7.5, 178, 340),
+        Illustrasjon("step-st550", "STEP ST550 krokfallås (låskasse)", 13, 1735, 781),
+        Illustrasjon("magnetlas-anker", "Magnetlås med ankerplate", 14, 1740, 888),
     ];
 
     public static readonly List<KoblingsKomponent> LesereOgSentraler =
