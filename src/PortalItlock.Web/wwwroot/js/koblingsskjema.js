@@ -183,6 +183,11 @@ export function initZoomPan(wrapEl, canvasEl, dotNetRef) {
         if (canvasEl.dataset.locked === '0') {
             return;
         }
+        // Med mus markerer venstre knapp (dra en boks). Tegningen flyttes med
+        // høyre/midtre knapp eller mellomrom + dra, og med fingeren på mobil.
+        if (e.pointerType !== 'touch' && e.button === 0 && canvasEl.dataset.rediger !== '1') {
+            return;
+        }
 
         if (e.pointerType === 'touch') {
             activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1721,6 +1726,8 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         startY = e.clientY;
         box = document.createElement('div');
         box.className = 'kobling-rubber-band';
+        // Stilen settes her: elementet lages av JS og treffes ikke av den scopede CSS-en.
+        box.style.cssText = 'position:absolute;z-index:20;pointer-events:none;border:1.5px solid #1f6feb;background:rgba(31,111,235,0.10);border-radius:3px;';
         canvasEl.appendChild(box);
         safeCapture(canvasEl, e.pointerId);
     }
@@ -1802,7 +1809,29 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         box.style.top = y1 + 'px';
         box.style.width = (x2 - x1) + 'px';
         box.style.height = (y2 - y1) + 'px';
+        visForvalg(box.getBoundingClientRect());
     });
+
+    // Komponenter som berøres av boksen og streker som ligger helt inni den,
+    // får samme blå markering som når de er valgt - før man slipper.
+    function visForvalg(b) {
+        canvasEl.querySelectorAll('.kobling-symbol-marker[data-symbolid]').forEach(m => {
+            const r = m.getBoundingClientRect();
+            const inni = r.left < b.right && r.right > b.left && r.top < b.bottom && r.bottom > b.top;
+            const bakgrunn = m.classList.contains('kobling-symbol-marker-laast')
+                || (r.left <= b.left && r.right >= b.right && r.top <= b.top && r.bottom >= b.bottom);
+            m.classList.toggle('ks-forvalg', inni && !bakgrunn && b.width >= 4 && b.height >= 4);
+        });
+        canvasEl.querySelectorAll('.kobling-strek-svg-overlay polyline[data-strekid]').forEach(p => {
+            const r = p.getBoundingClientRect();
+            const inni = r.left >= b.left - 2 && r.right <= b.right + 2 && r.top >= b.top - 2 && r.bottom <= b.bottom + 2;
+            p.classList.toggle('ks-forvalg', inni && b.width >= 4 && b.height >= 4);
+        });
+    }
+
+    function fjernForvalg() {
+        canvasEl.querySelectorAll('.ks-forvalg').forEach(el => el.classList.remove('ks-forvalg'));
+    }
 
     canvasEl.addEventListener('pointerup', (e) => {
         if (!active) {
@@ -1817,6 +1846,7 @@ export function enableRubberBandSelect(canvasEl, dotNetRef) {
         const boxRect = box.getBoundingClientRect();
         box.remove();
         box = null;
+        fjernForvalg();
 
         if (boxRect.width < 4 || boxRect.height < 4) {
             return;
