@@ -117,6 +117,7 @@ public static class KoblingsKomponentKatalog
         Illustrasjon("magnetkontakt", "Magnetkontakt", 10, 473, 110),
         Illustrasjon("dorautomatikk", "Dørautomatikk", 14, 429, 194),
         Illustrasjon("dormakaba-es200", "dormakaba ES200 styring (skyvedør)", 30, 2000, 685),
+        Illustrasjon("assaabloy-skyvedor", "ASSA ABLOY skyvedørsautomatikk med sensorer", 34, 2000, 650),
         Illustrasjon("exit-knapp", "Exit-knapp", 6, 185, 190),
         Illustrasjon("nokkelbryter-vippe", "Nøkkelbryter (vippe)", 6, 178, 197),
         Illustrasjon("nokkelbryter-sylinder", "Nøkkelbryter (sylinder)", 6, 198, 202),
