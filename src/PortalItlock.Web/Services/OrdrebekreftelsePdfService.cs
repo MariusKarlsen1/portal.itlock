@@ -23,6 +23,7 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
     private static readonly Color Ink = Color.FromHex("#292927");
     private static readonly Color Svak = Color.FromHex("#6D675F");
     private static readonly Color Linje = Color.FromHex("#D9D6D0");
+    private static readonly Color RadGra = Color.FromHex("#F0F0F0");
     private const decimal MvaSats = 0.25m;
 
     public sealed record Resultat(byte[] Pdf, string Ordrenummer, int Versjon);
@@ -286,7 +287,7 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
                     });
                     t.Header(h =>
                     {
-                        IContainer H(IContainer c) => c.BorderBottom(0.75f).BorderColor(Ink).PaddingVertical(5);
+                        IContainer H(IContainer c) => c.BorderBottom(0.75f).BorderColor(Ink).PaddingVertical(5).PaddingHorizontal(3);
                         h.Cell().Element(H).Text("Nummer").Bold();
                         h.Cell().Element(H).Text("Beskrivelse").Bold();
                         h.Cell().Element(H).AlignRight().Text("Antall").Bold();
@@ -294,9 +295,12 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
                         h.Cell().Element(H).AlignRight().Text("Rabatt %").Bold();
                         h.Cell().Element(H).AlignRight().Text("Totalt").Bold();
                     });
-                    IContainer C(IContainer c) => c.PaddingVertical(5);
+                    // Annenhver grå og hvit rad, så linjene er lette å følge.
+                    var radNr = 0;
                     foreach (var l in i.Linjer)
                     {
+                        var gra = radNr++ % 2 == 0;
+                        IContainer C(IContainer c) => (gra ? c.Background(RadGra) : c).PaddingVertical(5).PaddingHorizontal(3);
                         t.Cell().Element(C).Text(l.Nummer);
                         t.Cell().Element(C).Column(c =>
                         {
