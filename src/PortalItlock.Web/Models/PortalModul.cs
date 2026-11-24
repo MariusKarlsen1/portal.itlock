@@ -117,6 +117,7 @@ public static class PortalModulRegister
         new Lenke("Sjekkliste for servicerunder", "Punktene som automatisk legges til hver servicerunde.", "service-sjekklistemal", "clock"),
         new Lenke("Tilvalgsmaler", "Ferdige maler med alternativer, bilder og priser til gjenbruk.", "tilvalgmaler", "receipt"),
         new Lenke("Forsider", "Lag forside-/forbeholdstekster til bruk på tilbud.", "forsider", "folder"),
+        new Lenke("Ordrebekreftelse", "Hva som står på ordrebekreftelsen: felt, tekster og betingelser.", "ordrebekreftelse-mal", "file-text"),
         new Lenke("Godkjenninger", "Godkjenn innsendte timer og fraværssøknader, se sammendrag og eksporter til lønn.", "timegodkjenning", "check-circle", KreverModul: TilleggsModuler.Timer),
         new Lenke("CE-sertifisering", "Sett CE-kategori og standarddokument på beslagstyper, og grenseverdier for mål.", "ce-oppsett", "check-circle"),
         // Hjemmesidetekster, Nyheter og Notater er tatt ut av menyen/portalen
