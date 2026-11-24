@@ -1,0 +1,194 @@
+@page "/ordrebekreftelse-mal"
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@inject ApplicationDbContext Db
+
+<PageTitle>Mal for ordrebekreftelse</PageTitle>
+
+@* Oppsett og maler → Ordrebekreftelse. Standardteksten ligger inne fra start
+   (ObMalInnhold.Standard); her endres hva som står på alle nye
+   ordrebekreftelser, fra både tilbud og arbeidsordre. *@
+<div class="obm">
+    <a class="back-link" href="/oppsettmodul"><Icon Name="arrow-left" />Til oppsett og maler</a>
+    <h1>Mal for ordrebekreftelse</h1>
+    <p class="obm-under">Bestemmer hva som står på alle nye ordrebekreftelser, fra både tilbud og arbeidsordre. Standardteksten ligger inne fra start. Endre teksten, slå av det du ikke vil ha med, eller legg til egne punkter. Skriv <b>{firma}</b> der firmanavnet skal stå.</p>
+
+    @if (_mal is not null)
+    {
+        <div class="obm-kort">
+            <section class="obm-seksjon">
+                <div class="obm-h"><b>Opplysninger øverst til høyre</b><small>Hvilke felt som vises, og i hvilken rekkefølge</small></div>
+                <div class="obm-k">
+                    @for (var i = 0; i < _mal.Felt.Count; i++)
+                    {
+                        var felt = _mal.Felt[i];
+                        var nr = i;
+                        <div class="obm-rad @(felt.Vis ? "" : "av")">
+                            <button type="button" class="obm-sw @(felt.Vis ? "" : "av")" role="switch" aria-checked="@felt.Vis" aria-label="@($"Vis {felt.Navn}")" @onclick="@(() => { felt.Vis = !felt.Vis; Endret(); })"></button>
+                            <input class="obm-etikett" value="@felt.Navn" @onchange="@(e => { felt.Navn = e.Value?.ToString() ?? felt.Navn; Endret(); })" aria-label="Navn på feltet" />
+                            @if (felt.Nokkel is "levmate" or "levtid" or "betaling")
+                            {
+                                <input class="obm-verdi" value="@felt.Verdi" placeholder="@(felt.Nokkel switch { "levmate" => "Levering og montering (automatisk)", "levtid" => "Når ingen dato er satt", _ => "F.eks. 14 dager netto" })" @onchange="@(e => { felt.Verdi = e.Value?.ToString(); Endret(); })" aria-label="@($"Tekst for {felt.Navn}")" />
+                            }
+                            else
+                            {
+                                <span class="obm-auto">@Eksempel(felt.Nokkel)</span>
+                            }
+                            <button type="button" class="obm-ikon" title="Flytt opp" disabled="@(nr == 0)" @onclick="@(() => FlyttFelt(nr))"><Icon Name="arrow-up" /></button>
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <section class="obm-seksjon">
+                <div class="obm-h"><b>Tekst etter summen</b><small>Står rett under totalsummen. Tomt = ingen tekst.</small></div>
+                <div class="obm-k"><textarea rows="3" @bind="_mal.Takk" @bind:after="Endret"></textarea></div>
+            </section>
+
+            <section class="obm-seksjon">
+                <div class="obm-h"><b>Betingelser</b><small>Punkter merket «kun privat» tas bare med når kunden er privatperson.</small></div>
+                <div class="obm-k">
+                    @for (var i = 0; i < _mal.Punkter.Count; i++)
+                    {
+                        var p = _mal.Punkter[i];
+                        var nr = i;
+                        <div class="obm-punkt @(p.Vis ? "" : "av")">
+                            <div class="obm-punkt-h">
+                                <button type="button" class="obm-sw @(p.Vis ? "" : "av")" role="switch" aria-checked="@p.Vis" aria-label="Vis punktet" @onclick="@(() => { p.Vis = !p.Vis; Endret(); })"></button>
+                                <input class="obm-tittel" @bind="p.Tittel" @bind:after="Endret" placeholder="Tittel" aria-label="Tittel" />
+                                <label class="obm-privat"><input type="checkbox" @bind="p.KunPrivat" @bind:after="Endret" />kun privat</label>
+                                @if (p.Egen)
+                                {
+                                    <span class="obm-egen">eget</span>
+                                }
+                                <button type="button" class="obm-ikon" title="Flytt opp" disabled="@(nr == 0)" @onclick="@(() => FlyttPunkt(nr))"><Icon Name="arrow-up" /></button>
+                                <button type="button" class="obm-ikon" title="Fjern punktet" @onclick="@(() => { _mal.Punkter.RemoveAt(nr); Endret(); })"><Icon Name="x" /></button>
+                            </div>
+                            <textarea rows="3" @bind="p.Tekst" @bind:after="Endret" aria-label="Tekst"></textarea>
+                        </div>
+                    }
+                    <button type="button" class="obm-kn myk" @onclick="LeggTilPunkt"><Icon Name="plus" />Legg til eget punkt</button>
+                </div>
+            </section>
+
+            <section class="obm-seksjon">
+                <div class="obm-h"><b>Kontakt og bunntekst</b></div>
+                <div class="obm-k">
+                    <div class="obm-rad">
+                        <button type="button" class="obm-sw @(_mal.Kontakt ? "" : "av")" role="switch" aria-checked="@_mal.Kontakt" aria-label="Vis kontaktlinjen" @onclick="@(() => { _mal.Kontakt = !_mal.Kontakt; Endret(); })"></button>
+                        <span>«Spørsmål eller feil i ordren? Ta kontakt: …»</span>
+                    </div>
+                    <label class="obm-felt"><span>Tekst nederst på siden</span><input @bind="_mal.Bunntekst" @bind:after="Endret" /></label>
+                </div>
+            </section>
+
+            <div class="obm-bunn">
+                @if (!string.IsNullOrEmpty(_melding))
+                {
+                    <span class="obm-melding">@_melding</span>
+                }
+                @if (_bekreftTilbake)
+                {
+                    <span class="obm-bekreft">Sette alt tilbake til standard?</span>
+                    <button type="button" class="obm-kn" @onclick="@(() => _bekreftTilbake = false)">Avbryt</button>
+                    <button type="button" class="obm-kn" @onclick="Tilbakestill">Ja, tilbakestill</button>
+                }
+                else
+                {
+                    <button type="button" class="obm-kn" @onclick="@(() => _bekreftTilbake = true)">Tilbakestill til standard</button>
+                }
+                <button type="button" class="obm-kn" @onclick="@(() => LagreOgVis(true))">Forhåndsvis som privatkunde</button>
+                <button type="button" class="obm-kn p" @onclick="@(() => LagreOgVis(false))"><Icon Name="eye" />Lagre og forhåndsvis</button>
+            </div>
+        </div>
+    }
+</div>
+
+<PdfPreviewModal Url="@_forhandsvisning" Tittel="Ordrebekreftelse (eksempel)" OnClose="@(() => _forhandsvisning = null)" />
+
+@code {
+    private ObMalInnhold? _mal;
+    private string? _melding;
+    private bool _bekreftTilbake;
+    private string? _forhandsvisning;
+    private int _versjon;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _mal = ObMalInnhold.Les((await Db.OrdrebekreftelseMaler.AsNoTracking().FirstOrDefaultAsync())?.Json);
+    }
+
+    private static string Eksempel(string nokkel) => nokkel switch
+    {
+        "kundenr" => "Fra kunden",
+        "deres" => "Kontaktpersonen",
+        "var" => "Prosjektleder eller deg",
+        "tilbud" => "Fra tilbud",
+        "godkjent" => "Fra tilbud",
+        "ordre" => "Fra arbeidsordre",
+        "prosjektid" or "prosjektnavn" => "Fra prosjektet",
+        _ => "",
+    };
+
+    private void Endret() => _melding = null;
+
+    private void FlyttFelt(int i)
+    {
+        if (_mal is null || i <= 0)
+        {
+            return;
+        }
+        (_mal.Felt[i - 1], _mal.Felt[i]) = (_mal.Felt[i], _mal.Felt[i - 1]);
+        Endret();
+    }
+
+    private void FlyttPunkt(int i)
+    {
+        if (_mal is null || i <= 0)
+        {
+            return;
+        }
+        (_mal.Punkter[i - 1], _mal.Punkter[i]) = (_mal.Punkter[i], _mal.Punkter[i - 1]);
+        Endret();
+    }
+
+    private void LeggTilPunkt()
+    {
+        _mal?.Punkter.Add(new ObMalPunkt("Garanti", "") { Egen = true });
+        Endret();
+    }
+
+    private async Task Lagre()
+    {
+        if (_mal is null)
+        {
+            return;
+        }
+        var rad = await Db.OrdrebekreftelseMaler.FirstOrDefaultAsync();
+        if (rad is null)
+        {
+            rad = new OrdrebekreftelseMal();
+            Db.OrdrebekreftelseMaler.Add(rad);
+        }
+        rad.Json = _mal.Skriv();
+        await Db.SaveChangesAsync();
+        _melding = "Malen er lagret. Den brukes på alle nye ordrebekreftelser.";
+    }
+
+    private async Task LagreOgVis(bool privat)
+    {
+        await Lagre();
+        _forhandsvisning = $"/ordrebekreftelse-mal/eksempel?privat={(privat ? 1 : 0)}&v={++_versjon}";
+    }
+
+    private async Task Tilbakestill()
+    {
+        _mal = ObMalInnhold.Standard();
+        _bekreftTilbake = false;
+        await Lagre();
+        _melding = "Malen er satt tilbake til standard.";
+    }
+}

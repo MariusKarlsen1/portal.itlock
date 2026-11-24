@@ -33,8 +33,12 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
 
     private sealed record Innhold(
         string Ordrenummer, string? Erstatter, List<string> KundeLinjer, List<string> LeveringLinjer,
-        List<(string Etikett, string? Verdi)> Opplysninger, List<PdfLinje> Linjer, decimal TotaltEks,
-        bool ErPrivat, string? VarReferanse, string? KontaktEpost);
+        List<(string Nokkel, string? Verdi)> Opplysninger, List<PdfLinje> Linjer, decimal TotaltEks,
+        bool ErPrivat, string? VarReferanse, string? KontaktEpost, ObMalInnhold Mal);
+
+    // Malen fra Oppsett og maler → Ordrebekreftelse (standardteksten hvis den ikke er endret).
+    private async Task<ObMalInnhold> MalAsync() =>
+        ObMalInnhold.Les((await db.OrdrebekreftelseMaler.AsNoTracking().FirstOrDefaultAsync())?.Json);
 
     public async Task<Resultat?> LagAsync(int tilbudId, int? brukerId)
     {
@@ -93,19 +97,19 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
             KundeLinjer(kunde),
             LeveringLinjer(kunde, tilbud.KontaktpersonNavn, prosjekt?.Adresse, prosjekt?.Postnr, prosjekt?.Sted),
             [
-                ("Kundenummer", kunde?.TripletexKundenummer ?? kunde?.Id.ToString()),
-                ("Deres referanse", tilbud.KontaktpersonNavn ?? kunde?.Kontaktperson),
-                ("Vår referanse", varReferanse),
-                ("Leveringsmåte", arbeid.Count > 0 ? "Levering og montering" : "Levering"),
-                ("Leveringstid", string.IsNullOrWhiteSpace(tilbud.Leveringstid) ? "Avtales nærmere" : tilbud.Leveringstid),
-                ("Betalingsbetingelser", "Iht. faktura"),
-                ("Tilbud nr.", $"T-{tilbud.OpprettetDato.Year}-{tilbud.Id:000}"),
-                ("Godkjent dato", (tilbud.GodkjentDato ?? DateTime.Today).ToString("dd.MM.yyyy")),
-                ("Prosjekt ID", prosjekt is null ? null : $"P-{prosjekt.Id}"),
-                ("Prosjektnavn", prosjekt?.Navn),
+                ("kundenr", kunde?.TripletexKundenummer ?? kunde?.Id.ToString()),
+                ("deres", tilbud.KontaktpersonNavn ?? kunde?.Kontaktperson),
+                ("var", varReferanse),
+                ("levmate", arbeid.Count > 0 ? "Levering og montering" : "Levering"),
+                ("levtid", string.IsNullOrWhiteSpace(tilbud.Leveringstid) ? null : tilbud.Leveringstid),
+                ("betaling", null),
+                ("tilbud", $"T-{tilbud.OpprettetDato.Year}-{tilbud.Id:000}"),
+                ("godkjent", (tilbud.GodkjentDato ?? DateTime.Today).ToString("dd.MM.yyyy")),
+                ("prosjektid", prosjekt is null ? null : $"P-{prosjekt.Id}"),
+                ("prosjektnavn", prosjekt?.Navn),
             ],
             linjer, totaltEks, kunde?.Type == KundeType.Privatperson, varReferanse,
-            prosjekt?.Prosjektleder?.Epost ?? org.Epost);
+            prosjekt?.Prosjektleder?.Epost ?? org.Epost, await MalAsync());
 
         return new Resultat(Tegn(innhold, org), ordrenummer, versjon);
     }
@@ -156,18 +160,39 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
             KundeLinjer(kunde),
             LeveringLinjer(kunde, null, ordre.Adresse ?? ordre.Prosjekt?.Adresse, ordre.Postnr ?? ordre.Prosjekt?.Postnr, ordre.Sted ?? ordre.Prosjekt?.Sted),
             [
-                ("Kundenummer", kunde?.TripletexKundenummer ?? kunde?.Id.ToString()),
-                ("Deres referanse", kunde?.Kontaktperson),
-                ("Vår referanse", varReferanse),
-                ("Leveringsmåte", arbeid.Count > 0 ? "Levering og montering" : "Levering"),
-                ("Leveringstid", ordre.PlanlagtDato is { } d ? d.ToString("dd.MM.yyyy") : "Avtales nærmere"),
-                ("Betalingsbetingelser", "Iht. faktura"),
-                ("Arbeidsordre", $"#{ordre.Id} {ordre.Tittel}"),
+                ("kundenr", kunde?.TripletexKundenummer ?? kunde?.Id.ToString()),
+                ("deres", kunde?.Kontaktperson),
+                ("var", varReferanse),
+                ("levmate", arbeid.Count > 0 ? "Levering og montering" : "Levering"),
+                ("levtid", ordre.PlanlagtDato is { } d ? d.ToString("dd.MM.yyyy") : null),
+                ("betaling", null),
+                ("ordre", $"#{ordre.Id} {ordre.Tittel}"),
+                ("prosjektid", ordre.Prosjekt is null ? null : $"P-{ordre.Prosjekt.Id}"),
+                ("prosjektnavn", ordre.Prosjekt?.Navn),
             ],
             linjer, totaltEks, kunde?.Type == KundeType.Privatperson, varReferanse,
-            ordre.Prosjekt?.Prosjektleder?.Epost ?? bruker?.Epost ?? org.Epost);
+            ordre.Prosjekt?.Prosjektleder?.Epost ?? bruker?.Epost ?? org.Epost, await MalAsync());
 
         return new Resultat(Tegn(innhold, org), ordrenummer, versjon);
+    }
+
+    // Eksempel med oppdiktede linjer, til «Lagre og forhåndsvis» på malen.
+    public async Task<byte[]> LagEksempelAsync(bool privat)
+    {
+        var org = RapportProfil.Fra(tenantContext.Current);
+        var kunde = new Kunde { Navn = privat ? "Ola Nordmann" : "Eksempel AS", Adresse = "Storgata 1", Postnr = "4370", Sted = "Egersund", Kontaktperson = privat ? null : "Kari Kunde", Type = privat ? KundeType.Privatperson : KundeType.Bedriftskunde };
+        var linjer = new List<PdfLinje>
+        {
+            new("AK5.10", "Farget plastlokk S5 for nøkkel (K5S) Mørk grå", "iLOQ", "1", 673, null, 673),
+            new("K55S.2", "Nøkkel-Fob for iLOQ 5-serien låssystem", null, "1", 1126, 30, 788.20m),
+            new("HF1", "Ekspedisjonsgebyr", null, "1", 123, null, 123),
+            new("TA100", "Montasje", null, "3,5", 1100, null, 3850),
+        };
+        var innhold = new Innhold("AO-123", null, KundeLinjer(kunde), LeveringLinjer(kunde, null, null, null, null),
+            [("kundenr", "10002"), ("deres", kunde.Kontaktperson), ("var", "Marius Karlsen"), ("levmate", "Levering og montering"),
+             ("levtid", null), ("betaling", null), ("ordre", "#123 Bytte låskasser"), ("tilbud", null), ("godkjent", null), ("prosjektid", null), ("prosjektnavn", null)],
+            linjer, linjer.Sum(l => l.Total), privat, "Marius Karlsen", org.Epost, await MalAsync());
+        return Tegn(innhold, org);
     }
 
     private static List<string> KundeLinjer(Kunde? kunde) =>
@@ -215,7 +240,10 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
                         R("E-post", org.Epost);
                     });
                 });
-                f.Item().PaddingTop(8).Text("Ordren leveres i henhold til betingelsene i denne ordrebekreftelsen.").FontSize(8);
+                if (!string.IsNullOrWhiteSpace(i.Mal.Bunntekst))
+                {
+                    f.Item().PaddingTop(8).Text(i.Mal.Bunntekst.Replace(ObMalInnhold.Firma, org.Navn)).FontSize(8);
+                }
             });
 
             page.Header().AlignRight().Text(t =>
@@ -262,11 +290,24 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
                     row.RelativeItem(1.25f).Table(t =>
                     {
                         t.ColumnsDefinition(cd => { cd.ConstantColumn(150); cd.RelativeColumn(); });
-                        // Felt uten verdi tas ikke med. Verdiene står i fet skrift.
-                        foreach (var (a, b) in i.Opplysninger.Where(x => !string.IsNullOrWhiteSpace(x.Verdi)))
+                        // Feltene, rekkefølgen og standardverdiene kommer fra malen. Felt uten
+                        // verdi tas ikke med. Etiketten står i fet skrift.
+                        var verdier = i.Opplysninger.GroupBy(x => x.Nokkel).ToDictionary(g => g.Key, g => g.First().Verdi);
+                        foreach (var felt in i.Mal.Felt.Where(f => f.Vis && verdier.ContainsKey(f.Nokkel)))
                         {
-                            t.Cell().PaddingBottom(1).Text(a);
-                            t.Cell().PaddingBottom(1).Text(b!).Bold();
+                            var verdi = verdier[felt.Nokkel];
+                            // Egen tekst i malen går foran (leveringsmåte, betaling); ellers er den standard når feltet er tomt.
+                            if (felt.Nokkel is "levmate" or "betaling" && !string.IsNullOrWhiteSpace(felt.Verdi))
+                            {
+                                verdi = felt.Verdi;
+                            }
+                            verdi = string.IsNullOrWhiteSpace(verdi) ? felt.Verdi : verdi;
+                            if (string.IsNullOrWhiteSpace(verdi))
+                            {
+                                continue;
+                            }
+                            t.Cell().PaddingBottom(1).Text(felt.Navn).Bold();
+                            t.Cell().PaddingBottom(1).Text(verdi);
                         }
                     });
                 });
@@ -327,19 +368,27 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
                     t.Cell().PaddingTop(4).AlignRight().Text(Kr(i.TotaltEks + mva)).Bold();
                 });
 
-                col.Item().PaddingTop(24).Text("Takk for bestillingen! Tidspunkt for levering og montering avtales nærmere – montøren ringer før ankomst. Sørg for at det er ryddet og fri tilgang til døren/området.");
-
-                // Betingelser
-                col.Item().PaddingTop(16).Text("Betingelser").Bold();
-                Punkt(col, $"Salgspant og eiendomsrett: {org.Navn} forbeholder seg salgspant i de leverte varene som sikkerhet for kjøpesummen, inkludert renter og omkostninger, i medhold av panteloven §§ 3-14 til 3-22. Eiendomsretten går over til kjøper først når hele kjøpesummen er betalt.");
-                Punkt(col, "Spesialtilpassede varer: Det gis ikke retur- eller avbestillingsrett på spesialtilpassede systemlåser, lisensierte nøkler eller prosjektbestilte låsvarer etter at ordren er satt i produksjon eller bekreftet bestilt hos produsent.");
-                Punkt(col, "Avbestilling av tjenester: Avbestilling eller endring av avtalt montering må skje senest 24 timer før oppmøte. Ved for sen avbestilling eller manglende tilgang påløper bomtur etter gjeldende satser.");
-                if (i.ErPrivat)
+                if (!string.IsNullOrWhiteSpace(i.Mal.Takk))
                 {
-                    Punkt(col, "Angrerett (forbrukerkjøp): 14 dagers angrerett på standard lagervarer i ubrukt stand og originalemballasje. Angreretten bortfaller for tjenester (som montering) når arbeidet er påbegynt eller fullført etter avtale.");
+                    col.Item().PaddingTop(24).Text(i.Mal.Takk.Replace(ObMalInnhold.Firma, org.Navn));
                 }
-                var kontakt = string.Join(" · ", new[] { i.VarReferanse, org.Telefon, i.KontaktEpost }.Where(s => !string.IsNullOrWhiteSpace(s)));
-                col.Item().PaddingTop(12).Text($"Spørsmål eller feil i ordren? Ta kontakt{(kontakt.Length > 0 ? ": " + kontakt : ".")}");
+
+                // Betingelser fra malen. Punkter merket «kun privat» tas bare med for privatkunder.
+                var punkter = i.Mal.Punkter.Where(p => p.Vis && (!p.KunPrivat || i.ErPrivat) && !string.IsNullOrWhiteSpace(p.Tekst)).ToList();
+                if (punkter.Count > 0)
+                {
+                    col.Item().PaddingTop(16).Text("Betingelser").Bold();
+                    foreach (var p in punkter)
+                    {
+                        var tekst = p.Tekst.Replace(ObMalInnhold.Firma, org.Navn);
+                        Punkt(col, string.IsNullOrWhiteSpace(p.Tittel) ? tekst : $"{p.Tittel}: {tekst}");
+                    }
+                }
+                if (i.Mal.Kontakt)
+                {
+                    var kontakt = string.Join(" · ", new[] { i.VarReferanse, org.Telefon, i.KontaktEpost }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                    col.Item().PaddingTop(12).Text($"Spørsmål eller feil i ordren? Ta kontakt{(kontakt.Length > 0 ? ": " + kontakt : ".")}");
+                }
             });
         })).GeneratePdf();
     }

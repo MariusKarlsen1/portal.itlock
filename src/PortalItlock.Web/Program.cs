@@ -2193,6 +2193,11 @@ app.MapGet("/sjekklistepdf/{id:int}", async (int id, ApplicationDbContext db) =>
         : Results.File(pdf.Data, "application/pdf", pdf.Navn);
 }).RequireAuthorization();
 
+// Eksempel på ordrebekreftelse med malen slik den er lagret (Oppsett og maler → Ordrebekreftelse).
+app.MapGet("/ordrebekreftelse-mal/eksempel", async (HttpContext context, OrdrebekreftelsePdfService ob) =>
+    Results.File(await ob.LagEksempelAsync(context.Request.Query["privat"] == "1"), "application/pdf"))
+    .RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute { Roles = "Admin" });
+
 app.MapGet("/lagretpdf/{id:int}", async (int id, HttpContext context, ApplicationDbContext db) =>
 {
     var pdf = await db.LagredePdfer.FindAsync(id);

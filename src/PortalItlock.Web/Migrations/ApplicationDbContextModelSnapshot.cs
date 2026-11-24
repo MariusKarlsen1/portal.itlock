@@ -5378,6 +5378,20 @@ namespace PortalItlock.Web.Migrations
                     b.ToTable("OkonomiInnstillinger");
                 });
 
+            modelBuilder.Entity("PortalItlock.Web.Models.OrdrebekreftelseMal", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Json")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("OrdrebekreftelseMaler");
+                });
+
             modelBuilder.Entity("PortalItlock.Web.Models.Package", b =>
                 {
                     b.Property<int>("Id")
