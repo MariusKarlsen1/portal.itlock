@@ -14,6 +14,11 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.26", new DateOnly(2026, 11, 24),
+        [
+            new(Type.Bedre, "search", "Ordrelinjer som på tilbud", "Søk på vare, leverandør, produktkode eller priskode øverst, med fritekstlinje ved siden av."),
+            new(Type.Bedre, "file-text", "Se ordrebekreftelsen med en gang", "Trykk på en ordrebekreftelse for å forhåndsvise PDF-en."),
+        ]),
         new("1.25", new DateOnly(2026, 11, 24),
         [
             new(Type.Nytt, "receipt", "Arbeidsordre uten tilbud", "Velg «Direkte på ordren» ved ny arbeidsordre. Legg inn varer, pris og rabatt, og timer og kjøring kommer med av seg selv."),
