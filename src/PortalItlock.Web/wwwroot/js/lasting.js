@@ -10,6 +10,27 @@
 (function () {
     var pille = null, forsinkelse = null, skjul = null;
 
+    // Sikkerhetsnett: en interaktiv side der kretsen ikke har kommet i gang
+    // etter noen sekunder (sett rett etter innlogging), lastes på nytt én gang.
+    // Høyst én gang i minuttet, så en treg server ikke gir en evig løkke.
+    window.addEventListener('load', function () {
+        if (document.documentElement.innerHTML.indexOf('Blazor:{"type":"server"') < 0) {
+            return;
+        }
+        setTimeout(function () {
+            if (window.__fkKretsStartet) {
+                return;
+            }
+            var sist = 0;
+            try { sist = Number(sessionStorage.getItem('fk-krets-omlast') || 0); } catch (_) { }
+            if (Date.now() - sist < 60000) {
+                return;
+            }
+            try { sessionStorage.setItem('fk-krets-omlast', String(Date.now())); } catch (_) { }
+            location.reload();
+        }, 7000);
+    });
+
     function lagPille() {
         if (!pille) {
             pille = document.createElement('div');
