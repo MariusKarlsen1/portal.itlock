@@ -18,6 +18,7 @@
 @inject ArbeidsordrePdfService ArbeidsordrePdfService
 @inject LagretPdfService LagretPdfService
 @inject TripletexSyncService TripletexSync
+@inject OrdrebekreftelsePdfService OrdrebekreftelsePdf
 @inject TripletexService Tripletex
 @inject TilleggsmodulService Tilleggsmoduler
 @inject PlukkService PlukkSvc
@@ -46,7 +47,34 @@ else if (_ordre is not null)
             <StatusPill Tekst="@_ordre.Status.Visningsnavn()" Ikon="@_ordre.Status.PillIkon()" Farge="@_ordre.Status.PillFarge()" />
         }
         <span class="ordre-etikett">@(_ordre.Type?.Visningsnavn() ?? "Type ikke satt")</span>
+        @if (_ordre.ErDirekte && !HarTilbud)
+        {
+            <span class="ordre-etikett ordre-etikett-direkte">Direkte på ordren</span>
+        }
+        <span class="ordre-header-knapper">
+            @if (_ordre.ErDirekte && !HarTilbud && _naverendeRolle != BrukerRolle.Montor && KanEndreOrdre)
+            {
+                <button type="button" class="oh-kn oh-kn-p" disabled="@_genererer" @onclick="GenererOrdrebekreftelse"><Icon Name="file-text" />@(_genererer ? "Lager …" : "Generer ordrebekreftelse")</button>
+            }
+            @if (_harTimer)
+            {
+                <button type="button" class="oh-kn" @onclick="ApneTimer"><Icon Name="clock" />Registrer timer</button>
+            }
+            @if (KanEndreOrdre)
+            {
+                <button type="button" class="oh-kn" @onclick="ApneKnyttTilbud"><Icon Name="plus" />Knytt tilbud</button>
+                <button type="button" class="oh-kn" @onclick="Lagre"><Icon Name="check" />Lagre</button>
+            }
+            @if (KanFerdigmelde && _ordre.Status is not (ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert) && !(_naverendeRolle == BrukerRolle.Montor && _ordre.ErTilKontroll))
+            {
+                <button type="button" class="oh-kn oh-kn-g" @onclick="@(() => { _mobilFaneOrdre = "sluttrapport"; VisFerdigmeldValg(); })"><Icon Name="check-circle" />Ferdigmeld</button>
+            }
+        </span>
     </div>
+    @if (!string.IsNullOrEmpty(_obMelding))
+    {
+        <p class="save-success">@_obMelding</p>
+    }
 
     @if (_ordre.ErTilKontroll)
     {
@@ -63,6 +91,10 @@ else if (_ordre is not null)
 
     <div class="mobil-ordre-faner">
         <button type="button" class="mobil-ordre-fane-knapp @(_mobilFaneOrdre == "oversikt" ? "aktiv" : "")" @onclick="@(() => _mobilFaneOrdre = "oversikt")"><Icon Name="grid" />Oversikt</button>
+        @if (VisOrdrelinjer)
+        {
+            <button type="button" class="mobil-ordre-fane-knapp @(_mobilFaneOrdre == "ordrelinjer" ? "aktiv" : "")" @onclick="@(() => _mobilFaneOrdre = "ordrelinjer")"><Icon Name="receipt" />Ordrelinjer <span class="fane-teller">@(_ordre.Varer.Count + ArbeidLinjer.Count)</span></button>
+        }
         <button type="button" class="mobil-ordre-fane-knapp @(_mobilFaneOrdre == "dorbeslag" ? "aktiv" : "")" @onclick="@(() => _mobilFaneOrdre = "dorbeslag")"><Icon Name="box" />Dørbeslag @if (VarerTotalt > 0) {<span class="fane-teller @(VarerPlukket == VarerTotalt ? "ok" : "")">@VarerPlukket/@VarerTotalt</span>}</button>
         <button type="button" class="mobil-ordre-fane-knapp @(_mobilFaneOrdre == "servicepunkter" ? "aktiv" : "")" @onclick="@(() => _mobilFaneOrdre = "servicepunkter")"><Icon Name="check-circle" />Sjekkliste @if (_sjekkpunkter.Count > 0) {<span class="fane-teller @(SjekkFerdig == _sjekkpunkter.Count ? "ok" : "")">@SjekkFerdig/@_sjekkpunkter.Count</span>}</button>
         @if (_harTimer)
@@ -263,6 +295,134 @@ else if (_ordre is not null)
             }
         </div>
     </div>
+
+    @if (VisOrdrelinjer)
+    {
+        var arbeid = ArbeidLinjer;
+        var sumVarer = _ordre.Varer.Sum(v => v.Utpris * v.Antall);
+        var kostVarer = _ordre.Varer.Sum(v => v.Kostpris * v.Antall);
+        var sumArbeid = arbeid.Sum(a => a.Sum);
+        var sumEks = sumVarer + sumArbeid;
+        var db = sumEks - kostVarer - arbeid.Sum(a => a.Kost);
+        <div class="@FaneKlasse("ordrelinjer")">
+            <div class="ol-grid">
+                <section class="ol-boks">
+                    <div class="ol-hode"><h3>Ordrelinjer</h3><small>Varer og pris rett på ordren. Timer og kjøring som føres kommer med av seg selv, og alt kan overstyres.</small></div>
+                    <div class="ol-tabell">
+                        <table>
+                            <thead>
+                                <tr><th>Vare / arbeid</th><th class="n">Antall</th><th class="n">Kostpris</th><th class="n">Utpris</th><th class="n">Rabatt %</th><th class="n">Sum</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                <tr class="ol-gruppe"><td colspan="7">Varer</td></tr>
+                                @if (_ordre.Varer.Count == 0)
+                                {
+                                    <tr><td colspan="7" class="ol-tom">Ingen varer ennå. Søk under for å legge til.</td></tr>
+                                }
+                                @foreach (var v in _ordre.Varer.OrderBy(v => v.Id))
+                                {
+                                    var vare = v;
+                                    <tr @key="vare.Id">
+                                        <td>
+                                            <div class="ol-komp">
+                                                @if (vare.ComponentId is { } kid)
+                                                {
+                                                    <span class="ol-tb" data-forstorr="@($"/komponent/{kid}/bilde?w=600")"><Icon Name="tool" /><img src="@($"/komponent/{kid}/bilde?w=96")" alt="" loading="lazy" onerror="this.style.display='none'" /></span>
+                                                    <div><b>@vare.Navn</b><small>@(vare.Component?.Produktkode)@(vare.LagtTilAvBruker is { } lb ? $" · lagt til av {lb.Navn}" : "")</small></div>
+                                                }
+                                                else
+                                                {
+                                                    <span class="ol-tb"><Icon Name="edit" /></span>
+                                                    <input class="ol-navn" value="@vare.Navn" @onchange="@(async e => { vare.Navn = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? "Fri linje" : e.Value!.ToString()!.Trim(); await LagreOrdrelinjer(); })" aria-label="Beskrivelse" />
+                                                }
+                                            </div>
+                                        </td>
+                                        <td class="n"><input class="ol-inp ol-smal" value="@vare.Antall" @onchange="@(async e => { if (Tall(e) is { } t) { vare.Antall = Math.Max(0, (int)Math.Round(t)); await LagreVare(vare); } })" aria-label="Antall" /></td>
+                                        <td class="n"><input class="ol-inp" value="@Belop(vare.Kostpris)" @onchange="@(async e => { if (Tall(e) is { } t) { vare.Kostpris = t; await LagreOrdrelinjer(); } })" aria-label="Kostpris" /></td>
+                                        <td class="n"><input class="ol-inp" value="@Belop(vare.Listepris ?? vare.Utpris)" @onchange="@(async e => { if (Tall(e) is { } t) { vare.Listepris = t; vare.Utpris = Math.Round(t * (1 - vare.RabattProsent / 100m), 2); await LagreOrdrelinjer(); } })" aria-label="Utpris" /></td>
+                                        <td class="n"><input class="ol-inp ol-smal" value="@vare.RabattProsent.ToString("0.##", Kultur)" @onchange="@(async e => { if (Tall(e) is { } t) { vare.RabattProsent = Math.Clamp(t, 0, 100); vare.Listepris ??= vare.Utpris; vare.Utpris = Math.Round(vare.Listepris.Value * (1 - vare.RabattProsent / 100m), 2); await LagreOrdrelinjer(); } })" aria-label="Rabatt" /></td>
+                                        <td class="n"><b>@Belop(vare.Utpris * vare.Antall)</b></td>
+                                        <td class="n">@if (KanEndreOrdre) {<button type="button" class="ol-fjern" title="Fjern" @onclick="@(() => FjernVare(vare))"><Icon Name="x" /></button>}</td>
+                                    </tr>
+                                }
+                                <tr class="ol-gruppe"><td colspan="7">Timer og kjøring <span class="ol-merke">hentes fra timeføringen</span></td></tr>
+                                @if (arbeid.Count == 0)
+                                {
+                                    <tr><td colspan="7" class="ol-tom">Ingen timer eller kjøring ført ennå.</td></tr>
+                                }
+                                @foreach (var a in arbeid)
+                                {
+                                    var linje = a;
+                                    <tr @key="@("a-" + linje.Kode)" class="ol-auto">
+                                        <td>
+                                            <b>@linje.Kode @linje.Navn</b>
+                                            <small>
+                                                Ført: @linje.FortAntall.ToString("0.##", Kultur)@(linje.ErTimer ? " t" : "")
+                                                @if (linje.Overstyrt)
+                                                {
+                                                    <span> · overstyrt · </span><button type="button" class="ol-lenke" @onclick="@(() => TilbakestillArbeid(linje.Kode))">Tilbakestill</button>
+                                                }
+                                            </small>
+                                        </td>
+                                        <td class="n"><input class="ol-inp ol-smal" value="@linje.Antall.ToString("0.##", Kultur)" @onchange="@(e => SettArbeid(linje, "antall", e))" aria-label="Antall" /></td>
+                                        <td class="n"><input class="ol-inp" value="@Belop(linje.Kostpris)" @onchange="@(e => SettArbeid(linje, "kost", e))" aria-label="Kostpris" /></td>
+                                        <td class="n"><input class="ol-inp" value="@Belop(linje.Utpris)" @onchange="@(e => SettArbeid(linje, "ut", e))" aria-label="Utpris" /></td>
+                                        <td class="n"><input class="ol-inp ol-smal" value="@linje.Rabatt.ToString("0.##", Kultur)" @onchange="@(e => SettArbeid(linje, "rabatt", e))" aria-label="Rabatt" /></td>
+                                        <td class="n"><b>@Belop(linje.Sum)</b></td>
+                                        <td></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    @if (KanEndreOrdre)
+                    {
+                        <div class="ol-legg">
+                            <label class="ol-sok"><Icon Name="search" /><input @bind="_vareSok" @bind:event="oninput" @bind:after="SokVarer" placeholder="Legg til vare – søk på navn eller artikkelnr …" /></label>
+                            <button type="button" class="oh-kn" @onclick="LeggTilFriLinje"><Icon Name="plus" />Fri linje</button>
+                            @if (_vareSokResultater.Count > 0)
+                            {
+                                <div class="ol-treff">
+                                    @foreach (var c in _vareSokResultater)
+                                    {
+                                        var komp = c;
+                                        <button type="button" @onclick="@(() => LeggTilVare(komp))">
+                                            <span class="ol-tb"><Icon Name="tool" /><img src="@($"/komponent/{komp.Id}/bilde?w=96")" alt="" loading="lazy" onerror="this.style.display='none'" /></span>
+                                            <span><b>@komp.Navn</b><small>@komp.Produktkode</small></span>
+                                            <em>@Belop(komp.PrisVeiledende ?? komp.PrisNetto ?? 0)</em>
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </section>
+                <div class="ol-side">
+                    <section class="ol-boks">
+                        <div class="ol-hode"><h3>Sum</h3></div>
+                        <div class="ol-sum">
+                            <div><span>Varer</span><b>@Belop(sumVarer)</b></div>
+                            <div><span>Timer og kjøring</span><b>@Belop(sumArbeid)</b></div>
+                            <div class="ol-sum-t"><span>Sum eks. mva</span><span>@Belop(sumEks)</span></div>
+                            <div><span>Sum inkl. mva</span><b>@Belop(sumEks * 1.25m)</b></div>
+                            <div class="ol-db"><span>Dekningsbidrag</span><span>@Belop(db)@(sumEks != 0 ? $" · {Math.Round(db / sumEks * 100):0} %" : "")</span></div>
+                        </div>
+                    </section>
+                    <section class="ol-boks">
+                        <div class="ol-hode"><h3>Ordrebekreftelser</h3></div>
+                        @if (_ordrebekreftelser.Count == 0)
+                        {
+                            <p class="ol-tom ol-pad">Ingen ennå. Trykk «Generer ordrebekreftelse» øverst.</p>
+                        }
+                        @foreach (var pdf in _ordrebekreftelser.OrderByDescending(p => p.OpprettetDato))
+                        {
+                            <a class="ol-dok" href="@($"/lagretpdf/{pdf.Id}")" target="_blank"><Icon Name="file-text" /><span>@pdf.Navn</span><small>@pdf.OpprettetDato.ToString("dd.MM.yyyy HH:mm")</small></a>
+                        }
+                    </section>
+                </div>
+            </div>
+        </div>
+    }
 
     <div class="@FaneKlasse("dorbeslag")">
     @{
@@ -1491,40 +1651,6 @@ else if (_ordre is not null)
         </div>
     }
 
-    <aside class="ordre-kort-sido">
-        <div class="ao-side-blokk">
-            <h2>Handlinger</h2>
-            @if (KanFerdigmelde && _ordre.Status is not (ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert) && !(_naverendeRolle == BrukerRolle.Montor && _ordre.ErTilKontroll))
-            {
-                <button type="button" class="ordre-sido-knapp ordre-sido-knapp-gronn" @onclick="@(() => { _mobilFaneOrdre = "sluttrapport"; VisFerdigmeldValg(); })"><Icon Name="check-circle" />Ferdigmeld</button>
-            }
-            @if (_harTimer)
-            {
-                <button type="button" class="ordre-sido-knapp ordre-sido-knapp-lys" @onclick="ApneTimer"><Icon Name="clock" />Registrer timer</button>
-            }
-            @if (KanEndreOrdre)
-            {
-                <button type="button" class="ordre-sido-knapp ordre-sido-knapp-lys" @onclick="ApneKnyttTilbud"><Icon Name="plus" />Knytt tilbud</button>
-            }
-            @if (KanEndreOrdre)
-            {
-                <button type="button" class="ordre-sido-knapp ordre-sido-knapp-lys" @onclick="Lagre"><Icon Name="check" />Lagre</button>
-            }
-        </div>
-
-        @if (SisteAktivitet.Count > 0)
-        {
-            <div class="ao-side-blokk">
-                <h2>Siste</h2>
-                <div class="ao-siste">
-                    @foreach (var a in SisteAktivitet.Take(4))
-                    {
-                        <div><span>@a.Tittel</span><time>@a.Tid</time></div>
-                    }
-                </div>
-            </div>
-        }
-    </aside>
     </div>
     </div>
     </div>
@@ -1906,6 +2032,145 @@ else if (_ordre is not null)
     // Timeføring hører til tilleggsmodulen Timer og fravær.
     private bool _harTimer = true;
 
+    // ---------- Direkte på ordren: Ordrelinjer ----------
+    private List<LagretPdf> _ordrebekreftelser = [];
+    private bool _genererer;
+    private string? _obMelding;
+
+    private bool HarTilbud => _ordre?.TilbudId is not null || _tilbudListe.Count > 0;
+
+    // Fanen vises på ordrer direkte på ordren uten tilbud, og ikke for montøren (priser).
+    private bool VisOrdrelinjer => _ordre is { ErDirekte: true } && !HarTilbud && _naverendeRolle != BrukerRolle.Montor;
+
+    private List<ArbeidsordreOkonomiBeregner.ArbeidLinje> ArbeidLinjer =>
+        _ordre is null ? [] : ArbeidsordreOkonomiBeregner.DirekteArbeidLinjer(_ordre, _prisKoder);
+
+    private async Task LastOrdrelinjerAsync()
+    {
+        if (_ordre is not { ErDirekte: true })
+        {
+            return;
+        }
+        await Db.Entry(_ordre).Collection(a => a.Timeregistreringer).LoadAsync();
+        await Db.Entry(_ordre).Collection(a => a.KodeLinjer).LoadAsync();
+        if (_prisKoder.Count == 0)
+        {
+            _prisKoder = await Db.PrisKoder.AsNoTracking().OrderBy(k => k.Rekkefolge).ThenBy(k => k.Kode).ToListAsync();
+        }
+        _ordrebekreftelser = await LagretPdfService.HentAsync(OrdrebekreftelsePdfService.EntityTypeArbeidsordre, _ordre.Id);
+    }
+
+    private static decimal? Tall(ChangeEventArgs e)
+    {
+        var t = (e.Value?.ToString() ?? "").Replace(" ", "").Replace("\u00a0", "").Replace("kr", "").Replace("%", "").Trim();
+        if (t.Length == 0)
+        {
+            return 0;
+        }
+        return decimal.TryParse(t.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : null;
+    }
+
+    private static string Belop(decimal v) => v.ToString("N2", Kultur);
+
+    private async Task LagreOrdrelinjer()
+    {
+        if (!KanEndreOrdre)
+        {
+            return;
+        }
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task LeggTilFriLinje()
+    {
+        if (!KanEndreOrdre || _ordre is null)
+        {
+            return;
+        }
+        _ordre.Varer.Add(new ArbeidsordreVare { ArbeidsordreId = _ordre.Id, Navn = "Fri linje", Antall = 1 });
+        await Db.SaveChangesAsync();
+    }
+
+    // Overstyr antall, kostpris, utpris eller rabatt på en linje fra timeføringen.
+    // Settes verdien tilbake til det som er ført, fjernes overstyringen.
+    private async Task SettArbeid(ArbeidsordreOkonomiBeregner.ArbeidLinje linje, string felt, ChangeEventArgs e)
+    {
+        if (!KanEndreOrdre || _ordre is null || Tall(e) is not { } verdi)
+        {
+            return;
+        }
+        var alle = ArbeidsordreOkonomiBeregner.LesOverstyring(_ordre.ArbeidOverstyringJson);
+        var o = alle.TryGetValue(linje.Kode, out var finnes) ? finnes : new ArbeidsordreOkonomiBeregner.ArbeidOverstyring();
+        var auto = ArbeidsordreOkonomiBeregner.DirekteArbeidLinjer(new Arbeidsordre
+        {
+            Tittel = "", ErDirekte = true, Timepris = _ordre.Timepris,
+            Timeregistreringer = _ordre.Timeregistreringer, KodeLinjer = _ordre.KodeLinjer
+        }, _prisKoder).FirstOrDefault(l => l.Kode == linje.Kode);
+        switch (felt)
+        {
+            case "antall":
+                o.Antall = auto is not null && verdi == auto.Antall ? null : verdi;
+                break;
+            case "kost":
+                o.Kostpris = auto is not null && verdi == auto.Kostpris ? null : verdi;
+                break;
+            case "ut":
+                o.Utpris = auto is not null && verdi == auto.Utpris ? null : verdi;
+                break;
+            case "rabatt":
+                o.Rabatt = Math.Clamp(verdi, 0, 100);
+                break;
+        }
+        alle[linje.Kode] = o;
+        _ordre.ArbeidOverstyringJson = ArbeidsordreOkonomiBeregner.SkrivOverstyring(alle);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task TilbakestillArbeid(string kode)
+    {
+        if (!KanEndreOrdre || _ordre is null)
+        {
+            return;
+        }
+        var alle = ArbeidsordreOkonomiBeregner.LesOverstyring(_ordre.ArbeidOverstyringJson);
+        alle.Remove(kode);
+        _ordre.ArbeidOverstyringJson = ArbeidsordreOkonomiBeregner.SkrivOverstyring(alle);
+        await Db.SaveChangesAsync();
+    }
+
+    private async Task GenererOrdrebekreftelse()
+    {
+        if (_ordre is null || _genererer)
+        {
+            return;
+        }
+        _genererer = true;
+        _obMelding = null;
+        try
+        {
+            await Db.SaveChangesAsync();
+            var r = await OrdrebekreftelsePdf.LagForArbeidsordreAsync(_ordre.Id, _naverendeBrukerId);
+            if (r is null)
+            {
+                return;
+            }
+            var pdf = await LagretPdfService.LagreAsync(OrdrebekreftelsePdfService.EntityTypeArbeidsordre, _ordre.Id, $"Ordrebekreftelse {r.Ordrenummer}", r.Pdf);
+            _ordrebekreftelser = await LagretPdfService.HentAsync(OrdrebekreftelsePdfService.EntityTypeArbeidsordre, _ordre.Id);
+            _obMelding = $"Ordrebekreftelse {r.Ordrenummer} er laget og lagret under Ordrelinjer.";
+            try
+            {
+                await JS.InvokeVoidAsync("open", $"/lagretpdf/{pdf.Id}", "_blank");
+            }
+            catch (JSException)
+            {
+            }
+        }
+        finally
+        {
+            _genererer = false;
+        }
+    }
+
     protected override async Task OnParametersSetAsync()
     {
         if (!string.IsNullOrWhiteSpace(Fane) && _faneBruktFor != Id)
@@ -1962,6 +2227,7 @@ else if (_ordre is not null)
         }
 
         _opprinneligMontorId = _ordre.AnsvarligMontorId;
+        await LastOrdrelinjerAsync();
         await LastBilAsync();
         await SikreVarerAsync();
         _planlagtDato = _ordre.PlanlagtDato.HasValue ? DateOnly.FromDateTime(_ordre.PlanlagtDato.Value) : null;
@@ -2247,6 +2513,7 @@ else if (_ordre is not null)
             Antall = 1,
             Kostpris = c.PrisNetto ?? 0,
             Utpris = c.PrisVeiledende ?? c.PrisNetto ?? 0,
+            Listepris = c.PrisVeiledende ?? c.PrisNetto,
             LagtTilAvBrukerId = erMontorTillegg ? _naverendeBrukerId : null,
             LagtTilAvBruker = erMontorTillegg ? _naverendeBruker : null,
             LagtTilDato = erMontorTillegg ? DateTime.Now : null

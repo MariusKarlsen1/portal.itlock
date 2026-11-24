@@ -61,6 +61,11 @@ public static class ArbeidsordreOkonomiBeregner
                 }
             }
         }
+        else if (ordre.ErDirekte)
+        {
+            // Direkte på ordren: arbeidet etter førte timer, eller avtalt sum.
+            linjer.AddRange(DirekteArbeid(ordre, koder ?? []));
+        }
         else
         {
             if (ordre.Timepris is not null && ordre.EstimerteTimer is not null)
@@ -80,16 +85,107 @@ public static class ArbeidsordreOkonomiBeregner
                 .Where(l => l.Belop != 0));
         }
 
-        foreach (var v in ordre.Varer)
-        {
-            linjer.Add(new OkonomiLinje(
+        // Varene først, så arbeidet (på direkte ordrer ligger arbeidet sist).
+        var varer = ordre.Varer.Select(v => new OkonomiLinje(
                 v.Navn, v.ComponentId, v.Component?.Inntektskonto?.Nummer, v.Component?.Inntektskonto?.Navn,
                 v.Antall, v.Antall * v.Utpris,
-                Innpris: v.Kostpris, Listepris: v.Component?.PrisVeiledende, Produktkode: v.Component?.Produktkode));
+                Innpris: v.Kostpris, Listepris: v.Listepris ?? v.Component?.PrisVeiledende, Produktkode: v.Component?.Produktkode))
+            .ToList();
+        if (ordre.ErDirekte && ordre.Tilbud is null)
+        {
+            linjer.InsertRange(0, varer);
+        }
+        else
+        {
+            linjer.AddRange(varer);
         }
 
         return linjer;
     }
+
+    // Overstyring av én arbeidslinje på en ordre direkte på ordren (per kode).
+    // Null = som ført / som på priskoden.
+    public sealed class ArbeidOverstyring
+    {
+        public decimal? Antall { get; set; }
+        public decimal? Kostpris { get; set; }
+        public decimal? Utpris { get; set; }
+        public decimal Rabatt { get; set; }
+        public bool ErTom => Antall is null && Kostpris is null && Utpris is null && Rabatt == 0;
+    }
+
+    public static Dictionary<string, ArbeidOverstyring> LesOverstyring(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, ArbeidOverstyring>>(json) ?? [];
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return [];
+        }
+    }
+
+    public static string? SkrivOverstyring(Dictionary<string, ArbeidOverstyring> o)
+    {
+        var med = o.Where(x => !x.Value.ErTom).ToDictionary(x => x.Key, x => x.Value);
+        return med.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(med);
+    }
+
+    // Én arbeidslinje på en ordre direkte på ordren: timer per arbeidskode og
+    // kjøring/tillegg montøren har ført, med eventuell overstyring.
+    public sealed record ArbeidLinje(string Kode, string Navn, decimal FortAntall, decimal Antall, decimal Kostpris, decimal Utpris, decimal Rabatt, bool Overstyrt, bool ErTimer)
+    {
+        public decimal Sum => Math.Round(Antall * Utpris * (1 - Rabatt / 100m), 2);
+        public decimal Kost => Math.Round(Antall * Kostpris, 2);
+    }
+
+    public static List<ArbeidLinje> DirekteArbeidLinjer(Arbeidsordre ordre, IReadOnlyList<PrisKode> koder)
+    {
+        var standard = Montasjekode(koder);
+        var auto = new List<(string Kode, string Navn, decimal Antall, decimal Kost, decimal Ut, bool Timer)>();
+        foreach (var g in Fakturerbare(ordre)
+            .GroupBy(t => koder.FirstOrDefault(k => k.Id == t.PrisKodeId && k.Type == PrisKodeType.Arbeid) ?? standard)
+            .Where(g => g.Key is not null))
+        {
+            var ut = ordre.Timepris is { } tp && g.Key!.Id == standard?.Id ? tp : g.Key!.Salgspris;
+            auto.Add((g.Key.Kode, g.Key.Navn, Math.Round(g.Sum(t => t.TotalTimer), 2), g.Key.Kostpris, ut, true));
+        }
+        foreach (var g in ordre.KodeLinjer.GroupBy(k => (k.Kode, k.Navn)))
+        {
+            var antall = g.Sum(k => k.Antall);
+            auto.Add((g.Key.Kode, g.Key.Navn, antall,
+                antall == 0 ? 0 : Math.Round(g.Sum(k => k.Antall * k.Kostpris) / antall, 2),
+                antall == 0 ? 0 : Math.Round(g.Sum(k => k.Antall * k.Salgspris) / antall, 2), false));
+        }
+
+        var over = LesOverstyring(ordre.ArbeidOverstyringJson);
+        return auto
+            .GroupBy(a => a.Kode)
+            .Select(g =>
+            {
+                var f = g.First();
+                var antall = g.Sum(x => x.Antall);
+                over.TryGetValue(g.Key, out var o);
+                return new ArbeidLinje(g.Key, f.Navn, antall, o?.Antall ?? antall, o?.Kostpris ?? f.Kost, o?.Utpris ?? f.Ut,
+                    o?.Rabatt ?? 0, o is not null && !o.ErTom, f.Timer);
+            })
+            .ToList();
+    }
+
+    // Arbeidet på en ordre direkte på ordren som fakturalinjer.
+    public static List<OkonomiLinje> DirekteArbeid(Arbeidsordre ordre, IReadOnlyList<PrisKode> koder) =>
+        DirekteArbeidLinjer(ordre, koder)
+            .Where(l => l.Sum != 0)
+            .Select(l => new OkonomiLinje(l.Navn, null, null, null, l.Antall, l.Sum, l.Kode, Innpris: l.Kostpris))
+            .ToList();
+
+    public static decimal DirekteArbeidKost(Arbeidsordre ordre, IReadOnlyList<PrisKode> koder) =>
+        DirekteArbeidLinjer(ordre, koder).Sum(l => l.Kost);
 
     // Tripletex-linjen for en vare: «produktkode navn», veiledende pris som
     // enhetspris og rabatten som gir salgsprisen, og innkjøpsprisen. Uten

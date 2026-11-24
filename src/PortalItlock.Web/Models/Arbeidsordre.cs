@@ -77,6 +77,13 @@ public class Arbeidsordre
     public int? MontorFerdigmeldtAvBrukerId { get; set; }
     public string? MontorFerdigmeldtAvNavn { get; set; }
 
+    // «Direkte på ordren»: ingen tilbud, bare bestilling. Varer og pris legges
+    // rett på ordren (fanen Ordrelinjer). Timer og kjøring som føres kommer med
+    // som linjer automatisk; antall, kostpris, utpris og rabatt kan overstyres
+    // per kode (ArbeidOverstyringJson, se ArbeidsordreOkonomiBeregner).
+    public bool ErDirekte { get; set; }
+    public string? ArbeidOverstyringJson { get; set; }
+
     public bool ErTilKontroll => MontorFerdigmeldtDato is not null
         && Status is not (ArbeidsordreStatus.Ferdig or ArbeidsordreStatus.Fakturert);
 

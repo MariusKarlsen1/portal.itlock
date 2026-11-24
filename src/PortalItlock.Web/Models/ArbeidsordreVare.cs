@@ -12,7 +12,11 @@ public class ArbeidsordreVare
     public required string Navn { get; set; }
     public int Antall { get; set; } = 1;
     public decimal Kostpris { get; set; }
+    // Utpris er prisen per stk etter rabatt. På ordrer direkte på ordren kan
+    // veiledende pris og rabatt settes, og Utpris regnes ut fra dem.
     public decimal Utpris { get; set; }
+    public decimal? Listepris { get; set; }
+    public decimal RabattProsent { get; set; }
 
     public int? LagtTilAvBrukerId { get; set; }
     public Bruker? LagtTilAvBruker { get; set; }

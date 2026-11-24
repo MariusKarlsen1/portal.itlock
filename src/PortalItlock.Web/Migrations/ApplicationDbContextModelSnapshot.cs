@@ -146,11 +146,17 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int?>("AnsvarligMontorId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ArbeidOverstyringJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Beskrivelse")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("DokumentasjonEpostSendtDato")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("ErDirekte")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("ErDirektesalg")
                         .HasColumnType("INTEGER");
@@ -469,6 +475,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<DateTime?>("LagtTilDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<decimal?>("Listepris")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Navn")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -480,6 +489,9 @@ namespace PortalItlock.Web.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("PlukketDato")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("RabattProsent")
                         .HasColumnType("TEXT");
 
                     b.Property<decimal>("Utpris")
