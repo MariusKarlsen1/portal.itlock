@@ -14,6 +14,11 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.27", new DateOnly(2026, 11, 24),
+        [
+            new(Type.Nytt, "file-text", "Mal for ordrebekreftelse", "Under Oppsett og maler bestemmer du felt, tekster og betingelser på ordrebekreftelsen, og kan legge til egne punkter."),
+            new(Type.Bedre, "list", "Ryddigere ordrebekreftelse", "Annenhver grå og hvit rad i varelinjene, og tomme felt tas bort."),
+        ]),
         new("1.26", new DateOnly(2026, 11, 24),
         [
             new(Type.Bedre, "search", "Ordrelinjer som på tilbud", "Søk på vare, leverandør, produktkode eller priskode øverst, med fritekstlinje ved siden av."),
