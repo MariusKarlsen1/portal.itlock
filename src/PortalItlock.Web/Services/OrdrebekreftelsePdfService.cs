@@ -163,8 +163,6 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
                 ("Leveringstid", ordre.PlanlagtDato is { } d ? d.ToString("dd.MM.yyyy") : "Avtales nærmere"),
                 ("Betalingsbetingelser", "Iht. faktura"),
                 ("Arbeidsordre", $"#{ordre.Id} {ordre.Tittel}"),
-                ("Prosjekt ID", ordre.Prosjekt is null ? null : $"P-{ordre.Prosjekt.Id}"),
-                ("Prosjektnavn", ordre.Prosjekt?.Navn),
             ],
             linjer, totaltEks, kunde?.Type == KundeType.Privatperson, varReferanse,
             ordre.Prosjekt?.Prosjektleder?.Epost ?? bruker?.Epost ?? org.Epost);
@@ -264,10 +262,11 @@ public class OrdrebekreftelsePdfService(ApplicationDbContext db, PdfLogo pdfLogo
                     row.RelativeItem(1.25f).Table(t =>
                     {
                         t.ColumnsDefinition(cd => { cd.ConstantColumn(150); cd.RelativeColumn(); });
-                        foreach (var (a, b) in i.Opplysninger)
+                        // Felt uten verdi tas ikke med. Verdiene står i fet skrift.
+                        foreach (var (a, b) in i.Opplysninger.Where(x => !string.IsNullOrWhiteSpace(x.Verdi)))
                         {
                             t.Cell().PaddingBottom(1).Text(a);
-                            t.Cell().PaddingBottom(1).Text(b ?? "");
+                            t.Cell().PaddingBottom(1).Text(b!).Bold();
                         }
                     });
                 });
