@@ -9,6 +9,7 @@
 @using PortalItlock.Web.Data
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
+@using PortalItlock.Web.Components.Kalkulator
 @using System.Text.Json
 @inject ApplicationDbContext Db
 @inject NavigationManager Nav
@@ -104,9 +105,41 @@ else if (_tilbud is not null)
                         <button type="button" class="tk-kn tk-kn-m" title="Varesalg uten montør og timer: legges rett i Ferdigmeldte" @onclick="ApneDirekte"><Icon Name="file-text" />Fakturer direkte</button>
                     }
                 }
+                @if (!Laast)
+                {
+                    @* Kalkulatorer (forslag C): velg ARX eller StepLock, regn ut i et stort
+                       vindu, og «Legg til i tilbud» legger linjene under en egen overskrift. *@
+                    <div class="tk-kalk">
+                        <button type="button" class="tk-kn" aria-expanded="@_kalkMeny" @onclick="@(() => _kalkMeny = !_kalkMeny)"><Icon Name="plus" />Legg til fra kalkulator</button>
+                        @if (_kalkMeny)
+                        {
+                            <div class="tk-kalk-bak" @onclick="@(() => _kalkMeny = false)"></div>
+                            <div class="tk-kalk-meny" role="menu">
+                                <button type="button" role="menuitem" @onclick="@(() => ApneKalkulator("arx"))"><span class="tk-kalk-ik">A</span><span><b>ARX-kalkulator</b><small>Dører, lesere, låser og sentral gir hardware, batteri og lisenser</small></span></button>
+                                <button type="button" role="menuitem" @onclick="@(() => ApneKalkulator("steplock"))"><span class="tk-kalk-ik">S</span><span><b>StepLock Access</b><small>Porttelefoner, kortlesere og abonnement</small></span></button>
+                            </div>
+                        }
+                    </div>
+                }
                 <button type="button" class="tk-kn tk-kn-p" @onclick="Lagre"><Icon Name="check" />Lagre</button>
             </div>
         </div>
+
+        @if (_kalkApen is not null)
+        {
+            <div class="tk-kalk-slor" @onclick="@(() => _kalkApen = null)"></div>
+            <div class="tk-kalk-dlg" role="dialog" aria-modal="true" aria-label="Kalkulator">
+                <button type="button" class="tk-kalk-lukk" title="Lukk uten å legge til" @onclick="@(() => _kalkApen = null)"><Icon Name="x" /></button>
+                @if (_kalkApen == "arx")
+                {
+                    <ArxKalkulatorInnhold OnLeggTil="LeggTilFraKalkulator" />
+                }
+                else
+                {
+                    <SteplockKalkulatorInnhold OnLeggTil="LeggTilFraKalkulator" />
+                }
+            </div>
+        }
 
         @if (_aoValg)
         {
@@ -1574,6 +1607,70 @@ else if (_tilbud is not null)
 
     private sealed record ProsjektAo(int Id, string Tittel, ArbeidsordreStatus Status, int Antall);
     private bool _aoValg;
+    private bool _kalkMeny;
+    private string? _kalkApen;
+
+    private void ApneKalkulator(string hvilken)
+    {
+        _kalkMeny = false;
+        _kalkApen = hvilken;
+    }
+
+    // Linjene fra kalkulatoren legges nederst i tilbudet under en egen overskrift.
+    // Finnes artikkelnummeret i komponentregisteret, kobles linjen til komponenten
+    // (kundens rabatt og montasjetid følger med), ellers blir den en fritekstlinje.
+    private async Task LeggTilFraKalkulator(KalkulatorResultat res)
+    {
+        if (_tilbud is null || Laast) return;
+
+        var grp = new TilbudLinje
+        {
+            TilbudId = _tilbud.Id,
+            Navn = res.Overskrift,
+            Beskrivelse = res.Beskrivelse,
+            ErGruppering = true,
+            Antall = 1,
+            Rekkefolge = NesteVareRekkefolge()
+        };
+        _tilbud.Linjer.Add(grp);
+        Db.TilbudLinjer.Add(grp);
+
+        var koder = res.Linjer.Select(l => l.Kode.Trim().ToUpper()).Distinct().ToList();
+        var komponenter = (await Db.Components.Include(c => c.Produktgrupper)
+                .Where(c => c.Produktkode != null && koder.Contains(c.Produktkode.Trim().ToUpper()))
+                .ToListAsync())
+            .GroupBy(c => c.Produktkode!.Trim().ToUpperInvariant())
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.Aktiv).First());
+
+        foreach (var l in res.Linjer.Where(l => l.Antall > 0))
+        {
+            komponenter.TryGetValue(l.Kode.Trim().ToUpperInvariant(), out var c);
+            var linje = new TilbudLinje
+            {
+                TilbudId = _tilbud.Id,
+                ComponentId = c?.Id,
+                Navn = c?.Navn ?? $"{l.Navn} ({l.Kode})",
+                Innpris = c?.PrisNetto ?? l.Netto,
+                PrisVeiledende = c?.PrisVeiledende ?? l.Veiledende,
+                Antall = l.Antall,
+                Enhet = c?.Enhet,
+                MontasjeMinutter = c is null ? null : EffektivMontasjeMinutter(c),
+                RabattProsent = c is null ? 0 : await HentKundeRabattProsent(c),
+                Rekkefolge = NesteVareRekkefolge()
+            };
+            OppdaterLinjePris(linje);
+            _tilbud.Linjer.Add(linje);
+            Db.TilbudLinjer.Add(linje);
+        }
+
+        Db.TilbudHendelser.Add(NyHendelse($"Lagt til fra {res.Kalkulator}: {res.Overskrift} ({res.Linjer.Count(l => l.Antall > 0)} linjer)"));
+        OppdaterMontasjekostAutomatisk();
+        await Db.SaveChangesAsync();
+        await OppdaterHendelser();
+        _kalkApen = null;
+        _aktivFane = Fane.Varelinjer;
+        _savedMessage = $"{res.Overskrift} er lagt til i varelinjene.";
+    }
     private int _aoValgt;
     private List<ProsjektAo> _prosjektAo = [];
 

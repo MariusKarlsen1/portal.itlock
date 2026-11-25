@@ -1,0 +1,258 @@
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+@inject IJSRuntime JS
+
+@* StepLock-kalkulatoren som veiviser (samme konsept som ARX, forslag 2).
+   Regnestykket ligger uendret i StepLockPrisberegner, og alle priser hentes
+   fra komponentregisteret på artikkelnummeret (Produktkode). *@
+<KalkulatorVeiviser Tittel="StepLock Access" Undertittel="Porttelefoner, kortlesere og abonnement"
+                    Steg="StegNavn" @bind-Aktivt="_steg" Sporsmal="@Sporsmal[_steg]" Forklaring="@Forklaring[_steg]"
+                    BunnTekst="@BunnTekst" VisMerknad="@(Mangler.Count > 0)" TilbudTekst="@(_kopiert ? "Kopiert" : "Legg til i tilbud")" OnLeggTilTilbud="Kopier">
+    <Merknad>
+        <span><b>Disse artikkelnumrene mangler pris i komponentregisteret og regnes som 0 kr:</b> @string.Join(", ", Mangler). <a href="/komponenter">Gå til komponentregisteret</a></span>
+    </Merknad>
+    <Tall>
+        <div class="kv-tall"><small>Per måned</small><b>@Kr(Netto.PerManed) kr</b></div>
+        <div class="kv-tall"><small>Kost (netto)</small><b>@Kr(Netto.Hardware) kr</b></div>
+        <div class="kv-tall tot"><small>Bruttopris (veiledende)</small><b>@Kr(Veil.Hardware) kr</b></div>
+    </Tall>
+    <ChildContent>
+        @if (_steg < 5)
+        {
+            var felt = _steg;
+            <div class="stor-teller">
+                <button type="button" @onclick="@(() => Sett(felt, Hent(felt) - 1))">−</button>
+                <input type="number" min="0" value="@Hent(felt)" @oninput="@(e => Sett(felt, Antall(e)))" />
+                <button type="button" @onclick="@(() => Sett(felt, Hent(felt) + 1))">+</button>
+            </div>
+            @if (Hent(felt) > 0 && EnhetPris(felt) is { } p && p > 0)
+            {
+                <p class="kv-sentrert">@Kr(p) kr netto per stk med alt som hører til</p>
+            }
+            @if (felt is 0 or 2 or 3 && Hent(felt) > 0)
+            {
+                <div>
+                    <div class="felt-t"><b>Tilkobling</b><small>Gjelder alle i dette steget</small></div>
+                    <div class="liste-valg">
+                        @foreach (var t in felt == 0 ? new[] { StepLockTilkobling.PoE, StepLockTilkobling.Lte } : Tilkoblinger)
+                        {
+                            <button type="button" class="lv @(HentTilk(felt) == t ? "aktiv" : "")" @onclick="@(() => SettTilk(felt, t))">
+                                <i></i><span><b>@TilkNavn(t) @if (t == StepLockTilkobling.PoE) {<em class="merke">Anbefalt</em>}</b><small>@TilkTekst(t)</small></span>
+                                @if (t == StepLockTilkobling.Lte)
+                                {
+                                    <span class="h">+@Kr(Pris(felt == 0 ? StepLockPrisberegner.LtePorttelefon : StepLockPrisberegner.LteKortleser, false)) kr/mnd per stk</span>
+                                }
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+            <div class="hint @(HintErVarsel ? "varsel" : "")">@Hint</div>
+        }
+        else
+        {
+            <div>
+                <div class="felt-t"><b>Abonnement</b><small>Velges automatisk ut fra antallet</small></div>
+                <div class="planer">
+                    @foreach (var (nivaa, kode, porttelefoner, kortlesere) in Planer)
+                    {
+                        <div class="plan @(Netto.Abonnement == nivaa ? "aktiv" : "")">
+                            @if (Netto.Abonnement == nivaa)
+                            {
+                                <span class="pmerke">Ditt anlegg</span>
+                            }
+                            <b>@nivaa</b>
+                            <div class="pr">@Kr(Pris(kode, false)) <em>kr/mnd netto</em></div>
+                            <small>@porttelefoner</small>
+                            <small>@kortlesere</small>
+                        </div>
+                    }
+                </div>
+            </div>
+            <div class="hint @(HintErVarsel ? "varsel" : "")">@Hint</div>
+            <div class="prisboks">
+                <div><small>Kost (netto)</small><b>@Kr(Netto.Hardware) kr</b><span>Hardware</span></div>
+                <div class="vei"><small>Bruttopris (veiledende)</small><b>@Kr(Veil.Hardware) kr</b><span>Inkl. mva @Kr(Veil.Hardware * 1.25m) kr</span></div>
+                <div><small>Per måned</small><b>@Kr(Netto.PerManed) kr</b><span>Veiledende @Kr(Veil.PerManed) kr</span></div>
+                <div><small>Første år</small><b>@Kr(Netto.ForsteAr) kr</b><span>Veiledende @Kr(Veil.ForsteAr) kr</span></div>
+            </div>
+            <table class="plist">
+                <thead><tr><th>Produkt</th><th>Art.nr</th><th class="n">Ant.</th><th class="n">Kostpris netto</th><th class="n">Veiledende brutto</th></tr></thead>
+                <tbody>
+                    @foreach (var l in Netto.Linjer.Where(l => l.Antall > 0))
+                    {
+                        var v = Pris(l.Artikkel, true);
+                        <tr>
+                            <td>@ArtikkelNavn(l.Artikkel)</td>
+                            <td class="art">@l.Artikkel</td>
+                            <td class="n">@l.Antall</td>
+                            <td class="n">@Kr(l.Sum)@if (l.Antall > 1) {<small class="stk">@Kr(l.Pris) stk</small>}</td>
+                            <td class="n"><b>@Kr(l.Antall * v)</b>@if (l.Antall > 1) {<small class="stk">@Kr(v) stk</small>}</td>
+                        </tr>
+                    }
+                    <tr class="grp"><td colspan="3">Per måned</td><td class="n">@Kr(Netto.PerManed)</td><td class="n">@Kr(Veil.PerManed)</td></tr>
+                    @if (Netto.Abonnement is { } ab)
+                    {
+                        var kode = ab switch { StepLockAbonnement.Basic => StepLockPrisberegner.Basic, StepLockAbonnement.Standard => StepLockPrisberegner.Standard, _ => StepLockPrisberegner.Premium };
+                        <tr><td>Abonnement @ab</td><td class="art">@kode</td><td class="n">1</td><td class="n">@Kr(Netto.AbonnementPris)</td><td class="n"><b>@Kr(Veil.AbonnementPris)</b></td></tr>
+                    }
+                    @if (Netto.Tillegg4G > 0)
+                    {
+                        <tr><td>4G-tillegg</td><td class="art">M-001 / M-002</td><td class="n"></td><td class="n">@Kr(Netto.Tillegg4G)</td><td class="n"><b>@Kr(Veil.Tillegg4G)</b></td></tr>
+                    }
+                </tbody>
+                <tfoot><tr><td colspan="3">Hardware eks. mva</td><td class="n">@Kr(Netto.Hardware)</td><td class="n">@Kr(Veil.Hardware)</td></tr></tfoot>
+            </table>
+            <p class="kv-sentrert">Alle priser eks mva. Forhandlers tillegg for administrasjon og service kan komme i tillegg.</p>
+        }
+    </ChildContent>
+</KalkulatorVeiviser>
+
+@code {
+    private sealed record Artikkel(string Navn, decimal Netto, decimal Veiledende);
+
+    private static readonly CultureInfo Kultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly StepLockTilkobling[] Tilkoblinger = [StepLockTilkobling.PoE, StepLockTilkobling.Dce, StepLockTilkobling.Lte];
+    private static readonly string[] StegNavn = ["Porttelefoner", "Svarapparater", "Kortlesere", "Kodelesere", "Brikker", "Resultat"];
+    private static readonly string[] Sporsmal = ["Hvor mange porttelefoner?", "Hvor mange svarapparater?", "Hvor mange kortlesere uten PIN?", "Hvor mange kortlesere med PIN?", "Hvor mange brikker?", "Dette trengs"];
+    private static readonly string?[] Forklaring =
+    [
+        "Hver porttelefon leveres med dørsentral, kabel og veggboks.", "Svarenhet inne i leiligheten eller kontoret.",
+        "Hver kortleser får sin egen dørsentral.", "Kortleser med tastatur, for kort og kode.", "MIFARE-brikker til brukerne.", null
+    ];
+
+    private static readonly (StepLockAbonnement Nivaa, string Kode, string Porttelefoner, string Kortlesere)[] Planer =
+    [
+        (StepLockAbonnement.Basic, StepLockPrisberegner.Basic, "1 porttelefon", "0–4 kortlesere"),
+        (StepLockAbonnement.Standard, StepLockPrisberegner.Standard, "2–10 porttelefoner", "6–15 kortlesere"),
+        (StepLockAbonnement.Premium, StepLockPrisberegner.Premium, "11–20 porttelefoner", "16 eller flere kortlesere")
+    ];
+
+    private Dictionary<string, Artikkel> _artikler = [];
+    private int _tel = 1, _svar, _kort = 6, _pin, _bri, _steg;
+    private StepLockTilkobling _tilkPort, _tilkKort, _tilkPin;
+    private bool _kopiert;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var koder = StepLockPrisberegner.AlleKoder;
+        var komponenter = await Db.Components
+            .Where(c => c.Produktkode != null && koder.Contains(c.Produktkode.Trim().ToUpper()))
+            .Select(c => new { c.Produktkode, c.Navn, c.PrisNetto, c.PrisVeiledende, c.Aktiv })
+            .ToListAsync();
+
+        // Finnes artikkelnummeret flere ganger, gjelder det aktive.
+        _artikler = komponenter
+            .GroupBy(c => c.Produktkode!.Trim().ToUpperInvariant())
+            .ToDictionary(g => g.Key, g =>
+            {
+                var c = g.OrderByDescending(x => x.Aktiv).First();
+                return new Artikkel(c.Navn, c.PrisNetto ?? 0, c.PrisVeiledende ?? 0);
+            });
+    }
+
+    private StepLockValg Valg => new(_tel, _svar, _kort, _pin, _bri, _tilkPort, _tilkKort, _tilkPin);
+    private StepLockResultat Netto => StepLockPrisberegner.Beregn(Valg, k => Pris(k, false));
+    private StepLockResultat Veil => StepLockPrisberegner.Beregn(Valg, k => Pris(k, true));
+
+    private decimal Pris(string kode, bool veiledende) =>
+        _artikler.TryGetValue(kode, out var a) ? (veiledende ? a.Veiledende : a.Netto) : 0;
+
+    private string ArtikkelNavn(string kode) => _artikler.TryGetValue(kode, out var a) ? a.Navn : "Mangler i komponentregisteret";
+
+    private List<string> Mangler => StepLockPrisberegner.AlleKoder.Where(k => Pris(k, false) <= 0).ToList();
+
+    private int Hent(int felt) => felt switch { 0 => _tel, 1 => _svar, 2 => _kort, 3 => _pin, _ => _bri };
+
+    private void Sett(int felt, int v)
+    {
+        v = Math.Clamp(v, 0, 9999);
+        switch (felt) { case 0: _tel = v; break; case 1: _svar = v; break; case 2: _kort = v; break; case 3: _pin = v; break; default: _bri = v; break; }
+    }
+
+    private StepLockTilkobling HentTilk(int felt) => felt switch { 0 => _tilkPort, 2 => _tilkKort, _ => _tilkPin };
+
+    private void SettTilk(int felt, StepLockTilkobling t)
+    {
+        switch (felt) { case 0: _tilkPort = t; break; case 2: _tilkKort = t; break; default: _tilkPin = t; break; }
+    }
+
+    private decimal? EnhetPris(int felt) => felt switch
+    {
+        0 => StepLockPrisberegner.PrisPorttelefon(_tilkPort, k => Pris(k, false)),
+        1 => Pris(StepLockPrisberegner.Svarenhet, false),
+        2 => StepLockPrisberegner.PrisKortleser(StepLockPrisberegner.Kortleser, _tilkKort, k => Pris(k, false)),
+        3 => StepLockPrisberegner.PrisKortleser(StepLockPrisberegner.Kodeleser, _tilkPin, k => Pris(k, false)),
+        _ => Pris(StepLockPrisberegner.Brikke, false)
+    };
+
+    private static string TilkNavn(StepLockTilkobling t) => t switch { StepLockTilkobling.Dce => "DCE", StepLockTilkobling.Lte => "4G/LTE", _ => "PoE+" };
+
+    private static string TilkTekst(StepLockTilkobling t) => t switch
+    {
+        StepLockTilkobling.Dce => "Egen strøm, nett via DCE-dørsentral",
+        StepLockTilkobling.Lte => "Uten nettverk, egen 4G-router og månedlig tillegg",
+        _ => "Strøm og nett over én kabel"
+    };
+
+    private static int Antall(ChangeEventArgs e) =>
+        int.TryParse(e.Value?.ToString(), out var v) ? Math.Clamp(v, 0, 9999) : 0;
+
+    private static string Kr(decimal v) => v.ToString("N0", Kultur);
+
+    private string BunnTekst =>
+        $"{_tel} porttelefon{(_tel == 1 ? "" : "er")} · {_kort + _pin} kortlesere · {Netto.Abonnement?.ToString() ?? "Ikke definert"}";
+
+    private bool HintErVarsel => Netto.Abonnement is null || _tel > 20 || _kort + _pin > 100;
+
+    private string Hint
+    {
+        get
+        {
+            var r = Netto;
+            if (r.Abonnement is null) return "Forhandlerarket gir ikke noe abonnement for denne kombinasjonen.";
+            if (_tel > 20 && r.Abonnement == StepLockAbonnement.Basic) return "Over 20 porttelefoner gir forhandlerarket Basic. Sjekk prisen før den brukes.";
+            if (_tel > 20 || _kort + _pin > 100) return "Antallet er over det arket dekker. Da gjelder tillegg i prislisten eller pris etter avtale.";
+            return r.Abonnement switch
+            {
+                StepLockAbonnement.Basic => $"Abonnement Basic. Ved 2 porttelefoner eller 6 kortlesere går du til Standard, +{Kr(Pris(StepLockPrisberegner.Standard, false) - Pris(StepLockPrisberegner.Basic, false))} kr/mnd.",
+                StepLockAbonnement.Standard => $"Abonnement Standard. Ved 11 porttelefoner eller 16 kortlesere går du til Premium, +{Kr(Pris(StepLockPrisberegner.Premium, false) - Pris(StepLockPrisberegner.Standard, false))} kr/mnd.",
+                _ => "Abonnement Premium, det høyeste."
+            };
+        }
+    }
+
+    // Åpnet fra tilbudet: linjene sendes dit. Abonnementet er en månedspris og
+    // står i beskrivelsen under overskriften, ikke som varelinje.
+    [Parameter] public EventCallback<KalkulatorResultat> OnLeggTil { get; set; }
+
+    private async Task Kopier()
+    {
+        var n = Netto;
+        if (OnLeggTil.HasDelegate)
+        {
+            var linjerTilTilbud = n.Linjer.Where(l => l.Antall > 0)
+                .Select(l => new KalkulatorLinje(l.Artikkel, ArtikkelNavn(l.Artikkel), l.Antall, l.Pris, _artikler.ContainsKey(l.Artikkel) ? Pris(l.Artikkel, true) : null))
+                .ToList();
+            var beskrivelse = n.Abonnement is { } ab
+                ? $"Abonnement {ab}: {Kr(n.PerManed)} kr per måned eks. mva (veiledende {Kr(Veil.PerManed)} kr)."
+                : "Abonnement ikke definert for denne kombinasjonen.";
+            await OnLeggTil.InvokeAsync(new KalkulatorResultat("StepLock-kalkulator",
+                $"StepLock Access – {_tel} porttelefon{(_tel == 1 ? "" : "er")} og {_kort + _pin} kortlesere", beskrivelse, linjerTilTilbud));
+            return;
+        }
+
+        var linjer = new List<string> { "StepLock Access (netto, eks mva)" };
+        linjer.AddRange(n.Linjer.Where(l => l.Antall > 0).Select(l => $"{l.Antall} x {l.Artikkel} {ArtikkelNavn(l.Artikkel)}: {Kr(l.Sum)} kr"));
+        linjer.Add($"Hardware: {Kr(n.Hardware)} kr (veiledende {Kr(Veil.Hardware)} kr)");
+        linjer.Add($"Abonnement {n.Abonnement?.ToString() ?? "ikke definert"}: {Kr(n.PerManed)} kr per måned");
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", string.Join('\n', linjer));
+        _kopiert = true;
+        StateHasChanged();
+        await Task.Delay(1500);
+        _kopiert = false;
+    }
+}
