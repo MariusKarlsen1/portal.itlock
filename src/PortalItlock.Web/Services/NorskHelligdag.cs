@@ -27,6 +27,17 @@ public static class NorskHelligdag
         return null;
     }
 
+    // Dager som ikke er røde, men som mange har fri eller kort dag. Vises dempet
+    // i kalenderne. Regnes ut på nytt hvert år, som helligdagene.
+    public static string? Merkedag(DateTime dato)
+    {
+        var d = dato.Date;
+        if (d == ForsteParskedag(d.Year).AddDays(-1)) return "Påskeaften";
+        if (d == new DateTime(d.Year, 12, 24)) return "Julaften";
+        if (d == new DateTime(d.Year, 12, 31)) return "Nyttårsaften";
+        return null;
+    }
+
     private static DateTime ForsteParskedag(int ar)
     {
         var a = ar % 19;
