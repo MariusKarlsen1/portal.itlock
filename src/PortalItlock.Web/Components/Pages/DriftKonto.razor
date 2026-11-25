@@ -1,0 +1,144 @@
+@page "/drift/konto"
+@layout PortalItlock.Web.Components.Layout.DriftLayout
+@rendermode InteractiveServer
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Driftslisens")]
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject ApplicationDbContext Db
+
+<PageTitle>Min konto - Full Kontroll</PageTitle>
+
+@* Min konto i driftsportalen (forslag driftsportal-ny.html): tofaktor med
+   autentiseringsapp (samme oppsett som /tofaktor i portalen), bytte passord og
+   logg ut. *@
+<div class="dp-tittelrad">
+    <div class="dp-hei">
+        <h1>Min konto</h1>
+        <p>@_navn@(string.IsNullOrEmpty(_epost) ? "" : $" · {_epost}")</p>
+    </div>
+</div>
+
+<div class="dp-konto">
+    <section class="dp-konto-del">
+        <TofaktorOppsett Krav="Krav" />
+    </section>
+
+    <section class="dp-kort dp-konto-kort">
+        <div class="dp-konto-hode">
+            <span class="dp-ik"><Icon Name="lock" /></span>
+            <div><h2>Passord</h2><small>Minst 8 tegn. Du blir værende innlogget på denne enheten.</small></div>
+        </div>
+        @if (_somAnnen)
+        {
+            <p class="dp-mod-tekst">Du ser portalen som en annen bruker. Passordet byttes av brukeren selv.</p>
+        }
+        else if (!_visPassord)
+        {
+            @if (_passordMelding is not null)
+            {
+                <p class="dp-ok-tekst"><Icon Name="check" />@_passordMelding</p>
+            }
+            <div><button type="button" class="dp-knapp" @onclick="@(() => { _visPassord = true; _passordMelding = null; })">Bytt passord</button></div>
+        }
+        else
+        {
+            <div class="dp-passord">
+                <label><span class="dp-lbl">Nåværende passord</span><input type="password" autocomplete="current-password" @bind="_naa" /></label>
+                <label><span class="dp-lbl">Nytt passord</span><input type="password" autocomplete="new-password" @bind="_nytt" @bind:event="oninput" /></label>
+                <label><span class="dp-lbl">Gjenta nytt passord</span><input type="password" autocomplete="new-password" @bind="_gjenta" @bind:event="oninput" /></label>
+            </div>
+            @if (_passordFeil is not null)
+            {
+                <p class="dp-feil">@_passordFeil</p>
+            }
+            <div class="dp-knapperad">
+                <button type="button" class="dp-knapp dp-knapp-p" @onclick="ByttPassord" disabled="@_lagrer"><Icon Name="check" />Lagre nytt passord</button>
+                <button type="button" class="dp-knapp" @onclick="AvbrytPassord">Avbryt</button>
+            </div>
+        }
+    </section>
+
+    <section class="dp-kort dp-konto-kort">
+        <div class="dp-konto-hode">
+            <span class="dp-ik"><Icon Name="log-out" /></span>
+            <div><h2>Logg ut</h2><small>Logger ut av driftsportalen på denne enheten.</small></div>
+        </div>
+        <form method="post" action="/account/logout" class="drift-logout-form">
+            <button type="submit" class="dp-knapp"><Icon Name="log-out" />Logg ut</button>
+        </form>
+    </section>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "krav")] public int? Krav { get; set; }
+
+    private string _navn = "", _epost = "";
+    private int? _brukerId;
+    private bool _somAnnen, _visPassord, _lagrer;
+    private string _naa = "", _nytt = "", _gjenta = "";
+    private string? _passordFeil, _passordMelding;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthStateTask is null)
+        {
+            return;
+        }
+        var u = (await AuthStateTask).User;
+        _somAnnen = u.FindFirst("AdminBrukerId") is not null;
+        if (int.TryParse(u.FindFirst("BrukerId")?.Value, out var id))
+        {
+            var b = await Db.Brukere.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+            _brukerId = b?.Id;
+            _navn = b?.Navn ?? "";
+            _epost = b?.Epost ?? "";
+        }
+    }
+
+    private void AvbrytPassord()
+    {
+        _visPassord = false;
+        _naa = _nytt = _gjenta = "";
+        _passordFeil = null;
+    }
+
+    private async Task ByttPassord()
+    {
+        if (_somAnnen || _brukerId is null || _lagrer)
+        {
+            return;
+        }
+        if (_nytt.Length < 8)
+        {
+            _passordFeil = "Det nye passordet må ha minst 8 tegn.";
+            return;
+        }
+        if (_nytt != _gjenta)
+        {
+            _passordFeil = "De to nye passordene er ikke like.";
+            return;
+        }
+        _lagrer = true;
+        try
+        {
+            var bruker = await Db.Brukere.FirstOrDefaultAsync(b => b.Id == _brukerId);
+            if (bruker is null || !PasswordHasher.Verify(_naa, bruker.PasswordHash ?? PasswordHasher.DummyHash))
+            {
+                _passordFeil = "Nåværende passord stemmer ikke.";
+                return;
+            }
+            bruker.PasswordHash = PasswordHasher.Hash(_nytt);
+            await Db.SaveChangesAsync();
+            AvbrytPassord();
+            _passordMelding = "Passordet er byttet.";
+        }
+        finally
+        {
+            _lagrer = false;
+        }
+    }
+}

@@ -9,9 +9,14 @@
 @using PortalItlock.Web.Models
 @using PortalItlock.Web.Services
 @inject ApplicationDbContext Db
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
 <PageTitle>@(_prosjekt?.Navn ?? "Bygg") - Full Kontroll</PageTitle>
 
+@* Bygget i driftsportalen (forslag driftsportal-ny.html): faner Plantegning,
+   Dørliste og Meldinger. Plantegningen er bare tegningen med zoom og dra, og
+   en dør åpnes i et vindu over tegningen, som i hovedportalen. *@
 @if (_ikkeTilgang)
 {
     <p class="dp-feil">Du har ikke tilgang til dette bygget.</p>
@@ -27,21 +32,15 @@ else
     <div class="dp-tittelrad">
         <div class="dp-hei">
             <h1>@_prosjekt.Navn</h1>
-            <p>@(string.IsNullOrWhiteSpace(_prosjekt.Adresse) ? "" : $"{_prosjekt.Adresse} · ")@_dorer.Count dører</p>
+            <p>@(string.IsNullOrWhiteSpace(_prosjekt.Adresse) ? "" : $"{_prosjekt.Adresse} · ")@_dorer.Count dører@(AntallApne > 0 ? $" · {AntallApne} {(AntallApne == 1 ? "åpen melding" : "åpne meldinger")}" : "")</p>
         </div>
         <a class="dp-knapp dp-knapp-p dp-kun-pc" href="@($"/drift/meld?bygg={Id}")"><Icon Name="plus" />Meld inn en feil</a>
     </div>
 
-    <div class="dp-sok">
-        <Icon Name="search" />
-        <input @bind="_sok" @bind:event="oninput" @bind:after="SokEndret" placeholder="Søk dør, rom eller etasje..." />
-        <a href="/drift/meld?skann=1" title="Skann QR-kode"><Icon Name="qr" /></a>
-    </div>
-
-    <div class="dp-segment">
-        <button type="button" class="@(_visning == "plan" ? "aktiv" : "")" @onclick="@(() => _visning = "plan")">Plantegning</button>
-        <button type="button" class="@(_visning == "dorer" ? "aktiv" : "")" @onclick="@(() => _visning = "dorer")">Dørliste</button>
-        <button type="button" class="@(_visning == "meldinger" ? "aktiv" : "")" @onclick="@(() => _visning = "meldinger")">Meldinger<em hidden="@(AntallApne == 0)">@AntallApne</em></button>
+    <div class="dp-faner">
+        <button type="button" class="@(_visning == "plan" ? "aktiv" : "")" @onclick="@(() => _visning = "plan")"><Icon Name="map" />Plantegning</button>
+        <button type="button" class="@(_visning == "dorer" ? "aktiv" : "")" @onclick="@(() => _visning = "dorer")"><Icon Name="list" />Dørliste</button>
+        <button type="button" class="@(_visning == "meldinger" ? "aktiv" : "")" @onclick="@(() => _visning = "meldinger")"><Icon Name="bell" />Meldinger@if (AntallApne > 0) {<em>@AntallApne</em>}</button>
     </div>
 
     @if (_visning == "plan")
@@ -52,66 +51,140 @@ else
         }
         else
         {
-            @if (_plantegninger.Count > 1)
-            {
-                <div class="dp-chips">
-                    @foreach (var p in _plantegninger)
-                    {
-                        <button type="button" class="@(p.Id == _valgtPlanId ? "aktiv" : "")" @onclick="@(() => _valgtPlanId = p.Id)" @key="p.Id">@p.Navn</button>
-                    }
-                </div>
-            }
             var plan = _plantegninger.First(p => p.Id == _valgtPlanId);
-            <div class="dp-plan-rull">
-            <div class="dp-plan">
-                <img src="@($"/plantegningbilde/{plan.Id}")" alt="@plan.Navn" />
-                @foreach (var d in plan.Dorer.Where(d => d.PosX.HasValue && d.PosY.HasValue))
-                {
-                    <a @key="d.Id" class="dp-pin @PinKlasse(d.Id)" href="@($"/drift/dor/{d.Id}")" title="@DorNavn(d)"
-                       style="left:@(d.PosX!.Value.ToString(CultureInfo.InvariantCulture))%; top:@(d.PosY!.Value.ToString(CultureInfo.InvariantCulture))%;">@Etikett(d)</a>
-                }
-            </div>
-            </div>
-            <div class="dp-forkl">
-                <span><i style="background:var(--dp-gronn)"></i>I orden</span>
-                <span><i style="background:var(--dp-rust)"></i>Åpen melding</span>
-                <span><i style="background:var(--dp-gul)"></i>Montør planlagt</span>
-                <span class="dp-kun-pc">Trykk på en dør for å melde inn eller se historikk.</span>
-                <span class="dp-kun-mobil">Dra for å se hele tegningen, trykk på en dør.</span>
+            <div class="dp-plan-kort" @key="plan.Id">
+                <div class="dp-plan-verktoy">
+                    @if (_plantegninger.Count > 1)
+                    {
+                        <label class="dp-velg">
+                            <Icon Name="layers" />
+                            <select value="@_valgtPlanId" @onchange="VelgPlan" aria-label="Velg plantegning">
+                                @foreach (var p in _plantegninger)
+                                {
+                                    <option value="@p.Id">@p.Navn</option>
+                                }
+                            </select>
+                        </label>
+                    }
+                    else
+                    {
+                        <span class="dp-plan-navn"><Icon Name="layers" />@plan.Navn</span>
+                    }
+                    <div class="dp-forkl dp-kun-pc">
+                        <span><i style="background:var(--dp-gronn)"></i>I orden</span>
+                        <span><i style="background:var(--dp-rust)"></i>Åpen melding</span>
+                        <span><i style="background:var(--dp-gul)"></i>Montør planlagt</span>
+                    </div>
+                    <div class="dp-zoom">
+                        <button type="button" data-zoom="ut" title="Zoom ut"><Icon Name="minus" /></button>
+                        <span data-zoom-tall>100 %</span>
+                        <button type="button" data-zoom="inn" title="Zoom inn"><Icon Name="plus" /></button>
+                        <button type="button" data-zoom="tilpass" title="Tilpass til skjermen"><Icon Name="maximize" /></button>
+                    </div>
+                </div>
+                <div class="dp-plan-flate" @ref="_planFlate">
+                    <div class="dp-plan-lag">
+                        <img src="@($"/plantegningbilde/{plan.Id}")" alt="@plan.Navn" draggable="false" />
+                        @foreach (var d in PlanDorer(plan.Id))
+                        {
+                            var dor = d;
+                            var forkortelser = FunksjonForkortelser(d);
+                            <button type="button" @key="d.Id" class="dp-mark dp-mark-@StatusNokkel(d.Id) @(_valgtDor?.Id == d.Id ? "valgt" : "")" title="@DorNavn(d)"
+                                    style="left:@(d.PosX!.Value.ToString(CultureInfo.InvariantCulture))%; top:@(d.PosY!.Value.ToString(CultureInfo.InvariantCulture))%;"
+                                    @onclick="@(() => ApneDor(dor))">
+                                <span class="dp-mark-nr">@d.Dornummer</span>
+                                <span class="dp-mark-prikk"></span>
+                                @if (!string.IsNullOrEmpty(forkortelser))
+                                {
+                                    <span class="dp-mark-funk">@forkortelser</span>
+                                }
+                            </button>
+                        }
+                    </div>
+                </div>
+                <div class="dp-plan-fot">
+                    <span class="dp-kun-pc">Trykk på en dør for å se den eller melde inn en feil. Dra for å flytte, hjulet zoomer.</span>
+                    <span class="dp-kun-mobil">Dra med én finger, zoom med to. Trykk på en dør.</span>
+                </div>
             </div>
         }
     }
     else if (_visning == "dorer")
     {
-        var treff = FiltrerteDorer.ToList();
-        @if (treff.Count == 0)
-        {
-            <div class="dp-kort dp-tom">@(_dorer.Count == 0 ? "Ingen dører registrert på dette bygget ennå." : "Ingen dører passer søket.")</div>
-        }
-        else
-        {
-            @foreach (var gruppe in treff.GroupBy(d => string.IsNullOrWhiteSpace(d.Etasje) ? "Uten etasje" : int.TryParse(d.Etasje, out var etg) ? $"{etg}. etasje" : d.Etasje))
-            {
-                <div class="dp-seksjon-t"><h2>@gruppe.Key</h2><span>@gruppe.Count() dører</span></div>
-                <div class="dp-dorer">
-                    @foreach (var d in gruppe)
-                    {
-                        <a class="dp-dor" href="@($"/drift/dor/{d.Id}")" @key="d.Id">
-                            <span class="dp-nr">@Etikett(d)</span>
-                            <span><b>@DorNavn(d)</b><small>@DorUndertekst(d)</small></span>
-                            @if (DorStatus(d.Id) is { } s)
+        var treff = SorterteDorer.ToList();
+        <div class="dp-kort dp-dorliste">
+            <div class="dp-liste-verktoy">
+                @if (Etasjer.Count > 1)
+                {
+                    <label class="dp-velg">
+                        <Icon Name="layers" />
+                        <select @bind="_etasje" aria-label="Velg etasje">
+                            <option value="">Alle etasjer</option>
+                            @foreach (var e in Etasjer)
                             {
-                                <span class="dp-tag dp-t-@s.Farge">@s.Navn</span>
+                                <option value="@e">@EtasjeNavn(e)</option>
                             }
-                            else
-                            {
-                                <Icon Name="chevron-right" />
-                            }
-                        </a>
-                    }
+                        </select>
+                    </label>
+                }
+                <div class="dp-sok">
+                    <Icon Name="search" />
+                    <input @bind="_sok" @bind:event="oninput" placeholder="Søk dør, rom eller funksjon..." />
                 </div>
+                <a class="dp-rundknapp" href="/drift/meld?skann=1" title="Skann QR-kode på døren"><Icon Name="qr" /></a>
+            </div>
+
+            @if (treff.Count == 0)
+            {
+                <p class="dp-tom">@(_dorer.Count == 0 ? "Ingen dører registrert på dette bygget ennå." : "Ingen dører passer søket.")</p>
             }
-        }
+            else
+            {
+                <table class="dp-tabell">
+                    <thead>
+                        <tr>
+                            @foreach (var (kol, navn) in Kolonner)
+                            {
+                                var k = kol;
+                                <th @key="kol" class="dp-th-@kol"><button type="button" class="@(_sortKol == kol ? "aktiv" : "")" @onclick="@(() => Sorter(k))">@navn<span>@(_sortKol == kol ? (_sortStigende ? "▲" : "▼") : "")</span></button></th>
+                            }
+                        </tr>
+                    </thead>
+                    @foreach (var gruppe in treff.GroupBy(d => d.Etasje ?? ""))
+                    {
+                        <tbody @key="gruppe.Key">
+                            <tr class="dp-gruppe"><td colspan="5">@EtasjeNavn(gruppe.Key)<span>@gruppe.Count() @(gruppe.Count() == 1 ? "dør" : "dører")</span></td></tr>
+                            @foreach (var d in gruppe)
+                            {
+                                var dor = d;
+                                var s = DorStatus(d.Id);
+                                <tr @key="d.Id" class="dp-rad" @onclick="@(() => ApneDor(dor))">
+                                    <td class="dp-td-dor"><span class="dp-nrboks">@d.Dornummer</span></td>
+                                    <td class="dp-td-rom"><b>@(string.IsNullOrWhiteSpace(d.DorTil) ? "–" : d.DorTil)</b>@if (!string.IsNullOrWhiteSpace(d.Romnr)) {<small>Rom @d.Romnr</small>}</td>
+                                    <td class="dp-td-funk">
+                                        @foreach (var f in d.Funksjoner.IFastRekkefolge())
+                                        {
+                                            <span class="dp-fchip" title="@f.Navn" @key="f.Id">@(string.IsNullOrWhiteSpace(f.Forkortelse) ? f.Navn : f.Forkortelse)</span>
+                                        }
+                                    </td>
+                                    <td class="dp-td-brann">@(string.IsNullOrWhiteSpace(d.Brann) ? "–" : d.Brann)</td>
+                                    <td class="dp-td-status">
+                                        @if (s is null)
+                                        {
+                                            <span class="dp-tag dp-t-gronn"><Icon Name="check" />I orden</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="dp-tag dp-t-@s.Farge">@s.Navn</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    }
+                </table>
+            }
+        </div>
     }
     else
     {
@@ -129,6 +202,104 @@ else
             </div>
         }
     }
+
+    @if (_valgtDor is { } valgt)
+    {
+        var status = DorStatus(valgt.Id);
+        var historikk = _meldinger.Where(m => m.Melding.DorId == valgt.Id).ToList();
+        <div class="dp-mod-slor" @onclick="LukkDor">
+            <div class="dp-mod" role="dialog" aria-modal="true" aria-label="@DorNavn(valgt)" @onclick:stopPropagation="true">
+                <div class="dp-mod-h">
+                    <span class="dp-nrboks">@valgt.Dornummer</span>
+                    <div class="dp-mod-tittel">
+                        <h2>@(string.IsNullOrWhiteSpace(valgt.DorTil) ? $"Dør {valgt.Dornummer}" : valgt.DorTil)</h2>
+                        <small>@(_prosjekt.Navn)@(Plassering(valgt) is { Length: > 0 } pl ? $" · {pl}" : "")</small>
+                    </div>
+                    @if (status is null)
+                    {
+                        <span class="dp-tag dp-t-gronn dp-kun-pc"><Icon Name="check" />I orden</span>
+                    }
+                    else
+                    {
+                        <span class="dp-tag dp-t-@status.Farge dp-kun-pc">@status.Navn</span>
+                    }
+                    <button type="button" class="dp-mod-x" title="Lukk" @onclick="LukkDor"><Icon Name="x" /></button>
+                </div>
+                <div class="dp-mod-faner">
+                    <button type="button" class="@(_modFane == "oversikt" ? "aktiv" : "")" @onclick="@(() => _modFane = "oversikt")">Oversikt</button>
+                    <button type="button" class="@(_modFane == "historikk" ? "aktiv" : "")" @onclick="@(() => _modFane = "historikk")">Historikk@if (historikk.Count > 0) {<em>@historikk.Count</em>}</button>
+                    <button type="button" class="@(_modFane == "meld" ? "aktiv" : "")" @onclick="@(() => _modFane = "meld")">Meld inn feil</button>
+                </div>
+                <div class="dp-mod-b">
+                    @if (_modFane == "oversikt")
+                    {
+                        var fakta = Fakta(valgt);
+                        @if (fakta.Count > 0)
+                        {
+                            <div class="dp-fakta">
+                                @foreach (var (navn, verdi) in fakta)
+                                {
+                                    <div @key="navn"><small>@navn</small><b>@verdi</b></div>
+                                }
+                            </div>
+                        }
+                        @if (valgt.Funksjoner.Count > 0)
+                        {
+                            <span class="dp-lbl">Funksjoner</span>
+                            <div class="dp-fchips">
+                                @foreach (var f in valgt.Funksjoner.IFastRekkefolge())
+                                {
+                                    <span class="dp-fchip dp-fchip-lang" @key="f.Id">@if (!string.IsNullOrWhiteSpace(f.Forkortelse)) {<b>@f.Forkortelse</b>}@f.Navn</span>
+                                }
+                            </div>
+                        }
+                        <span class="dp-lbl">Siste melding</span>
+                        @if (historikk.FirstOrDefault() is { } siste)
+                        {
+                            <div class="dp-meldinger"><DriftMeldingRad Status="siste" VisBygg="false" /></div>
+                        }
+                        else
+                        {
+                            <p class="dp-mod-tekst">Ingen meldinger på denne døren.</p>
+                        }
+                    }
+                    else if (_modFane == "historikk")
+                    {
+                        @if (historikk.Count == 0)
+                        {
+                            <p class="dp-mod-tekst">Ingen meldinger på denne døren ennå.</p>
+                        }
+                        else
+                        {
+                            <div class="dp-meldinger">
+                                @foreach (var s in historikk)
+                                {
+                                    <DriftMeldingRad Status="s" VisBygg="false" @key="s.Melding.Id" />
+                                }
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <p class="dp-mod-tekst">Hva gjelder det? Velg, så kan du beskrive feilen og legge ved bilde.</p>
+                        <div class="dp-kategorier">
+                            @foreach (var k in DriftHelper.Kategorier)
+                            {
+                                <a href="@($"/drift/dor/{valgt.Id}?kategori={Uri.EscapeDataString(k.Navn)}")" @key="k.Navn"><Icon Name="@k.Ikon" />@k.Navn</a>
+                            }
+                        </div>
+                    }
+                </div>
+                @if (_modFane != "meld")
+                {
+                    <div class="dp-mod-f">
+                        <button type="button" class="dp-knapp" @onclick="LukkDor">Lukk</button>
+                        <button type="button" class="dp-knapp dp-knapp-p" @onclick="@(() => _modFane = "meld")"><Icon Name="plus" />Meld inn feil</button>
+                    </div>
+                }
+            </div>
+        </div>
+    }
 }
 
 @code {
@@ -143,34 +314,99 @@ else
     private int _valgtPlanId;
     private string _visning = "plan";
     private string _sok = "";
+    private string _etasje = "";
+    private string _sortKol = "dor";
+    private bool _sortStigende = true;
+    private Dor? _valgtDor;
+    private string _modFane = "oversikt";
+
+    private ElementReference _planFlate;
+    private IJSObjectReference? _planJs;
+    private int _koblaPlan;
+
+    private static readonly (string Kol, string Navn)[] Kolonner =
+        [("dor", "Dør"), ("rom", "Rom"), ("funksjon", "Funksjon"), ("brann", "Brann"), ("status", "Status")];
+
+    private static readonly CultureInfo NorskKultur = CultureInfo.GetCultureInfo("nb-NO");
+    private static readonly StringComparer NorskSortering = StringComparer.Create(NorskKultur, true);
 
     private int AntallApne => _meldinger.Count(m => m.ErApen);
 
-    private IEnumerable<Dor> FiltrerteDorer => string.IsNullOrWhiteSpace(_sok)
-        ? _dorer
-        : _dorer.Where(d => Inneholder(d.Dornummer) || Inneholder(d.Romnr) || Inneholder(d.DorTil) || Inneholder(d.Etasje) || Inneholder(d.Sone));
+    private IEnumerable<Dor> PlanDorer(int planId) =>
+        _dorer.Where(d => d.PlantegningId == planId && d.PosX.HasValue && d.PosY.HasValue);
 
-    private bool Inneholder(string? s) => s?.Contains(_sok.Trim(), StringComparison.OrdinalIgnoreCase) == true;
+    private List<string> Etasjer => _dorer.Select(d => d.Etasje ?? "").Distinct().OrderBy(EtasjeSortering, StringComparer.Ordinal).ToList();
 
-    private void SokEndret()
+    // Tall-etasjer først i tallrekkefølge (1, 2, 10), deretter tekst, «uten etasje» sist.
+    private static string EtasjeSortering(string e) =>
+        int.TryParse(e, out var n) ? $"0{n + 100:D5}" : string.IsNullOrWhiteSpace(e) ? "2" : $"1{e}";
+
+    private static string EtasjeNavn(string? e) =>
+        string.IsNullOrWhiteSpace(e) ? "Uten etasje" : int.TryParse(e, out var n) ? $"{n}. etasje" : e;
+
+    private IEnumerable<Dor> SorterteDorer
     {
-        // Søk viser alltid treffene i dørlisten.
-        if (!string.IsNullOrWhiteSpace(_sok))
+        get
         {
-            _visning = "dorer";
+            var sok = _sok.Trim();
+            var liste = _dorer.Where(d => _etasje == "" || (d.Etasje ?? "") == _etasje);
+            if (sok.Length > 0)
+            {
+                liste = liste.Where(d => Inneholder(d.Dornummer, sok) || Inneholder(d.Romnr, sok) || Inneholder(d.DorTil, sok)
+                    || Inneholder(d.Sone, sok) || Inneholder(d.Brann, sok)
+                    || d.Funksjoner.Any(f => Inneholder(f.Navn, sok) || Inneholder(f.Forkortelse, sok)));
+            }
+
+            Func<Dor, string> nokkel = _sortKol switch
+            {
+                "rom" => d => d.DorTil ?? d.Romnr ?? "",
+                "funksjon" => FunksjonForkortelser,
+                "brann" => d => d.Brann ?? "",
+                "status" => d => StatusRang(d.Id).ToString(CultureInfo.InvariantCulture),
+                _ => d => NaturligNokkel(d.Dornummer)
+            };
+            var sortert = _sortStigende ? liste.OrderBy(nokkel, NorskSortering) : liste.OrderByDescending(nokkel, NorskSortering);
+            // Gruppert på etasje: etasjene i fast rekkefølge, sorteringen gjelder inne i hver.
+            return sortert.OrderBy(d => EtasjeSortering(d.Etasje ?? ""), StringComparer.Ordinal);
         }
     }
 
-    private static string Etikett(Dor d) => string.IsNullOrWhiteSpace(d.Romnr) ? d.Dornummer : d.Romnr;
+    // Dørnummer som 1.02 og 1.10 sorteres som tall, ikke som tekst.
+    private static string NaturligNokkel(string s) =>
+        System.Text.RegularExpressions.Regex.Replace(s ?? "", @"\d+", m => m.Value.PadLeft(8, '0'));
+
+    private static bool Inneholder(string? s, string sok) =>
+        s is not null && NorskKultur.CompareInfo.IndexOf(s, sok, CompareOptions.IgnoreCase) >= 0;
+
+    private void Sorter(string kol)
+    {
+        _sortStigende = _sortKol != kol || !_sortStigende;
+        _sortKol = kol;
+    }
 
     private static string DorNavn(Dor d) => !string.IsNullOrWhiteSpace(d.DorTil) ? $"{d.Dornummer} – {d.DorTil}" : $"Dør {d.Dornummer}";
 
-    private static string DorUndertekst(Dor d) => string.Join(" · ", new[]
+    private static string FunksjonForkortelser(Dor d) => string.Join(", ",
+        d.Funksjoner.IFastRekkefolge()
+            .Where(f => !string.IsNullOrWhiteSpace(f.Forkortelse))
+            .Select(f => f.Forkortelse));
+
+    private static string Plassering(Dor d) => string.Join(" · ", new[]
     {
+        string.IsNullOrWhiteSpace(d.Etasje) ? null : EtasjeNavn(d.Etasje),
         string.IsNullOrWhiteSpace(d.Romnr) ? null : $"Rom {d.Romnr}",
-        d.Dortype,
         d.Sone
     }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+    private static List<(string Navn, string Verdi)> Fakta(Dor d) => new (string Navn, string? Verdi)[]
+    {
+        ("Brannklasse", d.Brann),
+        ("Dørkonstruksjon", d.Dortype),
+        ("Mål", d.MalTekst),
+        ("Slagretning", d.Slagretning),
+        ("Etasje", string.IsNullOrWhiteSpace(d.Etasje) ? null : EtasjeNavn(d.Etasje)),
+        ("Rom", d.Romnr)
+    }.Where(f => !string.IsNullOrWhiteSpace(f.Verdi)).Select(f => (f.Navn, f.Verdi!)).ToList();
 
     // Den mest alvorlige åpne meldingen på døren bestemmer fargen.
     private DriftHelper.MeldingStatus? DorStatus(int dorId) => _meldinger
@@ -178,12 +414,31 @@ else
         .OrderBy(m => m.Steg)
         .FirstOrDefault();
 
-    private string PinKlasse(int dorId) => DorStatus(dorId) switch
+    private string StatusNokkel(int dorId) => DorStatus(dorId) switch
     {
-        null => "",
-        { Steg: DriftHelper.Steg.UnderArbeid } => "dp-pin-gul",
-        _ => "dp-pin-rod"
+        null => "ok",
+        { Steg: DriftHelper.Steg.UnderArbeid } => "planlagt",
+        _ => "apen"
     };
+
+    // Åpne meldinger først når man sorterer på status.
+    private int StatusRang(int dorId) => StatusNokkel(dorId) switch { "apen" => 0, "planlagt" => 1, _ => 2 };
+
+    private void ApneDor(Dor d)
+    {
+        _valgtDor = d;
+        _modFane = "oversikt";
+    }
+
+    private void LukkDor() => _valgtDor = null;
+
+    private void VelgPlan(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id))
+        {
+            _valgtPlanId = id;
+        }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -207,7 +462,6 @@ else
         }
 
         _plantegninger = await Db.Plantegninger
-            .Include(p => p.Dorer)
             .AsNoTracking()
             .Where(p => p.ProsjektId == Id)
             .OrderBy(p => p.Navn)
@@ -216,6 +470,7 @@ else
 
         _dorer = await Db.Dorer
             .AsNoTracking()
+            .Include(d => d.Funksjoner)
             .Where(d => d.ProsjektId == Id)
             .OrderBy(d => d.Etasje).ThenBy(d => d.Dornummer)
             .ToListAsync();
@@ -225,6 +480,43 @@ else
         if (_plantegninger.Count == 0)
         {
             _visning = "dorer";
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Zoom og dra kobles på hver gang en ny tegning vises.
+        if (_visning != "plan" || _valgtPlanId == 0 || _prosjekt is null)
+        {
+            _koblaPlan = 0;
+            return;
+        }
+        if (_koblaPlan == _valgtPlanId)
+        {
+            return;
+        }
+        try
+        {
+            _planJs ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/driftPlan.js?v=2");
+            await _planJs.InvokeVoidAsync("koble", _planFlate);
+            _koblaPlan = _valgtPlanId;
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_planJs is not null)
+        {
+            try
+            {
+                await _planJs.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
         }
     }
 }

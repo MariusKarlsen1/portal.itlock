@@ -745,7 +745,10 @@ app.Use(async (context, next) =>
     if (context.User.FindFirst(TofaktorInnlogging.KravClaim) is not null && HttpMethods.IsGet(context.Request.Method))
     {
         var sti = context.Request.Path.Value ?? "/";
+        // Driftsbrukere setter det opp på Min konto i driftsportalen.
+        var drift = context.User.IsInRole(nameof(BrukerRolle.Driftslisens));
         var unntatt = sti.StartsWith("/tofaktor", StringComparison.OrdinalIgnoreCase)
+            || (drift && sti.StartsWith("/drift/konto", StringComparison.OrdinalIgnoreCase))
             || sti.StartsWith("/account", StringComparison.OrdinalIgnoreCase)
             || sti.StartsWith("/login", StringComparison.OrdinalIgnoreCase)
             || sti.StartsWith("/_blazor", StringComparison.OrdinalIgnoreCase)
@@ -754,7 +757,7 @@ app.Use(async (context, next) =>
             || Path.HasExtension(sti);
         if (!unntatt)
         {
-            context.Response.Redirect("/tofaktor?krav=1");
+            context.Response.Redirect(drift ? "/drift/konto?krav=1" : "/tofaktor?krav=1");
             return;
         }
     }
@@ -858,7 +861,9 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
 
-    return Results.Redirect(maaSetteOppTofaktor ? "/tofaktor?krav=1" : safeReturnUrl);
+    return Results.Redirect(maaSetteOppTofaktor
+        ? (bruker.Rolle == BrukerRolle.Driftslisens ? "/drift/konto?krav=1" : "/tofaktor?krav=1")
+        : safeReturnUrl);
 }).AllowAnonymous().RequireRateLimiting("login");
 
 // Steg 2 i innloggingen: koden fra autentiseringsappen (eller en reservekode).
