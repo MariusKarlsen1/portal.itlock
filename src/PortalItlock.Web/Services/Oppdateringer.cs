@@ -14,6 +14,14 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.28", new DateOnly(2026, 11, 25),
+        [
+            new(Type.Nytt, "receipt", "ARX-kalkulator", "Velg dører, leser, låser og sentral ett steg om gangen, og få hardware, batteri og lisenser med kost og bruttopris."),
+            new(Type.Bedre, "receipt", "Ny StepLock-kalkulator", "Samme oppsett som ARX: ett spørsmål om gangen, med abonnement og priser til slutt."),
+            new(Type.Nytt, "plus", "Kalkulator rett i tilbudet", "«Legg til fra kalkulator» øverst på tilbudet legger linjene inn under egen overskrift."),
+            new(Type.Bedre, "calendar", "Enklere ressursplan", "Større og ryddigere, med periode i nedtrekk og kapasitet du kan redigere."),
+            new(Type.Bedre, "alert-triangle", "Tydeligere brannkontroll", "Alle dører med C i brannklassen vises røde eller grønne etter om de har dørlukker eller automatikk."),
+        ]),
         new("1.27", new DateOnly(2026, 11, 24),
         [
             new(Type.Nytt, "file-text", "Mal for ordrebekreftelse", "Under Oppsett og maler bestemmer du felt, tekster og betingelser på ordrebekreftelsen, og kan legge til egne punkter."),
