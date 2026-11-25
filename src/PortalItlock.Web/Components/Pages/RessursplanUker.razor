@@ -10,6 +10,7 @@
 @inject UkeplanService Svc
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject VisningPreferanseService VisningPref
 
 <PageTitle>Ressursplan - Full Kontroll</PageTitle>
 
@@ -17,55 +18,11 @@
    prosjekter, mot manuell kapasitet. Prosjektene kommer inn av seg selv
    (UkeplanService.SynkAsync); serviceavtaler og annet legges inn manuelt.
    Klikk i en rute for å skrive timer, dra over flere uker for å fylle ut. *@
-<div class="rp" @onmouseup="AvsluttDra">
+<div class="rp @(_full ? "rp-full" : "")" @onmouseup="AvsluttDra">
     <div class="rp-topp">
         <div>
             <h1>Ressursplan</h1>
-            <div class="rp-sub">Uke @_denne.Nr · @DateTime.Today.ToString("d. MMMM yyyy", Nb) · bare prosjektledere og admin</div>
-        </div>
-        <div class="rp-h">
-            <div class="rp-innboks">
-                <button type="button" class="rp-kn" @onclick="@(() => _visEndringer = !_visEndringer)"><Icon Name="bell" />Endringer</button>
-                @if (_endringer.Count > 0)
-                {
-                    <span class="rp-tall">@_endringer.Count</span>
-                }
-                @if (_visEndringer)
-                {
-                    <span class="rp-meny-bak" @onclick="@(() => _visEndringer = false)"></span>
-                    <div class="rp-meny">
-                        <div class="rp-mh">Endringer fra prosjektene</div>
-                        @if (_endringer.Count == 0)
-                        {
-                            <div class="rp-mr"><small>Ingen nye endringer.</small></div>
-                        }
-                        @foreach (var e in _endringer)
-                        {
-                            var endring = e;
-                            <div class="rp-mr">
-                                <span class="rp-ic rp-ic-@e.Type.ToString().ToLowerInvariant()">@(e.Type == UkeplanEndringType.Ny ? "+" : e.Type == UkeplanEndringType.Avslatt ? "×" : "✓")</span>
-                                <div class="rp-mt"><b>@e.Tekst</b><small>@e.Under</small></div>
-                                @if (e.Type == UkeplanEndringType.Ny && e.RadId is not null)
-                                {
-                                    <button type="button" class="rp-kn rp-kn-s rp-kn-p" @onclick="@(() => Planlegg(endring))">Planlegg</button>
-                                }
-                                else if (e.Type == UkeplanEndringType.Avslatt && e.RadId is not null)
-                                {
-                                    <button type="button" class="rp-kn rp-kn-s" @onclick="@(() => AngreAvslag(endring))">Angre</button>
-                                    <button type="button" class="rp-kn rp-kn-s" @onclick="@(() => Kvitter(endring))">OK</button>
-                                }
-                                else
-                                {
-                                    <button type="button" class="rp-kn rp-kn-s" @onclick="@(() => Kvitter(endring))">OK</button>
-                                }
-                            </div>
-                        }
-                    </div>
-                }
-            </div>
-            <a class="rp-kn" href="@($"/ressursplan/excel?uker={_antUker}")" download><Icon Name="download" />Excel</a>
-            <button type="button" class="rp-kn" @onclick="SkrivUt"><Icon Name="printer" />Skriv ut</button>
-            <button type="button" class="rp-kn rp-kn-p" @onclick="ApneNy"><Icon Name="plus" />Legg til</button>
+            <div class="rp-sub">Uke @_denne.Nr · timer per uke mot kapasitet</div>
         </div>
     </div>
 
@@ -89,20 +46,16 @@
                         <option value="@l.Id">@l.Navn</option>
                     }
                 </select>
-                <div class="rp-seg">
-                    <button type="button" class="@(_gruppering == "kat" ? "pa" : "")" @onclick="@(() => _gruppering = "kat")">Kategori</button>
-                    <button type="button" class="@(_gruppering == "pl" ? "pa" : "")" @onclick="@(() => _gruppering = "pl")">Prosjektleder</button>
-                </div>
                 <span class="rp-sp"></span>
-                <label class="rp-sj"><input type="checkbox" @bind="_medPot" />Potensielle i sum</label>
-                <label class="rp-sj"><input type="checkbox" @bind="_skjulTomme" />Skjul uten timer</label>
-                <div class="rp-seg rp-ml">
-                    @foreach (var (n, t) in new[] { (18, "4 mnd"), (26, "6 mnd"), (52, "12 mnd") })
+                <select class="rp-f" value="@_antUker" @onchange="@(e => SettPeriode(int.Parse(e.Value?.ToString() ?? "18")))" aria-label="Periode">
+                    @foreach (var (n, t) in new[] { (12, "3 måneder"), (18, "4 måneder"), (26, "6 måneder"), (52, "12 måneder") })
                     {
-                        var antall = n;
-                        <button type="button" class="@(_antUker == n ? "pa" : "")" @onclick="@(() => SettPeriode(antall))">@t</button>
+                        <option value="@n">@t</option>
                     }
-                </div>
+                </select>
+                <button type="button" class="rp-kn" @onclick="ApneKapasitet"><Icon Name="edit" />Rediger kapasitet</button>
+                <button type="button" class="rp-kn rp-kn-p" @onclick="ApneNy"><Icon Name="plus" />Legg til</button>
+                <button type="button" class="rp-kn rp-kn-ik" title="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" aria-label="@(_full ? "Vanlig bredde" : "Utvid til hele vinduet")" @onclick="VekslFull"><Icon Name="@(_full ? "minimize" : "maximize")" /></button>
             </div>
 
             <div class="rp-rull">
@@ -117,39 +70,10 @@
                                     var j0 = i0;
                                     var mnd = Midtuke(uker[i0]).Month;
                                     while (j0 < uker.Count && Midtuke(uker[j0]).Month == mnd) j0++;
-                                    <th colspan="@(j0 - i0)">@Midtuke(uker[i0]).ToString("MMM", Nb).TrimEnd('.')@(i0 == 0 || mnd == 1 ? " " + Midtuke(uker[i0]).Year : "")</th>
+                                    var mndNavn = Midtuke(uker[i0]).ToString("MMMM", Nb);
+                                    <th colspan="@(j0 - i0)" class="@(i0 > 0 ? "rp-ms" : "")">@(char.ToUpper(mndNavn[0]) + mndNavn[1..])@if (i0 == 0 || mnd == 1) {<span> @Midtuke(uker[i0]).Year</span>}</th>
                                     i0 = j0;
                                 }
-                            }
-                        </tr>
-                        <tr class="rp-bel">
-                            <th class="rp-v"><div class="rp-vt">Belastning<small>planlagt mot kapasitet per uke</small></div></th>
-                            @for (var i = 0; i < uker.Count; i++)
-                            {
-                                var u = uker[i];
-                                var deler = new decimal[4];
-                                foreach (var r in vis)
-                                {
-                                    var t = T(r, u);
-                                    if (r.Kategori == UkeplanKategori.Potensiell)
-                                    {
-                                        if (_medPot) deler[3] += t * r.Sannsynlighet / 100m;
-                                    }
-                                    else
-                                    {
-                                        deler[(int)r.Kategori] += t;
-                                    }
-                                }
-                                var over = plan[i] > Kap(u);
-                                <th class="rp-u @UkeKlasse(u)" title="Uke @u.Nr: @Fmt(plan[i]) av @Fmt(Kap(u)) t">
-                                    <div class="rp-stolpe @(over ? "over" : "")">
-                                        <i style="height:@Px(deler[0], maks)px;background:var(--rp-store)"></i>
-                                        <i style="height:@Px(deler[1], maks)px;background:var(--rp-mindre)"></i>
-                                        <i style="height:@Px(deler[2], maks)px;background:var(--rp-service)"></i>
-                                        <i class="rp-hatch" style="height:@Px(deler[3], maks)px"></i>
-                                        <span class="rp-kap" style="bottom:@Px(Kap(u), maks)px"></span>
-                                    </div>
-                                </th>
                             }
                         </tr>
                         <tr class="rp-ukerad">
@@ -157,7 +81,7 @@
                             @foreach (var u in uker)
                             {
                                 var uke = u;
-                                <th class="rp-u @UkeKlasse(u)" title="Se hvem som jobber hvor i uke @u.Nr" @onclick="@(() => VisUke(uke))">@(u == _denne ? "Nå · " : "")@u.Nr</th>
+                                <th class="rp-u @UkeKlasse(u)" title="Uke @u.Nr · fra @u.Mandag.ToString("d. MMMM", Nb) · klikk for å se hvem som jobber hvor" @onclick="@(() => VisUke(uke))"><small>@(u == _denne ? "NÅ" : "UKE")</small><b>@u.Nr</b><em>@u.Mandag.ToString("d.M", Nb)</em></th>
                             }
                         </tr>
                     </thead>
@@ -170,15 +94,11 @@
                                 <td class="rp-v">
                                     <div class="rp-gt @(lukket ? "lukket" : "")">
                                         <Icon Name="chevron-down" />
-                                        <span class="rp-sw" style="background:@g.Farge"></span>@g.Navn
-                                        <span class="rp-ant">@g.Rader.Count · @Fmt(g.Rader.Sum(r => uker.Sum(u => T(r, u)))) t</span>
+                                        @g.Navn
+                                        <span class="rp-ant">@g.Rader.Count</span>
                                     </div>
                                 </td>
-                                @foreach (var u in uker)
-                                {
-                                    var s = g.Rader.Sum(r => T(r, u));
-                                    <td class="rp-u @UkeKlasse(u)">@(s > 0 ? Fmt(s) : "")</td>
-                                }
+                                <td colspan="@uker.Count"></td>
                             </tr>
                             @if (!lukket)
                             {
@@ -248,14 +168,14 @@
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td class="rp-v"><div class="rp-fl">Planlagt<small>@(_medPot ? "potensielle vektet" : "uten potensielle")</small></div></td>
+                            <td class="rp-v"><div class="rp-fl">Planlagt</div></td>
                             @for (var i = 0; i < uker.Count; i++)
                             {
                                 <td class="rp-u @UkeKlasse(uker[i])">@Fmt(plan[i])</td>
                             }
                         </tr>
                         <tr>
-                            <td class="rp-v"><div class="rp-fl rp-dempet">Kapasitet<small>manuell · <button type="button" class="rp-lenke" @onclick="ApneStd">standard @Fmt(_std) t</button></small></div></td>
+                            <td class="rp-v"><div class="rp-fl rp-dempet">Kapasitet<small><button type="button" class="rp-lenke" @onclick="ApneKapasitet">@(_stdOverstyrt ? $"standard {Fmt(_std)} t" : $"{_antMontorer} montører × 37,5 t")</button></small></div></td>
                             @foreach (var u in uker)
                             {
                                 var uke = u;
@@ -283,20 +203,11 @@
                     </tfoot>
                 </table>
             </div>
-            <div class="rp-forkl">
-                <span><i style="background:var(--rp-store)"></i>Store</span>
-                <span><i style="background:var(--rp-mindre)"></i>Mindre</span>
-                <span><i style="background:var(--rp-service)"></i>Service / ramme</span>
-                <span><i class="rp-hatch"></i>Potensielle (vektet)</span>
-                <span><b class="rp-strek"></b>Kapasitet</span>
-                <span class="rp-ml"><i class="rp-dot rp-d-pagar"></i>Under arbeid <i class="rp-dot rp-d-reg"></i>Registrert <i class="rp-dot rp-d-tilbud"></i>Tilbud sendt <i class="rp-dot rp-d-man"></i>Manuell</span>
-            </div>
         </div>
         <div class="rp-tips">
             <span><b>Klikk</b> en rute for å skrive timer · <b>Enter</b> går til neste uke</span>
             <span><b>Dra</b> over flere uker for å fylle ut alle på én gang</span>
             <span><b>Klikk ukenummer</b> for å se hvem som jobber hvor</span>
-            <span><b>Klikk tallet i Kapasitet</b> for å endre en uke</span>
         </div>
     }
 </div>
@@ -509,21 +420,40 @@ else if (_valgtUke is { } vu)
     </div>
 }
 
-@if (_visStd)
+@if (_visKap)
 {
-    <div class="rp-bak" @onclick="@(() => _visStd = false)">
-        <div class="rp-dlg rp-dlg-s" role="dialog" aria-modal="true" aria-label="Kapasitet" @onclick:stopPropagation="true">
-            <div class="rp-dh">Kapasitet</div>
-            <div class="rp-db">
-                <div class="rp-felt"><small>Standard kapasitet per uke (timer)</small><input inputmode="decimal" @bind="_stdVerdi" /></div>
-                <small class="rp-dempet">Gjelder alle uker uten egen verdi. Uker du har endret (understreket) beholder sin verdi.</small>
+    <span class="rp-panel-bak" @onclick="LukkKapasitet"></span>
+    <aside class="rp-panel rp-kappanel" role="dialog" aria-label="Kapasitet">
+        <div class="rp-kph"><div><b>Kapasitet</b><small>Timer dere har tilgjengelig per uke</small></div><button type="button" class="rp-kn rp-kn-ik" aria-label="Lukk" @onclick="LukkKapasitet"><Icon Name="x" /></button></div>
+        <div class="rp-kpk">
+            <div class="rp-kapstd">
+                <b>Standard per uke</b>
+                @if (_stdOverstyrt)
+                {
+                    <div class="rp-kaprad"><label>Timer per uke<input inputmode="decimal" @bind="_stdVerdi" @bind:after="LagreStd" /></label></div>
+                    <small>Beregnet: @_antMontorer montører × 37,5 t = @Fmt(_antMontorer * 37.5m) t</small>
+                }
+                else
+                {
+                    <div class="rp-kapauto"><b>@Fmt(_std) t</b><span>@_antMontorer montører × 37,5 t · regnes ut fra montørene i portalen</span></div>
+                }
+                <label class="rp-kapover"><input type="checkbox" checked="@_stdOverstyrt" @onchange="VekslOverstyr" />Overstyr</label>
+                <small>Brukes i alle uker som ikke er endret under.</small>
             </div>
-            <div class="rp-df">
-                <button type="button" class="rp-kn" @onclick="@(() => _visStd = false)">Avbryt</button>
-                <button type="button" class="rp-kn rp-kn-p" @onclick="LagreStd">Lagre</button>
-            </div>
+            <b class="rp-kapt">Uker <small>endre ved ferie, kurs eller sykdom</small></b>
+            @foreach (var u in _uker)
+            {
+                var uke = u;
+                var egen = _kapEgen.ContainsKey(u.Nokkel);
+                <div class="rp-ku @(egen ? "egen" : "")">
+                    <span><b>Uke @u.Nr</b> <small>@u.Mandag.ToString("d. MMM", Nb) · @(egen ? "endret" : "standard")</small></span>
+                    <input inputmode="decimal" value="@Inv(Kap(u))" @onchange="@(e => SettUkeKapasitet(uke, e.Value?.ToString()))" aria-label="Kapasitet uke @u.Nr" /> t
+                    <button type="button" class="rp-lenke" style="visibility:@(egen ? "visible" : "hidden")" @onclick="@(() => SettUkeKapasitet(uke, null))">Standard</button>
+                </div>
+            }
         </div>
-    </div>
+        <div class="rp-kpb"><button type="button" class="rp-kn" @onclick="AlleTilStandard">Sett alle uker til standard</button><button type="button" class="rp-kn rp-kn-p" @onclick="LukkKapasitet">Ferdig</button></div>
+    </aside>
 }
 
 @if (!string.IsNullOrEmpty(_toast))
@@ -561,7 +491,8 @@ else if (_valgtUke is { } vu)
     private string _sok = "";
     private int _plFilter;
     private string _gruppering = "kat";
-    private bool _medPot = true;
+    // Tilbud (potensielle) vises ikke og regnes ikke med.
+    private bool _medPot;
     private bool _skjulTomme;
     private readonly HashSet<string> _lukket = [];
     private bool _visEndringer;
@@ -586,8 +517,11 @@ else if (_valgtUke is { } vu)
     private string _kapVerdi = "";
     private ElementReference _kapRef;
     private bool _fokusKap;
-    private bool _visStd;
     private string _stdVerdi = "";
+    private bool _visKap;
+    private bool _stdOverstyrt;
+    private int _antMontorer;
+    private bool _full;
 
     // Panel
     private int? _aktivRadId;
@@ -618,6 +552,7 @@ else if (_valgtUke is { } vu)
             .Where(b => (b.Rolle == BrukerRolle.Admin || b.Rolle == BrukerRolle.Prosjektleder) && b.Aktiv && b.SlettetDato == null && !b.ErSkjult)
             .OrderBy(b => b.Navn).ToListAsync();
         await Last();
+        _full = await VisningPref.HentAsync("ressursplan-bredde", "normal") == "full";
         _lastet = true;
     }
 
@@ -631,6 +566,8 @@ else if (_valgtUke is { } vu)
         _kalk = await Svc.KalkulertAsync(ider);
         _brukt = await Svc.BruktAsync(ider);
         _std = await Svc.StandardKapasitetAsync();
+        _stdOverstyrt = await Db.UkeplanKapasitet.AsNoTracking().AnyAsync(k => k.Ar == 0 && k.Uke == 0);
+        _antMontorer = Math.Max(1, await Db.Brukere.CountAsync(b => b.Rolle == BrukerRolle.Montor && b.Aktiv && b.SlettetDato == null && !b.ErSkjult));
         _kapEgen = (await Db.UkeplanKapasitet.AsNoTracking().Where(k => k.Ar != 0).ToListAsync())
             .ToDictionary(k => $"{k.Ar}-{k.Uke}", k => k.Timer);
         _endringer = await Db.UkeplanEndringer.AsNoTracking().Where(e => !e.Kvittert).OrderByDescending(e => e.Dato).Take(30).ToListAsync();
@@ -645,7 +582,14 @@ else if (_valgtUke is { } vu)
     private static DateTime Midtuke(UkeplanService.Uke u) => u.Mandag.AddDays(3);
     private decimal Kap(UkeplanService.Uke u) => _kapEgen.TryGetValue(u.Nokkel, out var k) ? k : _std;
     private static decimal T(UkeplanRad r, UkeplanService.Uke u) => r.Timer.FirstOrDefault(t => t.Ar == u.Ar && t.Uke == u.Nr)?.Timer ?? 0;
-    private string UkeKlasse(UkeplanService.Uke u) => (u == _denne ? "na " : "") + (_valgtUke == u ? "valgt" : "");
+    private string UkeKlasse(UkeplanService.Uke u) => (u == _denne ? "na " : "") + (_valgtUke == u ? "valgt " : "") + (ErMndStart(u) ? "rp-ms" : "");
+
+    // Første uke i en ny måned får en skillelinje, så månedene er lette å se.
+    private bool ErMndStart(UkeplanService.Uke u)
+    {
+        var i = _uker.IndexOf(u);
+        return i > 0 && Midtuke(_uker[i]).Month != Midtuke(_uker[i - 1]).Month;
+    }
 
     private static string Initialer(string? navn)
     {
@@ -715,14 +659,8 @@ else if (_valgtUke is { } vu)
         {
             return "";
         }
-        var a = Math.Min(1m, t / 80m);
-        var rgb = r.Kategori switch
-        {
-            UkeplanKategori.Store => "31,78,140",
-            UkeplanKategori.Service => "122,77,196",
-            _ => "110,155,216"
-        };
-        return $"background:rgba({rgb},{Inv(0.12m + a * 0.5m)});color:{(a > 0.65m ? "#fff" : "#14213D")}";
+        // Én rolig farge på alle timene.
+        return "background:#E7EEF8;color:#14213D";
     }
 
     private List<UkeplanRad> Synlige()
@@ -731,6 +669,7 @@ else if (_valgtUke is { } vu)
         return _rader
             .Where(r => _plFilter == 0 || r.AnsvarligId == _plFilter)
             .Where(r => sok.Length == 0 || UkeplanService.RadNavn(r).Contains(sok, StringComparison.CurrentCultureIgnoreCase) || (r.ProsjektId is { } p && $"P-{p}".Contains(sok, StringComparison.OrdinalIgnoreCase)))
+            .Where(r => r.Kategori != UkeplanKategori.Potensiell)
             .Where(r => !_skjulTomme || _uker.Any(u => T(r, u) > 0))
             // Ferdige prosjekter går ut når de ikke har timer fra og med denne uka.
             .Where(r => r.Prosjekt?.Status is not (ProsjektStatus.Avsluttet or ProsjektStatus.Overlevert or ProsjektStatus.TilbudAvslatt)
@@ -1071,10 +1010,74 @@ else if (_valgtUke is { } vu)
         }
     }
 
+    private void ApneKapasitet()
+    {
+        _stdVerdi = Inv(_std);
+        _visKap = true;
+    }
+
+    private async Task LukkKapasitet()
+    {
+        _visKap = false;
+        await Task.CompletedTask;
+    }
+
+    private async Task VekslFull()
+    {
+        _full = !_full;
+        await VisningPref.SettAsync("ressursplan-bredde", _full ? "full" : "normal");
+    }
+
+    // Overstyr: standarden lagres som eget tall. Uten: montører × 37,5 t.
+    private async Task VekslOverstyr(ChangeEventArgs e)
+    {
+        if (e.Value is true)
+        {
+            await Svc.SettKapasitetAsync(0, 0, _std);
+            _stdOverstyrt = true;
+        }
+        else
+        {
+            await Svc.SettKapasitetAsync(0, 0, null);
+            _stdOverstyrt = false;
+            _std = await Svc.StandardKapasitetAsync();
+        }
+        _stdVerdi = Inv(_std);
+    }
+
+    private async Task SettUkeKapasitet(UkeplanService.Uke u, string? verdi)
+    {
+        decimal? ny = null;
+        if (!string.IsNullOrWhiteSpace(verdi))
+        {
+            if (!decimal.TryParse(verdi.Replace(" ", "").Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out var v))
+            {
+                return;
+            }
+            ny = v == _std ? null : Math.Max(0, v);
+        }
+        await Svc.SettKapasitetAsync(u.Ar, u.Nr, ny);
+        if (ny is null)
+        {
+            _kapEgen.Remove(u.Nokkel);
+        }
+        else
+        {
+            _kapEgen[u.Nokkel] = ny.Value;
+        }
+    }
+
+    private async Task AlleTilStandard()
+    {
+        foreach (var u in _uker.Where(u => _kapEgen.ContainsKey(u.Nokkel)).ToList())
+        {
+            await SettUkeKapasitet(u, null);
+        }
+    }
+
     private void ApneStd()
     {
         _stdVerdi = Inv(_std);
-        _visStd = true;
     }
 
     private async Task LagreStd()
@@ -1085,7 +1088,6 @@ else if (_valgtUke is { } vu)
         }
         await Svc.SettKapasitetAsync(0, 0, v);
         _std = v;
-        _visStd = false;
         Vis($"Standard kapasitet er {Fmt(v)} t per uke");
     }
 
