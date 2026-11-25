@@ -44,6 +44,7 @@ public static class PortalModulRegister
     // Kalkulatorene på /kalkulatorer (Prosjekt, service og tilbud).
     public static readonly List<Lenke> KalkulatorUndermoduler =
     [
+        new Lenke("ARX-kalkulator", "Antall dører, lesere, låser og sentral gir hardware, batteri og lisenser for ARX.", "arx-kalkulator", "receipt", null, ModulTilgang.FraProsjektleder),
         new Lenke("StepLock-kalkulator", "Sett sammen StepLock Access og se pris på hardware og abonnement – Basic, Standard eller Premium.", "steplock-kalkulator", "receipt", null, ModulTilgang.FraProsjektleder),
     ];
 
@@ -232,8 +233,9 @@ public static class PortalModulRegister
                     new Lenke("Finn dørpakke", "Velg krav og få riktig dørpakke.", "finn-dorpakke", "box"),
                     new Lenke("Serviceavtaler", "Avtaler, servicerunder og årshjul.", "service", "clock", null, ModulTilgang.Alle),
                     new Lenke("Tilbud", "Gi pris på mindre jobber og service.", "tilbud-service", "receipt", null, ModulTilgang.FraProsjektleder),
-                    // KA1: kalkulatorene samles i én modul - StepLock ligger bare der, ikke i venstremenyen.
-                    new Lenke("Kalkulatorer", "StepLock-kalkulator og andre kalkulatorer samlet på ett sted.", "kalkulatorer", "receipt", KalkulatorUndermoduler, ModulTilgang.FraProsjektleder),
+                    // Kalkulatorene (ARX og StepLock) er tatt ut av modulmenyen 2026-11-25.
+                    // De skal inn i Tilbud. Sidene lever videre på /arx-kalkulator,
+                    // /steplock-kalkulator og /kalkulatorer.
                     new Lenke("CE-godkjenninger", "CE-dokumentasjon for automatiske dører.", "ce-godkjenninger", "shield", KreverModul: TilleggsModuler.Ce),
                     new Lenke("Prosjektøkonomi", "Økonomien i pågående prosjekter, og etterkalkyle når de er overlevert.", "prosjektokonomi", "trend-up", null, ModulTilgang.FraProsjektleder, KreverModul: TilleggsModuler.Okonomi),
                     // Ressursplan (2026-11-17): timer per uke fremover mot kapasitet - bare prosjektleder og admin.
@@ -389,7 +391,7 @@ public static class PortalModulRegister
     public static readonly HashSet<string> StandardIMeny = new(StringComparer.OrdinalIgnoreCase)
     {
         "dashbord", "kunngjoringer", "todo",
-        "arbeidsordre", "kalkulatorer", "prosjektokonomi", "ressursplan", "timeregistrering", "fravar",
+        "arbeidsordre", "prosjektokonomi", "ressursplan", "timeregistrering", "fravar",
         "tickets", "lager", "kassa",
         "oppsettmodul", "komponentprismodul", "brukerkundemodul", "rapportermodul"
     };
