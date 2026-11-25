@@ -28,6 +28,18 @@ public static class InnleggTypeExtensions
         _ => "💬"
     };
 
+    // Strekikon (Components/Icon.razor) per type, brukt i stedet for emoji i knapper og merkelapper.
+    public static string Ikon(this InnleggType type) => type switch
+    {
+        InnleggType.Kunngjoring => "megafon",
+        InnleggType.Diskusjon => "melding",
+        InnleggType.Sporsmal => "help-circle",
+        InnleggType.Ros => "star",
+        InnleggType.Avstemning => "bar-chart",
+        InnleggType.Arrangement => "calendar",
+        _ => "melding"
+    };
+
     // Typer som vises med egen overskrift (de andre er korte innlegg uten tittel).
     public static bool HarTittel(this InnleggType type) =>
         type is InnleggType.Kunngjoring or InnleggType.Sporsmal or InnleggType.Avstemning or InnleggType.Arrangement;
