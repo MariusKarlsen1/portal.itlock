@@ -236,21 +236,23 @@ public class TripletexApiTests
         await using var db = MinneDb(conn);
         var ny = new PrisKode { Kode = "KM1", Navn = "Kjøring", Enhet = PrisKodeEnhet.Km, Salgspris = 9 };
         var endretDer = new PrisKode { Kode = "TA100", Navn = "Timer montør", Enhet = PrisKodeEnhet.Time, Kostpris = 500, Salgspris = 1090 };
-        endretDer.TripletexSynk = "Timer montør|500|1090";
+        endretDer.TripletexSynk = "Timer montør|500.00|1090.00";
         var endretHer = new PrisKode { Kode = "TA200", Navn = "Timer service", Enhet = PrisKodeEnhet.Time, Kostpris = 500, Salgspris = 1200 };
-        endretHer.TripletexSynk = "Timer service|500|1100";
+        endretHer.TripletexSynk = "Timer service|500.00|1100.00";
         var vare = new Component { Navn = "Låsefedt", Produktkode = "36012256", PrisNetto = 60, PrisVeiledende = 150 };
         db.PrisKoder.AddRange(ny, endretDer, endretHer);
         db.Components.Add(vare);
         await db.SaveChangesAsync();
 
-        var falsk = new FalskTripletex((req, _) =>
+        var ta200Pris = "1100";
+        var falsk = new FalskTripletex((req, body) =>
         {
             var sti = req.RequestUri!.PathAndQuery;
             if (sti.Contains("token/session")) return Json("""{"value":{"token":"t"}}""");
             if (req.Method == HttpMethod.Post && sti.EndsWith("/product")) return Json("""{"value":{"id":99}}""");
+            if (req.Method == HttpMethod.Put && sti.EndsWith("product/2")) ta200Pris = "1200.0";
             if (req.Method == HttpMethod.Put) return Json("""{"value":{"id":1}}""");
-            if (sti.Contains("product?")) return Json("""{"values":[{"id":1,"number":"TA100","name":"Timer montør","costExcludingVatCurrency":500,"priceExcludingVatCurrency":1150,"productUnit":{"name":"Time","nameShort":"t"}},{"id":2,"number":"TA200","name":"Timer service","costExcludingVatCurrency":500,"priceExcludingVatCurrency":1100,"productUnit":{"name":"Time","nameShort":"t"}},{"id":3,"number":"36012256","name":"Låsefedt","costExcludingVatCurrency":60,"priceExcludingVatCurrency":120},{"id":4,"number":"TA300","name":"Timer helg","costExcludingVatCurrency":600,"priceExcludingVatCurrency":1600,"productUnit":{"name":"Time","nameShort":"t"}},{"id":5,"number":"V-77","name":"Dørstopper","costExcludingVatCurrency":20,"priceExcludingVatCurrency":59,"productUnit":{"name":"Stykk","nameShort":"stk"}}]}""");
+            if (sti.Contains("product?")) return Json("""{"values":[{"id":1,"number":"TA100","name":"Timer montør","costExcludingVatCurrency":500.0,"priceExcludingVatCurrency":1150,"productUnit":{"name":"Time","nameShort":"t"}},{"id":2,"number":"TA200","name":"Timer service","costExcludingVatCurrency":500,"priceExcludingVatCurrency":""" + ta200Pris + ""","productUnit":{"name":"Time","nameShort":"t"}},{"id":3,"number":"36012256","name":"Låsefedt","costExcludingVatCurrency":60,"priceExcludingVatCurrency":120},{"id":4,"number":"TA300","name":"Timer helg","costExcludingVatCurrency":600,"priceExcludingVatCurrency":1600,"productUnit":{"name":"Time","nameShort":"t"}},{"id":5,"number":"V-77","name":"Dørstopper","costExcludingVatCurrency":20,"priceExcludingVatCurrency":59,"productUnit":{"name":"Stykk","nameShort":"stk"}}]}""");
             return Json("""{"values":[]}""");
         });
 
@@ -272,10 +274,12 @@ public class TripletexApiTests
         Assert.Equal(2, r.KoderSendt);
         Assert.Equal(1, r.VarerHentet);
 
-        // Andre runde: alt er likt, ingenting sendes.
+        // Andre runde: alt er likt (Tripletex sender 500.0 der portalen har 500),
+        // så ingenting sendes eller hentes.
         falsk.Kall.Clear();
-        await new TripletexSyncService(db, Lag(falsk)).SynkroniserVarerOgKoderAsync();
-        Assert.DoesNotContain(falsk.Kall, k => k.Metode == HttpMethod.Put && !k.Sti.EndsWith("product/3"));
+        var r2 = await new TripletexSyncService(db, Lag(falsk)).SynkroniserVarerOgKoderAsync();
+        Assert.DoesNotContain(falsk.Kall, k => k.Metode == HttpMethod.Put && k.Sti.EndsWith("product/1"));
+        Assert.Equal(0, r2.KoderHentet);
     }
 
     // Varer som ikke finnes i Tripletex opprettes første gang de brukes på en ordre,

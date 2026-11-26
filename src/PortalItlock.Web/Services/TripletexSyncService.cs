@@ -704,7 +704,8 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
     private static string Snapshot(string navn, decimal? kost, decimal? salg, bool bareNavn) =>
         bareNavn
             ? navn.Trim()
-            : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{navn.Trim()}|{Math.Round(kost ?? 0, 2)}|{Math.Round(salg ?? 0, 2)}");
+            // Fast format: Tripletex sender 550.0 der portalen har 550.
+            : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{navn.Trim()}|{kost ?? 0:0.00}|{salg ?? 0:0.00}");
 
     private static bool Likt(decimal? a, decimal? b) => Math.Round(a ?? 0, 2) == Math.Round(b ?? 0, 2);
 
