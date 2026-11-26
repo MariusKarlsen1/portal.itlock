@@ -28,7 +28,19 @@ namespace PortalItlock.Web.Services;
 // holdes adskilt per nøkkel og per organisasjon.
 public sealed class TripletexService(HttpClient http, TripletexService.Nokler? nokler, int tenantId)
 {
-    public sealed record Nokler(string ConsumerToken, string EmployeeToken, bool Test);
+    public sealed record Nokler(string ConsumerToken, string EmployeeToken, bool Test)
+    {
+        // API-nøkkel fra Selskap → API-nøkler i Tripletex («egne integrasjoner»):
+        // én nøkkel som starter med tlxr_ og dekker både applikasjon og bruker.
+        // Den trenger ikke Full Kontroll sitt consumer-token.
+        public bool ErApiNokkel => ErApiNokkelVerdi(EmployeeToken);
+    }
+
+    public static bool ErApiNokkelVerdi(string? verdi) =>
+        verdi?.Trim().StartsWith("tlxr_", StringComparison.Ordinal) == true;
+
+    // Sesjonen fra en API-nøkkel varer maks 8 timer (ttlSeconds 300–28800).
+    private const int ApiNokkelSesjonSekunder = 28800;
 
     private static readonly SemaphoreSlim _sessionLas = new(1, 1);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Token, DateTime UtlopUtc)> _sessioner = new();
@@ -75,6 +87,24 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
             if (_sessioner.TryGetValue(nokkel, out s) && DateTime.UtcNow < s.UtlopUtc)
             {
                 return s.Token;
+            }
+
+            // API-nøkkel (tlxr_): byttes inn mot en sesjon på 8 timer via
+            // :createFromRefreshToken. Fornyes 10 minutter før den går ut.
+            if (nokler.ErApiNokkel)
+            {
+                var refreshBody = new { refreshToken = nokler.EmployeeToken.Trim(), ttlSeconds = ApiNokkelSesjonSekunder };
+                using var refreshResp = await http.PostAsJsonAsync("token/session/:createFromRefreshToken", refreshBody, JsonOpts, ct);
+                var refreshRaw = await refreshResp.Content.ReadAsStringAsync(ct);
+                if (!refreshResp.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException($"Tripletex avviste API-nøkkelen ({(int)refreshResp.StatusCode}): {refreshRaw}");
+                }
+
+                var refreshToken = JsonSerializer.Deserialize<ResponseWrapper<SessionTokenSvar>>(refreshRaw, JsonOpts)?.Value?.Token
+                    ?? throw new InvalidOperationException("Tripletex-svaret manglet selve token-verdien.");
+                _sessioner[nokkel] = (refreshToken, DateTime.UtcNow.AddSeconds(ApiNokkelSesjonSekunder - 600));
+                return refreshToken;
             }
 
             // Be om et session-token som er gyldig i 90 dager fremover - det

@@ -211,4 +211,35 @@ public class TripletexApiTests
         Assert.Equal(ArbeidsordreStatus.Ferdig, kreditert.Status);
         Assert.Equal(AkontoStatus.Betalt, akonto.Status);
     }
+
+    // API-nøkkel fra Selskap → API-nøkler (tlxr_): byttes inn via :createFromRefreshToken
+    // med ttlSeconds (maks 8 timer), uten consumer-token, og sesjonen brukes som vanlig.
+    [Fact]
+    public async Task Api_nokkel_tlxr_logger_inn_med_refresh_token_uten_consumer_token()
+    {
+        var falsk = new FalskTripletex((req, _) => req.RequestUri!.PathAndQuery.Contains("createFromRefreshToken")
+            ? Json("""{"value":{"token":"jwt-sesjon"}}""")
+            : Json("""{"value":{"companyId":93903281,"employee":{"firstName":"Andreas","lastName":"Karlsen"},"company":{"name":"AK transport"}}}"""));
+        var nokkel = "tlxr_" + Guid.NewGuid().ToString("N");
+        var tx = new TripletexService(new HttpClient(falsk) { BaseAddress = new Uri("https://api-test.tripletex.tech/v2/") },
+            new TripletexService.Nokler("", nokkel, true), 1);
+
+        var svar = await tx.TestTilkoblingAsync();
+
+        Assert.True(svar.Ok, svar.Feilmelding);
+        Assert.Equal("AK transport (konto 93903281)", svar.FirmaNavn);
+        var inn = falsk.Kall.Single(k => k.Sti.Contains("createFromRefreshToken"));
+        var body = JsonDocument.Parse(inn.Body!).RootElement;
+        Assert.Equal(nokkel, body.GetProperty("refreshToken").GetString());
+        Assert.Equal(28800, body.GetProperty("ttlSeconds").GetInt32());
+        Assert.DoesNotContain(falsk.Kall, k => k.Sti.EndsWith("token/session/:create"));
+    }
+
+    [Theory]
+    [InlineData("tlxr_abc", true)]
+    [InlineData("  tlxr_abc  ", true)]
+    [InlineData("eyJhbGciOi", false)]
+    [InlineData(null, false)]
+    public void Api_nokkel_kjennes_igjen_pa_tlxr(string? verdi, bool forventet) =>
+        Assert.Equal(forventet, TripletexService.ErApiNokkelVerdi(verdi));
 }

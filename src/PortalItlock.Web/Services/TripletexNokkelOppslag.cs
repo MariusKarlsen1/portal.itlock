@@ -37,6 +37,11 @@ public class TripletexNokkelOppslag(
         var test = inn?.TripletexBrukTest ?? oppsett.Hent().TripletexTest;
         var employee = hemmelig.Dekrypter(test ? inn?.TripletexTestEmployeeTokenKryptert : inn?.TripletexEmployeeTokenKryptert);
         var consumer = oppsett.ConsumerToken(test);
+        // API-nøkkel fra Selskap → API-nøkler (tlxr_) virker alene, uten consumer-token.
+        if (TripletexService.ErApiNokkelVerdi(employee))
+        {
+            return new TripletexService.Nokler("", employee!.Trim(), test);
+        }
         if (!string.IsNullOrWhiteSpace(employee) && !string.IsNullOrWhiteSpace(consumer))
         {
             return new TripletexService.Nokler(consumer, employee, test);
