@@ -14,6 +14,14 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.34", new DateOnly(2026, 11, 26),
+        [
+            new(Type.Bedre, "receipt", "Ny Fakturering-fane", "Klart, fakturert og gjenstår øverst, akontoen som er klar med én knapp, og Rediger for å endre faktureringsplanen."),
+            new(Type.Nytt, "check", "Fakturert i Tripletex vises her", "Når du har fakturert ordren inne i Tripletex, settes arbeidsordren til Fakturert i portalen av seg selv. Betalte akontoer blir Betalt."),
+            new(Type.Bedre, "link-ikon", "Enklere kobling til Tripletex", "Lim inn en API-nøkkel fra Selskap → API-nøkler i Tripletex. Over 1000 kunder og varer hentes nå også."),
+            new(Type.Nytt, "file-text", "Velg mottaker på tilbuds-PDF", "Prosjektets kunde, en annen kunde, skriv inn selv eller ingen. Gyldig til og levering vises bare når de er fylt ut."),
+            new(Type.Fikset, "edit", "Renere overskrifter i tilbud", "Overskrift og beskrivelse i varelinjene vises uten ramme."),
+        ]),
         new("1.33", new DateOnly(2026, 11, 26),
         [
             new(Type.Bedre, "trend-up", "Ny Økonomi-fane", "Fortjenesten mot prognosen som store tall, ett råd, og arbeid, varer og kjøring som rader du kan åpne."),
