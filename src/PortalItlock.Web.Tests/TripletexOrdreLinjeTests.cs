@@ -28,6 +28,17 @@ public class TripletexOrdreLinjeTests
         Assert.Null(ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre));
     }
 
+    // Tilbudet har veiledende 2259,30 og utpris 1650,96 (rabatt 26,93 %), men
+    // 2259,30 × 0,7307 = 1650,87. Enhetsprisen justeres så linjesummen blir 1650,96.
+    [Fact]
+    public void Rabatt_med_to_desimaler_gir_samme_linjesum()
+    {
+        var t = ArbeidsordreOkonomiBeregner.TripletexLinje(Linje(1, 1650.96m, 2259.30m));
+
+        Assert.Equal(26.93m, t.RabattProsent);
+        Assert.Equal(1650.96m, Math.Round(t.Enhetspris * (1 - t.RabattProsent / 100m), 2));
+    }
+
     [Theory]
     [InlineData(TilbudPrisType.Rabatt, null, 4786, 15)]
     [InlineData(TilbudPrisType.Dekningsgrad, null, 4068.10, 0)]

@@ -241,7 +241,26 @@ public static class ArbeidsordreOkonomiBeregner
         var pris = l.Antall == 0 ? 0 : l.Belop / l.Antall;
         if (l.Listepris is { } liste && liste > 0 && pris > 0 && pris < liste)
         {
-            var rabatt = Math.Round((1 - pris / liste) * 100m, 4);
+            // Tripletex lagrer rabatten med to desimaler. Gir veiledende pris med
+            // avrundet rabatt ikke samme linjesum som i portalen, justeres
+            // enhetsprisen noen øre, så summen på ordren blir lik tilbudet.
+            var rabatt = Math.Round((1 - pris / liste) * 100m, 2);
+            var mal = Math.Round(l.Belop, 2);
+            decimal Sum(decimal enhet) => Math.Round(l.Antall * enhet * (1 - rabatt / 100m), 2);
+            if (Sum(liste) != mal && rabatt < 100)
+            {
+                var start = Math.Round(pris / (1 - rabatt / 100m), 2);
+                for (var ore = 0; ore <= 10; ore++)
+                {
+                    foreach (var kandidat in new[] { start + ore / 100m, start - ore / 100m })
+                    {
+                        if (Sum(kandidat) == mal)
+                        {
+                            return (beskrivelse, kandidat, rabatt, l.Innpris);
+                        }
+                    }
+                }
+            }
             return (beskrivelse, liste, rabatt, l.Innpris);
         }
 

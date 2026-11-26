@@ -656,7 +656,9 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
                 ["deliveryDate"] = iDag,
                 // Linjene sendes med pris eks. mva. Står firmaet til å prioritere
                 // priser inkl. mva, må ordren si fra, ellers avvises eller feiltolkes prisene.
-                ["isPrioritizeAmountsIncludingVat"] = false
+                ["isPrioritizeAmountsIncludingVat"] = false,
+                // Linjene i samme rekkefølge som i portalen (ellers sorterer Tripletex på varenummer).
+                ["orderLineSorting"] = "CUSTOM"
             };
             // Kontaktperson hos kunden og vår kontakt, som når ordren legges inn
             // for hånd. Finnes de ikke, sendes ordren likevel uten.
@@ -712,11 +714,12 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
                 }
             }
 
-            var linjerBody = linjer.Select(l =>
+            var linjerBody = linjer.Select((l, indeks) =>
             {
                 var linje = new Dictionary<string, object?>
                 {
                     ["order"] = new { id = opprettetOrdre.Id },
+                    ["sortIndex"] = indeks,
                     ["description"] = l.Beskrivelse,
                     ["count"] = l.Antall,
                     ["unitPriceExcludingVatCurrency"] = l.EnhetsprisEksMva,
@@ -737,6 +740,12 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
                     if (produkter.TryGetValue(l.Varenummer.Trim(), out var produkt))
                     {
                         linje["product"] = new { id = produkt.Id };
+                        // Tripletex skriver varens navn foran beskrivelsen. Er de like,
+                        // sendes ingen beskrivelse, så navnet ikke står to ganger.
+                        if (string.Equals(produkt.Navn.Trim(), l.Beskrivelse.Trim(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            linje.Remove("description");
+                        }
                         if (produkt.MvaId is int produktMva)
                         {
                             linje["vatType"] = new { id = produktMva };

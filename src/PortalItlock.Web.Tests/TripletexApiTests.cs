@@ -304,7 +304,8 @@ public class TripletexApiTests
         Assert.Equal("IQ 3.0 gateway", produkt.GetProperty("name").GetString());
         var linjer = JsonDocument.Parse(falsk.Kall.Single(k => k.Sti.Contains("order/orderline/list")).Body!).RootElement;
         Assert.Equal(77, linjer[0].GetProperty("product").GetProperty("id").GetInt32());
-        Assert.Equal("IQ 3.0 gateway", linjer[0].GetProperty("description").GetString());
+        Assert.False(linjer[0].TryGetProperty("description", out _));
+        Assert.Equal(0, linjer[0].GetProperty("sortIndex").GetInt32());
     }
 
     // To portal-kunder koblet til samme Tripletex-kunde stoppet hele synken

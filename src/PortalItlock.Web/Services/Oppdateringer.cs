@@ -14,6 +14,10 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.37", new DateOnly(2026, 11, 26),
+        [
+            new(Type.Fikset, "receipt", "Riktig sum og ryddige linjer i Tripletex", "Summen på ordren blir lik tilbudet også med rabatt, varenavnet står bare én gang, og linjene kommer i samme rekkefølge som i portalen."),
+        ]),
         new("1.36", new DateOnly(2026, 11, 26),
         [
             new(Type.Nytt, "box", "Varer og priskoder synkes med Tripletex", "Priskoder går begge veier. Varer opprettes i Tripletex første gang de brukes på en ordre, og varer laget i Tripletex hentes hit."),
