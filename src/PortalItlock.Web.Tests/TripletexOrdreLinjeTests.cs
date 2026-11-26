@@ -28,26 +28,25 @@ public class TripletexOrdreLinjeTests
         Assert.Equal("Arbeidsordre #89 - Test", ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre));
     }
 
-    [Fact]
-    public void Uten_rabattprising_sendes_bare_nettopris()
-    {
-        var t = ArbeidsordreOkonomiBeregner.TripletexLinje(Linje(10, 4068.10m, 4786m, 3350.20m, "C50S.111.SD.SE"), visRabatt: false);
-
-        Assert.Equal("C50S.111.SD.SE Ovalsylinder S50", t.Beskrivelse);
-        Assert.Equal(4068.10m, t.Enhetspris);
-        Assert.Equal(0m, t.RabattProsent);
-        Assert.Equal(3350.20m, t.Innpris);
-    }
-
     [Theory]
-    [InlineData(TilbudPrisType.Rabatt, true)]
-    [InlineData(TilbudPrisType.Dekningsgrad, false)]
-    [InlineData(TilbudPrisType.Paslag, false)]
-    [InlineData(TilbudPrisType.Veiledende, false)]
-    public void Rabatt_vises_bare_ved_rabatt_pa_veiledende(TilbudPrisType type, bool forventet)
+    [InlineData(TilbudPrisType.Rabatt, null, 4786, 15)]
+    [InlineData(TilbudPrisType.Dekningsgrad, null, 4068.10, 0)]
+    [InlineData(TilbudPrisType.Paslag, null, 4068.10, 0)]
+    [InlineData(TilbudPrisType.Veiledende, null, 4068.10, 0)]
+    [InlineData(TilbudPrisType.Veiledende, TilbudPrisType.Rabatt, 4786, 15)]
+    [InlineData(TilbudPrisType.Rabatt, TilbudPrisType.Dekningsgrad, 4068.10, 0)]
+    public void Rabatt_vises_bare_pa_linjer_med_rabatt_pa_veiledende(TilbudPrisType tilbudType, TilbudPrisType? linjeType, decimal pris, decimal rabatt)
     {
-        var ordre = new Arbeidsordre { Tittel = "x", Tilbud = new Tilbud { Tittel = "t", PrisType = type } };
-        Assert.Equal(forventet, ArbeidsordreOkonomiBeregner.VisRabattITripletex(ordre));
+        var tilbud = new Tilbud { Tittel = "t", PrisType = tilbudType };
+        tilbud.Linjer.Add(new TilbudLinje { Navn = "Ovalsylinder S50", Antall = 10, Innpris = 3350.20m, Utpris = 4068.10m, PrisVeiledende = 4786m, PrisType = linjeType });
+        var ordre = new Arbeidsordre { Tittel = "x", Tilbud = tilbud };
+
+        var linje = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre).First();
+        var t = ArbeidsordreOkonomiBeregner.TripletexLinje(linje);
+
+        Assert.Equal(pris, t.Enhetspris);
+        Assert.Equal(rabatt, t.RabattProsent);
+        Assert.Equal(3350.20m, t.Innpris);
     }
 
     [Fact]

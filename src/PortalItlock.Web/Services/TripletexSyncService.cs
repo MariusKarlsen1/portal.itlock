@@ -426,7 +426,6 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         }
         else
         {
-            var visRabatt = ArbeidsordreOkonomiBeregner.VisRabattITripletex(ordre);
             linjer = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre, koder)
                 .Select(l =>
                 {
@@ -434,7 +433,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
                     {
                         return new TripletexService.OrdreLinjeInput(l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall, l.Varenummer);
                     }
-                    var t = ArbeidsordreOkonomiBeregner.TripletexLinje(l, visRabatt);
+                    var t = ArbeidsordreOkonomiBeregner.TripletexLinje(l);
                     return new TripletexService.OrdreLinjeInput(t.Beskrivelse, l.Antall, t.Enhetspris, null, t.Innpris, t.RabattProsent);
                 })
                 .ToList();
