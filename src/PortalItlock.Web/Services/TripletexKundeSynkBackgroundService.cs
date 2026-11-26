@@ -6,7 +6,8 @@ namespace PortalItlock.Web.Services;
 
 // Holder kundene like i portalen og Tripletex for alle organisasjoner som har
 // Tripletex koblet: nye og endrede kunder (med kontaktpersoner) sendes dit, og
-// kunder opprettet eller endret i Tripletex hentes inn. Hvert 10. minutt.
+// kunder opprettet eller endret i Tripletex hentes inn. Arbeidsordre og akontoer
+// som er fakturert eller betalt inne i Tripletex, får samme status her. Hvert 10. minutt.
 public class TripletexKundeSynkBackgroundService(IServiceScopeFactory scopeFactory, ILogger<TripletexKundeSynkBackgroundService> logger) : BackgroundService
 {
     private static readonly TimeSpan Intervall = TimeSpan.FromMinutes(10);
@@ -74,7 +75,16 @@ public class TripletexKundeSynkBackgroundService(IServiceScopeFactory scopeFacto
                     .AddInterceptors(new SqliteUnicodeFunctionsInterceptor())
                     .Options;
                 await using var db = new ApplicationDbContext(options);
-                var r = await new TripletexSyncService(db, tripletex).SynkroniserKunderAsync(stoppingToken);
+                var synk = new TripletexSyncService(db, tripletex);
+                var r = await synk.SynkroniserKunderAsync(stoppingToken);
+
+                // Det som er fakturert eller betalt inne i Tripletex, settes også her.
+                var fakt = await synk.OppdaterFakturertStatusAsync(stoppingToken);
+                if (fakt.ArbeidsordreFakturert + fakt.AkontoerBetalt > 0 || fakt.Feil is not null)
+                {
+                    logger.LogInformation("Tripletex-fakturastatus for {Organisasjon}: {Ao} arbeidsordre fakturert, {Akonto} akontoer betalt{Feil}.",
+                        t.Navn, fakt.ArbeidsordreFakturert, fakt.AkontoerBetalt, fakt.Feil is null ? "" : $", feil: {fakt.Feil}");
+                }
                 if (r.PushetTilTripletex + r.HentetFraTripletex > 0 || r.Feil.Count > 0)
                 {
                     logger.LogInformation("Tripletex-kundesynk for {Organisasjon}: {Sendt} sendt, {Hentet} hentet, {Oppdatert} oppdatert, {Feil} feil.",

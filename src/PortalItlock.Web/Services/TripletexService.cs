@@ -123,6 +123,69 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         return req;
     }
 
+    // Tripletex gir maks 1000 rader per kall (count). Lister hentes derfor side for
+    // side med «from» til en side kommer tilbake med færre enn 1000 rader. Feiler en
+    // side, returneres feilen og ingen rader, som før.
+    private const int SideStorrelse = 1000;
+
+    private async Task<(List<T> Verdier, string? Feilmelding)> HentAlleSiderAsync<T>(string sti, CancellationToken ct, int maksSider = 100)
+    {
+        var alle = new List<T>();
+        var skille = sti.Contains('?') ? '&' : '?';
+        for (var side = 0; side < maksSider; side++)
+        {
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, $"{sti}{skille}from={side * SideStorrelse}&count={SideStorrelse}", ct);
+            using var resp = await http.SendAsync(req, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return ([], $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
+            }
+
+            var verdier = JsonSerializer.Deserialize<ListResponse<T>>(raw, JsonOpts)?.Values ?? [];
+            alle.AddRange(verdier);
+            if (verdier.Count < SideStorrelse)
+            {
+                break;
+            }
+        }
+        return (alle, null);
+    }
+
+    // Utgående mva, høy sats (25 %) slås opp i firmaets egne mva-koder: koden må
+    // være aktiv i kontoen. Faller tilbake til id 3, som er standardkoden.
+    private int? _utgaendeMvaId;
+
+    private async Task<int> UtgaendeMvaIdAsync(CancellationToken ct)
+    {
+        if (_utgaendeMvaId is int kjent)
+        {
+            return kjent;
+        }
+
+        try
+        {
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, "ledger/vatType?typeOfVat=OUTGOING&number=3&fields=id,number,percentage", ct);
+            using var resp = await http.SendAsync(req, ct);
+            if (resp.IsSuccessStatusCode)
+            {
+                var treff = JsonSerializer.Deserialize<ListResponse<VatTypeSvar>>(await resp.Content.ReadAsStringAsync(ct), JsonOpts)?.Values?
+                    .FirstOrDefault(v => v.Number == "3" && v.Percentage == 25m);
+                if (treff is not null)
+                {
+                    _utgaendeMvaId = treff.Id;
+                    return treff.Id;
+                }
+            }
+        }
+        catch (Exception)
+        {
+        }
+
+        _utgaendeMvaId = 3;
+        return 3;
+    }
+
     public sealed record TilkoblingResultat(bool Ok, string? Feilmelding, string? FirmaNavn, string? BrukerNavn);
 
     // «The employee token cannot be used for this consumer and consumer token»: ansattnøkkelen
@@ -223,23 +286,14 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     {
         try
         {
-            var sti = "customer?count=1000&fields=id,name,customerNumber,organizationNumber,email,phoneNumber,phoneNumberMobile,postalAddress(addressLine1,postalCode,city)";
+            var sti = "customer?fields=id,name,customerNumber,organizationNumber,email,phoneNumber,phoneNumberMobile,postalAddress(addressLine1,postalCode,city)";
             if (endretSiden is not null)
             {
                 sti += $"&changedSince={Uri.EscapeDataString(endretSiden.Value.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"))}";
             }
 
-            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, sti, ct);
-            using var resp = await http.SendAsync(req, ct);
-            var raw = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode)
-            {
-                return ([], $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
-            }
-
-            var parsed = JsonSerializer.Deserialize<ListResponse<CustomerSvar>>(raw, JsonOpts);
-            var kunder = (parsed?.Values ?? []).Select(TilTripletexKunde).ToList();
-            return (kunder, null);
+            var (verdier, feil) = await HentAlleSiderAsync<CustomerSvar>(sti, ct);
+            return feil is not null ? ([], feil) : (verdier.Select(TilTripletexKunde).ToList(), null);
         }
         catch (Exception ex)
         {
@@ -351,7 +405,7 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     {
         try
         {
-            var body = LagKundeBody(kunde);
+            var body = LagKundeBody(kunde, ny: true);
             using var req = await LagAutorisertForespurselAsync(HttpMethod.Post, "customer", ct);
             req.Content = JsonContent.Create(body, options: JsonOpts);
             using var resp = await http.SendAsync(req, ct);
@@ -407,25 +461,43 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         return System.Text.RegularExpressions.Regex.IsMatch(e, @"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$") ? e : null;
     }
 
-    private static object LagKundeBody(KundeOppdatering kunde)
+    // Ny kunde: sendemåten settes, ellers blir den EHF for bedrifter, og da krever
+    // Tripletex postadresse (bedrifter uten adresse ble avvist). Med gyldig e-post
+    // sendes fakturaen på e-post; uten e-post og adresse sendes den manuelt.
+    // Ved oppdatering endres ikke sendemåten, så det firmaet har valgt i Tripletex, står.
+    public static string? SendemateForNyKunde(KundeOppdatering kunde)
+    {
+        if (GyldigEpost(kunde.Email) is not null)
+        {
+            return "EMAIL";
+        }
+        var harAdresse = !string.IsNullOrWhiteSpace(kunde.Adresse) && !string.IsNullOrWhiteSpace(kunde.Postnr);
+        return harAdresse ? null : "MANUAL";
+    }
+
+    private static object LagKundeBody(KundeOppdatering kunde, bool ny = false)
     {
         object? postadresse = string.IsNullOrWhiteSpace(kunde.Adresse) && string.IsNullOrWhiteSpace(kunde.Postnr) && string.IsNullOrWhiteSpace(kunde.Sted)
             ? null
             : new { addressLine1 = kunde.Adresse, postalCode = kunde.Postnr, city = kunde.Sted };
 
-        return new
+        var body = new Dictionary<string, object?>
         {
-            name = kunde.Navn,
-            organizationNumber = string.IsNullOrWhiteSpace(kunde.OrganizationNumber) ? null : kunde.OrganizationNumber,
-            email = GyldigEpost(kunde.Email),
+            ["name"] = kunde.Navn,
+            ["organizationNumber"] = string.IsNullOrWhiteSpace(kunde.OrganizationNumber) ? null : kunde.OrganizationNumber,
+            ["email"] = GyldigEpost(kunde.Email),
             // Fakturaene går til samme e-post.
-            invoiceEmail = GyldigEpost(kunde.Email),
-            phoneNumberMobile = kunde.Telefon,
-            postalAddress = postadresse,
+            ["invoiceEmail"] = GyldigEpost(kunde.Email),
+            ["phoneNumberMobile"] = kunde.Telefon,
+            ["postalAddress"] = postadresse,
             // Uten org.nr. er kunden en privatperson.
-            isPrivateIndividual = string.IsNullOrWhiteSpace(kunde.OrganizationNumber),
-            isCustomer = true
+            ["isPrivateIndividual"] = string.IsNullOrWhiteSpace(kunde.OrganizationNumber)
         };
+        if (ny && SendemateForNyKunde(kunde) is { } sendemate)
+        {
+            body["invoiceSendMethod"] = sendemate;
+        }
+        return body;
     }
 
     // Ordrelinje: beskrivelse + antall + pris. Varene er fritekst (inntektskonto
@@ -462,7 +534,10 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
                 customer = new { id = tripletexKundeId },
                 reference = referanse,
                 orderDate = iDag,
-                deliveryDate = iDag
+                deliveryDate = iDag,
+                // Linjene sendes med pris eks. mva. Står firmaet til å prioritere
+                // priser inkl. mva, må ordren si fra, ellers avvises eller feiltolkes prisene.
+                isPrioritizeAmountsIncludingVat = false
             };
 
             using var ordreReq = await LagAutorisertForespurselAsync(HttpMethod.Post, "order", ct);
@@ -479,15 +554,18 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
 
             // Priskodene slås opp mot produktene i Tripletex. Finnes ikke
             // varenummeret der, sendes linjen som fritekst med koden foran.
-            var produkter = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            // Linjen får produktets egen mva-kode, så inntektskontoen på produktet brukes
+            // (Tripletex bruker produktets konto bare når mva-koden er lik).
+            var produkter = new Dictionary<string, TripletexProdukt>(StringComparer.OrdinalIgnoreCase);
             if (linjer.Any(l => !string.IsNullOrWhiteSpace(l.Varenummer)))
             {
                 var (liste, _) = await HentProdukterAsync(ct);
                 foreach (var p in liste)
                 {
-                    produkter.TryAdd(p.Nummer, p.Id);
+                    produkter.TryAdd(p.Nummer, p);
                 }
             }
+            var mvaId = await UtgaendeMvaIdAsync(ct);
 
             var linjerBody = linjer.Select(l =>
             {
@@ -497,10 +575,8 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
                     ["description"] = l.Beskrivelse,
                     ["count"] = l.Antall,
                     ["unitPriceExcludingVatCurrency"] = l.EnhetsprisEksMva,
-                    // itlock bruker 25% mva på alt (samme kode som den eksisterende
-                    // TripletexOrdreCsvService sitt CSV-importformat bruker) - se
-                    // MVA-kodeoversikten i Tripletex hvis dette ikke stemmer.
-                    ["vatType"] = new { id = 3 }
+                    // Utgående mva, høy sats (25 %), slått opp i firmaets mva-koder.
+                    ["vatType"] = new { id = mvaId }
                 };
                 // Innkjøpspris og rabatt, så linjen ser ut som når den legges inn i Tripletex.
                 if (l.Innpris is { } inn && inn > 0)
@@ -513,9 +589,13 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
                 }
                 if (!string.IsNullOrWhiteSpace(l.Varenummer))
                 {
-                    if (produkter.TryGetValue(l.Varenummer.Trim(), out var produktId))
+                    if (produkter.TryGetValue(l.Varenummer.Trim(), out var produkt))
                     {
-                        linje["product"] = new { id = produktId };
+                        linje["product"] = new { id = produkt.Id };
+                        if (produkt.MvaId is int produktMva)
+                        {
+                            linje["vatType"] = new { id = produktMva };
+                        }
                     }
                     else
                     {
@@ -549,8 +629,10 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     public sealed record TripletexFaktura(
         int Id, int? Nummer, DateTime? Dato, DateTime? Forfallsdato,
         int? KundeId, string? KundeNavn, decimal Belop, decimal Utestaende,
-        bool ErKreditnota, string? OrdreNummer);
+        bool ErKreditnota, string? OrdreNummer, int? OrdreId = null);
 
+    // dateTo er «til, ikke med» (som invoiceDateTo i Tripletex): send dagen etter
+    // siste dag som skal være med.
     // Henter fakturaer som faktisk er sendt/opprettet i Tripletex - i
     // motsetning til rapportene i /rapporter (som beregnes fra portalens
     // egne ferdigmeldte arbeidsordre), finnes denne dataen KUN i Tripletex
@@ -589,27 +671,25 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     {
         try
         {
-            var sti = $"invoice?count=1000&invoiceDateFrom={dateFrom:yyyy-MM-dd}&invoiceDateTo={dateTo:yyyy-MM-dd}"
-                + "&fields=id,invoiceNumber,invoiceDate,invoiceDueDate,customer(id,name),amount,amountOutstanding,isCreditNote,orders(number)";
+            // invoiceDateTo er «til, ikke med» i Tripletex: send dagen etter siste dag.
+            var sti = $"invoice?invoiceDateFrom={dateFrom:yyyy-MM-dd}&invoiceDateTo={dateTo:yyyy-MM-dd}"
+                + "&fields=id,invoiceNumber,invoiceDate,invoiceDueDate,customer(id,name),amount,amountOutstanding,isCreditNote,orders(id,number)";
             if (kundeId is not null)
             {
                 sti += $"&customerId={kundeId}";
             }
 
-            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, sti, ct);
-            using var resp = await http.SendAsync(req, ct);
-            var raw = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode)
+            var (verdier, feil) = await HentAlleSiderAsync<InvoiceSvar>(sti, ct);
+            if (feil is not null)
             {
-                return ([], $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
+                return ([], feil);
             }
 
-            var parsed = JsonSerializer.Deserialize<ListResponse<InvoiceSvar>>(raw, JsonOpts);
-            var fakturaer = (parsed?.Values ?? [])
+            var fakturaer = verdier
                 .Select(v => new TripletexFaktura(
                     v.Id, v.InvoiceNumber, v.InvoiceDate, v.InvoiceDueDate,
                     v.Customer?.Id, v.Customer?.Name, v.Amount ?? 0, v.AmountOutstanding ?? 0,
-                    v.IsCreditNote ?? false, v.Orders?.FirstOrDefault()?.Number))
+                    v.IsCreditNote ?? false, v.Orders?.FirstOrDefault()?.Number, v.Orders?.FirstOrDefault()?.Id))
                 .ToList();
             return (fakturaer, null);
         }
@@ -619,7 +699,7 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         }
     }
 
-    public sealed record TripletexProdukt(int Id, string Nummer, string Navn, decimal? Kostpris, decimal? Salgspris);
+    public sealed record TripletexProdukt(int Id, string Nummer, string Navn, decimal? Kostpris, decimal? Salgspris, int? MvaId = null);
 
     // Produktene i Tripletex (aktive, med varenummer). Brukes til å hente
     // priskodene, så kodene i portalen er de samme som varenumrene der.
@@ -627,20 +707,17 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     {
         try
         {
-            const string sti = "product?count=1000&isInactive=false&fields=id,number,name,costExcludingVatCurrency,priceExcludingVatCurrency";
-            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, sti, ct);
-            using var resp = await http.SendAsync(req, ct);
-            var raw = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode)
+            const string sti = "product?isInactive=false&fields=id,number,name,costExcludingVatCurrency,priceExcludingVatCurrency,vatType(id)";
+            var (verdier, feil) = await HentAlleSiderAsync<ProductSvar>(sti, ct);
+            if (feil is not null)
             {
-                return ([], $"Tripletex svarte {(int)resp.StatusCode}: {raw}");
+                return ([], feil);
             }
 
-            var parsed = JsonSerializer.Deserialize<ListResponse<ProductSvar>>(raw, JsonOpts);
-            var produkter = (parsed?.Values ?? [])
+            var produkter = verdier
                 .Where(p => !string.IsNullOrWhiteSpace(p.Number))
                 .Select(p => new TripletexProdukt(p.Id, p.Number!.Trim(), string.IsNullOrWhiteSpace(p.Name) ? p.Number!.Trim() : p.Name.Trim(),
-                    p.CostExcludingVatCurrency, p.PriceExcludingVatCurrency))
+                    p.CostExcludingVatCurrency, p.PriceExcludingVatCurrency, p.VatType?.Id))
                 .OrderBy(p => p.Nummer)
                 .ToList();
             return (produkter, null);
@@ -660,6 +737,21 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         public string? Name { get; set; }
         public decimal? CostExcludingVatCurrency { get; set; }
         public decimal? PriceExcludingVatCurrency { get; set; }
+        public IdSvar? VatType { get; set; }
+    }
+
+    private sealed class IdSvar
+    {
+        public int Id { get; set; }
+    }
+
+    private sealed class VatTypeSvar
+    {
+        public int Id { get; set; }
+
+        [JsonConverter(typeof(SlakkStrengKonverterer))]
+        public string? Number { get; set; }
+        public decimal? Percentage { get; set; }
     }
 
     private sealed class ResponseWrapper<T>

@@ -454,6 +454,71 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         return (true, null);
     }
 
+    public sealed record FakturertResultat(int ArbeidsordreFakturert, int AkontoerBetalt, string? Feil);
+
+    // Leser tilbake fra Tripletex det som er fakturert der. Portalen fakturerer
+    // aldri selv: ordren legges i Tripletex, og fakturaen lages når noen trykker
+    // Fakturer der inne. Når det har skjedd, finnes en faktura som peker på
+    // ordren (Invoice.orders), og da settes arbeidsordren til Fakturert her, så
+    // ingen trenger å markere den en gang til. Akontoer settes til Betalt når
+    // fakturaen er betalt (amountOutstanding 0). Kreditnotaer telles ikke.
+    public async Task<FakturertResultat> OppdaterFakturertStatusAsync(CancellationToken ct = default)
+    {
+        var ordre = await db.Arbeidsordre
+            .Where(a => a.TripletexOrdreId != null && a.Status == ArbeidsordreStatus.Ferdig)
+            .ToListAsync(ct);
+        var akontoer = await db.ProsjektAkontoer
+            .Where(a => a.TripletexOrdreId != null && a.Status == AkontoStatus.Sendt)
+            .ToListAsync(ct);
+        if (ordre.Count == 0 && akontoer.Count == 0)
+        {
+            return new(0, 0, null);
+        }
+
+        var forste = ordre.Select(a => a.TripletexOrdreSendtDato ?? a.FullfortDato ?? DateTime.Today)
+            .Concat(akontoer.Select(a => a.SendtDato ?? DateTime.Today))
+            .Min().Date.AddDays(-7);
+        var (fakturaer, feil) = await tripletex.HentFakturaerAsync(forste, DateTime.Today.AddDays(1), null, ct);
+        if (feil is not null)
+        {
+            return new(0, 0, feil);
+        }
+
+        var perOrdre = fakturaer
+            .Where(f => !f.ErKreditnota && f.OrdreId is not null)
+            .GroupBy(f => f.OrdreId!.Value)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(f => f.Dato).First());
+
+        var antallAo = 0;
+        foreach (var a in ordre)
+        {
+            if (perOrdre.TryGetValue(a.TripletexOrdreId!.Value, out var f))
+            {
+                a.Status = ArbeidsordreStatus.Fakturert;
+                a.FakturertDato = f.Dato ?? DateTime.Now;
+                a.FakturertAvNavn = f.Nummer is int nr ? $"Tripletex, faktura {nr}" : "Tripletex";
+                antallAo++;
+            }
+        }
+
+        var antallBetalt = 0;
+        foreach (var a in akontoer)
+        {
+            if (perOrdre.TryGetValue(a.TripletexOrdreId!.Value, out var f) && f.Utestaende == 0 && f.Belop > 0)
+            {
+                a.Status = AkontoStatus.Betalt;
+                a.BetaltDato = DateTime.Today;
+                antallBetalt++;
+            }
+        }
+
+        if (antallAo + antallBetalt > 0)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        return new(antallAo, antallBetalt, null);
+    }
+
     // Akonto fra faktureringsplanen under Prosjektøkonomi: én ordrelinje med
     // beløpet, på prosjektets kunde. Sendes bare én gang.
     public async Task<(bool Ok, string? Feilmelding)> PushAkontoTilTripletexAsync(int akontoId, decimal belop, decimal innestaaende = 0, CancellationToken ct = default)

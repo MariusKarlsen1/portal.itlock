@@ -258,7 +258,9 @@ builder.Services.AddHttpClient(nameof(TripletexService), (sp, client) =>
     var baseUrl = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TripletexOptions>>().Value.BaseUrl;
     client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(20);
-});
+})
+    // Venter og prøver igjen når Tripletex svarer 429 (for mange kall).
+    .AddHttpMessageHandler(() => new TripletexBegrensningHandler());
 builder.Services.AddSingleton<TripletexNokkelOppslag>();
 builder.Services.AddScoped<TripletexService>(sp =>
     sp.GetRequiredService<TripletexNokkelOppslag>().Lag(sp.GetRequiredService<ITenantContext>().Current));
