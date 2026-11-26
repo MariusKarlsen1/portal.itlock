@@ -14,6 +14,12 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.32", new DateOnly(2026, 11, 26),
+        [
+            new(Type.Bedre, "trend-up", "Enklere prosjektøkonomi", "Fire faner inne på prosjektet: Oversikt, Økonomi, Fakturering og Fremdrift, med svaret i én setning øverst."),
+            new(Type.Bedre, "receipt", "Fakturering med én knapp", "Akontoen som er klar, sendes rett fra toppen av fanen."),
+            new(Type.Bedre, "check", "Kryss av oppgaver", "Trykk på en aktivitet i Fremdrift og kryss av oppgavene."),
+        ]),
         new("1.31", new DateOnly(2026, 11, 26),
         [
             new(Type.Bedre, "mail", "Forespørsler uten tickets", "Status, ansvarlig, prioritet, frist og kunde settes rett på forespørselen. Ticket-knappene er borte."),
