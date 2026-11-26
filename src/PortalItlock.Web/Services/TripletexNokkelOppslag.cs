@@ -26,8 +26,14 @@ public class TripletexNokkelOppslag(
         // ansattnøkkel for hvert. Consumer-tokenet for miljøet er plattformens.
         var inn = platformDb.TenantInnstillinger.AsNoTracking()
             .Where(i => i.TenantId == tenant.Id)
-            .Select(i => new { i.TripletexBrukTest, i.TripletexEmployeeTokenKryptert, i.TripletexTestEmployeeTokenKryptert })
+            .Select(i => new { i.TripletexBrukTest, i.TripletexEmployeeTokenKryptert, i.TripletexTestEmployeeTokenKryptert, i.Okonomisystem })
             .FirstOrDefault();
+        // Er et annet økonomisystem (eller ingen) valgt for organisasjonen, er
+        // Tripletex stengt, selv om det ligger en nøkkel der fra før.
+        if (inn?.Okonomisystem is { } valgt && valgt != OkonomisystemType.Tripletex)
+        {
+            return null;
+        }
         var test = inn?.TripletexBrukTest ?? oppsett.Hent().TripletexTest;
         var employee = hemmelig.Dekrypter(test ? inn?.TripletexTestEmployeeTokenKryptert : inn?.TripletexEmployeeTokenKryptert);
         var consumer = oppsett.ConsumerToken(test);

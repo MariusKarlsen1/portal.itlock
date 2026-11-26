@@ -7,6 +7,7 @@
 @inject ProsjektOppfolgingService OppfolgingSvc
 @inject TripletexSyncService TripletexSync
 @inject TripletexService Tripletex
+@inject PortalItlock.Web.Services.OkonomisystemService Okonomi
 @inject NavigationManager Nav
 
 @* Ett pågående prosjekt under Prosjektøkonomi: det som var arket
@@ -1414,7 +1415,7 @@ else
         try
         {
             var (ok, feil) = await TripletexSync.PushAkontoTilTripletexAsync(r.Akonto.Id, r.Netto, r.Innestaaende);
-            _melding = ok ? $"Akonto {r.Akonto.Nr} på {Kr(r.Netto)} er sendt til Tripletex som ordre. Fakturer den der." : $"Tripletex: {feil}";
+            _melding = ok ? $"Akonto {r.Akonto.Nr} på {Kr(r.Netto)} er sendt til {Okonomi.Navn} som ordre. Fakturer den der." : $"{Okonomi.Navn}: {feil}";
             _meldingFeil = !ok;
         }
         finally
@@ -1429,13 +1430,14 @@ else
     // Fakturering (forslag prosjektokonomi-enkel.html): svaret og én knapp øverst,
     // akontoene som en enkel liste, og plan og bankgaranti bak «Endre».
     private bool _visPlanEndre;
+    private int? _bekreftFakturert;
     private bool _visBankgaranti;
 
     private RenderFragment FakturaFane() => @<div class="pf-fane pf-fane-smal">
         @{
             var f = _f!;
             var p = _p!;
-            var harTripletex = Tripletex.ErKonfigurert;
+            var harTripletex = Okonomi.KanSende;
             var klar = f.KlarAkonto;
             var plan = f.Akontoer.Where(a => a.Akonto.Status == AkontoStatus.Planlagt).Select(a => a.Akonto.InnestaaendeProsent).Distinct().ToList();
             var rest = Math.Max(0, f.Gjenstar - f.UtfortIkkeFakturert);
@@ -1447,18 +1449,28 @@ else
             {
                 @if (_bekreftSend == klar.Akonto.Id)
                 {
-                    <span class="pf-bekreft">Send @Kr(klar.Netto) til Tripletex?
+                    <span class="pf-bekreft">Send @Kr(klar.Netto) til @Okonomi.Navn?
                         <button type="button" class="pf-knapp pf-knapp-ok" disabled="@_sender" @onclick="@(() => SendTilTripletex(klar))">@(_sender ? "Sender …" : "Ja, send")</button>
                         <button type="button" class="pf-lenke" @onclick="@(() => _bekreftSend = null)">Avbryt</button>
                     </span>
                 }
                 else if (harTripletex && klar.Netto > 0)
                 {
-                    <button type="button" class="pf-knapp pf-knapp-p pf-knapp-stor" @onclick="@(() => _bekreftSend = klar.Akonto.Id)"><Icon Name="send" />Send akonto @klar.Akonto.Nr til Tripletex</button>
+                    <button type="button" class="pf-knapp pf-knapp-p pf-knapp-stor" @onclick="@(() => _bekreftSend = klar.Akonto.Id)"><Icon Name="send" />Send akonto @klar.Akonto.Nr til @Okonomi.Navn</button>
                 }
                 else
                 {
-                    <button type="button" class="pf-knapp pf-knapp-p pf-knapp-stor" @onclick="@(() => MarkerFakturert(klar))"><Icon Name="check" />Marker akonto @klar.Akonto.Nr som fakturert</button>
+                    @if (_bekreftFakturert == klar.Akonto.Id)
+                    {
+                        <span class="pf-bekreft">Fakturert @Okonomi.INavn?
+                            <button type="button" class="pf-knapp pf-knapp-ok" @onclick="@(() => { _bekreftFakturert = null; return MarkerFakturert(klar); })">Ja, fakturert</button>
+                            <button type="button" class="pf-lenke" @onclick="@(() => _bekreftFakturert = null)">Avbryt</button>
+                        </span>
+                    }
+                    else
+                    {
+                        <button type="button" class="pf-knapp pf-knapp-p pf-knapp-stor" @onclick="@(() => _bekreftFakturert = klar.Akonto.Id)"><Icon Name="check" />Marker akonto @klar.Akonto.Nr som fakturert</button>
+                    }
                 }
             }
         </div>
@@ -1529,9 +1541,19 @@ else
                                     {
                                         @if (harTripletex && r.Netto > 0)
                                         {
-                                            <button type="button" class="pf-knapp" @onclick="@(() => _bekreftSend = a.Id)">Send til Tripletex</button>
+                                            <button type="button" class="pf-knapp" @onclick="@(() => _bekreftSend = a.Id)">Send til @Okonomi.Navn</button>
                                         }
-                                        <button type="button" class="pf-lenke" @onclick="@(() => MarkerFakturert(rad))">Marker fakturert</button>
+                                        @if (_bekreftFakturert == a.Id)
+                                        {
+                                            <span class="pf-bekreft">Fakturert @Okonomi.INavn?
+                                                <button type="button" class="pf-knapp pf-knapp-ok" @onclick="@(() => { _bekreftFakturert = null; return MarkerFakturert(rad); })">Ja</button>
+                                                <button type="button" class="pf-lenke" @onclick="@(() => _bekreftFakturert = null)">Avbryt</button>
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="pf-lenke" @onclick="@(() => _bekreftFakturert = a.Id)">Marker fakturert</button>
+                                        }
                                     }
                                     else
                                     {
@@ -1544,7 +1566,7 @@ else
                     @if (_bekreftSend == a.Id && a.Id != klar?.Akonto.Id)
                     {
                         <div class="pf-rad pf-rad-bekreft">
-                            <span class="pf-bekreft">Send @Kr(r.Netto) til Tripletex?
+                            <span class="pf-bekreft">Send @Kr(r.Netto) til @Okonomi.Navn?
                                 <button type="button" class="pf-knapp pf-knapp-ok" disabled="@_sender" @onclick="@(() => SendTilTripletex(rad))">@(_sender ? "Sender …" : "Ja, send")</button>
                                 <button type="button" class="pf-lenke" @onclick="@(() => _bekreftSend = null)">Avbryt</button>
                             </span>
@@ -1560,7 +1582,7 @@ else
             </div>
             @if (!harTripletex)
             {
-                <p class="pf-dempet">Tripletex er ikke koblet til. Fakturer akontoen der du pleier, og trykk «Marker fakturert».</p>
+                <p class="pf-dempet">Lag fakturaen @Okonomi.INavn, og trykk «Marker fakturert» her når den er sendt.</p>
             }
         }
 

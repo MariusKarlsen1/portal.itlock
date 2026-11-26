@@ -263,6 +263,7 @@ builder.Services.AddSingleton<TripletexNokkelOppslag>();
 builder.Services.AddScoped<TripletexService>(sp =>
     sp.GetRequiredService<TripletexNokkelOppslag>().Lag(sp.GetRequiredService<ITenantContext>().Current));
 builder.Services.AddScoped<TripletexSyncService>();
+builder.Services.AddScoped<OkonomisystemService>();
 // Kundene holdes like i portalen og Tripletex begge veier, også når ingen har
 // kundelisten åpen. Arbeidsordre sendes fortsatt bare ved ferdigmelding.
 builder.Services.AddHostedService<TripletexKundeSynkBackgroundService>();

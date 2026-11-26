@@ -689,6 +689,12 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.Property<string>("EpostNavn")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("Okonomisystem")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OkonomisystemNavn")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("SistEndret")
                         .HasColumnType("TEXT");
 

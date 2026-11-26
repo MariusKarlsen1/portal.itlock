@@ -22,6 +22,13 @@ public class TenantInnstillinger
     public bool SvarTilPortal { get; set; } = true;
     public string? SvarTilEpost { get; set; }
 
+    // Økonomisystemet organisasjonen fakturerer i (Plattform → organisasjon →
+    // Økonomisystem). Null = som før: Tripletex hvis nøkkel er lagt inn, ellers
+    // ingen. «Ingen» betyr at fakturaen lages for hånd i eget system, og
+    // OkonomisystemNavn er navnet på det (f.eks. «Fiken») til tekstene i portalen.
+    public OkonomisystemType? Okonomisystem { get; set; }
+    public string? OkonomisystemNavn { get; set; }
+
     // Organisasjonens egen Tripletex: ansattnøkkelen (employee token) fra
     // firmaet, kryptert, én for produksjon og én for Tripletex sitt testmiljø.
     // TripletexBrukTest velger hvilken som brukes. Consumer-tokenet for
@@ -98,4 +105,12 @@ public static class VarselTypeExtensions
         VarselType.Prosjektokonomi => m.Prosjektokonomi,
         _ => false
     };
+}
+
+public enum OkonomisystemType
+{
+    Ingen = 0,
+    Tripletex = 1,
+    PowerOffice = 2,
+    Visma = 3
 }
