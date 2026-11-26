@@ -14,6 +14,14 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.36", new DateOnly(2026, 11, 26),
+        [
+            new(Type.Nytt, "box", "Varer og priskoder synkes med Tripletex", "Priskoder går begge veier. Varer opprettes i Tripletex første gang de brukes på en ordre, og varer laget i Tripletex hentes hit."),
+            new(Type.Bedre, "users", "Kontaktperson og vår kontakt på ordren", "Ordren i Tripletex får kundens kontaktperson og den som laget tilbudet. Referansen er aldri arbeidsordrenummeret."),
+            new(Type.Nytt, "edit", "Kommentar til kunde", "Skriv f.eks. bestillingsnummeret ved ferdigmelding. Det havner i «Kommentar til kunde» i Tripletex."),
+            new(Type.Fikset, "tag", "Rabatt per varelinje", "Rabatt % sendes bare på linjer priset med rabatt på veiledende. De andre linjene får bare prisen."),
+            new(Type.Fikset, "link-ikon", "Kundesynken stopper ikke på dubletter", "To kunder koblet til samme kunde i Tripletex stoppet synken. Nå fortsetter den og sier hvilke kunder det gjelder."),
+        ]),
         new("1.35", new DateOnly(2026, 11, 26),
         [
             new(Type.Nytt, "receipt", "Velg hva som legges i Tripletex", "Ved ferdigmelding velger du alle varelinjer, eller iht. tilbud med bare summen."),
