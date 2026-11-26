@@ -35,6 +35,13 @@ public class TenantInnstillinger
     // Når den ukentlige påminnelsen om prosjektøkonomi sist ble sendt.
     public DateTime? SistOkonomiVarsel { get; set; }
 
+    // Nettskjema for kunder (full-kontroll.no/skjema/{EpostNavn}). Innsendte
+    // skjema blir forespørsler. SkjemaValg er valgene under «Hva gjelder det?»,
+    // ett per linje (tomt = standardvalgene).
+    public bool SkjemaPa { get; set; }
+    public bool SkjemaBilder { get; set; } = true;
+    public string? SkjemaValg { get; set; }
+
     public DateTime SistEndret { get; set; } = DateTime.Now;
 }
 

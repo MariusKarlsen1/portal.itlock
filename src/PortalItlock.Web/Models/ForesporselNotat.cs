@@ -12,4 +12,8 @@ public class ForesporselNotat
     public Bruker? OpprettetAvBruker { get; set; }
 
     public DateTime OpprettetDato { get; set; } = DateTime.Now;
+
+    // Automatisk logglinje (status, tildeling, arbeidsordre laget …), ikke et notat
+    // en person har skrevet. Vises under Aktivitet, ikke under Interne notater.
+    public bool ErSystem { get; set; }
 }

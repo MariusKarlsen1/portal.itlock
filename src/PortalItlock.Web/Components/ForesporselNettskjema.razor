@@ -1,0 +1,123 @@
+@using Microsoft.EntityFrameworkCore
+@using PortalItlock.Web.Data
+@using PortalItlock.Web.Models
+@using PortalItlock.Web.Services
+@inject PlatformDbContext PlatformDb
+@inject ITenantContext TenantContext
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+@* Forespørsler → Nettskjema: hvordan skjemaet ser ut for kundene, og oppsettet
+   (på/av, bilder, valg). Skjemaet ligger på /skjema/{EpostNavn} (se Program.cs). *@
+@if (_innst is null || string.IsNullOrWhiteSpace(_innst.EpostNavn))
+{
+    <div class="fp-oppsett-kort">
+        <div class="fp-oppsett-hode"><Icon Name="globe" />Nettskjema</div>
+        <div class="fp-oppsett-innhold">
+            <p class="fp-tom">Organisasjonen har ingen adresse i Full Kontroll ennå. Ta kontakt med Full Kontroll for å få satt opp adressen, så kan skjemaet slås på.</p>
+        </div>
+    </div>
+}
+else
+{
+    <div class="fp-oppsett">
+        <section class="fp-oppsett-kort">
+            <div class="fp-oppsett-hode"><Icon Name="globe" />Slik ser skjemaet ut for kundene</div>
+            <div class="fp-oppsett-innhold fp-skjema-forh">
+                <iframe title="Nettskjema" src="@($"{Lenke}?v={_versjon}")"></iframe>
+            </div>
+        </section>
+        <section class="fp-oppsett-kort">
+            <div class="fp-oppsett-hode"><Icon Name="settings" />Oppsett av nettskjema</div>
+            <div class="fp-oppsett-innhold">
+                <div class="fp-bryter">
+                    <span><b>Skjema på</b><small>Av = lenken viser at skjemaet ikke er i bruk.</small></span>
+                    <button type="button" class="fp-av-pa @(_innst.SkjemaPa ? "pa" : "")" role="switch" aria-checked="@(_innst.SkjemaPa ? "true" : "false")" aria-label="Skjema på" @onclick="@(() => Bytt(i => i.SkjemaPa = !i.SkjemaPa))"></button>
+                </div>
+                <div class="fp-bryter">
+                    <span><b>Tillat bilder</b><small>Kunden kan legge ved inntil @Nettskjema.MaksBilder bilder.</small></span>
+                    <button type="button" class="fp-av-pa @(_innst.SkjemaBilder ? "pa" : "")" role="switch" aria-checked="@(_innst.SkjemaBilder ? "true" : "false")" aria-label="Tillat bilder" @onclick="@(() => Bytt(i => i.SkjemaBilder = !i.SkjemaBilder))"></button>
+                </div>
+
+                <div class="fp-steg"><span>1</span><div>Del lenken, eller legg den inn som knapp på nettsiden deres.</div></div>
+                <div class="fp-kode"><code>@Lenke</code><button type="button" class="ol-ri" @onclick="@(() => Kopier(Lenke))"><Icon Name="copy" />@(_kopiert == Lenke ? "Kopiert" : "Kopier")</button></div>
+                <div class="fp-steg"><span>2</span><div>Vil dere ha skjemaet inne på selve nettsiden, lim inn denne koden der det skal stå:</div></div>
+                <div class="fp-kode"><code>@Iframe</code><button type="button" class="ol-ri" @onclick="@(() => Kopier(Iframe))"><Icon Name="copy" />@(_kopiert == Iframe ? "Kopiert" : "Kopier")</button></div>
+
+                <label class="fp-felt">
+                    Valg under «Hva gjelder det?» <small>(ett per linje)</small>
+                    <textarea rows="5" @bind="_valg" placeholder="@string.Join("\n", Nettskjema.StandardValg)"></textarea>
+                </label>
+                <div class="fp-svar-actions">
+                    @if (_lagret)
+                    {
+                        <span class="fp-lagret"><Icon Name="check" />Lagret</span>
+                    }
+                    <button type="button" class="fp-knapp fp-knapp-primaer" @onclick="LagreValg">Lagre valg</button>
+                </div>
+                <p class="fp-hint">Det som sendes inn, havner i Forespørsler under «Nettskjema», med telefon, adresse og bilder. Kunden får ingen e-post fra portalen.</p>
+            </div>
+        </section>
+    </div>
+}
+
+@code {
+    private TenantInnstillinger? _innst;
+    private string _valg = "";
+    private bool _lagret;
+    private string? _kopiert;
+    private int _versjon;
+
+    private string Lenke => $"{Nav.BaseUri.TrimEnd('/')}/skjema/{_innst?.EpostNavn}";
+    private string Iframe => $"<iframe src=\"{Lenke}\" style=\"width:100%;height:900px;border:0\" title=\"Send forespørsel\"></iframe>";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (TenantContext.Current is { } t)
+        {
+            _innst = await PlatformDb.TenantInnstillinger.FirstOrDefaultAsync(i => i.TenantId == t.Id);
+            _valg = _innst?.SkjemaValg ?? "";
+        }
+    }
+
+    private async Task Bytt(Action<TenantInnstillinger> endring)
+    {
+        if (_innst is null)
+        {
+            return;
+        }
+
+        endring(_innst);
+        _innst.SistEndret = DateTime.Now;
+        await PlatformDb.SaveChangesAsync();
+        _versjon++;
+    }
+
+    private async Task LagreValg()
+    {
+        if (_innst is null)
+        {
+            return;
+        }
+
+        var linjer = _valg.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        _innst.SkjemaValg = linjer.Length == 0 ? null : string.Join("\n", linjer.Select(l => l.Length > 60 ? l[..60] : l).Take(12));
+        _innst.SistEndret = DateTime.Now;
+        await PlatformDb.SaveChangesAsync();
+        _valg = _innst.SkjemaValg ?? "";
+        _lagret = true;
+        _versjon++;
+    }
+
+    private async Task Kopier(string tekst)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", tekst);
+            _kopiert = tekst;
+        }
+        catch (JSException)
+        {
+        }
+    }
+}

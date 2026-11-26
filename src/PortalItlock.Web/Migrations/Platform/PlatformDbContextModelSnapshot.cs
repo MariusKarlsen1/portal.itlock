@@ -695,6 +695,15 @@ namespace PortalItlock.Web.Migrations.Platform
                     b.Property<DateTime?>("SistOkonomiVarsel")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("SkjemaBilder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SkjemaPa")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SkjemaValg")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("SvarTilEpost")
                         .HasColumnType("TEXT");
 

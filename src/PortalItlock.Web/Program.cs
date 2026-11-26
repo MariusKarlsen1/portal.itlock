@@ -2620,14 +2620,43 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
         }
     }
 
+    // Fraværsmeldinger og andre automatiske svar blir ikke forespørsler.
+    if (PortalItlock.Web.Services.ForesporselInn.ErAutosvar(tolket.Emne, body))
+    {
+        logger.LogInformation("Innkommende e-post til {Mottakere} er et automatisk svar og er ikke lagret", string.Join(", ", ResendInboundParser.HentMottakere(body)));
+        if (egenDb is not null)
+        {
+            await egenDb.DisposeAsync();
+        }
+        return Results.Ok();
+    }
+
+    // Videresendt fra en vanlig innboks: den opprinnelige avsenderen blir avsender,
+    // og den som videresendte lagres for seg. Kunden finnes fra avsenderens adresse.
+    var fraEpost = tolket.FraEpost;
+    var fraNavn = tolket.FraNavn;
+    var emne = tolket.Emne;
+    string? videresendtAv = null;
+    var videresender = PortalItlock.Web.Services.ForesporselInn.TolkAvsender(tolket.FraEpost);
+    var opprinnelig = PortalItlock.Web.Services.ForesporselInn.FinnOpprinneligAvsender(tolket.Emne, innhold, videresender?.Epost);
+    if (opprinnelig is not null)
+    {
+        videresendtAv = string.IsNullOrWhiteSpace(tolket.FraNavn) ? (videresender?.Epost ?? tolket.FraEpost) : tolket.FraNavn;
+        fraEpost = opprinnelig.Epost;
+        fraNavn = opprinnelig.Navn;
+        emne = PortalItlock.Web.Services.ForesporselInn.RensEmne(tolket.Emne);
+    }
+
     var foresporsel = new PortalItlock.Web.Models.Foresporsel
     {
-        FraEpost = tolket.FraEpost,
-        FraNavn = tolket.FraNavn,
-        Emne = tolket.Emne,
+        FraEpost = fraEpost,
+        FraNavn = fraNavn,
+        Emne = emne,
         Innhold = innhold,
         InnholdHtml = innholdHtml,
-        RawJson = body
+        RawJson = body,
+        VideresendtAv = videresendtAv,
+        KundeId = await PortalItlock.Web.Services.ForesporselInn.FinnKundeAsync(db, fraEpost)
     };
     db.Foresporsler.Add(foresporsel);
 
@@ -2652,6 +2681,96 @@ app.MapPost("/api/webhooks/resend-inbound", async (HttpContext http, Application
 
     return Results.Ok();
 }).AllowAnonymous();
+
+// Nettskjema for kunder (Forespørsler → Nettskjema). Åpent for alle, kan legges inn
+// på organisasjonens egen nettside i en iframe. Innsendt skjema blir en forespørsel.
+static void TillatInnbygging(HttpContext http)
+{
+    http.Response.Headers.Remove("X-Frame-Options");
+    http.Response.Headers["Content-Security-Policy"] = "frame-ancestors *";
+}
+
+app.MapGet("/skjema/{navn}", async (string navn, HttpContext http, PlatformDbContext platformDb) =>
+{
+    var org = await PortalItlock.Web.Services.Nettskjema.FinnAsync(platformDb, navn);
+    if (org is null)
+    {
+        return Results.NotFound();
+    }
+
+    TillatInnbygging(http);
+    return Results.Content(PortalItlock.Web.Services.Nettskjema.Side(org.Value.Tenant, org.Value.Innstillinger), "text/html; charset=utf-8");
+}).AllowAnonymous();
+
+app.MapPost("/skjema/{navn}", async (string navn, HttpContext http, PlatformDbContext platformDb, ILogger<Program> logger) =>
+{
+    var org = await PortalItlock.Web.Services.Nettskjema.FinnAsync(platformDb, navn);
+    if (org is null)
+    {
+        return Results.NotFound();
+    }
+
+    TillatInnbygging(http);
+    var (tenant, innst) = org.Value;
+    if (!innst.SkjemaPa || !http.Request.HasFormContentType)
+    {
+        return Results.Content(PortalItlock.Web.Services.Nettskjema.Side(tenant, innst), "text/html; charset=utf-8");
+    }
+
+    var form = await http.Request.ReadFormAsync();
+    string F(string felt, int maks) { var v = form[felt].ToString().Trim(); return v.Length > maks ? v[..maks] : v; }
+    var utfylt = new PortalItlock.Web.Services.Nettskjema.Utfylt(
+        F("navn", 120), F("telefon", 40), F("epost", 160), F("adresse", 200), F("kategori", 60), F("tekst", 4000));
+
+    // Robotfelle: skjult felt som mennesker ikke fyller ut, og et skjema som sendes
+    // under to sekunder etter at det ble åpnet. Svarer «takk» uten å lagre.
+    var ferdigTakk = "Vi har fått forespørselen din og tar kontakt så snart vi kan.";
+    var forFort = long.TryParse(form["t"], out var ticks) && DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc) < TimeSpan.FromSeconds(2);
+    if (!string.IsNullOrEmpty(form["nettside"]) || forFort)
+    {
+        return Results.Content(PortalItlock.Web.Services.Nettskjema.Side(tenant, innst, melding: ferdigTakk), "text/html; charset=utf-8");
+    }
+
+    string? feil = null;
+    if (utfylt.Navn.Length == 0 || utfylt.Tekst.Length == 0)
+    {
+        feil = "Fyll inn navn og hva det gjelder.";
+    }
+    else if (utfylt.Telefon.Length == 0 && utfylt.Epost.Length == 0)
+    {
+        feil = "Fyll inn telefon eller e-post, så vi kan nå deg.";
+    }
+    else if (PortalItlock.Web.Services.Nettskjema.ForMange(http.Connection.RemoteIpAddress?.ToString()))
+    {
+        feil = "Det er sendt mange forespørsler herfra nå. Prøv igjen om litt.";
+    }
+
+    var bilder = new List<(string, string, byte[])>();
+    if (feil is null && innst.SkjemaBilder)
+    {
+        foreach (var fil in form.Files.Where(f => f.Name == "bilder" && f.Length > 0).Take(PortalItlock.Web.Services.Nettskjema.MaksBilder))
+        {
+            if (!PortalItlock.Web.Services.Nettskjema.ErBilde(fil.ContentType) || fil.Length > PortalItlock.Web.Services.Nettskjema.MaksBildeStorrelse)
+            {
+                feil = "Bare bilder på inntil 8 MB kan legges ved.";
+                break;
+            }
+            using var ms = new MemoryStream();
+            await fil.CopyToAsync(ms);
+            bilder.Add((Path.GetFileName(fil.FileName), fil.ContentType, ms.ToArray()));
+        }
+    }
+
+    if (feil is not null)
+    {
+        return Results.Content(PortalItlock.Web.Services.Nettskjema.Side(tenant, innst, feil: feil, utfylt: utfylt), "text/html; charset=utf-8");
+    }
+
+    await using var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options);
+    var id = await PortalItlock.Web.Services.Nettskjema.LagreAsync(db, utfylt, bilder);
+    logger.LogInformation("Nettskjema lagret som forespørsel {Id} hos organisasjon {TenantId}", id, tenant.Id);
+    return Results.Content(PortalItlock.Web.Services.Nettskjema.Side(tenant, innst, melding: ferdigTakk), "text/html; charset=utf-8");
+}).AllowAnonymous().DisableAntiforgery();
 
 app.Run();
 

@@ -1473,6 +1473,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         modelBuilder.Entity<KundeOppfolging>()
             .HasIndex(o => new { o.KundeId, o.Utfort, o.Frist });
 
+        modelBuilder.Entity<Foresporsel>()
+            .HasOne(f => f.AnsvarligBruker)
+            .WithMany()
+            .HasForeignKey(f => f.AnsvarligBrukerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Foresporsel>()
+            .HasOne(f => f.Kunde)
+            .WithMany()
+            .HasForeignKey(f => f.KundeId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         modelBuilder.Entity<ForesporselNotat>()
             .HasOne(n => n.Foresporsel)
             .WithMany(f => f.Notater)

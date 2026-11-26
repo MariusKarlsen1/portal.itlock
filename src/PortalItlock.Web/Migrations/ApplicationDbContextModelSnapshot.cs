@@ -2993,6 +2993,15 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Adresse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("AnsvarligBrukerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ArbeidsordreId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("DriftsmeldingId")
                         .HasColumnType("INTEGER");
 
@@ -3007,6 +3016,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("FraNavn")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("Frist")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Innhold")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -3017,17 +3029,42 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("Kanal")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Kategori")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("KundeId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("Lest")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("MottattDato")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Prioritet")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("RawJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Telefon")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("TilbudId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("VideresendtAv")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("AnsvarligBrukerId");
+
+                    b.HasIndex("KundeId");
 
                     b.ToTable("Foresporsler");
                 });
@@ -3070,6 +3107,9 @@ namespace PortalItlock.Web.Migrations
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ErSystem")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("ForesporselId")
@@ -9666,6 +9706,23 @@ namespace PortalItlock.Web.Migrations
                     b.Navigation("Bruker");
 
                     b.Navigation("Fellesskap");
+                });
+
+            modelBuilder.Entity("PortalItlock.Web.Models.Foresporsel", b =>
+                {
+                    b.HasOne("PortalItlock.Web.Models.Bruker", "AnsvarligBruker")
+                        .WithMany()
+                        .HasForeignKey("AnsvarligBrukerId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("PortalItlock.Web.Models.Kunde", "Kunde")
+                        .WithMany()
+                        .HasForeignKey("KundeId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("AnsvarligBruker");
+
+                    b.Navigation("Kunde");
                 });
 
             modelBuilder.Entity("PortalItlock.Web.Models.ForesporselMedia", b =>
