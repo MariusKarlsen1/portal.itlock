@@ -121,10 +121,19 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
                 .Select(n => n!)
                 .ToHashSet();
 
-            var eksisterende = await db.Kunder
+            // Flere portal-kunder kan være koblet til samme Tripletex-kunde (dubletter
+            // i portalen). Da oppdateres den eldste, og synken stopper ikke.
+            var koblet = await db.Kunder
                 .Include(k => k.Kontaktpersoner)
                 .Where(k => k.TripletexKundenummer != null && kundenumre.Contains(k.TripletexKundenummer))
-                .ToDictionaryAsync(k => k.TripletexKundenummer!, ct);
+                .ToListAsync(ct);
+            var eksisterende = koblet
+                .GroupBy(k => k.TripletexKundenummer!)
+                .ToDictionary(g => g.Key, g => g.OrderBy(k => k.Id).First());
+            foreach (var dubletter in koblet.GroupBy(k => k.TripletexKundenummer!).Where(g => g.Count() > 1))
+            {
+                feil.Add($"Disse kundene er koblet til samme kunde i Tripletex (nr. {dubletter.Key}): {string.Join(", ", dubletter.Select(k => k.Navn))}. Slå dem sammen i portalen.");
+            }
 
             foreach (var tk in tripletexKunder)
             {

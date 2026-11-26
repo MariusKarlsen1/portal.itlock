@@ -214,6 +214,37 @@ public class TripletexApiTests
         Assert.Equal(AkontoStatus.Betalt, akonto.Status);
     }
 
+    // To portal-kunder koblet til samme Tripletex-kunde stoppet hele synken
+    // («An item with the same key has already been added»). Nå oppdateres den
+    // eldste, og dubletten meldes.
+    [Fact]
+    public async Task Kundesynk_taler_dubletter_med_samme_kundenummer()
+    {
+        using var conn = new SqliteConnection("Data Source=:memory:");
+        conn.Open();
+        await using var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(conn).Options);
+        db.Database.EnsureCreated();
+        var forste = new Kunde { Navn = "Firma AS", TripletexKundenummer = "10040" };
+        var andre = new Kunde { Navn = "Firma AS (kopi)", TripletexKundenummer = "10040" };
+        db.Kunder.AddRange(forste, andre);
+        await db.SaveChangesAsync();
+
+        var falsk = new FalskTripletex((req, _) =>
+        {
+            var sti = req.RequestUri!.PathAndQuery;
+            if (sti.Contains("whoAmI")) return Json("""{"value":{"companyId":93903281}}""");
+            if (sti.Contains("token/session")) return Json("""{"value":{"token":"t"}}""");
+            if (sti.Contains("/customer")) return Json("""{"values":[{"id":7,"name":"Firma Nytt Navn AS","customerNumber":10040}]}""");
+            return Json("""{"values":[]}""");
+        });
+
+        var r = await new TripletexSyncService(db, Lag(falsk)).SynkroniserKunderAsync();
+
+        Assert.Contains(r.Feil, f => f.Contains("10040"));
+        Assert.Equal("Firma Nytt Navn AS", forste.Navn);
+        Assert.Equal("Firma AS (kopi)", andre.Navn);
+    }
+
     // API-nøkkel fra Selskap → API-nøkler (tlxr_): byttes inn via :createFromRefreshToken
     // med ttlSeconds (maks 8 timer), uten consumer-token, og sesjonen brukes som vanlig.
     [Fact]
