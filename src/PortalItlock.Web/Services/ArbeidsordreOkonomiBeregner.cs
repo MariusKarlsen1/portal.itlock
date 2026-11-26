@@ -190,13 +190,19 @@ public static class ArbeidsordreOkonomiBeregner
     // Tripletex-linjen for en vare: «produktkode navn», veiledende pris som
     // enhetspris og rabatten som gir salgsprisen, og innkjøpsprisen. Uten
     // veiledende pris (eller hvis vi selger over den) går salgsprisen rett inn.
-    public static (string Beskrivelse, decimal Enhetspris, decimal RabattProsent, decimal? Innpris) TripletexLinje(OkonomiLinje l)
+    // visRabatt: bare når tilbudet er priset som «Rabatt på veiledende» skal
+    // Tripletex-linjen vise veiledende pris og rabatt %. Med DG, påslag eller
+    // veiledende pris sendes bare nettoprisen, uten rabatt.
+    public static bool VisRabattITripletex(Arbeidsordre ordre) =>
+        ordre.Tilbud is null || ordre.Tilbud.PrisType == TilbudPrisType.Rabatt;
+
+    public static (string Beskrivelse, decimal Enhetspris, decimal RabattProsent, decimal? Innpris) TripletexLinje(OkonomiLinje l, bool visRabatt = true)
     {
         var navn = l.Navn.Trim();
         var kode = l.Produktkode?.Trim();
         var beskrivelse = string.IsNullOrEmpty(kode) || navn.StartsWith(kode, StringComparison.OrdinalIgnoreCase) ? navn : $"{kode} {navn}";
         var pris = l.Antall == 0 ? 0 : l.Belop / l.Antall;
-        if (l.Listepris is { } liste && liste > 0 && pris > 0 && pris < liste)
+        if (visRabatt && l.Listepris is { } liste && liste > 0 && pris > 0 && pris < liste)
         {
             var rabatt = Math.Round((1 - pris / liste) * 100m, 4);
             return (beskrivelse, liste, rabatt, l.Innpris);

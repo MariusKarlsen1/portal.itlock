@@ -417,12 +417,16 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         }
         else if (type == TripletexOverforingsType.KunSum)
         {
+            // Iht. tilbud: én linje med summen, som viser til tilbudet.
             var sum = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre, koder).Sum(l => l.Belop);
-            var navn = ordre.Prosjekt?.Navn ?? ordre.Tittel;
+            var navn = ordre.Tilbud is { } tb
+                ? $"Iht. tilbud #{tb.Id} - {tb.Tittel}"
+                : ordre.Prosjekt?.Navn ?? ordre.Tittel;
             linjer = [new TripletexService.OrdreLinjeInput(navn, 1, sum)];
         }
         else
         {
+            var visRabatt = ArbeidsordreOkonomiBeregner.VisRabattITripletex(ordre);
             linjer = ArbeidsordreOkonomiBeregner.BeregnLinjer(ordre, koder)
                 .Select(l =>
                 {
@@ -430,7 +434,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
                     {
                         return new TripletexService.OrdreLinjeInput(l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall, l.Varenummer);
                     }
-                    var t = ArbeidsordreOkonomiBeregner.TripletexLinje(l);
+                    var t = ArbeidsordreOkonomiBeregner.TripletexLinje(l, visRabatt);
                     return new TripletexService.OrdreLinjeInput(t.Beskrivelse, l.Antall, t.Enhetspris, null, t.Innpris, t.RabattProsent);
                 })
                 .ToList();

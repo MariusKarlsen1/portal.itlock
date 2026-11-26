@@ -12,6 +12,28 @@ public class TripletexOrdreLinjeTests
         new(navn, null, null, null, antall, antall * utpris, Innpris: inn, Listepris: liste, Produktkode: kode);
 
     [Fact]
+    public void Uten_rabattprising_sendes_bare_nettopris()
+    {
+        var t = ArbeidsordreOkonomiBeregner.TripletexLinje(Linje(10, 4068.10m, 4786m, 3350.20m, "C50S.111.SD.SE"), visRabatt: false);
+
+        Assert.Equal("C50S.111.SD.SE Ovalsylinder S50", t.Beskrivelse);
+        Assert.Equal(4068.10m, t.Enhetspris);
+        Assert.Equal(0m, t.RabattProsent);
+        Assert.Equal(3350.20m, t.Innpris);
+    }
+
+    [Theory]
+    [InlineData(TilbudPrisType.Rabatt, true)]
+    [InlineData(TilbudPrisType.Dekningsgrad, false)]
+    [InlineData(TilbudPrisType.Paslag, false)]
+    [InlineData(TilbudPrisType.Veiledende, false)]
+    public void Rabatt_vises_bare_ved_rabatt_pa_veiledende(TilbudPrisType type, bool forventet)
+    {
+        var ordre = new Arbeidsordre { Tittel = "x", Tilbud = new Tilbud { Tittel = "t", PrisType = type } };
+        Assert.Equal(forventet, ArbeidsordreOkonomiBeregner.VisRabattITripletex(ordre));
+    }
+
+    [Fact]
     public void Rabatt_fra_veiledende_pris_gir_samme_belop()
     {
         var t = ArbeidsordreOkonomiBeregner.TripletexLinje(Linje(10, 4068.10m, 4786m, 3350.20m, "C50S.111.SD.SE"));
