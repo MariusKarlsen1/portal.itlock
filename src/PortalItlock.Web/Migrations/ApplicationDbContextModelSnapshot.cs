@@ -182,6 +182,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("Hentehylle")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("KommentarTilKunde")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Kontaktperson")
                         .HasColumnType("TEXT");
 

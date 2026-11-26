@@ -71,7 +71,7 @@ public class TripletexApiTests
         [
             new TripletexService.OrdreLinjeInput("Kortleser", 1, 1980),
             new TripletexService.OrdreLinjeInput("Montasje", 3, 1172, "TA100"),
-        ]);
+        ], kommentarTilKunde: " PO 4471 ");
 
         Assert.Null(feil);
         Assert.Equal(500, id);
@@ -79,6 +79,8 @@ public class TripletexApiTests
 
         var ordre = JsonDocument.Parse(falsk.Kall.Single(k => k.Sti.EndsWith("/order")).Body!).RootElement;
         Assert.False(ordre.GetProperty("isPrioritizeAmountsIncludingVat").GetBoolean());
+        Assert.Equal("AO 231", ordre.GetProperty("reference").GetString());
+        Assert.Equal("PO 4471", ordre.GetProperty("invoiceComment").GetString());
 
         var linjer = JsonDocument.Parse(falsk.Kall.Single(k => k.Sti.Contains("order/orderline/list")).Body!).RootElement;
         Assert.Equal(99, linjer[0].GetProperty("vatType").GetProperty("id").GetInt32());

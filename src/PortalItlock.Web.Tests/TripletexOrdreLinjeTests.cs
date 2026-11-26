@@ -12,6 +12,23 @@ public class TripletexOrdreLinjeTests
         new(navn, null, null, null, antall, antall * utpris, Innpris: inn, Listepris: liste, Produktkode: kode);
 
     [Fact]
+    public void Referanse_er_bestilleren()
+    {
+        var kunde = new Kunde { Navn = "Firma AS", Kontaktperson = "Kari Kunde" };
+        var ordre = new Arbeidsordre { Id = 89, Tittel = "Test", Kunde = kunde };
+        Assert.Equal("Kari Kunde", ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre));
+
+        ordre.Tilbud = new Tilbud { Tittel = "t", KontaktpersonNavn = "Ola Tilbud" };
+        Assert.Equal("Ola Tilbud", ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre));
+
+        ordre.Kontaktperson = "Per Valgt";
+        Assert.Equal("Per Valgt", ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre));
+
+        ordre.Kontaktperson = "-";
+        Assert.Equal("Arbeidsordre #89 - Test", ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre));
+    }
+
+    [Fact]
     public void Uten_rabattprising_sendes_bare_nettopris()
     {
         var t = ArbeidsordreOkonomiBeregner.TripletexLinje(Linje(10, 4068.10m, 4786m, 3350.20m, "C50S.111.SD.SE"), visRabatt: false);

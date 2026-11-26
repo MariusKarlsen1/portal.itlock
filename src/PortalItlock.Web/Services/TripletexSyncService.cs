@@ -441,7 +441,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         }
 
         var (ordreId, ordreNummer, ordreFeil) = await tripletex.OpprettOrdreAsync(
-            tripletexKundeId, $"Arbeidsordre #{ordre.Id} - {ordre.Tittel}", linjer, ct);
+            tripletexKundeId, ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre), linjer, ct, ordre.KommentarTilKunde);
 
         if (ordreFeil is not null)
         {

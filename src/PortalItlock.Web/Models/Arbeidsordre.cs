@@ -50,6 +50,10 @@ public class Arbeidsordre
     // Kontakt for jobben valgt på ordren. Tom: prosjektets kontaktperson. «-»: ingen.
     public string? Kontaktperson { get; set; }
 
+    // «Kommentar til kunde» på ordren i Tripletex (invoiceComment), f.eks.
+    // et bestillingsnummer fakturaen skal merkes med.
+    public string? KommentarTilKunde { get; set; }
+
     public DateTime OpprettetDato { get; set; } = DateTime.UtcNow;
 
     public string? UtfortArbeid { get; set; }

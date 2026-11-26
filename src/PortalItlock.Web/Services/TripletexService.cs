@@ -570,7 +570,8 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     // tillegg påkrevd i praksis (422 "Kan ikke være null" uten den), selv om
     // Tripletex sin egen OpenAPI-spesifikasjon ikke lister den som påkrevd.
     public async Task<(int? Id, string? OrdreNummer, string? Feilmelding)> OpprettOrdreAsync(
-        int tripletexKundeId, string? referanse, List<OrdreLinjeInput> linjer, CancellationToken ct = default)
+        int tripletexKundeId, string? referanse, List<OrdreLinjeInput> linjer, CancellationToken ct = default,
+        string? kommentarTilKunde = null)
     {
         try
         {
@@ -584,6 +585,8 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
             {
                 customer = new { id = tripletexKundeId },
                 reference = referanse,
+                // «Kommentar til kunde» i Tripletex, vises på fakturaen.
+                invoiceComment = string.IsNullOrWhiteSpace(kommentarTilKunde) ? null : kommentarTilKunde.Trim(),
                 orderDate = iDag,
                 deliveryDate = iDag,
                 // Linjene sendes med pris eks. mva. Står firmaet til å prioritere

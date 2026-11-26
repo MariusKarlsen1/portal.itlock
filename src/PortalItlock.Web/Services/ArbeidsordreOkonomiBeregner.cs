@@ -193,6 +193,19 @@ public static class ArbeidsordreOkonomiBeregner
     // visRabatt: bare når tilbudet er priset som «Rabatt på veiledende» skal
     // Tripletex-linjen vise veiledende pris og rabatt %. Med DG, påslag eller
     // veiledende pris sendes bare nettoprisen, uten rabatt.
+    // Referansen på Tripletex-ordren: personen som bestilte. Kontakt valgt på
+    // arbeidsordren, ellers prosjektets, tilbudets eller kundens kontaktperson.
+    // «-» på arbeidsordren betyr ingen kontakt. Uten person: arbeidsordrenummeret.
+    public static string TripletexReferanse(Arbeidsordre ordre)
+    {
+        static string? Tom(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+        var valgt = Tom(ordre.Kontaktperson);
+        var navn = valgt == "-" ? null
+            : valgt ?? Tom(ordre.Prosjekt?.Kontaktperson) ?? Tom(ordre.Tilbud?.KontaktpersonNavn)
+                ?? Tom(ordre.Kunde?.Kontaktperson) ?? Tom(ordre.Prosjekt?.Kunde?.Kontaktperson);
+        return navn ?? $"Arbeidsordre #{ordre.Id} - {ordre.Tittel}";
+    }
+
     public static bool VisRabattITripletex(Arbeidsordre ordre) =>
         ordre.Tilbud is null || ordre.Tilbud.PrisType == TilbudPrisType.Rabatt;
 
