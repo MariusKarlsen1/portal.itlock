@@ -14,6 +14,12 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.35", new DateOnly(2026, 11, 26),
+        [
+            new(Type.Nytt, "receipt", "Velg hva som legges i Tripletex", "Ved ferdigmelding velger du alle varelinjer, eller iht. tilbud med bare summen."),
+            new(Type.Bedre, "tag", "Rabatt bare når tilbudet har rabatt", "Er tilbudet priset med rabatt på veiledende, vises veiledende pris og rabatt %. Med DG, påslag eller veiledende vises bare prisen."),
+            new(Type.Fikset, "link-ikon", "Tydeligere feil fra Tripletex", "Når synken feiler, vises Tripletex sitt eget svar."),
+        ]),
         new("1.34", new DateOnly(2026, 11, 26),
         [
             new(Type.Bedre, "receipt", "Ny Fakturering-fane", "Klart, fakturert og gjenstår øverst, akontoen som er klar med én knapp, og Rediger for å endre faktureringsplanen."),
