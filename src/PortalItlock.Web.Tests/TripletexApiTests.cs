@@ -64,6 +64,8 @@ public class TripletexApiTests
             if (sti.Contains("ledger/vatType")) return Json("""{"values":[{"id":99,"number":"3","percentage":25}]}""");
             if (sti.Contains("/product")) return Json("""{"values":[{"id":7,"number":"TA100","name":"Montasje","vatType":{"id":55}}]}""");
             if (sti.EndsWith("/order")) return Json("""{"value":{"id":500,"number":"10255"}}""");
+            if (sti.Contains("contact?customerId=12")) return Json("""{"values":[{"id":31,"firstName":"Runar","lastName":"Bowitz Østebrød"}]}""");
+            if (sti.Contains("employee?")) return Json("""{"values":[{"id":8,"firstName":"Ola","lastName":"Hansen"},{"id":9,"firstName":"Marius","lastName":"Karlsen"}]}""");
             return Json("""{"values":[]}""");
         });
 
@@ -71,7 +73,7 @@ public class TripletexApiTests
         [
             new TripletexService.OrdreLinjeInput("Kortleser", 1, 1980),
             new TripletexService.OrdreLinjeInput("Montasje", 3, 1172, "TA100"),
-        ], kommentarTilKunde: " PO 4471 ");
+        ], kommentarTilKunde: " PO 4471 ", kundeKontakt: "runar bowitz østebrød", varKontakt: "Marius Karlsen");
 
         Assert.Null(feil);
         Assert.Equal(500, id);
@@ -81,6 +83,8 @@ public class TripletexApiTests
         Assert.False(ordre.GetProperty("isPrioritizeAmountsIncludingVat").GetBoolean());
         Assert.Equal("AO 231", ordre.GetProperty("reference").GetString());
         Assert.Equal("PO 4471", ordre.GetProperty("invoiceComment").GetString());
+        Assert.Equal(31, ordre.GetProperty("contact").GetProperty("id").GetInt32());
+        Assert.Equal(9, ordre.GetProperty("ourContactEmployee").GetProperty("id").GetInt32());
 
         var linjer = JsonDocument.Parse(falsk.Kall.Single(k => k.Sti.Contains("order/orderline/list")).Body!).RootElement;
         Assert.Equal(99, linjer[0].GetProperty("vatType").GetProperty("id").GetInt32());

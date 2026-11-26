@@ -199,15 +199,24 @@ public static class ArbeidsordreOkonomiBeregner
     // Da vises veiledende pris og rabatt %, ellers bare nettoprisen.
     // Referansen på Tripletex-ordren: personen som bestilte. Kontakt valgt på
     // arbeidsordren, ellers prosjektets, tilbudets eller kundens kontaktperson.
-    // «-» på arbeidsordren betyr ingen kontakt. Uten person: arbeidsordrenummeret.
-    public static string TripletexReferanse(Arbeidsordre ordre)
+    // «-» på arbeidsordren betyr ingen kontakt. Uten person: tom (aldri arbeidsordrenummeret).
+    public static string? TripletexReferanse(Arbeidsordre ordre)
     {
         static string? Tom(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
         var valgt = Tom(ordre.Kontaktperson);
         var navn = valgt == "-" ? null
             : valgt ?? Tom(ordre.Prosjekt?.Kontaktperson) ?? Tom(ordre.Tilbud?.KontaktpersonNavn)
                 ?? Tom(ordre.Kunde?.Kontaktperson) ?? Tom(ordre.Prosjekt?.Kunde?.Kontaktperson);
-        return navn ?? $"Arbeidsordre #{ordre.Id} - {ordre.Tittel}";
+        return navn;
+    }
+
+    // «Vår kontakt» på Tripletex-ordren: den som laget tilbudet, ellers
+    // prosjektlederen, den som laget prosjektet, eller den som ferdigmeldte.
+    public static string? TripletexVarKontakt(Arbeidsordre ordre)
+    {
+        static string? Tom(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+        return Tom(ordre.Tilbud?.OpprettetAvNavn) ?? Tom(ordre.Prosjekt?.Prosjektleder?.Navn)
+            ?? Tom(ordre.Prosjekt?.OpprettetAvNavn) ?? Tom(ordre.FullfortAvBruker?.Navn);
     }
 
     public static (string Beskrivelse, decimal Enhetspris, decimal RabattProsent, decimal? Innpris) TripletexLinje(OkonomiLinje l)

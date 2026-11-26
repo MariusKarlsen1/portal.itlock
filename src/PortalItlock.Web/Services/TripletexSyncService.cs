@@ -366,6 +366,8 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
     {
         var ordre = await db.Arbeidsordre
             .Include(a => a.Kunde)
+            .Include(a => a.FullfortAvBruker)
+            .Include(a => a.Prosjekt).ThenInclude(p => p!.Prosjektleder)
             .Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
             .Include(a => a.Tilbud).ThenInclude(t => t!.Linjer).ThenInclude(l => l.Component)
             .Include(a => a.Varer).ThenInclude(v => v.Component)
@@ -449,7 +451,9 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         }
 
         var (ordreId, ordreNummer, ordreFeil) = await tripletex.OpprettOrdreAsync(
-            tripletexKundeId, ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre), linjer, ct, ordre.KommentarTilKunde);
+            tripletexKundeId, ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre), linjer, ct, ordre.KommentarTilKunde,
+            kundeKontakt: ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre),
+            varKontakt: ArbeidsordreOkonomiBeregner.TripletexVarKontakt(ordre));
 
         if (ordreFeil is not null)
         {
@@ -531,11 +535,14 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         return new(antallAo, antallBetalt, null);
     }
 
+    private static string? Tom(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
     // Akonto fra faktureringsplanen under Prosjektøkonomi: én ordrelinje med
     // beløpet, på prosjektets kunde. Sendes bare én gang.
     public async Task<(bool Ok, string? Feilmelding)> PushAkontoTilTripletexAsync(int akontoId, decimal belop, decimal innestaaende = 0, CancellationToken ct = default)
     {
         var akonto = await db.ProsjektAkontoer.Include(a => a.Prosjekt).ThenInclude(p => p!.Kunde)
+            .Include(a => a.Prosjekt).ThenInclude(p => p!.Prosjektleder)
             .FirstOrDefaultAsync(a => a.Id == akontoId, ct);
         if (akonto is null)
         {
@@ -574,7 +581,10 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         }
 
         var (ordreId, ordreNummer, ordreFeil) = await tripletex.OpprettOrdreAsync(
-            kundeId.Value, $"{akonto.Prosjekt.Navn} - {tekst}", [new TripletexService.OrdreLinjeInput(tekst, 1, belop)], ct);
+            kundeId.Value, Tom(akonto.Prosjekt.Kontaktperson) ?? Tom(kunde.Kontaktperson),
+            [new TripletexService.OrdreLinjeInput($"{akonto.Prosjekt.Navn} - {tekst}", 1, belop)], ct,
+            kundeKontakt: Tom(akonto.Prosjekt.Kontaktperson) ?? Tom(kunde.Kontaktperson),
+            varKontakt: Tom(akonto.Prosjekt.Prosjektleder?.Navn) ?? Tom(akonto.Prosjekt.OpprettetAvNavn));
         if (ordreFeil is not null)
         {
             akonto.TripletexFeil = ordreFeil;

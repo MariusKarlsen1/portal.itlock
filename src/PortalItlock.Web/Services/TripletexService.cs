@@ -417,6 +417,71 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         }
     }
 
+    // Kontaktpersonen på kunden i Tripletex med dette navnet. Finnes hun/han
+    // ikke der, opprettes kontakten (som når den legges til på kundekortet).
+    private async Task<int?> KundeKontaktIdAsync(int kundeId, string? navn, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(navn))
+        {
+            return null;
+        }
+        int? Finn(List<TripletexKontakt> liste) =>
+            liste.FirstOrDefault(k => string.Equals(k.Navn, navn.Trim(), StringComparison.OrdinalIgnoreCase))?.Id;
+
+        var (kontakter, feil) = await HentKontakterAsync(kundeId, ct);
+        if (feil is not null)
+        {
+            return null;
+        }
+        if (Finn(kontakter) is int id)
+        {
+            return id;
+        }
+        if (await LagreKontaktAsync(null, kundeId, navn, null, null, ct) is not null)
+        {
+            return null;
+        }
+        (kontakter, _) = await HentKontakterAsync(kundeId, ct);
+        return Finn(kontakter);
+    }
+
+    // Den ansatte i Tripletex med dette navnet (fornavn + etternavn).
+    private async Task<int?> AnsattIdAsync(string? navn, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(navn))
+        {
+            return null;
+        }
+        try
+        {
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, "employee?count=1000&fields=id,firstName,lastName", ct);
+            using var resp = await http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return null;
+            }
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("values", out var verdier))
+            {
+                return null;
+            }
+            foreach (var v in verdier.EnumerateArray())
+            {
+                string S(string n) => v.TryGetProperty(n, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString()!.Trim() : "";
+                var fullt = $"{S("firstName")} {S("lastName")}".Trim();
+                if (string.Equals(fullt, navn.Trim(), StringComparison.OrdinalIgnoreCase) && v.TryGetProperty("id", out var id))
+                {
+                    return id.GetInt32();
+                }
+            }
+            return null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     // Oppretter (id null) eller oppdaterer en kontaktperson på kunden i Tripletex.
     public async Task<string?> LagreKontaktAsync(int? kontaktId, int kundeId, string navn, string? epost, string? telefon, CancellationToken ct = default)
     {
@@ -571,7 +636,7 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     // Tripletex sin egen OpenAPI-spesifikasjon ikke lister den som påkrevd.
     public async Task<(int? Id, string? OrdreNummer, string? Feilmelding)> OpprettOrdreAsync(
         int tripletexKundeId, string? referanse, List<OrdreLinjeInput> linjer, CancellationToken ct = default,
-        string? kommentarTilKunde = null)
+        string? kommentarTilKunde = null, string? kundeKontakt = null, string? varKontakt = null)
     {
         try
         {
@@ -581,18 +646,28 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
             }
 
             var iDag = DateTime.Today.ToString("yyyy-MM-dd");
-            var ordreBody = new
+            var ordreBody = new Dictionary<string, object?>
             {
-                customer = new { id = tripletexKundeId },
-                reference = referanse,
+                ["customer"] = new { id = tripletexKundeId },
+                ["reference"] = string.IsNullOrWhiteSpace(referanse) ? null : referanse.Trim(),
                 // «Kommentar til kunde» i Tripletex, vises på fakturaen.
-                invoiceComment = string.IsNullOrWhiteSpace(kommentarTilKunde) ? null : kommentarTilKunde.Trim(),
-                orderDate = iDag,
-                deliveryDate = iDag,
+                ["invoiceComment"] = string.IsNullOrWhiteSpace(kommentarTilKunde) ? null : kommentarTilKunde.Trim(),
+                ["orderDate"] = iDag,
+                ["deliveryDate"] = iDag,
                 // Linjene sendes med pris eks. mva. Står firmaet til å prioritere
                 // priser inkl. mva, må ordren si fra, ellers avvises eller feiltolkes prisene.
-                isPrioritizeAmountsIncludingVat = false
+                ["isPrioritizeAmountsIncludingVat"] = false
             };
+            // Kontaktperson hos kunden og vår kontakt, som når ordren legges inn
+            // for hånd. Finnes de ikke, sendes ordren likevel uten.
+            if (await KundeKontaktIdAsync(tripletexKundeId, kundeKontakt, ct) is int kontaktId)
+            {
+                ordreBody["contact"] = new { id = kontaktId };
+            }
+            if (await AnsattIdAsync(varKontakt, ct) is int ansattId)
+            {
+                ordreBody["ourContactEmployee"] = new { id = ansattId };
+            }
 
             using var ordreReq = await LagAutorisertForespurselAsync(HttpMethod.Post, "order", ct);
             ordreReq.Content = JsonContent.Create(ordreBody, options: JsonOpts);

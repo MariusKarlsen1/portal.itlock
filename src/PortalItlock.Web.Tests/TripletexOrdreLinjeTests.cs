@@ -25,7 +25,7 @@ public class TripletexOrdreLinjeTests
         Assert.Equal("Per Valgt", ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre));
 
         ordre.Kontaktperson = "-";
-        Assert.Equal("Arbeidsordre #89 - Test", ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre));
+        Assert.Null(ArbeidsordreOkonomiBeregner.TripletexReferanse(ordre));
     }
 
     [Theory]
