@@ -61,7 +61,7 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
         var konto = await tripletex.KontoAsync(ct);
         if (konto is null)
         {
-            return new KundeSyncResultat(0, 0, 0, ["Fikk ikke kontakt med Tripletex. Sjekk nøklene under Oppsett → Tripletex."]);
+            return new KundeSyncResultat(0, 0, 0, [$"Fikk ikke kontakt med Tripletex: {tripletex.SisteKontoFeil ?? "ukjent feil"}"]);
         }
         var start = await db.TripletexSyncTilstand.FirstOrDefaultAsync(t => t.Id == 1, ct);
         if (start is null)

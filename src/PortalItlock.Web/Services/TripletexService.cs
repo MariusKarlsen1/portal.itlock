@@ -224,30 +224,51 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         feilmelding?.Contains("cannot be used for this consumer", StringComparison.OrdinalIgnoreCase) == true;
 
     // Hvilken Tripletex-konto nøklene går til, f.eks. «test:93305273». Null hvis Tripletex ikke svarer.
+    // Hvorfor KontoAsync ga null: Tripletex sitt eget svar, så feilen kan vises.
+    public string? SisteKontoFeil { get; private set; }
+
     public async Task<string?> KontoAsync(CancellationToken ct = default)
     {
+        SisteKontoFeil = null;
         if (nokler is null)
         {
+            SisteKontoFeil = IkkeSattOpp;
             return null;
         }
         try
         {
-            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, "token/session/>whoAmI?fields=companyId", ct);
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, "token/session/>whoAmI?fields=companyId,company(id)", ct);
             using var resp = await http.SendAsync(req, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
+                SisteKontoFeil = $"Tripletex svarte {(int)resp.StatusCode}: {Kort(raw)}";
                 return null;
             }
-            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
-            return doc.RootElement.TryGetProperty("value", out var v) && v.TryGetProperty("companyId", out var id) && id.ValueKind == JsonValueKind.Number
-                ? $"{(nokler.Test ? "test" : "prod")}:{id.GetInt64()}"
-                : null;
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.TryGetProperty("value", out var v))
+            {
+                if (v.TryGetProperty("companyId", out var id) && id.ValueKind == JsonValueKind.Number)
+                {
+                    return $"{(nokler.Test ? "test" : "prod")}:{id.GetInt64()}";
+                }
+                if (v.TryGetProperty("company", out var c) && c.ValueKind == JsonValueKind.Object
+                    && c.TryGetProperty("id", out var cid) && cid.ValueKind == JsonValueKind.Number)
+                {
+                    return $"{(nokler.Test ? "test" : "prod")}:{cid.GetInt64()}";
+                }
+            }
+            SisteKontoFeil = $"Tripletex sa ikke hvilken konto nøkkelen hører til: {Kort(raw)}";
+            return null;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            SisteKontoFeil = ex.Message;
             return null;
         }
     }
+
+    private static string Kort(string? tekst) => tekst is null ? "" : tekst.Length > 400 ? tekst[..400] + " …" : tekst;
 
     public async Task<TilkoblingResultat> TestTilkoblingAsync(CancellationToken ct = default)
     {
