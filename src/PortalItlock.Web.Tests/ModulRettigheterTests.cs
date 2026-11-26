@@ -42,7 +42,7 @@ public class ModulRettigheterTests
     // Ressurser og godkjenninger: bare kalenderen, og bare se.
     [InlineData("kalender", Rettighet.Les)]
     [InlineData("timegodkjenning", Rettighet.Ingen)]
-    // Teknisk og ADK: bare se - bortsett fra Kobling, der de kan lage nytt.
+    // Teknisk: bare se - bortsett fra Kobling, der de kan lage nytt.
     [InlineData("guide/kobling", Rettighet.Opprett)]
     [InlineData("dormiljo", Rettighet.Les)]
     [InlineData("guide/oppsett-adgangskontroll", Rettighet.Les)]

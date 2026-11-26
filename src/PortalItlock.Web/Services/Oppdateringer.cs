@@ -14,6 +14,14 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.29", new DateOnly(2026, 11, 26),
+        [
+            new(Type.Nytt, "home", "Ny driftsportal", "Mine bygg, plantegning med zoom der du trykker på en dør for å se den, dørliste og meldinger på hvert bygg."),
+            new(Type.Nytt, "lock", "Tofaktor i driftsportalen", "Driftsbrukere kan slå på tofaktor og bytte passord under Min konto, og du kan kreve det under Brukere."),
+            new(Type.Bedre, "calendar", "Røde dager i kalenderen", "Helligdager vises i fraværskalenderen og ukevisningen, og befaringslisten har status i nedtrekk."),
+            new(Type.Bedre, "check", "Ryddigere to-do", "Bare i dag og forfalt vises, kommende ligger lukket under, og utførte havner nederst."),
+            new(Type.Bedre, "list", "Kunngjøringer med ikoner", "Strekikoner på innleggstyper, filter og tydelig varsel på viktige innlegg."),
+        ]),
         new("1.28", new DateOnly(2026, 11, 25),
         [
             new(Type.Nytt, "receipt", "ARX-kalkulator", "Velg dører, leser, låser og sentral ett steg om gangen, og få hardware, batteri og lisenser med kost og bruttopris."),

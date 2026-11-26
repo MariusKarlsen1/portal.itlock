@@ -41,7 +41,7 @@ public static class ModulRettigheter
         // tatt (uttrykkelig ønske 2026-10-13).
         ["kalender"] = Rettighet.Les,
 
-        // Teknisk og ADK - bare se. Kobling er unntaket: der kan de lage nye
+        // Teknisk - bare se. Kobling er unntaket: der kan de lage nye
         // skjema, men ikke endre de som ligger der fra før.
         ["guide/kobling"] = Rettighet.Opprett,
         ["dormiljo"] = Rettighet.Les,

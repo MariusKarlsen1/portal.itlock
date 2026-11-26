@@ -39,7 +39,7 @@ public class PortalModulRegisterTests
     // tilgang ved et uhell.
     //
     // Montørene fikk lesetilgang til disse 2026-10-13 på uttrykkelig ønske:
-    // hele Teknisk og ADK skal de kunne se, og Finn dørpakke likeså. Hva de
+    // hele Teknisk skal de kunne se, og Finn dørpakke likeså. Hva de
     // får GJØRE der styres av ModulRettigheter (se ModulRettigheterTests).
     // Godkjenninger er IKKE med - den skal de ikke se.
     private static readonly Dictionary<BrukerRolle, string[]> BevisstLagtTil = new()

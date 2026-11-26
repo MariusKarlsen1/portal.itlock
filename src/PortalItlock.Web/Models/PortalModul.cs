@@ -262,7 +262,7 @@ public static class PortalModulRegister
 
         new Rolle(
             "teknisk",
-            "Teknisk og ADK",
+            "Teknisk",
             "Kobling, dørmiljø og oppsett av adgangskontroll",
             [
                 new LenkeGruppe("Moduler", [

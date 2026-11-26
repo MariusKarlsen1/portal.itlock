@@ -64,11 +64,14 @@ export function koble(flate) {
         zoomRundt(e.clientX - r.left, e.clientY - r.top, st.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
     }, { passive: false });
 
-    // Dra og to-finger-zoom med pointer events.
+    // Mus og penn: dra for å flytte. Touch håndteres for seg lenger ned.
     const pekere = new Map();
     let flyttet = false, start = null, pinch = null;
 
     flate.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'touch') {
+            return;
+        }
         pekere.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (pekere.size === 1) {
             flyttet = false;
@@ -114,6 +117,50 @@ export function koble(flate) {
     };
     window.addEventListener('pointerup', slipp);
     window.addEventListener('pointercancel', slipp);
+
+    // Touch: én finger blar siden som vanlig (touch-action: pan-y), to fingre
+    // flytter og zoomer tegningen. Ellers kommer man seg ikke forbi plantegningen
+    // på telefon, fordi den fyller nesten hele skjermen.
+    let tp = null;
+    const midt = (t, r) => ({ x: (t[0].clientX + t[1].clientX) / 2 - r.left, y: (t[0].clientY + t[1].clientY) / 2 - r.top });
+    const avst = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+    flate.addEventListener('touchstart', e => {
+        if (e.touches.length === 1) {
+            flyttet = false;
+            return;
+        }
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            const r = flate.getBoundingClientRect();
+            const m = midt(e.touches, r);
+            tp = { d: avst(e.touches) || 1, z: st.z, px: (m.x - st.x) / st.z, py: (m.y - st.y) / st.z };
+            flyttet = true;
+        }
+    }, { passive: false });
+
+    flate.addEventListener('touchmove', e => {
+        if (!tp || e.touches.length < 2) {
+            return;
+        }
+        if (e.cancelable) {
+            e.preventDefault();
+        }
+        const r = flate.getBoundingClientRect();
+        const m = midt(e.touches, r);
+        st.z = Math.min(st.maks, Math.max(st.min, tp.z * avst(e.touches) / tp.d));
+        st.x = m.x - tp.px * st.z;
+        st.y = m.y - tp.py * st.z;
+        tegn();
+    }, { passive: false });
+
+    const touchSlutt = e => {
+        if (e.touches.length < 2) {
+            tp = null;
+        }
+    };
+    flate.addEventListener('touchend', touchSlutt);
+    flate.addEventListener('touchcancel', touchSlutt);
 
     // Klikk etter et drag skal ikke åpne døren under fingeren.
     flate.addEventListener('click', e => {
