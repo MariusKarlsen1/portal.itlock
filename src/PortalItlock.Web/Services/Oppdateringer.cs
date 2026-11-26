@@ -14,6 +14,15 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.31", new DateOnly(2026, 11, 26),
+        [
+            new(Type.Bedre, "mail", "Forespørsler uten tickets", "Status, ansvarlig, prioritet, frist og kunde settes rett på forespørselen. Ticket-knappene er borte."),
+            new(Type.Nytt, "tool", "Lag arbeidsordre eller tilbud", "Rett fra forespørselen, med kunde, adresse, tekst og vedlegg ferdig utfylt."),
+            new(Type.Nytt, "send", "Videresend fra Outlook", "Videresendt e-post får kunden som avsender, og kobles til riktig kunde av seg selv."),
+            new(Type.Nytt, "globe", "Nettskjema for kunder", "Slå det på under Forespørsler → Nettskjema, og del lenken eller legg den på nettsiden."),
+            new(Type.Bedre, "trend-up", "Prosjektøkonomi inne på prosjektet", "Status i klartekst, nøkkeltall og veien fra tilbudt til fortjeneste, med fakturering og fremdrift ved siden av."),
+            new(Type.Fikset, "users", "Kunngjøringer bare for ansatte", "Kunder og driftslisenser ser ikke kunngjøringene lenger."),
+        ]),
         new("1.30", new DateOnly(2026, 11, 26),
         [
             new(Type.Fikset, "phone", "Rulling i montørappen på Android", "Du kan igjen rulle nedover med fingeren på Hjem, arbeidsordre og prosjekt i Chrome på Android."),
