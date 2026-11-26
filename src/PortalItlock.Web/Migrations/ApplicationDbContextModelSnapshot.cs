@@ -8244,6 +8244,18 @@ namespace PortalItlock.Web.Migrations
                     b.Property<string>("OpsjonSortering")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("PdfMottaker")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PdfMottakerAdresse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PdfMottakerKundeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PdfMottakerNavn")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("PrisType")
                         .HasColumnType("INTEGER");
 

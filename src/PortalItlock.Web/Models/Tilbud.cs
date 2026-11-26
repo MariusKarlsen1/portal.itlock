@@ -1,4 +1,4 @@
-namespace PortalItlock.Web.Models;
+﻿namespace PortalItlock.Web.Models;
 
 public class Tilbud
 {
@@ -34,6 +34,14 @@ public class Tilbud
     public bool VisPrisPerDor { get; set; }
     // Teksten i «Forespørsel / beskrivelse» (Info) står øverst på side 2 i PDF-en.
     public bool VisForesporselIPdf { get; set; } = true;
+
+    // Hvem som står under «Til» på forsiden av PDF-en. Kunde = prosjektets kunde
+    // (som før). Tilbud sendes ofte til mange, så det kan være en annen kunde,
+    // fritekst eller ingen mottaker.
+    public TilbudMottaker PdfMottaker { get; set; } = TilbudMottaker.Kunde;
+    public int? PdfMottakerKundeId { get; set; }
+    public string? PdfMottakerNavn { get; set; }
+    public string? PdfMottakerAdresse { get; set; }
     public string? ByggetrinnFilter { get; set; }
 
     // Opsjonstilbud (TilbudType.Opsjon): hvilke dører som er med (kommaliste
@@ -102,4 +110,12 @@ public class Tilbud
     // og kodelinjene samme Rekkefolge. Før det står kodelinjene under varene.
     public bool FellesRekkefolge { get; set; }
     public List<TilbudKodeLinje> KodeLinjer { get; set; } = [];
+}
+
+public enum TilbudMottaker
+{
+    Kunde = 0,
+    Ingen = 1,
+    AnnenKunde = 2,
+    Fritekst = 3
 }

@@ -241,8 +241,18 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
         var prosjektleder = tilbud.Prosjekt?.Prosjektleder;
         var kontaktNavn = prosjektleder?.Navn ?? (org.ErStandard ? FirmaInfo.Kontaktperson : null);
         var kontaktEpost = prosjektleder?.Epost ?? org.Epost;
-        var kunde = tilbud.Prosjekt?.Kunde;
-        var kundeAdresse = kunde is null ? null : string.Join(", ", new[] { kunde.Adresse, string.Join(" ", new[] { kunde.Postnr, kunde.Sted }.Where(s => !string.IsNullOrWhiteSpace(s))) }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        // Mottakeren under «Til»: prosjektets kunde (som før), en annen kunde,
+        // fritekst eller ingen. «Att:» med kontaktperson hører bare til prosjektets kunde.
+        var kunde = tilbud.PdfMottaker switch
+        {
+            TilbudMottaker.Kunde => tilbud.Prosjekt?.Kunde,
+            TilbudMottaker.AnnenKunde when tilbud.PdfMottakerKundeId is int mk => await db.Kunder.AsNoTracking().FirstOrDefaultAsync(k => k.Id == mk),
+            _ => null
+        };
+        string? AdresseFor(Kunde k) => string.Join(", ", new[] { k.Adresse, string.Join(" ", new[] { k.Postnr, k.Sted }.Where(s => !string.IsNullOrWhiteSpace(s))) }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        var mottakerNavn = tilbud.PdfMottaker == TilbudMottaker.Fritekst ? tilbud.PdfMottakerNavn?.Trim() : kunde?.Navn;
+        var kundeAdresse = tilbud.PdfMottaker == TilbudMottaker.Fritekst ? tilbud.PdfMottakerAdresse?.Trim() : kunde is null ? null : AdresseFor(kunde);
+        var attNavn = tilbud.PdfMottaker == TilbudMottaker.Kunde ? tilbud.KontaktpersonNavn : null;
         var bunnLinje = string.Join(" · ", new[] { org.Navn, org.Adresse, org.OrgNr is null ? null : $"Org.nr {org.OrgNr}" }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
         static void Etikett(ColumnDescriptor c, string tekst, Color farge) =>
@@ -304,22 +314,22 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                             kol.Item().PaddingTop(4).Text(tilbud.Prosjekt.Navn).FontSize(12).FontColor(Colors.Grey.Darken2);
                         }
 
-                        if (kunde is not null || !string.IsNullOrWhiteSpace(tilbud.KontaktpersonNavn))
+                        if (!string.IsNullOrWhiteSpace(mottakerNavn) || !string.IsNullOrWhiteSpace(attNavn))
                         {
                             kol.Item().PaddingTop(56).Column(til =>
                             {
                                 Etikett(til, "Til", org.Aksent);
-                                if (kunde is not null)
+                                if (!string.IsNullOrWhiteSpace(mottakerNavn))
                                 {
-                                    til.Item().PaddingTop(2).Text(kunde.Navn).FontSize(12).SemiBold();
+                                    til.Item().PaddingTop(2).Text(mottakerNavn).FontSize(12).SemiBold();
                                     if (!string.IsNullOrWhiteSpace(kundeAdresse))
                                     {
                                         til.Item().Text(kundeAdresse).FontSize(9).FontColor(Colors.Grey.Darken2);
                                     }
                                 }
-                                if (!string.IsNullOrWhiteSpace(tilbud.KontaktpersonNavn))
+                                if (!string.IsNullOrWhiteSpace(attNavn))
                                 {
-                                    var kontakt = string.Join(" · ", new[] { $"Att: {tilbud.KontaktpersonNavn}", tilbud.KontaktpersonTelefon }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                                    var kontakt = string.Join(" · ", new[] { $"Att: {attNavn}", tilbud.KontaktpersonTelefon }.Where(s => !string.IsNullOrWhiteSpace(s)));
                                     til.Item().Text(kontakt).FontSize(9).FontColor(Colors.Grey.Darken2);
                                 }
                             });
@@ -340,8 +350,15 @@ public class TilbudPdfService(ApplicationDbContext db, PdfLogo pdfLogo, ITenantC
                             });
 
                             Felt("Dato", tilbud.OpprettetDato.ToString("dd.MM.yyyy"));
-                            Felt("Gyldig til", tilbud.GyldigTil?.ToString("dd.MM.yyyy") ?? "-");
-                            Felt("Levering", string.IsNullOrWhiteSpace(tilbud.Leveringstid) ? "-" : tilbud.Leveringstid);
+                            // Gyldig til og levering vises bare når de er fylt ut.
+                            if (tilbud.GyldigTil is { } gyldig)
+                            {
+                                Felt("Gyldig til", gyldig.ToString("dd.MM.yyyy"));
+                            }
+                            if (!string.IsNullOrWhiteSpace(tilbud.Leveringstid))
+                            {
+                                Felt("Levering", tilbud.Leveringstid);
+                            }
                         });
 
                         // Forsiden er bare informasjon - prisen står på neste side.
