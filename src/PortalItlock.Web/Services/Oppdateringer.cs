@@ -14,6 +14,14 @@ public static class Oppdateringer
 
     public static readonly IReadOnlyList<Versjon> Alle =
     [
+        new("1.33", new DateOnly(2026, 11, 26),
+        [
+            new(Type.Bedre, "trend-up", "Ny Økonomi-fane", "Fortjenesten mot prognosen som store tall, ett råd, og arbeid, varer og kjøring som rader du kan åpne."),
+            new(Type.Bedre, "calendar", "Fremdrift som tidslinje", "Uker, denne uken, milepæler og stolper som viser hva som er gjort. Kryss av oppgavene rett i planen."),
+            new(Type.Nytt, "receipt", "Fakturer uten Tripletex", "Uten tilkoblet økonomisystem spør portalen om det er fakturert i deres eget system."),
+            new(Type.Fikset, "file-text", "Overskrifter i tilbud", "Overskrift og beskrivelse går over hele raden igjen."),
+            new(Type.Bedre, "list", "Modulene i menyen", "Kunder, Brukere og kunder og Oppsett åpner valgvinduet i stedet for den gamle siden."),
+        ]),
         new("1.32", new DateOnly(2026, 11, 26),
         [
             new(Type.Bedre, "trend-up", "Enklere prosjektøkonomi", "Fire faner inne på prosjektet: Oversikt, Økonomi, Fakturering og Fremdrift, med svaret i én setning øverst."),
