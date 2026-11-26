@@ -218,6 +218,91 @@ public class TripletexApiTests
         Assert.Equal(AkontoStatus.Betalt, akonto.Status);
     }
 
+    private static ApplicationDbContext MinneDb(SqliteConnection conn)
+    {
+        conn.Open();
+        var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(conn).Options);
+        db.Database.EnsureCreated();
+        return db;
+    }
+
+    // Varer og priskoder: nye koder sendes, koder endret i Tripletex hentes,
+    // koder endret i portalen sendes, varer får portalens priser, og varer som
+    // bare finnes i Tripletex hentes hit (time-varer som priskoder).
+    [Fact]
+    public async Task Varesynk_sender_og_henter_koder_og_varer()
+    {
+        using var conn = new SqliteConnection("Data Source=:memory:");
+        await using var db = MinneDb(conn);
+        var ny = new PrisKode { Kode = "KM1", Navn = "Kjøring", Enhet = PrisKodeEnhet.Km, Salgspris = 9 };
+        var endretDer = new PrisKode { Kode = "TA100", Navn = "Timer montør", Enhet = PrisKodeEnhet.Time, Kostpris = 500, Salgspris = 1090 };
+        endretDer.TripletexSynk = "Timer montør|500|1090";
+        var endretHer = new PrisKode { Kode = "TA200", Navn = "Timer service", Enhet = PrisKodeEnhet.Time, Kostpris = 500, Salgspris = 1200 };
+        endretHer.TripletexSynk = "Timer service|500|1100";
+        var vare = new Component { Navn = "Låsefedt", Produktkode = "36012256", PrisNetto = 60, PrisVeiledende = 150 };
+        db.PrisKoder.AddRange(ny, endretDer, endretHer);
+        db.Components.Add(vare);
+        await db.SaveChangesAsync();
+
+        var falsk = new FalskTripletex((req, _) =>
+        {
+            var sti = req.RequestUri!.PathAndQuery;
+            if (sti.Contains("token/session")) return Json("""{"value":{"token":"t"}}""");
+            if (req.Method == HttpMethod.Post && sti.EndsWith("/product")) return Json("""{"value":{"id":99}}""");
+            if (req.Method == HttpMethod.Put) return Json("""{"value":{"id":1}}""");
+            if (sti.Contains("product?")) return Json("""{"values":[{"id":1,"number":"TA100","name":"Timer montør","costExcludingVatCurrency":500,"priceExcludingVatCurrency":1150,"productUnit":{"name":"Time","nameShort":"t"}},{"id":2,"number":"TA200","name":"Timer service","costExcludingVatCurrency":500,"priceExcludingVatCurrency":1100,"productUnit":{"name":"Time","nameShort":"t"}},{"id":3,"number":"36012256","name":"Låsefedt","costExcludingVatCurrency":60,"priceExcludingVatCurrency":120},{"id":4,"number":"TA300","name":"Timer helg","costExcludingVatCurrency":600,"priceExcludingVatCurrency":1600,"productUnit":{"name":"Time","nameShort":"t"}},{"id":5,"number":"V-77","name":"Dørstopper","costExcludingVatCurrency":20,"priceExcludingVatCurrency":59,"productUnit":{"name":"Stykk","nameShort":"stk"}}]}""");
+            return Json("""{"values":[]}""");
+        });
+
+        var r = await new TripletexSyncService(db, Lag(falsk)).SynkroniserVarerOgKoderAsync();
+
+        Assert.Empty(r.Feil);
+        // Ny kode opprettet i Tripletex.
+        var post = falsk.Kall.Single(k => k.Metode == HttpMethod.Post && k.Sti.EndsWith("/product"));
+        Assert.Equal("KM1", JsonDocument.Parse(post.Body!).RootElement.GetProperty("number").GetString());
+        // Endret i Tripletex: hentet hit.
+        Assert.Equal(1150, endretDer.Salgspris);
+        // Endret i portalen: sendt dit.
+        Assert.Contains(falsk.Kall, k => k.Metode == HttpMethod.Put && k.Sti.EndsWith("product/2") && k.Body!.Contains("1200"));
+        // Varen får portalens veiledende pris i Tripletex.
+        Assert.Contains(falsk.Kall, k => k.Metode == HttpMethod.Put && k.Sti.EndsWith("product/3") && k.Body!.Contains("150"));
+        // Bare i Tripletex: time-varen blir priskode, den andre en vare.
+        Assert.Contains(db.PrisKoder, k => k.Kode == "TA300" && k.Enhet == PrisKodeEnhet.Time && k.Salgspris == 1600);
+        Assert.Contains(db.Components, c => c.Produktkode == "V-77" && c.PrisVeiledende == 59 && c.Enhet == "stk");
+        Assert.Equal(2, r.KoderSendt);
+        Assert.Equal(1, r.VarerHentet);
+
+        // Andre runde: alt er likt, ingenting sendes.
+        falsk.Kall.Clear();
+        await new TripletexSyncService(db, Lag(falsk)).SynkroniserVarerOgKoderAsync();
+        Assert.DoesNotContain(falsk.Kall, k => k.Metode == HttpMethod.Put && !k.Sti.EndsWith("product/3"));
+    }
+
+    // Varer som ikke finnes i Tripletex opprettes første gang de brukes på en ordre,
+    // og linjen kobles til varen.
+    [Fact]
+    public async Task Ordre_oppretter_manglende_vare_og_kobler_linjen()
+    {
+        var falsk = new FalskTripletex((req, _) =>
+        {
+            var sti = req.RequestUri!.PathAndQuery;
+            if (sti.Contains("token/session")) return Json("""{"value":{"token":"t"}}""");
+            if (req.Method == HttpMethod.Post && sti.EndsWith("/product")) return Json("""{"value":{"id":77}}""");
+            if (sti.EndsWith("/order")) return Json("""{"value":{"id":500,"number":"1"}}""");
+            return Json("""{"values":[]}""");
+        });
+
+        await Lag(falsk).OpprettOrdreAsync(12, null,
+            [new TripletexService.OrdreLinjeInput("IQ 3.0 gateway", 1, 1650.96m, "IQ3NBW20EU", 1355.58m)]);
+
+        var produkt = JsonDocument.Parse(falsk.Kall.Single(k => k.Metode == HttpMethod.Post && k.Sti.EndsWith("/product")).Body!).RootElement;
+        Assert.Equal("IQ3NBW20EU", produkt.GetProperty("number").GetString());
+        Assert.Equal("IQ 3.0 gateway", produkt.GetProperty("name").GetString());
+        var linjer = JsonDocument.Parse(falsk.Kall.Single(k => k.Sti.Contains("order/orderline/list")).Body!).RootElement;
+        Assert.Equal(77, linjer[0].GetProperty("product").GetProperty("id").GetInt32());
+        Assert.Equal("IQ 3.0 gateway", linjer[0].GetProperty("description").GetString());
+    }
+
     // To portal-kunder koblet til samme Tripletex-kunde stoppet hele synken
     // («An item with the same key has already been added»). Nå oppdateres den
     // eldste, og dubletten meldes.

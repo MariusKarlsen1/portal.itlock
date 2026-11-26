@@ -85,6 +85,11 @@ public class PrisKode
 
     // Montøren kan velge koden selv (timeføring, kjøring og tillegg på arbeidsordren).
     public bool MontorKanFore { get; set; } = true;
+
+    // Navn og priser slik de var sist koden ble synket med Tripletex. Er koden
+    // endret i portalen siden da, sendes den dit; er den bare endret i Tripletex,
+    // hentes endringen hit. Null: aldri synket.
+    public string? TripletexSynk { get; set; }
 }
 
 // En linje med kode på et tilbud. Kode, navn og priser kopieres fra koden når

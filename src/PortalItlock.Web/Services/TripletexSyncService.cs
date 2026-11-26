@@ -445,6 +445,11 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
                         return new TripletexService.OrdreLinjeInput(l.Navn, l.Antall, l.Antall == 0 ? 0 : l.Belop / l.Antall, l.Varenummer);
                     }
                     var t = ArbeidsordreOkonomiBeregner.TripletexLinje(l);
+                    // Varer med produktkode kobles til (eller opprettes som) varen i Tripletex.
+                    if (!string.IsNullOrWhiteSpace(l.Produktkode))
+                    {
+                        return new TripletexService.OrdreLinjeInput(ArbeidsordreOkonomiBeregner.NavnUtenKode(l), l.Antall, t.Enhetspris, l.Produktkode.Trim(), t.Innpris, t.RabattProsent);
+                    }
                     return new TripletexService.OrdreLinjeInput(t.Beskrivelse, l.Antall, t.Enhetspris, null, t.Innpris, t.RabattProsent);
                 })
                 .ToList();
@@ -536,6 +541,172 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
     }
 
     private static string? Tom(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    public sealed record VareSyncResultat(int KoderSendt, int KoderHentet, int VarerHentet, int VarerOppdatert, List<string> Feil);
+
+    // Varer og priskoder mellom portalen og Tripletex (hvert 10. minutt):
+    // - Priskoder (timer, kjøring, tillegg) begge veier. Nye koder sendes dit,
+    //   og endringer går den veien de er gjort (portalen vinner hvis begge er endret).
+    // - Varer: portalen er hovedregister og bestemmer prisene. Varer som finnes
+    //   begge steder får portalens navn og priser i Tripletex. Varer som bare
+    //   finnes i Tripletex, hentes hit (time- og km-varer som priskoder).
+    //   Portalens varer sendes ikke dit samlet, bare når de brukes på en ordre.
+    public async Task<VareSyncResultat> SynkroniserVarerOgKoderAsync(CancellationToken ct = default)
+    {
+        var feil = new List<string>();
+        if (!tripletex.ErKonfigurert)
+        {
+            return new(0, 0, 0, 0, feil);
+        }
+        var (produkter, hentFeil) = await tripletex.HentProdukterAsync(ct);
+        if (hentFeil is not null)
+        {
+            feil.Add($"Kunne ikke hente varer fra Tripletex: {hentFeil}");
+            return new(0, 0, 0, 0, feil);
+        }
+        var iTripletex = produkter.GroupBy(p => p.Nummer, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        int koderSendt = 0, koderHentet = 0, varerHentet = 0, varerOppdatert = 0;
+
+        // 1) Priskoder begge veier.
+        var koder = await db.PrisKoder.ToListAsync(ct);
+        foreach (var k in koder)
+        {
+            if (string.IsNullOrWhiteSpace(k.Kode))
+            {
+                continue;
+            }
+            var input = KodeInput(k);
+            if (!iTripletex.TryGetValue(k.Kode.Trim(), out var p))
+            {
+                // Bare koder som aldri er synket opprettes (en kode som er fjernet
+                // eller satt inaktiv i Tripletex, lages ikke på nytt).
+                if (k.TripletexSynk is null)
+                {
+                    var (_, opprettFeil) = await tripletex.OpprettProduktAsync(input, ct);
+                    if (opprettFeil is null)
+                    {
+                        k.TripletexSynk = KodeSnapshot(k);
+                        koderSendt++;
+                    }
+                    else
+                    {
+                        feil.Add(opprettFeil);
+                    }
+                }
+                continue;
+            }
+
+            var portal = KodeSnapshot(k);
+            var der = Snapshot(p.Navn, p.Kostpris, p.Salgspris, k.Enhet.ErProsent());
+            if (portal == der)
+            {
+                k.TripletexSynk = portal;
+            }
+            else if (k.TripletexSynk != portal)
+            {
+                // Endret i portalen (eller aldri synket): portalen vinner.
+                var oppdaterFeil = await tripletex.OppdaterProduktAsync(p.Id, input, ct);
+                if (oppdaterFeil is null)
+                {
+                    k.TripletexSynk = portal;
+                    koderSendt++;
+                }
+                else
+                {
+                    feil.Add(oppdaterFeil);
+                }
+            }
+            else
+            {
+                // Bare endret i Tripletex: hent hit.
+                k.Navn = p.Navn;
+                if (!k.Enhet.ErProsent())
+                {
+                    k.Kostpris = p.Kostpris ?? 0;
+                    k.Salgspris = p.Salgspris ?? 0;
+                }
+                k.TripletexSynk = KodeSnapshot(k);
+                koderHentet++;
+            }
+        }
+        var kodenumre = koder.Select(k => k.Kode.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // 2) Varer: portalens navn og priser til Tripletex der varen finnes begge steder.
+        var varer = await db.Components
+            .Where(c => c.Produktkode != null && c.Produktkode != "" && !c.ErEgendefinert && !c.ErPlassholder)
+            .ToListAsync(ct);
+        var varePaKode = varer.GroupBy(c => c.Produktkode!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.Aktiv).ThenBy(c => c.Id).First(), StringComparer.OrdinalIgnoreCase);
+        foreach (var p in produkter.Where(p => !kodenumre.Contains(p.Nummer)))
+        {
+            if (varePaKode.TryGetValue(p.Nummer, out var c))
+            {
+                var kost = c.PrisNetto ?? p.Kostpris;
+                var salg = c.PrisVeiledende ?? p.Salgspris;
+                if (!Likt(kost, p.Kostpris) || !Likt(salg, p.Salgspris))
+                {
+                    var oppdaterFeil = await tripletex.OppdaterProduktAsync(p.Id, new TripletexService.ProduktInput(p.Nummer, p.Navn, kost, salg), ct);
+                    if (oppdaterFeil is null) varerOppdatert++;
+                    else feil.Add(oppdaterFeil);
+                }
+                continue;
+            }
+
+            // 3) Bare i Tripletex: hentes hit. Timer og km blir priskoder, resten varer.
+            var enhet = p.Enhet?.Trim().ToLowerInvariant();
+            if (enhet is "t" or "time" or "timer" or "km")
+            {
+                var kode = new PrisKode
+                {
+                    Kode = p.Nummer,
+                    Navn = p.Navn,
+                    Type = enhet == "km" ? PrisKodeType.Kjoring : PrisKodeType.Arbeid,
+                    Enhet = enhet == "km" ? PrisKodeEnhet.Km : PrisKodeEnhet.Time,
+                    Kostpris = p.Kostpris ?? 0,
+                    Salgspris = p.Salgspris ?? 0,
+                    Rekkefolge = koder.Count == 0 ? 0 : koder.Max(x => x.Rekkefolge) + 1
+                };
+                kode.TripletexSynk = KodeSnapshot(kode);
+                db.PrisKoder.Add(kode);
+                koder.Add(kode);
+                koderHentet++;
+            }
+            else
+            {
+                var vare = new Component
+                {
+                    Navn = p.Navn,
+                    Produktkode = p.Nummer,
+                    PrisNetto = p.Kostpris,
+                    PrisVeiledende = p.Salgspris,
+                    Enhet = string.IsNullOrWhiteSpace(p.Enhet) ? null : p.Enhet
+                };
+                db.Components.Add(vare);
+                varePaKode[p.Nummer] = vare;
+                varerHentet++;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+        return new(koderSendt, koderHentet, varerHentet, varerOppdatert, feil);
+    }
+
+    private static TripletexService.ProduktInput KodeInput(PrisKode k) => new(
+        k.Kode.Trim(), k.Navn,
+        k.Enhet.ErProsent() ? null : k.Kostpris,
+        k.Enhet.ErProsent() ? null : k.Salgspris,
+        k.Enhet switch { PrisKodeEnhet.Time => "time", PrisKodeEnhet.Km => "km", PrisKodeEnhet.Dag => "dag", _ => "stk" });
+
+    // Prosentkoder har prosent som pris i portalen, så der sammenlignes bare navnet.
+    private static string KodeSnapshot(PrisKode k) => Snapshot(k.Navn, k.Kostpris, k.Salgspris, k.Enhet.ErProsent());
+
+    private static string Snapshot(string navn, decimal? kost, decimal? salg, bool bareNavn) =>
+        bareNavn
+            ? navn.Trim()
+            : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{navn.Trim()}|{Math.Round(kost ?? 0, 2)}|{Math.Round(salg ?? 0, 2)}");
+
+    private static bool Likt(decimal? a, decimal? b) => Math.Round(a ?? 0, 2) == Math.Round(b ?? 0, 2);
 
     // Akonto fra faktureringsplanen under Prosjektøkonomi: én ordrelinje med
     // beløpet, på prosjektets kunde. Sendes bare én gang.

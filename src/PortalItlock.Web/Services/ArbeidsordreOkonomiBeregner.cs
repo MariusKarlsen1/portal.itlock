@@ -195,6 +195,20 @@ public static class ArbeidsordreOkonomiBeregner
     // Tripletex-linjen for en vare: «produktkode navn», veiledende pris som
     // enhetspris og rabatten som gir salgsprisen, og innkjøpsprisen. Uten
     // veiledende pris (eller hvis vi selger over den) går salgsprisen rett inn.
+    // Varens navn uten produktkoden foran (koden står i egen kolonne når linjen
+    // er koblet til varen i Tripletex).
+    public static string NavnUtenKode(OkonomiLinje l)
+    {
+        var navn = l.Navn.Trim();
+        var kode = l.Produktkode?.Trim();
+        if (!string.IsNullOrEmpty(kode) && navn.StartsWith(kode, StringComparison.OrdinalIgnoreCase))
+        {
+            var rest = navn[kode.Length..].TrimStart(' ', '-', '–').Trim();
+            return rest.Length > 0 ? rest : navn;
+        }
+        return navn;
+    }
+
     // Listepris er bare satt på linjer priset med rabatt (se BeregnLinjer).
     // Da vises veiledende pris og rabatt %, ellers bare nettoprisen.
     // Referansen på Tripletex-ordren: personen som bestilte. Kontakt valgt på

@@ -5902,6 +5902,9 @@ namespace PortalItlock.Web.Migrations
                     b.Property<int>("Timetype")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("TripletexSynk")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Type")
                         .HasColumnType("INTEGER");
 

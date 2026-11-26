@@ -696,6 +696,22 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
             }
             var mvaId = await UtgaendeMvaIdAsync(ct);
 
+            // Varer og koder som ikke finnes i Tripletex ennå, opprettes der første
+            // gang de brukes på en ordre. Feiler det, går linjen som fritekst.
+            foreach (var l in linjer.Where(l => !string.IsNullOrWhiteSpace(l.Varenummer)))
+            {
+                var nr = l.Varenummer!.Trim();
+                if (produkter.ContainsKey(nr))
+                {
+                    continue;
+                }
+                var (nyId, _) = await OpprettProduktAsync(new ProduktInput(nr, l.Beskrivelse, l.Innpris, l.EnhetsprisEksMva), ct);
+                if (nyId is int id)
+                {
+                    produkter[nr] = new TripletexProdukt(id, nr, l.Beskrivelse, l.Innpris, l.EnhetsprisEksMva, mvaId);
+                }
+            }
+
             var linjerBody = linjer.Select(l =>
             {
                 var linje = new Dictionary<string, object?>
@@ -828,7 +844,119 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         }
     }
 
-    public sealed record TripletexProdukt(int Id, string Nummer, string Navn, decimal? Kostpris, decimal? Salgspris, int? MvaId = null);
+    public sealed record TripletexProdukt(int Id, string Nummer, string Navn, decimal? Kostpris, decimal? Salgspris, int? MvaId = null, string? Enhet = null);
+
+    // En vare eller priskode som skal opprettes eller oppdateres i Tripletex.
+    // Enhet: time, km, stk eller dag (settes bare hvis firmaet har enheten).
+    public sealed record ProduktInput(string Nummer, string Navn, decimal? Kostpris, decimal? Salgspris, string? Enhet = null);
+
+    // Oppretter en vare i Tripletex med utgående mva 25 %.
+    public async Task<(int? Id, string? Feilmelding)> OpprettProduktAsync(ProduktInput p, CancellationToken ct = default)
+    {
+        try
+        {
+            var body = new Dictionary<string, object?>
+            {
+                ["number"] = p.Nummer.Trim(),
+                ["name"] = p.Navn.Trim(),
+                ["vatType"] = new { id = await UtgaendeMvaIdAsync(ct) }
+            };
+            if (p.Kostpris is { } kost) body["costExcludingVatCurrency"] = Math.Round(kost, 2);
+            if (p.Salgspris is { } salg) body["priceExcludingVatCurrency"] = Math.Round(salg, 2);
+            if (await EnhetIdAsync(p.Enhet, ct) is int enhet) body["productUnit"] = new { id = enhet };
+
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Post, "product", ct);
+            req.Content = JsonContent.Create(body, options: JsonOpts);
+            using var resp = await http.SendAsync(req, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return (null, $"Tripletex svarte {(int)resp.StatusCode} ved oppretting av vare {p.Nummer}: {Kort(raw)}");
+            }
+            var id = JsonSerializer.Deserialize<ResponseWrapper<IdSvar>>(raw, JsonOpts)?.Value?.Id;
+            return (id, id is null ? "Tomt svar fra Tripletex ved oppretting av vare." : null);
+        }
+        catch (Exception ex)
+        {
+            return (null, ex.Message);
+        }
+    }
+
+    // Oppdaterer navn og priser på en vare i Tripletex.
+    public async Task<string?> OppdaterProduktAsync(int id, ProduktInput p, CancellationToken ct = default)
+    {
+        try
+        {
+            var body = new Dictionary<string, object?> { ["id"] = id, ["name"] = p.Navn.Trim() };
+            if (p.Kostpris is { } kost) body["costExcludingVatCurrency"] = Math.Round(kost, 2);
+            if (p.Salgspris is { } salg) body["priceExcludingVatCurrency"] = Math.Round(salg, 2);
+
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Put, $"product/{id}", ct);
+            req.Content = JsonContent.Create(body, options: JsonOpts);
+            using var resp = await http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return $"Tripletex svarte {(int)resp.StatusCode} ved oppdatering av vare {p.Nummer}: {Kort(await resp.Content.ReadAsStringAsync(ct))}";
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    // Enhetene i Tripletex (time, km, stk …) slått opp på navn eller kortnavn.
+    private Dictionary<string, int>? _enheter;
+
+    private async Task<int?> EnhetIdAsync(string? enhet, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(enhet))
+        {
+            return null;
+        }
+        if (_enheter is null)
+        {
+            _enheter = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, "product/unit?count=1000&fields=id,name,nameShort", ct);
+                using var resp = await http.SendAsync(req, ct);
+                if (resp.IsSuccessStatusCode)
+                {
+                    foreach (var u in JsonSerializer.Deserialize<ListResponse<EnhetSvar>>(await resp.Content.ReadAsStringAsync(ct), JsonOpts)?.Values ?? [])
+                    {
+                        foreach (var navn in new[] { u.Name, u.NameShort })
+                        {
+                            if (!string.IsNullOrWhiteSpace(navn)) _enheter.TryAdd(navn.Trim(), u.Id);
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+            }
+        }
+        string[] kandidater = enhet.ToLowerInvariant() switch
+        {
+            "time" => ["time", "timer", "t", "hour", "hours"],
+            "km" => ["km", "kilometer"],
+            "dag" => ["dag", "dager", "døgn"],
+            _ => ["stk", "stykk", "pcs"]
+        };
+        foreach (var k in kandidater)
+        {
+            if (_enheter.TryGetValue(k, out var id)) return id;
+        }
+        return null;
+    }
+
+    private sealed class EnhetSvar
+    {
+        public int Id { get; set; }
+        public string? Name { get; set; }
+        public string? NameShort { get; set; }
+    }
 
     // Produktene i Tripletex (aktive, med varenummer). Brukes til å hente
     // priskodene, så kodene i portalen er de samme som varenumrene der.
@@ -836,7 +964,7 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     {
         try
         {
-            const string sti = "product?isInactive=false&fields=id,number,name,costExcludingVatCurrency,priceExcludingVatCurrency,vatType(id)";
+            const string sti = "product?isInactive=false&fields=id,number,name,costExcludingVatCurrency,priceExcludingVatCurrency,vatType(id),productUnit(name,nameShort)";
             var (verdier, feil) = await HentAlleSiderAsync<ProductSvar>(sti, ct);
             if (feil is not null)
             {
@@ -846,7 +974,8 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
             var produkter = verdier
                 .Where(p => !string.IsNullOrWhiteSpace(p.Number))
                 .Select(p => new TripletexProdukt(p.Id, p.Number!.Trim(), string.IsNullOrWhiteSpace(p.Name) ? p.Number!.Trim() : p.Name.Trim(),
-                    p.CostExcludingVatCurrency, p.PriceExcludingVatCurrency, p.VatType?.Id))
+                    p.CostExcludingVatCurrency, p.PriceExcludingVatCurrency, p.VatType?.Id,
+                    string.IsNullOrWhiteSpace(p.ProductUnit?.NameShort) ? p.ProductUnit?.Name?.Trim() : p.ProductUnit.NameShort.Trim()))
                 .OrderBy(p => p.Nummer)
                 .ToList();
             return (produkter, null);
@@ -867,6 +996,7 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
         public decimal? CostExcludingVatCurrency { get; set; }
         public decimal? PriceExcludingVatCurrency { get; set; }
         public IdSvar? VatType { get; set; }
+        public EnhetSvar? ProductUnit { get; set; }
     }
 
     private sealed class IdSvar

@@ -78,6 +78,14 @@ public class TripletexKundeSynkBackgroundService(IServiceScopeFactory scopeFacto
                 var synk = new TripletexSyncService(db, tripletex);
                 var r = await synk.SynkroniserKunderAsync(stoppingToken);
 
+                // Varer og priskoder.
+                var varer = await synk.SynkroniserVarerOgKoderAsync(stoppingToken);
+                if (varer.KoderSendt + varer.KoderHentet + varer.VarerHentet + varer.VarerOppdatert > 0 || varer.Feil.Count > 0)
+                {
+                    logger.LogInformation("Tripletex-varesynk for {Organisasjon}: {KS} koder sendt, {KH} koder hentet, {VH} varer hentet, {VO} varer oppdatert, {Feil} feil.",
+                        t.Navn, varer.KoderSendt, varer.KoderHentet, varer.VarerHentet, varer.VarerOppdatert, varer.Feil.Count);
+                }
+
                 // Det som er fakturert eller betalt inne i Tripletex, settes også her.
                 var fakt = await synk.OppdaterFakturertStatusAsync(stoppingToken);
                 if (fakt.ArbeidsordreFakturert + fakt.AkontoerBetalt > 0 || fakt.Feil is not null)
