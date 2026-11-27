@@ -1783,6 +1783,45 @@ app.MapPost("/lasplan/g/{token}/godkjenn", async (string token, LasplanGodkjenni
     return Results.Json(new { ok = feil is null, melding = feil });
 }).AllowAnonymous().RequireRateLimiting("login");
 
+// «Be om demo» på nettsiden (wwwroot/nettside/be-om-demo.html): sendes som
+// e-post til eieren. Svar går rett til den som spurte. Feltet «nettsted» er
+// skjult for mennesker og fanger roboter.
+app.MapPost("/nettside/be-om-demo", async (DemoForesporselBody body, EmailService epost) =>
+{
+    static string Rens(string? s, int maks) => (s ?? "").Trim() is var t && t.Length > maks ? t[..maks] : (s ?? "").Trim();
+    if (!string.IsNullOrWhiteSpace(body.Nettsted))
+    {
+        return Results.Json(new { ok = true });
+    }
+    var bedrift = Rens(body.Bedrift, 120);
+    var navn = Rens(body.Navn, 120);
+    var fra = Rens(body.Epost, 200);
+    var telefon = Rens(body.Telefon, 40);
+    var melding = Rens(body.Melding, 4000);
+    if (bedrift.Length < 2 || navn.Length < 2 || !System.Net.Mail.MailAddress.TryCreate(fra, out var adresse) || adresse.Address != fra)
+    {
+        return Results.Json(new { ok = false, melding = "Fyll inn bedriftsnavn, navn og en gyldig e-post." });
+    }
+    static string E(string s) => System.Net.WebUtility.HtmlEncode(s);
+    var html = $"""
+<div style="font-family:Arial,sans-serif;font-size:15px;color:#14213D">
+  <h2 style="margin:0 0 12px">Ny forespørsel om demo</h2>
+  <table cellpadding="6" style="border-collapse:collapse">
+    <tr><td><b>Bedrift</b></td><td>{E(bedrift)}</td></tr>
+    <tr><td><b>Navn</b></td><td>{E(navn)}</td></tr>
+    <tr><td><b>E-post</b></td><td><a href="mailto:{E(fra)}">{E(fra)}</a></td></tr>
+    <tr><td><b>Telefon</b></td><td>{(telefon.Length == 0 ? "–" : "+47 " + E(telefon))}</td></tr>
+  </table>
+  {(melding.Length == 0 ? "" : $"<p style=\"margin-top:14px;white-space:pre-line\"><b>Melding</b><br>{E(melding)}</p>")}
+  <p style="color:#6B7488;font-size:13px">Sendt fra «Be om demo» på full-kontroll.no. Svar på denne e-posten for å svare {E(navn)}.</p>
+</div>
+""";
+    var sendt = await epost.SendAsync("marius@itlock.no", $"Demo av Full Kontroll – {bedrift}", html, svarTil: fra);
+    return Results.Json(sendt
+        ? new { ok = true, melding = (string?)null }
+        : new { ok = false, melding = (string?)"Kunne ikke sende akkurat nå. Send en e-post til marius@itlock.no, så tar vi kontakt." });
+}).AllowAnonymous().RequireRateLimiting("login");
+
 app.MapGet("/fdvvedlegg/{id:int}/fil", async (int id, ApplicationDbContext db) =>
 {
     var vedlegg = await db.FdvVedlegg.FindAsync(id);
@@ -2881,3 +2920,4 @@ sealed class InlineFileResult(byte[] data, string contentType, string filename) 
 }
 
 record LasplanGodkjenningBody(string? Navn, string? Firma, string? Signatur, List<string>? Kryss);
+record DemoForesporselBody(string? Bedrift, string? Navn, string? Epost, string? Telefon, string? Melding, string? Nettsted);
