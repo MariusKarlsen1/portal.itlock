@@ -551,25 +551,44 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
     //   begge steder får portalens navn og priser i Tripletex. Varer som bare
     //   finnes i Tripletex, hentes hit (time- og km-varer som priskoder).
     //   Portalens varer sendes ikke dit samlet, bare når de brukes på en ordre.
-    public async Task<VareSyncResultat> SynkroniserVarerOgKoderAsync(CancellationToken ct = default)
+    // brukChecksum: produktlisten hentes med checksum, og er den uendret i
+    // Tripletex og ingen koder er endret i portalen, gjøres ingenting mer.
+    // Den nattlige fulle synken bruker ikke checksum, så varepriser fra
+    // portalen også sendes når ingenting er endret i Tripletex.
+    public async Task<VareSyncResultat> SynkroniserVarerOgKoderAsync(CancellationToken ct = default, bool brukChecksum = true)
     {
         var feil = new List<string>();
         if (!tripletex.ErKonfigurert)
         {
             return new(0, 0, 0, 0, feil);
         }
-        var (produkter, hentFeil) = await tripletex.HentProdukterAsync(ct);
+        var koder = await db.PrisKoder.ToListAsync(ct);
+        var portalEndret = koder.Any(k => !string.IsNullOrWhiteSpace(k.Kode) && k.TripletexSynk != KodeSnapshot(k));
+        var tilstand = await db.TripletexSyncTilstand.FirstOrDefaultAsync(t => t.Id == 1, ct);
+        if (tilstand is null)
+        {
+            tilstand = new TripletexSyncTilstand { Id = 1 };
+            db.TripletexSyncTilstand.Add(tilstand);
+        }
+        var (hentet, digest, hentFeil) = await tripletex.HentProdukterMedChecksumAsync(
+            brukChecksum && !portalEndret ? tilstand.ProduktDigest : null, ct);
         if (hentFeil is not null)
         {
             feil.Add($"Kunne ikke hente varer fra Tripletex: {hentFeil}");
             return new(0, 0, 0, 0, feil);
         }
+        if (hentet is null)
+        {
+            // 304: uendret i Tripletex, og ingenting å sende fra portalen.
+            return new(0, 0, 0, 0, feil);
+        }
+        var produkter = hentet;
+        tilstand.ProduktDigest = digest;
         var iTripletex = produkter.GroupBy(p => p.Nummer, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         int koderSendt = 0, koderHentet = 0, varerHentet = 0, varerOppdatert = 0;
 
         // 1) Priskoder begge veier.
-        var koder = await db.PrisKoder.ToListAsync(ct);
         foreach (var k in koder)
         {
             if (string.IsNullOrWhiteSpace(k.Kode))
@@ -690,6 +709,35 @@ public sealed class TripletexSyncService(ApplicationDbContext db, TripletexServi
 
         await db.SaveChangesAsync(ct);
         return new(koderSendt, koderHentet, varerHentet, varerOppdatert, feil);
+    }
+
+    // Endringer i portalen som venter på å bli sendt til Tripletex (uten API-kall):
+    // kunder som ikke er sendt eller er endret, og priskoder endret siden forrige synk.
+    public async Task<(bool Kunder, bool Koder)> VenterLokaleEndringerAsync(CancellationToken ct = default)
+    {
+        var kunder = await db.Kunder.AnyAsync(k => k.Navn != "" && (k.TripletexKundenummer == null || k.TripletexMaSendes), ct);
+        var koder = (await db.PrisKoder.AsNoTracking().ToListAsync(ct))
+            .Any(k => !string.IsNullOrWhiteSpace(k.Kode) && k.TripletexSynk != KodeSnapshot(k));
+        return (kunder, koder);
+    }
+
+    // Setter opp webhooks i Tripletex mot adressen (med en hemmelighet per
+    // organisasjon), og husker om det virket. Uten webhooks synkes oftere.
+    public async Task<bool> SikreWebhooksAsync(string adresse, CancellationToken ct = default)
+    {
+        var tilstand = await db.TripletexSyncTilstand.FirstOrDefaultAsync(t => t.Id == 1, ct);
+        if (tilstand is null)
+        {
+            tilstand = new TripletexSyncTilstand { Id = 1 };
+            db.TripletexSyncTilstand.Add(tilstand);
+        }
+        tilstand.WebhookHemmelighet ??= Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var feil = await tripletex.SikreWebhooksAsync(adresse, tilstand.WebhookHemmelighet, ct);
+        tilstand.WebhookAdresse = adresse;
+        tilstand.WebhookAktiv = feil is null;
+        tilstand.WebhookFeil = feil;
+        await db.SaveChangesAsync(ct);
+        return feil is null;
     }
 
     private static TripletexService.ProduktInput KodeInput(PrisKode k) => new(

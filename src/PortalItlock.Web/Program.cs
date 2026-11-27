@@ -2693,6 +2693,49 @@ static void TillatInnbygging(HttpContext http)
     http.Response.Headers["Content-Security-Policy"] = "frame-ancestors *";
 }
 
+// Webhooks fra Tripletex (se TripletexKundeSynkBackgroundService). Hemmeligheten
+// i headeren er unik per organisasjon og satt da abonnementet ble opprettet.
+// Svarer raskt med 200; selve synken tas av bakgrunnsjobben.
+app.MapPost("/tripletex/webhook/{organisasjonId:int}", async (int organisasjonId, HttpContext http, PlatformDbContext platformDb) =>
+{
+    var tenant = await platformDb.Tenants.AsNoTracking()
+        .FirstOrDefaultAsync(t => t.Id == organisasjonId && t.Status == TenantStatus.Aktiv);
+    if (tenant is null)
+    {
+        return Results.NotFound();
+    }
+
+    string? hemmelighet;
+    await using (var tenantDb = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(tenant.ConnectionString).Options))
+    {
+        hemmelighet = await tenantDb.TripletexSyncTilstand.AsNoTracking()
+            .Where(x => x.Id == 1).Select(x => x.WebhookHemmelighet).FirstOrDefaultAsync();
+    }
+    var mottatt = http.Request.Headers[PortalItlock.Web.Services.TripletexService.WebhookHeader].ToString();
+    if (string.IsNullOrEmpty(hemmelighet)
+        || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(mottatt), System.Text.Encoding.UTF8.GetBytes(hemmelighet)))
+    {
+        return Results.Unauthorized();
+    }
+
+    string? hendelse = null;
+    try
+    {
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(http.Request.Body);
+        if (doc.RootElement.TryGetProperty("event", out var e) && e.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+            hendelse = e.GetString();
+        }
+    }
+    catch (System.Text.Json.JsonException)
+    {
+    }
+
+    PortalItlock.Web.Services.TripletexWebhookKo.Meld(organisasjonId, PortalItlock.Web.Services.TripletexWebhookKo.FraHendelse(hendelse));
+    return Results.Ok();
+}).AllowAnonymous();
+
 app.MapGet("/skjema/{navn}", async (string navn, HttpContext http, PlatformDbContext platformDb) =>
 {
     var org = await PortalItlock.Web.Services.Nettskjema.FinnAsync(platformDb, navn);

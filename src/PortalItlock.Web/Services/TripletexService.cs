@@ -309,7 +309,8 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     {
         try
         {
-            var query = string.IsNullOrWhiteSpace(navn) ? "" : $"?customerName={Uri.EscapeDataString(navn)}&count=25";
+            const string felter = "fields=id,name,customerNumber,organizationNumber,email,phoneNumber,phoneNumberMobile,postalAddress(addressLine1,postalCode,city)";
+            var query = string.IsNullOrWhiteSpace(navn) ? $"?count=25&{felter}" : $"?customerName={Uri.EscapeDataString(navn)}&count=25&{felter}";
             using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, $"customer{query}", ct);
             using var resp = await http.SendAsync(req, ct);
             var raw = await resp.Content.ReadAsStringAsync(ct);
@@ -973,25 +974,141 @@ public sealed class TripletexService(HttpClient http, TripletexService.Nokler? n
     {
         try
         {
-            const string sti = "product?isInactive=false&fields=id,number,name,costExcludingVatCurrency,priceExcludingVatCurrency,vatType(id),productUnit(name,nameShort)";
-            var (verdier, feil) = await HentAlleSiderAsync<ProductSvar>(sti, ct);
+            var (verdier, feil) = await HentAlleSiderAsync<ProductSvar>(ProduktSti, ct);
             if (feil is not null)
             {
                 return ([], feil);
             }
 
-            var produkter = verdier
-                .Where(p => !string.IsNullOrWhiteSpace(p.Number))
-                .Select(p => new TripletexProdukt(p.Id, p.Number!.Trim(), string.IsNullOrWhiteSpace(p.Name) ? p.Number!.Trim() : p.Name.Trim(),
-                    p.CostExcludingVatCurrency, p.PriceExcludingVatCurrency, p.VatType?.Id,
-                    string.IsNullOrWhiteSpace(p.ProductUnit?.NameShort) ? p.ProductUnit?.Name?.Trim() : p.ProductUnit.NameShort.Trim()))
-                .OrderBy(p => p.Nummer)
-                .ToList();
-            return (produkter, null);
+            return (TilProdukter(verdier), null);
         }
         catch (Exception ex)
         {
             return ([], ex.Message);
+        }
+    }
+
+    private const string ProduktSti = "product?isInactive=false&fields=id,number,name,costExcludingVatCurrency,priceExcludingVatCurrency,vatType(id),productUnit(name,nameShort)";
+
+    private static List<TripletexProdukt> TilProdukter(IEnumerable<ProductSvar> verdier) => verdier
+        .Where(p => !string.IsNullOrWhiteSpace(p.Number))
+        .Select(p => new TripletexProdukt(p.Id, p.Number!.Trim(), string.IsNullOrWhiteSpace(p.Name) ? p.Number!.Trim() : p.Name.Trim(),
+            p.CostExcludingVatCurrency, p.PriceExcludingVatCurrency, p.VatType?.Id,
+            string.IsNullOrWhiteSpace(p.ProductUnit?.NameShort) ? p.ProductUnit?.Name?.Trim() : p.ProductUnit.NameShort.Trim()))
+        .OrderBy(p => p.Nummer)
+        .ToList();
+
+    // Produktene med checksum (Tripletex «Checksum»): If-None-Match med forrige
+    // versionDigest gir 304 Not Modified når listen er uendret. Produkter = null
+    // betyr uendret. Får ikke listen plass på én side, hentes alle sider uten
+    // checksum (Digest = null).
+    public async Task<(List<TripletexProdukt>? Produkter, string? Digest, string? Feilmelding)> HentProdukterMedChecksumAsync(string? digest, CancellationToken ct = default)
+    {
+        try
+        {
+            using var req = await LagAutorisertForespurselAsync(HttpMethod.Get, $"{ProduktSti}&from=0&count={SideStorrelse}", ct);
+            req.Headers.TryAddWithoutValidation("If-None-Match", string.IsNullOrWhiteSpace(digest) ? "0" : digest);
+            using var resp = await http.SendAsync(req, ct);
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotModified)
+            {
+                return (null, digest, null);
+            }
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return (null, null, $"Tripletex svarte {(int)resp.StatusCode}: {Kort(raw)}");
+            }
+            var side = JsonSerializer.Deserialize<ListMedDigest<ProductSvar>>(raw, JsonOpts);
+            var verdier = side?.Values ?? [];
+            if (verdier.Count < SideStorrelse)
+            {
+                return (TilProdukter(verdier), side?.VersionDigest, null);
+            }
+            var (alle, feil) = await HentProdukterAsync(ct);
+            return feil is null ? (alle, null, null) : (null, null, feil);
+        }
+        catch (Exception ex)
+        {
+            return (null, null, ex.Message);
+        }
+    }
+
+    private sealed class ListMedDigest<T>
+    {
+        public List<T>? Values { get; set; }
+        public string? VersionDigest { get; set; }
+    }
+
+    // --- Webhooks (Tripletex «event/subscription») ---
+
+    // Hendelsene integrasjonen følger: kunder og kontakter (kundesynk), produkter
+    // (varesynk), og fakturaer og betalinger (fakturert/betalt-status).
+    public static readonly string[] WebhookHendelser =
+    [
+        "customer.create", "customer.update", "contact.create", "contact.update",
+        "product.create", "product.update", "invoice.charged", "closegroup.create"
+    ];
+
+    public const string WebhookHeader = "X-FullKontroll-Webhook";
+
+    private sealed class AbonnementSvar
+    {
+        public int Id { get; set; }
+        public string? Event { get; set; }
+        public string? TargetUrl { get; set; }
+        public string? Status { get; set; }
+    }
+
+    // Sørger for at alle hendelsene er abonnert med riktig adresse og hemmelighet,
+    // og aktive. Returnerer feilmelding hvis noe ikke kunne settes opp.
+    public async Task<string?> SikreWebhooksAsync(string adresse, string hemmelighet, CancellationToken ct = default)
+    {
+        try
+        {
+            var (eksisterende, feil) = await HentAlleSiderAsync<AbonnementSvar>("event/subscription?fields=id,event,targetUrl,status", ct);
+            if (feil is not null)
+            {
+                return feil;
+            }
+
+            var feilListe = new List<string>();
+            foreach (var hendelse in WebhookHendelser)
+            {
+                var body = new Dictionary<string, object?>
+                {
+                    ["event"] = hendelse,
+                    ["targetUrl"] = adresse,
+                    ["fields"] = "id",
+                    ["authHeaderName"] = WebhookHeader,
+                    ["authHeaderValue"] = hemmelighet
+                };
+                var finnes = eksisterende.FirstOrDefault(s => s.Event == hendelse && s.TargetUrl == adresse);
+                HttpRequestMessage req;
+                if (finnes is null)
+                {
+                    req = await LagAutorisertForespurselAsync(HttpMethod.Post, "event/subscription", ct);
+                }
+                else
+                {
+                    body["id"] = finnes.Id;
+                    body["status"] = "ACTIVE";
+                    req = await LagAutorisertForespurselAsync(HttpMethod.Put, $"event/subscription/{finnes.Id}", ct);
+                }
+                using (req)
+                {
+                    req.Content = JsonContent.Create(body, options: JsonOpts);
+                    using var resp = await http.SendAsync(req, ct);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        feilListe.Add($"{hendelse}: {(int)resp.StatusCode} {Kort(await resp.Content.ReadAsStringAsync(ct))}");
+                    }
+                }
+            }
+            return feilListe.Count == 0 ? null : string.Join("; ", feilListe);
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
         }
     }
 

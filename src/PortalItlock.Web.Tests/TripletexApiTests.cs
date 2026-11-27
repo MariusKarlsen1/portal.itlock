@@ -226,6 +226,84 @@ public class TripletexApiTests
         return db;
     }
 
+    // Tripletex ber om checksum: uendret produktliste gir 304, og da gjøres ingenting mer.
+    [Fact]
+    public async Task Varesynk_bruker_checksum_og_hopper_over_uendret_liste()
+    {
+        using var conn = new SqliteConnection("Data Source=:memory:");
+        await using var db = MinneDb(conn);
+        var kode = new PrisKode { Kode = "TA100", Navn = "Montasje", Enhet = PrisKodeEnhet.Time, Kostpris = 550, Salgspris = 1100 };
+        kode.TripletexSynk = "Montasje|550.00|1100.00";
+        db.PrisKoder.Add(kode);
+        await db.SaveChangesAsync();
+
+        var falsk = new FalskTripletex((req, _) =>
+        {
+            var sti = req.RequestUri!.PathAndQuery;
+            if (sti.Contains("token/session")) return Json("""{"value":{"token":"t"}}""");
+            if (sti.Contains("product?"))
+            {
+                var etag = req.Headers.TryGetValues("If-None-Match", out var v) ? v.First() : null;
+                return etag == "abc"
+                    ? new HttpResponseMessage(HttpStatusCode.NotModified)
+                    : Json("""{"versionDigest":"abc","values":[{"id":1,"number":"TA100","name":"Montasje","costExcludingVatCurrency":550.0,"priceExcludingVatCurrency":1100.0}]}""");
+            }
+            return Json("""{"values":[]}""");
+        });
+
+        await new TripletexSyncService(db, Lag(falsk)).SynkroniserVarerOgKoderAsync();
+        Assert.Equal("abc", (await db.TripletexSyncTilstand.SingleAsync()).ProduktDigest);
+
+        falsk.Kall.Clear();
+        var r = await new TripletexSyncService(db, Lag(falsk)).SynkroniserVarerOgKoderAsync();
+        Assert.Single(falsk.Kall, k => k.Sti.Contains("product?"));
+        Assert.DoesNotContain(falsk.Kall, k => k.Metode != HttpMethod.Get && !k.Sti.Contains("token"));
+        Assert.Equal(0, r.KoderSendt + r.KoderHentet + r.VarerHentet);
+    }
+
+    // Webhooks: manglende abonnementer opprettes (POST), eksisterende settes aktive (PUT),
+    // med hemmeligheten i egen header.
+    [Fact]
+    public async Task Webhooks_opprettes_og_aktiveres_med_hemmelighet()
+    {
+        const string adresse = "https://full-kontroll.no/tripletex/webhook/7";
+        var falsk = new FalskTripletex((req, _) =>
+        {
+            var sti = req.RequestUri!.PathAndQuery;
+            if (sti.Contains("token/session")) return Json("""{"value":{"token":"t"}}""");
+            if (req.Method == HttpMethod.Get && sti.Contains("event/subscription"))
+                return Json("{\"values\":[{\"id\":5,\"event\":\"customer.create\",\"targetUrl\":\"" + adresse + "\",\"status\":\"DISABLED_TOO_MANY_ERRORS\"}]}");
+            return Json("""{"value":{"id":1}}""");
+        });
+
+        var feil = await Lag(falsk).SikreWebhooksAsync(adresse, "hemmelig123");
+
+        Assert.Null(feil);
+        var put = falsk.Kall.Single(k => k.Metode == HttpMethod.Put);
+        Assert.EndsWith("event/subscription/5", put.Sti);
+        Assert.Contains("ACTIVE", put.Body);
+        var poster = falsk.Kall.Where(k => k.Metode == HttpMethod.Post && k.Sti.EndsWith("event/subscription")).ToList();
+        Assert.Equal(TripletexService.WebhookHendelser.Length - 1, poster.Count);
+        var body = JsonDocument.Parse(poster[0].Body!).RootElement;
+        Assert.Equal(TripletexService.WebhookHeader, body.GetProperty("authHeaderName").GetString());
+        Assert.Equal("hemmelig123", body.GetProperty("authHeaderValue").GetString());
+        Assert.Equal(adresse, body.GetProperty("targetUrl").GetString());
+    }
+
+    [Fact]
+    public void Webhook_koen_samler_endringer_og_venter_til_det_er_stille()
+    {
+        Assert.Equal(TripletexEndring.Kunder, TripletexWebhookKo.FraHendelse("contact.update"));
+        Assert.Equal(TripletexEndring.Varer, TripletexWebhookKo.FraHendelse("product.create"));
+        Assert.Equal(TripletexEndring.Fakturaer, TripletexWebhookKo.FraHendelse("closegroup.create"));
+
+        TripletexWebhookKo.Meld(991, TripletexEndring.Kunder);
+        TripletexWebhookKo.Meld(991, TripletexEndring.Varer);
+        Assert.Equal(TripletexEndring.Ingen, TripletexWebhookKo.Ta(991, TimeSpan.FromMinutes(5)));
+        Assert.Equal(TripletexEndring.Kunder | TripletexEndring.Varer, TripletexWebhookKo.Ta(991, TimeSpan.Zero));
+        Assert.Equal(TripletexEndring.Ingen, TripletexWebhookKo.Ta(991, TimeSpan.Zero));
+    }
+
     // Varer og priskoder: nye koder sendes, koder endret i Tripletex hentes,
     // koder endret i portalen sendes, varer får portalens priser, og varer som
     // bare finnes i Tripletex hentes hit (time-varer som priskoder).

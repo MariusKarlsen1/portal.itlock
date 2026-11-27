@@ -8836,10 +8836,28 @@ namespace PortalItlock.Web.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ProduktDigest")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("SistFullSynkUtc")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("SistSynkronisertKunderUtc")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TripletexKonto")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("WebhookAdresse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("WebhookAktiv")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("WebhookFeil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("WebhookHemmelighet")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
