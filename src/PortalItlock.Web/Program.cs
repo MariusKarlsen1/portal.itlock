@@ -778,6 +778,7 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
     var epost = form["username"].ToString().Trim();
     var password = form["password"].ToString();
     var returnUrl = form["returnUrl"].ToString();
+    var huskMeg = form["huskMeg"].ToString() is "on" or "true" or "1";
 
     var safeReturnUrl = !string.IsNullOrEmpty(returnUrl) && returnUrl.StartsWith('/') && !returnUrl.StartsWith("//")
         ? returnUrl
@@ -815,6 +816,11 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
     if (bruker.TofaktorPa && !TofaktorInnlogging.ErHusket(http, vern, tenant.Id, bruker))
     {
         TofaktorInnlogging.SettVenter(http, vern, tenant.Id, bruker.Id, safeReturnUrl, 0);
+        // «Husk meg» tas med til kodesteget i en kortvarig kapsel.
+        if (huskMeg)
+        {
+            http.Response.Cookies.Append("fk_huskmeg", "1", new CookieOptions { HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Lax, MaxAge = TimeSpan.FromMinutes(15) });
+        }
         return Results.Redirect("/login?tofaktor=1");
     }
 
@@ -862,7 +868,8 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
         claims.Add(new Claim(TofaktorInnlogging.KravClaim, "1"));
     }
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity),
+        new AuthenticationProperties { IsPersistent = huskMeg });
 
     return Results.Redirect(maaSetteOppTofaktor
         ? (bruker.Rolle == BrukerRolle.Driftslisens ? "/drift/konto?krav=1" : "/tofaktor?krav=1")
@@ -936,7 +943,10 @@ app.MapPost("/account/tofaktor", async (HttpContext http, PlatformDbContext plat
         new("TenantId", tenant.Id.ToString())
     };
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    var huskMegTofaktor = http.Request.Cookies["fk_huskmeg"] == "1";
+    http.Response.Cookies.Delete("fk_huskmeg");
+    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity),
+        new AuthenticationProperties { IsPersistent = huskMegTofaktor });
     return Results.Redirect(venter.ReturnUrl);
 }).AllowAnonymous().RequireRateLimiting("login");
 
@@ -955,7 +965,10 @@ app.MapGet("/account/tofaktor-ferdig", async (HttpContext http, ApplicationDbCon
     }
     var claims = http.User.Claims.Where(c => c.Type != TofaktorInnlogging.KravClaim).ToList();
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    // Behold «Husk meg» fra innloggingen.
+    var forrige = await http.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity),
+        new AuthenticationProperties { IsPersistent = forrige.Properties?.IsPersistent == true });
     return Results.Redirect("/");
 }).RequireAuthorization();
 
