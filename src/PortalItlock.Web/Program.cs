@@ -680,9 +680,7 @@ app.Use(async (context, next) =>
     {
         // Driftslisens og kunde har egne portaler - /app er bare for
         // ansatte, og sendte dem rett tilbake til innloggingen på mobil.
-        var mal = context.User.IsInRole(nameof(BrukerRolle.Driftslisens)) ? "/drift"
-            : context.User.IsInRole(nameof(BrukerRolle.Kunde)) ? "/kunde"
-            : "/app";
+        var mal = context.User.IsInRole(nameof(BrukerRolle.Driftslisens)) ? "/drift" : "/app";
         context.Response.Redirect(mal);
         return;
     }
@@ -805,7 +803,8 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
     // finnes (tidsbasert sidekanal, se sikkerhetsgjennomgangen 2026-10-08).
     var passwordOk = PasswordHasher.Verify(password, bruker?.PasswordHash ?? PasswordHasher.DummyHash);
 
-    if (tenant is null || bruker is null || !passwordOk || !bruker.Aktiv)
+    // Kundeportalen er lagt ned, så kundebrukere kan ikke logge inn lenger.
+    if (tenant is null || bruker is null || !passwordOk || !bruker.Aktiv || bruker.Rolle == BrukerRolle.Kunde)
     {
         return Results.Redirect($"/login?returnUrl={Uri.EscapeDataString(safeReturnUrl)}&feil=1");
     }
@@ -1123,7 +1122,7 @@ app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db
     // nøyaktig hva de to ser uten å logge inn som noen andre.
     if (!Enum.TryParse<BrukerRolle>(onsketRolle, out var rolle)
         || rolle is not (BrukerRolle.Admin or BrukerRolle.Prosjektleder or BrukerRolle.Montor
-            or BrukerRolle.Kunde or BrukerRolle.Driftslisens))
+            or BrukerRolle.Driftslisens))
     {
         return Results.Redirect(trygReturUrl);
     }
@@ -1188,7 +1187,6 @@ app.MapPost("/account/vis-som", async (HttpContext http, ApplicationDbContext db
     return rolle switch
     {
         BrukerRolle.Admin => Results.Redirect(trygReturUrl),
-        BrukerRolle.Kunde => Results.Redirect("/kunde"),
         BrukerRolle.Driftslisens => Results.Redirect("/drift"),
         _ => Results.Redirect("/")
     };

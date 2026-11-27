@@ -144,7 +144,6 @@ public static class PortalModulRegister
     private static readonly List<Lenke> BrukerKundeUndermoduler =
     [
         new Lenke("Brukere", "Opprett brukere med e-post, stilling og tilgang til portalen.", "brukere", "users"),
-        new Lenke("Kundetilganger", "Administrer innlogging til kundeportalen.", "kundetilganger", "bell"),
         // Fravær er tatt ut herfra 2026-10-13 - det hører under Ressurser og
         // godkjenninger, der det allerede ligger, og trengs ikke to steder.
         new Lenke("Driftslisenser", "Gi vaktmestere tilgang til å registrere driftsmeldinger på utvalgte prosjekter.", "driftslisenser", "tool"),

@@ -58,7 +58,8 @@ public static class TenantSeedHelper
     {
         var endret = false;
 
-        if (!db.Brukere.Any(b => b.Aktiv && b.Rolle == BrukerRolle.Kunde))
+        // Testkunden lages ikke lenger: kundeportalen er lagt ned.
+        if (false && !db.Brukere.Any(b => b.Aktiv && b.Rolle == BrukerRolle.Kunde))
         {
             // Kobles til den første kunden som finnes, slik at kundeportalen
             // har noe å vise med en gang. Byttes i Kundetilganger.
