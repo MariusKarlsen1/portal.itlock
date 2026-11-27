@@ -819,7 +819,7 @@ app.MapPost("/account/login", async (HttpContext http, TenantOppslagService opps
         // «Husk meg» tas med til kodesteget i en kortvarig kapsel.
         if (huskMeg)
         {
-            http.Response.Cookies.Append("fk_huskmeg", "1", new CookieOptions { HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Lax, MaxAge = TimeSpan.FromMinutes(15) });
+            http.Response.Cookies.Append("fk_huskmeg", "1", new CookieOptions { HttpOnly = true, Secure = http.Request.IsHttps, SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Lax, MaxAge = TimeSpan.FromMinutes(15) });
         }
         return Results.Redirect("/login?tofaktor=1");
     }
