@@ -10,7 +10,7 @@
 // på telefoner som allerede hadde appen installert: /min-dag ble bufret med
 // datidens CSS/JS-versjoner, og siden selve service-worker.js-filen ikke var
 // endret, oppdaget ikke nettleseren at noe hadde endret seg.
-const STATIC_CACHE = 'itlock-static-v3';
+const STATIC_CACHE = 'itlock-static-v4';
 const PAGE_CACHE = 'itlock-sider-v3';
 const OFFLINE_SIDER = ['/min-dag', '/kart'];
 const GJELDENDE_CACHER = [STATIC_CACHE, PAGE_CACHE];
